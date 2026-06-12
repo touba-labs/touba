@@ -42,7 +42,7 @@ Read `CONTRIBUTING.md`, `FEEDBACK.md`, `SECURITY.md` and
 
 ## Authors
 
-Touba is created and led by Khadim Bamba Lo. See `AUTHORS.md`.
+Touba is authored by Khadim Lo, Jean-Sebastien Dessureault and Soukaina Alaoui Ismaili. Khadim Lo is the principal maintainer. See `AUTHORS.md` for roles and contact addresses.
 
 ## License
 
