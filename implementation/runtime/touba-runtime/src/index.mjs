@@ -18,6 +18,7 @@ const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
 const AGENT_DECISION_PROTOCOL_VERSION = "touba-agent-decision-v1";
 const AGENT_MODEL_INPUT_PROTOCOL_VERSION = "touba-agent-model-input-v1";
 const AGENT_DECISION_PROVIDER_CONTENT_MODES = new Set(["inline", "opaque_refs"]);
+const AGENT_PROVIDER_OBSERVATIONS_DEFAULT_MAX_BYTES = 32768;
 const SECRET_HANDLE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const SECRET_RECORD_STATUS_VALUES = new Set(["active", "revoked"]);
 const DOTENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -344,6 +345,12 @@ function createExecutionContext(document, entryRef, options = {}) {
         ?? options.agentModelInputContentMode
         ?? options.agent_model_input_content_mode
         ?? "inline",
+    ),
+    agentProviderObservationsMaxBytes: normalizeOptionalPositiveRuntimeInteger(
+      options.agentProviderObservationsMaxBytes
+        ?? options.agent_provider_observations_max_bytes
+        ?? AGENT_PROVIDER_OBSERVATIONS_DEFAULT_MAX_BYTES,
+      "agentProviderObservationsMaxBytes",
     ),
     skillPacks,
     activeSkillPackRefs,
@@ -1507,6 +1514,7 @@ async function requestAgentDecisionFromProvider(agent, capabilityRefs, context, 
 function agentDecisionProviderRequest(agent, capabilityRefs, context, mode, loopState = null) {
   const rawInputs = publicInputValuesForAgentDecision(context);
   const providerContent = agentDecisionProviderContent(rawInputs, loopState?.observations ?? [], context);
+  assertAgentProviderObservationsBudget(context, agent, mode, providerContent);
   const capabilities = capabilityRefs.map((capabilityRef) => agentCapabilityDescriptor(capabilityRef, context));
   const modelInput = agentModelInput(agent, capabilityRefs, capabilities, rawInputs, mode, loopState, context, providerContent);
   const request = {
@@ -1570,6 +1578,7 @@ function agentModelInput(
       step_index: loopState?.stepIndex ?? 0,
       observation_count: observations.length,
       observations: observationEntries,
+      observation_budget: agentProviderObservationBudgetReport(context, content),
     },
     instructions: [
       developerInstruction,
@@ -1702,6 +1711,7 @@ function agentDecisionProviderContent(inputs, observations, context) {
       inputs: Object.fromEntries(inputEntries.map((entry) => [entry.name, entry])),
       inputEntries,
       observations: observationEntries,
+      observationsBytes: estimateJsonBytes(observationEntries),
       refs,
       externalContentAccess: agentExternalContentAccessPolicy(mode, refs.length),
     };
@@ -1726,9 +1736,48 @@ function agentDecisionProviderContent(inputs, observations, context) {
     inputs,
     inputEntries,
     observations: observationEntries,
+    observationsBytes: estimateJsonBytes(observationEntries),
     refs: [],
     externalContentAccess: agentExternalContentAccessPolicy(mode, 0),
   };
+}
+
+function assertAgentProviderObservationsBudget(context, agent, providerMode, providerContent) {
+  const maxBytes = context?.agentProviderObservationsMaxBytes ?? null;
+  if (maxBytes === null || providerContent.observationsBytes <= maxBytes) {
+    return;
+  }
+  context.trace.push("agent_observations_budget_refused", {
+    payload: compactPayload({
+      agent_ref: agent.id,
+      provider_mode: providerMode,
+      content_mode: providerContent.mode,
+      observation_count: providerContent.observations.length,
+      consumed_bytes: providerContent.observationsBytes,
+      budget_max_bytes: maxBytes,
+      runtime_error_code: "AgentProviderObservationsBudgetExceeded",
+    }),
+  });
+  throw new RuntimeFailure(
+    `agent provider observations budget exceeded for ${agent.id}`,
+    {
+      agentRef: agent.id,
+      providerMode,
+      contentMode: providerContent.mode,
+      observationCount: providerContent.observations.length,
+      consumedBytes: providerContent.observationsBytes,
+      maxBytes,
+    },
+    "AgentProviderObservationsBudgetExceeded",
+  );
+}
+
+function agentProviderObservationBudgetReport(context, providerContent) {
+  return compactPayload({
+    max_bytes: context?.agentProviderObservationsMaxBytes ?? null,
+    consumed_bytes: providerContent.observationsBytes,
+    content_mode: providerContent.mode,
+  });
 }
 
 function opaqueRuntimeInputDescriptor(name, value, index) {

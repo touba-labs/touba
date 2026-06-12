@@ -2962,6 +2962,83 @@ test("can send external content to the agent decision provider as opaque refs", 
   assert.equal(JSON.stringify(result.trace).includes(injectedText), false);
 });
 
+test("refuses oversized inline observations before calling the agent decision provider again", async () => {
+  const largeObservation = "x".repeat(600);
+  const document = agentProviderDocument({ searchResult: largeObservation });
+  const providerCalls = [];
+
+  const result = await executeAirDocument(document, {
+    agentProviderObservationsMaxBytes: 240,
+    agentDecisionProvider: (request) => {
+      providerCalls.push(`${request.mode}:${request.step_index}`);
+      if (request.step_index === 0 && request.mode === "summary") {
+        return { action: "request_capabilities", reason: "need search" };
+      }
+      assert.equal(request.step_index, 0);
+      assert.equal(request.mode, "capabilities");
+      return {
+        target_ref: "skill:test/Search",
+        reason: "collect large result",
+        arguments: {},
+      };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.deepEqual(providerCalls, ["summary:0", "capabilities:0"]);
+  const refused = eventOf(result.trace, "agent_observations_budget_refused").payload;
+  assert.equal(refused.agent_ref, "agent:test/Researcher");
+  assert.equal(refused.provider_mode, "summary");
+  assert.equal(refused.content_mode, "inline");
+  assert.equal(refused.observation_count, 1);
+  assert.equal(refused.budget_max_bytes, 240);
+  assert.equal(refused.runtime_error_code, "AgentProviderObservationsBudgetExceeded");
+  assert.equal(JSON.stringify(result.trace).includes(largeObservation), false);
+});
+
+test("keeps oversized observations as opaque refs within the provider observation budget", async () => {
+  const largeObservation = "OPAQUE_OBSERVATION_".repeat(80);
+  const document = agentProviderDocument({ searchResult: largeObservation });
+  const providerCalls = [];
+
+  const result = await executeAirDocument(document, {
+    agentDecisionProviderContentMode: "opaque_refs",
+    agentProviderObservationsMaxBytes: 600,
+    agentDecisionProvider: (request) => {
+      providerCalls.push(`${request.mode}:${request.step_index}`);
+      assert.equal(JSON.stringify(request).includes(largeObservation), false);
+      if (request.step_index === 0 && request.mode === "summary") {
+        return { action: "request_capabilities", reason: "need search" };
+      }
+      if (request.step_index === 0 && request.mode === "capabilities") {
+        return {
+          target_ref: "skill:test/Search",
+          reason: "collect large result",
+          arguments: {},
+        };
+      }
+      assert.equal(request.step_index, 1);
+      assert.equal(request.mode, "summary");
+      assert.equal(request.observations[0].ref, "opaque:runtime_observation/0");
+      assert.equal(request.observations[0].value, undefined);
+      assert.equal(request.model_input.agent_state.observation_budget.max_bytes, 600);
+      assert.equal(request.model_input.agent_state.observation_budget.content_mode, "opaque_refs");
+      return {
+        action: "answer_directly",
+        source: "opaque_budget_test",
+        reason: "opaque observation descriptor is sufficient",
+        result: "ok",
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(result.result, "ok");
+  assert.deepEqual(providerCalls, ["summary:0", "capabilities:0", "summary:1"]);
+  assert.equal(eventsOf(result.trace, "agent_observations_budget_refused").length, 0);
+  assert.equal(JSON.stringify(result.trace).includes(largeObservation), false);
+});
+
 test("lists skill pack hints in orientation without activating pack content by default", async () => {
   const document = agentProviderDocument();
   const skillPacks = [

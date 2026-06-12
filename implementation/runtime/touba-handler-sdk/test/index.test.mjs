@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   ToubaEngine,
   ToubaEngineError,
+  ToubaAgentDecisionProviderError,
   ToubaHandlerError,
   TOUBA_SDK_METADATA,
   createAiSdkDecisionProvider,
@@ -426,11 +427,77 @@ test("createAiSdkDecisionProvider can answer directly from orientation input", a
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].model, "test-provider/test-model");
+  assert.equal(calls[0].maxOutputTokens, 700);
   assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
   assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
   const prompt = JSON.parse(calls[0].prompt);
   assert.equal(prompt.protocol, "touba-agent-model-input-v1");
   assert.equal(prompt.content_boundary.user_input_authority, "domain_data_only");
+});
+
+test("createAiSdkDecisionProvider passes an explicit maxOutputTokens budget", async () => {
+  const calls = [];
+  const provider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    source: "test_ai_sdk",
+    maxOutputTokens: 96,
+    generateObject: async (request) => {
+      calls.push(request);
+      return {
+        object: {
+          action: "answer_directly",
+          source: "test_ai_sdk",
+          reason: "bounded structured output",
+          result: "ok",
+        },
+      };
+    },
+  });
+
+  const decision = await provider(agentDecisionSummaryRequest());
+
+  assert.equal(decision.result, "ok");
+  assert.equal(calls[0].maxOutputTokens, 96);
+});
+
+test("createAiSdkDecisionProvider rejects invalid output budget options", () => {
+  assert.throws(
+    () => createAiSdkDecisionProvider({
+      model: "test-provider/test-model",
+      maxOutputTokens: 0,
+      generateObject: async () => ({ object: {} }),
+    }),
+    (error) =>
+      error instanceof ToubaAgentDecisionProviderError
+      && error.code === "InvalidDecisionProviderOptions"
+      && /maxOutputTokens/.test(error.message),
+  );
+});
+
+test("createAiSdkDecisionProvider rejects overly rich structured decisions", async () => {
+  const provider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    source: "test_ai_sdk",
+    generateObject: async () => ({
+      object: {
+        action: "answer_directly",
+        source: "test_ai_sdk",
+        reason: "too much output",
+        result: "ok",
+        debug_payload: {
+          hidden: "extra",
+        },
+      },
+    }),
+  });
+
+  await assert.rejects(
+    () => provider(agentDecisionSummaryRequest()),
+    (error) =>
+      error instanceof ToubaAgentDecisionProviderError
+      && error.code === "InvalidModelDecision"
+      && /unsupported fields/.test(error.message),
+  );
 });
 
 test("createAiSdkDecisionProvider requests a catalog and selects a capability with signature arguments", async () => {

@@ -299,7 +299,7 @@ function normalizeAiSdkDecisionProviderOptions(options) {
       : "ai_sdk_structured_output",
     temperature: options.temperature ?? 0,
     maxRetries: options.maxRetries ?? 1,
-    maxOutputTokens: options.maxOutputTokens ?? 700,
+    maxOutputTokens: normalizePositiveIntegerOption(options.maxOutputTokens ?? 700, "maxOutputTokens"),
   };
 }
 
@@ -537,6 +537,7 @@ function normalizeAiSdkDecisionObject(request, object, defaultSource) {
   }
 
   if (object.action === "request_capabilities") {
+    assertOnlyFields(object, ["action", "source", "reason", "result"], "request_capabilities decision");
     if (request.mode !== "summary") {
       throw new ToubaAgentDecisionProviderError(
         "InvalidModelDecision",
@@ -551,6 +552,7 @@ function normalizeAiSdkDecisionObject(request, object, defaultSource) {
   }
 
   if (object.action === "answer_directly") {
+    assertOnlyFields(object, ["action", "source", "reason", "result"], "answer_directly decision");
     if (request.mode !== "summary") {
       throw new ToubaAgentDecisionProviderError(
         "InvalidModelDecision",
@@ -567,6 +569,11 @@ function normalizeAiSdkDecisionObject(request, object, defaultSource) {
 
   if (object.action !== "select_capability") {
     if (object.action === "request_human_review") {
+      assertOnlyFields(
+        object,
+        ["action", "target_ref", "source", "reason", "arguments", "review_prompt"],
+        "request_human_review decision",
+      );
       if (request.mode !== "capabilities") {
         throw new ToubaAgentDecisionProviderError(
           "InvalidModelDecision",
@@ -585,6 +592,11 @@ function normalizeAiSdkDecisionObject(request, object, defaultSource) {
       `unsupported model decision action ${object.action}`,
     );
   }
+  assertOnlyFields(
+    object,
+    ["action", "target_ref", "source", "reason", "arguments", "review_prompt"],
+    "select_capability decision",
+  );
   if (!request.capability_refs.includes(object.target_ref)) {
     throw new ToubaAgentDecisionProviderError(
       "InvalidModelDecision",
@@ -597,6 +609,29 @@ function normalizeAiSdkDecisionObject(request, object, defaultSource) {
     reason: object.reason,
     arguments: object.arguments ?? {},
   };
+}
+
+function normalizePositiveIntegerOption(value, fieldName) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  throw new ToubaAgentDecisionProviderError(
+    "InvalidDecisionProviderOptions",
+    `${fieldName} must be a positive integer`,
+    { fieldName },
+  );
+}
+
+function assertOnlyFields(object, allowedFields, context) {
+  const unknownFields = Object.keys(object).filter((field) => !allowedFields.includes(field));
+  if (unknownFields.length === 0) {
+    return;
+  }
+  throw new ToubaAgentDecisionProviderError(
+    "InvalidModelDecision",
+    `${context} contains unsupported fields`,
+    { unknownFields },
+  );
 }
 
 function valueForRequest(value, request) {
