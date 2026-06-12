@@ -152,6 +152,26 @@ pnpm validate:v1-local
 `pnpm validate:v1-local` aggregates the runtime, CLI, project, SDK, corpus and
 fixture validations used to qualify a local build.
 
+## Static Registry Resolution
+
+Touba can resolve static registry metadata into a local lock without installing
+or executing package content:
+
+```sh
+touba registry resolve \
+  --registry ../touba-registry \
+  --package pkg:touba-skills-library/donnees-quebec-dataset-brief \
+  --version 0.1.0 \
+  --source-root ../touba-skills-library \
+  --allow-draft \
+  --out donnees-quebec.lock.json
+```
+
+The command verifies the registry index, package metadata digest, requested
+version, protocol compatibility and status. When `--source-root` is provided,
+it also verifies source artifact digests. It does not provide a hosted registry
+service, package installation, signature verification or runtime authority.
+
 ## Platform Support
 
 | Platform | Status | Artifact |

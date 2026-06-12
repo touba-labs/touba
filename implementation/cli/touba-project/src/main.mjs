@@ -19,6 +19,10 @@ import {
   newSkillPack,
   validateSkillPacks,
 } from "./skill-packs.mjs";
+import {
+  renderRegistryResolution,
+  resolveRegistryPackage,
+} from "./registry.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -149,6 +153,9 @@ async function dispatch(rawArgs) {
   }
   if (command === "supply-chain") {
     return supplyChainCommand(rest);
+  }
+  if (command === "registry") {
+    return registryCommand(rest);
   }
   if (command === "manifest") {
     return manifestCommand(rest);
@@ -366,6 +373,35 @@ function supplyChainCommand(rawArgs) {
   throw new Error(`unknown supply-chain command ${subcommand}`);
 }
 
+async function registryCommand(rawArgs) {
+  const [subcommand, ...tail] = rawArgs;
+  if (subcommand === "resolve") {
+    const options = parseRegistryResolveOptions(tail);
+    if (options.help === true) {
+      return { text: registryResolveUsage(), exitCode: 0 };
+    }
+    const lock = await resolveRegistryPackage(options);
+    if (options.out !== undefined) {
+      assertJsonOutputPath(options.out, "touba registry resolve --out");
+      const outputPath = resolve(options.out);
+      mkdirSync(dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+    }
+    if (options.json === true) {
+      return { report: lock, json: true, exitCode: 0 };
+    }
+    const prefix = options.out === undefined ? "" : `wrote registry lock ${resolve(options.out)}\n`;
+    return { text: `${prefix}${renderRegistryResolution(lock)}`, exitCode: 0 };
+  }
+  if (subcommand === undefined || subcommand === "--help" || subcommand === "-h") {
+    return {
+      text: registryResolveUsage(),
+      exitCode: 0,
+    };
+  }
+  throw new Error(`unknown registry command ${subcommand}`);
+}
+
 function manifestCommand(rawArgs) {
   const [subcommand, ...tail] = rawArgs;
   if (subcommand === "generate") {
@@ -392,6 +428,15 @@ function handlerCommand(rawArgs) {
     };
   }
   throw new Error(`unknown handler command ${subcommand}`);
+}
+
+function assertJsonOutputPath(path, label) {
+  if (!path.endsWith(".json")) {
+    throw new Error(`${label} requires a .json output path`);
+  }
+  if (existsSync(path) && statSync(path).isDirectory()) {
+    throw new Error(`${label} must target a file, not a directory`);
+  }
 }
 
 function versionCommand(rawArgs) {
@@ -680,6 +725,62 @@ function parseSkillValidateOptions(rawArgs) {
   return options;
 }
 
+function parseRegistryResolveOptions(rawArgs) {
+  const options = {
+    json: false,
+    allowDraft: false,
+    allowDeprecated: false,
+  };
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === "--registry") {
+      options.registry = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--registry=")) {
+      options.registry = arg.slice("--registry=".length);
+    } else if (arg === "--package") {
+      options.packageRef = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--package=")) {
+      options.packageRef = arg.slice("--package=".length);
+    } else if (arg === "--version") {
+      options.version = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--version=")) {
+      options.version = arg.slice("--version=".length);
+    } else if (arg === "--source-root") {
+      options.sourceRoot = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--source-root=")) {
+      options.sourceRoot = arg.slice("--source-root=".length);
+    } else if (arg === "--out") {
+      options.out = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--out=")) {
+      options.out = arg.slice("--out=".length);
+    } else if (arg === "--allow-draft") {
+      options.allowDraft = true;
+    } else if (arg === "--allow-deprecated") {
+      options.allowDeprecated = true;
+    } else if (arg === "--generated-on") {
+      options.generatedOn = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--generated-on=")) {
+      options.generatedOn = arg.slice("--generated-on=".length);
+    } else if (arg === "--json") {
+      options.json = true;
+    } else if (arg === "--help" || arg === "-h") {
+      options.help = true;
+    } else {
+      throw new Error(`unknown option ${arg}`);
+    }
+  }
+  return options;
+}
+
+function registryResolveUsage() {
+  return [
+    "Usage: touba registry resolve --registry <path-or-url> --package <pkg:namespace/name> --version <semver> [--source-root <path>] [--allow-draft] [--allow-deprecated] [--out <lock.json>] [--json]",
+    "",
+    "Reads a static registry index and package metadata, verifies metadata digests, optionally verifies source artifact digests, and prints a local lock.",
+    "It does not install package content or execute scripts.",
+  ].join("\n");
+}
+
 function secretValueFromOptions(options) {
   if (options.value !== undefined) {
     return options.value;
@@ -716,6 +817,7 @@ function printUsage() {
   touba inspect <artifact> [inspect options] [--report-out <report.inspect.txt>]
   touba audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--output text|json]
   touba supply-chain validate --lock <touba.lock.json> --air <program.air.json> [--manifest <touba.manifest.json>] [--report-out <report.supply-chain-report.json>] [--output text|json] [--strict] [--require-review]
+  touba registry resolve --registry <path-or-url> --package <pkg:namespace/name> --version <semver> [--source-root <path>] [--allow-draft] [--allow-deprecated] [--out <lock.json>] [--json]
   touba manifest generate <air.json> --out <touba.manifest.json>
   touba manifest generate <air.json> --stdout
   touba handler stub <air.json> [--tool-ref <tool_ref>] [--handler-root <path>] [--force]
