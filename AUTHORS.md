@@ -2,16 +2,17 @@
 
 The Touba and PAP ecosystem is authored by:
 
-- Khadim Lo: principal maintainer, `khadim.lo@uqtr.ca`
-- Jean-Sebastien Dessureault: professor in artificial intelligence, UQTR, `jean-sebastien.dessureault@uqtr.ca`
-- Soukaina Alaoui Ismaili: author, `Soukaina.Alaoui.Ismaili@uqtr.ca`
+- Khadim Lo: principal maintainer and doctoral researcher in computer engineering, UQTR School of Engineering, `khadim.lo@uqtr.ca`
+- Jean-Sebastien Dessureault: professor in artificial intelligence at UQTR and research supervisor, `jean-sebastien.dessureault@uqtr.ca`
+- Soukaina Alaoui Ismaili: doctoral researcher in computer engineering, UQTR School of Engineering, `Soukaina.Alaoui.Ismaili@uqtr.ca`
 
 Khadim Lo is the principal maintainer of the public repositories.
 
-Jean-Sebastien Dessureault is professor in artificial intelligence at UQTR.
+Jean-Sebastien Dessureault is the research supervisor for Khadim Lo and
+Soukaina Alaoui Ismaili.
 
-Soukaina Alaoui Ismaili is a doctoral researcher in computer engineering at the
-Ecole d'ingenierie de l'UQTR.
+Khadim Lo and Soukaina Alaoui Ismaili are doctoral researchers in computer
+engineering at the UQTR School of Engineering.
 
 Contributors are recognized through the Git history, pull requests and release
 notes of each repository.
