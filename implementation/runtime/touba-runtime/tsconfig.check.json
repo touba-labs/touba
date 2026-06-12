@@ -11,5 +11,9 @@
     "target": "ES2024",
     "types": ["node"]
   },
-  "include": ["src/agent-provider-content.mjs"]
+  "include": [
+    "src/agent-provider-content.mjs",
+    "src/payload-validation.mjs",
+    "src/runtime-errors.mjs"
+  ]
 }

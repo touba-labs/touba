@@ -6,6 +6,21 @@ import {
   agentDecisionProviderContent,
   agentProviderObservationBudgetReport,
 } from "./agent-provider-content.mjs";
+import {
+  isPortablePayloadConstraintScalar,
+  payloadValueKind,
+  validateToolInputPayload,
+  validateToolOutputPayload,
+  validateToolPayloadConstraints,
+} from "./payload-validation.mjs";
+import {
+  RuntimeCancelled,
+  RuntimeFailure,
+  RuntimeStop,
+  ToubaRuntimeError,
+} from "./runtime-errors.mjs";
+
+export { ToubaRuntimeError };
 
 export const AIR_SCHEMA_VERSION = "air-minimal-v0.1";
 export const AIR_JSON_PROFILE = "air-json-v0.1";
@@ -170,33 +185,6 @@ export const RUNTIME_CAPABILITIES = Object.freeze([
   "simple-failure-paths-v0.1",
   TRACE_PROTOCOL_VERSION,
 ]);
-
-export class ToubaRuntimeError extends Error {
-  constructor(code, message, details = {}) {
-    super(message);
-    this.name = "ToubaRuntimeError";
-    this.code = code;
-    this.details = details;
-  }
-}
-
-class RuntimeStop extends ToubaRuntimeError {
-  constructor(message = "execution stopped", details = {}) {
-    super("RuntimeStopped", message, details);
-  }
-}
-
-class RuntimeCancelled extends ToubaRuntimeError {
-  constructor(message = "execution cancelled", details = {}) {
-    super("RuntimeCancelled", message, details);
-  }
-}
-
-class RuntimeFailure extends ToubaRuntimeError {
-  constructor(message, details = {}, code = "RuntimeFailure") {
-    super(code, message, details);
-  }
-}
 
 export function loadAirFromJson(json) {
   let document;
@@ -3221,288 +3209,6 @@ function traceSecretHandleRefused(tool, secretHandle, context, reason) {
       reason,
     }),
   });
-}
-
-function validateToolInputPayload(tool, toolArguments, context) {
-  for (const input of tool.signature?.inputs ?? []) {
-    validatePayloadValue(toolArguments[input.name], input.type_ref, context, {
-      toolRef: tool.id,
-      direction: "input",
-      path: `arguments.${input.name}`,
-      errorCode: "ToolInputSchemaInvalid",
-    });
-  }
-}
-
-function validateToolOutputPayload(tool, value, context) {
-  const outputType = tool.signature?.output_type;
-  if (typeof outputType !== "string" || outputType.trim() === "") {
-    return;
-  }
-
-  validatePayloadValue(value, outputType, context, {
-    toolRef: tool.id,
-    direction: "output",
-    path: "value",
-    errorCode: "ToolOutputSchemaInvalid",
-  });
-}
-
-function validateToolPayloadConstraints(direction, tool, rootValue, constraints) {
-  if (!Array.isArray(constraints) || constraints.length === 0) {
-    return;
-  }
-
-  for (const constraint of constraints) {
-    const resolved = payloadConstraintValueAtPath(rootValue, constraint.segments);
-    if (!resolved.found) {
-      throwPayloadConstraintFailure(tool, direction, constraint, "path_not_found");
-    }
-
-    const value = resolved.value;
-    if (constraint.non_empty === true) {
-      if (typeof value !== "string") {
-        throwPayloadConstraintFailure(tool, direction, constraint, "expected_text_for_non_empty");
-      }
-      if (value.trim().length === 0) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "non_empty");
-      }
-    }
-
-    if (constraint.max_length !== undefined) {
-      if (typeof value !== "string") {
-        throwPayloadConstraintFailure(tool, direction, constraint, "expected_text_for_max_length");
-      }
-      if (value.length > constraint.max_length) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "max_length", {
-          observedLength: value.length,
-        });
-      }
-    }
-
-    if (constraint.min !== undefined) {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "expected_number_for_min");
-      }
-      if (value < constraint.min) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "min");
-      }
-    }
-
-    if (constraint.max !== undefined) {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "expected_number_for_max");
-      }
-      if (value > constraint.max) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "max");
-      }
-    }
-
-    if (constraint.allowed_values !== undefined) {
-      if (!isPortablePayloadConstraintScalar(value)) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "expected_scalar_for_allowed_values");
-      }
-      if (!constraint.allowed_values.some((allowedValue) => Object.is(allowedValue, value))) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "allowed_values");
-      }
-    }
-
-    if (constraint.min_items !== undefined) {
-      if (!Array.isArray(value)) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "expected_list_for_min_items");
-      }
-      if (value.length < constraint.min_items) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "min_items", {
-          observedLength: value.length,
-        });
-      }
-    }
-
-    if (constraint.max_items !== undefined) {
-      if (!Array.isArray(value)) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "expected_list_for_max_items");
-      }
-      if (value.length > constraint.max_items) {
-        throwPayloadConstraintFailure(tool, direction, constraint, "max_items", {
-          observedLength: value.length,
-        });
-      }
-    }
-  }
-}
-
-function isPortablePayloadConstraintScalar(value) {
-  if (typeof value === "string" || typeof value === "boolean") {
-    return true;
-  }
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function payloadConstraintValueAtPath(rootValue, segments) {
-  if (segments.length === 0) {
-    return { found: true, value: rootValue };
-  }
-  let current = rootValue;
-  for (const segment of segments) {
-    if (!current || typeof current !== "object" || Array.isArray(current) || !Object.hasOwn(current, segment)) {
-      return { found: false };
-    }
-    current = current[segment];
-  }
-  return { found: true, value: current };
-}
-
-function throwPayloadConstraintFailure(tool, direction, constraint, reason, extra = {}) {
-  throw new RuntimeFailure(
-    `tool ${direction} payload constraint violation for ${tool.id} at ${constraint.path}: ${reason}`,
-    {
-      toolRef: tool.id,
-      direction,
-      constraintPath: constraint.path,
-      constraint: reason,
-      constraintLimitValue: payloadConstraintLimitValue(constraint, reason),
-      allowedValuesCount: constraint.allowed_values?.length,
-      observedLength: extra.observedLength,
-    },
-    "ToolPayloadConstraintViolation",
-  );
-}
-
-function payloadConstraintLimitValue(constraint, reason) {
-  if (reason === "max_length") {
-    return constraint.max_length;
-  }
-  if (reason === "min") {
-    return constraint.min;
-  }
-  if (reason === "max") {
-    return constraint.max;
-  }
-  if (reason === "allowed_values") {
-    return constraint.allowed_values?.length;
-  }
-  if (reason === "min_items") {
-    return constraint.min_items;
-  }
-  if (reason === "max_items") {
-    return constraint.max_items;
-  }
-  return undefined;
-}
-
-function validatePayloadValue(value, typeRef, context, details) {
-  if (typeof typeRef !== "string" || typeRef.trim() === "") {
-    return;
-  }
-
-  if (typeRef === BUILTIN_TEXT) {
-    if (typeof value !== "string") {
-      throwToolSchemaFailure("expected Text", value, typeRef, details);
-    }
-    return;
-  }
-
-  if (typeRef === BUILTIN_BOOLEAN) {
-    if (typeof value !== "boolean") {
-      throwToolSchemaFailure("expected Boolean", value, typeRef, details);
-    }
-    return;
-  }
-
-  if (typeRef === BUILTIN_INT) {
-    if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-      throwToolSchemaFailure("expected Int in V1 safe integer domain", value, typeRef, details);
-    }
-    return;
-  }
-
-  if (typeRef === BUILTIN_FLOAT) {
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      throwToolSchemaFailure("expected finite Float", value, typeRef, details);
-    }
-    return;
-  }
-
-  if (typeRef.startsWith("list:")) {
-    if (!Array.isArray(value)) {
-      throwToolSchemaFailure("expected List", value, typeRef, details);
-    }
-    const itemTypeRef = typeRef.slice("list:".length);
-    for (let index = 0; index < value.length; index += 1) {
-      validatePayloadValue(value[index], itemTypeRef, context, {
-        ...details,
-        path: `${details.path}[${index}]`,
-      });
-    }
-    return;
-  }
-
-  const localType = context.indexes.types.get(typeRef);
-  if (!localType) {
-    return;
-  }
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throwToolSchemaFailure("expected object for local Touba type", value, typeRef, details);
-  }
-
-  const fields = Array.isArray(localType.fields) ? localType.fields : [];
-  const expectedFieldNames = new Set(fields.map((field) => field.name));
-  const actualFieldNames = Object.keys(value);
-  const missingFields = fields
-    .filter((field) => !Object.hasOwn(value, field.name))
-    .map((field) => field.name);
-  const unknownFields = actualFieldNames.filter((fieldName) => !expectedFieldNames.has(fieldName));
-
-  if (missingFields.length > 0) {
-    throwToolSchemaFailure("missing fields for local Touba type", value, typeRef, {
-      ...details,
-      missingFields,
-    });
-  }
-
-  if (unknownFields.length > 0) {
-    throwToolSchemaFailure("unknown fields for local Touba type", value, typeRef, {
-      ...details,
-      unknownFields,
-    });
-  }
-
-  for (const field of fields) {
-    validatePayloadValue(value[field.name], field.type_ref, context, {
-      ...details,
-      path: `${details.path}.${field.name}`,
-    });
-  }
-}
-
-function throwToolSchemaFailure(reason, value, expectedTypeRef, details) {
-  throw new RuntimeFailure(
-    `tool ${details.direction} payload schema invalid for ${details.toolRef} at ${details.path}: ${reason}`,
-    {
-      toolRef: details.toolRef,
-      direction: details.direction,
-      schemaPath: details.path,
-      expectedTypeRef,
-      actualType: payloadValueKind(value),
-      missingFields: details.missingFields,
-      unknownFields: details.unknownFields,
-    },
-    details.errorCode,
-  );
-}
-
-function payloadValueKind(value) {
-  if (value === null) {
-    return "null";
-  }
-  if (Array.isArray(value)) {
-    return "array";
-  }
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return "integer";
-  }
-  return typeof value;
 }
 
 function normalizeAirMemoryAccesses(memoryAccesses, toolRef) {
