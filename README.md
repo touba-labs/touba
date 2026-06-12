@@ -1,10 +1,22 @@
 # Touba
 
 Touba is a programming language and runtime for governed agentic systems.
+Touba means `Thinking Orchestration Using Bounded Agency`, and the official
+source extension is `.tb`.
 
-Touba means `Thinking Orchestration Using Bounded Agency`.
+In Touba, agents, tools, skills, memories, secrets and human validation are
+language constructs with typed contracts, not conventions buried in prompts or
+framework code. Programs compile to AIR, an explicit intermediate
+representation, and the runtime executes AIR only: invocation authority,
+grants, secret handles, budgets and payload limits are checked before any
+external effect, and every run can produce structured traces that link back to
+AIR nodes and source locations.
 
-The official source extension is `.tb`.
+Touba is built for teams that need agentic autonomy and accountability at the
+same time: developers declare what a system can do, reviewers see who is
+allowed to invoke it, and operators get observable refusals instead of silent
+failures. It is the executable path of the PAP research program
+(`Probabilistic Agentic Programming`).
 
 ## Why Touba
 
