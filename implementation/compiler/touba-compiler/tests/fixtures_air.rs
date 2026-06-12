@@ -641,6 +641,13 @@ const HUMAN_APPROVAL_NEGATIVE_AIR_FIXTURES: &[NegativeAirFixture] = &[
         ),
         expected_code: AirDiagnosticCode::HumanApprovalInFunction,
     },
+    NegativeAirFixture {
+        source_id: "tb-human-v1-n07",
+        source: include_str!(
+            "../../../grammar/tree-sitter-touba/examples/human-approval-v1/negative/semantic/tb-human-v1-n07-approval-after-effect.tb"
+        ),
+        expected_code: AirDiagnosticCode::HumanApprovalAfterEffectRequiresDurableResume,
+    },
 ];
 
 const USER_INTERACTION_POSITIVE_AIR_FIXTURES: &[(&str, &str)] = &[

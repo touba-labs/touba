@@ -474,6 +474,7 @@ pub enum AirDiagnosticCode {
     MissingHumanApprovalDecisionBinding,
     UnknownHumanApprovalArgument,
     HumanApprovalInFunction,
+    HumanApprovalAfterEffectRequiresDurableResume,
     MissingUserInteractionMessageArgument,
     MissingUserInteractionPromptArgument,
     MissingUserInteractionResultBinding,

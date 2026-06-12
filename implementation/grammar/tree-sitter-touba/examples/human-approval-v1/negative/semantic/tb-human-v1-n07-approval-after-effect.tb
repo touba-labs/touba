@@ -1,0 +1,26 @@
+module examples.human_approval_after_effect
+
+type Change
+    summary is Text
+
+type ApprovalDecision
+    decision is Text
+
+tool ApplyChange
+    takes change as Change
+    gives ApprovalDecision
+
+skill ApplyThenReview
+    takes change as Change
+    gives ApprovalDecision
+    uses ApplyChange
+    do
+        ApplyChange
+            with change as change
+            into applied
+
+        human.approve
+            with context as change
+            into approval
+
+        give applied

@@ -57,6 +57,7 @@ struct AirLowerer {
     type_fields: HashMap<String, HashMap<String, TypeFieldRef>>,
     agent_authority: HashMap<String, Vec<AirCallableBy>>,
     tool_memory_accesses: HashMap<String, Vec<AirMemoryAccess>>,
+    effectful_symbols: HashSet<String>,
     diagnostics: Vec<AirDiagnostic>,
 }
 
@@ -68,6 +69,7 @@ impl AirLowerer {
             type_fields: HashMap::new(),
             agent_authority: HashMap::new(),
             tool_memory_accesses: HashMap::new(),
+            effectful_symbols: HashSet::new(),
             diagnostics: Vec::new(),
         };
         lowerer.register_symbols(document);
@@ -76,6 +78,7 @@ impl AirLowerer {
         lowerer.register_type_fields(document);
         lowerer.register_agent_authority(document);
         lowerer.register_tool_memory_accesses(document);
+        lowerer.effectful_symbols = lowerer.compute_effectful_symbols(document);
         lowerer
     }
 
@@ -434,6 +437,109 @@ impl AirLowerer {
             let id = tool_id(&self.module_name, &declaration.name);
             let accesses = self.lower_tool_memory_accesses(declaration);
             self.tool_memory_accesses.insert(id, accesses);
+        }
+    }
+
+    fn compute_effectful_symbols(&self, document: &AstDocument) -> HashSet<String> {
+        let mut effectful = HashSet::new();
+        for symbol in self.symbols.values() {
+            if symbol.kind == SymbolKind::Tool
+                || symbol.kind == SymbolKind::Agent
+                || (symbol.imported
+                    && matches!(symbol.kind, SymbolKind::Skill | SymbolKind::Strategy))
+            {
+                effectful.insert(symbol.id.clone());
+            }
+        }
+
+        loop {
+            let mut changed = false;
+            for declaration in &document.declarations {
+                let Some((symbol_id, body)) = self.declaration_body_ref(declaration) else {
+                    continue;
+                };
+                if effectful.contains(&symbol_id) {
+                    continue;
+                }
+                if self.body_contains_effectful_call(body, &effectful) {
+                    changed |= effectful.insert(symbol_id);
+                }
+            }
+            if !changed {
+                return effectful;
+            }
+        }
+    }
+
+    fn declaration_body_ref<'b>(
+        &self,
+        declaration: &'b AstDeclaration,
+    ) -> Option<(String, &'b AstBody)> {
+        match declaration {
+            AstDeclaration::Function(declaration) => declaration
+                .body
+                .as_ref()
+                .map(|body| (function_id(&self.module_name, &declaration.name), body)),
+            AstDeclaration::Skill(declaration) => declaration
+                .body
+                .as_ref()
+                .map(|body| (skill_id(&self.module_name, &declaration.name), body)),
+            AstDeclaration::Strategy(declaration) => declaration
+                .body
+                .as_ref()
+                .map(|body| (strategy_id(&self.module_name, &declaration.name), body)),
+            AstDeclaration::Constant(_)
+            | AstDeclaration::Memory(_)
+            | AstDeclaration::Type(_)
+            | AstDeclaration::Tool(_)
+            | AstDeclaration::Agent(_)
+            | AstDeclaration::Trigger(_) => None,
+        }
+    }
+
+    fn body_contains_effectful_call(
+        &self,
+        body: &AstBody,
+        effectful: &HashSet<String>,
+    ) -> bool {
+        self.statements_contain_effectful_call(&body.statements, effectful)
+    }
+
+    fn statements_contain_effectful_call(
+        &self,
+        statements: &[AstStatement],
+        effectful: &HashSet<String>,
+    ) -> bool {
+        statements
+            .iter()
+            .any(|statement| self.statement_contains_effectful_call(statement, effectful))
+    }
+
+    fn statement_contains_effectful_call(
+        &self,
+        statement: &AstStatement,
+        effectful: &HashSet<String>,
+    ) -> bool {
+        match statement {
+            AstStatement::Call(call) => self
+                .symbols
+                .get(&call.target)
+                .is_some_and(|symbol| effectful.contains(&symbol.id)),
+            AstStatement::If(statement) => {
+                self.statements_contain_effectful_call(&statement.then_branch, effectful)
+                    || self.statements_contain_effectful_call(&statement.else_branch, effectful)
+            }
+            AstStatement::For(statement) => {
+                self.statements_contain_effectful_call(&statement.body, effectful)
+            }
+            AstStatement::While(statement) => {
+                self.statements_contain_effectful_call(&statement.body, effectful)
+            }
+            AstStatement::Bind(_)
+            | AstStatement::HumanApproval(_)
+            | AstStatement::UserInteraction(_)
+            | AstStatement::Give(_)
+            | AstStatement::Stop(_) => false,
         }
     }
 
@@ -1411,6 +1517,7 @@ impl AirLowerer {
             type_fields: &self.type_fields,
             agent_authority: &self.agent_authority,
             tool_memory_accesses: &self.tool_memory_accesses,
+            effectful_symbols: &self.effectful_symbols,
         }
     }
 
@@ -1561,6 +1668,7 @@ struct FlowGraphEnvironment<'a> {
     type_fields: &'a HashMap<String, HashMap<String, TypeFieldRef>>,
     agent_authority: &'a HashMap<String, Vec<AirCallableBy>>,
     tool_memory_accesses: &'a HashMap<String, Vec<AirMemoryAccess>>,
+    effectful_symbols: &'a HashSet<String>,
 }
 
 struct FlowGraphSpec<'a> {
@@ -1576,6 +1684,7 @@ struct FlowGraphBuilder<'a> {
     type_fields: &'a HashMap<String, HashMap<String, TypeFieldRef>>,
     agent_authority: &'a HashMap<String, Vec<AirCallableBy>>,
     tool_memory_accesses: &'a HashMap<String, Vec<AirMemoryAccess>>,
+    effectful_symbols: &'a HashSet<String>,
     owner_memory_scopes: HashSet<(String, String)>,
     owner_ref: &'a str,
     graph_id: &'a str,
@@ -1594,6 +1703,7 @@ struct FlowGraphBuilder<'a> {
     trace_counter: usize,
     first_call_node_id: Option<String>,
     declared_bindings: HashSet<String>,
+    external_effect_possible: bool,
 }
 
 impl<'a> FlowGraphBuilder<'a> {
@@ -1615,6 +1725,7 @@ impl<'a> FlowGraphBuilder<'a> {
             type_fields: environment.type_fields,
             agent_authority: environment.agent_authority,
             tool_memory_accesses: environment.tool_memory_accesses,
+            effectful_symbols: environment.effectful_symbols,
             owner_memory_scopes,
             owner_ref: spec.owner_ref,
             graph_id: spec.graph_id,
@@ -1633,6 +1744,7 @@ impl<'a> FlowGraphBuilder<'a> {
             trace_counter: 0,
             first_call_node_id: None,
             declared_bindings: HashSet::new(),
+            external_effect_possible: false,
         };
         builder.push_trace(AirTraceAnchorKind::ScopeEntry, None, None);
         builder.push_trace(AirTraceAnchorKind::ScopeExit, None, None);
@@ -1829,6 +1941,7 @@ impl<'a> FlowGraphBuilder<'a> {
         SequenceFragment {
             exits: pending_exits,
             terminal_reason,
+            external_effect_possible: self.external_effect_possible,
         }
     }
 
@@ -1969,6 +2082,9 @@ impl<'a> FlowGraphBuilder<'a> {
             trace_point_refs: vec![trace_point],
             source_ref: statement.source_ref.clone(),
         });
+        if self.effectful_symbols.contains(&symbol.id) {
+            self.external_effect_possible = true;
+        }
         FlowFragment::linear(node_id)
     }
 
@@ -2012,6 +2128,14 @@ impl<'a> FlowGraphBuilder<'a> {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::HumanApprovalInFunction,
                 "human approval is not allowed inside `function`; functions must remain pure",
+                Some(statement.source_ref.clone()),
+            ));
+            return FlowFragment::empty();
+        }
+        if self.external_effect_possible {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::HumanApprovalAfterEffectRequiresDurableResume,
+                "human approval after a possible external effect requires durable resume, which is not part of V1",
                 Some(statement.source_ref.clone()),
             ));
             return FlowFragment::empty();
@@ -2979,6 +3103,9 @@ impl<'a> FlowGraphBuilder<'a> {
             self.lower_branch(&node_id, AirFlowEdgeRole::True, &statement.then_branch);
         let else_branch =
             self.lower_branch(&node_id, AirFlowEdgeRole::False, &statement.else_branch);
+        self.external_effect_possible = self.external_effect_possible
+            || then_branch.external_effect_possible
+            || else_branch.external_effect_possible;
         let terminal_reason =
             if then_branch.terminal_reason.is_some() && else_branch.terminal_reason.is_some() {
                 Some("if")
@@ -3025,6 +3152,8 @@ impl<'a> FlowGraphBuilder<'a> {
         let body = self.lower_branch(&node_id, AirFlowEdgeRole::LoopNext, &statement.body);
         self.local_values = outer_values;
         self.local_value_types = outer_value_types;
+        self.external_effect_possible =
+            self.external_effect_possible || body.external_effect_possible;
         for exit in body.exits {
             self.edges.push(AirFlowEdge {
                 from_node_id: exit.node_id,
@@ -3068,6 +3197,8 @@ impl<'a> FlowGraphBuilder<'a> {
             source_ref: statement.source_ref.clone(),
         });
         let body = self.lower_branch(&node_id, AirFlowEdgeRole::LoopNext, &statement.body);
+        self.external_effect_possible =
+            self.external_effect_possible || body.external_effect_possible;
         for exit in body.exits {
             self.edges.push(AirFlowEdge {
                 from_node_id: exit.node_id,
@@ -3094,8 +3225,11 @@ impl<'a> FlowGraphBuilder<'a> {
     ) -> SequenceFragment {
         let outer_values = self.local_values.clone();
         let outer_value_types = self.local_value_types.clone();
+        let outer_external_effect_possible = self.external_effect_possible;
+        self.external_effect_possible = outer_external_effect_possible;
         let first_node_before = self.nodes.len();
         let fragment = self.lower_statement_sequence(statements);
+        let branch_external_effect_possible = self.external_effect_possible;
         if let Some(entry_node_id) = self
             .nodes
             .get(first_node_before)
@@ -3110,7 +3244,12 @@ impl<'a> FlowGraphBuilder<'a> {
         }
         self.local_values = outer_values;
         self.local_value_types = outer_value_types;
-        fragment
+        self.external_effect_possible = outer_external_effect_possible;
+        SequenceFragment {
+            exits: fragment.exits,
+            terminal_reason: fragment.terminal_reason,
+            external_effect_possible: branch_external_effect_possible,
+        }
     }
 
     fn condition_handle(&mut self, expression: &AstExpression) -> String {
@@ -3281,6 +3420,7 @@ impl FlowFragment {
 struct SequenceFragment {
     exits: Vec<PendingExit>,
     terminal_reason: Option<&'static str>,
+    external_effect_possible: bool,
 }
 
 #[derive(Debug, Clone)]
