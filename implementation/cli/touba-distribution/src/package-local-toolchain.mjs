@@ -1,0 +1,212 @@
+#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const currentFile = fileURLToPath(import.meta.url);
+const currentDir = dirname(currentFile);
+const packageRoot = resolve(currentDir, "..");
+const implementationRoot = resolve(currentDir, "../../..");
+const distRoot = join(packageRoot, "dist");
+const platform = `${process.platform}-${process.arch}`;
+const toolchainName = `touba-toolchain-${platform}`;
+const toolchainRoot = join(distRoot, toolchainName);
+
+const copiedPackages = [
+  "cli/touba-project",
+  "cli/touba-run",
+  "cli/touba-inspect",
+  "cli/touba-audit",
+  "cli/touba-supply-chain",
+  "cli/touba-manifest",
+  "cli/touba-action-plan",
+  "runtime/touba-runtime",
+  "runtime/touba-handler-sdk",
+];
+
+const nodeModuleAliases = [
+  ["runtime/touba-runtime", "@touba/runtime"],
+  ["runtime/touba-handler-sdk", "@touba/sdk"],
+  ["cli/touba-supply-chain", "@touba/supply-chain"],
+];
+
+export function packageLocalToolchain(options = {}) {
+  if (options.buildCompiler !== false) {
+    buildCompiler();
+  }
+
+  rmSync(toolchainRoot, { recursive: true, force: true });
+  mkdirSync(join(toolchainRoot, "bin"), { recursive: true });
+  mkdirSync(join(toolchainRoot, "lib"), { recursive: true });
+
+  copyNodeRuntime();
+  copyCompiler();
+  copyToubaPackages();
+  writeLaunchers();
+  writeMetadata();
+
+  if (options.quiet !== true) {
+    process.stdout.write(`TOOLCHAIN ${toolchainRoot}\n`);
+  }
+  return {
+    toolchainRoot,
+    platform,
+  };
+}
+
+function buildCompiler() {
+  const result = spawnSync(process.env.CARGO ?? "cargo", [
+    "build",
+    "-p",
+    "touba-cli",
+    "--bin",
+    "touba-compile",
+    "--release",
+  ], {
+    cwd: implementationRoot,
+    stdio: "inherit",
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`cargo build failed with status ${result.status}`);
+  }
+}
+
+function copyNodeRuntime() {
+  const nodeName = process.platform === "win32" ? "node.exe" : "node";
+  const nodeSource = resolveNodeRuntimeSource(nodeName);
+  copyFileSync(nodeSource, join(toolchainRoot, "bin", nodeName));
+  chmodSync(join(toolchainRoot, "bin", nodeName), 0o755);
+}
+
+function resolveNodeRuntimeSource(nodeName) {
+  const localNode = join(implementationRoot, ".toolchains", `node-v24.15.0-${platform}`, "bin", nodeName);
+  if (existsSync(localNode)) {
+    return realpathSync(localNode);
+  }
+  return realpathSync(process.execPath);
+}
+
+function copyCompiler() {
+  const executableName = process.platform === "win32" ? "touba-compile.exe" : "touba-compile";
+  const compilerSource = join(implementationRoot, "target", "release", executableName);
+  if (!existsSync(compilerSource)) {
+    throw new Error(`missing compiler binary ${compilerSource}`);
+  }
+  copyFileSync(compilerSource, join(toolchainRoot, "bin", executableName));
+  chmodSync(join(toolchainRoot, "bin", executableName), 0o755);
+}
+
+function copyToubaPackages() {
+  for (const relativePackage of copiedPackages) {
+    copyPackage(relativePackage, join(toolchainRoot, "lib", relativePackage));
+  }
+
+  for (const [relativePackage, alias] of nodeModuleAliases) {
+    copyPackage(relativePackage, join(toolchainRoot, "lib", "node_modules", ...alias.split("/")));
+  }
+}
+
+function copyPackage(relativePackage, destination) {
+  const source = join(implementationRoot, relativePackage);
+  if (!existsSync(source)) {
+    throw new Error(`missing package source ${source}`);
+  }
+  mkdirSync(destination, { recursive: true });
+  copyFileSync(join(source, "package.json"), join(destination, "package.json"));
+  const sourceDirectory = join(source, "src");
+  if (existsSync(sourceDirectory)) {
+    cpSync(sourceDirectory, join(destination, "src"), { recursive: true });
+  }
+}
+
+function writeLaunchers() {
+  const shellLauncher = `#!/bin/sh
+case "$0" in
+  */*) SCRIPT_DIR="\${0%/*}" ;;
+  *) SCRIPT_DIR="." ;;
+esac
+ROOT="$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)"
+export TOUBA_DISTRIBUTION_CHANNEL="\${TOUBA_DISTRIBUTION_CHANNEL:-local-archive}"
+export TOUBA_COMPILE_BIN="$ROOT/bin/touba-compile"
+export PATH="$ROOT/bin:$PATH"
+exec "$ROOT/bin/node" "$ROOT/lib/cli/touba-project/src/main.mjs" "$@"
+`;
+  writeFileSync(join(toolchainRoot, "bin", "touba"), shellLauncher, "utf8");
+  chmodSync(join(toolchainRoot, "bin", "touba"), 0o755);
+
+  const cmdLauncher = `@echo off
+set "ROOT=%~dp0.."
+if "%TOUBA_DISTRIBUTION_CHANNEL%"=="" set "TOUBA_DISTRIBUTION_CHANNEL=local-archive"
+set "TOUBA_COMPILE_BIN=%ROOT%\\bin\\touba-compile.exe"
+set "PATH=%ROOT%\\bin;%PATH%"
+"%ROOT%\\bin\\node.exe" "%ROOT%\\lib\\cli\\touba-project\\src\\main.mjs" %*
+`;
+  writeFileSync(join(toolchainRoot, "bin", "touba.cmd"), cmdLauncher, "utf8");
+}
+
+function writeMetadata() {
+  const metadata = {
+    toolchain_profile: "touba-local-toolchain-v0.1",
+    platform,
+    touba_version: readPackageVersion(join(implementationRoot, "cli", "touba-project", "package.json")),
+    node_source: resolveNodeRuntimeSource(process.platform === "win32" ? "node.exe" : "node"),
+    entrypoints: {
+      cli: "bin/touba",
+      compiler: process.platform === "win32" ? "bin/touba-compile.exe" : "bin/touba-compile",
+      node: process.platform === "win32" ? "bin/node.exe" : "bin/node",
+    },
+    included_components: [
+      "touba public CLI facade",
+      "touba-compile release binary",
+      "Touba runtime Node packages",
+      "Touba inspect and manifest CLI tools",
+      "Node runtime used to package the archive",
+    ],
+    excluded_prerequisites_for_users: [
+      "Rust toolchain",
+      "Cargo",
+      "pnpm",
+      "repository checkout",
+    ],
+    limitations: [
+      "local archive profile only",
+      "no public update channel",
+      "no checksum or signature policy applied yet",
+    ],
+  };
+  writeFileSync(join(toolchainRoot, "TOOLCHAIN.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+  writeFileSync(join(toolchainRoot, "README.txt"), [
+    "Touba local toolchain archive",
+    "",
+    "Add the bin directory to PATH, then run: touba version",
+    "This local archive is a packaging validation artifact, not a signed public release.",
+    "",
+  ].join("\n"), "utf8");
+}
+
+function readPackageVersion(packageJsonPath) {
+  return JSON.parse(readFileSync(packageJsonPath, "utf8")).version;
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    packageLocalToolchain();
+  } catch (error) {
+    process.stderr.write(`touba distribution: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
+}

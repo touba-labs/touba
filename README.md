@@ -50,8 +50,8 @@ public package registry as available runtime capabilities.
 
 ## Quick Start
 
-Install the macOS Apple Silicon bundle (`touba-v0.1.0-darwin-arm64.tar.gz`),
-then check the CLI:
+Use an installed Touba CLI, or build the local macOS Apple Silicon validation
+bundle (`touba-v0.1.0-darwin-arm64.tar.gz`) from source, then check the CLI:
 
 ```sh
 sh install.sh
@@ -185,6 +185,23 @@ Linux carries the heavier corpus and local toolchain smoke checks to keep macOS
 minutes controlled. The workflow validates source builds only; it is not a
 public release, package publication, notarization or platform support claim.
 
+## Local Release Packaging
+
+The source tree can produce a local release bundle for the current host
+platform:
+
+```sh
+cd implementation
+pnpm package:touba-release
+pnpm test:distribution-release
+pnpm check:touba-release-macos
+```
+
+`package:touba-release` refuses cross-platform packaging by default. Platforms
+without a validated release profile must be generated explicitly as
+experimental artifacts and remain non-public until their OS validation gates
+pass.
+
 ## Static Registry Resolution
 
 Touba can resolve static registry metadata into a local lock without installing
@@ -227,14 +244,15 @@ trusted by default.
 
 | Platform | Status | Artifact |
 | --- | --- | --- |
-| macOS Apple Silicon | Available | `touba-v0.1.0-darwin-arm64.tar.gz` |
-| VS Code extension | Available | `touba-vscode-0.1.0.vsix` |
-| macOS Intel | Prepared | `darwin-x64` |
-| Linux | Prepared | `linux-x64 / linux-arm64` |
-| Windows | Prepared | `win32-x64` |
+| macOS Apple Silicon | Local release validation artifact | `touba-v0.1.0-darwin-arm64.tar.gz`, generated from source |
+| VS Code extension | Local validation artifact | `touba-vscode-0.1.0.vsix`, generated from source |
+| macOS Intel | Source CI target, no public bundle claim | `darwin-x64` |
+| Linux | Source CI target, no public bundle claim | `linux-x64 / linux-arm64` |
+| Windows | Diagnostic CI target, no public bundle claim | `win32-x64` |
 
-Prepared channels are published once their bundles reach the same validation
-level as macOS Apple Silicon.
+Prepared channels can be published only after their bundles reach the same
+validation level as the local macOS Apple Silicon artifact. This repository
+does not currently publish a public release channel.
 
 ## Use This Repository For
 
