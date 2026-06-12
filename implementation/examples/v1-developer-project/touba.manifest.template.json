@@ -1,0 +1,17 @@
+{
+  "manifest_version": "touba-manifest-v1",
+  "bindings": {
+    "tool:examples.v1_developer_project/FetchProfile": {
+      "handler": {
+        "kind": "process",
+        "command": "__NODE_EXECUTABLE__",
+        "args": ["handlers/fetch_profile.handler.mjs"],
+        "cwd": "__PROJECT_ROOT__"
+      },
+      "grants": ["network", "secret_read"],
+      "secrets": ["DEMO_API_KEY"],
+      "timeout_ms": 5000,
+      "max_payload_bytes": 1048576
+    }
+  }
+}

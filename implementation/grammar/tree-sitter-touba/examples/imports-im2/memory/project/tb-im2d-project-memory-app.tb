@@ -1,0 +1,17 @@
+module examples.memory_app
+
+import type KnowledgeQuery from examples.memory_tools
+import type KnowledgeResult from examples.memory_tools
+import memory ProjectKnowledge from examples.shared_memory
+import tool ReadKnowledge from examples.memory_tools
+
+skill BuildKnowledgeAnswer
+    takes query as KnowledgeQuery
+    gives KnowledgeResult
+    uses ReadKnowledge
+    memory ProjectKnowledge read
+    do
+        ReadKnowledge
+            with query as query
+            into result
+        give result

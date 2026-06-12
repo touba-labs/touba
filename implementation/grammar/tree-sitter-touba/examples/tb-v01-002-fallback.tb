@@ -1,0 +1,38 @@
+module examples.fallback
+
+type SourceRequest
+    topic is Text
+
+type SourceText
+    content is Text
+
+tool FetchPrimarySource
+    takes request as SourceRequest
+    gives SourceText
+
+skill BuildFallbackSource
+    takes request as SourceRequest
+    gives SourceText
+    do
+        stop
+
+skill BuildSource
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchPrimarySource
+    uses BuildFallbackSource
+    do
+        FetchPrimarySource
+        give SourceText
+    on failure
+        fallback BuildFallbackSource
+
+agent Researcher
+    uses BuildSource
+    callable_by strategy RunSourceLookup
+
+strategy RunSourceLookup
+    uses Researcher
+    do
+        Researcher
+        give SourceText

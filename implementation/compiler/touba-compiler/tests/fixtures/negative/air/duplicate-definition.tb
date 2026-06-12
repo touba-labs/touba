@@ -1,0 +1,7 @@
+module invalid.duplicate
+
+type Draft
+    body is Text
+
+type Draft
+    summary is Text

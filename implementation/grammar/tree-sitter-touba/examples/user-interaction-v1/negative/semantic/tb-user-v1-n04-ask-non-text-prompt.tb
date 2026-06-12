@@ -1,0 +1,10 @@
+module examples.user_interaction_non_text_prompt
+
+strategy RunInteraction
+    gives Text
+    do
+        ask
+            with prompt as 42
+            into query
+
+        give query

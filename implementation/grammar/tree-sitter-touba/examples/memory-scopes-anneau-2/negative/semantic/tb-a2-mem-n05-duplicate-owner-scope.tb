@@ -1,0 +1,7 @@
+module examples.a2_memory_duplicate_owner_scope
+
+memory ProjectKnowledge
+
+agent Researcher
+    memory ProjectKnowledge read
+    memory ProjectKnowledge read

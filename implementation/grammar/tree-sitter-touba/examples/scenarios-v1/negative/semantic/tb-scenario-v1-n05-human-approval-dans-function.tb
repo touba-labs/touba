@@ -1,0 +1,13 @@
+module examples.scenario_human_approval_in_function
+
+type ChangeRequest
+    summary is Text
+
+function BadApproval
+    takes request as ChangeRequest
+    gives ChangeRequest
+    do
+        human.approve
+            with context as request
+            into approval
+        give request

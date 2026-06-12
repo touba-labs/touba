@@ -1,0 +1,15 @@
+module examples.typecheck_v1_negative_with_text_to_int
+
+tool StoreCount
+    takes count as Int
+    gives Text
+
+skill BadArgument
+    takes label as Text
+    gives Text
+    uses StoreCount
+    do
+        StoreCount
+            with count as label
+            into stored
+        give stored

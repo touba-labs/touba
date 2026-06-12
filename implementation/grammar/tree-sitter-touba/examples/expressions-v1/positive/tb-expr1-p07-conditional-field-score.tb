@@ -1,0 +1,27 @@
+module examples.expr1_conditional_field_score
+
+type Analysis
+    score is Float
+    accepted is Boolean
+
+function IsAcceptedHighScore
+    takes analysis as Analysis
+    takes threshold as Float
+    gives Boolean
+    do
+        give analysis.accepted and analysis.score >= threshold
+
+skill GateAnalysis
+    takes analysis as Analysis
+    takes threshold as Float
+    gives Analysis
+    uses IsAcceptedHighScore
+    do
+        IsAcceptedHighScore
+            with analysis as analysis
+            with threshold as threshold
+            into ready
+        if ready
+            give analysis
+        else
+            stop

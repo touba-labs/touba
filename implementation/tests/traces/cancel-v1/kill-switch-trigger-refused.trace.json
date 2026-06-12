@@ -1,0 +1,86 @@
+{
+  "trace_protocol_version": "trace-minimal-v0.1",
+  "run": {
+    "run_id": "run-1",
+    "air_schema_version": "air-minimal-v0.1",
+    "module_ref": "module:test",
+    "entry_ref": "trigger:test/DailyRun"
+  },
+  "events": [
+    {
+      "event_id": "event:run-1:1",
+      "run_id": "run-1",
+      "sequence_index": 0,
+      "kind": "run_started",
+      "payload": {
+        "entry_ref": "trigger:test/DailyRun"
+      }
+    },
+    {
+      "event_id": "event:run-1:2",
+      "run_id": "run-1",
+      "sequence_index": 1,
+      "kind": "kill_switch_enabled",
+      "payload": {
+        "scope": "runtime",
+        "authority_source": "host",
+        "reason": "kill_switch_enabled"
+      }
+    },
+    {
+      "event_id": "event:run-1:3",
+      "run_id": "run-1",
+      "sequence_index": 2,
+      "kind": "run_cancel_requested",
+      "payload": {
+        "authority_source": "kill_switch",
+        "reason": "kill_switch_enabled",
+        "scope": "runtime"
+      }
+    },
+    {
+      "event_id": "event:run-1:4",
+      "run_id": "run-1",
+      "sequence_index": 3,
+      "kind": "trigger_event_received",
+      "payload": {
+        "trigger_ref": "trigger:test/DailyRun",
+        "event_id": "evt-001",
+        "source_kind": "schedule"
+      }
+    },
+    {
+      "event_id": "event:run-1:5",
+      "run_id": "run-1",
+      "sequence_index": 4,
+      "kind": "trigger_event_refused",
+      "payload": {
+        "trigger_ref": "trigger:test/DailyRun",
+        "event_id": "evt-001",
+        "source_kind": "schedule",
+        "reason": "kill_switch_enabled",
+        "runtime_error_code": "RuntimeCancelled"
+      }
+    },
+    {
+      "event_id": "event:run-1:6",
+      "run_id": "run-1",
+      "sequence_index": 5,
+      "kind": "run_cancelled",
+      "payload": {
+        "authority_source": "kill_switch",
+        "reason": "kill_switch_enabled",
+        "cancel_event_id": "event:run-1:3"
+      }
+    },
+    {
+      "event_id": "event:run-1:7",
+      "run_id": "run-1",
+      "sequence_index": 6,
+      "kind": "run_completed",
+      "payload": {
+        "status": "cancelled"
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+# Rust
+target/
+
+# Node / pnpm
+node_modules/
+dist/
+coverage/
+.toolchains/
+.vscode-test/
+
+# Tree-sitter generated metadata
+grammar/tree-sitter-touba/src/grammar.json
+grammar/tree-sitter-touba/src/node-types.json
+grammar/tree-sitter-touba/bindings/
+
+# Local generated logs
+*.log

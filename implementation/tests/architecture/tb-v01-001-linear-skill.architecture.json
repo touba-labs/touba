@@ -1,0 +1,521 @@
+{
+  "projection_schema_version": "architecture-projection-v0.1",
+  "source_air_schema_version": "air-minimal-v0.1",
+  "test_only": true,
+  "module": {
+    "id": "module:examples.linear_skill",
+    "name": "examples.linear_skill",
+    "source_ref": {
+      "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+      "start_byte": 0,
+      "end_byte": 28,
+      "start_line": 0,
+      "start_column": 0,
+      "end_line": 0,
+      "end_column": 28
+    }
+  },
+  "nodes": [
+    {
+      "id": "module:examples.linear_skill",
+      "kind": "module",
+      "name": "examples.linear_skill",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 0,
+        "end_byte": 28,
+        "start_line": 0,
+        "start_column": 0,
+        "end_line": 0,
+        "end_column": 28
+      }
+    },
+    {
+      "id": "type:examples.linear_skill/SourceRequest",
+      "kind": "type",
+      "name": "SourceRequest",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 30,
+        "end_byte": 68,
+        "start_line": 2,
+        "start_column": 0,
+        "end_line": 5,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "type:examples.linear_skill/SourceText",
+      "kind": "type",
+      "name": "SourceText",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 68,
+        "end_byte": 105,
+        "start_line": 5,
+        "start_column": 0,
+        "end_line": 8,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "type:examples.linear_skill/SourceNote",
+      "kind": "type",
+      "name": "SourceNote",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 105,
+        "end_byte": 142,
+        "start_line": 8,
+        "start_column": 0,
+        "end_line": 11,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "tool:examples.linear_skill/FetchSource",
+      "kind": "tool",
+      "name": "FetchSource",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 142,
+        "end_byte": 216,
+        "start_line": 11,
+        "start_column": 0,
+        "end_line": 15,
+        "end_column": 0
+      },
+      "required_capabilities": [],
+      "required_secrets": [],
+      "memory_accesses": []
+    },
+    {
+      "id": "skill:examples.linear_skill/BuildNote",
+      "kind": "skill",
+      "name": "BuildNote",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 216,
+        "end_byte": 361,
+        "start_line": 15,
+        "start_column": 0,
+        "end_line": 23,
+        "end_column": 0
+      },
+      "memory_scopes": []
+    },
+    {
+      "id": "agent:examples.linear_skill/Researcher",
+      "kind": "agent",
+      "name": "Researcher",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 361,
+        "end_byte": 438,
+        "start_line": 23,
+        "start_column": 0,
+        "end_line": 27,
+        "end_column": 0
+      },
+      "responsibility": "Researcher",
+      "callable_by": [
+        "strategy:examples.linear_skill/RunSourcedNote"
+      ],
+      "memory_scopes": []
+    },
+    {
+      "id": "strategy:examples.linear_skill/RunSourcedNote",
+      "kind": "strategy",
+      "name": "RunSourcedNote",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 438,
+        "end_byte": 532,
+        "start_line": 27,
+        "start_column": 0,
+        "end_line": 32,
+        "end_column": 0
+      },
+      "memory_scopes": []
+    },
+    {
+      "id": "graph:skill:examples.linear_skill/BuildNote",
+      "kind": "graph",
+      "owner_ref": "skill:examples.linear_skill/BuildNote",
+      "entry_node_id": "node:graph:skill:examples.linear_skill/BuildNote:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 313,
+        "end_byte": 361,
+        "start_line": 19,
+        "start_column": 4,
+        "end_line": 23,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "node:graph:skill:examples.linear_skill/BuildNote:1",
+      "kind": "flow_node",
+      "graph_ref": "graph:skill:examples.linear_skill/BuildNote",
+      "flow_node_kind": "call_tool",
+      "target_ref": "tool:examples.linear_skill/FetchSource",
+      "arguments": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 324,
+        "end_byte": 335,
+        "start_line": 20,
+        "start_column": 8,
+        "end_line": 20,
+        "end_column": 19
+      }
+    },
+    {
+      "id": "node:graph:skill:examples.linear_skill/BuildNote:2",
+      "kind": "flow_node",
+      "graph_ref": "graph:skill:examples.linear_skill/BuildNote",
+      "flow_node_kind": "give",
+      "arguments": [
+        "symbol:SourceNote"
+      ],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 344,
+        "end_byte": 359,
+        "start_line": 21,
+        "start_column": 8,
+        "end_line": 21,
+        "end_column": 23
+      }
+    },
+    {
+      "id": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "kind": "graph",
+      "owner_ref": "strategy:examples.linear_skill/RunSourcedNote",
+      "entry_node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 486,
+        "end_byte": 532,
+        "start_line": 29,
+        "start_column": 4,
+        "end_line": 32,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
+      "kind": "flow_node",
+      "graph_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "flow_node_kind": "call_agent",
+      "target_ref": "agent:examples.linear_skill/Researcher",
+      "arguments": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 497,
+        "end_byte": 507,
+        "start_line": 30,
+        "start_column": 8,
+        "end_line": 30,
+        "end_column": 18
+      }
+    },
+    {
+      "id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:2",
+      "kind": "flow_node",
+      "graph_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "flow_node_kind": "give",
+      "arguments": [
+        "symbol:SourceNote"
+      ],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 516,
+        "end_byte": 531,
+        "start_line": 31,
+        "start_column": 8,
+        "end_line": 31,
+        "end_column": 23
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.linear_skill/BuildNote:1",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.linear_skill/BuildNote",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:skill:examples.linear_skill/BuildNote:2",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.linear_skill/BuildNote",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:skill:examples.linear_skill/BuildNote:3",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.linear_skill/BuildNote",
+      "anchor_kind": "call",
+      "node_id": "node:graph:skill:examples.linear_skill/BuildNote:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 324,
+        "end_byte": 335,
+        "start_line": 20,
+        "start_column": 8,
+        "end_line": 20,
+        "end_column": 19
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.linear_skill/BuildNote:4",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.linear_skill/BuildNote",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:skill:examples.linear_skill/BuildNote:2",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 344,
+        "end_byte": 359,
+        "start_line": 21,
+        "start_column": 8,
+        "end_line": 21,
+        "end_column": 23
+      }
+    },
+    {
+      "id": "trace:graph:strategy:examples.linear_skill/RunSourcedNote:1",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:strategy:examples.linear_skill/RunSourcedNote:2",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:strategy:examples.linear_skill/RunSourcedNote:3",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "anchor_kind": "call",
+      "node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 497,
+        "end_byte": 507,
+        "start_line": 30,
+        "start_column": 8,
+        "end_line": 30,
+        "end_column": 18
+      }
+    },
+    {
+      "id": "trace:graph:strategy:examples.linear_skill/RunSourcedNote:4",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:2",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 516,
+        "end_byte": 531,
+        "start_line": 31,
+        "start_column": 8,
+        "end_line": 31,
+        "end_column": 23
+      }
+    }
+  ],
+  "links": [
+    {
+      "kind": "module_declares",
+      "from": "module:examples.linear_skill",
+      "to": "type:examples.linear_skill/SourceRequest"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.linear_skill",
+      "to": "type:examples.linear_skill/SourceText"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.linear_skill",
+      "to": "type:examples.linear_skill/SourceNote"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.linear_skill",
+      "to": "tool:examples.linear_skill/FetchSource"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.linear_skill",
+      "to": "skill:examples.linear_skill/BuildNote"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "skill:examples.linear_skill/BuildNote",
+      "to": "tool:examples.linear_skill/FetchSource"
+    },
+    {
+      "kind": "declaration_has_graph",
+      "from": "skill:examples.linear_skill/BuildNote",
+      "to": "graph:skill:examples.linear_skill/BuildNote"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.linear_skill",
+      "to": "agent:examples.linear_skill/Researcher"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "agent:examples.linear_skill/Researcher",
+      "to": "skill:examples.linear_skill/BuildNote"
+    },
+    {
+      "kind": "agent_callable_by",
+      "from": "strategy:examples.linear_skill/RunSourcedNote",
+      "to": "agent:examples.linear_skill/Researcher",
+      "caller_kind": "strategy",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 401,
+        "end_byte": 436,
+        "start_line": 25,
+        "start_column": 4,
+        "end_line": 25,
+        "end_column": 39
+      }
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.linear_skill",
+      "to": "strategy:examples.linear_skill/RunSourcedNote"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "strategy:examples.linear_skill/RunSourcedNote",
+      "to": "agent:examples.linear_skill/Researcher"
+    },
+    {
+      "kind": "declaration_has_graph",
+      "from": "strategy:examples.linear_skill/RunSourcedNote",
+      "to": "graph:strategy:examples.linear_skill/RunSourcedNote"
+    },
+    {
+      "kind": "graph_owned_by",
+      "from": "graph:skill:examples.linear_skill/BuildNote",
+      "to": "skill:examples.linear_skill/BuildNote"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:skill:examples.linear_skill/BuildNote",
+      "to": "node:graph:skill:examples.linear_skill/BuildNote:1"
+    },
+    {
+      "kind": "node_targets",
+      "from": "node:graph:skill:examples.linear_skill/BuildNote:1",
+      "to": "tool:examples.linear_skill/FetchSource"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.linear_skill/BuildNote:1",
+      "to": "trace:graph:skill:examples.linear_skill/BuildNote:3"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:skill:examples.linear_skill/BuildNote",
+      "to": "node:graph:skill:examples.linear_skill/BuildNote:2"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.linear_skill/BuildNote:2",
+      "to": "trace:graph:skill:examples.linear_skill/BuildNote:4"
+    },
+    {
+      "kind": "flow_edge",
+      "from": "node:graph:skill:examples.linear_skill/BuildNote:1",
+      "to": "node:graph:skill:examples.linear_skill/BuildNote:2",
+      "graph_ref": "graph:skill:examples.linear_skill/BuildNote",
+      "role": "next",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 344,
+        "end_byte": 359,
+        "start_line": 21,
+        "start_column": 8,
+        "end_line": 21,
+        "end_column": 23
+      }
+    },
+    {
+      "kind": "graph_owned_by",
+      "from": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "to": "strategy:examples.linear_skill/RunSourcedNote"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "to": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1"
+    },
+    {
+      "kind": "node_targets",
+      "from": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
+      "to": "agent:examples.linear_skill/Researcher"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
+      "to": "trace:graph:strategy:examples.linear_skill/RunSourcedNote:3"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "to": "node:graph:strategy:examples.linear_skill/RunSourcedNote:2"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:strategy:examples.linear_skill/RunSourcedNote:2",
+      "to": "trace:graph:strategy:examples.linear_skill/RunSourcedNote:4"
+    },
+    {
+      "kind": "flow_edge",
+      "from": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
+      "to": "node:graph:strategy:examples.linear_skill/RunSourcedNote:2",
+      "graph_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
+      "role": "next",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "start_byte": 516,
+        "end_byte": 531,
+        "start_line": 31,
+        "start_column": 8,
+        "end_line": 31,
+        "end_column": 23
+      }
+    }
+  ],
+  "absent_data": [
+    "policies",
+    "permissions",
+    "costs",
+    "risks",
+    "confidence",
+    "memory contents backends",
+    "approvals",
+    "rich parallelism",
+    "scheduling",
+    "product ownership",
+    "business criticality",
+    "Verified Unverified"
+  ],
+  "unresolved_references": []
+}

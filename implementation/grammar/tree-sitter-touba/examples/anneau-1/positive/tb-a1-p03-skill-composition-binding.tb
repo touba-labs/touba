@@ -1,0 +1,44 @@
+module examples.a1_skill_composition
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+type SourceNote
+    body is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+skill LoadSource
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchSource
+    do
+        FetchSource
+            with request as request
+            into source
+        give source
+
+skill BuildNote
+    takes source as SourceText
+    gives SourceNote
+    do
+        give SourceNote
+
+skill RunPipeline
+    takes request as SourceRequest
+    gives SourceNote
+    uses LoadSource
+    uses BuildNote
+    do
+        LoadSource
+            with request as request
+            into source
+        BuildNote
+            with source as source
+            into note
+        give note

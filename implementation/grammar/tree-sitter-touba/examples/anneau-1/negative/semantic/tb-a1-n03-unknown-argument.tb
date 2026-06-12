@@ -1,0 +1,21 @@
+module examples.a1_negative_unknown_argument
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+skill BrokenFlow
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchSource
+    do
+        FetchSource
+            with unknown as request
+            into source
+        give source

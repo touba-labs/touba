@@ -1,0 +1,8 @@
+module examples.expr1_float_average
+
+function AverageScore
+    takes score as Float
+    takes bonus as Float
+    gives Float
+    do
+        give (score + bonus) / 2.0

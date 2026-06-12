@@ -1,0 +1,47 @@
+module examples.trigger_morning_review
+
+define ReviewTopic as Text = "signaux produit Touba"
+define RiskTheme as Text = "risques agents"
+
+function BuildReviewTitle
+    takes topic as Text
+    gives Text
+    do
+        give "Revue matinale: " ++ topic
+
+skill BuildMorningBrief
+    takes topic as Text
+    gives Text
+    do
+        BuildReviewTitle
+            with topic as topic
+            into title
+
+        show
+            with message as title
+
+        show
+            with message as "Point de controle: verifier traces, refus et prochaines actions"
+
+        give title
+
+strategy RunMorningReview
+    takes topic as Text
+    gives Text
+    uses BuildMorningBrief
+    do
+        bind scoped_topic as Text = topic ++ " / " ++ RiskTheme
+
+        BuildMorningBrief
+            with topic as scoped_topic
+            into title
+
+        give title
+
+trigger MorningReview
+    on schedule "every 1s"
+    runs strategy RunMorningReview
+    with topic as ReviewTopic
+    limits
+        max_runs_per_day as 1
+        timeout_ms as 30000

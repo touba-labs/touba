@@ -1,0 +1,18 @@
+module examples.typecheck_v1_field_argument
+
+type Reading
+    score is Float
+
+tool StoreScore
+    takes score as Float
+    gives Text
+
+skill SaveReading
+    takes reading as Reading
+    gives Text
+    uses StoreScore
+    do
+        StoreScore
+            with score as reading.score
+            into stored
+        give stored

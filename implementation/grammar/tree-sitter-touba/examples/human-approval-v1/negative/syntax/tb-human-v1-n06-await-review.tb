@@ -1,0 +1,14 @@
+module examples.human_await_review
+
+type Analysis
+    confidence is Float
+
+skill NeedsReview
+    takes analysis as Analysis
+    gives Analysis
+    do
+        await human.review
+            with context as analysis
+            into decision
+
+        give analysis

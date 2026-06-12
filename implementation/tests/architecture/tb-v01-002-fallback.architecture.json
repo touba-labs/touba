@@ -1,0 +1,745 @@
+{
+  "projection_schema_version": "architecture-projection-v0.1",
+  "source_air_schema_version": "air-minimal-v0.1",
+  "test_only": true,
+  "module": {
+    "id": "module:examples.fallback",
+    "name": "examples.fallback",
+    "source_ref": {
+      "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+      "start_byte": 0,
+      "end_byte": 24,
+      "start_line": 0,
+      "start_column": 0,
+      "end_line": 0,
+      "end_column": 24
+    }
+  },
+  "nodes": [
+    {
+      "id": "module:examples.fallback",
+      "kind": "module",
+      "name": "examples.fallback",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 0,
+        "end_byte": 24,
+        "start_line": 0,
+        "start_column": 0,
+        "end_line": 0,
+        "end_column": 24
+      }
+    },
+    {
+      "id": "type:examples.fallback/SourceRequest",
+      "kind": "type",
+      "name": "SourceRequest",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 26,
+        "end_byte": 64,
+        "start_line": 2,
+        "start_column": 0,
+        "end_line": 5,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "type:examples.fallback/SourceText",
+      "kind": "type",
+      "name": "SourceText",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 64,
+        "end_byte": 101,
+        "start_line": 5,
+        "start_column": 0,
+        "end_line": 8,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "tool:examples.fallback/FetchPrimarySource",
+      "kind": "tool",
+      "name": "FetchPrimarySource",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 101,
+        "end_byte": 182,
+        "start_line": 8,
+        "start_column": 0,
+        "end_line": 12,
+        "end_column": 0
+      },
+      "required_capabilities": [],
+      "required_secrets": [],
+      "memory_accesses": []
+    },
+    {
+      "id": "skill:examples.fallback/BuildFallbackSource",
+      "kind": "skill",
+      "name": "BuildFallbackSource",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 182,
+        "end_byte": 285,
+        "start_line": 12,
+        "start_column": 0,
+        "end_line": 18,
+        "end_column": 0
+      },
+      "memory_scopes": []
+    },
+    {
+      "id": "skill:examples.fallback/BuildSource",
+      "kind": "skill",
+      "name": "BuildSource",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 285,
+        "end_byte": 527,
+        "start_line": 18,
+        "start_column": 0,
+        "end_line": 29,
+        "end_column": 0
+      },
+      "memory_scopes": []
+    },
+    {
+      "id": "agent:examples.fallback/Researcher",
+      "kind": "agent",
+      "name": "Researcher",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 527,
+        "end_byte": 607,
+        "start_line": 29,
+        "start_column": 0,
+        "end_line": 33,
+        "end_column": 0
+      },
+      "responsibility": "Researcher",
+      "callable_by": [
+        "strategy:examples.fallback/RunSourceLookup"
+      ],
+      "memory_scopes": []
+    },
+    {
+      "id": "strategy:examples.fallback/RunSourceLookup",
+      "kind": "strategy",
+      "name": "RunSourceLookup",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 607,
+        "end_byte": 702,
+        "start_line": 33,
+        "start_column": 0,
+        "end_line": 38,
+        "end_column": 0
+      },
+      "memory_scopes": []
+    },
+    {
+      "id": "graph:skill:examples.fallback/BuildFallbackSource",
+      "kind": "graph",
+      "owner_ref": "skill:examples.fallback/BuildFallbackSource",
+      "entry_node_id": "node:graph:skill:examples.fallback/BuildFallbackSource:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 268,
+        "end_byte": 285,
+        "start_line": 15,
+        "start_column": 4,
+        "end_line": 18,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "node:graph:skill:examples.fallback/BuildFallbackSource:1",
+      "kind": "flow_node",
+      "graph_ref": "graph:skill:examples.fallback/BuildFallbackSource",
+      "flow_node_kind": "stop",
+      "arguments": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 279,
+        "end_byte": 283,
+        "start_line": 16,
+        "start_column": 8,
+        "end_line": 16,
+        "end_column": 12
+      }
+    },
+    {
+      "id": "graph:skill:examples.fallback/BuildSource",
+      "kind": "graph",
+      "owner_ref": "skill:examples.fallback/BuildSource",
+      "entry_node_id": "node:graph:skill:examples.fallback/BuildSource:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 420,
+        "end_byte": 478,
+        "start_line": 23,
+        "start_column": 4,
+        "end_line": 26,
+        "end_column": 4
+      }
+    },
+    {
+      "id": "node:graph:skill:examples.fallback/BuildSource:1",
+      "kind": "flow_node",
+      "graph_ref": "graph:skill:examples.fallback/BuildSource",
+      "flow_node_kind": "call_tool",
+      "target_ref": "tool:examples.fallback/FetchPrimarySource",
+      "arguments": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 431,
+        "end_byte": 449,
+        "start_line": 24,
+        "start_column": 8,
+        "end_line": 24,
+        "end_column": 26
+      }
+    },
+    {
+      "id": "node:graph:skill:examples.fallback/BuildSource:2",
+      "kind": "flow_node",
+      "graph_ref": "graph:skill:examples.fallback/BuildSource",
+      "flow_node_kind": "give",
+      "arguments": [
+        "symbol:SourceText"
+      ],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 458,
+        "end_byte": 473,
+        "start_line": 25,
+        "start_column": 8,
+        "end_line": 25,
+        "end_column": 23
+      }
+    },
+    {
+      "id": "node:graph:skill:examples.fallback/BuildSource:3",
+      "kind": "flow_node",
+      "graph_ref": "graph:skill:examples.fallback/BuildSource",
+      "flow_node_kind": "fallback",
+      "target_ref": "skill:examples.fallback/BuildFallbackSource",
+      "arguments": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 497,
+        "end_byte": 525,
+        "start_line": 27,
+        "start_column": 8,
+        "end_line": 27,
+        "end_column": 36
+      }
+    },
+    {
+      "id": "failure:graph:skill:examples.fallback/BuildSource:1",
+      "kind": "failure_path",
+      "graph_ref": "graph:skill:examples.fallback/BuildSource",
+      "scope_ref": "graph:skill:examples.fallback/BuildSource",
+      "trigger_node_id": "node:graph:skill:examples.fallback/BuildSource:1",
+      "target_node_id": "node:graph:skill:examples.fallback/BuildSource:3",
+      "mode": "fallback",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 497,
+        "end_byte": 525,
+        "start_line": 27,
+        "start_column": 8,
+        "end_line": 27,
+        "end_column": 36
+      }
+    },
+    {
+      "id": "graph:strategy:examples.fallback/RunSourceLookup",
+      "kind": "graph",
+      "owner_ref": "strategy:examples.fallback/RunSourceLookup",
+      "entry_node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 656,
+        "end_byte": 702,
+        "start_line": 35,
+        "start_column": 4,
+        "end_line": 38,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
+      "kind": "flow_node",
+      "graph_ref": "graph:strategy:examples.fallback/RunSourceLookup",
+      "flow_node_kind": "call_agent",
+      "target_ref": "agent:examples.fallback/Researcher",
+      "arguments": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 667,
+        "end_byte": 677,
+        "start_line": 36,
+        "start_column": 8,
+        "end_line": 36,
+        "end_column": 18
+      }
+    },
+    {
+      "id": "node:graph:strategy:examples.fallback/RunSourceLookup:2",
+      "kind": "flow_node",
+      "graph_ref": "graph:strategy:examples.fallback/RunSourceLookup",
+      "flow_node_kind": "give",
+      "arguments": [
+        "symbol:SourceText"
+      ],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 686,
+        "end_byte": 701,
+        "start_line": 37,
+        "start_column": 8,
+        "end_line": 37,
+        "end_column": 23
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.fallback/BuildFallbackSource:1",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.fallback/BuildFallbackSource",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:skill:examples.fallback/BuildFallbackSource:2",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.fallback/BuildFallbackSource",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:skill:examples.fallback/BuildFallbackSource:3",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.fallback/BuildFallbackSource",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:skill:examples.fallback/BuildFallbackSource:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 279,
+        "end_byte": 283,
+        "start_line": 16,
+        "start_column": 8,
+        "end_line": 16,
+        "end_column": 12
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.fallback/BuildSource:1",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.fallback/BuildSource",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:skill:examples.fallback/BuildSource:2",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.fallback/BuildSource",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:skill:examples.fallback/BuildSource:3",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.fallback/BuildSource",
+      "anchor_kind": "call",
+      "node_id": "node:graph:skill:examples.fallback/BuildSource:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 431,
+        "end_byte": 449,
+        "start_line": 24,
+        "start_column": 8,
+        "end_line": 24,
+        "end_column": 26
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.fallback/BuildSource:4",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.fallback/BuildSource",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:skill:examples.fallback/BuildSource:2",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 458,
+        "end_byte": 473,
+        "start_line": 25,
+        "start_column": 8,
+        "end_line": 25,
+        "end_column": 23
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.fallback/BuildSource:5",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.fallback/BuildSource",
+      "anchor_kind": "failure",
+      "node_id": "node:graph:skill:examples.fallback/BuildSource:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 497,
+        "end_byte": 525,
+        "start_line": 27,
+        "start_column": 8,
+        "end_line": 27,
+        "end_column": 36
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.fallback/BuildSource:6",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.fallback/BuildSource",
+      "anchor_kind": "fallback",
+      "node_id": "node:graph:skill:examples.fallback/BuildSource:3",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 497,
+        "end_byte": 525,
+        "start_line": 27,
+        "start_column": 8,
+        "end_line": 27,
+        "end_column": 36
+      }
+    },
+    {
+      "id": "trace:graph:strategy:examples.fallback/RunSourceLookup:1",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.fallback/RunSourceLookup",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:strategy:examples.fallback/RunSourceLookup:2",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.fallback/RunSourceLookup",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:strategy:examples.fallback/RunSourceLookup:3",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.fallback/RunSourceLookup",
+      "anchor_kind": "call",
+      "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 667,
+        "end_byte": 677,
+        "start_line": 36,
+        "start_column": 8,
+        "end_line": 36,
+        "end_column": 18
+      }
+    },
+    {
+      "id": "trace:graph:strategy:examples.fallback/RunSourceLookup:4",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.fallback/RunSourceLookup",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:2",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 686,
+        "end_byte": 701,
+        "start_line": 37,
+        "start_column": 8,
+        "end_line": 37,
+        "end_column": 23
+      }
+    }
+  ],
+  "links": [
+    {
+      "kind": "module_declares",
+      "from": "module:examples.fallback",
+      "to": "type:examples.fallback/SourceRequest"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.fallback",
+      "to": "type:examples.fallback/SourceText"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.fallback",
+      "to": "tool:examples.fallback/FetchPrimarySource"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.fallback",
+      "to": "skill:examples.fallback/BuildFallbackSource"
+    },
+    {
+      "kind": "declaration_has_graph",
+      "from": "skill:examples.fallback/BuildFallbackSource",
+      "to": "graph:skill:examples.fallback/BuildFallbackSource"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.fallback",
+      "to": "skill:examples.fallback/BuildSource"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "skill:examples.fallback/BuildSource",
+      "to": "tool:examples.fallback/FetchPrimarySource"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "skill:examples.fallback/BuildSource",
+      "to": "skill:examples.fallback/BuildFallbackSource"
+    },
+    {
+      "kind": "declaration_has_graph",
+      "from": "skill:examples.fallback/BuildSource",
+      "to": "graph:skill:examples.fallback/BuildSource"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.fallback",
+      "to": "agent:examples.fallback/Researcher"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "agent:examples.fallback/Researcher",
+      "to": "skill:examples.fallback/BuildSource"
+    },
+    {
+      "kind": "agent_callable_by",
+      "from": "strategy:examples.fallback/RunSourceLookup",
+      "to": "agent:examples.fallback/Researcher",
+      "caller_kind": "strategy",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 569,
+        "end_byte": 605,
+        "start_line": 31,
+        "start_column": 4,
+        "end_line": 31,
+        "end_column": 40
+      }
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.fallback",
+      "to": "strategy:examples.fallback/RunSourceLookup"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "strategy:examples.fallback/RunSourceLookup",
+      "to": "agent:examples.fallback/Researcher"
+    },
+    {
+      "kind": "declaration_has_graph",
+      "from": "strategy:examples.fallback/RunSourceLookup",
+      "to": "graph:strategy:examples.fallback/RunSourceLookup"
+    },
+    {
+      "kind": "graph_owned_by",
+      "from": "graph:skill:examples.fallback/BuildFallbackSource",
+      "to": "skill:examples.fallback/BuildFallbackSource"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:skill:examples.fallback/BuildFallbackSource",
+      "to": "node:graph:skill:examples.fallback/BuildFallbackSource:1"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.fallback/BuildFallbackSource:1",
+      "to": "trace:graph:skill:examples.fallback/BuildFallbackSource:3"
+    },
+    {
+      "kind": "graph_owned_by",
+      "from": "graph:skill:examples.fallback/BuildSource",
+      "to": "skill:examples.fallback/BuildSource"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:skill:examples.fallback/BuildSource",
+      "to": "node:graph:skill:examples.fallback/BuildSource:1"
+    },
+    {
+      "kind": "node_targets",
+      "from": "node:graph:skill:examples.fallback/BuildSource:1",
+      "to": "tool:examples.fallback/FetchPrimarySource"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.fallback/BuildSource:1",
+      "to": "trace:graph:skill:examples.fallback/BuildSource:3"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.fallback/BuildSource:1",
+      "to": "trace:graph:skill:examples.fallback/BuildSource:5"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:skill:examples.fallback/BuildSource",
+      "to": "node:graph:skill:examples.fallback/BuildSource:2"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.fallback/BuildSource:2",
+      "to": "trace:graph:skill:examples.fallback/BuildSource:4"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:skill:examples.fallback/BuildSource",
+      "to": "node:graph:skill:examples.fallback/BuildSource:3"
+    },
+    {
+      "kind": "node_targets",
+      "from": "node:graph:skill:examples.fallback/BuildSource:3",
+      "to": "skill:examples.fallback/BuildFallbackSource"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.fallback/BuildSource:3",
+      "to": "trace:graph:skill:examples.fallback/BuildSource:6"
+    },
+    {
+      "kind": "flow_edge",
+      "from": "node:graph:skill:examples.fallback/BuildSource:1",
+      "to": "node:graph:skill:examples.fallback/BuildSource:2",
+      "graph_ref": "graph:skill:examples.fallback/BuildSource",
+      "role": "next",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 458,
+        "end_byte": 473,
+        "start_line": 25,
+        "start_column": 8,
+        "end_line": 25,
+        "end_column": 23
+      }
+    },
+    {
+      "kind": "flow_edge",
+      "from": "node:graph:skill:examples.fallback/BuildSource:1",
+      "to": "node:graph:skill:examples.fallback/BuildSource:3",
+      "graph_ref": "graph:skill:examples.fallback/BuildSource",
+      "role": "failure",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 497,
+        "end_byte": 525,
+        "start_line": 27,
+        "start_column": 8,
+        "end_line": 27,
+        "end_column": 36
+      }
+    },
+    {
+      "kind": "flow_edge",
+      "from": "node:graph:skill:examples.fallback/BuildSource:1",
+      "to": "node:graph:skill:examples.fallback/BuildSource:3",
+      "graph_ref": "graph:skill:examples.fallback/BuildSource",
+      "role": "fallback",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 497,
+        "end_byte": 525,
+        "start_line": 27,
+        "start_column": 8,
+        "end_line": 27,
+        "end_column": 36
+      }
+    },
+    {
+      "kind": "graph_failure_path",
+      "from": "graph:skill:examples.fallback/BuildSource",
+      "to": "failure:graph:skill:examples.fallback/BuildSource:1"
+    },
+    {
+      "kind": "failure_path_trigger",
+      "from": "failure:graph:skill:examples.fallback/BuildSource:1",
+      "to": "node:graph:skill:examples.fallback/BuildSource:1"
+    },
+    {
+      "kind": "failure_path_target",
+      "from": "failure:graph:skill:examples.fallback/BuildSource:1",
+      "to": "node:graph:skill:examples.fallback/BuildSource:3"
+    },
+    {
+      "kind": "graph_failure_path_ref",
+      "from": "graph:skill:examples.fallback/BuildSource",
+      "to": "failure:graph:skill:examples.fallback/BuildSource:1"
+    },
+    {
+      "kind": "graph_owned_by",
+      "from": "graph:strategy:examples.fallback/RunSourceLookup",
+      "to": "strategy:examples.fallback/RunSourceLookup"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:strategy:examples.fallback/RunSourceLookup",
+      "to": "node:graph:strategy:examples.fallback/RunSourceLookup:1"
+    },
+    {
+      "kind": "node_targets",
+      "from": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
+      "to": "agent:examples.fallback/Researcher"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
+      "to": "trace:graph:strategy:examples.fallback/RunSourceLookup:3"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:strategy:examples.fallback/RunSourceLookup",
+      "to": "node:graph:strategy:examples.fallback/RunSourceLookup:2"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:strategy:examples.fallback/RunSourceLookup:2",
+      "to": "trace:graph:strategy:examples.fallback/RunSourceLookup:4"
+    },
+    {
+      "kind": "flow_edge",
+      "from": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
+      "to": "node:graph:strategy:examples.fallback/RunSourceLookup:2",
+      "graph_ref": "graph:strategy:examples.fallback/RunSourceLookup",
+      "role": "next",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "start_byte": 686,
+        "end_byte": 701,
+        "start_line": 37,
+        "start_column": 8,
+        "end_line": 37,
+        "end_column": 23
+      }
+    }
+  ],
+  "absent_data": [
+    "policies",
+    "permissions",
+    "costs",
+    "risks",
+    "confidence",
+    "memory contents backends",
+    "approvals",
+    "rich parallelism",
+    "scheduling",
+    "product ownership",
+    "business criticality",
+    "Verified Unverified"
+  ],
+  "unresolved_references": []
+}

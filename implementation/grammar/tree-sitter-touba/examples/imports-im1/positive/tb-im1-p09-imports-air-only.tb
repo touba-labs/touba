@@ -1,0 +1,10 @@
+module examples.imports_air
+
+import type SearchRequest from examples.common
+import define DefaultRows from examples.common
+import function NormalizeQuery from examples.common
+
+strategy RunImports
+    do
+        show
+            with message as "imports are visible in AIR"

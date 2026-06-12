@@ -1,0 +1,16 @@
+module examples.a2_trigger_runs_agent_rejected
+
+agent ResearchAgent
+    uses PrepareResearch
+
+skill PrepareResearch
+    gives Text
+    do
+        give "ready"
+
+trigger DailyResearch
+    on schedule "0 8 * * *"
+    runs agent ResearchAgent
+    limits
+        max_runs_per_day as 1
+        timeout_ms as 30000

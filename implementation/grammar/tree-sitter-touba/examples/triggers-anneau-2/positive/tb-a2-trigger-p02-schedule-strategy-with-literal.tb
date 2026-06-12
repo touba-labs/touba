@@ -1,0 +1,15 @@
+module examples.a2_trigger_schedule_literal
+
+strategy RunResearch
+    takes topic as Text
+    gives Text
+    do
+        give topic
+
+trigger DailyResearch
+    on schedule "0 8 * * *"
+    runs strategy RunResearch
+    with topic as "AI safety"
+    limits
+        max_runs_per_day as 1
+        timeout_ms as 30000

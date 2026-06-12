@@ -1,0 +1,15 @@
+module examples.a2_memory_missing_write_capability
+
+memory ProjectKnowledge
+
+type KnowledgeEntry
+    body is Text
+
+type WriteResult
+    status is Text
+
+tool WriteProjectKnowledge
+    uses memory ProjectKnowledge write
+    takes entry as KnowledgeEntry
+    gives WriteResult
+    requires memory_read

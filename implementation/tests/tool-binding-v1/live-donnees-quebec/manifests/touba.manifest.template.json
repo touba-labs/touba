@@ -1,0 +1,16 @@
+{
+  "manifest_version": "touba-manifest-v1",
+  "bindings": {
+    "tool:examples.donnees_quebec_live/SearchDatasets": {
+      "handler": {
+        "kind": "process",
+        "command": "__NODE_EXECUTABLE__",
+        "args": ["handlers/search_datasets.handler.mjs"],
+        "cwd": "__FIXTURE_ROOT__"
+      },
+      "grants": ["network"],
+      "timeout_ms": 10000,
+      "max_payload_bytes": 1048576
+    }
+  }
+}

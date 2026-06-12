@@ -1,0 +1,7 @@
+module examples.typecheck_v1_negative_give_int_to_text
+
+function BadGive
+    takes count as Int
+    gives Text
+    do
+        give count

@@ -1,0 +1,8 @@
+module examples.expr1_negative_text_plus
+
+function BadTextPlus
+    takes title as Text
+    takes suffix as Text
+    gives Text
+    do
+        give title + suffix

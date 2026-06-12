@@ -1,0 +1,10 @@
+module examples.a2_memory_owner_unknown
+
+type Query
+    text is Text
+
+type KnowledgeResult
+    summary is Text
+
+agent Researcher
+    memory MissingKnowledge read

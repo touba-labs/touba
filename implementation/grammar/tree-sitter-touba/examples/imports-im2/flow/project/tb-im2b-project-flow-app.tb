@@ -1,0 +1,22 @@
+module examples.flow_app
+
+import skill NormalizeTopic from examples.shared_flow
+import strategy SharedTopicRun from examples.shared_flow
+
+strategy RunImportedSkill
+    takes topic as Text
+    gives Text
+    uses NormalizeTopic
+    do
+        NormalizeTopic
+            with topic as topic
+            into normalized
+        give normalized
+
+trigger SharedTopicSchedule
+    on schedule "every hour"
+    runs strategy SharedTopicRun
+    with topic as "transport"
+    limits
+        max_runs_per_day as 4
+        timeout_ms as 5000

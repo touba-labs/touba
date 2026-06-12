@@ -1,0 +1,13 @@
+module examples.human_missing_context
+
+type Change
+    summary is Text
+
+skill NeedsApproval
+    takes change as Change
+    gives Change
+    do
+        human.approve
+            into approval
+
+        give change

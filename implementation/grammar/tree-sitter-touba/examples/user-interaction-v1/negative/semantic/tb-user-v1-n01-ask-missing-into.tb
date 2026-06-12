@@ -1,0 +1,9 @@
+module examples.user_interaction_missing_into
+
+strategy RunInteraction
+    gives Text
+    do
+        ask
+            with prompt as "Search query?"
+
+        give "missing"

@@ -1,0 +1,9 @@
+module invalid.call
+
+type Draft
+    body is Text
+
+function Build
+    gives Draft
+    do
+        Draft

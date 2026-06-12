@@ -1,0 +1,66 @@
+{
+  "ownership_schema_version": "touba-ownership-v0.1",
+  "teams": {
+    "team:platform": {
+      "display_name": "Platform"
+    },
+    "team:security": {
+      "display_name": "Security"
+    }
+  },
+  "owners": {
+    "package:org.example.customer": [
+      "team:platform"
+    ],
+    "tool:org.example.customer/FetchCustomerProfile": [
+      "team:platform"
+    ],
+    "resource_bindings:touba.resources": [
+      "team:platform"
+    ],
+    "run_plan:touba.run-plan": [
+      "team:platform"
+    ],
+    "lock:touba.lock.json": [
+      "team:security"
+    ]
+  },
+  "review_gates": {
+    "prod": {
+      "requires_review_for": [
+        "tool_binding",
+        "required_capability",
+        "required_secret",
+        "resource_binding",
+        "run_plan",
+        "supply_chain_lock"
+      ],
+      "reviewers": [
+        "team:security"
+      ]
+    }
+  },
+  "reviews": [
+    {
+      "review_id": "review:customer/security-resources",
+      "profile": "prod",
+      "target_ref": "resource_bindings:touba.resources",
+      "reviewer": "team:security",
+      "decision": "approved"
+    },
+    {
+      "review_id": "review:customer/security-run-plan",
+      "profile": "prod",
+      "target_ref": "run_plan:touba.run-plan",
+      "reviewer": "team:security",
+      "decision": "approved"
+    },
+    {
+      "review_id": "review:customer/security-lock",
+      "profile": "prod",
+      "target_ref": "lock:touba.lock.json",
+      "reviewer": "team:security",
+      "decision": "approved"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+module examples.typecheck_v1_di_negative_text_to_instruction
+
+type AgentInstruction
+    content is Text
+
+type LLMResponse
+    summary is Text
+
+tool CallLLM
+    takes instruction as AgentInstruction
+    gives LLMResponse
+    requires network
+
+skill UnsafeTextAsInstruction
+    takes body as Text
+    gives LLMResponse
+    uses CallLLM
+    do
+        CallLLM
+            with instruction as body
+            into response
+        give response

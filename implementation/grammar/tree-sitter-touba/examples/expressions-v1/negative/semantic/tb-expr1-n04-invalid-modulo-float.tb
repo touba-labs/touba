@@ -1,0 +1,7 @@
+module examples.expr1_negative_invalid_modulo_float
+
+function BadModulo
+    takes score as Float
+    gives Float
+    do
+        give score % 2.0

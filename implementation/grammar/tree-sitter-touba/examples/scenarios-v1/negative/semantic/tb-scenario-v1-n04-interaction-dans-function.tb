@@ -1,0 +1,8 @@
+module examples.scenario_interaction_in_function
+
+function BadInteraction
+    gives Text
+    do
+        show
+            with message as "not allowed"
+        give "done"

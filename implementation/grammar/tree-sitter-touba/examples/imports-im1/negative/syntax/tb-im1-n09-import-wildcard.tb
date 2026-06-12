@@ -1,0 +1,3 @@
+module examples.search
+
+import * from examples.common

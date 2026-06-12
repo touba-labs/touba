@@ -1,0 +1,20 @@
+module examples.a2_trigger_duplicate
+
+strategy RunResearch
+    do
+        show
+            with message as "research scheduled"
+
+trigger DailyResearch
+    on schedule "0 8 * * *"
+    runs strategy RunResearch
+    limits
+        max_runs_per_day as 1
+        timeout_ms as 30000
+
+trigger DailyResearch
+    on schedule "0 9 * * *"
+    runs strategy RunResearch
+    limits
+        max_runs_per_day as 1
+        timeout_ms as 30000

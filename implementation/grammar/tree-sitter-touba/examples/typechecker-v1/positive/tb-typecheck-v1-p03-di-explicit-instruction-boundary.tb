@@ -1,0 +1,45 @@
+module examples.typecheck_v1_di_explicit_instruction_boundary
+
+type SearchRequest
+    query is Text
+
+type SourceText
+    content is Text
+
+type AgentInstruction
+    content is Text
+
+type LLMResponse
+    summary is Text
+
+tool FetchSource
+    takes request as SearchRequest
+    gives SourceText
+    requires network
+
+tool BuildInstruction
+    takes source as SourceText
+    gives AgentInstruction
+
+tool CallLLM
+    takes instruction as AgentInstruction
+    gives LLMResponse
+    requires network
+
+skill ResearchWithBoundary
+    takes request as SearchRequest
+    gives LLMResponse
+    uses FetchSource
+    uses BuildInstruction
+    uses CallLLM
+    do
+        FetchSource
+            with request as request
+            into source
+        BuildInstruction
+            with source as source
+            into instruction
+        CallLLM
+            with instruction as instruction
+            into response
+        give response

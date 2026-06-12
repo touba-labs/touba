@@ -1,0 +1,17 @@
+{
+  "manifest_version": "touba-manifest-v1",
+  "bindings": {
+    "tool:examples.v1_process_binding/FetchSource": {
+      "handler": {
+        "kind": "process",
+        "command": "__NODE_EXECUTABLE_SET_BY_TEST__",
+        "args": ["handlers/fetch_source.handler.mjs"],
+        "cwd": "__FIXTURE_ROOT_SET_BY_TEST__"
+      },
+      "grants": ["secret_read"],
+      "secrets": ["SEARCH_API_KEY"],
+      "timeout_ms": 5000,
+      "max_payload_bytes": 1048576
+    }
+  }
+}

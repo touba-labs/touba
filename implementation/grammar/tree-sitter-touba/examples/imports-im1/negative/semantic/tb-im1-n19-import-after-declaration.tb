@@ -1,0 +1,11 @@
+module examples.search
+
+define DefaultRows as Int = 5
+
+import function NormalizeQuery from examples.common
+
+function BuildLabel
+    takes query as Text
+    gives Text
+    do
+        give query ++ ":" ++ text(DefaultRows)

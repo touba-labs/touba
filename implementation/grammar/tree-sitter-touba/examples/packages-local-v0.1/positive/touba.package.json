@@ -1,0 +1,32 @@
+{
+  "package_schema_version": "touba-package-v0.1",
+  "name": "org.example.research",
+  "version": "0.1.0",
+  "root": ".",
+  "touba": {
+    "air_profile": "air-json-v0.1",
+    "runtime_compatibility": ">=0.1 <0.2"
+  },
+  "exports": {
+    "types": [
+      "type:org.example.research/DatasetSearchRequest",
+      "type:org.example.research/DatasetSearchResult"
+    ],
+    "defines": [],
+    "functions": [],
+    "tools": [
+      "tool:org.example.research/SearchDatasets"
+    ],
+    "skills": [],
+    "strategies": [],
+    "agents": [],
+    "memories": []
+  },
+  "provenance": {
+    "kind": "local_path",
+    "source": "."
+  },
+  "contract_tests": [
+    "validation/package/research-contract.md"
+  ]
+}

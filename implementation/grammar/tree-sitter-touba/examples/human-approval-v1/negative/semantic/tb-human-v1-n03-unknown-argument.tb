@@ -1,0 +1,14 @@
+module examples.human_unknown_argument
+
+type Analysis
+    confidence is Float
+
+skill NeedsReview
+    takes analysis as Analysis
+    gives Analysis
+    do
+        human.review
+            with reason as analysis
+            into decision
+
+        give analysis

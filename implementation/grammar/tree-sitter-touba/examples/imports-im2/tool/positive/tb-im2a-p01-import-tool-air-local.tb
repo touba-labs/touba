@@ -1,0 +1,8 @@
+module examples.research_app
+
+import tool SearchDatasets from examples.data_tools
+
+strategy InspectToolImport
+    do
+        show
+            with message as "tool import is represented in local AIR only"

@@ -1,0 +1,14 @@
+module examples.a2_memory_missing_read_capability
+
+memory ProjectKnowledge
+
+type Query
+    text is Text
+
+type KnowledgeResult
+    summary is Text
+
+tool ReadProjectKnowledge
+    uses memory ProjectKnowledge read
+    takes query as Query
+    gives KnowledgeResult

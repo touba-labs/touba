@@ -1,0 +1,12 @@
+module invalid.use
+
+type Draft
+    body is Text
+
+agent Reviewer
+    uses MissingSkill
+
+strategy RunReview
+    uses Reviewer
+    do
+        Reviewer

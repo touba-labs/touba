@@ -1,0 +1,19 @@
+{
+  "resource_bindings_schema_version": "touba-resource-bindings-v0.1",
+  "resources": {
+    "memory:org.example.customer/CustomerNotes": {
+      "kind": "memory_backend",
+      "provider": "host.local.customer_notes",
+      "config": {
+        "endpoint_url": "memory://team/customer-notes"
+      },
+      "grants": [
+        "memory.read"
+      ],
+      "secrets": [],
+      "limits": {
+        "max_payload_bytes": 65536
+      }
+    }
+  }
+}

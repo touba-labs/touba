@@ -1,0 +1,9 @@
+{
+  "name": "@touba/memory-postgres-rb2-backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "pg": "8.21.0"
+  }
+}

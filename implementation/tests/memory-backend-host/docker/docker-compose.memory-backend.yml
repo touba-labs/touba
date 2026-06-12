@@ -1,0 +1,15 @@
+services:
+  memory-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.memory-backend
+    environment:
+      MEMORY_BACKEND_TOKEN: ${MEMORY_BACKEND_TOKEN:?MEMORY_BACKEND_TOKEN is required}
+      PORT: "8787"
+    ports:
+      - "127.0.0.1:${TOUBA_MEMORY_BACKEND_PORT:-18787}:8787"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 1s
+      timeout: 1s
+      retries: 20

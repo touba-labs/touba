@@ -1,0 +1,8 @@
+module examples.project_missing_module
+
+import function NormalizeQuery from examples.project_absent
+
+strategy RunMissingModule
+    do
+        show
+            with message as "missing module"

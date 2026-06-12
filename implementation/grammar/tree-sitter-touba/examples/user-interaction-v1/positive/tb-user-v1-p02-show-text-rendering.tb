@@ -1,0 +1,7 @@
+module examples.user_interaction_text_rendering
+
+strategy ShowCount
+    takes age as Int
+    do
+        show
+            with message as "age is: " ++ text(age)

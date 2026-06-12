@@ -1,0 +1,29 @@
+module examples.customer_review_app
+
+import type CustomerRequest from org.example.customer
+import type CustomerProfile from org.example.customer
+import memory CustomerNotes from org.example.customer
+import tool FetchCustomerProfile from org.example.customer
+
+skill BuildCustomerReview
+    takes request as CustomerRequest
+    gives CustomerProfile
+    uses FetchCustomerProfile
+    memory CustomerNotes read
+    do
+        FetchCustomerProfile
+            with request as request
+            into profile
+        give profile
+
+strategy RunCustomerReview
+    takes request as CustomerRequest
+    gives CustomerProfile
+    uses BuildCustomerReview
+    do
+        BuildCustomerReview
+            with request as request
+            into profile
+        show
+            with message as "Customer profile ready"
+        give profile

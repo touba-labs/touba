@@ -1,0 +1,5 @@
+.touba/
+.touba-build/
+*.air.json
+*.trace.json
+.env

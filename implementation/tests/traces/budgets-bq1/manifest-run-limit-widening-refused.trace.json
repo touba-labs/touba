@@ -1,0 +1,63 @@
+{
+  "trace_protocol_version": "trace-minimal-v0.1",
+  "run": {
+    "run_id": "run-1",
+    "air_schema_version": "air-minimal-v0.1",
+    "module_ref": "module:test",
+    "entry_ref": "skill:test/BindThenGive"
+  },
+  "events": [
+    {
+      "event_id": "event:run-1:1",
+      "run_id": "run-1",
+      "sequence_index": 0,
+      "kind": "run_started",
+      "payload": {
+        "entry_ref": "skill:test/BindThenGive"
+      }
+    },
+    {
+      "event_id": "event:run-1:2",
+      "run_id": "run-1",
+      "sequence_index": 1,
+      "kind": "budget_limit_checked",
+      "payload": {
+        "budget_kind": "max_steps",
+        "limit_value": 1,
+        "authority_source": "air",
+        "candidates": [
+          {
+            "authority_source": "air",
+            "value": 1
+          },
+          {
+            "authority_source": "manifest",
+            "value": 2
+          }
+        ]
+      }
+    },
+    {
+      "event_id": "event:run-1:3",
+      "run_id": "run-1",
+      "sequence_index": 2,
+      "kind": "budget_limit_exceeded",
+      "payload": {
+        "budget_kind": "max_steps",
+        "limit_value": 1,
+        "attempted_value": 2,
+        "authority_source": "manifest",
+        "reason": "manifest_limit_exceeds_air"
+      }
+    },
+    {
+      "event_id": "event:run-1:4",
+      "run_id": "run-1",
+      "sequence_index": 3,
+      "kind": "run_completed",
+      "payload": {
+        "status": "failure"
+      }
+    }
+  ]
+}

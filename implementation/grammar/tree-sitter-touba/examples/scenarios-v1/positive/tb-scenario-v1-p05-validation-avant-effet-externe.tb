@@ -1,0 +1,47 @@
+module examples.scenario_external_approval
+
+type PaymentRequest
+    reference is Text
+    amount is Float
+    destination is Text
+
+type PaymentResult
+    receipt is Text
+
+tool SendPayment
+    takes request as PaymentRequest
+    gives PaymentResult
+    requires network, secret_read
+    secrets PAYMENT_API_KEY
+
+skill ApprovePayment
+    takes request as PaymentRequest
+    gives PaymentRequest
+    do
+        show
+            with message as "Payment review requested: " ++ request.reference
+
+        human.approve
+            with context as request
+            into approval
+
+        give request
+
+strategy RunRegulatedPayment
+    takes request as PaymentRequest
+    gives PaymentResult
+    uses ApprovePayment
+    uses SendPayment
+    do
+        ApprovePayment
+            with request as request
+            into approved
+
+        SendPayment
+            with request as approved
+            into sent
+
+        show
+            with message as "Payment sent: " ++ sent.receipt
+
+        give sent

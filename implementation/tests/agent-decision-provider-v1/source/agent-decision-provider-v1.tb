@@ -1,0 +1,36 @@
+module examples.agent_decision_provider_v1
+
+type ResearchRequest
+    query is Text
+
+skill ListDatasets
+    gives Text
+    do
+        show
+            with message as "Dataset list selected"
+        give "dataset-list"
+
+skill BuildBrief
+    takes request as ResearchRequest
+    gives Text
+    do
+        show
+            with message as "Brief selected"
+        give request.query
+
+skill HiddenAdminPath
+    gives Text
+    do
+        show
+            with message as "Hidden path selected"
+        give "hidden"
+
+agent DonneesQuebecResearcher
+    uses ListDatasets
+    uses BuildBrief
+    callable_by strategy RunResearch
+
+strategy RunResearch
+    uses DonneesQuebecResearcher
+    do
+        DonneesQuebecResearcher

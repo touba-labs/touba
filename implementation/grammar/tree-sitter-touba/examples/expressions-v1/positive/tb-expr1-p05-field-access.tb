@@ -1,0 +1,11 @@
+module examples.expr1_field_access
+
+type Analysis
+    score is Float
+    accepted is Boolean
+
+function ExtractScore
+    takes analysis as Analysis
+    gives Float
+    do
+        give analysis.score

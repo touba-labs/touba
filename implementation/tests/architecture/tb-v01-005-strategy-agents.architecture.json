@@ -1,0 +1,717 @@
+{
+  "projection_schema_version": "architecture-projection-v0.1",
+  "source_air_schema_version": "air-minimal-v0.1",
+  "test_only": true,
+  "module": {
+    "id": "module:examples.strategy_agents",
+    "name": "examples.strategy_agents",
+    "source_ref": {
+      "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+      "start_byte": 0,
+      "end_byte": 31,
+      "start_line": 0,
+      "start_column": 0,
+      "end_line": 0,
+      "end_column": 31
+    }
+  },
+  "nodes": [
+    {
+      "id": "module:examples.strategy_agents",
+      "kind": "module",
+      "name": "examples.strategy_agents",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 0,
+        "end_byte": 31,
+        "start_line": 0,
+        "start_column": 0,
+        "end_line": 0,
+        "end_column": 31
+      }
+    },
+    {
+      "id": "type:examples.strategy_agents/ChangeRequest",
+      "kind": "type",
+      "name": "ChangeRequest",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 33,
+        "end_byte": 73,
+        "start_line": 2,
+        "start_column": 0,
+        "end_line": 5,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "type:examples.strategy_agents/ReviewedChange",
+      "kind": "type",
+      "name": "ReviewedChange",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 73,
+        "end_byte": 114,
+        "start_line": 5,
+        "start_column": 0,
+        "end_line": 8,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "tool:examples.strategy_agents/ApplyChange",
+      "kind": "tool",
+      "name": "ApplyChange",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 114,
+        "end_byte": 192,
+        "start_line": 8,
+        "start_column": 0,
+        "end_line": 12,
+        "end_column": 0
+      },
+      "required_capabilities": [],
+      "required_secrets": [],
+      "memory_accesses": []
+    },
+    {
+      "id": "skill:examples.strategy_agents/MakeChange",
+      "kind": "skill",
+      "name": "MakeChange",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 192,
+        "end_byte": 346,
+        "start_line": 12,
+        "start_column": 0,
+        "end_line": 20,
+        "end_column": 0
+      },
+      "memory_scopes": []
+    },
+    {
+      "id": "skill:examples.strategy_agents/ReviewChange",
+      "kind": "skill",
+      "name": "ReviewChange",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 346,
+        "end_byte": 461,
+        "start_line": 20,
+        "start_column": 0,
+        "end_line": 26,
+        "end_column": 0
+      },
+      "memory_scopes": []
+    },
+    {
+      "id": "agent:examples.strategy_agents/Engineer",
+      "kind": "agent",
+      "name": "Engineer",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 461,
+        "end_byte": 532,
+        "start_line": 26,
+        "start_column": 0,
+        "end_line": 30,
+        "end_column": 0
+      },
+      "responsibility": "Engineer",
+      "callable_by": [
+        "strategy:examples.strategy_agents/RunChange"
+      ],
+      "memory_scopes": []
+    },
+    {
+      "id": "agent:examples.strategy_agents/Reviewer",
+      "kind": "agent",
+      "name": "Reviewer",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 532,
+        "end_byte": 605,
+        "start_line": 30,
+        "start_column": 0,
+        "end_line": 34,
+        "end_column": 0
+      },
+      "responsibility": "Reviewer",
+      "callable_by": [
+        "strategy:examples.strategy_agents/RunChange"
+      ],
+      "memory_scopes": []
+    },
+    {
+      "id": "strategy:examples.strategy_agents/RunChange",
+      "kind": "strategy",
+      "name": "RunChange",
+      "origin": "local",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 605,
+        "end_byte": 729,
+        "start_line": 34,
+        "start_column": 0,
+        "end_line": 41,
+        "end_column": 0
+      },
+      "memory_scopes": []
+    },
+    {
+      "id": "graph:skill:examples.strategy_agents/MakeChange",
+      "kind": "graph",
+      "owner_ref": "skill:examples.strategy_agents/MakeChange",
+      "entry_node_id": "node:graph:skill:examples.strategy_agents/MakeChange:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 294,
+        "end_byte": 346,
+        "start_line": 16,
+        "start_column": 4,
+        "end_line": 20,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "node:graph:skill:examples.strategy_agents/MakeChange:1",
+      "kind": "flow_node",
+      "graph_ref": "graph:skill:examples.strategy_agents/MakeChange",
+      "flow_node_kind": "call_tool",
+      "target_ref": "tool:examples.strategy_agents/ApplyChange",
+      "arguments": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 305,
+        "end_byte": 316,
+        "start_line": 17,
+        "start_column": 8,
+        "end_line": 17,
+        "end_column": 19
+      }
+    },
+    {
+      "id": "node:graph:skill:examples.strategy_agents/MakeChange:2",
+      "kind": "flow_node",
+      "graph_ref": "graph:skill:examples.strategy_agents/MakeChange",
+      "flow_node_kind": "give",
+      "arguments": [
+        "symbol:ReviewedChange"
+      ],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 325,
+        "end_byte": 344,
+        "start_line": 18,
+        "start_column": 8,
+        "end_line": 18,
+        "end_column": 27
+      }
+    },
+    {
+      "id": "graph:skill:examples.strategy_agents/ReviewChange",
+      "kind": "graph",
+      "owner_ref": "skill:examples.strategy_agents/ReviewChange",
+      "entry_node_id": "node:graph:skill:examples.strategy_agents/ReviewChange:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 429,
+        "end_byte": 461,
+        "start_line": 23,
+        "start_column": 4,
+        "end_line": 26,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "node:graph:skill:examples.strategy_agents/ReviewChange:1",
+      "kind": "flow_node",
+      "graph_ref": "graph:skill:examples.strategy_agents/ReviewChange",
+      "flow_node_kind": "give",
+      "arguments": [
+        "symbol:ReviewedChange"
+      ],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 440,
+        "end_byte": 459,
+        "start_line": 24,
+        "start_column": 8,
+        "end_line": 24,
+        "end_column": 27
+      }
+    },
+    {
+      "id": "graph:strategy:examples.strategy_agents/RunChange",
+      "kind": "graph",
+      "owner_ref": "strategy:examples.strategy_agents/RunChange",
+      "entry_node_id": "node:graph:strategy:examples.strategy_agents/RunChange:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 664,
+        "end_byte": 729,
+        "start_line": 37,
+        "start_column": 4,
+        "end_line": 41,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "node:graph:strategy:examples.strategy_agents/RunChange:1",
+      "kind": "flow_node",
+      "graph_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "flow_node_kind": "call_agent",
+      "target_ref": "agent:examples.strategy_agents/Engineer",
+      "arguments": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 675,
+        "end_byte": 683,
+        "start_line": 38,
+        "start_column": 8,
+        "end_line": 38,
+        "end_column": 16
+      }
+    },
+    {
+      "id": "node:graph:strategy:examples.strategy_agents/RunChange:2",
+      "kind": "flow_node",
+      "graph_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "flow_node_kind": "call_agent",
+      "target_ref": "agent:examples.strategy_agents/Reviewer",
+      "arguments": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 692,
+        "end_byte": 700,
+        "start_line": 39,
+        "start_column": 8,
+        "end_line": 39,
+        "end_column": 16
+      }
+    },
+    {
+      "id": "node:graph:strategy:examples.strategy_agents/RunChange:3",
+      "kind": "flow_node",
+      "graph_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "flow_node_kind": "give",
+      "arguments": [
+        "symbol:ReviewedChange"
+      ],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 709,
+        "end_byte": 728,
+        "start_line": 40,
+        "start_column": 8,
+        "end_line": 40,
+        "end_column": 27
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.strategy_agents/MakeChange:1",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.strategy_agents/MakeChange",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:skill:examples.strategy_agents/MakeChange:2",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.strategy_agents/MakeChange",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:skill:examples.strategy_agents/MakeChange:3",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.strategy_agents/MakeChange",
+      "anchor_kind": "call",
+      "node_id": "node:graph:skill:examples.strategy_agents/MakeChange:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 305,
+        "end_byte": 316,
+        "start_line": 17,
+        "start_column": 8,
+        "end_line": 17,
+        "end_column": 19
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.strategy_agents/MakeChange:4",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.strategy_agents/MakeChange",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:skill:examples.strategy_agents/MakeChange:2",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 325,
+        "end_byte": 344,
+        "start_line": 18,
+        "start_column": 8,
+        "end_line": 18,
+        "end_column": 27
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.strategy_agents/ReviewChange:1",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.strategy_agents/ReviewChange",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:skill:examples.strategy_agents/ReviewChange:2",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.strategy_agents/ReviewChange",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:skill:examples.strategy_agents/ReviewChange:3",
+      "kind": "trace_point",
+      "owner_ref": "graph:skill:examples.strategy_agents/ReviewChange",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:skill:examples.strategy_agents/ReviewChange:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 440,
+        "end_byte": 459,
+        "start_line": 24,
+        "start_column": 8,
+        "end_line": 24,
+        "end_column": 27
+      }
+    },
+    {
+      "id": "trace:graph:strategy:examples.strategy_agents/RunChange:1",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:strategy:examples.strategy_agents/RunChange:2",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:strategy:examples.strategy_agents/RunChange:3",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "anchor_kind": "call",
+      "node_id": "node:graph:strategy:examples.strategy_agents/RunChange:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 675,
+        "end_byte": 683,
+        "start_line": 38,
+        "start_column": 8,
+        "end_line": 38,
+        "end_column": 16
+      }
+    },
+    {
+      "id": "trace:graph:strategy:examples.strategy_agents/RunChange:4",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "anchor_kind": "call",
+      "node_id": "node:graph:strategy:examples.strategy_agents/RunChange:2",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 692,
+        "end_byte": 700,
+        "start_line": 39,
+        "start_column": 8,
+        "end_line": 39,
+        "end_column": 16
+      }
+    },
+    {
+      "id": "trace:graph:strategy:examples.strategy_agents/RunChange:5",
+      "kind": "trace_point",
+      "owner_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:strategy:examples.strategy_agents/RunChange:3",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 709,
+        "end_byte": 728,
+        "start_line": 40,
+        "start_column": 8,
+        "end_line": 40,
+        "end_column": 27
+      }
+    }
+  ],
+  "links": [
+    {
+      "kind": "module_declares",
+      "from": "module:examples.strategy_agents",
+      "to": "type:examples.strategy_agents/ChangeRequest"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.strategy_agents",
+      "to": "type:examples.strategy_agents/ReviewedChange"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.strategy_agents",
+      "to": "tool:examples.strategy_agents/ApplyChange"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.strategy_agents",
+      "to": "skill:examples.strategy_agents/MakeChange"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "skill:examples.strategy_agents/MakeChange",
+      "to": "tool:examples.strategy_agents/ApplyChange"
+    },
+    {
+      "kind": "declaration_has_graph",
+      "from": "skill:examples.strategy_agents/MakeChange",
+      "to": "graph:skill:examples.strategy_agents/MakeChange"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.strategy_agents",
+      "to": "skill:examples.strategy_agents/ReviewChange"
+    },
+    {
+      "kind": "declaration_has_graph",
+      "from": "skill:examples.strategy_agents/ReviewChange",
+      "to": "graph:skill:examples.strategy_agents/ReviewChange"
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.strategy_agents",
+      "to": "agent:examples.strategy_agents/Engineer"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "agent:examples.strategy_agents/Engineer",
+      "to": "skill:examples.strategy_agents/MakeChange"
+    },
+    {
+      "kind": "agent_callable_by",
+      "from": "strategy:examples.strategy_agents/RunChange",
+      "to": "agent:examples.strategy_agents/Engineer",
+      "caller_kind": "strategy",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 500,
+        "end_byte": 530,
+        "start_line": 28,
+        "start_column": 4,
+        "end_line": 28,
+        "end_column": 34
+      }
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.strategy_agents",
+      "to": "agent:examples.strategy_agents/Reviewer"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "agent:examples.strategy_agents/Reviewer",
+      "to": "skill:examples.strategy_agents/ReviewChange"
+    },
+    {
+      "kind": "agent_callable_by",
+      "from": "strategy:examples.strategy_agents/RunChange",
+      "to": "agent:examples.strategy_agents/Reviewer",
+      "caller_kind": "strategy",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 573,
+        "end_byte": 603,
+        "start_line": 32,
+        "start_column": 4,
+        "end_line": 32,
+        "end_column": 34
+      }
+    },
+    {
+      "kind": "module_declares",
+      "from": "module:examples.strategy_agents",
+      "to": "strategy:examples.strategy_agents/RunChange"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "strategy:examples.strategy_agents/RunChange",
+      "to": "agent:examples.strategy_agents/Engineer"
+    },
+    {
+      "kind": "declaration_uses",
+      "from": "strategy:examples.strategy_agents/RunChange",
+      "to": "agent:examples.strategy_agents/Reviewer"
+    },
+    {
+      "kind": "declaration_has_graph",
+      "from": "strategy:examples.strategy_agents/RunChange",
+      "to": "graph:strategy:examples.strategy_agents/RunChange"
+    },
+    {
+      "kind": "graph_owned_by",
+      "from": "graph:skill:examples.strategy_agents/MakeChange",
+      "to": "skill:examples.strategy_agents/MakeChange"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:skill:examples.strategy_agents/MakeChange",
+      "to": "node:graph:skill:examples.strategy_agents/MakeChange:1"
+    },
+    {
+      "kind": "node_targets",
+      "from": "node:graph:skill:examples.strategy_agents/MakeChange:1",
+      "to": "tool:examples.strategy_agents/ApplyChange"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.strategy_agents/MakeChange:1",
+      "to": "trace:graph:skill:examples.strategy_agents/MakeChange:3"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:skill:examples.strategy_agents/MakeChange",
+      "to": "node:graph:skill:examples.strategy_agents/MakeChange:2"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.strategy_agents/MakeChange:2",
+      "to": "trace:graph:skill:examples.strategy_agents/MakeChange:4"
+    },
+    {
+      "kind": "flow_edge",
+      "from": "node:graph:skill:examples.strategy_agents/MakeChange:1",
+      "to": "node:graph:skill:examples.strategy_agents/MakeChange:2",
+      "graph_ref": "graph:skill:examples.strategy_agents/MakeChange",
+      "role": "next",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 325,
+        "end_byte": 344,
+        "start_line": 18,
+        "start_column": 8,
+        "end_line": 18,
+        "end_column": 27
+      }
+    },
+    {
+      "kind": "graph_owned_by",
+      "from": "graph:skill:examples.strategy_agents/ReviewChange",
+      "to": "skill:examples.strategy_agents/ReviewChange"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:skill:examples.strategy_agents/ReviewChange",
+      "to": "node:graph:skill:examples.strategy_agents/ReviewChange:1"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:skill:examples.strategy_agents/ReviewChange:1",
+      "to": "trace:graph:skill:examples.strategy_agents/ReviewChange:3"
+    },
+    {
+      "kind": "graph_owned_by",
+      "from": "graph:strategy:examples.strategy_agents/RunChange",
+      "to": "strategy:examples.strategy_agents/RunChange"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:strategy:examples.strategy_agents/RunChange",
+      "to": "node:graph:strategy:examples.strategy_agents/RunChange:1"
+    },
+    {
+      "kind": "node_targets",
+      "from": "node:graph:strategy:examples.strategy_agents/RunChange:1",
+      "to": "agent:examples.strategy_agents/Engineer"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:strategy:examples.strategy_agents/RunChange:1",
+      "to": "trace:graph:strategy:examples.strategy_agents/RunChange:3"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:strategy:examples.strategy_agents/RunChange",
+      "to": "node:graph:strategy:examples.strategy_agents/RunChange:2"
+    },
+    {
+      "kind": "node_targets",
+      "from": "node:graph:strategy:examples.strategy_agents/RunChange:2",
+      "to": "agent:examples.strategy_agents/Reviewer"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:strategy:examples.strategy_agents/RunChange:2",
+      "to": "trace:graph:strategy:examples.strategy_agents/RunChange:4"
+    },
+    {
+      "kind": "graph_has_node",
+      "from": "graph:strategy:examples.strategy_agents/RunChange",
+      "to": "node:graph:strategy:examples.strategy_agents/RunChange:3"
+    },
+    {
+      "kind": "node_trace_point",
+      "from": "node:graph:strategy:examples.strategy_agents/RunChange:3",
+      "to": "trace:graph:strategy:examples.strategy_agents/RunChange:5"
+    },
+    {
+      "kind": "flow_edge",
+      "from": "node:graph:strategy:examples.strategy_agents/RunChange:1",
+      "to": "node:graph:strategy:examples.strategy_agents/RunChange:2",
+      "graph_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "role": "next",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 692,
+        "end_byte": 700,
+        "start_line": 39,
+        "start_column": 8,
+        "end_line": 39,
+        "end_column": 16
+      }
+    },
+    {
+      "kind": "flow_edge",
+      "from": "node:graph:strategy:examples.strategy_agents/RunChange:2",
+      "to": "node:graph:strategy:examples.strategy_agents/RunChange:3",
+      "graph_ref": "graph:strategy:examples.strategy_agents/RunChange",
+      "role": "next",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
+        "start_byte": 709,
+        "end_byte": 728,
+        "start_line": 40,
+        "start_column": 8,
+        "end_line": 40,
+        "end_column": 27
+      }
+    }
+  ],
+  "absent_data": [
+    "policies",
+    "permissions",
+    "costs",
+    "risks",
+    "confidence",
+    "memory contents backends",
+    "approvals",
+    "rich parallelism",
+    "scheduling",
+    "product ownership",
+    "business criticality",
+    "Verified Unverified"
+  ],
+  "unresolved_references": []
+}

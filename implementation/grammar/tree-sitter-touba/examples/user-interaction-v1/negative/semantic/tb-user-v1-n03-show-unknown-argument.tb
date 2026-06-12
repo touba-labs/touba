@@ -1,0 +1,9 @@
+module examples.user_interaction_unknown_argument
+
+strategy RunInteraction
+    gives Text
+    do
+        show
+            with prompt as "Wrong argument"
+
+        give "done"

@@ -1,0 +1,9 @@
+import function NormalizeQuery from examples.common
+
+module examples.search
+
+function BuildLabel
+    takes query as Text
+    gives Text
+    do
+        give query

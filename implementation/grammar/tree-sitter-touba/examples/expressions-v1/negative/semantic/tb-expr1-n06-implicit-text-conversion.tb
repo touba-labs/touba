@@ -1,0 +1,8 @@
+module examples.expr1_negative_implicit_text_conversion
+
+function BadImplicitText
+    takes count as Int
+    takes label as Text
+    gives Text
+    do
+        give count ++ label

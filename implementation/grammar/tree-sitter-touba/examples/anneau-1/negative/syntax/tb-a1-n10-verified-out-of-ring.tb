@@ -1,0 +1,4 @@
+module examples.a1_negative_verified
+
+type SourceText
+    body is Verified Text

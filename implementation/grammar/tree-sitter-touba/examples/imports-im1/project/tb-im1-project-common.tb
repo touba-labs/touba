@@ -1,0 +1,13 @@
+module examples.project_common
+
+type SearchRequest
+    query is Text
+    rows is Int
+
+define DefaultRows as Int = 5
+
+function NormalizeQuery
+    takes query as Text
+    gives Text
+    do
+        give query

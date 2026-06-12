@@ -1,0 +1,7 @@
+module examples.expr1_negative_host_eval
+
+function BadHostEval
+    takes source as Text
+    gives Text
+    do
+        give js_eval(source)

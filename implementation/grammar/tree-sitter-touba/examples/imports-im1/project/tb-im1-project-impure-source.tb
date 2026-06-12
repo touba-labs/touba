@@ -1,0 +1,11 @@
+module examples.project_impure_source
+
+tool FetchSource
+    gives Text
+
+function FetchThroughFunction
+    gives Text
+    do
+        FetchSource
+            into fetched
+        give fetched

@@ -1,0 +1,37 @@
+module examples.a2_memory_agent_write
+
+memory ProjectKnowledge
+
+type KnowledgeEntry
+    body is Text
+
+type WriteResult
+    status is Text
+
+tool WriteProjectKnowledge
+    uses memory ProjectKnowledge write
+    takes entry as KnowledgeEntry
+    gives WriteResult
+    requires memory_write
+
+skill StoreProjectKnowledge
+    takes entry as KnowledgeEntry
+    gives WriteResult
+    uses WriteProjectKnowledge
+    memory ProjectKnowledge write
+    do
+        WriteProjectKnowledge
+            with entry as entry
+            into result
+        give result
+
+agent Curator
+    uses StoreProjectKnowledge
+    memory ProjectKnowledge write
+    callable_by strategy RunCuration
+
+strategy RunCuration
+    uses Curator
+    do
+        Curator
+        give WriteResult

@@ -1,0 +1,10 @@
+module examples.project_search
+
+import type SearchRequest from examples.project_common
+import define DefaultRows from examples.project_common
+import function NormalizeQuery from examples.project_common
+
+strategy RunSearch
+    do
+        show
+            with message as "search project ready"

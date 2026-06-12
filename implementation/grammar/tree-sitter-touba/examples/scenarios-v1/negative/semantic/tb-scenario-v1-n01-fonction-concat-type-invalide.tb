@@ -1,0 +1,8 @@
+module examples.scenario_bad_function_concat
+
+function BadReviewLabel
+    takes count as Int
+    takes title as Text
+    gives Text
+    do
+        give count ++ title

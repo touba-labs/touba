@@ -1,0 +1,15 @@
+module examples.a2_memory_invalid_access
+
+memory ProjectKnowledge
+
+type Query
+    text is Text
+
+type KnowledgeResult
+    summary is Text
+
+tool AuditProjectKnowledge
+    uses memory ProjectKnowledge audit
+    takes query as Query
+    gives KnowledgeResult
+    requires memory_read

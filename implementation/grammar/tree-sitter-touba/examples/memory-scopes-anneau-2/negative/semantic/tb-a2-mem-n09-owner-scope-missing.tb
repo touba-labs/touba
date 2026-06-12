@@ -1,0 +1,25 @@
+module examples.a2_memory_owner_scope_missing
+
+memory ProjectKnowledge
+
+type Query
+    text is Text
+
+type KnowledgeResult
+    summary is Text
+
+tool ReadProjectKnowledge
+    uses memory ProjectKnowledge read
+    takes query as Query
+    gives KnowledgeResult
+    requires memory_read
+
+skill UseKnowledgeWithoutScope
+    takes query as Query
+    gives KnowledgeResult
+    uses ReadProjectKnowledge
+    do
+        ReadProjectKnowledge
+            with query as query
+            into result
+        give result

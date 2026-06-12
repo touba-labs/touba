@@ -1,0 +1,17 @@
+module examples.binddefine_local_bind
+
+define ScoreLimit as Float = 0.75
+define AcceptedLabel as Text = "accepted"
+define ReviewLabel as Text = "review"
+
+function ReviewScore
+    takes score as Float
+    takes bonus as Float
+    gives Text
+    do
+        bind adjusted as Float = (score + bonus) / 2.0
+        bind accepted as Boolean = adjusted >= ScoreLimit
+        if accepted
+            give AcceptedLabel
+        else
+            give ReviewLabel

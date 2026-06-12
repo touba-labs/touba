@@ -1,0 +1,42 @@
+module examples.memory_postgres_rb2
+
+memory CustomerMemory
+
+type MemoryRequest
+    customer_id is Text
+    note is Text
+
+type MemoryResult
+    customer_id is Text
+    stored_note is Text
+    backend is Text
+
+tool ReadCustomerMemory
+    uses memory CustomerMemory read
+    takes request as MemoryRequest
+    gives MemoryResult
+    requires network, secret_read, memory_read
+    secrets POSTGRES_MEMORY_TOKEN
+
+skill ReadCustomerMemoryOnly
+    takes request as MemoryRequest
+    gives MemoryResult
+    uses ReadCustomerMemory
+    memory CustomerMemory read
+    do
+        ReadCustomerMemory
+            with request as request
+            into loaded
+
+        give loaded
+
+agent MemoryAgent
+    uses ReadCustomerMemoryOnly
+    memory CustomerMemory read
+    callable_by strategy RunReadOnlyMemory
+
+strategy RunReadOnlyMemory
+    takes request as MemoryRequest
+    uses MemoryAgent
+    do
+        MemoryAgent

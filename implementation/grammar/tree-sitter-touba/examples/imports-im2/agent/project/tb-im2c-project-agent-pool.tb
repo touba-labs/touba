@@ -1,0 +1,4 @@
+module examples.agent_pool
+
+agent Reviewer
+    callable_by strategy examples.agent_app.RunReview

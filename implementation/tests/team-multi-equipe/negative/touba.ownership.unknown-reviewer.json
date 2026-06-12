@@ -1,0 +1,36 @@
+{
+  "ownership_schema_version": "touba-ownership-v0.1",
+  "teams": {
+    "team:platform": {
+      "display_name": "Platform"
+    },
+    "team:security": {
+      "display_name": "Security"
+    }
+  },
+  "owners": {
+    "tool:org.example.customer/FetchCustomerProfile": [
+      "team:platform"
+    ]
+  },
+  "review_gates": {
+    "prod": {
+      "requires_review_for": [
+        "tool_binding"
+      ],
+      "reviewers": [
+        "team:security"
+      ]
+    }
+  },
+  "reviews": [
+    {
+      "review_id": "review:customer/unknown-reviewer",
+      "profile": "prod",
+      "target_ref": "tool:org.example.customer/FetchCustomerProfile",
+      "reviewer": "team:legal",
+      "decision": "approved",
+      "evidence_ref": "reviews/unknown-reviewer.md"
+    }
+  ]
+}

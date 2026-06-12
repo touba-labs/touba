@@ -1,0 +1,28 @@
+module examples.loop
+
+type NormalizedItems
+    items are List of Text
+
+function NormalizeItem
+    gives Text
+    do
+        give "normalized"
+
+skill NormalizeItems
+    takes items as List of Text
+    gives NormalizedItems
+    uses NormalizeItem
+    do
+        for item in items
+            NormalizeItem
+        give NormalizedItems
+
+agent Normalizer
+    uses NormalizeItems
+    callable_by strategy RunNormalization
+
+strategy RunNormalization
+    uses Normalizer
+    do
+        Normalizer
+        give NormalizedItems

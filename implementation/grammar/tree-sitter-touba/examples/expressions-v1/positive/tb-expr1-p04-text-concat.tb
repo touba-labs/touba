@@ -1,0 +1,8 @@
+module examples.expr1_text_concat
+
+function BuildTitle
+    takes prefix as Text
+    takes title as Text
+    gives Text
+    do
+        give prefix ++ title

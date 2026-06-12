@@ -1,0 +1,37 @@
+module examples.memory_postgres_rb2
+
+define TriggerCustomerId as Text = "ACME-PG-TRIGGER"
+define TriggerNote as Text = "Triggered PostgreSQL memory write"
+
+memory CustomerMemory
+
+type MemoryResult
+    customer_id is Text
+    stored_note is Text
+    backend is Text
+
+tool WriteTriggerMemory
+    uses memory CustomerMemory write
+    takes customer_id as Text
+    takes note as Text
+    gives MemoryResult
+    requires network, secret_read, memory_write
+    secrets POSTGRES_MEMORY_TOKEN
+
+strategy RunTriggeredMemoryWrite
+    uses WriteTriggerMemory
+    memory CustomerMemory write
+    do
+        WriteTriggerMemory
+            with customer_id as TriggerCustomerId
+            with note as TriggerNote
+            into stored
+
+        give stored
+
+trigger ScheduledMemoryWrite
+    on schedule "every 1s"
+    runs strategy RunTriggeredMemoryWrite
+    limits
+        max_runs_per_day as 1
+        timeout_ms as 30000

@@ -1,0 +1,8 @@
+module examples.project_cycle_b
+
+import function FromA from examples.project_cycle_a
+
+function FromB
+    gives Text
+    do
+        give "b"

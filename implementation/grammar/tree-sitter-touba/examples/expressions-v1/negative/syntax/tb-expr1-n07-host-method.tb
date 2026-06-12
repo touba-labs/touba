@@ -1,0 +1,7 @@
+module examples.expr1_negative_host_method
+
+function BadMethod
+    takes title as Text
+    gives Text
+    do
+        give title.toLowerCase()

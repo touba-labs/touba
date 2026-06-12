@@ -1,0 +1,7 @@
+module examples.scenario_bad_function_return
+
+function BadEscalation
+    takes risk as Float
+    gives Boolean
+    do
+        give risk

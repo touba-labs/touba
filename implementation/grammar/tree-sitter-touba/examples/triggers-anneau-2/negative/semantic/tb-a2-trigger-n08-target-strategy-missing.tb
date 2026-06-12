@@ -1,0 +1,8 @@
+module examples.a2_trigger_missing_strategy
+
+trigger DailyResearch
+    on schedule "0 8 * * *"
+    runs strategy RunResearch
+    limits
+        max_runs_per_day as 1
+        timeout_ms as 30000

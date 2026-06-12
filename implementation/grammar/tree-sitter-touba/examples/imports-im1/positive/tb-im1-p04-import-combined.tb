@@ -1,0 +1,14 @@
+module examples.search
+
+import type SearchRequest from examples.common
+import define DefaultRows from examples.common
+import function NormalizeQuery from examples.common
+
+function BuildLabel
+    takes request as SearchRequest
+    gives Text
+    do
+        NormalizeQuery
+            with query as request.query
+            into normalized
+        give normalized ++ ":" ++ text(DefaultRows)

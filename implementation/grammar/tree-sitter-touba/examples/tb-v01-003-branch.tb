@@ -1,0 +1,31 @@
+module examples.branch
+
+type AcceptedDraft
+    body is Text
+
+function IsAcceptable
+    gives Boolean
+    do
+        give true
+
+skill ReviewDraft
+    takes accepted as Boolean
+    gives AcceptedDraft
+    uses IsAcceptable
+    do
+        IsAcceptable
+        if accepted
+            give AcceptedDraft
+        else
+            stop
+
+agent Reviewer
+    uses ReviewDraft
+    callable_by strategy RunReview
+
+strategy RunReview
+    takes accepted as Boolean
+    uses Reviewer
+    do
+        Reviewer
+        give AcceptedDraft

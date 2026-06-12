@@ -1,0 +1,16 @@
+module examples.a2_memory_duplicate_tool_access
+
+memory ProjectKnowledge
+
+type Query
+    text is Text
+
+type KnowledgeResult
+    summary is Text
+
+tool ReadProjectKnowledge
+    uses memory ProjectKnowledge read
+    uses memory ProjectKnowledge read
+    takes query as Query
+    gives KnowledgeResult
+    requires memory_read

@@ -1,0 +1,8 @@
+module examples.expr1_negative_text_order_comparison
+
+function BadTextOrder
+    takes left as Text
+    takes right as Text
+    gives Boolean
+    do
+        give left < right

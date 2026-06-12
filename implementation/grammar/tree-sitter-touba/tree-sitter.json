@@ -1,0 +1,33 @@
+{
+  "grammars": [
+    {
+      "name": "touba",
+      "scope": "source.touba",
+      "file-types": [
+        "tb"
+      ],
+      "injection-regex": "^touba$"
+    }
+  ],
+  "metadata": {
+    "version": "0.0.0",
+    "license": "UNLICENSED",
+    "description": "Initial Tree-sitter grammar for the bounded Touba v0.1 surface.",
+    "authors": [
+      {
+        "name": "Agentic Engineering"
+      }
+    ]
+  },
+  "bindings": {
+    "c": true,
+    "go": false,
+    "java": false,
+    "kotlin": false,
+    "node": false,
+    "python": false,
+    "rust": false,
+    "swift": false,
+    "zig": false
+  }
+}

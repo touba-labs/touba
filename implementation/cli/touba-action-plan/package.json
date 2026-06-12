@@ -1,0 +1,16 @@
+{
+  "name": "@touba/action-plan",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Touba memory action plan validator.",
+  "type": "module",
+  "bin": {
+    "touba-action-plan": "./src/validate.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": "24.15.0"
+  }
+}

@@ -1,0 +1,10 @@
+packages:
+  - "grammar/tree-sitter-touba"
+  - "compiler/*"
+  - "runtime/*"
+  - "lsp/*"
+  - "cli/*"
+  - "tests/*"
+
+onlyBuiltDependencies:
+  - "tree-sitter-cli"

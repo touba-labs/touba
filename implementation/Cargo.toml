@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "compiler/touba-compiler",
+    "cli/touba-cli",
+]
+resolver = "3"

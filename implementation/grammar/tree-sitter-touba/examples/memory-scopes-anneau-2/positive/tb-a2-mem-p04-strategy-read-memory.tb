@@ -1,0 +1,37 @@
+module examples.a2_memory_strategy_read
+
+memory ProjectKnowledge
+
+type Query
+    text is Text
+
+type KnowledgeResult
+    summary is Text
+
+tool ReadProjectKnowledge
+    uses memory ProjectKnowledge read
+    takes query as Query
+    gives KnowledgeResult
+    requires memory_read
+
+skill SummarizeKnowledge
+    takes query as Query
+    gives KnowledgeResult
+    uses ReadProjectKnowledge
+    memory ProjectKnowledge read
+    do
+        ReadProjectKnowledge
+            with query as query
+            into result
+        give result
+
+strategy RunKnowledgeReview
+    takes query as Query
+    gives KnowledgeResult
+    uses SummarizeKnowledge
+    memory ProjectKnowledge read
+    do
+        SummarizeKnowledge
+            with query as query
+            into result
+        give result

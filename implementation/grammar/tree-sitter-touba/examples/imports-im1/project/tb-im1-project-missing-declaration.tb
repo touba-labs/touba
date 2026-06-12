@@ -1,0 +1,8 @@
+module examples.project_missing_declaration
+
+import function MissingFunction from examples.project_common
+
+strategy RunMissingDeclaration
+    do
+        show
+            with message as "missing declaration"

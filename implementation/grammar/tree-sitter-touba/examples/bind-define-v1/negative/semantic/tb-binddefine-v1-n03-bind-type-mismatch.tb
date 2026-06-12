@@ -1,0 +1,11 @@
+module examples.binddefine_type_mismatch
+
+function Mismatch
+    takes title as Text
+    gives Text
+    do
+        bind accepted as Boolean = title
+        if accepted
+            give title
+        else
+            give "review"

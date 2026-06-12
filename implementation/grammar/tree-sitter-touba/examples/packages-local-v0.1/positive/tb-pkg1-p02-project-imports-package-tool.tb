@@ -1,0 +1,25 @@
+module examples.package_app
+
+import type DatasetSearchRequest from org.example.research
+import type DatasetSearchResult from org.example.research
+import tool SearchDatasets from org.example.research
+
+skill BuildDatasetBrief
+    takes request as DatasetSearchRequest
+    gives DatasetSearchResult
+    uses SearchDatasets
+    do
+        SearchDatasets
+            with request as request
+            into result
+        give result
+
+strategy RunDatasetSearch
+    takes request as DatasetSearchRequest
+    gives DatasetSearchResult
+    uses BuildDatasetBrief
+    do
+        BuildDatasetBrief
+            with request as request
+            into result
+        give result

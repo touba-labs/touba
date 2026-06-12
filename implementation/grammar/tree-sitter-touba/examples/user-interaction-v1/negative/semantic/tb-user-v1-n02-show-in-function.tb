@@ -1,0 +1,9 @@
+module examples.user_interaction_function
+
+function RenderMessage
+    gives Text
+    do
+        show
+            with message as "Not pure"
+
+        give "done"

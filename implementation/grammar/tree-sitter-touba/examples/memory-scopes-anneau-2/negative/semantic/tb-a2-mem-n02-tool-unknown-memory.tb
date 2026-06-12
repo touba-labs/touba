@@ -1,0 +1,13 @@
+module examples.a2_memory_tool_unknown
+
+type Query
+    text is Text
+
+type KnowledgeResult
+    summary is Text
+
+tool ReadProjectKnowledge
+    uses memory MissingKnowledge read
+    takes query as Query
+    gives KnowledgeResult
+    requires memory_read

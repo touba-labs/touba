@@ -1,0 +1,9 @@
+module examples.expr1_boolean_comparison
+
+function ShouldEscalate
+    takes accepted as Boolean
+    takes score as Float
+    takes threshold as Float
+    gives Boolean
+    do
+        give not accepted or score < threshold

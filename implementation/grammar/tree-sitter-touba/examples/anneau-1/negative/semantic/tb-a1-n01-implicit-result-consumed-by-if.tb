@@ -1,0 +1,23 @@
+module examples.a1_negative_implicit_result
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+skill BrokenFlow
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchSource
+    do
+        FetchSource
+            with request as request
+        if source
+            give source
+        else
+            stop

@@ -1,0 +1,21 @@
+module examples.a1_negative_use_before_binding
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+skill BrokenFlow
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchSource
+    do
+        give source
+        FetchSource
+            with request as request
+            into source

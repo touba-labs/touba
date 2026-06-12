@@ -1,0 +1,8 @@
+module examples.expr1_int_arithmetic
+
+function ComputeTotal
+    takes count as Int
+    takes bonus as Int
+    gives Int
+    do
+        give count + bonus * 2

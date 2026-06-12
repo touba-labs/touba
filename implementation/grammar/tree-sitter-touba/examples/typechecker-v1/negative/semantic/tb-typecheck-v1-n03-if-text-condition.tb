@@ -1,0 +1,10 @@
+module examples.typecheck_v1_negative_if_text_condition
+
+skill BadCondition
+    takes label as Text
+    gives Text
+    do
+        if label
+            give "yes"
+        else
+            give "no"

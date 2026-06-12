@@ -1,0 +1,28 @@
+{
+  "name": "@touba/cli-run",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal Touba AIR runner CLI.",
+  "exports": {
+    ".": "./src/run.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:trigger-runner": "node --test --test-name-pattern \"trigger runner\" test/*.test.mjs",
+    "validate:corpus": "node validate-corpus.mjs",
+    "validate:corpus:anneau1": "node validate-anneau1-corpus.mjs",
+    "validate:corpus:expressions-v1": "node validate-expressions-corpus.mjs",
+    "validate:corpus:bind-define-v1": "node validate-bind-define-corpus.mjs",
+    "write:air-fixtures": "node write-air-fixtures.mjs",
+    "check:air-fixtures": "node write-air-fixtures.mjs --check",
+    "write:trace-fixtures": "node write-trace-fixtures.mjs",
+    "check:trace-fixtures": "node write-trace-fixtures.mjs --check",
+    "write:anneau1-trace-fixtures": "node write-anneau1-trace-fixtures.mjs",
+    "check:anneau1-trace-fixtures": "node write-anneau1-trace-fixtures.mjs --check"
+  },
+  "dependencies": {
+    "@touba/runtime": "workspace:*",
+    "@touba/supply-chain": "workspace:*"
+  }
+}

@@ -1,0 +1,9 @@
+module examples.search
+
+import define DefaultRows from examples.common
+
+function BuildLabel
+    takes query as Text
+    gives Text
+    do
+        give query ++ ":" ++ text(DefaultRows)

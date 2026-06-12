@@ -1,0 +1,30 @@
+module examples.a2_auth_duplicate_caller
+
+type ChangeRequest
+    summary is Text
+
+type ReviewedChange
+    summary is Text
+
+tool ApplyChange
+    takes request as ChangeRequest
+    gives ReviewedChange
+
+skill MakeChange
+    takes request as ChangeRequest
+    gives ReviewedChange
+    uses ApplyChange
+    do
+        ApplyChange
+        give ReviewedChange
+
+agent Engineer
+    uses MakeChange
+    callable_by strategy RunChange
+    callable_by strategy RunChange
+
+strategy RunChange
+    uses Engineer
+    do
+        Engineer
+        give ReviewedChange

@@ -1,0 +1,17 @@
+module examples.human_agent_review
+
+type Analysis
+    confidence is Float
+    summary is Text
+
+skill ReviewWhenNeeded
+    takes analysis as Analysis
+    gives Analysis
+    do
+        if analysis.confidence < 0.8
+            human.review
+                with context as analysis
+                into decision
+            give analysis
+        else
+            give analysis

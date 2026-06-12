@@ -1,0 +1,7 @@
+module examples.a2_memory_inline_backend_rejected
+
+memory ProjectKnowledge
+    backend postgres
+
+type Query
+    text is Text

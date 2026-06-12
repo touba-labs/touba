@@ -1,0 +1,9 @@
+module examples.search
+
+import type SearchRequest from examples.common
+
+strategy RunSearch
+    takes request as SearchRequest
+    do
+        show
+            with message as request.query

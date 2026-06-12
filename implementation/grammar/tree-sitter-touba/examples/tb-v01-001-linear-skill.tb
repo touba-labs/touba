@@ -1,0 +1,32 @@
+module examples.linear_skill
+
+type SourceRequest
+    topic is Text
+
+type SourceText
+    content is Text
+
+type SourceNote
+    summary is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+skill BuildNote
+    takes request as SourceRequest
+    gives SourceNote
+    uses FetchSource
+    do
+        FetchSource
+        give SourceNote
+
+agent Researcher
+    uses BuildNote
+    callable_by strategy RunSourcedNote
+
+strategy RunSourcedNote
+    uses Researcher
+    do
+        Researcher
+        give SourceNote

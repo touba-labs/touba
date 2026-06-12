@@ -1,0 +1,25 @@
+module examples.typecheck_v1_di_negative_source_to_instruction
+
+type SourceText
+    content is Text
+
+type AgentInstruction
+    content is Text
+
+type LLMResponse
+    summary is Text
+
+tool CallLLM
+    takes instruction as AgentInstruction
+    gives LLMResponse
+    requires network
+
+skill UnsafeSourceAsInstruction
+    takes source as SourceText
+    gives LLMResponse
+    uses CallLLM
+    do
+        CallLLM
+            with instruction as source
+            into response
+        give response

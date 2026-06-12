@@ -1,0 +1,30 @@
+module examples.donnees_quebec_live
+
+type DonneesQuebecSearchRequest
+    query is Text
+    rows is Int
+    dry_run is Boolean
+
+type DonneesQuebecSearchResult
+    mode is Text
+    api_url is Text
+    query is Text
+    result_count is Int
+    first_dataset_title is Text
+
+tool SearchDatasets
+    takes request as DonneesQuebecSearchRequest
+    gives DonneesQuebecSearchResult
+    requires network
+
+skill BuildDatasetSearch
+    takes request as DonneesQuebecSearchRequest
+    gives DonneesQuebecSearchResult
+    uses SearchDatasets
+    do
+        SearchDatasets
+            with request as request
+            into result
+        show
+            with message as "First dataset: " ++ result.first_dataset_title
+        give result

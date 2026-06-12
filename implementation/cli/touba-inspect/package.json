@@ -1,0 +1,17 @@
+{
+  "name": "@touba/inspect",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local Touba artifact inspection command.",
+  "type": "module",
+  "bin": {
+    "touba-inspect": "./src/inspect.mjs"
+  },
+  "scripts": {
+    "inspect": "node src/inspect.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": "24.15.0"
+  }
+}

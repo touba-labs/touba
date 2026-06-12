@@ -1,0 +1,34 @@
+module examples.scenario_human_interaction
+
+type ChangeRequest
+    summary is Text
+
+skill ValidateChange
+    takes request as ChangeRequest
+    gives ChangeRequest
+    do
+        human.approve
+            with context as request
+            into approval
+        give request
+
+strategy RunHumanValidation
+    takes request as ChangeRequest
+    gives Text
+    uses ValidateChange
+    do
+        show
+            with message as "Change review started"
+
+        ask
+            with prompt as "Reviewer ticket?"
+            into ticket
+
+        ValidateChange
+            with request as request
+            into validated
+
+        show
+            with message as "Change review completed"
+
+        give ticket

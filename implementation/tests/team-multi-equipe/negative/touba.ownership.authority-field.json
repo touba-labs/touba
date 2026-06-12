@@ -1,0 +1,14 @@
+{
+  "ownership_schema_version": "touba-ownership-v0.1",
+  "teams": {
+    "team:security": {
+      "display_name": "Security"
+    }
+  },
+  "grants": [
+    "network"
+  ],
+  "owners": {},
+  "review_gates": {},
+  "reviews": []
+}

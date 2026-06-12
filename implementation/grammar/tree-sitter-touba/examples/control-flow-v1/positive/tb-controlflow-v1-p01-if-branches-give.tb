@@ -1,0 +1,10 @@
+module examples.control_flow_if_branches
+
+function ChooseLabel
+    takes accepted as Boolean
+    gives Text
+    do
+        if accepted
+            give "accepted"
+        else
+            give "review"

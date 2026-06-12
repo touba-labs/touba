@@ -1,0 +1,15 @@
+module examples.memory_tools
+
+import memory ProjectKnowledge from examples.shared_memory
+
+type KnowledgeQuery
+    query is Text
+
+type KnowledgeResult
+    summary is Text
+
+tool ReadKnowledge
+    takes query as KnowledgeQuery
+    gives KnowledgeResult
+    requires memory_read
+    uses memory ProjectKnowledge read

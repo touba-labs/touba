@@ -1,0 +1,8 @@
+module examples.a2_memory_duplicate_declaration
+
+memory ProjectKnowledge
+
+memory ProjectKnowledge
+
+type Query
+    text is Text

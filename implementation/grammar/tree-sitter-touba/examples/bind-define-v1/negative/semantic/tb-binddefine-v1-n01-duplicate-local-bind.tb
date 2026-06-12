@@ -1,0 +1,9 @@
+module examples.binddefine_duplicate_local
+
+function DuplicateLocal
+    takes score as Float
+    gives Float
+    do
+        bind adjusted as Float = score + 1.0
+        bind adjusted as Float = score + 2.0
+        give adjusted

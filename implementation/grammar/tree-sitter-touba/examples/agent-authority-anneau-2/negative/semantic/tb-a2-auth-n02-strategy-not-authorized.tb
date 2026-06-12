@@ -1,0 +1,34 @@
+module examples.a2_auth_strategy_not_authorized
+
+type ChangeRequest
+    summary is Text
+
+type ReviewedChange
+    summary is Text
+
+tool ApplyChange
+    takes request as ChangeRequest
+    gives ReviewedChange
+
+skill MakeChange
+    takes request as ChangeRequest
+    gives ReviewedChange
+    uses ApplyChange
+    do
+        ApplyChange
+        give ReviewedChange
+
+agent Engineer
+    uses MakeChange
+    callable_by strategy AdminRun
+
+strategy AdminRun
+    uses Engineer
+    do
+        give ReviewedChange
+
+strategy RunChange
+    uses Engineer
+    do
+        Engineer
+        give ReviewedChange

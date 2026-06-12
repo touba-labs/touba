@@ -1,0 +1,43 @@
+module examples.scenario_change_review
+
+type ChangeRequest
+    summary is Text
+
+type ReviewedChange
+    summary is Text
+
+tool ApplyChange
+    takes request as ChangeRequest
+    gives ReviewedChange
+
+skill MakeChange
+    takes request as ChangeRequest
+    gives ReviewedChange
+    uses ApplyChange
+    do
+        ApplyChange
+            with request as request
+            into result
+        give result
+
+skill ReviewChange
+    takes request as ChangeRequest
+    gives ChangeRequest
+    do
+        give request
+
+agent Reviewer
+    uses ReviewChange
+    callable_by strategy RunChangeReview
+
+agent Engineer
+    uses MakeChange
+    callable_by strategy RunChangeReview
+
+strategy RunChangeReview
+    takes request as ChangeRequest
+    uses Reviewer
+    uses Engineer
+    do
+        Reviewer
+        Engineer

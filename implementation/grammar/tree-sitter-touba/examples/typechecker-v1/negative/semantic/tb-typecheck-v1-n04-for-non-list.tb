@@ -1,0 +1,8 @@
+module examples.typecheck_v1_negative_for_non_list
+
+skill BadLoop
+    takes label as Text
+    gives Text
+    do
+        for item in label
+            stop

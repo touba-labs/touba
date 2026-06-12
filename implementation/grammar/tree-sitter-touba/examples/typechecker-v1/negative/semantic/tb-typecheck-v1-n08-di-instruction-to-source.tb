@@ -1,0 +1,21 @@
+module examples.typecheck_v1_di_negative_instruction_to_source
+
+type SourceText
+    content is Text
+
+type AgentInstruction
+    content is Text
+
+tool ArchiveSource
+    takes source as SourceText
+    gives Text
+
+skill UnsafeInstructionAsSource
+    takes instruction as AgentInstruction
+    gives Text
+    uses ArchiveSource
+    do
+        ArchiveSource
+            with source as instruction
+            into archived
+        give archived

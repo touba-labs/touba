@@ -1,0 +1,16 @@
+module examples.user_interaction
+
+strategy RunInteraction
+    gives Text
+    do
+        show
+            with message as "Touba ready"
+
+        ask
+            with prompt as "Search query?"
+            into query
+
+        show
+            with message as "Query captured"
+
+        give query

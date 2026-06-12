@@ -1,0 +1,5 @@
+module invalid.signature
+
+function Build
+    do
+        give true

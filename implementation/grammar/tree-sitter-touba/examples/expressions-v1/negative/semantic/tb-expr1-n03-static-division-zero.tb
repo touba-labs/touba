@@ -1,0 +1,7 @@
+module examples.expr1_negative_static_division_zero
+
+function BadDivision
+    takes total as Int
+    gives Float
+    do
+        give total / 0

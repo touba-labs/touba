@@ -1,0 +1,14 @@
+module examples.human_unknown_target
+
+type Change
+    summary is Text
+
+skill NeedsApproval
+    takes change as Change
+    gives Change
+    do
+        human.confirm
+            with context as change
+            into approval
+
+        give change

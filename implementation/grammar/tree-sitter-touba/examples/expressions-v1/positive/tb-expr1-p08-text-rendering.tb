@@ -1,0 +1,10 @@
+module examples.expr1_text_rendering
+
+function FormatSummary
+    takes age as Int
+    takes score as Float
+    takes active as Boolean
+    gives Text
+    do
+        bind next_age as Int = age + 1
+        give "age=" ++ text(age) ++ ", next=" ++ text(next_age) ++ ", score=" ++ text(score) ++ ", active=" ++ text(active)

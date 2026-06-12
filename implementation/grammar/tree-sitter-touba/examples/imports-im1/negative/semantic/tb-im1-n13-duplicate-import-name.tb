@@ -1,0 +1,9 @@
+module examples.search
+
+import type SearchRequest from examples.common
+import type SearchRequest from examples.shared
+
+strategy RunSearch
+    do
+        show
+            with message as "duplicate import name"

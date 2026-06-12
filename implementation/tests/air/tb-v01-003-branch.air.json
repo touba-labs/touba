@@ -1,0 +1,591 @@
+{
+  "air_schema_version": "air-minimal-v0.1",
+  "module": {
+    "id": "module:examples.branch",
+    "name": "examples.branch",
+    "source_ref": {
+      "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+      "start_byte": 0,
+      "end_byte": 22,
+      "start_line": 0,
+      "start_column": 0,
+      "end_line": 0,
+      "end_column": 22
+    }
+  },
+  "definitions": {
+    "types": [
+      {
+        "id": "type:examples.branch/AcceptedDraft",
+        "name": "AcceptedDraft",
+        "fields": [
+          {
+            "name": "body",
+            "type_ref": "builtin:Text",
+            "source_ref": {
+              "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+              "start_byte": 47,
+              "end_byte": 59,
+              "start_line": 3,
+              "start_column": 4,
+              "end_line": 3,
+              "end_column": 16
+            }
+          }
+        ],
+        "source_ref": {
+          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "start_byte": 24,
+          "end_byte": 61,
+          "start_line": 2,
+          "start_column": 0,
+          "end_line": 5,
+          "end_column": 0
+        }
+      }
+    ],
+    "functions": [
+      {
+        "id": "function:examples.branch/IsAcceptable",
+        "name": "IsAcceptable",
+        "signature": {
+          "inputs": [],
+          "output_type": "builtin:Boolean"
+        },
+        "body_graph_ref": "graph:function:examples.branch/IsAcceptable",
+        "source_ref": {
+          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "start_byte": 61,
+          "end_byte": 127,
+          "start_line": 5,
+          "start_column": 0,
+          "end_line": 10,
+          "end_column": 0
+        }
+      }
+    ],
+    "tools": [],
+    "skills": [
+      {
+        "id": "skill:examples.branch/ReviewDraft",
+        "name": "ReviewDraft",
+        "signature": {
+          "inputs": [
+            {
+              "name": "accepted",
+              "type_ref": "builtin:Boolean",
+              "source_ref": {
+                "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+                "start_byte": 155,
+                "end_byte": 174,
+                "start_line": 11,
+                "start_column": 10,
+                "end_line": 11,
+                "end_column": 29
+              }
+            }
+          ],
+          "output_type": "type:examples.branch/AcceptedDraft"
+        },
+        "uses": [
+          "function:examples.branch/IsAcceptable"
+        ],
+        "use_refs": [
+          {
+            "target_ref": "function:examples.branch/IsAcceptable",
+            "source_ref": {
+              "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+              "start_byte": 203,
+              "end_byte": 220,
+              "start_line": 13,
+              "start_column": 4,
+              "end_line": 13,
+              "end_column": 21
+            }
+          }
+        ],
+        "flow_graph_ref": "graph:skill:examples.branch/ReviewDraft",
+        "source_ref": {
+          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "start_byte": 127,
+          "end_byte": 331,
+          "start_line": 10,
+          "start_column": 0,
+          "end_line": 21,
+          "end_column": 0
+        }
+      }
+    ],
+    "agents": [
+      {
+        "id": "agent:examples.branch/Reviewer",
+        "name": "Reviewer",
+        "responsibility": "Reviewer",
+        "uses": [
+          "skill:examples.branch/ReviewDraft"
+        ],
+        "use_refs": [
+          {
+            "target_ref": "skill:examples.branch/ReviewDraft",
+            "source_ref": {
+              "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+              "start_byte": 350,
+              "end_byte": 366,
+              "start_line": 22,
+              "start_column": 4,
+              "end_line": 22,
+              "end_column": 20
+            }
+          }
+        ],
+        "callable_by": [
+          {
+            "caller_ref": "strategy:examples.branch/RunReview",
+            "caller_kind": "strategy",
+            "source_ref": {
+              "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+              "start_byte": 371,
+              "end_byte": 401,
+              "start_line": 23,
+              "start_column": 4,
+              "end_line": 23,
+              "end_column": 34
+            }
+          }
+        ],
+        "source_ref": {
+          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "start_byte": 331,
+          "end_byte": 403,
+          "start_line": 21,
+          "start_column": 0,
+          "end_line": 25,
+          "end_column": 0
+        }
+      }
+    ],
+    "strategies": [
+      {
+        "id": "strategy:examples.branch/RunReview",
+        "name": "RunReview",
+        "uses": [
+          "agent:examples.branch/Reviewer"
+        ],
+        "use_refs": [
+          {
+            "target_ref": "agent:examples.branch/Reviewer",
+            "source_ref": {
+              "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+              "start_byte": 456,
+              "end_byte": 469,
+              "start_line": 27,
+              "start_column": 4,
+              "end_line": 27,
+              "end_column": 17
+            }
+          }
+        ],
+        "flow_graph_ref": "graph:strategy:examples.branch/RunReview",
+        "signature": {
+          "inputs": [
+            {
+              "name": "accepted",
+              "type_ref": "builtin:Boolean",
+              "source_ref": {
+                "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+                "start_byte": 432,
+                "end_byte": 451,
+                "start_line": 26,
+                "start_column": 10,
+                "end_line": 26,
+                "end_column": 29
+              }
+            }
+          ],
+          "output_type": null
+        },
+        "source_ref": {
+          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "start_byte": 403,
+          "end_byte": 521,
+          "start_line": 25,
+          "start_column": 0,
+          "end_line": 31,
+          "end_column": 0
+        }
+      }
+    ]
+  },
+  "execution_graphs": [
+    {
+      "id": "graph:function:examples.branch/IsAcceptable",
+      "owner_ref": "function:examples.branch/IsAcceptable",
+      "entry_node_id": "node:graph:function:examples.branch/IsAcceptable:1",
+      "nodes": [
+        {
+          "id": "node:graph:function:examples.branch/IsAcceptable:1",
+          "kind": "give",
+          "arguments": [
+            "literal:bool:true"
+          ],
+          "trace_point_refs": [
+            "trace:graph:function:examples.branch/IsAcceptable:3"
+          ],
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 116,
+            "end_byte": 125,
+            "start_line": 8,
+            "start_column": 8,
+            "end_line": 8,
+            "end_column": 17
+          }
+        }
+      ],
+      "edges": [],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 105,
+        "end_byte": 127,
+        "start_line": 7,
+        "start_column": 4,
+        "end_line": 10,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "graph:skill:examples.branch/ReviewDraft",
+      "owner_ref": "skill:examples.branch/ReviewDraft",
+      "entry_node_id": "node:graph:skill:examples.branch/ReviewDraft:1",
+      "nodes": [
+        {
+          "id": "node:graph:skill:examples.branch/ReviewDraft:1",
+          "kind": "call_function",
+          "target_ref": "function:examples.branch/IsAcceptable",
+          "trace_point_refs": [
+            "trace:graph:skill:examples.branch/ReviewDraft:3"
+          ],
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 236,
+            "end_byte": 248,
+            "start_line": 15,
+            "start_column": 8,
+            "end_line": 15,
+            "end_column": 20
+          }
+        },
+        {
+          "id": "node:graph:skill:examples.branch/ReviewDraft:2",
+          "kind": "branch",
+          "condition_ref": "value:accepted",
+          "trace_point_refs": [
+            "trace:graph:skill:examples.branch/ReviewDraft:4"
+          ],
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 257,
+            "end_byte": 331,
+            "start_line": 16,
+            "start_column": 8,
+            "end_line": 21,
+            "end_column": 0
+          }
+        },
+        {
+          "id": "node:graph:skill:examples.branch/ReviewDraft:3",
+          "kind": "give",
+          "arguments": [
+            "symbol:AcceptedDraft"
+          ],
+          "trace_point_refs": [
+            "trace:graph:skill:examples.branch/ReviewDraft:5"
+          ],
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 281,
+            "end_byte": 299,
+            "start_line": 17,
+            "start_column": 12,
+            "end_line": 17,
+            "end_column": 30
+          }
+        },
+        {
+          "id": "node:graph:skill:examples.branch/ReviewDraft:4",
+          "kind": "stop",
+          "trace_point_refs": [
+            "trace:graph:skill:examples.branch/ReviewDraft:6"
+          ],
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 325,
+            "end_byte": 329,
+            "start_line": 19,
+            "start_column": 12,
+            "end_line": 19,
+            "end_column": 16
+          }
+        }
+      ],
+      "edges": [
+        {
+          "from_node_id": "node:graph:skill:examples.branch/ReviewDraft:2",
+          "to_node_id": "node:graph:skill:examples.branch/ReviewDraft:3",
+          "role": "true",
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 281,
+            "end_byte": 299,
+            "start_line": 17,
+            "start_column": 12,
+            "end_line": 17,
+            "end_column": 30
+          }
+        },
+        {
+          "from_node_id": "node:graph:skill:examples.branch/ReviewDraft:2",
+          "to_node_id": "node:graph:skill:examples.branch/ReviewDraft:4",
+          "role": "false",
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 325,
+            "end_byte": 329,
+            "start_line": 19,
+            "start_column": 12,
+            "end_line": 19,
+            "end_column": 16
+          }
+        },
+        {
+          "from_node_id": "node:graph:skill:examples.branch/ReviewDraft:1",
+          "to_node_id": "node:graph:skill:examples.branch/ReviewDraft:2",
+          "role": "next",
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 257,
+            "end_byte": 331,
+            "start_line": 16,
+            "start_column": 8,
+            "end_line": 21,
+            "end_column": 0
+          }
+        }
+      ],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 225,
+        "end_byte": 331,
+        "start_line": 14,
+        "start_column": 4,
+        "end_line": 21,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "graph:strategy:examples.branch/RunReview",
+      "owner_ref": "strategy:examples.branch/RunReview",
+      "entry_node_id": "node:graph:strategy:examples.branch/RunReview:1",
+      "nodes": [
+        {
+          "id": "node:graph:strategy:examples.branch/RunReview:1",
+          "kind": "call_agent",
+          "target_ref": "agent:examples.branch/Reviewer",
+          "trace_point_refs": [
+            "trace:graph:strategy:examples.branch/RunReview:3"
+          ],
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 485,
+            "end_byte": 493,
+            "start_line": 29,
+            "start_column": 8,
+            "end_line": 29,
+            "end_column": 16
+          }
+        },
+        {
+          "id": "node:graph:strategy:examples.branch/RunReview:2",
+          "kind": "give",
+          "arguments": [
+            "symbol:AcceptedDraft"
+          ],
+          "trace_point_refs": [
+            "trace:graph:strategy:examples.branch/RunReview:4"
+          ],
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 502,
+            "end_byte": 520,
+            "start_line": 30,
+            "start_column": 8,
+            "end_line": 30,
+            "end_column": 26
+          }
+        }
+      ],
+      "edges": [
+        {
+          "from_node_id": "node:graph:strategy:examples.branch/RunReview:1",
+          "to_node_id": "node:graph:strategy:examples.branch/RunReview:2",
+          "role": "next",
+          "source_ref": {
+            "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "start_byte": 502,
+            "end_byte": 520,
+            "start_line": 30,
+            "start_column": 8,
+            "end_line": 30,
+            "end_column": 26
+          }
+        }
+      ],
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 474,
+        "end_byte": 521,
+        "start_line": 28,
+        "start_column": 4,
+        "end_line": 31,
+        "end_column": 0
+      }
+    }
+  ],
+  "trace_points": [
+    {
+      "id": "trace:graph:function:examples.branch/IsAcceptable:1",
+      "owner_ref": "graph:function:examples.branch/IsAcceptable",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:function:examples.branch/IsAcceptable:2",
+      "owner_ref": "graph:function:examples.branch/IsAcceptable",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:function:examples.branch/IsAcceptable:3",
+      "owner_ref": "graph:function:examples.branch/IsAcceptable",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:function:examples.branch/IsAcceptable:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 116,
+        "end_byte": 125,
+        "start_line": 8,
+        "start_column": 8,
+        "end_line": 8,
+        "end_column": 17
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.branch/ReviewDraft:1",
+      "owner_ref": "graph:skill:examples.branch/ReviewDraft",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:skill:examples.branch/ReviewDraft:2",
+      "owner_ref": "graph:skill:examples.branch/ReviewDraft",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:skill:examples.branch/ReviewDraft:3",
+      "owner_ref": "graph:skill:examples.branch/ReviewDraft",
+      "anchor_kind": "call",
+      "node_id": "node:graph:skill:examples.branch/ReviewDraft:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 236,
+        "end_byte": 248,
+        "start_line": 15,
+        "start_column": 8,
+        "end_line": 15,
+        "end_column": 20
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.branch/ReviewDraft:4",
+      "owner_ref": "graph:skill:examples.branch/ReviewDraft",
+      "anchor_kind": "branch",
+      "node_id": "node:graph:skill:examples.branch/ReviewDraft:2",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 257,
+        "end_byte": 331,
+        "start_line": 16,
+        "start_column": 8,
+        "end_line": 21,
+        "end_column": 0
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.branch/ReviewDraft:5",
+      "owner_ref": "graph:skill:examples.branch/ReviewDraft",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:skill:examples.branch/ReviewDraft:3",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 281,
+        "end_byte": 299,
+        "start_line": 17,
+        "start_column": 12,
+        "end_line": 17,
+        "end_column": 30
+      }
+    },
+    {
+      "id": "trace:graph:skill:examples.branch/ReviewDraft:6",
+      "owner_ref": "graph:skill:examples.branch/ReviewDraft",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:skill:examples.branch/ReviewDraft:4",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 325,
+        "end_byte": 329,
+        "start_line": 19,
+        "start_column": 12,
+        "end_line": 19,
+        "end_column": 16
+      }
+    },
+    {
+      "id": "trace:graph:strategy:examples.branch/RunReview:1",
+      "owner_ref": "graph:strategy:examples.branch/RunReview",
+      "anchor_kind": "scope_entry"
+    },
+    {
+      "id": "trace:graph:strategy:examples.branch/RunReview:2",
+      "owner_ref": "graph:strategy:examples.branch/RunReview",
+      "anchor_kind": "scope_exit"
+    },
+    {
+      "id": "trace:graph:strategy:examples.branch/RunReview:3",
+      "owner_ref": "graph:strategy:examples.branch/RunReview",
+      "anchor_kind": "call",
+      "node_id": "node:graph:strategy:examples.branch/RunReview:1",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 485,
+        "end_byte": 493,
+        "start_line": 29,
+        "start_column": 8,
+        "end_line": 29,
+        "end_column": 16
+      }
+    },
+    {
+      "id": "trace:graph:strategy:examples.branch/RunReview:4",
+      "owner_ref": "graph:strategy:examples.branch/RunReview",
+      "anchor_kind": "completion",
+      "node_id": "node:graph:strategy:examples.branch/RunReview:2",
+      "source_ref": {
+        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "start_byte": 502,
+        "end_byte": 520,
+        "start_line": 30,
+        "start_column": 8,
+        "end_line": 30,
+        "end_column": 26
+      }
+    }
+  ]
+}

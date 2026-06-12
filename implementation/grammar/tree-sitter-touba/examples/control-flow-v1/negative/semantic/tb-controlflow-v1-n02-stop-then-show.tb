@@ -1,0 +1,8 @@
+module examples.control_flow_stop_then_show
+
+strategy StopThenShow
+    do
+        stop
+
+        show
+            with message as "unreachable"

@@ -1,0 +1,18 @@
+module org.example.customer
+
+memory CustomerNotes
+
+type CustomerRequest
+    customer_id is Text
+
+type CustomerProfile
+    customer_id is Text
+    segment is Text
+    status is Text
+
+tool FetchCustomerProfile
+    uses memory CustomerNotes read
+    takes request as CustomerRequest
+    gives CustomerProfile
+    requires network, secret_read, memory_read
+    secrets CRM_API_TOKEN

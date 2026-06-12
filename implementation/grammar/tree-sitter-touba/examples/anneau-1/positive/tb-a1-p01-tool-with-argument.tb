@@ -1,0 +1,20 @@
+module examples.a1_tool_argument
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+skill BuildSource
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchSource
+    do
+        FetchSource
+            with request as request
+        give SourceText

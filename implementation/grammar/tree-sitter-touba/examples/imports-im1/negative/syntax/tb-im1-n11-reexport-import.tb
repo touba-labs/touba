@@ -1,0 +1,3 @@
+module examples.search
+
+export import function NormalizeQuery from examples.common

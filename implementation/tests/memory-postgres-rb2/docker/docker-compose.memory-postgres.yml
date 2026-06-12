@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:17.10-alpine
+    environment:
+      POSTGRES_USER: touba_memory
+      POSTGRES_PASSWORD: touba_memory_password
+      POSTGRES_DB: touba_memory
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U touba_memory -d touba_memory"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+
+  memory-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.memory-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://touba_memory:touba_memory_password@postgres:5432/touba_memory
+      POSTGRES_MEMORY_TOKEN: ${POSTGRES_MEMORY_TOKEN:?POSTGRES_MEMORY_TOKEN is required}
+      PORT: "8788"
+    ports:
+      - "127.0.0.1:${TOUBA_POSTGRES_MEMORY_API_PORT:-18788}:8788"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8788/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 1s
+      timeout: 5s
+      retries: 30

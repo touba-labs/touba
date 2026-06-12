@@ -1,0 +1,7 @@
+module examples.typecheck_v1_int_to_float_give
+
+function PromoteScore
+    takes score as Int
+    gives Float
+    do
+        give score

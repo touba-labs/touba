@@ -1,0 +1,10 @@
+module examples.expr1_negative_text_render_local_type
+
+type Profile
+    age is Int
+
+function BadTextRender
+    takes profile as Profile
+    gives Text
+    do
+        give text(profile)

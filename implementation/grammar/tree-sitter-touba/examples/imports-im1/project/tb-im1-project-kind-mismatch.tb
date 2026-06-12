@@ -1,0 +1,8 @@
+module examples.project_kind_mismatch
+
+import function SearchRequest from examples.project_common
+
+strategy RunKindMismatch
+    do
+        show
+            with message as "kind mismatch"

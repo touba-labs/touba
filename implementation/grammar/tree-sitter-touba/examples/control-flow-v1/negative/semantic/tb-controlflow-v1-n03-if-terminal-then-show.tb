@@ -1,0 +1,12 @@
+module examples.control_flow_if_terminal_then_show
+
+strategy BranchThenShow
+    gives Text
+    do
+        if true
+            give "accepted"
+        else
+            give "review"
+
+        show
+            with message as "unreachable"

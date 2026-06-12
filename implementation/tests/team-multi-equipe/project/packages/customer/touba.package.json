@@ -1,0 +1,34 @@
+{
+  "package_schema_version": "touba-package-v0.1",
+  "name": "org.example.customer",
+  "version": "0.1.0",
+  "root": ".",
+  "touba": {
+    "air_profile": "air-json-v0.1",
+    "runtime_compatibility": ">=0.1 <0.2"
+  },
+  "exports": {
+    "types": [
+      "type:org.example.customer/CustomerRequest",
+      "type:org.example.customer/CustomerProfile"
+    ],
+    "defines": [],
+    "functions": [],
+    "tools": [
+      "tool:org.example.customer/FetchCustomerProfile"
+    ],
+    "skills": [],
+    "strategies": [],
+    "agents": [],
+    "memories": [
+      "memory:org.example.customer/CustomerNotes"
+    ]
+  },
+  "provenance": {
+    "kind": "local_path",
+    "source": "."
+  },
+  "contract_tests": [
+    "validation/package/customer-contract.md"
+  ]
+}

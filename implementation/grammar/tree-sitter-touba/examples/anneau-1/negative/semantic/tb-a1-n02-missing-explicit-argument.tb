@@ -1,0 +1,20 @@
+module examples.a1_negative_missing_argument
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+skill BrokenFlow
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchSource
+    do
+        FetchSource
+            into source
+        give source

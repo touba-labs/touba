@@ -1,0 +1,27 @@
+module examples.a1_negative_agent_dispatch
+
+type ChangeRequest
+    summary is Text
+
+type ReviewedChange
+    summary is Text
+
+skill MakeChange
+    takes request as ChangeRequest
+    gives ReviewedChange
+    do
+        give ReviewedChange
+
+agent Engineer
+    uses MakeChange
+    callable_by strategy BrokenStrategy
+
+strategy BrokenStrategy
+    takes request as ChangeRequest
+    gives ReviewedChange
+    uses Engineer
+    do
+        Engineer
+            with request as request
+            into change
+        give change

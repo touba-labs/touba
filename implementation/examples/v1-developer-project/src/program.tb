@@ -1,0 +1,37 @@
+module examples.v1_developer_project
+
+type ProfileRequest
+    query is Text
+
+type Profile
+    title is Text
+    score is Float
+    secret_value_in_stdin is Boolean
+
+tool FetchProfile
+    takes request as ProfileRequest
+    gives Profile
+    requires network, secret_read
+    secrets DEMO_API_KEY
+
+function BuildSummary
+    takes profile as Profile
+    gives Text
+    do
+        give "profile:" ++ profile.title
+
+skill BuildProfileSummary
+    takes request as ProfileRequest
+    gives Text
+    uses FetchProfile
+    uses BuildSummary
+    do
+        FetchProfile
+            with request as request
+            into profile
+
+        BuildSummary
+            with profile as profile
+            into summary
+
+        give summary

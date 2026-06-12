@@ -1,0 +1,34 @@
+module examples.a1_branch_binding
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+function IsReady
+    takes source as SourceText
+    gives Boolean
+    do
+        give true
+
+skill BuildWhenReady
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchSource
+    uses IsReady
+    do
+        FetchSource
+            with request as request
+            into source
+        IsReady
+            with source as source
+            into ready
+        if ready
+            give source
+        else
+            stop

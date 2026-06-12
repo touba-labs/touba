@@ -1,0 +1,10 @@
+module examples.binddefine_non_literal_define
+
+define BaseScore as Float = 0.5
+define ScoreLimit as Float = BaseScore + 0.25
+
+function UseLimit
+    takes score as Float
+    gives Boolean
+    do
+        give score >= ScoreLimit

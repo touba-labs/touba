@@ -1,0 +1,10 @@
+module invalid.loop
+
+type Draft
+    body is Text
+
+skill Build
+    gives Draft
+    do
+        for item in items
+            give Draft

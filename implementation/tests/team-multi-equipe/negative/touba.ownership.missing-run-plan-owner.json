@@ -1,0 +1,51 @@
+{
+  "ownership_schema_version": "touba-ownership-v0.1",
+  "teams": {
+    "team:platform": {
+      "display_name": "Platform"
+    },
+    "team:security": {
+      "display_name": "Security"
+    },
+    "team:customer_ops": {
+      "display_name": "Customer Operations"
+    }
+  },
+  "owners": {
+    "package:org.example.customer": [
+      "team:platform"
+    ],
+    "tool:org.example.customer/FetchCustomerProfile": [
+      "team:platform"
+    ],
+    "memory:org.example.customer/CustomerNotes": [
+      "team:customer_ops"
+    ],
+    "resource_bindings:touba.resources": [
+      "team:platform"
+    ],
+    "lock:touba.lock.json": [
+      "team:security"
+    ]
+  },
+  "review_gates": {
+    "prod": {
+      "requires_review_for": [
+        "run_plan"
+      ],
+      "reviewers": [
+        "team:security"
+      ]
+    }
+  },
+  "reviews": [
+    {
+      "review_id": "review:customer/security-run-plan",
+      "profile": "prod",
+      "target_ref": "run_plan:touba.run-plan",
+      "reviewer": "team:security",
+      "decision": "approved",
+      "evidence_ref": "reviews/customer-run-plan.md"
+    }
+  ]
+}

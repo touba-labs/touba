@@ -1,0 +1,14 @@
+module examples.human_function_approval
+
+type Change
+    summary is Text
+
+function NeedsApproval
+    takes change as Change
+    gives Change
+    do
+        human.approve
+            with context as change
+            into approval
+
+        give change

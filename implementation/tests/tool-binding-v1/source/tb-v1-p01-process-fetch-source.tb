@@ -1,0 +1,25 @@
+module examples.v1_process_binding
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+    inherited_env_visible is Boolean
+    secret_value_in_stdin is Boolean
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+    requires network, secret_read
+    secrets SEARCH_API_KEY
+
+skill BuildSource
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchSource
+    do
+        FetchSource
+            with request as request
+            into source
+        give source

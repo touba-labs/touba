@@ -1,0 +1,13 @@
+[package]
+name = "touba-cli"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "touba-compile"
+path = "src/main.rs"
+
+[dependencies]
+touba-compiler = { path = "../../compiler/touba-compiler" }
+serde_json = "1.0.149"

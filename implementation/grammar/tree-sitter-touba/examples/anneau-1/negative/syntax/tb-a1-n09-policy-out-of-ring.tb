@@ -1,0 +1,4 @@
+module examples.a1_negative_policy
+
+policy DataPolicy
+    allow Read

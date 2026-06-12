@@ -1,0 +1,13 @@
+module examples.a2_trigger_non_positive_max_runs
+
+strategy RunResearch
+    do
+        show
+            with message as "research scheduled"
+
+trigger DailyResearch
+    on schedule "0 8 * * *"
+    runs strategy RunResearch
+    limits
+        max_runs_per_day as 0
+        timeout_ms as 30000

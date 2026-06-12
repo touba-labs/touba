@@ -1,0 +1,24 @@
+module examples.binddefine_module_define
+
+define DefaultTopic as Text = "transport"
+define ScoreLimit as Float = 0.75
+
+tool SearchTopic
+    takes query as Text
+    gives Text
+    requires network
+
+function IsAccepted
+    takes score as Float
+    gives Boolean
+    do
+        give score >= ScoreLimit
+
+skill RunSearch
+    gives Text
+    uses SearchTopic
+    do
+        SearchTopic
+            with query as DefaultTopic
+            into result
+        give result

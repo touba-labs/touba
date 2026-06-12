@@ -1,0 +1,30 @@
+module examples.a1_fallback_binding
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+skill FallbackSource
+    takes request as SourceRequest
+    gives SourceText
+    do
+        give SourceText
+
+skill BuildSource
+    takes request as SourceRequest
+    gives SourceText
+    uses FetchSource
+    uses FallbackSource
+    do
+        FetchSource
+            with request as request
+            into source
+        give source
+    on failure
+        fallback FallbackSource

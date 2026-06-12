@@ -1,0 +1,25 @@
+module examples.a1_loop_binding
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+type SourceBatch
+    items is List of SourceText
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+
+skill BuildBatch
+    takes requests as List of SourceRequest
+    gives SourceBatch
+    uses FetchSource
+    do
+        for request in requests
+            FetchSource
+                with request as request
+                into source
+        give SourceBatch

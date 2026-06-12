@@ -1,0 +1,9 @@
+module invalid.give_value
+
+type Draft
+    body is Text
+
+function Build
+    gives Draft
+    do
+        give missingDraft

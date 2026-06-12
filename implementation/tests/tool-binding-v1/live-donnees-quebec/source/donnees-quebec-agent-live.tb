@@ -1,0 +1,74 @@
+module examples.donnees_quebec_agent_live
+
+type DonneesQuebecAgentRequest
+    query is Text
+    rows is Int
+    dry_run is Boolean
+    llm_model is Text
+    goal is Text
+
+type DonneesQuebecSearchResult
+    mode is Text
+    api_url is Text
+    query is Text
+    result_count is Int
+    first_dataset_title is Text
+    llm_model is Text
+
+type DonneesQuebecAgentBrief
+    mode is Text
+    query is Text
+    result_count is Int
+    first_dataset_title is Text
+    summary is Text
+
+tool SearchDatasets
+    takes request as DonneesQuebecAgentRequest
+    gives DonneesQuebecSearchResult
+    requires network
+
+tool SummarizeDatasets
+    takes search as DonneesQuebecSearchResult
+    gives DonneesQuebecAgentBrief
+    requires network, secret_read
+    secrets OPENAI_API_KEY
+
+skill SearchDatasetOnly
+    takes request as DonneesQuebecAgentRequest
+    gives DonneesQuebecSearchResult
+    uses SearchDatasets
+    do
+        SearchDatasets
+            with request as request
+            into search
+        show
+            with message as "Search-only first dataset: " ++ search.first_dataset_title
+        give search
+
+skill BuildDatasetBrief
+    takes request as DonneesQuebecAgentRequest
+    gives DonneesQuebecAgentBrief
+    uses SearchDatasets
+    uses SummarizeDatasets
+    do
+        SearchDatasets
+            with request as request
+            into search
+        show
+            with message as "First dataset: " ++ search.first_dataset_title
+        SummarizeDatasets
+            with search as search
+            into brief
+        show
+            with message as brief.summary
+        give brief
+
+agent Researcher
+    uses SearchDatasetOnly
+    uses BuildDatasetBrief
+    callable_by strategy RunDatasetResearch
+
+strategy RunDatasetResearch
+    uses Researcher
+    do
+        Researcher

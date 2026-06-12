@@ -1,0 +1,12 @@
+module examples.v1_tool_requires
+
+type SourceRequest
+    query is Text
+
+type SourceText
+    body is Text
+
+tool FetchSource
+    takes request as SourceRequest
+    gives SourceText
+    requires network, secret_read

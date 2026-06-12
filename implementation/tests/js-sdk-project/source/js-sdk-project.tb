@@ -1,0 +1,26 @@
+module examples.js_sdk_project
+
+type JsSdkRequest
+    name is Text
+
+type JsSdkResult
+    message is Text
+    secret_seen is Boolean
+
+tool BuildGreeting
+    takes request as JsSdkRequest
+    gives JsSdkResult
+    requires network, secret_read
+    secrets DEMO_API_KEY
+
+skill RunGreeting
+    takes request as JsSdkRequest
+    gives JsSdkResult
+    uses BuildGreeting
+    do
+        BuildGreeting
+            with request as request
+            into result
+        show
+            with message as result.message
+        give result

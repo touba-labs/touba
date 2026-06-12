@@ -1,0 +1,52 @@
+# System files
+.DS_Store
+Thumbs.db
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+*.secret.*
+*.secrets.*
+*.private.*
+*.local.*
+
+# Dependencies and caches
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+.turbo/
+.cache/
+.toolchains/
+.vscode-test/
+.dart_tool/
+target/
+
+# Build outputs
+dist/
+build/
+coverage/
+.docusaurus/
+vsix-staging/
+*.vsix
+*.tgz
+
+# Generated LaTeX artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.pdf
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+*.vrb

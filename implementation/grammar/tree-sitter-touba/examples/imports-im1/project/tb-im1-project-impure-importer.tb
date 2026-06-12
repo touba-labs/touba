@@ -1,0 +1,8 @@
+module examples.project_impure_importer
+
+import function FetchThroughFunction from examples.project_impure_source
+
+strategy RunImpureImporter
+    do
+        show
+            with message as "impure import"

@@ -1,0 +1,18 @@
+module examples.shared_flow
+
+skill NormalizeTopic
+    takes topic as Text
+    gives Text
+    do
+        bind normalized as Text = "topic:" ++ topic
+        give normalized
+
+strategy SharedTopicRun
+    takes topic as Text
+    gives Text
+    uses NormalizeTopic
+    do
+        NormalizeTopic
+            with topic as topic
+            into normalized
+        give normalized

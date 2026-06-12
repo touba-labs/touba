@@ -1,0 +1,7 @@
+module examples.control_flow_give_then_give
+
+strategy DoubleGive
+    gives Text
+    do
+        give "first"
+        give "second"

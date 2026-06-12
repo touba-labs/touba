@@ -1,0 +1,22 @@
+module examples.expr1_call_argument_expression
+
+type Analysis
+    score is Float
+
+type Decision
+    approved is Boolean
+
+tool StoreScore
+    takes score as Float
+    gives Decision
+
+skill ReviewScore
+    takes analysis as Analysis
+    takes bonus as Float
+    gives Decision
+    uses StoreScore
+    do
+        StoreScore
+            with score as analysis.score + bonus
+            into decision
+        give decision

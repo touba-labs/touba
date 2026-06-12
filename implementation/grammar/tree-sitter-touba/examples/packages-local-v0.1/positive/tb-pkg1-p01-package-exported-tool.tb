@@ -1,0 +1,14 @@
+module org.example.research
+
+type DatasetSearchRequest
+    query is Text
+    rows is Int
+
+type DatasetSearchResult
+    title is Text
+    url is Text
+
+tool SearchDatasets
+    takes request as DatasetSearchRequest
+    gives DatasetSearchResult
+    requires network

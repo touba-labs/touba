@@ -1,0 +1,42 @@
+module examples.scenario_pure_functions
+
+define RiskThreshold as Float = 0.7
+define FileThreshold as Int = 12
+define ReviewPrefix as Text = "review: "
+define FilesPrefix as Text = "files: "
+
+type ChangeSignal
+    title is Text
+    high_impact is Boolean
+    risk is Float
+    files is Int
+
+function CountRemainingReviews
+    takes requested as Int
+    takes completed as Int
+    gives Int
+    do
+        give requested - completed
+
+function ComputeAdjustedRisk
+    takes signal as ChangeSignal
+    takes mitigation as Float
+    gives Float
+    do
+        bind adjusted as Float = signal.risk - mitigation
+        give adjusted
+
+function BuildReviewLabel
+    takes signal as ChangeSignal
+    gives Text
+    do
+        bind label as Text = ReviewPrefix ++ signal.title ++ " / " ++ FilesPrefix ++ text(signal.files)
+        give label
+
+function ShouldEscalateChange
+    takes signal as ChangeSignal
+    gives Boolean
+    do
+        bind risky as Boolean = signal.risk >= RiskThreshold
+        bind many_files as Boolean = signal.files > FileThreshold
+        give signal.high_impact or risky or many_files

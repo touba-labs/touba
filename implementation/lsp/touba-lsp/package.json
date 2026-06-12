@@ -1,0 +1,16 @@
+{
+  "name": "@touba/lsp-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal Touba language server.",
+  "main": "./src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs --stdio",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "vscode-languageserver": "9.0.1",
+    "vscode-languageserver-textdocument": "1.0.12"
+  }
+}

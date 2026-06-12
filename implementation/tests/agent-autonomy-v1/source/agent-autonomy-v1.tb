@@ -1,0 +1,32 @@
+module examples.agent_autonomy_v1
+
+skill UseDatasetSearch
+    gives Text
+    do
+        show
+            with message as "Dataset search selected"
+        give "dataset"
+
+skill UseMemorySearch
+    gives Text
+    do
+        show
+            with message as "Memory search selected"
+        give "memory"
+
+skill HiddenSearch
+    gives Text
+    do
+        show
+            with message as "Hidden search selected"
+        give "hidden"
+
+agent Researcher
+    uses UseDatasetSearch
+    uses UseMemorySearch
+    callable_by strategy RunResearch
+
+strategy RunResearch
+    uses Researcher
+    do
+        Researcher

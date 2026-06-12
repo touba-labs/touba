@@ -1,0 +1,24 @@
+module examples.human_strategy_approval
+
+type Change
+    summary is Text
+
+skill ReviewChange
+    takes change as Change
+    gives Change
+    do
+        give change
+
+agent Reviewer
+    uses ReviewChange
+    callable_by strategy RunApproval
+
+strategy RunApproval
+    takes change as Change
+    uses Reviewer
+    do
+        human.approve
+            with context as change
+            into approval
+
+        Reviewer

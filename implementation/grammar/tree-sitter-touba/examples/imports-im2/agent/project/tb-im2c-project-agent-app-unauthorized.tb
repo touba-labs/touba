@@ -1,0 +1,9 @@
+module examples.agent_app_unauthorized
+
+import agent Reviewer from examples.agent_pool
+
+strategy RunReview
+    uses Reviewer
+    do
+        Reviewer
+        stop

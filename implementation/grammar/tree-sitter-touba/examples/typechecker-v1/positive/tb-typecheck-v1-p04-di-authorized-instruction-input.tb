@@ -1,0 +1,22 @@
+module examples.typecheck_v1_di_authorized_instruction_input
+
+type AgentInstruction
+    content is Text
+
+type LLMResponse
+    summary is Text
+
+tool CallLLM
+    takes instruction as AgentInstruction
+    gives LLMResponse
+    requires network
+
+skill RunAuthorizedInstruction
+    takes instruction as AgentInstruction
+    gives LLMResponse
+    uses CallLLM
+    do
+        CallLLM
+            with instruction as instruction
+            into response
+        give response

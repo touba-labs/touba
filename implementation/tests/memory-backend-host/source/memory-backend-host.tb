@@ -1,0 +1,58 @@
+module examples.memory_backend_host
+
+memory CustomerMemory
+
+type MemoryRequest
+    customer_id is Text
+    note is Text
+
+type MemoryResult
+    customer_id is Text
+    stored_note is Text
+    backend is Text
+
+tool WriteMemoryNote
+    uses memory CustomerMemory write
+    takes request as MemoryRequest
+    gives MemoryResult
+    requires network, secret_read, memory_write
+    secrets MEMORY_BACKEND_TOKEN
+
+tool ReadMemoryNote
+    uses memory CustomerMemory read
+    takes request as MemoryRequest
+    gives MemoryResult
+    requires network, secret_read, memory_read
+    secrets MEMORY_BACKEND_TOKEN
+
+skill StoreAndReadCustomerMemory
+    takes request as MemoryRequest
+    gives MemoryResult
+    uses WriteMemoryNote
+    uses ReadMemoryNote
+    memory CustomerMemory read
+    memory CustomerMemory write
+    do
+        WriteMemoryNote
+            with request as request
+            into stored
+
+        ReadMemoryNote
+            with request as request
+            into loaded
+
+        give loaded
+
+strategy RunCustomerMemory
+    takes request as MemoryRequest
+    gives MemoryResult
+    uses StoreAndReadCustomerMemory
+    do
+        StoreAndReadCustomerMemory
+            with request as request
+            into result
+
+        show
+            with message as "Memory backend returned: " ++ result.stored_note
+
+        give result

@@ -1,0 +1,10 @@
+module examples.expr1_negative_unknown_field
+
+type Analysis
+    score is Float
+
+function BadField
+    takes analysis as Analysis
+    gives Float
+    do
+        give analysis.confidence
