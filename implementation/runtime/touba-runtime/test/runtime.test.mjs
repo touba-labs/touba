@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 
 import {
   AIR_JSON_PROFILE,
@@ -2878,6 +2879,156 @@ test("lets the runtime decision provider request a capability catalog and provid
   assert.equal(JSON.stringify(result.trace).includes("postgres"), false);
 });
 
+test("lists skill pack hints in orientation without activating pack content by default", async () => {
+  const document = agentProviderDocument();
+  const skillPacks = [
+    skillPackFixture("research-review", {
+      description: "Review public research notes.",
+      content: "FULL PROCEDURE SHOULD NOT BE SENT BY DEFAULT",
+    }),
+    skillPackFixture("dataset-brief", {
+      description: "Prepare a dataset brief.",
+      content: "ANOTHER FULL PROCEDURE SHOULD NOT BE SENT",
+    }),
+  ];
+  let providerWasCalled = false;
+
+  const result = await executeAirDocument(document, {
+    inputs: { topic: "postgres" },
+    skillPacks,
+    agentDecisionProvider: (request) => {
+      providerWasCalled = true;
+      assert.equal(request.mode, "summary");
+      assert.equal(request.model_input.mode, "orientation");
+      assert.equal(request.model_input.resources_hint.skill_pack_hint_count, 2);
+      assert.deepEqual(
+        request.model_input.skill_pack_hints.map((hint) => hint.ref),
+        ["skill_pack:project/research-review", "skill_pack:project/dataset-brief"],
+      );
+      assert.equal(request.model_input.active_skill_packs, undefined);
+      assert.equal(JSON.stringify(request.model_input).includes("FULL PROCEDURE"), false);
+      return {
+        action: "answer_directly",
+        source: "skill_pack_test",
+        reason: "hints are enough",
+        result: "ok",
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(providerWasCalled, true);
+  const listed = eventOf(result.trace, "skill_pack_discovery_listed").payload;
+  assert.equal(listed.skill_pack_count, 2);
+  assert.deepEqual(listed.skill_pack_refs, [
+    "skill_pack:project/research-review",
+    "skill_pack:project/dataset-brief",
+  ]);
+  assert.equal(JSON.stringify(result.trace).includes("FULL PROCEDURE"), false);
+});
+
+test("activates configured skill packs with budgeted context and redacted traces", async () => {
+  const document = agentProviderDocument();
+  const skillPacks = [
+    skillPackFixture("research-review", {
+      content: "Use public references, compare claims, then prepare a concise review.",
+    }),
+  ];
+
+  const result = await executeAirDocument(document, {
+    inputs: { topic: "postgres" },
+    skillPacks,
+    activeSkillPackRefs: ["skill_pack:project/research-review"],
+    skillPackActivationReasons: {
+      "skill_pack:project/research-review": "host_policy_for_research_agent",
+    },
+    skillPackDiscoveryMaxBytes: 2000,
+    skillPackActivationMaxBytes: 2000,
+    agentModelInputMaxBytes: 12000,
+    agentDecisionProvider: (request) => {
+      assert.equal(request.mode, "summary");
+      assert.equal(request.model_input.skill_pack_hints.length, 1);
+      assert.equal(request.model_input.active_skill_packs.length, 1);
+      assert.equal(
+        request.model_input.active_skill_packs[0].resources[0].content,
+        "Use public references, compare claims, then prepare a concise review.",
+      );
+      assert.equal(request.model_input.skill_pack_budgets.activation_max_bytes, 2000);
+      return {
+        action: "answer_directly",
+        source: "skill_pack_test",
+        reason: "active pack is sufficient",
+        result: "ok",
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  const activated = eventOf(result.trace, "skill_pack_activated").payload;
+  assert.equal(activated.skill_pack_ref, "skill_pack:project/research-review");
+  assert.equal(activated.reason, "host_policy_for_research_agent");
+  assert.equal(activated.budget_max_bytes, 2000);
+  assert.equal(JSON.stringify(result.trace).includes("Use public references"), false);
+});
+
+test("refuses skill pack activation when the activation budget is exceeded", async () => {
+  const document = agentProviderDocument();
+  let providerWasCalled = false;
+
+  const result = await executeAirDocument(document, {
+    inputs: { topic: "postgres" },
+    skillPacks: [
+      skillPackFixture("research-review", {
+        content: "long active content that does not fit in a tiny activation budget",
+      }),
+    ],
+    activeSkillPackRefs: ["skill_pack:project/research-review"],
+    skillPackActivationMaxBytes: 10,
+    agentDecisionProvider: () => {
+      providerWasCalled = true;
+      return { action: "answer_directly", result: "unreachable" };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(providerWasCalled, false);
+  const refused = eventOf(result.trace, "skill_pack_activation_refused").payload;
+  assert.equal(refused.runtime_error_code, "SkillPackBudgetExceeded");
+  assert.equal(refused.phase, "activation");
+  assert.equal(refused.skill_pack_ref, "skill_pack:project/research-review");
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "SkillPackBudgetExceeded");
+  assert.equal(JSON.stringify(result.trace).includes("long active content"), false);
+});
+
+test("refuses resolved secrets in active skill pack context before calling the provider", async () => {
+  const document = agentProviderDocument();
+  let providerWasCalled = false;
+
+  const result = await executeAirDocument(document, {
+    inputs: { topic: "public-topic" },
+    secretStore: loadSecretsFromJson(JSON.stringify(secretsDocument()), {
+      env: { SEARCH_API_TOKEN: "resolved-secret-value" },
+    }),
+    skillPacks: [
+      skillPackFixture("research-review", {
+        content: "resolved-secret-value",
+      }),
+    ],
+    activeSkillPackRefs: ["skill_pack:project/research-review"],
+    agentDecisionProvider: () => {
+      providerWasCalled = true;
+      return { action: "answer_directly", result: "unreachable" };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(providerWasCalled, false);
+  const failure = eventOf(result.trace, "failure_detected");
+  assert.equal(failure.payload.runtime_error_code, "SecretValueInAgentDecisionRequest");
+  assert.deepEqual(failure.payload.secret_handles_refused, ["SEARCH_API_KEY"]);
+  assert.equal(JSON.stringify(result.trace).includes("resolved-secret-value"), false);
+});
+
 test("traces ADP-1 provider metadata and redacted request digest without raw inputs", async () => {
   const document = agentProviderDocument();
   const result = await executeAirDocument(document, {
@@ -4300,6 +4451,39 @@ function triggerEvent(fields = {}) {
       raw: "raw-secret-payload",
     },
     ...fields,
+  };
+}
+
+function skillPackFixture(skillId, {
+  description = "Procedure for a runtime test skill pack.",
+  content = "Follow the declared procedure.",
+} = {}) {
+  const resourceDigest = `sha256:${crypto.createHash("sha256").update(content).digest("hex")}`;
+  return {
+    ref: `skill_pack:project/${skillId}`,
+    name: skillId
+      .split("-")
+      .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+      .join(" "),
+    description,
+    version: "0.1.0",
+    tags: ["test"],
+    source: "project",
+    activation: {
+      model_invocable: true,
+      user_invocable: true,
+    },
+    resources: [
+      {
+        ref: `resource:${skillId}/procedure`,
+        path: "SKILL.md",
+        kind: "procedure",
+        loadable_as_context: true,
+        digest: resourceDigest,
+        content,
+      },
+    ],
+    execution_links: [],
   };
 }
 

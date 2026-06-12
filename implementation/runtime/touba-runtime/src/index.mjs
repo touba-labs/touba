@@ -135,6 +135,15 @@ const AGENT_DECISION_PROVIDER_METADATA_FIELDS = Object.freeze([
 ]);
 const AGENT_DECISION_PROVIDER_METADATA_FIELD_SET = new Set(AGENT_DECISION_PROVIDER_METADATA_FIELDS);
 const AGENT_DECISION_PROVIDER_METADATA_MAX_LENGTH = 200;
+const SKILL_PACK_REF_PATTERN = /^skill_pack:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const SKILL_PACK_RESOURCE_REF_PATTERN = /^resource:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const SHA256_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const SKILL_PACK_RESOURCE_KINDS = new Set(["procedure", "reference", "example", "template", "sample", "script", "fixture"]);
+const SKILL_PACK_BUDGET_FIELDS = Object.freeze({
+  discoveryMaxBytes: "skillPackDiscoveryMaxBytes",
+  activationMaxBytes: "skillPackActivationMaxBytes",
+  modelInputMaxBytes: "agentModelInputMaxBytes",
+});
 
 export const RUNTIME_CAPABILITIES = Object.freeze([
   AIR_SCHEMA_VERSION,
@@ -294,6 +303,12 @@ function createExecutionContext(document, entryRef, options = {}) {
   const indexes = indexAirDocument(document);
   const trace = new TraceBuilder(document, entryRef, options.runId ?? "run-1");
   const initialValues = normalizeInputs(options.inputs ?? {});
+  const skillPacks = normalizeSkillPacks(options.skillPacks ?? options.skill_packs ?? []);
+  const activeSkillPackRefs = normalizeStringSet(
+    options.activeSkillPackRefs ?? options.active_skill_pack_refs ?? [],
+    "activeSkillPackRefs",
+  );
+  validateActiveSkillPackRefs(skillPacks, activeSkillPackRefs);
   return {
     indexes,
     trace,
@@ -321,6 +336,12 @@ function createExecutionContext(document, entryRef, options = {}) {
       options.agentDecisionProviderMaxRetries ?? options.agent_decision_provider_max_retries ?? 0,
       "agentDecisionProviderMaxRetries",
     ) ?? 0,
+    skillPacks,
+    activeSkillPackRefs,
+    skillPackActivationReasons: normalizeSkillPackActivationReasons(
+      options.skillPackActivationReasons ?? options.skill_pack_activation_reasons ?? {},
+    ),
+    skillPackBudgets: normalizeSkillPackBudgets(options),
     runState: createRunState(options),
     budgetState: createBudgetState(document, normalizeOptionalToolBindingManifest(options.toolBindingManifest), options),
     maxAgentSteps: normalizePositiveRuntimeInteger(
@@ -1475,7 +1496,7 @@ async function requestAgentDecisionFromProvider(agent, capabilityRefs, context, 
 function agentDecisionProviderRequest(agent, capabilityRefs, context, mode, loopState = null) {
   const inputs = publicInputValuesForAgentDecision(context);
   const capabilities = capabilityRefs.map((capabilityRef) => agentCapabilityDescriptor(capabilityRef, context));
-  const modelInput = agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loopState);
+  const modelInput = agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loopState, context);
   const request = {
     protocol: AGENT_DECISION_PROTOCOL_VERSION,
     mode,
@@ -1500,9 +1521,10 @@ function agentDecisionProviderRequest(agent, capabilityRefs, context, mode, loop
   return request;
 }
 
-function agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loopState = null) {
+function agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loopState = null, context = null) {
   const orientationMode = mode === "summary";
   const observations = loopState?.observations ?? [];
+  const skillPackContext = prepareSkillPackModelContext(context, agent, mode);
   const inputEntries = Object.entries(inputs).map(([name, value]) => ({
     name,
     category: "runtime_input",
@@ -1523,7 +1545,7 @@ function agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loop
     authority: "developer",
     text: agent.responsibility,
   };
-  return compactPayload({
+  const modelInput = compactPayload({
     protocol: AGENT_MODEL_INPUT_PROTOCOL_VERSION,
     mode: orientationMode ? "orientation" : "capability_catalog",
     agent: {
@@ -1573,13 +1595,19 @@ function agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loop
       capability_kinds: resourceKinds,
       catalog_available_on_request: orientationMode,
       catalog_presented: !orientationMode,
+      skill_pack_hints_available: skillPackContext.hints.length > 0,
+      skill_pack_hint_count: skillPackContext.hints.length,
+      active_skill_pack_count: skillPackContext.active.length,
     },
+    skill_pack_hints: skillPackContext.hints,
+    active_skill_packs: skillPackContext.active.length > 0 ? skillPackContext.active : undefined,
+    skill_pack_budgets: skillPackContext.budgets,
     resource_interface: {
       catalog_policy: orientationMode ? "available_on_request" : "presented",
-      resource_kinds: resourceKinds,
+      resource_kinds: skillPackContext.hints.length > 0 ? [...resourceKinds, "skill_pack"] : resourceKinds,
       includes: orientationMode
-        ? ["capability_refs", "capability_count", "capability_kinds"]
-        : ["capability_descriptors", "signatures", "requirements", "nested_uses"],
+        ? ["capability_refs", "capability_count", "capability_kinds", "skill_pack_hints"]
+        : ["capability_descriptors", "signatures", "requirements", "nested_uses", "skill_pack_hints", "active_skill_packs"],
     },
     human_interaction: {
       request_present: false,
@@ -1625,6 +1653,169 @@ function agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loop
         },
       },
   });
+  assertSkillPackBudget(context, "model_input", estimateJsonBytes(modelInput), context?.skillPackBudgets?.modelInputMaxBytes ?? null, {
+    agent_ref: agent.id,
+    provider_mode: mode,
+    skill_pack_hint_count: skillPackContext.hints.length,
+    active_skill_pack_count: skillPackContext.active.length,
+  });
+  return modelInput;
+}
+
+function prepareSkillPackModelContext(context, agent, providerMode) {
+  if (!context || context.skillPacks.length === 0) {
+    return {
+      hints: [],
+      active: [],
+      budgets: skillPackBudgetReport(context),
+    };
+  }
+
+  const hints = context.skillPacks.map((pack) => skillPackHint(pack));
+  const hintBytes = estimateJsonBytes(hints);
+  assertSkillPackBudget(context, "discovery", hintBytes, context.skillPackBudgets.discoveryMaxBytes, {
+    agent_ref: agent.id,
+    provider_mode: providerMode,
+    skill_pack_count: hints.length,
+  });
+  context.trace.push("skill_pack_discovery_listed", {
+    payload: compactPayload({
+      agent_ref: agent.id,
+      provider_mode: providerMode,
+      skill_pack_count: hints.length,
+      skill_pack_refs: hints.map((hint) => hint.ref),
+      approx_size_bytes: hintBytes,
+      budget_max_bytes: context.skillPackBudgets.discoveryMaxBytes,
+    }),
+  });
+
+  const active = [];
+  for (const pack of context.skillPacks) {
+    if (!context.activeSkillPackRefs.has(pack.ref)) {
+      continue;
+    }
+    const reason = context.skillPackActivationReasons.get(pack.ref) ?? "host_policy";
+    const activePack = activeSkillPackRecord(pack, reason);
+    const activeBytes = estimateJsonBytes(activePack);
+    assertSkillPackBudget(context, "activation", activeBytes, context.skillPackBudgets.activationMaxBytes, {
+      agent_ref: agent.id,
+      provider_mode: providerMode,
+      skill_pack_ref: pack.ref,
+      skill_pack_version: pack.version,
+      skill_pack_digest: pack.digest,
+      source: pack.source,
+      reason,
+    });
+    active.push(activePack);
+    context.trace.push("skill_pack_activated", {
+      payload: compactPayload({
+        agent_ref: agent.id,
+        provider_mode: providerMode,
+        skill_pack_ref: pack.ref,
+        version: pack.version,
+        digest: pack.digest,
+        source: pack.source,
+        reason,
+        approx_size_bytes: activeBytes,
+        budget_max_bytes: context.skillPackBudgets.activationMaxBytes,
+      }),
+    });
+  }
+
+  const activeBytes = estimateJsonBytes(active);
+  assertSkillPackBudget(context, "active_skill_packs", activeBytes, context.skillPackBudgets.modelInputMaxBytes, {
+    agent_ref: agent.id,
+    provider_mode: providerMode,
+    active_skill_pack_count: active.length,
+  });
+
+  return {
+    hints,
+    active,
+    budgets: skillPackBudgetReport(context),
+  };
+}
+
+function skillPackHint(pack) {
+  return compactPayload({
+    ref: pack.ref,
+    name: pack.name,
+    description: pack.description,
+    version: pack.version,
+    tags: pack.tags,
+    source: pack.source,
+    digest: pack.digest,
+    activation: pack.activation,
+    resource_count: pack.resources.length,
+    execution_link_count: pack.executionLinks.length,
+  });
+}
+
+function activeSkillPackRecord(pack, reason) {
+  return compactPayload({
+    ref: pack.ref,
+    name: pack.name,
+    description: pack.description,
+    version: pack.version,
+    source: pack.source,
+    digest: pack.digest,
+    activation_reason: reason,
+    resources: pack.resources
+      .filter((resource) => resource.loadableAsContext === true)
+      .map((resource) => compactPayload({
+        ref: resource.ref,
+        kind: resource.kind,
+        path: resource.path,
+        digest: resource.digest,
+        content: resource.content,
+      })),
+    execution_links: pack.executionLinks,
+  });
+}
+
+function assertSkillPackBudget(context, phase, consumedBytes, maxBytes, details = {}) {
+  if (maxBytes === null || consumedBytes <= maxBytes) {
+    return;
+  }
+  context.trace.push("skill_pack_activation_refused", {
+    payload: compactPayload({
+      ...details,
+      phase,
+      reason: "budget_exceeded",
+      consumed_bytes: consumedBytes,
+      budget_max_bytes: maxBytes,
+      runtime_error_code: "SkillPackBudgetExceeded",
+    }),
+  });
+  throw new RuntimeFailure(
+    `skill pack ${phase} budget exceeded`,
+    {
+      ...details,
+      phase,
+      consumedBytes,
+      maxBytes,
+    },
+    "SkillPackBudgetExceeded",
+  );
+}
+
+function skillPackBudgetReport(context) {
+  if (!context?.skillPackBudgets) {
+    return {
+      discovery_max_bytes: null,
+      activation_max_bytes: null,
+      model_input_max_bytes: null,
+    };
+  }
+  return {
+    discovery_max_bytes: context.skillPackBudgets.discoveryMaxBytes,
+    activation_max_bytes: context.skillPackBudgets.activationMaxBytes,
+    model_input_max_bytes: context.skillPackBudgets.modelInputMaxBytes,
+  };
+}
+
+function estimateJsonBytes(value) {
+  return Buffer.byteLength(JSON.stringify(value ?? null), "utf8");
 }
 
 function agentDecisionRequestTracePayload(request) {
@@ -1642,6 +1833,12 @@ function agentDecisionRequestTracePayload(request) {
     observation_count: Array.isArray(request.observations) ? request.observations.length : undefined,
     capability_refs: request.mode === "summary" ? request.capability_refs : undefined,
     catalog_presented: request.mode === "capabilities" ? true : undefined,
+    skill_pack_hint_count: request.model_input?.skill_pack_hints?.length > 0
+      ? request.model_input.skill_pack_hints.length
+      : undefined,
+    active_skill_pack_count: request.model_input?.active_skill_packs?.length > 0
+      ? request.model_input.active_skill_packs.length
+      : undefined,
     input_keys: request.input_keys,
   });
 }
@@ -6318,6 +6515,242 @@ function normalizeTriggerRunCountKey(triggerRef) {
     });
   }
   return triggerRef;
+}
+
+function normalizeSkillPacks(skillPacks) {
+  if (skillPacks === undefined || skillPacks === null) {
+    return [];
+  }
+  if (!Array.isArray(skillPacks)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", "skillPacks must be an array");
+  }
+  const refs = new Set();
+  return skillPacks.map((pack, index) => {
+    const fieldName = `skillPacks[${index}]`;
+    if (!pack || typeof pack !== "object" || Array.isArray(pack)) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an object`);
+    }
+    const ref = normalizeSkillPackRef(pack.ref, `${fieldName}.ref`);
+    if (refs.has(ref)) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", "skillPacks cannot contain duplicate refs", { ref });
+    }
+    refs.add(ref);
+    const resources = normalizeSkillPackResources(pack.resources ?? [], `${fieldName}.resources`);
+    const executionLinks = normalizeSkillPackExecutionLinks(
+      pack.execution_links ?? pack.executionLinks ?? [],
+      `${fieldName}.execution_links`,
+    );
+    return Object.freeze({
+      ref,
+      name: normalizeNonEmptyRuntimeString(pack.name, `${fieldName}.name`),
+      description: normalizeNonEmptyRuntimeString(pack.description, `${fieldName}.description`),
+      version: normalizeNonEmptyRuntimeString(pack.version ?? "0.0.0", `${fieldName}.version`),
+      tags: normalizeRuntimeStringArray(pack.tags ?? [], `${fieldName}.tags`),
+      source: normalizeNonEmptyRuntimeString(pack.source ?? "project", `${fieldName}.source`),
+      digest: normalizeOptionalSha256Digest(pack.digest, `${fieldName}.digest`)
+        ?? digestSkillPackEvidence(ref, pack.version, resources),
+      activation: normalizeSkillPackActivation(pack.activation ?? {}, `${fieldName}.activation`),
+      resources,
+      executionLinks,
+    });
+  });
+}
+
+function normalizeSkillPackResources(resources, fieldName) {
+  if (!Array.isArray(resources)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an array`);
+  }
+  const refs = new Set();
+  return resources.map((resource, index) => {
+    const entryField = `${fieldName}[${index}]`;
+    if (!resource || typeof resource !== "object" || Array.isArray(resource)) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", `${entryField} must be an object`);
+    }
+    const ref = normalizeSkillPackResourceRef(resource.ref, `${entryField}.ref`);
+    if (refs.has(ref)) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} cannot contain duplicate resource refs`, { ref });
+    }
+    refs.add(ref);
+    const kind = normalizeNonEmptyRuntimeString(resource.kind, `${entryField}.kind`);
+    if (!SKILL_PACK_RESOURCE_KINDS.has(kind)) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", `${entryField}.kind is not supported`, { kind });
+    }
+    if (resource.executable_by_pack === true || resource.executableByPack === true) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", "skill pack scripts cannot be executable by the pack", {
+        fieldName: entryField,
+      });
+    }
+    const loadableAsContext = resource.loadable_as_context ?? resource.loadableAsContext ?? false;
+    if (typeof loadableAsContext !== "boolean") {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", `${entryField}.loadable_as_context must be boolean`);
+    }
+    return Object.freeze({
+      ref,
+      path: normalizeNonEmptyRuntimeString(resource.path, `${entryField}.path`),
+      kind,
+      digest: normalizeOptionalSha256Digest(resource.digest, `${entryField}.digest`),
+      loadableAsContext,
+      content: normalizeOptionalRuntimeString(resource.content, `${entryField}.content`),
+    });
+  });
+}
+
+function normalizeSkillPackExecutionLinks(links, fieldName) {
+  if (!Array.isArray(links)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an array`);
+  }
+  return links.map((link, index) => {
+    const entryField = `${fieldName}[${index}]`;
+    if (!link || typeof link !== "object" || Array.isArray(link)) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", `${entryField} must be an object`);
+    }
+    return Object.freeze({
+      label: normalizeNonEmptyRuntimeString(link.label, `${entryField}.label`),
+      target_ref: normalizeNonEmptyRuntimeString(link.target_ref ?? link.targetRef, `${entryField}.target_ref`),
+      description: normalizeOptionalRuntimeString(link.description, `${entryField}.description`),
+    });
+  });
+}
+
+function normalizeSkillPackActivation(activation, fieldName) {
+  if (!activation || typeof activation !== "object" || Array.isArray(activation)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an object`);
+  }
+  return Object.freeze({
+    model_invocable: activation.model_invocable !== false,
+    user_invocable: activation.user_invocable !== false,
+  });
+}
+
+function normalizeSkillPackBudgets(options) {
+  return Object.freeze({
+    discoveryMaxBytes: normalizeOptionalPositiveRuntimeInteger(
+      options.skillPackDiscoveryMaxBytes
+        ?? options.skill_pack_discovery_max_bytes
+        ?? null,
+      SKILL_PACK_BUDGET_FIELDS.discoveryMaxBytes,
+    ),
+    activationMaxBytes: normalizeOptionalPositiveRuntimeInteger(
+      options.skillPackActivationMaxBytes
+        ?? options.skill_pack_activation_max_bytes
+        ?? null,
+      SKILL_PACK_BUDGET_FIELDS.activationMaxBytes,
+    ),
+    modelInputMaxBytes: normalizeOptionalPositiveRuntimeInteger(
+      options.agentModelInputMaxBytes
+        ?? options.agent_model_input_max_bytes
+        ?? null,
+      SKILL_PACK_BUDGET_FIELDS.modelInputMaxBytes,
+    ),
+  });
+}
+
+function normalizeSkillPackActivationReasons(reasons) {
+  if (reasons instanceof Map) {
+    return new Map(
+      [...reasons.entries()].map(([ref, reason]) => [
+        normalizeSkillPackRef(ref, "skillPackActivationReasons key"),
+        normalizeNonEmptyRuntimeString(reason, `skillPackActivationReasons.${ref}`),
+      ]),
+    );
+  }
+  if (!reasons || typeof reasons !== "object" || Array.isArray(reasons)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", "skillPackActivationReasons must be an object");
+  }
+  const normalized = new Map();
+  for (const [ref, reason] of Object.entries(reasons)) {
+    normalized.set(
+      normalizeSkillPackRef(ref, "skillPackActivationReasons key"),
+      normalizeNonEmptyRuntimeString(reason, `skillPackActivationReasons.${ref}`),
+    );
+  }
+  return normalized;
+}
+
+function normalizeStringSet(values, fieldName) {
+  if (values instanceof Set) {
+    values = [...values];
+  }
+  if (!Array.isArray(values)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an array`);
+  }
+  const normalized = new Set();
+  for (const value of values) {
+    normalized.add(normalizeSkillPackRef(value, `${fieldName}[]`));
+  }
+  return normalized;
+}
+
+function validateActiveSkillPackRefs(skillPacks, activeRefs) {
+  const knownRefs = new Set(skillPacks.map((pack) => pack.ref));
+  for (const ref of activeRefs) {
+    if (!knownRefs.has(ref)) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", "activeSkillPackRefs contains an unknown skill pack ref", {
+        ref,
+      });
+    }
+  }
+}
+
+function normalizeSkillPackRef(value, fieldName) {
+  const ref = normalizeNonEmptyRuntimeString(value, fieldName);
+  if (!SKILL_PACK_REF_PATTERN.test(ref)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be a skill_pack ref`, { ref });
+  }
+  return ref;
+}
+
+function normalizeSkillPackResourceRef(value, fieldName) {
+  const ref = normalizeNonEmptyRuntimeString(value, fieldName);
+  if (!SKILL_PACK_RESOURCE_REF_PATTERN.test(ref)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be a resource ref`, { ref });
+  }
+  return ref;
+}
+
+function normalizeOptionalSha256Digest(value, fieldName) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const digest = normalizeNonEmptyRuntimeString(value, fieldName);
+  if (!SHA256_DIGEST_PATTERN.test(digest)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be sha256:<hex>`);
+  }
+  return digest;
+}
+
+function normalizeNonEmptyRuntimeString(value, fieldName) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be a non-empty string`);
+  }
+  return value;
+}
+
+function normalizeOptionalRuntimeString(value, fieldName) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return normalizeNonEmptyRuntimeString(value, fieldName);
+}
+
+function normalizeRuntimeStringArray(values, fieldName) {
+  if (!Array.isArray(values)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an array`);
+  }
+  return values.map((value, index) => normalizeNonEmptyRuntimeString(value, `${fieldName}[${index}]`));
+}
+
+function digestSkillPackEvidence(ref, version, resources) {
+  return `sha256:${sha256Json({
+    ref,
+    version,
+    resources: resources.map((resource) => ({
+      ref: resource.ref,
+      digest: resource.digest,
+      path: resource.path,
+      kind: resource.kind,
+    })),
+  })}`;
 }
 
 function normalizePositiveRuntimeInteger(value, fieldName) {
