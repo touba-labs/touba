@@ -22,6 +22,20 @@ const packageRoot = resolve(currentDir, "..");
 const implementationRoot = resolve(currentDir, "../../..");
 const args = process.argv.slice(2);
 
+const TOUBA_VERSION = "0.1.0";
+const SCHEMA_VERSIONS = Object.freeze({
+  air: "air-minimal-v0.1",
+  trace: "trace-minimal-v0.1",
+  manifest: "touba-manifest-v1",
+  secrets: "touba-secrets-v1",
+  ownership: "touba-ownership-v0.1",
+  trace_audit: "trace-audit-v0.1",
+  trace_audit_validation: "trace-audit-validation-v0.1",
+  trace_audit_export: "trace-audit-export-v0.1-local",
+  supply_chain_lock: "touba-lock-v0.1",
+  supply_chain_validation: "touba-supply-chain-validation-v0.1",
+});
+
 try {
   const result = await dispatch(args);
   if (result.usage === true) {
@@ -429,24 +443,13 @@ function runPassthrough(command, rawArgs, options = {}) {
 
 function toubaVersions() {
   return {
-    cli: readPackageVersion(join(packageRoot, "package.json")),
-    runtime: readPackageVersion(join(implementationRoot, "runtime", "touba-runtime", "package.json")),
-    inspect: readPackageVersion(join(implementationRoot, "cli", "touba-inspect", "package.json")),
-    audit: readPackageVersion(join(implementationRoot, "cli", "touba-audit", "package.json")),
-    supply_chain: readPackageVersion(join(implementationRoot, "cli", "touba-supply-chain", "package.json")),
-    manifest: readPackageVersion(join(implementationRoot, "cli", "touba-manifest", "package.json")),
-    schemas: {
-      air: "air-minimal-v0.1",
-      trace: "trace-minimal-v0.1",
-      manifest: "touba-manifest-v1",
-      secrets: "touba-secrets-v1",
-      ownership: "touba-ownership-v0.1",
-      trace_audit: "trace-audit-v0.1",
-      trace_audit_validation: "trace-audit-validation-v0.1",
-      trace_audit_export: "trace-audit-export-v0.1-local",
-      supply_chain_lock: "touba-lock-v0.1",
-      supply_chain_validation: "touba-supply-chain-validation-v0.1",
-    },
+    cli: readPackageVersion(join(packageRoot, "package.json"), TOUBA_VERSION),
+    runtime: readPackageVersion(join(implementationRoot, "runtime", "touba-runtime", "package.json"), TOUBA_VERSION),
+    inspect: readPackageVersion(join(implementationRoot, "cli", "touba-inspect", "package.json"), TOUBA_VERSION),
+    audit: readPackageVersion(join(implementationRoot, "cli", "touba-audit", "package.json"), TOUBA_VERSION),
+    supply_chain: readPackageVersion(join(implementationRoot, "cli", "touba-supply-chain", "package.json"), TOUBA_VERSION),
+    manifest: readPackageVersion(join(implementationRoot, "cli", "touba-manifest", "package.json"), TOUBA_VERSION),
+    schemas: SCHEMA_VERSIONS,
     distribution: {
       channel: process.env.TOUBA_DISTRIBUTION_CHANNEL ?? "local-development",
       platform: `${process.platform}-${process.arch}`,
@@ -474,12 +477,12 @@ function renderVersionsText(info) {
   ].join("\n");
 }
 
-function readPackageVersion(packageJsonPath) {
+function readPackageVersion(packageJsonPath, fallback = "unknown") {
   try {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
-    return packageJson.version ?? "unknown";
+    return packageJson.version ?? fallback;
   } catch {
-    return "unknown";
+    return fallback;
   }
 }
 
