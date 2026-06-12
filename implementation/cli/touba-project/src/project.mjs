@@ -641,6 +641,12 @@ export function renderReport(report) {
   if (report.run_plan_path) {
     lines.push(`Run plan: ${report.run_plan_path}`);
   }
+  if (report.skill_pack_path) {
+    lines.push(`Skill pack: ${report.skill_pack_path}`);
+  }
+  if (report.skill_pack_ref) {
+    lines.push(`Skill pack ref: ${report.skill_pack_ref}`);
+  }
   if (report.ownership?.path) {
     lines.push(`Ownership: ${report.ownership.path}`);
   }
@@ -669,6 +675,12 @@ export function renderReport(report) {
     lines.push("Packages:");
     for (const item of report.packages) {
       lines.push(`- ${item.name}@${item.version} ${item.manifest_path}`);
+    }
+  }
+  if (report.skill_packs?.length > 0) {
+    lines.push("Skill packs:");
+    for (const item of report.skill_packs) {
+      lines.push(`- ${item.ref} ${item.path} (${item.resource_count} resources)`);
     }
   }
   if (report.binding_fragments?.length > 0) {

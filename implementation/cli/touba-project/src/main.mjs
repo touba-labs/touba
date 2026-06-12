@@ -15,6 +15,10 @@ import {
   renderReport,
   setProjectSecret,
 } from "./project.mjs";
+import {
+  newSkillPack,
+  validateSkillPacks,
+} from "./skill-packs.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -107,6 +111,26 @@ async function dispatch(rawArgs) {
       return { report, json: options.json, exitCode: 0 };
     }
     throw new Error("usage: touba secret set|list|check|remove ...");
+  }
+  if (command === "skill") {
+    const [action, target, ...tail] = rest;
+    if (action === "new" && target) {
+      const options = parseCommonOptions(tail);
+      const report = newSkillPack(target, options);
+      return { report, json: options.json, exitCode: 0 };
+    }
+    if (action === "validate") {
+      const options = parseSkillValidateOptions(target === undefined ? tail : [target, ...tail]);
+      const report = validateSkillPacks(options);
+      return { report, json: options.json, exitCode: report.status === "error" ? 1 : 0 };
+    }
+    if (action === undefined || action === "--help" || action === "-h") {
+      return {
+        text: "Usage: touba skill new <skill-id> [--root <path>] [--force]\n       touba skill validate [<skill-id|path>] [--root <path>]",
+        exitCode: 0,
+      };
+    }
+    throw new Error("usage: touba skill new|validate ...");
   }
   if (command === "compile") {
     return compileCommand(rest);
@@ -637,6 +661,25 @@ function parseSecretOptions(rawArgs) {
   return options;
 }
 
+function parseSkillValidateOptions(rawArgs) {
+  const options = { json: false };
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === "--root") {
+      options.root = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--root=")) {
+      options.root = arg.slice("--root=".length);
+    } else if (arg === "--json") {
+      options.json = true;
+    } else if (!arg.startsWith("--") && options.target === undefined) {
+      options.target = arg;
+    } else {
+      throw new Error(`unknown option ${arg}`);
+    }
+  }
+  return options;
+}
+
 function secretValueFromOptions(options) {
   if (options.value !== undefined) {
     return options.value;
@@ -659,6 +702,8 @@ function printUsage() {
   process.stdout.write(`Usage:
   touba init [--root <path>] [--language javascript]
   touba new module <domain.module> [--root <path>] [--force]
+  touba skill new <skill-id> [--root <path>] [--force]
+  touba skill validate [<skill-id|path>] [--root <path>]
   touba prepare [--root <path>] [--mode plan|check|write] [--source <file.tb>] [--air <file.air.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--resource-bindings <resources.json>] [--require-resource-bindings] [--run-plan <path>] [--ownership <touba.ownership.json>] [--require-ownership] [--entry <air-ref>] [--profile dev|prod] [--manifest <path>] [--handler-root <path>] [--handler-command <path>] [--json]
   touba secret set <HANDLE> [--root <path>] [--store <path>] --value-stdin
   touba secret list [--root <path>] [--store <path>]

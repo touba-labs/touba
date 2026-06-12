@@ -16,6 +16,10 @@ import {
   removeProjectSecret,
   setProjectSecret,
 } from "../src/project.mjs";
+import {
+  newSkillPack,
+  validateSkillPacks,
+} from "../src/skill-packs.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const cliPath = new URL("../src/main.mjs", import.meta.url).pathname;
@@ -102,6 +106,125 @@ test("new module writes canonical dotted module under src", () => {
     assert.throws(() => newModule("scratch", { root }), /at least two lowercase dotted/);
     assert.throws(() => newModule("DonneesQuebec.live_search", { root }), /lowercase dotted/);
     assert.throws(() => newModule("donnees_quebec.live_search", { root }), /already exists/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("skill new scaffolds a standard skill pack and validate accepts it", () => {
+  const root = tempRoot();
+  try {
+    const report = newSkillPack("research-review", { root });
+    const packPath = join(root, "skills/research-review");
+    assert.equal(report.command, "skill new");
+    assert.equal(report.skill_pack_ref, "skill_pack:project/research-review");
+    assert.equal(existsSync(join(packPath, "skill.json")), true);
+    assert.equal(existsSync(join(packPath, "SKILL.md")), true);
+    assert.equal(existsSync(join(packPath, "resources/references")), true);
+    assert.equal(existsSync(join(packPath, "resources/examples")), true);
+    assert.equal(existsSync(join(packPath, "resources/templates")), true);
+    assert.equal(existsSync(join(packPath, "resources/samples")), true);
+    assert.equal(existsSync(join(packPath, "scripts")), true);
+    assert.equal(existsSync(join(packPath, "tests/fixtures")), true);
+
+    const descriptor = JSON.parse(readFileSync(join(packPath, "skill.json"), "utf8"));
+    assert.equal(descriptor.skill_pack_schema_version, "touba-skill-pack-v0.1");
+    assert.equal(descriptor.resources[0].path, "SKILL.md");
+    assert.match(descriptor.resources[0].digest, /^sha256:[0-9a-f]{64}$/);
+
+    const validation = validateSkillPacks({ root });
+    assert.equal(validation.status, "success");
+    assert.equal(validation.skill_packs.length, 1);
+    assert.equal(validation.skill_packs[0].ref, "skill_pack:project/research-review");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("skill validate reports structural diagnostics for invalid packs", () => {
+  const root = tempRoot();
+  try {
+    newSkillPack("research-review", { root });
+    const descriptorPath = join(root, "skills/research-review/skill.json");
+    const descriptor = JSON.parse(readFileSync(descriptorPath, "utf8"));
+    descriptor.grants = ["network"];
+    descriptor.resources[0].path = "../outside.md";
+    descriptor.resources[0].digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    writeJson(descriptorPath, descriptor);
+
+    const validation = validateSkillPacks({ root, target: "research-review" });
+    assert.equal(validation.status, "error");
+    assert.equal(validation.diagnostics.some((item) => item.code === "SkillPackAuthorityFieldForbidden"), true);
+    assert.equal(validation.diagnostics.some((item) => item.code === "SkillPackResourcePathInvalid"), true);
+
+    descriptor.resources[0].path = "SKILL.md";
+    writeJson(descriptorPath, descriptor);
+    const digestValidation = validateSkillPacks({ root, target: "research-review" });
+    assert.equal(digestValidation.status, "error");
+    assert.equal(digestValidation.diagnostics.some((item) => item.code === "SkillPackDigestMismatch"), true);
+
+    const missingDescriptorRoot = join(root, "skills/missing-descriptor");
+    mkdirSync(join(missingDescriptorRoot, "resources/references"), { recursive: true });
+    mkdirSync(join(missingDescriptorRoot, "resources/examples"), { recursive: true });
+    mkdirSync(join(missingDescriptorRoot, "resources/templates"), { recursive: true });
+    mkdirSync(join(missingDescriptorRoot, "resources/samples"), { recursive: true });
+    mkdirSync(join(missingDescriptorRoot, "scripts"), { recursive: true });
+    mkdirSync(join(missingDescriptorRoot, "tests/fixtures"), { recursive: true });
+    writeFileSync(join(missingDescriptorRoot, "SKILL.md"), "# Missing Descriptor\n", "utf8");
+    const missingValidation = validateSkillPacks({ root, target: "missing-descriptor" });
+    assert.equal(missingValidation.status, "error");
+    assert.equal(missingValidation.diagnostics.some((item) => item.code === "SkillPackDescriptorMissing"), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CLI skill commands expose scaffold and validation reports", () => {
+  const root = tempRoot();
+  try {
+    const createResult = spawnSync(process.execPath, [
+      cliPath,
+      "skill",
+      "new",
+      "research-review",
+      "--root",
+      root,
+      "--json",
+    ], { encoding: "utf8" });
+    assert.equal(createResult.status, 0, createResult.stderr);
+    const createReport = JSON.parse(createResult.stdout);
+    assert.equal(createReport.skill_pack_ref, "skill_pack:project/research-review");
+
+    const validateResult = spawnSync(process.execPath, [
+      cliPath,
+      "skill",
+      "validate",
+      "research-review",
+      "--root",
+      root,
+      "--json",
+    ], { encoding: "utf8" });
+    assert.equal(validateResult.status, 0, validateResult.stderr);
+    const validateReport = JSON.parse(validateResult.stdout);
+    assert.equal(validateReport.status, "success");
+    assert.equal(validateReport.skill_packs.length, 1);
+
+    const descriptorPath = join(root, "skills/research-review/skill.json");
+    const descriptor = JSON.parse(readFileSync(descriptorPath, "utf8"));
+    descriptor.handler = { command: "node" };
+    writeJson(descriptorPath, descriptor);
+    const refusedResult = spawnSync(process.execPath, [
+      cliPath,
+      "skill",
+      "validate",
+      "research-review",
+      "--root",
+      root,
+      "--json",
+    ], { encoding: "utf8" });
+    assert.equal(refusedResult.status, 1);
+    const refusedReport = JSON.parse(refusedResult.stdout);
+    assert.equal(refusedReport.diagnostics.some((item) => item.code === "SkillPackAuthorityFieldForbidden"), true);
   } finally {
     cleanup(root);
   }
@@ -1616,6 +1739,8 @@ test("CLI help prints usage without a synthetic report", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Usage:/);
   assert.match(result.stdout, /touba trigger run <program\.air\.json> --manifest <path> --trigger <trigger_ref> --max-runs <n>/);
+  assert.match(result.stdout, /touba skill new <skill-id>/);
+  assert.match(result.stdout, /touba skill validate \[<skill-id\|path>\]/);
   assert.match(result.stdout, /--state <touba\.trigger-state\.json>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --out <touba\.manifest\.json>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --stdout/);
@@ -1649,6 +1774,12 @@ test("CLI trigger, manifest and handler help match current public options", () =
   assert.match(handlerResult.stdout, /touba handler stub <air\.json>/);
   assert.match(handlerResult.stdout, /--handler-root <path>/);
   assert.equal(handlerResult.stdout.includes("--out-dir"), false);
+
+  const skillResult = spawnSync(process.execPath, [cliPath, "skill", "--help"], { encoding: "utf8" });
+  assert.equal(skillResult.status, 0, skillResult.stderr);
+  assert.match(skillResult.stdout, /touba skill new <skill-id>/);
+  assert.match(skillResult.stdout, /touba skill validate \[<skill-id\|path>\]/);
+  assert.equal(skillResult.stdout.includes("marketplace"), false);
 
   const auditResult = spawnSync(process.execPath, [cliPath, "audit", "--help"], { encoding: "utf8" });
   assert.equal(auditResult.status, 0, auditResult.stderr);
