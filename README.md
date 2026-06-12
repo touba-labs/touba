@@ -167,6 +167,24 @@ pnpm validate:v1-local
 `pnpm validate:v1-local` aggregates the runtime, CLI, project, SDK, corpus and
 fixture validations used to qualify a local build.
 
+## Source CI
+
+The repository includes a source-build workflow for pull requests, pushes to
+`main` and manual runs. It does not publish release artifacts.
+
+The matrix is:
+
+| Target | Runner | Suite |
+| --- | --- | --- |
+| Linux x64 | `ubuntu-24.04` | full source validation |
+| macOS Intel | `macos-15-intel` | core build/runtime/CLI validation |
+| macOS Apple Silicon | `macos-14` | core build/runtime/CLI validation |
+| Windows x64 | `windows-2025` | diagnostic core validation, allowed to fail until Windows hardening is complete |
+
+Linux carries the heavier corpus and local toolchain smoke checks to keep macOS
+minutes controlled. The workflow validates source builds only; it is not a
+public release, package publication, notarization or platform support claim.
+
 ## Static Registry Resolution
 
 Touba can resolve static registry metadata into a local lock without installing
