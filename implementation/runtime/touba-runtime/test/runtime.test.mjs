@@ -2971,6 +2971,243 @@ test("activates configured skill packs with budgeted context and redacted traces
   assert.equal(JSON.stringify(result.trace).includes("Use public references"), false);
 });
 
+test("loads declared template resources as context with provenance traces", async () => {
+  const document = agentProviderDocument();
+  const templateContent = "## Review\nUse concise claims and cite public sources.";
+
+  const result = await executeAirDocument(document, {
+    inputs: { topic: "postgres" },
+    skillPacks: [
+      skillPackFixture("research-review", {
+        resources: [
+          {
+            ref: "resource:research-review/report-template",
+            path: "resources/templates/report.md",
+            kind: "template",
+            content: templateContent,
+          },
+        ],
+      }),
+    ],
+    activeSkillPackRefs: ["skill_pack:project/research-review"],
+    agentDecisionProvider: (request) => {
+      const activePack = request.model_input.active_skill_packs[0];
+      const template = activePack.resources.find((resource) =>
+        resource.ref === "resource:research-review/report-template"
+      );
+      assert.equal(template.content, templateContent);
+      return {
+        action: "answer_directly",
+        source: "skill_pack_test",
+        reason: "template loaded",
+        result: "ok",
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  const loaded = eventsOf(result.trace, "skill_pack_resource_loaded")
+    .find((event) => event.payload.resource_ref === "resource:research-review/report-template");
+  assert.equal(loaded.payload.resource_kind, "template");
+  assert.match(loaded.payload.digest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(JSON.stringify(result.trace).includes(templateContent), false);
+});
+
+test("keeps skill pack scripts as non-executable resources without loading script content", async () => {
+  const document = agentProviderDocument();
+
+  const result = await executeAirDocument(document, {
+    inputs: { topic: "postgres" },
+    skillPacks: [
+      skillPackFixture("research-review", {
+        resources: [
+          {
+            ref: "resource:research-review/extract-script",
+            path: "scripts/extract_claims.mjs",
+            kind: "script",
+            content: "console.log('must not be loaded or executed')",
+          },
+        ],
+      }),
+    ],
+    activeSkillPackRefs: ["skill_pack:project/research-review"],
+    agentDecisionProvider: (request) => {
+      const script = request.model_input.active_skill_packs[0].resources.find((resource) =>
+        resource.ref === "resource:research-review/extract-script"
+      );
+      assert.equal(script.content, undefined);
+      assert.equal(script.executable_by_pack, false);
+      return {
+        action: "answer_directly",
+        source: "skill_pack_test",
+        reason: "script listed only",
+        result: "ok",
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  const refused = eventOf(result.trace, "skill_pack_resource_refused").payload;
+  assert.equal(refused.resource_ref, "resource:research-review/extract-script");
+  assert.equal(refused.runtime_error_code, "SkillPackScriptExecutionForbidden");
+  assert.equal(JSON.stringify(result.trace).includes("must not be loaded"), false);
+});
+
+test("refuses direct skill pack script execution declarations before provider call", async () => {
+  const document = agentProviderDocument();
+
+  await assert.rejects(
+    executeAirDocument(document, {
+      skillPacks: [
+        skillPackFixture("research-review", {
+          resources: [
+            {
+              ref: "resource:research-review/extract-script",
+              path: "scripts/extract_claims.mjs",
+              kind: "script",
+              content: "console.log('blocked')",
+              executable_by_pack: true,
+            },
+          ],
+        }),
+      ],
+      activeSkillPackRefs: ["skill_pack:project/research-review"],
+      agentDecisionProvider: () => ({ action: "answer_directly", result: "unreachable" }),
+    }),
+    (error) => error instanceof ToubaRuntimeError && error.code === "InvalidRuntimeOption",
+  );
+});
+
+test("refuses skill pack execution links outside the active agent uses", async () => {
+  const document = agentProviderDocument();
+  let providerWasCalled = false;
+
+  const result = await executeAirDocument(document, {
+    inputs: { topic: "postgres" },
+    skillPacks: [
+      skillPackFixture("research-review", {
+        executionLinks: [
+          {
+            label: "Hidden search",
+            target_ref: "tool:test/HiddenSearch",
+          },
+        ],
+      }),
+    ],
+    activeSkillPackRefs: ["skill_pack:project/research-review"],
+    agentDecisionProvider: () => {
+      providerWasCalled = true;
+      return { action: "answer_directly", result: "unreachable" };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(providerWasCalled, false);
+  const refused = eventOf(result.trace, "skill_pack_resource_refused").payload;
+  assert.equal(refused.target_ref, "tool:test/HiddenSearch");
+  assert.equal(refused.runtime_error_code, "SkillPackExecutionLinkUnauthorized");
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "SkillPackExecutionLinkUnauthorized");
+});
+
+test("keeps allowed execution links informative while execution still goes through a governed tool", async () => {
+  const document = baseDocument({
+    tools: [tool("Search")],
+    agents: [
+      {
+        id: "agent:test/Researcher",
+        name: "Researcher",
+        responsibility: "Researcher",
+        uses: ["tool:test/Search"],
+        callable_by: [
+          {
+            caller_ref: "strategy:test/RunResearch",
+            caller_kind: "strategy",
+            source_ref: sourceRef(),
+          },
+        ],
+        source_ref: sourceRef(),
+      },
+    ],
+    strategies: [
+      {
+        id: "strategy:test/RunResearch",
+        name: "RunResearch",
+        uses: ["agent:test/Researcher"],
+        flow_graph_ref: "graph:strategy:test/RunResearch",
+        source_ref: sourceRef(),
+      },
+    ],
+    graphs: [
+      graph("graph:strategy:test/RunResearch", "strategy:test/RunResearch", [
+        node("s1", "call_agent", { target_ref: "agent:test/Researcher" }),
+      ]),
+    ],
+  });
+  const handlerCalls = [];
+
+  const result = await executeAirDocument(document, {
+    skillPacks: [
+      skillPackFixture("research-review", {
+        resources: [
+          {
+            ref: "resource:research-review/extract-script",
+            path: "scripts/extract_claims.mjs",
+            kind: "script",
+            content: "console.log('example script only')",
+          },
+        ],
+        executionLinks: [
+          {
+            label: "Search through governed tool",
+            target_ref: "tool:test/Search",
+          },
+        ],
+      }),
+    ],
+    activeSkillPackRefs: ["skill_pack:project/research-review"],
+    agentDecisionProvider: (request) => {
+      if (request.mode === "summary" && request.step_index === 1) {
+        return {
+          action: "answer_directly",
+          source: "skill_pack_test",
+          reason: "tool result is enough",
+          result: request.observations[0].value,
+        };
+      }
+      if (request.mode === "summary") {
+        return {
+          action: "request_capabilities",
+          source: "skill_pack_test",
+          reason: "need governed tool catalog",
+        };
+      }
+      assert.equal(request.model_input.active_skill_packs[0].execution_links[0].authority, "informative_only");
+      return {
+        target_ref: "tool:test/Search",
+        source: "skill_pack_test",
+        reason: "use linked governed tool",
+      };
+    },
+    toolHandlers: {
+      "tool:test/Search": () => {
+        handlerCalls.push("tool:test/Search");
+        return "tool-result";
+      },
+    },
+    toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(bindingManifestDocument({
+      grants: [],
+      secrets: [],
+    }))),
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(result.result, "tool-result");
+  assert.deepEqual(handlerCalls, ["tool:test/Search"]);
+  assert.equal(eventOf(result.trace, "agent_capability_selected").payload.selected_ref, "tool:test/Search");
+  assert.equal(eventOf(result.trace, "tool_binding_authorized").payload.tool_ref, "tool:test/Search");
+  assert.equal(JSON.stringify(result.trace).includes("example script only"), false);
+});
+
 test("refuses skill pack activation when the activation budget is exceeded", async () => {
   const document = agentProviderDocument();
   let providerWasCalled = false;
@@ -4457,8 +4694,22 @@ function triggerEvent(fields = {}) {
 function skillPackFixture(skillId, {
   description = "Procedure for a runtime test skill pack.",
   content = "Follow the declared procedure.",
+  resources = [],
+  executionLinks = [],
 } = {}) {
   const resourceDigest = `sha256:${crypto.createHash("sha256").update(content).digest("hex")}`;
+  const normalizedResources = resources.map((resource) => {
+    const resourceContent = resource.content ?? "";
+    return {
+      ref: resource.ref,
+      path: resource.path,
+      kind: resource.kind,
+      loadable_as_context: resource.loadable_as_context ?? true,
+      digest: resource.digest ?? `sha256:${crypto.createHash("sha256").update(resourceContent).digest("hex")}`,
+      content: resource.content,
+      ...(resource.executable_by_pack !== undefined ? { executable_by_pack: resource.executable_by_pack } : {}),
+    };
+  });
   return {
     ref: `skill_pack:project/${skillId}`,
     name: skillId
@@ -4482,8 +4733,9 @@ function skillPackFixture(skillId, {
         digest: resourceDigest,
         content,
       },
+      ...normalizedResources,
     ],
-    execution_links: [],
+    execution_links: executionLinks,
   };
 }
 
