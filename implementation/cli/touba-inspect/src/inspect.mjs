@@ -55,6 +55,42 @@ const EXPECTED_SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-vali
 const EXPECTED_TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
 const INSPECT_REPORT_SUFFIX = ".inspect.txt";
 const OTEL_EXPORT_SUFFIX = ".otel.json";
+const OTEL_SEMCONV_SCHEMA_URL = "https://opentelemetry.io/schemas/1.41.1";
+const SAFE_OTEL_PAYLOAD_KEYS = new Set([
+  "action",
+  "agent_ref",
+  "approx_size_bytes",
+  "budget_kind",
+  "budget_max_bytes",
+  "budget_ref",
+  "call_ref",
+  "capability_count",
+  "content_mode",
+  "consumed_bytes",
+  "event_ref",
+  "external_content_count",
+  "input_ref",
+  "interaction_ref",
+  "memory_ref",
+  "node_id",
+  "observation_count",
+  "provider_call_index",
+  "provider_kind",
+  "provider_mode",
+  "provider_name",
+  "provider_timeout_ms",
+  "provider_version",
+  "ref",
+  "resource_ref",
+  "runtime_error_code",
+  "skill_pack_count",
+  "skill_pack_ref",
+  "source",
+  "status",
+  "target_ref",
+  "tool_ref",
+  "trigger_ref",
+]);
 const defaultFs = {
   existsSync: defaultExistsSync,
   mkdirSync: defaultMkdirSync,
@@ -576,22 +612,27 @@ export function exportTraceToOpenTelemetry(trace, options = {}) {
   const traceId = stableHex(`touba-trace:${runId}`, 32);
   const resourceAttributes = otelAttributes({
     "service.name": "touba",
+    "telemetry.sdk.name": "touba.inspect.otel",
+    "telemetry.sdk.language": "javascript",
+    "telemetry.sdk.version": "0.1.0",
     "touba.trace.protocol_version": trace.trace_protocol_version,
     "touba.run.id": runId,
     "touba.module.ref": trace.run?.module_ref,
     "touba.entry.ref": trace.run?.entry_ref,
-    "touba.source.path": options.sourcePath,
+    "touba.source.provided": Boolean(options.sourcePath),
     "gen_ai.system": "touba",
   });
-  const spans = (trace.events ?? []).map((event) => toubaEventToOtelSpan(event, traceId));
+  const spans = (trace.events ?? []).map((event) => toubaEventToOtelSpan(event, trace, traceId));
   return {
     resourceSpans: [
       {
+        schemaUrl: OTEL_SEMCONV_SCHEMA_URL,
         resource: {
           attributes: resourceAttributes,
         },
         scopeSpans: [
           {
+            schemaUrl: OTEL_SEMCONV_SCHEMA_URL,
             scope: {
               name: "touba.inspect.otel",
               version: "0.1.0",
@@ -604,16 +645,19 @@ export function exportTraceToOpenTelemetry(trace, options = {}) {
   };
 }
 
-function toubaEventToOtelSpan(event, traceId) {
+function toubaEventToOtelSpan(event, trace, traceId) {
   const startTimeUnixNano = syntheticEventTimeUnixNano(event.sequence_index ?? 0);
   const endTimeUnixNano = (BigInt(startTimeUnixNano) + 1n).toString();
+  const semantic = toubaEventSemanticMapping(event, trace);
+  const errorType = otelErrorType(event);
   return {
     traceId,
     spanId: stableHex(`touba-span:${event.run_id}:${event.event_id}`, 16),
-    name: `touba.${event.kind}`,
-    kind: 1,
+    name: semantic.name,
+    kind: semantic.spanKind,
     startTimeUnixNano,
     endTimeUnixNano,
+    status: errorType ? { code: 2 } : undefined,
     attributes: otelAttributes({
       "touba.event.id": event.event_id,
       "touba.event.kind": event.kind,
@@ -622,17 +666,84 @@ function toubaEventToOtelSpan(event, traceId) {
       "touba.air.flow_graph_ref": event.air_ref?.flow_graph_ref,
       "touba.air.owner_ref": event.air_ref?.owner_ref,
       "touba.air.node_id": event.air_ref?.node_id,
-      "gen_ai.operation.name": "agentic_workflow",
-      ...flattenOtelPayload(event.payload),
+      "gen_ai.operation.name": semantic.operationName,
+      "gen_ai.provider.name": semantic.providerName,
+      "gen_ai.agent.id": semantic.agentId,
+      "gen_ai.agent.name": semantic.agentName,
+      "gen_ai.workflow.name": semantic.workflowName,
+      "gen_ai.tool.name": semantic.toolName,
+      "error.type": errorType,
+      ...safeOtelPayloadAttributes(event.payload),
     }),
   };
+}
+
+function toubaEventSemanticMapping(event, trace) {
+  const payload = isPlainObject(event.payload) ? event.payload : {};
+  const agentRef = stringOrUndefined(payload.agent_ref) ?? agentRefFromOwner(event.air_ref?.owner_ref);
+  const toolName = toolNameFromEvent(event);
+  if (toolName) {
+    return {
+      operationName: "execute_tool",
+      providerName: "touba",
+      spanKind: 1,
+      name: `execute_tool ${toolName}`,
+      toolName,
+      workflowName: trace.run?.entry_ref,
+    };
+  }
+  if (event.kind?.startsWith("agent_") || agentRef) {
+    return {
+      operationName: "invoke_agent",
+      providerName: "touba",
+      spanKind: 1,
+      name: `invoke_agent ${agentRef ?? "touba.agent"}`,
+      agentId: agentRef,
+      agentName: agentRef ? agentRef.split("/").at(-1) : undefined,
+      workflowName: trace.run?.entry_ref,
+    };
+  }
+  return {
+    operationName: "invoke_workflow",
+    providerName: "touba",
+    spanKind: 1,
+    name: `invoke_workflow ${trace.run?.entry_ref ?? "touba.workflow"}`,
+    workflowName: trace.run?.entry_ref,
+  };
+}
+
+function toolNameFromEvent(event) {
+  const payload = isPlainObject(event.payload) ? event.payload : {};
+  const ref = stringOrUndefined(payload.tool_ref)
+    ?? (event.kind?.startsWith("tool_") ? stringOrUndefined(payload.target_ref) : undefined);
+  return ref ? ref.split("/").at(-1) : undefined;
+}
+
+function agentRefFromOwner(ownerRef) {
+  return typeof ownerRef === "string" && ownerRef.startsWith("agent:")
+    ? ownerRef
+    : undefined;
+}
+
+function otelErrorType(event) {
+  const payload = isPlainObject(event.payload) ? event.payload : {};
+  if (typeof payload.runtime_error_code === "string") {
+    return payload.runtime_error_code;
+  }
+  if (typeof payload.error_code === "string") {
+    return payload.error_code;
+  }
+  if (typeof event.kind === "string" && /(failed|refused|exceeded|invalid|cancelled|timeout)/u.test(event.kind)) {
+    return event.kind;
+  }
+  return undefined;
 }
 
 function syntheticEventTimeUnixNano(sequenceIndex) {
   return (BigInt(sequenceIndex) * 1_000_000n).toString();
 }
 
-function flattenOtelPayload(payload) {
+function safeOtelPayloadAttributes(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return {};
   }
@@ -641,7 +752,9 @@ function flattenOtelPayload(payload) {
     if (value === undefined || value === null) {
       continue;
     }
-    entries[`touba.payload.${key}`] = value;
+    if (SAFE_OTEL_PAYLOAD_KEYS.has(key) && isOtelScalarOrScalarArray(value)) {
+      entries[`touba.payload.${key}`] = value;
+    }
   }
   return entries;
 }
@@ -659,6 +772,13 @@ function otelAnyValue(value) {
   if (typeof value === "boolean") {
     return { boolValue: value };
   }
+  if (Array.isArray(value)) {
+    return {
+      arrayValue: {
+        values: value.map((item) => otelAnyValue(item)),
+      },
+    };
+  }
   if (Number.isInteger(value)) {
     return { intValue: String(value) };
   }
@@ -669,6 +789,21 @@ function otelAnyValue(value) {
     return { stringValue: value };
   }
   return { stringValue: JSON.stringify(value) };
+}
+
+function isOtelScalarOrScalarArray(value) {
+  if (Array.isArray(value)) {
+    return value.every((item) => isOtelScalarOrScalarArray(item) && !Array.isArray(item));
+  }
+  return ["boolean", "number", "string"].includes(typeof value);
+}
+
+function stringOrUndefined(value) {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function stableHex(input, length) {

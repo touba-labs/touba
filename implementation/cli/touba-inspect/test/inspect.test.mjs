@@ -285,7 +285,7 @@ test("exports a Touba trace to an OpenTelemetry JSON projection", () => {
   );
   const spans = otel.resourceSpans[0].scopeSpans[0].spans;
   assert.equal(spans.length, trace.events.length);
-  assert.equal(spans[0].name, `touba.${trace.events[0].kind}`);
+  assert.match(spans[0].name, /^invoke_workflow /);
   assert.equal(spans[0].traceId.length, 32);
   assert.equal(spans[0].spanId.length, 16);
   assert.ok(
@@ -295,6 +295,19 @@ test("exports a Touba trace to an OpenTelemetry JSON projection", () => {
         attribute.value.stringValue === trace.events[0].kind,
     ),
   );
+  assert.ok(
+    spans[0].attributes.some(
+      (attribute) =>
+        attribute.key === "gen_ai.operation.name" &&
+        attribute.value.stringValue === "invoke_workflow",
+    ),
+  );
+  assert.equal(
+    otel.resourceSpans[0].resource.attributes.find((attribute) => attribute.key === "touba.source.provided")
+      .value.boolValue,
+    true,
+  );
+  assert.equal(JSON.stringify(otel).includes("source.tb"), false);
 });
 
 test("writes an OpenTelemetry JSON projection from the inspect CLI", () => {
@@ -315,6 +328,94 @@ test("writes an OpenTelemetry JSON projection from the inspect CLI", () => {
     rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("maps Touba agent and tool events to GenAI span operations", () => {
+  const trace = {
+    trace_protocol_version: "trace-minimal-v0.1",
+    run: {
+      run_id: "run-otel-agent",
+      module_ref: "module:examples.otel",
+      entry_ref: "strategy:examples.otel/Research",
+    },
+    events: [
+      {
+        event_id: "event:run-otel-agent:1",
+        run_id: "run-otel-agent",
+        sequence_index: 0,
+        kind: "agent_decision_recorded",
+        payload: {
+          agent_ref: "agent:examples.otel/Researcher",
+          target_ref: "tool:examples.otel/Search",
+          action: "select_capability",
+        },
+      },
+      {
+        event_id: "event:run-otel-agent:2",
+        run_id: "run-otel-agent",
+        sequence_index: 1,
+        kind: "tool_dispatch_started",
+        payload: {
+          tool_ref: "tool:examples.otel/Search",
+          runtime_error_code: "ToolDispatchRefused",
+        },
+      },
+    ],
+  };
+
+  const spans = exportTraceToOpenTelemetry(trace).resourceSpans[0].scopeSpans[0].spans;
+
+  assert.equal(attributeString(spans[0], "gen_ai.operation.name"), "invoke_agent");
+  assert.equal(attributeString(spans[0], "gen_ai.agent.id"), "agent:examples.otel/Researcher");
+  assert.equal(attributeString(spans[0], "touba.payload.target_ref"), "tool:examples.otel/Search");
+  assert.equal(attributeString(spans[1], "gen_ai.operation.name"), "execute_tool");
+  assert.equal(attributeString(spans[1], "gen_ai.tool.name"), "Search");
+  assert.equal(attributeString(spans[1], "error.type"), "ToolDispatchRefused");
+  assert.equal(spans[1].status.code, 2);
+});
+
+test("keeps OpenTelemetry export free of raw prompts, secrets and payload content", () => {
+  const trace = {
+    trace_protocol_version: "trace-minimal-v0.1",
+    run: {
+      run_id: "run-otel-redaction",
+      module_ref: "module:examples.otel",
+      entry_ref: "strategy:examples.otel/Research",
+    },
+    events: [
+      {
+        event_id: "event:run-otel-redaction:1",
+        run_id: "run-otel-redaction",
+        sequence_index: 0,
+        kind: "agent_observations_budget_refused",
+        payload: {
+          agent_ref: "agent:examples.otel/Researcher",
+          target_ref: "skill:examples.otel/Summarize",
+          runtime_error_code: "AgentProviderObservationsBudgetExceeded",
+          raw_prompt: "PROMPT_SHOULD_NOT_EXPORT",
+          secret_value: "TOUBA_SHOULD_NOT_LEAK",
+          observation: "RAW_OBSERVATION_SHOULD_NOT_EXPORT",
+          result: "RAW_RESULT_SHOULD_NOT_EXPORT",
+          value: "RAW_VALUE_SHOULD_NOT_EXPORT",
+        },
+      },
+    ],
+  };
+
+  const serialized = JSON.stringify(exportTraceToOpenTelemetry(trace));
+
+  assert.match(serialized, /AgentProviderObservationsBudgetExceeded/);
+  assert.match(serialized, /skill:examples\.otel\/Summarize/);
+  assert.doesNotMatch(
+    serialized,
+    /PROMPT_SHOULD_NOT_EXPORT|TOUBA_SHOULD_NOT_LEAK|RAW_OBSERVATION_SHOULD_NOT_EXPORT|RAW_RESULT_SHOULD_NOT_EXPORT|RAW_VALUE_SHOULD_NOT_EXPORT/,
+  );
+});
+
+function attributeString(span, key) {
+  const attribute = span.attributes.find((entry) => entry.key === key);
+  assert.ok(attribute, `missing span attribute ${key}`);
+  return attribute.value.stringValue;
+}
 
 test("inspects human approval trace states from events only", () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "touba-inspect-human-trace-"));
