@@ -16,6 +16,13 @@ import {
   validateToolPayloadConstraints,
 } from "./payload-validation.mjs";
 import {
+  RUN_BUDGET_COUNTERS,
+  RUN_BUDGET_ERROR_CODES,
+  RUN_BUDGET_KIND_SET,
+  createBudgetState,
+  normalizeAirRunLimits,
+} from "./runtime-budgets.mjs";
+import {
   RuntimeCancelled,
   RuntimeFailure,
   RuntimeStop,
@@ -149,27 +156,6 @@ const MEMORY_METADATA_LEAK_FIELDS = new Set([
   "secret",
   "connection_string",
 ]);
-const RUN_BUDGET_KINDS = Object.freeze([
-  "max_run_ms",
-  "max_steps",
-  "max_tool_calls",
-  "max_agent_invocations",
-  "max_provider_calls",
-]);
-const RUN_BUDGET_KIND_SET = new Set(RUN_BUDGET_KINDS);
-const RUN_BUDGET_ERROR_CODES = Object.freeze({
-  max_run_ms: "RunTimeBudgetExceeded",
-  max_steps: "StepBudgetExceeded",
-  max_tool_calls: "ToolCallBudgetExceeded",
-  max_agent_invocations: "AgentInvocationBudgetExceeded",
-  max_provider_calls: "AgentDecisionProviderBudgetExceeded",
-});
-const RUN_BUDGET_COUNTERS = Object.freeze({
-  max_steps: "steps",
-  max_tool_calls: "toolCalls",
-  max_agent_invocations: "agentInvocations",
-  max_provider_calls: "providerCalls",
-});
 const AIR_DEFINITION_COLLECTIONS = Object.freeze([
   "types",
   "constants",
@@ -1262,152 +1248,6 @@ function validateAirBudgets(budgets) {
     });
   }
   normalizeAirRunLimits(budgets.run, "AIR budgets.run");
-}
-
-function createBudgetState(document, manifest, options = {}) {
-  const airRunLimits = normalizeAirRunLimits(document.budgets?.run, "AIR budgets.run");
-  const manifestRunLimits = manifest?.runLimits ?? new Map();
-  const hostRunLimits = normalizeRunLimitMap(
-    options.runLimits ?? options.run_limits,
-    "runLimits",
-    "host_policy",
-  );
-  const runtimeDefaultLimits = normalizeRunLimitMap(
-    options.runtimeDefaultRunLimits ?? options.runtime_default_run_limits,
-    "runtimeDefaultRunLimits",
-    "runtime_default",
-  );
-  const { effectiveLimits, manifestWideningErrors } = effectiveRunBudgetLimits({
-    airRunLimits,
-    manifestRunLimits,
-    hostRunLimits,
-    runtimeDefaultLimits,
-  });
-
-  return {
-    initialized: false,
-    airRunLimits,
-    manifestRunLimits,
-    hostRunLimits,
-    runtimeDefaultLimits,
-    effectiveLimits,
-    manifestWideningErrors,
-    counters: {
-      steps: 0,
-      toolCalls: 0,
-      agentInvocations: 0,
-      providerCalls: 0,
-    },
-  };
-}
-
-function normalizeAirRunLimits(limits, fieldName) {
-  if (limits === undefined) {
-    return new Map();
-  }
-  if (!limits || typeof limits !== "object" || Array.isArray(limits)) {
-    throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName} must be an object`);
-  }
-  const normalized = new Map();
-  for (const [budgetKind, entry] of Object.entries(limits)) {
-    if (!RUN_BUDGET_KIND_SET.has(budgetKind)) {
-      throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName} contains unknown budget kind`, {
-        budgetKind,
-      });
-    }
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName}.${budgetKind} must be an object`, {
-        budgetKind,
-      });
-    }
-    if (!Number.isSafeInteger(entry.value) || entry.value <= 0) {
-      throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName}.${budgetKind}.value must be a positive integer`, {
-        budgetKind,
-      });
-    }
-    if (!entry.source_ref || typeof entry.source_ref !== "object" || Array.isArray(entry.source_ref)) {
-      throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName}.${budgetKind}.source_ref is required`, {
-        budgetKind,
-      });
-    }
-    normalized.set(budgetKind, Object.freeze({
-      value: entry.value,
-      authoritySource: "air",
-      sourceRef: entry.source_ref,
-    }));
-  }
-  return normalized;
-}
-
-function normalizeRunLimitMap(limits, fieldName, authoritySource) {
-  if (limits === undefined || limits === null) {
-    return new Map();
-  }
-  if (!limits || typeof limits !== "object" || Array.isArray(limits)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an object`);
-  }
-  const normalized = new Map();
-  for (const [budgetKind, value] of Object.entries(limits)) {
-    if (!RUN_BUDGET_KIND_SET.has(budgetKind)) {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} contains unknown budget kind`, {
-        budgetKind,
-      });
-    }
-    normalized.set(budgetKind, Object.freeze({
-      value: normalizePositiveRuntimeInteger(value, `${fieldName}.${budgetKind}`),
-      authoritySource,
-    }));
-  }
-  return normalized;
-}
-
-function effectiveRunBudgetLimits({
-  airRunLimits,
-  manifestRunLimits,
-  hostRunLimits,
-  runtimeDefaultLimits,
-}) {
-  const effectiveLimits = new Map();
-  const manifestWideningErrors = [];
-  for (const budgetKind of RUN_BUDGET_KINDS) {
-    const air = airRunLimits.get(budgetKind);
-    const manifest = manifestRunLimits.get(budgetKind);
-    if (air && manifest && manifest.value > air.value) {
-      manifestWideningErrors.push({
-        budgetKind,
-        airValue: air.value,
-        manifestValue: manifest.value,
-      });
-    }
-    const candidates = [
-      air,
-      manifest,
-      hostRunLimits.get(budgetKind),
-      runtimeDefaultLimits.get(budgetKind),
-    ].filter(Boolean);
-    if (candidates.length === 0) {
-      continue;
-    }
-    let effective = candidates[0];
-    for (const candidate of candidates.slice(1)) {
-      if (candidate.value < effective.value) {
-        effective = candidate;
-      }
-    }
-    effectiveLimits.set(budgetKind, Object.freeze({
-      budgetKind,
-      value: effective.value,
-      authoritySource: effective.authoritySource,
-      candidates: candidates.map((candidate) => ({
-        authority_source: candidate.authoritySource,
-        value: candidate.value,
-      })),
-    }));
-  }
-  return {
-    effectiveLimits,
-    manifestWideningErrors,
-  };
 }
 
 function indexAirDocument(document) {

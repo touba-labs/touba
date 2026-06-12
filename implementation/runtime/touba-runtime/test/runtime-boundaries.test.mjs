@@ -10,6 +10,11 @@ import {
   loadToolBindingManifestFromJson,
 } from "../src/index.mjs";
 import {
+  RUN_BUDGET_ERROR_CODES,
+  createBudgetState,
+  normalizeRunLimitMap,
+} from "../src/runtime-budgets.mjs";
+import {
   normalizeAgentDecisionProvider,
   normalizeAgentDecisionProviderContentMode,
   normalizeSkillPackActivationReasons,
@@ -53,6 +58,52 @@ test("builds trace documents with stable sequencing and compact payloads", () =>
   assert.equal(
     sha256Json({ ref: "skill_pack:project/research-review" }),
     "9526c9ca8b9bde7ada330e272b124c8c664acd7969da3127720cf3aa641a0af7",
+  );
+});
+
+test("computes effective run budgets without widening AIR authority", () => {
+  const document = {
+    budgets: {
+      run: {
+        max_steps: {
+          value: 5,
+          source_ref: { module_ref: "module:test" },
+        },
+        max_provider_calls: {
+          value: 3,
+          source_ref: { module_ref: "module:test" },
+        },
+      },
+    },
+  };
+  const manifest = {
+    runLimits: new Map([
+      ["max_steps", { value: 8, authoritySource: "manifest" }],
+      ["max_provider_calls", { value: 2, authoritySource: "manifest" }],
+    ]),
+  };
+  const budgetState = createBudgetState(document, manifest, {
+    runLimits: { max_tool_calls: 4 },
+    runtimeDefaultRunLimits: { max_run_ms: 1000 },
+  });
+
+  assert.equal(budgetState.counters.steps, 0);
+  assert.deepEqual(budgetState.manifestWideningErrors, [
+    {
+      budgetKind: "max_steps",
+      airValue: 5,
+      manifestValue: 8,
+    },
+  ]);
+  assert.equal(budgetState.effectiveLimits.get("max_steps").value, 5);
+  assert.equal(budgetState.effectiveLimits.get("max_provider_calls").value, 2);
+  assert.equal(budgetState.effectiveLimits.get("max_tool_calls").authoritySource, "host_policy");
+  assert.equal(budgetState.effectiveLimits.get("max_run_ms").authoritySource, "runtime_default");
+  assert.equal(RUN_BUDGET_ERROR_CODES.max_provider_calls, "AgentDecisionProviderBudgetExceeded");
+
+  assert.throws(
+    () => normalizeRunLimitMap({ max_tokens: 10 }, "runLimits", "host_policy"),
+    (error) => error instanceof ToubaRuntimeError && error.code === "InvalidRuntimeOption",
   );
 });
 
