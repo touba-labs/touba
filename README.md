@@ -184,6 +184,9 @@ The matrix is:
 Linux carries the heavier corpus and local toolchain smoke checks to keep macOS
 minutes controlled. The workflow validates source builds only; it is not a
 public release, package publication, notarization or platform support claim.
+All jobs run release metadata tests. The Windows job also attempts an
+experimental release packaging diagnostic and is allowed to fail until Windows
+hardening is complete.
 
 ## Local Release Packaging
 

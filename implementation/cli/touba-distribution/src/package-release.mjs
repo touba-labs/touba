@@ -359,8 +359,18 @@ echo "Removed Touba files from $PREFIX"
   chmodSync(scriptPath, 0o755);
 }
 
-function writeInstallPowerShell(plan) {
-  const script = `param(
+export function renderWindowsCmdLauncher(plan) {
+  return `@echo off
+if "%TOUBA_DISTRIBUTION_CHANNEL%"=="" set "TOUBA_DISTRIBUTION_CHANNEL=${plan.channel}"
+set "TOUBA_COMPILE_BIN=%~dp0..\\touba-toolchain\\bin\\touba-compile.exe"
+set "PATH=%~dp0..\\touba-toolchain\\bin;%PATH%"
+"%~dp0..\\touba-toolchain\\bin\\node.exe" "%~dp0..\\touba-toolchain\\lib\\cli\\touba-project\\src\\main.mjs" %*
+`;
+}
+
+export function renderInstallPowerShell(plan) {
+  const launcher = renderWindowsCmdLauncher(plan).replace(/\n$/u, "");
+  return `param(
   [string]$Prefix = $env:TOUBA_PREFIX,
   [switch]$Force
 )
@@ -396,11 +406,7 @@ if (Test-Path $InstallRoot) {
 Copy-Item -Recurse -Force $Source $InstallRoot
 
 $Launcher = @"
-@echo off
-if "%TOUBA_DISTRIBUTION_CHANNEL%"=="" set "TOUBA_DISTRIBUTION_CHANNEL=${plan.channel}"
-set "TOUBA_COMPILE_BIN=%~dp0..\\touba-toolchain\\bin\\touba-compile.exe"
-set "PATH=%~dp0..\\touba-toolchain\\bin;%PATH%"
-"%~dp0..\\touba-toolchain\\bin\\node.exe" "%~dp0..\\touba-toolchain\\lib\\cli\\touba-project\\src\\main.mjs" %*
+${launcher}
 "@
 Set-Content -Path (Join-Path $Prefix "bin\\touba.cmd") -Value $Launcher -Encoding ASCII
 
@@ -420,12 +426,16 @@ $Installation | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $Prefix "
 Write-Output "Installed Touba ${plan.toubaVersion} at $Prefix"
 Write-Output "Add $(Join-Path $Prefix "bin") to PATH, then run: touba version"
 `;
+}
+
+function writeInstallPowerShell(plan) {
+  const script = renderInstallPowerShell(plan);
   const scriptPath = join(plan.releaseDir, "install.ps1");
   writeFileSync(scriptPath, script, "utf8");
 }
 
-function writeUninstallPowerShell(plan) {
-  const script = `param(
+export function renderUninstallPowerShell() {
+  return `param(
   [string]$Prefix = $env:TOUBA_PREFIX
 )
 
@@ -443,6 +453,10 @@ Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Prefix "bin")
 Remove-Item -Force -ErrorAction SilentlyContinue $Prefix
 Write-Output "Removed Touba files from $Prefix"
 `;
+}
+
+function writeUninstallPowerShell(plan) {
+  const script = renderUninstallPowerShell(plan);
   writeFileSync(join(plan.releaseDir, "uninstall.ps1"), script, "utf8");
 }
 

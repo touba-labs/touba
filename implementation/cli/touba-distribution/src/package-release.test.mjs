@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   createReleasePlan,
   parsePackageReleaseArgs,
+  renderInstallPowerShell,
+  renderUninstallPowerShell,
+  renderWindowsCmdLauncher,
 } from "./package-release.mjs";
 
 test("release plan keeps the locally verified macOS profile explicit", () => {
@@ -71,4 +74,46 @@ test("release CLI parser accepts platform, experimental and json flags", () => {
     json: true,
     buildCompiler: false,
   });
+});
+
+test("Windows cmd launcher preserves quoting and bundled paths", () => {
+  const plan = createReleasePlan({
+    platform: "win32-x64",
+    hostPlatform: "win32-x64",
+    toubaVersion: "1.2.3",
+    releaseRoot: "/tmp/touba-release-test",
+    experimental: true,
+  });
+
+  const launcher = renderWindowsCmdLauncher(plan);
+  assert.match(launcher, /TOUBA_DISTRIBUTION_CHANNEL=local-release-experimental/u);
+  assert.match(launcher, /TOUBA_COMPILE_BIN=%~dp0\.\.\\touba-toolchain\\bin\\touba-compile\.exe/u);
+  assert.match(launcher, /"%~dp0\.\.\\touba-toolchain\\bin\\node\.exe"/u);
+  assert.match(launcher, /"%~dp0\.\.\\touba-toolchain\\lib\\cli\\touba-project\\src\\main\.mjs" %\*/u);
+});
+
+test("PowerShell install script writes touba.cmd and INSTALLATION metadata", () => {
+  const plan = createReleasePlan({
+    platform: "win32-x64",
+    hostPlatform: "win32-x64",
+    toubaVersion: "1.2.3",
+    releaseRoot: "/tmp/touba-release-test",
+    experimental: true,
+  });
+
+  const script = renderInstallPowerShell(plan);
+  assert.match(script, /param\(/u);
+  assert.match(script, /\[switch\]\$Force/u);
+  assert.match(script, /Join-Path \$Source "bin\\touba\.cmd"/u);
+  assert.match(script, /Set-Content -Path \(Join-Path \$Prefix "bin\\touba\.cmd"\)/u);
+  assert.match(script, /installation_profile = "touba-local-release-install-experimental-v0\.1"/u);
+  assert.match(script, /validation_status = "experimental_unvalidated"/u);
+  assert.match(script, /public_release = \$false/u);
+});
+
+test("PowerShell uninstall script removes launcher, toolchain and metadata paths", () => {
+  const script = renderUninstallPowerShell();
+  assert.match(script, /Join-Path \$Prefix "bin\\touba\.cmd"/u);
+  assert.match(script, /Join-Path \$Prefix "touba-toolchain"/u);
+  assert.match(script, /Join-Path \$Prefix "INSTALLATION\.json"/u);
 });
