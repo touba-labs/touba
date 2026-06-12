@@ -397,6 +397,7 @@ function createExecutionContext(document, entryRef, options = {}) {
       options.humanApprovalResumeCheckpoint ?? options.human_approval_resume_checkpoint,
     ),
     pendingHumanApprovalCheckpoint: null,
+    callStack: [],
     loopState: new Map(),
     maxLoopIterations: options.maxLoopIterations ?? 100,
     activeAgentRef: null,
@@ -430,11 +431,22 @@ function normalizeOptionalHumanApprovalCheckpoint(checkpoint) {
 
 async function executeHumanApprovalResumeCheckpoint(document, entryRef, context) {
   const checkpoint = context.humanApprovalResumeCheckpoint;
+  if (!checkpoint) {
+    throw new RuntimeFailure(
+      "human approval resume checkpoint is required",
+      { entryRef },
+      "HumanApprovalResumeCheckpointRequired",
+    );
+  }
+  if (checkpoint.kind === "agent_human_review") {
+    return executeAgentHumanReviewResumeCheckpoint(document, entryRef, context, checkpoint);
+  }
   validateHumanApprovalResumeCheckpoint(document, entryRef, context, checkpoint);
   applyHumanApprovalResumeCheckpoint(context, checkpoint);
   context.trace.push("human_approval_checkpoint_loaded", {
     payload: compactPayload({
       checkpoint_schema_version: checkpoint.checkpoint_schema_version,
+      kind: checkpoint.kind,
       approval_ref: checkpoint.approval_ref,
       graph_ref: checkpoint.graph_ref,
       node_id: checkpoint.node_id,
@@ -448,13 +460,6 @@ async function executeHumanApprovalResumeCheckpoint(document, entryRef, context)
 }
 
 function validateHumanApprovalResumeCheckpoint(document, entryRef, context, checkpoint) {
-  if (!checkpoint) {
-    throw new RuntimeFailure(
-      "human approval resume checkpoint is required",
-      { entryRef },
-      "HumanApprovalResumeCheckpointRequired",
-    );
-  }
   if (checkpoint.kind !== "human_approval") {
     throw new RuntimeFailure(
       "human approval checkpoint kind is invalid",
@@ -462,34 +467,9 @@ function validateHumanApprovalResumeCheckpoint(document, entryRef, context, chec
       "InvalidHumanApprovalCheckpoint",
     );
   }
-  const expectedDigest = airDocumentDigest(document);
-  const compatibilityErrors = [];
-  if (checkpoint.air_schema_version !== document.air_schema_version) {
-    compatibilityErrors.push("air_schema_version");
-  }
-  if (checkpoint.module_ref !== document.module.id) {
-    compatibilityErrors.push("module_ref");
-  }
-  if (checkpoint.entry_ref !== entryRef) {
-    compatibilityErrors.push("entry_ref");
-  }
-  if (checkpoint.air_digest !== expectedDigest) {
-    compatibilityErrors.push("air_digest");
-  }
-  if (checkpoint.scope !== "entry_graph") {
-    compatibilityErrors.push("scope");
-  }
-  if (compatibilityErrors.length > 0) {
-    throw new RuntimeFailure(
-      "human approval checkpoint is not compatible with this run",
-      {
-        entryRef,
-        approvalRef: checkpoint.approval_ref,
-        compatibilityErrors,
-      },
-      "HumanApprovalCheckpointIncompatible",
-    );
-  }
+  validateHumanApprovalCheckpointCompatibility(document, entryRef, checkpoint, {
+    expectedScope: "entry_graph",
+  });
 
   const graph = context.indexes.graphs.get(checkpoint.graph_ref);
   const node = graph?.nodes?.find((candidate) => candidate.id === checkpoint.node_id);
@@ -532,6 +512,37 @@ function validateHumanApprovalResumeCheckpoint(document, entryRef, context, chec
   }
 }
 
+function validateHumanApprovalCheckpointCompatibility(document, entryRef, checkpoint, options = {}) {
+  const expectedDigest = airDocumentDigest(document);
+  const compatibilityErrors = [];
+  if (checkpoint.air_schema_version !== document.air_schema_version) {
+    compatibilityErrors.push("air_schema_version");
+  }
+  if (checkpoint.module_ref !== document.module.id) {
+    compatibilityErrors.push("module_ref");
+  }
+  if (checkpoint.entry_ref !== entryRef) {
+    compatibilityErrors.push("entry_ref");
+  }
+  if (checkpoint.air_digest !== expectedDigest) {
+    compatibilityErrors.push("air_digest");
+  }
+  if (options.expectedScope !== undefined && checkpoint.scope !== options.expectedScope) {
+    compatibilityErrors.push("scope");
+  }
+  if (compatibilityErrors.length > 0) {
+    throw new RuntimeFailure(
+      "human approval checkpoint is not compatible with this run",
+      {
+        entryRef,
+        approvalRef: checkpoint.approval_ref,
+        compatibilityErrors,
+      },
+      "HumanApprovalCheckpointIncompatible",
+    );
+  }
+}
+
 function applyHumanApprovalResumeCheckpoint(context, checkpoint) {
   context.values = mapFromCheckpointObject(checkpoint.values, "values");
   context.inputValueKeys = new Set(checkpointStringArray(checkpoint.input_value_keys, "input_value_keys"));
@@ -546,6 +557,292 @@ function applyHumanApprovalResumeCheckpoint(context, checkpoint) {
   context.nextCallIndex = checkpoint.next_call_index ?? 1;
   context.activeAgentRef = checkpoint.active_agent_ref ?? null;
   context.activeCallerRef = checkpoint.active_caller_ref ?? null;
+}
+
+async function executeAgentHumanReviewResumeCheckpoint(document, entryRef, context, checkpoint) {
+  validateAgentHumanReviewResumeCheckpoint(document, entryRef, context, checkpoint);
+  applyHumanApprovalResumeCheckpoint(context, checkpoint);
+  const loopState = agentLoopStateFromCheckpoint(checkpoint);
+  context.trace.push("human_approval_checkpoint_loaded", {
+    payload: compactPayload({
+      checkpoint_schema_version: checkpoint.checkpoint_schema_version,
+      kind: checkpoint.kind,
+      approval_ref: checkpoint.approval_ref,
+      agent_ref: checkpoint.agent_ref,
+      step_index: loopState.stepIndex,
+      next_step_index: loopState.nextStepIndex,
+      checkpoint_run_id: checkpoint.run_id,
+      trace_prefix_digest: checkpoint.trace_prefix_digest,
+      external_tool_dispatches: checkpoint.effect_state?.external_tool_dispatches,
+      observation_count: loopState.observations.length,
+      call_frame_present: checkpoint.call_frame !== undefined && checkpoint.call_frame !== null,
+    }),
+  });
+
+  const agent = requireDefinition(context.indexes.agents, checkpoint.agent_ref);
+  const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
+  const reviewResult = resumeAgentHumanReviewDecision(agent, checkpoint, context, loopState.stepIndex);
+  const observations = [
+    ...loopState.observations,
+    {
+      step_index: loopState.stepIndex,
+      action: "request_human_review",
+      result_type: "human_review_decision",
+      value: reviewResult,
+    },
+  ];
+  const agentResult = await executeAgentDecisionLoop(agent, capabilityRefs, context, {
+    startStepIndex: loopState.nextStepIndex,
+    observations,
+  });
+
+  return resumeAgentHumanReviewCaller(context, checkpoint, agent, agentResult);
+}
+
+function validateAgentHumanReviewResumeCheckpoint(document, entryRef, context, checkpoint) {
+  validateHumanApprovalCheckpointCompatibility(document, entryRef, checkpoint, {
+    expectedScope: "agent_decision_loop",
+  });
+  if (checkpoint.kind !== "agent_human_review") {
+    throw new RuntimeFailure(
+      "human approval checkpoint kind is invalid",
+      { entryRef, checkpointKind: checkpoint.kind },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  const agentRef = checkpoint.agent_ref;
+  const agent = context.indexes.agents.get(agentRef);
+  if (!agent) {
+    throw new RuntimeFailure(
+      "agent human review checkpoint target agent is invalid",
+      { entryRef, approvalRef: checkpoint.approval_ref, agentRef },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  const loopState = agentLoopStateFromCheckpoint(checkpoint);
+  const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
+  if (
+    loopState.agentRef !== agentRef
+    || checkpoint.approval_ref !== agentHumanReviewApprovalRef(agentRef, loopState.stepIndex)
+    || !stringArraysEqual(loopState.capabilityRefs, capabilityRefs)
+  ) {
+    throw new RuntimeFailure(
+      "agent human review checkpoint target does not match AIR",
+      {
+        entryRef,
+        approvalRef: checkpoint.approval_ref,
+        agentRef,
+      },
+      "HumanApprovalCheckpointIncompatible",
+    );
+  }
+  if (!context.humanApprovalDecisions.has(checkpoint.approval_ref)) {
+    throw new RuntimeFailure(
+      "human approval resume requires an explicit decision",
+      { entryRef, approvalRef: checkpoint.approval_ref },
+      "HumanApprovalResumeDecisionRequired",
+    );
+  }
+  validateAgentHumanReviewCallFrame(context, checkpoint, agentRef);
+}
+
+function agentLoopStateFromCheckpoint(checkpoint) {
+  const loopState = checkpoint.agent_loop_state;
+  if (!loopState || typeof loopState !== "object" || Array.isArray(loopState)) {
+    throw new RuntimeFailure(
+      "agent human review checkpoint agent_loop_state must be an object",
+      { approvalRef: checkpoint.approval_ref },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  const agentRef = checkpointString(loopState.agent_ref, "agent_loop_state.agent_ref");
+  const stepIndex = checkpointNonNegativeSafeInteger(loopState.step_index, "agent_loop_state.step_index");
+  const nextStepIndex = checkpointNonNegativeSafeInteger(loopState.next_step_index, "agent_loop_state.next_step_index");
+  if (nextStepIndex !== stepIndex + 1) {
+    throw new RuntimeFailure(
+      "agent human review checkpoint next_step_index must follow step_index",
+      { approvalRef: checkpoint.approval_ref, stepIndex, nextStepIndex },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  const observations = checkpointJsonClone(
+    checkpointArray(loopState.observations, "agent_loop_state.observations"),
+    "agent_loop_state.observations",
+  );
+  const capabilityRefs = checkpointStringArray(loopState.capability_refs, "agent_loop_state.capability_refs");
+  return {
+    agentRef,
+    stepIndex,
+    nextStepIndex,
+    observations,
+    capabilityRefs,
+  };
+}
+
+function validateAgentHumanReviewCallFrame(context, checkpoint, agentRef) {
+  if (checkpoint.call_frame === undefined || checkpoint.call_frame === null) {
+    if (checkpoint.entry_ref === agentRef) {
+      return;
+    }
+    throw new RuntimeFailure(
+      "agent human review checkpoint has no resumable caller frame",
+      { approvalRef: checkpoint.approval_ref, agentRef },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  const frame = checkpoint.call_frame;
+  if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
+    throw new RuntimeFailure(
+      "agent human review checkpoint call_frame must be an object",
+      { approvalRef: checkpoint.approval_ref, agentRef },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  const graphRef = checkpointString(frame.graph_ref, "call_frame.graph_ref");
+  const nodeId = checkpointString(frame.node_id, "call_frame.node_id");
+  const graph = context.indexes.graphs.get(graphRef);
+  const node = graph?.nodes?.find((candidate) => candidate.id === nodeId);
+  const expectedResumeTargetRef = graph && node ? nextNodeId(graph, node.id, successEdgeRole(graph, node.id)) : undefined;
+  if (
+    !graph
+    || !node
+    || node.kind !== "call_agent"
+    || node.target_ref !== agentRef
+    || graph.owner_ref !== checkpoint.entry_ref
+    || frame.caller_ref !== graph.owner_ref
+    || frame.target_ref !== agentRef
+    || frame.result_binding !== node.result_binding
+    || frame.resume_target_ref !== expectedResumeTargetRef
+  ) {
+    throw new RuntimeFailure(
+      "agent human review checkpoint caller frame does not match AIR",
+      {
+        approvalRef: checkpoint.approval_ref,
+        agentRef,
+        graphRef,
+        nodeId,
+      },
+      "HumanApprovalCheckpointIncompatible",
+    );
+  }
+}
+
+function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
+  const approvalRef = checkpoint.approval_ref;
+  const humanDecision = context.humanApprovalDecisions.get(approvalRef);
+  if (!["approved", "rejected", "expired", "cancelled"].includes(humanDecision)) {
+    const error = new RuntimeFailure(
+      `invalid human approval decision ${humanDecision} for ${approvalRef}`,
+      { approvalRef, decision: humanDecision, agentRef: agent.id },
+      "InvalidHumanApprovalDecision",
+    );
+    context.trace.push("failure_detected", {
+      payload: compactPayload({
+        failure_mode: "human_approval",
+        runtime_error_code: error.code,
+        approval_ref: approvalRef,
+        agent_ref: agent.id,
+        step_index: stepIndex,
+      }),
+      message: error.message,
+    });
+    throw error;
+  }
+  context.trace.push("human_approval_decided", {
+    payload: {
+      approval_ref: approvalRef,
+      decision: humanDecision,
+      agent_ref: agent.id,
+      step_index: stepIndex,
+    },
+  });
+
+  if (humanDecision === "approved") {
+    context.trace.push("human_approval_resumed", {
+      payload: {
+        approval_ref: approvalRef,
+        decision: humanDecision,
+        agent_ref: agent.id,
+        step_index: stepIndex,
+      },
+    });
+    return {
+      approval_ref: approvalRef,
+      decision: humanDecision,
+    };
+  }
+
+  const terminalKind = {
+    rejected: "human_approval_rejected",
+    expired: "human_approval_expired",
+    cancelled: "human_approval_cancelled",
+  }[humanDecision];
+  context.trace.push(terminalKind, {
+    payload: {
+      approval_ref: approvalRef,
+      decision: humanDecision,
+      agent_ref: agent.id,
+      step_index: stepIndex,
+    },
+  });
+  throw new RuntimeStop(`agent human review ${humanDecision}`, {
+    approvalRef,
+    agentRef: agent.id,
+    decision: humanDecision,
+  });
+}
+
+async function resumeAgentHumanReviewCaller(context, checkpoint, agent, agentResult) {
+  if (checkpoint.call_frame === undefined || checkpoint.call_frame === null) {
+    return agentResult;
+  }
+  const graph = requireDefinition(context.indexes.graphs, checkpoint.call_frame.graph_ref);
+  const node = graph.nodes.find((candidate) => candidate.id === checkpoint.call_frame.node_id);
+  if (!node) {
+    throw new RuntimeFailure(
+      "agent human review checkpoint caller node is missing",
+      {
+        approvalRef: checkpoint.approval_ref,
+        agentRef: agent.id,
+        graphRef: checkpoint.call_frame.graph_ref,
+        nodeId: checkpoint.call_frame.node_id,
+      },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  if (node.result_binding) {
+    const bindingHandle = valueHandle(node.result_binding);
+    context.values.set(bindingHandle, agentResult);
+    const outputType = targetOutputType(agent.id, context);
+    if (outputType) {
+      context.valueTypes.set(bindingHandle, outputType);
+    }
+  }
+  context.trace.push("call_completed", {
+    airRef: airRefForNode(graph, node),
+    payload: compactPayload({
+      target_ref: agent.id,
+      caller_ref: graph.owner_ref,
+      agent_ref: context.activeAgentRef,
+      result_binding: node.result_binding,
+      resumed_from_checkpoint: true,
+    }),
+  });
+  const resumeTargetRef = checkpoint.call_frame.resume_target_ref;
+  if (resumeTargetRef) {
+    return executeGraph(graph.id, context, { startNodeId: resumeTargetRef });
+  }
+  context.trace.push("scope_exited", {
+    airRef: {
+      flow_graph_ref: graph.id,
+      owner_ref: graph.owner_ref,
+      node_id: node.id,
+    },
+    payload: {
+      status: "success",
+    },
+  });
+  return agentResult;
 }
 
 function createHumanApprovalCheckpoint(context, graph, node, payload) {
@@ -606,8 +903,178 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
   return checkpoint;
 }
 
+function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, observations, payload, callFrame) {
+  const values = checkpointObjectFromMap(context.values, "values");
+  assertCheckpointHasNoResolvedSecret(values, context, payload.approval_ref);
+  const checkpointObservations = checkpointJsonClone(observations, "agent_loop_state.observations");
+  assertCheckpointHasNoResolvedSecret(checkpointObservations, context, payload.approval_ref);
+  const valueTypes = checkpointObjectFromMap(context.valueTypes, "value_types");
+  const tracePrefixDigest = `sha256:${sha256Json(context.trace.document())}`;
+  const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
+  const checkpoint = {
+    checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
+    kind: "agent_human_review",
+    scope: "agent_decision_loop",
+    run_id: context.trace.runId,
+    entry_ref: context.entryRef,
+    module_ref: context.trace.airDocument.module.id,
+    air_schema_version: context.trace.airDocument.air_schema_version,
+    air_digest: airDocumentDigest(context.trace.airDocument),
+    approval_ref: payload.approval_ref,
+    mode: payload.mode,
+    agent_ref: agent.id,
+    caller_ref: payload.caller_ref,
+    requester_ref: payload.requester_ref,
+    step_index: stepIndex,
+    agent_loop_state: {
+      agent_ref: agent.id,
+      step_index: stepIndex,
+      next_step_index: stepIndex + 1,
+      capability_refs: capabilityRefs,
+      observations: checkpointObservations,
+      consumed_decisions: [
+        ...checkpointObservations.map((observation) => compactPayload({
+          step_index: observation.step_index,
+          action: observation.action,
+          target_ref: observation.target_ref,
+        })),
+        compactPayload({
+          step_index: stepIndex,
+          action: "request_human_review",
+          decision_source: decision.source,
+          reason: decision.reason,
+          review_prompt_present: decision.reviewPrompt !== undefined,
+        }),
+      ],
+    },
+    call_frame: callFrame,
+    values,
+    input_value_keys: [...context.inputValueKeys],
+    value_types: valueTypes,
+    budget_counters: {
+      steps: context.budgetState.counters.steps,
+      tool_calls: context.budgetState.counters.toolCalls,
+      agent_invocations: context.budgetState.counters.agentInvocations,
+      provider_calls: context.budgetState.counters.providerCalls,
+    },
+    effect_state: {
+      external_tool_dispatches: context.effectState.externalToolDispatches,
+    },
+    next_call_index: context.nextCallIndex,
+    active_agent_ref: context.activeAgentRef,
+    active_caller_ref: context.activeCallerRef,
+    trace_prefix_digest: tracePrefixDigest,
+  };
+  context.pendingHumanApprovalCheckpoint = checkpoint;
+  context.trace.push("human_approval_checkpoint_created", {
+    payload: compactPayload({
+      checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
+      kind: checkpoint.kind,
+      approval_ref: payload.approval_ref,
+      agent_ref: agent.id,
+      step_index: stepIndex,
+      next_step_index: stepIndex + 1,
+      trace_prefix_digest: tracePrefixDigest,
+      external_tool_dispatches: context.effectState.externalToolDispatches,
+      observation_count: checkpointObservations.length,
+      call_frame_present: callFrame !== undefined && callFrame !== null,
+    }),
+  });
+  return checkpoint;
+}
+
 function canCreateHumanApprovalCheckpoint(context, graph) {
   return context.durableHumanApprovals === true && graph.owner_ref === context.entryRef;
+}
+
+function agentHumanReviewCheckpointSupport(context, agentRef) {
+  if (context.durableHumanApprovals !== true) {
+    return {
+      supported: false,
+      reason: "durable_human_approvals_disabled",
+      callFrame: null,
+    };
+  }
+  if (context.entryRef === agentRef) {
+    return {
+      supported: true,
+      callFrame: null,
+    };
+  }
+  const frame = context.callStack.at(-1);
+  if (!frame || frame.kind !== "call_agent" || frame.target_ref !== agentRef) {
+    return {
+      supported: false,
+      reason: "agent_review_call_frame_unavailable",
+      callFrame: null,
+    };
+  }
+  if (frame.graph_owner_ref !== context.entryRef) {
+    return {
+      supported: false,
+      reason: "nested_caller_graph_requires_call_stack_checkpoint",
+      callFrame: frame,
+    };
+  }
+  return {
+    supported: true,
+    callFrame: frame,
+  };
+}
+
+function refuseAgentHumanReviewCheckpointUnavailable(context, payload, support) {
+  const reason = support.reason ?? "agent_human_review_checkpoint_unavailable";
+  context.trace.push("human_approval_pause_refused", {
+    payload: compactPayload({
+      approval_ref: payload.approval_ref,
+      mode: payload.mode,
+      caller_ref: payload.caller_ref,
+      agent_ref: payload.agent_ref,
+      reason,
+      external_tool_dispatches: context.effectState.externalToolDispatches,
+      runtime_error_code: "HumanApprovalCheckpointUnsupported",
+    }),
+  });
+  const error = new RuntimeFailure(
+    "agent human review checkpoint is not available for this call shape",
+    {
+      approvalRef: payload.approval_ref,
+      mode: payload.mode,
+      callerRef: payload.caller_ref,
+      agentRef: payload.agent_ref,
+      externalToolDispatches: context.effectState.externalToolDispatches,
+      reason,
+    },
+    "HumanApprovalCheckpointUnsupported",
+  );
+  context.trace.push("failure_detected", {
+    payload: compactPayload({
+      failure_mode: "human_approval_pause",
+      runtime_error_code: error.code,
+      approval_ref: payload.approval_ref,
+      caller_ref: payload.caller_ref,
+      agent_ref: payload.agent_ref,
+      external_tool_dispatches: context.effectState.externalToolDispatches,
+      reason,
+    }),
+    message: error.message,
+  });
+  throw error;
+}
+
+function callFrameForNode(graph, node, targetRef) {
+  const edgeRole = successEdgeRole(graph, node.id);
+  return compactPayload({
+    kind: node.kind,
+    graph_ref: graph.id,
+    graph_owner_ref: graph.owner_ref,
+    node_id: node.id,
+    caller_ref: graph.owner_ref,
+    target_ref: targetRef,
+    result_binding: node.result_binding,
+    success_edge_role: edgeRole,
+    resume_target_ref: nextNodeId(graph, node.id, edgeRole),
+  });
 }
 
 function checkpointObjectFromMap(map, label) {
@@ -633,6 +1100,39 @@ function checkpointStringArray(value, label) {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
     throw new RuntimeFailure(
       `human approval checkpoint ${label} must be an array of strings`,
+      { label },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  return value;
+}
+
+function checkpointString(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new RuntimeFailure(
+      `human approval checkpoint ${label} must be a non-empty string`,
+      { label },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  return value;
+}
+
+function checkpointArray(value, label) {
+  if (!Array.isArray(value)) {
+    throw new RuntimeFailure(
+      `human approval checkpoint ${label} must be an array`,
+      { label },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  return value;
+}
+
+function checkpointNonNegativeSafeInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RuntimeFailure(
+      `human approval checkpoint ${label} must be a non-negative safe integer`,
       { label },
       "InvalidHumanApprovalCheckpoint",
     );
@@ -676,6 +1176,13 @@ function checkpointJsonClone(value, path) {
     { path, valueKind: payloadValueKind(value) },
     "HumanApprovalCheckpointValueNotPortable",
   );
+}
+
+function stringArraysEqual(left, right) {
+  return Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === right.length
+    && left.every((entry, index) => entry === right[index]);
 }
 
 function assertCheckpointHasNoResolvedSecret(values, context, approvalRef) {
@@ -1449,10 +1956,13 @@ async function executeTarget(targetRef, context, callArguments = null, options =
   throw new RuntimeFailure(`unsupported AIR target ${targetRef}`, { targetRef });
 }
 
-async function executeAgentDecisionLoop(agent, capabilityRefs, context) {
-  const observations = [];
+async function executeAgentDecisionLoop(agent, capabilityRefs, context, options = {}) {
+  const observations = Array.isArray(options.observations) ? options.observations : [];
+  const startStepIndex = Number.isSafeInteger(options.startStepIndex) && options.startStepIndex >= 0
+    ? options.startStepIndex
+    : 0;
 
-  for (let stepIndex = 0; stepIndex < context.maxAgentSteps; stepIndex += 1) {
+  for (let stepIndex = startStepIndex; stepIndex < context.maxAgentSteps; stepIndex += 1) {
     const loopState = {
       stepIndex,
       observations,
@@ -1494,7 +2004,7 @@ async function executeAgentDecisionLoop(agent, capabilityRefs, context) {
     }
 
     if (decision.action === "request_human_review") {
-      const reviewResult = executeAgentHumanReview(agent, decision, context, stepIndex);
+      const reviewResult = executeAgentHumanReview(agent, decision, context, stepIndex, observations);
       observations.push({
         step_index: stepIndex,
         action: "request_human_review",
@@ -1591,8 +2101,8 @@ async function executeAgentDecisionLoop(agent, capabilityRefs, context) {
   );
 }
 
-function executeAgentHumanReview(agent, decision, context, stepIndex) {
-  const approvalRef = `approval:${agent.id}:step-${stepIndex}:human-review`;
+function executeAgentHumanReview(agent, decision, context, stepIndex, observations = []) {
+  const approvalRef = agentHumanReviewApprovalRef(agent.id, stepIndex);
   const basePayload = compactPayload({
     approval_ref: approvalRef,
     mode: "agent_review",
@@ -1613,7 +2123,28 @@ function executeAgentHumanReview(agent, decision, context, stepIndex) {
 
   const humanDecision = context.humanApprovalDecisions.get(approvalRef);
   if (!humanDecision) {
-    assertHumanApprovalCanPause(context, basePayload);
+    const checkpointSupport = agentHumanReviewCheckpointSupport(context, agent.id);
+    if (
+      context.durableHumanApprovals === true
+      && checkpointSupport.supported !== true
+      && context.effectState.externalToolDispatches > 0
+    ) {
+      refuseAgentHumanReviewCheckpointUnavailable(context, basePayload, checkpointSupport);
+    }
+    assertHumanApprovalCanPause(context, basePayload, undefined, {
+      durableResumeAvailable: checkpointSupport.supported === true,
+    });
+    if (checkpointSupport.supported === true) {
+      createAgentHumanReviewCheckpoint(
+        context,
+        agent,
+        decision,
+        stepIndex,
+        observations,
+        basePayload,
+        checkpointSupport.callFrame,
+      );
+    }
     context.trace.push("human_approval_paused", {
       payload: basePayload,
     });
@@ -1679,6 +2210,10 @@ function executeAgentHumanReview(agent, decision, context, stepIndex) {
     agentRef: agent.id,
     decision: humanDecision,
   });
+}
+
+function agentHumanReviewApprovalRef(agentRef, stepIndex) {
+  return `approval:${agentRef}:step-${stepIndex}:human-review`;
 }
 
 function requireDefinition(index, id) {
@@ -5181,13 +5716,16 @@ async function executeCallNode(graph, node, context) {
     }
 
     const previousCallerRef = context.activeCallerRef;
+    const callFrame = callFrameForNode(graph, node, targetRef);
     context.activeCallerRef = graph.owner_ref;
+    context.callStack.push(callFrame);
     let result;
     try {
       result = await executeTarget(targetRef, context, callArguments, {
         dispatchAlreadyChecked: true,
       });
     } finally {
+      context.callStack.pop();
       context.activeCallerRef = previousCallerRef;
     }
     if (node.result_binding) {

@@ -3974,6 +3974,194 @@ test("refuses agent-requested human review pause after external tool dispatch wi
   );
 });
 
+test("resumes agent-requested human review from checkpoint without redispatching prior effects", async () => {
+  const document = agentReviewAfterToolDocument();
+  const approvalRef = "approval:agent:test/Researcher:step-1:human-review";
+  let toolCalls = 0;
+  const toolHandlers = {
+    "tool:test/Fetch": async () => {
+      toolCalls += 1;
+      return "fetched";
+    },
+  };
+
+  const paused = await executeAirDocument(document, {
+    durableHumanApprovals: true,
+    toolHandlers,
+    agentDecisionProvider: (request) => {
+      if (request.step_index === 0 && request.mode === "summary") {
+        return { action: "request_capabilities", reason: "need data" };
+      }
+      if (request.step_index === 0 && request.mode === "capabilities") {
+        return {
+          target_ref: "skill:test/FetchData",
+          reason: "fetch once",
+          arguments: {},
+        };
+      }
+      if (request.step_index === 1 && request.mode === "summary") {
+        assert.equal(request.observations[0].value, "fetched");
+        return { action: "request_capabilities", reason: "human review may be needed" };
+      }
+      assert.equal(request.step_index, 1);
+      assert.equal(request.mode, "capabilities");
+      return {
+        action: "request_human_review",
+        source: "test_review",
+        reason: "review after external effect",
+        review_prompt: "Review fetched data.",
+      };
+    },
+  });
+
+  assert.equal(paused.status, "stopped");
+  assert.equal(toolCalls, 1);
+  assert.ok(paused.checkpoint);
+  assert.equal(paused.checkpoint.kind, "agent_human_review");
+  assert.equal(paused.checkpoint.scope, "agent_decision_loop");
+  assert.equal(paused.checkpoint.approval_ref, approvalRef);
+  assert.equal(paused.checkpoint.agent_loop_state.step_index, 1);
+  assert.equal(paused.checkpoint.agent_loop_state.next_step_index, 2);
+  assert.equal(paused.checkpoint.agent_loop_state.observations.length, 1);
+  assert.equal(paused.checkpoint.call_frame.graph_ref, "graph:strategy:test/RunResearch");
+  assert.equal(eventOf(paused.trace, "human_approval_checkpoint_created").payload.external_tool_dispatches, 1);
+
+  const resumedProviderCalls = [];
+  const resumed = await executeAirDocument(document, {
+    humanApprovalResumeCheckpoint: paused.checkpoint,
+    humanApprovalDecisions: {
+      [approvalRef]: "approved",
+    },
+    toolHandlers,
+    agentDecisionProvider: (request) => {
+      resumedProviderCalls.push(`${request.mode}:${request.step_index}`);
+      assert.equal(request.step_index, 2);
+      assert.equal(request.mode, "summary");
+      assert.equal(request.observations.length, 2);
+      assert.equal(request.observations[0].value, "fetched");
+      assert.deepEqual(request.observations[1].value, {
+        approval_ref: approvalRef,
+        decision: "approved",
+      });
+      return {
+        action: "answer_directly",
+        source: "test_after_checkpoint",
+        reason: "review approved",
+        result: "approved after checkpoint",
+      };
+    },
+  });
+
+  assert.equal(resumed.status, "success");
+  assert.equal(resumed.result, "approved after checkpoint");
+  assert.equal(toolCalls, 1);
+  assert.deepEqual(resumedProviderCalls, ["summary:2"]);
+  assert.equal(eventOf(resumed.trace, "human_approval_checkpoint_loaded").payload.kind, "agent_human_review");
+  assert.deepEqual(eventOf(resumed.trace, "human_approval_resumed").payload, {
+    approval_ref: approvalRef,
+    decision: "approved",
+    agent_ref: "agent:test/Researcher",
+    step_index: 1,
+  });
+});
+
+test("refuses incomplete agent human review checkpoint resume", async () => {
+  const document = agentReviewAfterToolDocument();
+  const paused = await executeAirDocument(document, {
+    durableHumanApprovals: true,
+    toolHandlers: {
+      "tool:test/Fetch": async () => "fetched",
+    },
+    agentDecisionProvider: (request) => {
+      if (request.step_index === 0 && request.mode === "summary") {
+        return { action: "request_capabilities", reason: "need data" };
+      }
+      if (request.step_index === 0 && request.mode === "capabilities") {
+        return {
+          target_ref: "skill:test/FetchData",
+          reason: "fetch once",
+          arguments: {},
+        };
+      }
+      if (request.mode === "summary") {
+        return { action: "request_capabilities", reason: "review needed" };
+      }
+      return {
+        action: "request_human_review",
+        source: "test_review",
+        reason: "review after external effect",
+      };
+    },
+  });
+
+  const incompleteCheckpoint = {
+    ...paused.checkpoint,
+    call_frame: undefined,
+  };
+  const resumed = await executeAirDocument(document, {
+    humanApprovalResumeCheckpoint: incompleteCheckpoint,
+    humanApprovalDecisions: {
+      "approval:agent:test/Researcher:step-1:human-review": "approved",
+    },
+    toolHandlers: {
+      "tool:test/Fetch": async () => "must-not-run",
+    },
+    agentDecisionProvider: () => ({
+      action: "answer_directly",
+      result: "must not run",
+    }),
+  });
+
+  assert.equal(resumed.status, "failure");
+  assert.equal(eventOf(resumed.trace, "run_completed").payload.status, "failure");
+});
+
+test("refuses agent human review checkpoint for nested agent invocation without call stack support", async () => {
+  const result = await executeAirDocument(nestedAgentInvocationReviewAfterToolDocument(), {
+    durableHumanApprovals: true,
+    toolHandlers: {
+      "tool:test/Fetch": async () => "fetched",
+    },
+    agentDecisionProvider: (request) => {
+      if (request.agent_ref === "agent:test/Coordinator") {
+        if (request.step_index === 0 && request.mode === "summary") {
+          return { action: "request_capabilities", reason: "delegate needed" };
+        }
+        return {
+          target_ref: "agent:test/Specialist",
+          reason: "specialist owns the risky step",
+          arguments: {},
+        };
+      }
+      if (request.step_index === 0 && request.mode === "summary") {
+        return { action: "request_capabilities", reason: "need data" };
+      }
+      if (request.step_index === 0 && request.mode === "capabilities") {
+        return {
+          target_ref: "skill:test/FetchData",
+          reason: "fetch once",
+          arguments: {},
+        };
+      }
+      if (request.step_index === 1 && request.mode === "summary") {
+        return { action: "request_capabilities", reason: "human review may be needed" };
+      }
+      return {
+        action: "request_human_review",
+        source: "test_review",
+        reason: "review after nested external effect",
+      };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(eventOf(result.trace, "human_approval_pause_refused").payload.reason, "agent_review_call_frame_unavailable");
+  assert.equal(
+    eventOf(result.trace, "failure_detected").payload.runtime_error_code,
+    "HumanApprovalCheckpointUnsupported",
+  );
+});
+
 test("refuses explicit human approval pause after external tool dispatch without durable resume", async () => {
   const document = toolThenHumanApprovalDocument();
   const toolCalls = [];
@@ -5226,6 +5414,81 @@ function agentReviewAfterToolDocument() {
       ]),
       graph("graph:strategy:test/RunResearch", "strategy:test/RunResearch", [
         node("run", "call_agent", { target_ref: "agent:test/Researcher" }),
+      ]),
+    ],
+  });
+}
+
+function nestedAgentInvocationReviewAfterToolDocument() {
+  return baseDocument({
+    tools: [
+      tool("Fetch", {
+        signature: {
+          inputs: [],
+          output_type: "builtin:Text",
+        },
+      }),
+    ],
+    skills: [
+      {
+        ...skill("FetchData", "graph:skill:test/FetchData", ["tool:test/Fetch"]),
+        signature: {
+          inputs: [],
+          output_type: "builtin:Text",
+        },
+      },
+    ],
+    agents: [
+      {
+        id: "agent:test/Coordinator",
+        name: "Coordinator",
+        responsibility: "Coordinator",
+        uses: ["agent:test/Specialist"],
+        callable_by: [
+          {
+            caller_ref: "strategy:test/RunNestedResearch",
+            caller_kind: "strategy",
+            source_ref: sourceRef(),
+          },
+        ],
+        source_ref: sourceRef(),
+      },
+      {
+        id: "agent:test/Specialist",
+        name: "Specialist",
+        responsibility: "Specialist",
+        uses: ["skill:test/FetchData"],
+        callable_by: [
+          {
+            caller_ref: "agent:test/Coordinator",
+            caller_kind: "agent",
+            source_ref: sourceRef(),
+          },
+        ],
+        source_ref: sourceRef(),
+      },
+    ],
+    strategies: [
+      {
+        id: "strategy:test/RunNestedResearch",
+        name: "RunNestedResearch",
+        uses: ["agent:test/Coordinator"],
+        flow_graph_ref: "graph:strategy:test/RunNestedResearch",
+        source_ref: sourceRef(),
+      },
+    ],
+    graphs: [
+      graph("graph:skill:test/FetchData", "skill:test/FetchData", [
+        node("fetch", "call_tool", {
+          target_ref: "tool:test/Fetch",
+          result_binding: "fetched",
+        }),
+        node("give", "give", { arguments: ["value:fetched"] }),
+      ], [
+        edge("fetch", "give", "next"),
+      ]),
+      graph("graph:strategy:test/RunNestedResearch", "strategy:test/RunNestedResearch", [
+        node("run", "call_agent", { target_ref: "agent:test/Coordinator" }),
       ]),
     ],
   });

@@ -1255,6 +1255,112 @@ test("writes and resumes a human approval checkpoint without replaying prior too
   }
 });
 
+test("writes and resumes an agent human review checkpoint without replaying prior tool dispatch", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-agent-human-checkpoint-"));
+  try {
+    const airPath = writeAirDocument(workspace, agentToolThenHumanReviewDocument());
+    const providerPath = join(workspace, "provider.mjs");
+    const checkpointPath = join(workspace, "agent-human.checkpoint.json");
+    const tracePath = join(workspace, "resume-trace.json");
+
+    writeFileSync(
+      providerPath,
+      [
+        "export function decideAgentCapability(request) {",
+        "  if (request.step_index === 0 && request.mode === 'summary') {",
+        "    return { action: 'request_capabilities', reason: 'need source text' };",
+        "  }",
+        "  if (request.step_index === 0 && request.mode === 'capabilities') {",
+        "    return { target_ref: 'skill:examples.cli_agent_human_checkpoint/FetchData', reason: 'fetch once', arguments: {} };",
+        "  }",
+        "  if (request.step_index === 1 && request.mode === 'summary') {",
+        "    return { action: 'request_capabilities', reason: 'review fetched text' };",
+        "  }",
+        "  return { action: 'request_human_review', source: 'cli_fixture', reason: 'human review after fetch' };",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const pausedStdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--local-fetch-source-text",
+        "fetched before pause",
+        "--agent-decision-provider",
+        providerPath,
+        "--human-checkpoint-out",
+        checkpointPath,
+        "--output",
+        "trace",
+      ],
+      { encoding: "utf8" },
+    );
+    const pausedTrace = JSON.parse(pausedStdout);
+    const checkpoint = JSON.parse(readFileSync(checkpointPath, "utf8"));
+
+    assert.equal(pausedTrace.events.at(-1).payload.status, "stopped");
+    assert.equal(checkpoint.kind, "agent_human_review");
+    assert.equal(checkpoint.approval_ref, "approval:agent:examples.cli_agent_human_checkpoint/Researcher:step-1:human-review");
+    assert.equal(checkpoint.agent_loop_state.observations[0].value.content, "fetched before pause");
+    assert.equal(eventOf(pausedTrace, "human_approval_checkpoint_created").payload.external_tool_dispatches, 1);
+
+    writeFileSync(
+      providerPath,
+      [
+        "export function decideAgentCapability(request) {",
+        "  if (request.step_index !== 2 || request.mode !== 'summary') {",
+        "    throw new Error(`unexpected resume request ${request.mode}:${request.step_index}`);",
+        "  }",
+        "  const fetched = request.observations[0].value.content;",
+        "  const review = request.observations[1].value.decision;",
+        "  return {",
+        "    action: 'answer_directly',",
+        "    source: 'cli_resume_fixture',",
+        "    reason: 'checkpoint review approved',",
+        "    result: `${fetched} / ${review}`",
+        "  };",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const resumedStdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--local-fetch-source-text",
+        "would indicate replay",
+        "--agent-decision-provider",
+        providerPath,
+        "--human-resume-checkpoint",
+        checkpointPath,
+        "--human-decisions-json",
+        JSON.stringify({ "approval:agent:examples.cli_agent_human_checkpoint/Researcher:step-1:human-review": "approved" }),
+        "--trace-out",
+        tracePath,
+        "--output",
+        "result",
+      ],
+      { encoding: "utf8" },
+    );
+    const resumedTrace = JSON.parse(readFileSync(tracePath, "utf8"));
+
+    assert.equal(JSON.parse(resumedStdout), "fetched before pause / approved");
+    assert.equal(resumedTrace.events.at(-1).payload.status, "success");
+    assert.equal(resumedTrace.events.filter((event) => event.kind === "tool_binding_authorized").length, 0);
+    assert.equal(JSON.stringify(resumedTrace).includes("would indicate replay"), false);
+    assert.equal(eventOf(resumedTrace, "human_approval_checkpoint_loaded").payload.kind, "agent_human_review");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("reports invalid human approval decisions without inventing approval state", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-human-"));
   try {
@@ -3392,6 +3498,103 @@ function toolThenHumanApprovalDocument() {
         [
           edge("fetch", "review", "next"),
           edge("review", "done", "next"),
+        ],
+      ),
+    ],
+    trace_points: [],
+  };
+}
+
+function agentToolThenHumanReviewDocument() {
+  return {
+    air_schema_version: "air-minimal-v0.1",
+    module: {
+      id: "module:examples.cli_agent_human_checkpoint",
+      name: "examples.cli_agent_human_checkpoint",
+      source_ref: sourceRef(),
+    },
+    definitions: {
+      types: [
+        {
+          id: "type:examples.linear_skill/SourceText",
+          name: "SourceText",
+          fields: [{ name: "content", type_ref: "builtin:Text" }],
+          source_ref: sourceRef(),
+        },
+      ],
+      functions: [],
+      tools: [
+        {
+          id: LINEAR_FETCH_SOURCE_TOOL_REF,
+          name: "FetchSource",
+          signature: {
+            inputs: [],
+            output_type: "type:examples.linear_skill/SourceText",
+          },
+          source_ref: sourceRef(),
+        },
+      ],
+      skills: [
+        {
+          id: "skill:examples.cli_agent_human_checkpoint/FetchData",
+          name: "FetchData",
+          signature: {
+            inputs: [],
+            output_type: "type:examples.linear_skill/SourceText",
+          },
+          uses: [LINEAR_FETCH_SOURCE_TOOL_REF],
+          flow_graph_ref: "graph:skill:examples.cli_agent_human_checkpoint/FetchData",
+          source_ref: sourceRef(),
+        },
+      ],
+      agents: [
+        {
+          id: "agent:examples.cli_agent_human_checkpoint/Researcher",
+          name: "Researcher",
+          responsibility: "Fetch source text and request human review when needed.",
+          uses: ["skill:examples.cli_agent_human_checkpoint/FetchData"],
+          callable_by: [
+            {
+              caller_ref: "strategy:examples.cli_agent_human_checkpoint/RunResearch",
+              caller_kind: "strategy",
+              source_ref: sourceRef(),
+            },
+          ],
+          source_ref: sourceRef(),
+        },
+      ],
+      strategies: [
+        {
+          id: "strategy:examples.cli_agent_human_checkpoint/RunResearch",
+          name: "RunResearch",
+          uses: ["agent:examples.cli_agent_human_checkpoint/Researcher"],
+          flow_graph_ref: "graph:strategy:examples.cli_agent_human_checkpoint/RunResearch",
+          source_ref: sourceRef(),
+        },
+      ],
+    },
+    execution_graphs: [
+      graph(
+        "graph:skill:examples.cli_agent_human_checkpoint/FetchData",
+        "skill:examples.cli_agent_human_checkpoint/FetchData",
+        [
+          node("fetch", "call_tool", {
+            target_ref: LINEAR_FETCH_SOURCE_TOOL_REF,
+            result_binding: "fetched",
+          }),
+          node("done", "give", { arguments: ["value:fetched"] }),
+        ],
+        [
+          edge("fetch", "done", "next"),
+        ],
+      ),
+      graph(
+        "graph:strategy:examples.cli_agent_human_checkpoint/RunResearch",
+        "strategy:examples.cli_agent_human_checkpoint/RunResearch",
+        [
+          node("run", "call_agent", {
+            target_ref: "agent:examples.cli_agent_human_checkpoint/Researcher",
+          }),
         ],
       ),
     ],
