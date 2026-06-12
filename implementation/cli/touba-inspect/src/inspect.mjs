@@ -2265,13 +2265,21 @@ function validateSourceRefs(diagnostics, label, sourcePath, artifact) {
   const sourceIds = collectSourceIds(artifact);
   if (sourceIds.size === 0) return;
   const normalizedSourcePath = path.resolve(sourcePath);
-  const matches = [...sourceIds].some((sourceId) => path.resolve(sourceId) === normalizedSourcePath);
+  const matches = [...sourceIds].some((sourceId) => sourceIdMatchesPath(sourceId, normalizedSourcePath));
   if (!matches) {
     diagnostics.push({
       code: "SourceRefMismatch",
       message: `${label} source_ref does not reference ${normalizedSourcePath}`,
     });
   }
+}
+
+function sourceIdMatchesPath(sourceId, normalizedSourcePath) {
+  const value = String(sourceId);
+  return [
+    path.resolve(value),
+    path.resolve(implementationDir, value),
+  ].some((candidate) => candidate === normalizedSourcePath);
 }
 
 function collectSourceIds(value, result = new Set()) {

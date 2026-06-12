@@ -6,7 +6,7 @@
     "id": "module:examples.linear_skill",
     "name": "examples.linear_skill",
     "source_ref": {
-      "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+      "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
       "start_byte": 0,
       "end_byte": 28,
       "start_line": 0,
@@ -21,7 +21,7 @@
       "kind": "module",
       "name": "examples.linear_skill",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 0,
         "end_byte": 28,
         "start_line": 0,
@@ -36,7 +36,7 @@
       "name": "SourceRequest",
       "origin": "local",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 30,
         "end_byte": 68,
         "start_line": 2,
@@ -51,7 +51,7 @@
       "name": "SourceText",
       "origin": "local",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 68,
         "end_byte": 105,
         "start_line": 5,
@@ -66,7 +66,7 @@
       "name": "SourceNote",
       "origin": "local",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 105,
         "end_byte": 142,
         "start_line": 8,
@@ -81,7 +81,7 @@
       "name": "FetchSource",
       "origin": "local",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 142,
         "end_byte": 216,
         "start_line": 11,
@@ -99,7 +99,7 @@
       "name": "BuildNote",
       "origin": "local",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 216,
         "end_byte": 361,
         "start_line": 15,
@@ -115,7 +115,7 @@
       "name": "Researcher",
       "origin": "local",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 361,
         "end_byte": 438,
         "start_line": 23,
@@ -135,7 +135,7 @@
       "name": "RunSourcedNote",
       "origin": "local",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 438,
         "end_byte": 532,
         "start_line": 27,
@@ -151,7 +151,7 @@
       "owner_ref": "skill:examples.linear_skill/BuildNote",
       "entry_node_id": "node:graph:skill:examples.linear_skill/BuildNote:1",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 313,
         "end_byte": 361,
         "start_line": 19,
@@ -168,7 +168,7 @@
       "target_ref": "tool:examples.linear_skill/FetchSource",
       "arguments": [],
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 324,
         "end_byte": 335,
         "start_line": 20,
@@ -186,7 +186,7 @@
         "symbol:SourceNote"
       ],
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 344,
         "end_byte": 359,
         "start_line": 21,
@@ -201,7 +201,7 @@
       "owner_ref": "strategy:examples.linear_skill/RunSourcedNote",
       "entry_node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 486,
         "end_byte": 532,
         "start_line": 29,
@@ -218,7 +218,7 @@
       "target_ref": "agent:examples.linear_skill/Researcher",
       "arguments": [],
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 497,
         "end_byte": 507,
         "start_line": 30,
@@ -236,7 +236,7 @@
         "symbol:SourceNote"
       ],
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 516,
         "end_byte": 531,
         "start_line": 31,
@@ -264,7 +264,7 @@
       "anchor_kind": "call",
       "node_id": "node:graph:skill:examples.linear_skill/BuildNote:1",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 324,
         "end_byte": 335,
         "start_line": 20,
@@ -280,7 +280,7 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:skill:examples.linear_skill/BuildNote:2",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 344,
         "end_byte": 359,
         "start_line": 21,
@@ -308,7 +308,7 @@
       "anchor_kind": "call",
       "node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 497,
         "end_byte": 507,
         "start_line": 30,
@@ -324,7 +324,7 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:2",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 516,
         "end_byte": 531,
         "start_line": 31,
@@ -386,7 +386,7 @@
       "to": "agent:examples.linear_skill/Researcher",
       "caller_kind": "strategy",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 401,
         "end_byte": 436,
         "start_line": 25,
@@ -447,7 +447,7 @@
       "graph_ref": "graph:skill:examples.linear_skill/BuildNote",
       "role": "next",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 344,
         "end_byte": 359,
         "start_line": 21,
@@ -493,7 +493,7 @@
       "graph_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
       "role": "next",
       "source_ref": {
-        "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
         "start_byte": 516,
         "end_byte": 531,
         "start_line": 31,

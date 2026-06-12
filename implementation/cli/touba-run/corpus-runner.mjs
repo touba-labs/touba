@@ -10,6 +10,7 @@ const fixturesDir = join(implementationDir, "grammar/tree-sitter-touba/examples"
 const anneau1FixturesDir = join(fixturesDir, "anneau-1");
 const expressionsFixturesDir = join(fixturesDir, "expressions-v1");
 const bindDefineFixturesDir = join(fixturesDir, "bind-define-v1");
+const normalizedImplementationPrefix = `${implementationDir.replaceAll("\\", "/")}/`;
 
 // Set CARGO=/path/to/cargo if cargo is not in PATH.
 const CARGO = process.env.CARGO ?? "cargo";
@@ -419,10 +420,38 @@ async function executeFixtureAtPath(sourcePath, fixture, toolHandlers) {
       toolHandlers,
       inputs: fixture.inputs,
     });
-    return { sourcePath, airJson, document, result };
+    const normalizedDocument = normalizeFixtureArtifact(document);
+    const normalizedResult = normalizeFixtureArtifact(result);
+    return {
+      sourcePath,
+      airJson: `${JSON.stringify(normalizedDocument, null, 2)}\n`,
+      document: normalizedDocument,
+      result: normalizedResult,
+    };
   } catch (e) {
     throw new CorpusFixtureError("execute", e.message);
   }
+}
+
+function normalizeFixtureArtifact(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeFixtureArtifact(entry));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, normalizeFixtureArtifact(entry)]),
+    );
+  }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const normalized = value.replaceAll("\\", "/");
+  return normalized.startsWith(normalizedImplementationPrefix)
+    ? normalized.slice(normalizedImplementationPrefix.length)
+    : value;
 }
 
 function anneau1HandlersForFixture(fixture) {

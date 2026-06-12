@@ -36,7 +36,7 @@
         "owner_ref": "skill:examples.a1_skill_composition/LoadSource",
         "node_id": "node:graph:skill:examples.a1_skill_composition/LoadSource:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p03-skill-composition-binding.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p03-skill-composition-binding.tb",
           "start_byte": 327,
           "end_byte": 407,
           "start_line": 20,
@@ -62,7 +62,7 @@
         "owner_ref": "skill:examples.a1_skill_composition/LoadSource",
         "node_id": "node:graph:skill:examples.a1_skill_composition/LoadSource:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p03-skill-composition-binding.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p03-skill-composition-binding.tb",
           "start_byte": 327,
           "end_byte": 407,
           "start_line": 20,

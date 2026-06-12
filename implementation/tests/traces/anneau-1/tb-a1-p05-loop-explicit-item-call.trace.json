@@ -36,7 +36,7 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
           "start_byte": 348,
           "end_byte": 472,
           "start_line": 20,
@@ -62,7 +62,7 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:2",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
           "start_byte": 384,
           "end_byte": 472,
           "start_line": 21,
@@ -88,7 +88,7 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:2",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
           "start_byte": 384,
           "end_byte": 472,
           "start_line": 21,
@@ -113,7 +113,7 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
           "start_byte": 348,
           "end_byte": 472,
           "start_line": 20,
@@ -139,7 +139,7 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:2",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
           "start_byte": 384,
           "end_byte": 472,
           "start_line": 21,
@@ -165,7 +165,7 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:2",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
           "start_byte": 384,
           "end_byte": 472,
           "start_line": 21,
@@ -190,7 +190,7 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
           "start_byte": 348,
           "end_byte": 472,
           "start_line": 20,

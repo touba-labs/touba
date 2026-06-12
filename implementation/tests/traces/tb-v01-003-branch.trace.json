@@ -36,7 +36,7 @@
         "owner_ref": "strategy:examples.branch/RunReview",
         "node_id": "node:graph:strategy:examples.branch/RunReview:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
           "start_byte": 485,
           "end_byte": 493,
           "start_line": 29,
@@ -61,7 +61,7 @@
         "owner_ref": "strategy:examples.branch/RunReview",
         "node_id": "node:graph:strategy:examples.branch/RunReview:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
           "start_byte": 485,
           "end_byte": 493,
           "start_line": 29,
@@ -166,7 +166,7 @@
         "owner_ref": "skill:examples.branch/ReviewDraft",
         "node_id": "node:graph:skill:examples.branch/ReviewDraft:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
           "start_byte": 236,
           "end_byte": 248,
           "start_line": 15,
@@ -215,7 +215,7 @@
         "owner_ref": "skill:examples.branch/ReviewDraft",
         "node_id": "node:graph:skill:examples.branch/ReviewDraft:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
           "start_byte": 236,
           "end_byte": 248,
           "start_line": 15,
@@ -240,7 +240,7 @@
         "owner_ref": "skill:examples.branch/ReviewDraft",
         "node_id": "node:graph:skill:examples.branch/ReviewDraft:2",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
           "start_byte": 257,
           "end_byte": 331,
           "start_line": 16,
@@ -279,7 +279,7 @@
         "owner_ref": "strategy:examples.branch/RunReview",
         "node_id": "node:graph:strategy:examples.branch/RunReview:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
           "start_byte": 485,
           "end_byte": 493,
           "start_line": 29,

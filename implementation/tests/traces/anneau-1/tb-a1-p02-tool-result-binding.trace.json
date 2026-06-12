@@ -36,7 +36,7 @@
         "owner_ref": "skill:examples.a1_tool_binding/BuildSource",
         "node_id": "node:graph:skill:examples.a1_tool_binding/BuildSource:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p02-tool-result-binding.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p02-tool-result-binding.tb",
           "start_byte": 289,
           "end_byte": 369,
           "start_line": 17,
@@ -62,7 +62,7 @@
         "owner_ref": "skill:examples.a1_tool_binding/BuildSource",
         "node_id": "node:graph:skill:examples.a1_tool_binding/BuildSource:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p02-tool-result-binding.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p02-tool-result-binding.tb",
           "start_byte": 289,
           "end_byte": 369,
           "start_line": 17,

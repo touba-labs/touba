@@ -36,7 +36,7 @@
         "owner_ref": "strategy:examples.a1_simple_agents/RunChange",
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 676,
           "end_byte": 684,
           "start_line": 38,
@@ -61,7 +61,7 @@
         "owner_ref": "strategy:examples.a1_simple_agents/RunChange",
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 676,
           "end_byte": 684,
           "start_line": 38,
@@ -172,7 +172,7 @@
         "owner_ref": "skill:examples.a1_simple_agents/MakeChange",
         "node_id": "node:graph:skill:examples.a1_simple_agents/MakeChange:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 306,
           "end_byte": 317,
           "start_line": 17,
@@ -197,7 +197,7 @@
         "owner_ref": "skill:examples.a1_simple_agents/MakeChange",
         "node_id": "node:graph:skill:examples.a1_simple_agents/MakeChange:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 306,
           "end_byte": 317,
           "start_line": 17,
@@ -236,7 +236,7 @@
         "owner_ref": "strategy:examples.a1_simple_agents/RunChange",
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:1",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 676,
           "end_byte": 684,
           "start_line": 38,
@@ -260,7 +260,7 @@
         "owner_ref": "strategy:examples.a1_simple_agents/RunChange",
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:2",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 693,
           "end_byte": 701,
           "start_line": 39,
@@ -285,7 +285,7 @@
         "owner_ref": "strategy:examples.a1_simple_agents/RunChange",
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:2",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 693,
           "end_byte": 701,
           "start_line": 39,
@@ -404,7 +404,7 @@
         "owner_ref": "strategy:examples.a1_simple_agents/RunChange",
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:2",
         "source_ref": {
-          "source_id": "implementation/grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
+          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 693,
           "end_byte": 701,
           "start_line": 39,

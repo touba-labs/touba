@@ -385,11 +385,19 @@ function validateSourceRefs(artifacts, diagnostics) {
   }
   const expectedSourceId = path.resolve(artifacts.source.path);
   for (const { sourceRef, artifact } of collectSourceRefs(artifacts)) {
-    if (path.resolve(String(sourceRef.source_id)) !== expectedSourceId) {
+    if (!sourceIdMatchesPath(sourceRef.source_id, expectedSourceId)) {
       diagnostics.push(error("SourceRefMismatch", "source_ref does not match explicit source artifact", artifact, "source_ref"));
       return;
     }
   }
+}
+
+function sourceIdMatchesPath(sourceId, expectedSourceId) {
+  const value = String(sourceId);
+  return [
+    path.resolve(value),
+    path.resolve(implementationDir, value),
+  ].some((candidate) => candidate === expectedSourceId);
 }
 
 function validateRedaction(artifacts, auditManifest, diagnostics) {
