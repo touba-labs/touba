@@ -26,6 +26,7 @@ function main() {
       "cli/touba-supply-chain/src/validate.mjs",
       "cli/touba-supply-chain/test/validate.test.mjs",
       "tests/agent-decision-provider-v1/package.json",
+      "examples/providers/ollama-decision.provider.mjs",
       "tests/js-sdk-project/README.md",
       "tests/js-sdk-engine-project/README.md",
       "tests/team-multi-equipe/README.md",
@@ -128,6 +129,10 @@ function main() {
       "pnpm validate:donnees-quebec-agent:live",
     ]);
     assertScriptContains(packageJson, "validate:v1-local", "pnpm validate:test-structure");
+    assertIncludes(
+      "examples/providers/ollama-decision.provider.mjs",
+      "createOllamaDecisionProvider",
+    );
     assertCommandsInclude(packageJson, "validate:tool-binding-dx", [
       "pnpm validate:js-sdk-project",
       "pnpm validate:js-sdk-engine-project",

@@ -270,6 +270,39 @@ export function createOpenAiDecisionProvider(options = {}) {
   return createAiSdkDecisionProvider(normalized);
 }
 
+export function createOllamaDecisionProvider(options = {}) {
+  const normalized = {
+    ...options,
+    source: options.source ?? "ollama_openai_compatible",
+    providerOptions: options.providerOptions ?? { openai: { store: false } },
+    model: async (request) => {
+      const { createOpenAI } = await import("@ai-sdk/openai");
+      const apiKey = await valueForRequest(options.apiKey, request)
+        ?? firstNonEmptyEnvOptional(options.apiKeyEnvNames ?? [
+          "TOUBA_AGENT_DECISION_OLLAMA_API_KEY",
+          "OLLAMA_API_KEY",
+        ])
+        ?? "ollama-local";
+      const baseURL = await valueForRequest(options.baseURL, request)
+        ?? process.env.TOUBA_AGENT_DECISION_OLLAMA_BASE_URL
+        ?? process.env.OLLAMA_BASE_URL
+        ?? "http://127.0.0.1:11434/v1";
+      const provider = createOpenAI(compactObject({
+        apiKey,
+        baseURL,
+        headers: await valueForRequest(options.headers, request),
+      }));
+      const modelId = await valueForRequest(options.model, request)
+        ?? request.inputs?.request?.llm_model
+        ?? process.env.TOUBA_AGENT_DECISION_OLLAMA_MODEL
+        ?? process.env.OLLAMA_MODEL
+        ?? "llama3.2";
+      return provider(modelId);
+    },
+  };
+  return createAiSdkDecisionProvider(normalized);
+}
+
 export async function defineTool(definition) {
   const normalized = normalizeToolDefinition(definition);
   const rawInput = await readStdin();
@@ -652,6 +685,16 @@ function firstNonEmptyEnv(names) {
     "MissingProviderSecret",
     `${names.join(" or ")} must be set for the OpenAI decision provider`,
   );
+}
+
+function firstNonEmptyEnvOptional(names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function compactObject(value) {

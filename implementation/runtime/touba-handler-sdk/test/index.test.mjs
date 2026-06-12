@@ -13,6 +13,7 @@ import {
   ToubaHandlerError,
   TOUBA_SDK_METADATA,
   createAiSdkDecisionProvider,
+  createOllamaDecisionProvider,
   createToolHandler,
   handleToolRequest,
   toubaSdkMetadata,
@@ -460,6 +461,48 @@ test("createAiSdkDecisionProvider passes an explicit maxOutputTokens budget", as
   assert.equal(calls[0].maxOutputTokens, 96);
 });
 
+test("createOllamaDecisionProvider provides a non-OpenAI AI SDK helper without a required secret", async () => {
+  const previousApiKey = process.env.TOUBA_AGENT_DECISION_OLLAMA_API_KEY;
+  const previousOllamaApiKey = process.env.OLLAMA_API_KEY;
+  delete process.env.TOUBA_AGENT_DECISION_OLLAMA_API_KEY;
+  delete process.env.OLLAMA_API_KEY;
+  try {
+    const calls = [];
+    const provider = createOllamaDecisionProvider({
+      model: "llama3.2",
+      baseURL: "http://127.0.0.1:11434/v1",
+      generateObject: async (request) => {
+        calls.push(request);
+        return {
+          object: {
+            action: "answer_directly",
+            source: "ollama_openai_compatible",
+            reason: "local provider answered",
+            result: "Bonjour depuis un provider local.",
+          },
+        };
+      },
+    });
+
+    const decision = await provider(agentDecisionSummaryRequest());
+
+    assert.deepEqual(decision, {
+      action: "answer_directly",
+      source: "ollama_openai_compatible",
+      reason: "local provider answered",
+      result: "Bonjour depuis un provider local.",
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].providerOptions.openai.store, false);
+    assert.deepEqual(jsonSchemaOf(calls[0]).properties.source.enum, [
+      "ollama_openai_compatible",
+    ]);
+  } finally {
+    restoreEnv("TOUBA_AGENT_DECISION_OLLAMA_API_KEY", previousApiKey);
+    restoreEnv("OLLAMA_API_KEY", previousOllamaApiKey);
+  }
+});
+
 test("createAiSdkDecisionProvider rejects invalid output budget options", () => {
   assert.throws(
     () => createAiSdkDecisionProvider({
@@ -705,6 +748,14 @@ function capabilityDescriptors() {
       },
     },
   ];
+}
+
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
 }
 
 function writeFakeToubaCli(workspace) {
