@@ -13,10 +13,10 @@ external effect, and every run can produce structured traces that link back to
 AIR nodes and source locations.
 
 Touba is built for teams that need agentic autonomy and accountability at the
-same time: developers declare what a system can do, reviewers see who is
-allowed to invoke it, and operators get observable refusals instead of silent
-failures. It is the executable path of the PAP research program
-(`Probabilistic Agentic Programming`).
+same time. It brings **Agents as Code** to agentic systems: developers declare
+what a system can do, reviewers see who is allowed to invoke it, and operators
+get observable refusals instead of silent failures. It is the executable path
+of the PAP research program (`Probabilistic Agentic Programming`).
 
 ## Why Touba
 
@@ -32,6 +32,21 @@ The core model is:
 
 This distinction makes agentic behavior easier to analyze, test, govern and
 operate than prompt-only orchestration.
+
+## Agents as Code
+
+Touba treats agent authority as code. Source `.tb` files, AIR, manifests, run
+plans, locks, traces and review gates are artifacts that teams can commit,
+diff, review, validate and audit before execution.
+
+The analogy with Infrastructure as Code is intentional: a team should not let
+agents act from unreviewed prompts any more than it would let production
+infrastructure be changed by hand. Touba makes tool access, invocation
+authority, budgets, payload boundaries and execution evidence explicit.
+
+Current limits remain explicit. Touba does not provide a hosted agent service,
+a complete system sandbox, automatic compliance, mandatory signatures or a
+public package registry as available runtime capabilities.
 
 ## Quick Start
 
