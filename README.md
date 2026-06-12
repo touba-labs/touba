@@ -32,3 +32,18 @@ This repository contains the Touba language and runtime core:
 - SDK and handler contracts;
 - examples, fixtures and validation tests.
 
+## Contributing And Feedback
+
+Contributions, bug reports, proposals and documentation feedback are handled
+through GitHub Issues and pull requests.
+
+Read `CONTRIBUTING.md`, `FEEDBACK.md`, `SECURITY.md` and
+`CODE_OF_CONDUCT.md` before opening a change.
+
+## Authors
+
+Touba is created and led by Khadim Bamba Lo. See `AUTHORS.md`.
+
+## License
+
+This repository is licensed under the MIT License. See `LICENSE`.
