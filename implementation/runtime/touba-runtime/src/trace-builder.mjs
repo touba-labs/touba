@@ -1,0 +1,98 @@
+// @ts-check
+
+import { createHash } from "node:crypto";
+
+export const TRACE_PROTOCOL_VERSION = "trace-minimal-v0.1";
+
+/**
+ * @typedef {object} TraceAirDocument
+ * @property {string} air_schema_version
+ * @property {{ id: string }} module
+ *
+ * @typedef {object} TraceEventOptions
+ * @property {unknown=} airRef
+ * @property {unknown=} payload
+ * @property {string=} message
+ *
+ * @typedef {object} TraceEvent
+ * @property {string} event_id
+ * @property {string} run_id
+ * @property {number} sequence_index
+ * @property {string} kind
+ * @property {unknown=} air_ref
+ * @property {unknown=} payload
+ * @property {string=} message
+ */
+
+export class TraceBuilder {
+  /**
+   * @param {TraceAirDocument} airDocument
+   * @param {string} entryRef
+   * @param {string} runId
+   */
+  constructor(airDocument, entryRef, runId) {
+    /** @type {TraceAirDocument} */
+    this.airDocument = airDocument;
+    /** @type {string} */
+    this.runId = runId;
+    /** @type {string} */
+    this.entryRef = entryRef;
+    /** @type {TraceEvent[]} */
+    this.events = [];
+  }
+
+  /**
+   * @param {string} kind
+   * @param {TraceEventOptions} [options]
+   * @returns {TraceEvent}
+   */
+  push(kind, options = {}) {
+    const event = /** @type {TraceEvent} */ (compactPayload({
+      event_id: `event:${this.runId}:${this.events.length + 1}`,
+      run_id: this.runId,
+      sequence_index: this.events.length,
+      kind,
+      air_ref: options.airRef,
+      payload: options.payload,
+      message: options.message,
+    }));
+    this.events.push(event);
+    return event;
+  }
+
+  /**
+   * @returns {{ trace_protocol_version: string, run: { run_id: string, air_schema_version: string, module_ref: string, entry_ref: string }, events: TraceEvent[] }}
+   */
+  document() {
+    return {
+      trace_protocol_version: TRACE_PROTOCOL_VERSION,
+      run: {
+        run_id: this.runId,
+        air_schema_version: this.airDocument.air_schema_version,
+        module_ref: this.airDocument.module.id,
+        entry_ref: this.entryRef,
+      },
+      events: this.events,
+    };
+  }
+}
+
+/**
+ * @param {Record<string, unknown>} payload
+ * @returns {Record<string, unknown>}
+ */
+export function compactPayload(payload) {
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined && value !== null),
+  );
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function sha256Json(value) {
+  return createHash("sha256")
+    .update(JSON.stringify(value))
+    .digest("hex");
+}

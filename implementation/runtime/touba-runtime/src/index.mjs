@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import {
@@ -41,12 +40,18 @@ import {
   resolvedSecretEntries,
   secretValuesForRedaction,
 } from "./secret-redaction.mjs";
+import {
+  TRACE_PROTOCOL_VERSION,
+  TraceBuilder,
+  compactPayload,
+  sha256Json,
+} from "./trace-builder.mjs";
 
 export { ToubaRuntimeError };
+export { TRACE_PROTOCOL_VERSION };
 
 export const AIR_SCHEMA_VERSION = "air-minimal-v0.1";
 export const AIR_JSON_PROFILE = "air-json-v0.1";
-export const TRACE_PROTOCOL_VERSION = "trace-minimal-v0.1";
 const TOUBA_MAX_SAFE_INT = 9007199254740991n;
 const BUILTIN_TEXT = "builtin:Text";
 const BUILTIN_BOOLEAN = "builtin:Boolean";
@@ -6990,18 +6995,6 @@ function airRefForNode(graph, node) {
   });
 }
 
-function compactPayload(payload) {
-  return Object.fromEntries(
-    Object.entries(payload).filter(([, value]) => value !== undefined && value !== null),
-  );
-}
-
-function sha256Json(value) {
-  return createHash("sha256")
-    .update(JSON.stringify(value))
-    .digest("hex");
-}
-
 function runtimeFailureTracePayload(error, context) {
   return compactPayload({
     runtime_error_code: error.code,
@@ -7052,40 +7045,4 @@ function runtimeFailureTracePayload(error, context) {
     secret_handles_refused: error.details?.secretHandlesRefused ?? error.details?.missingSecrets,
     secret_refusal_reasons: error.details?.secretRefusalReasons,
   });
-}
-
-class TraceBuilder {
-  constructor(airDocument, entryRef, runId) {
-    this.airDocument = airDocument;
-    this.runId = runId;
-    this.entryRef = entryRef;
-    this.events = [];
-  }
-
-  push(kind, options = {}) {
-    const event = compactPayload({
-      event_id: `event:${this.runId}:${this.events.length + 1}`,
-      run_id: this.runId,
-      sequence_index: this.events.length,
-      kind,
-      air_ref: options.airRef,
-      payload: options.payload,
-      message: options.message,
-    });
-    this.events.push(event);
-    return event;
-  }
-
-  document() {
-    return {
-      trace_protocol_version: TRACE_PROTOCOL_VERSION,
-      run: {
-        run_id: this.runId,
-        air_schema_version: this.airDocument.air_schema_version,
-        module_ref: this.airDocument.module.id,
-        entry_ref: this.entryRef,
-      },
-      events: this.events,
-    };
-  }
 }

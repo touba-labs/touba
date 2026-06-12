@@ -18,6 +18,43 @@ import {
   normalizeStringSet,
   validateActiveSkillPackRefs,
 } from "../src/runtime-options.mjs";
+import {
+  TRACE_PROTOCOL_VERSION,
+  TraceBuilder,
+  compactPayload,
+  sha256Json,
+} from "../src/trace-builder.mjs";
+
+test("builds trace documents with stable sequencing and compact payloads", () => {
+  const trace = new TraceBuilder(
+    {
+      air_schema_version: AIR_SCHEMA_VERSION,
+      module: { id: "module:test" },
+    },
+    "skill:test/Noop",
+    "run-trace-test",
+  );
+
+  const first = trace.push("run_started", {
+    payload: compactPayload({
+      kept: "value",
+      omittedNull: null,
+      omittedUndefined: undefined,
+    }),
+  });
+  const second = trace.push("run_completed", { message: "ok" });
+  const document = trace.document();
+
+  assert.equal(first.event_id, "event:run-trace-test:1");
+  assert.equal(second.sequence_index, 1);
+  assert.equal(document.trace_protocol_version, TRACE_PROTOCOL_VERSION);
+  assert.equal(document.run.module_ref, "module:test");
+  assert.deepEqual(document.events[0].payload, { kept: "value" });
+  assert.equal(
+    sha256Json({ ref: "skill_pack:project/research-review" }),
+    "9526c9ca8b9bde7ada330e272b124c8c664acd7969da3127720cf3aa641a0af7",
+  );
+});
 
 test("normalizes agent decision provider options at a typed runtime boundary", () => {
   const functionProvider = () => ({ target_ref: "skill:test/Noop" });

@@ -17,6 +17,7 @@
     "src/payload-validation.mjs",
     "src/runtime-errors.mjs",
     "src/runtime-options.mjs",
-    "src/secret-redaction.mjs"
+    "src/secret-redaction.mjs",
+    "src/trace-builder.mjs"
   ]
 }
