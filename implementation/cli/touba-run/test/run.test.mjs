@@ -251,6 +251,18 @@ test("rejects invalid BQ-1 CLI budget values before execution", () => {
   assert.match(invalidJson.stderr, /--run-limits-json must decode to a JSON object/);
 });
 
+test("rejects invalid agent decision provider content modes before execution", () => {
+  const failure = runCliExpectFailure([
+    runPath,
+    "fixture.air.json",
+    "--agent-decision-provider-content-mode",
+    "raw",
+  ]);
+
+  assert.equal(failure.status, 2);
+  assert.match(failure.stderr, /--agent-decision-provider-content-mode must be one of: inline, opaque_refs/);
+});
+
 test("surfaces BQ-1 budget refusals through CLI diagnostics and traces", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-budget-"));
   try {
@@ -1700,6 +1712,72 @@ test("passes ADP-1 provider metadata and budget flags through the CLI", () => {
       decision_schema_version: "touba-agent-decision-v1",
     });
     assert.equal(JSON.stringify(trace).includes("private-cli-topic"), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("passes opaque_refs provider content mode through the CLI without raw payload", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-opaque-provider-"));
+  try {
+    const airPath = writeAirDocument(workspace, agentDecisionProviderDocument());
+    const providerPath = join(workspace, "provider.mjs");
+    const capturedPath = join(workspace, "provider-request.json");
+    const tracePath = join(workspace, "trace.json");
+    const privatePayload = "private-cli-provider-payload";
+    writeFileSync(
+      providerPath,
+      [
+        "import { writeFileSync } from 'node:fs';",
+        `const capturedPath = ${JSON.stringify(capturedPath)};`,
+        "export function decideAgentCapability(request) {",
+        "  writeFileSync(capturedPath, JSON.stringify(request, null, 2));",
+        "  return {",
+        "    action: 'answer_directly',",
+        "    reason: 'opaque refs accepted',",
+        "    result: 'ok'",
+        "  };",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const stdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--inputs-json",
+        JSON.stringify({ topic: privatePayload }),
+        "--agent-decision-provider",
+        providerPath,
+        "--agent-decision-provider-content-mode",
+        "opaque_refs",
+        "--trace-out",
+        tracePath,
+        "--output",
+        "result",
+      ],
+      { encoding: "utf8" },
+    );
+
+    assert.equal(JSON.parse(stdout), "ok");
+    const requestText = readFileSync(capturedPath, "utf8");
+    assert.doesNotMatch(requestText, new RegExp(privatePayload));
+    const request = JSON.parse(requestText);
+    assert.equal(request.content_mode, "opaque_refs");
+    assert.equal(request.external_content_access.raw_content_in_provider_request, false);
+    assert.equal(request.inputs.topic.value, undefined);
+    assert.match(request.inputs.topic.ref, /^opaque:runtime_input\/topic$/);
+    assert.equal(request.model_input.content_boundary.provider_content_mode, "opaque_refs");
+    assert.equal(request.model_input.content_boundary.raw_external_content_in_request, false);
+
+    const trace = JSON.parse(readFileSync(tracePath, "utf8"));
+    const requested = eventOf(trace, "agent_decision_requested").payload;
+    assert.equal(requested.content_mode, "opaque_refs");
+    assert.equal(requested.external_content_access.raw_content_in_provider_request, false);
+    assert.equal(JSON.stringify(trace).includes(privatePayload), false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

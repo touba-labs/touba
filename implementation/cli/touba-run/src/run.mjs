@@ -358,6 +358,7 @@ try {
     agentDecisions,
     agentDecisionProvider,
     agentDecisionProviderMetadata: parsedArgs.agentDecisionProviderMetadata,
+    agentDecisionProviderContentMode: parsedArgs.agentDecisionProviderContentMode,
     agentDecisionProviderTimeoutMs: parsedArgs.agentDecisionProviderTimeoutMs,
     agentDecisionProviderMaxRetries: parsedArgs.agentDecisionProviderMaxRetries,
     maxAgentSteps: parsedArgs.maxAgentSteps,
@@ -1132,6 +1133,18 @@ function parseArgs(rawArgs) {
         return { error: "--agent-decision-provider-max-retries requires a non-negative integer" };
       }
       parsed.agentDecisionProviderMaxRetries = maxRetries;
+    } else if (arg === "--agent-decision-provider-content-mode") {
+      index += 1;
+      if (!["inline", "opaque_refs"].includes(rawArgs[index])) {
+        return { error: "--agent-decision-provider-content-mode must be one of: inline, opaque_refs" };
+      }
+      parsed.agentDecisionProviderContentMode = rawArgs[index];
+    } else if (arg.startsWith("--agent-decision-provider-content-mode=")) {
+      const contentMode = arg.slice("--agent-decision-provider-content-mode=".length);
+      if (!["inline", "opaque_refs"].includes(contentMode)) {
+        return { error: "--agent-decision-provider-content-mode must be one of: inline, opaque_refs" };
+      }
+      parsed.agentDecisionProviderContentMode = contentMode;
     } else if (arg === "--trigger-event") {
       index += 1;
       if (index >= rawArgs.length) {
@@ -1494,7 +1507,7 @@ function parseArgs(rawArgs) {
 
 function printUsage() {
   process.stderr.write(
-    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object>] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer>] [--state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>]\n",
+    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object>] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer>] [--state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>]\n",
   );
 }
 

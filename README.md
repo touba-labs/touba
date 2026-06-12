@@ -172,6 +172,24 @@ version, protocol compatibility and status. When `--source-root` is provided,
 it also verifies source artifact digests. It does not provide a hosted registry
 service, package installation, signature verification or runtime authority.
 
+## Agent Decision Providers
+
+`touba run` can delegate an agent's capability choice to an explicit decision
+provider while keeping runtime authority in Touba:
+
+```sh
+touba run program.air.json \
+  --agent-decision-provider providers/researcher.provider.mjs \
+  --agent-decision-provider-content-mode opaque_refs
+```
+
+The default content mode is `inline`. `opaque_refs` replaces raw runtime inputs
+and observations in the provider request with references and metadata, then
+records the mode in the trace. The runtime still revalidates selected
+capabilities, arguments, budgets and `callable_by` before execution. This mode
+does not install a provider, grant hidden authority or make a third-party model
+trusted by default.
+
 ## Platform Support
 
 | Platform | Status | Artifact |

@@ -2891,6 +2891,8 @@ function agentDecisionRequestTracePayload(request) {
     step_index: request.step_index,
     provider_metadata: request.provider_metadata,
     request_digest: sha256Json(redactedEvidence),
+    content_mode: request.content_mode,
+    external_content_access: request.external_content_access,
     model_input_protocol: request.model_input?.protocol,
     model_input_mode: request.model_input?.mode,
     capability_count: request.capability_count,
