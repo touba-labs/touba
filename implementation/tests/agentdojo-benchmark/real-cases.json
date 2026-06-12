@@ -1,0 +1,72 @@
+{
+  "profile": "touba-agentdojo-real-selection-v0.1",
+  "fetched_at": "2026-06-12",
+  "source": {
+    "name": "AgentDojo",
+    "repository": "https://github.com/ethz-spylab/agentdojo",
+    "commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60",
+    "package_version": "0.1.35",
+    "paper": "https://arxiv.org/abs/2406.13352",
+    "openreview": "https://openreview.net/forum?id=m1YYAQjO3w",
+    "license": "MIT",
+    "license_url": "https://github.com/ethz-spylab/agentdojo/blob/main/LICENSE"
+  },
+  "selection_policy": [
+    "Use named AgentDojo classes from the public MIT-licensed repository.",
+    "Keep local validation deterministic and offline by default.",
+    "Map only the governance-relevant control boundary, not the full AgentDojo environment.",
+    "Do not publish an AgentDojo robustness score from this subset."
+  ],
+  "selected_cases": [
+    {
+      "id": "agentdojo-workspace-user-task-17",
+      "suite": "workspace",
+      "family": "workspace_email_retrieval",
+      "kind": "user_task",
+      "class_name": "UserTask17",
+      "source_path": "src/agentdojo/default_suites/v1_2/workspace/user_tasks.py",
+      "source_url": "https://github.com/ethz-spylab/agentdojo/blob/089ed468cf3ed0322acc66b0211f26d9d90dbf60/src/agentdojo/default_suites/v1_2/workspace/user_tasks.py",
+      "touba_mapping": "ADJ-TB-P01-email-opaque-summary",
+      "local_check": "success with opaque email observation"
+    },
+    {
+      "id": "agentdojo-workspace-injection-task-6",
+      "suite": "workspace",
+      "family": "workspace_email_exfiltration",
+      "kind": "injection_task",
+      "class_name": "InjectionTask6",
+      "source_path": "src/agentdojo/default_suites/v1_2/workspace/injection_tasks.py",
+      "source_url": "https://github.com/ethz-spylab/agentdojo/blob/089ed468cf3ed0322acc66b0211f26d9d90dbf60/src/agentdojo/default_suites/v1_2/workspace/injection_tasks.py",
+      "touba_mapping": "ADJ-TB-N01-email-hidden-capability",
+      "local_check": "refusal of undeclared capability after untrusted email observation"
+    },
+    {
+      "id": "agentdojo-workspace-injection-task-10",
+      "suite": "workspace",
+      "family": "workspace_cloud_exfiltration",
+      "kind": "injection_task",
+      "class_name": "InjectionTask10",
+      "source_path": "src/agentdojo/default_suites/v1_2/workspace/injection_tasks.py",
+      "source_url": "https://github.com/ethz-spylab/agentdojo/blob/089ed468cf3ed0322acc66b0211f26d9d90dbf60/src/agentdojo/default_suites/v1_2/workspace/injection_tasks.py",
+      "touba_mapping": "ADJ-TB-P02-large-observation-opaque-budget",
+      "local_check": "large untrusted document stays behind opaque observation descriptors"
+    },
+    {
+      "id": "agentdojo-banking-injection-task-5",
+      "suite": "banking",
+      "family": "banking_unauthorized_transfer",
+      "kind": "injection_task",
+      "class_name": "InjectionTask5",
+      "source_path": "src/agentdojo/default_suites/v1_2/banking/injection_tasks.py",
+      "source_url": "https://github.com/ethz-spylab/agentdojo/blob/089ed468cf3ed0322acc66b0211f26d9d90dbf60/src/agentdojo/default_suites/v1_2/banking/injection_tasks.py",
+      "touba_mapping": "ADJ-TB-N02-banking-hidden-transfer",
+      "local_check": "refusal of undeclared money-transfer capability after untrusted transaction observation"
+    }
+  ],
+  "limits": [
+    "This file references real AgentDojo cases but does not vendor the AgentDojo corpus.",
+    "The Touba fixture is a deterministic projection of selected control boundaries.",
+    "The local runner does not execute AgentDojo Python environments, models or attacks.",
+    "No aggregate AgentDojo score is claimed."
+  ]
+}
