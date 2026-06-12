@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -6,6 +5,10 @@ import {
   agentDecisionProviderContent,
   agentProviderObservationBudgetReport,
 } from "./agent-provider-content.mjs";
+import {
+  runProcessToolHandler,
+  TOOL_HANDLER_PROTOCOL_VERSION,
+} from "./handler-protocol.mjs";
 import {
   isPortablePayloadConstraintScalar,
   payloadValueKind,
@@ -19,6 +22,11 @@ import {
   RuntimeStop,
   ToubaRuntimeError,
 } from "./runtime-errors.mjs";
+import {
+  redactSecrets,
+  resolvedSecretEntries,
+  secretValuesForRedaction,
+} from "./secret-redaction.mjs";
 
 export { ToubaRuntimeError };
 
@@ -33,7 +41,6 @@ const BUILTIN_FLOAT = "builtin:Float";
 const TOOL_BINDING_MANIFEST_VERSION = "touba-manifest-v1";
 const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
 const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
-const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
 const AGENT_DECISION_PROTOCOL_VERSION = "touba-agent-decision-v1";
 const AGENT_MODEL_INPUT_PROTOCOL_VERSION = "touba-agent-model-input-v1";
 const AGENT_DECISION_PROVIDER_CONTENT_MODES = new Set(["inline", "opaque_refs"]);
@@ -2466,7 +2473,26 @@ async function executeTool(tool, context) {
   if (!handler) {
     if (binding) {
       recordExternalToolDispatch(context);
-      const handlerResponse = await runProcessToolHandler(tool, binding, context, toolArguments);
+      const secretHandles = tool.required_secrets ?? [];
+      const handlerRequest = {
+        protocol: TOOL_HANDLER_PROTOCOL_VERSION,
+        tool_ref: tool.id,
+        call_id: `call:${context.trace.runId}:${context.nextCallIndex}`,
+        arguments: toolArguments,
+        grants: [...binding.grants],
+        memory_accesses: memoryAccessesForTrace(tool.memory_accesses ?? []),
+        resource_bindings: resourceBindingsForTool(tool, context),
+        secret_handles: [...secretHandles],
+        limits: { ...binding.limits },
+      };
+      context.nextCallIndex += 1;
+      const handlerResponse = await runProcessToolHandler({
+        toolRef: tool.id,
+        binding,
+        request: handlerRequest,
+        secretHandles,
+        secretStore: context.secretStore,
+      });
       observeToolMemoryMetadata(tool, handlerResponse.memoryMetadata, context);
       const value = handlerResponse.value;
       validateToolOutputPayload(tool, value, context);
@@ -2550,253 +2576,6 @@ function assertHumanApprovalCanPause(context, payload, airRef = undefined) {
   throw error;
 }
 
-async function runProcessToolHandler(tool, binding, context, toolArguments) {
-  const secretHandles = tool.required_secrets ?? [];
-  const secretValues = secretValuesForRedaction(context.secretStore);
-  const resourceBindings = resourceBindingsForTool(tool, context);
-  const request = {
-    protocol: TOOL_HANDLER_PROTOCOL_VERSION,
-    tool_ref: tool.id,
-    call_id: `call:${context.trace.runId}:${context.nextCallIndex}`,
-    arguments: toolArguments,
-    grants: [...binding.grants],
-    memory_accesses: memoryAccessesForTrace(tool.memory_accesses ?? []),
-    resource_bindings: resourceBindings,
-    secret_handles: [...secretHandles],
-    limits: { ...binding.limits },
-  };
-  context.nextCallIndex += 1;
-
-  const requestPayload = `${JSON.stringify(request)}\n`;
-  assertPayloadWithinLimit(
-    Buffer.byteLength(requestPayload, "utf8"),
-    binding.limits.max_payload_bytes,
-    "tool handler request payload",
-    tool.id,
-    secretValues,
-  );
-
-  const childEnv = buildHandlerEnv(secretHandles, context.secretStore);
-  const child = spawn(binding.handler.command, binding.handler.args, {
-    cwd: binding.handler.cwd,
-    env: childEnv,
-    stdio: ["pipe", "pipe", "pipe"],
-    shell: false,
-    windowsHide: true,
-  });
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let stdoutSize = 0;
-    let stderrSize = 0;
-    const stdoutChunks = [];
-    const stderrChunks = [];
-
-    const timer = setTimeout(() => {
-      failAndKill(
-        new RuntimeFailure(
-          `tool handler timed out ${tool.id}`,
-          { toolRef: tool.id, timeoutMs: binding.limits.timeout_ms },
-          "ToolHandlerTimeout",
-        ),
-      );
-    }, binding.limits.timeout_ms);
-
-    const finish = (action, value) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      action(value);
-    };
-
-    const failAndKill = (error) => {
-      if (!child.killed) {
-        child.kill("SIGTERM");
-      }
-      finish(reject, error);
-    };
-
-    child.stdout.on("data", (chunk) => {
-      stdoutSize += chunk.length;
-      if (stdoutSize > binding.limits.max_payload_bytes) {
-        failAndKill(
-          new RuntimeFailure(
-            `tool handler stdout exceeded max_payload_bytes ${tool.id}`,
-            { toolRef: tool.id, maxPayloadBytes: binding.limits.max_payload_bytes },
-            "ToolHandlerOutputTooLarge",
-          ),
-        );
-        return;
-      }
-      stdoutChunks.push(chunk);
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderrSize += chunk.length;
-      if (stderrSize > binding.limits.max_payload_bytes) {
-        failAndKill(
-          new RuntimeFailure(
-            `tool handler stderr exceeded max_payload_bytes ${tool.id}`,
-            { toolRef: tool.id, maxPayloadBytes: binding.limits.max_payload_bytes },
-            "ToolHandlerOutputTooLarge",
-          ),
-        );
-        return;
-      }
-      stderrChunks.push(chunk);
-    });
-
-    child.on("error", (error) => {
-      const message = redactSecrets(error instanceof Error ? error.message : String(error), secretValues);
-      finish(
-        reject,
-        new RuntimeFailure(
-          `tool handler process failed ${tool.id}: ${message}`,
-          { toolRef: tool.id, cause: message },
-          "ToolHandlerProcessError",
-        ),
-      );
-    });
-
-    child.on("close", (code, signal) => {
-      if (settled) {
-        return;
-      }
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderr = redactSecrets(Buffer.concat(stderrChunks).toString("utf8"), secretValues);
-
-      if (code !== 0) {
-        const suffix = stderr.trim() ? `: ${stderr.trim()}` : "";
-        finish(
-          reject,
-          new RuntimeFailure(
-            `tool handler exited non-zero ${tool.id} (${code ?? signal})${suffix}`,
-            {
-              toolRef: tool.id,
-              exitCode: code,
-              signal,
-              cause: stderr.trim() || undefined,
-            },
-            "ToolHandlerNonZeroExit",
-          ),
-        );
-        return;
-      }
-
-      let response;
-      try {
-        response = JSON.parse(stdout);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        finish(
-          reject,
-          new RuntimeFailure(
-            `tool handler returned invalid JSON ${tool.id}: ${message}`,
-            { toolRef: tool.id, cause: message },
-            "ToolHandlerInvalidJson",
-          ),
-        );
-        return;
-      }
-
-      try {
-        finish(resolve, decodeToolHandlerResponse(response, tool.id, secretValues));
-      } catch (error) {
-        finish(reject, error);
-      }
-    });
-
-    child.stdin.on("error", (error) => {
-      if (settled) {
-        return;
-      }
-      const message = redactSecrets(error instanceof Error ? error.message : String(error), secretValues);
-      failAndKill(
-        new RuntimeFailure(
-          `tool handler stdin failed ${tool.id}: ${message}`,
-          { toolRef: tool.id, cause: message },
-          "ToolHandlerProcessError",
-        ),
-      );
-    });
-    child.stdin.end(requestPayload);
-  });
-}
-
-function decodeToolHandlerResponse(response, toolRef, secretValues) {
-  if (!response || typeof response !== "object" || Array.isArray(response)) {
-    throw new RuntimeFailure(
-      `tool handler response must be an object ${toolRef}`,
-      { toolRef },
-      "ToolHandlerInvalidResponse",
-    );
-  }
-
-  if (response.ok === true) {
-    if (!Object.hasOwn(response, "value")) {
-      throw new RuntimeFailure(
-        `tool handler success response is missing value ${toolRef}`,
-        { toolRef },
-        "ToolHandlerInvalidResponse",
-      );
-    }
-    return {
-      value: response.value,
-      memoryMetadata: response.memory_metadata,
-    };
-  }
-
-  if (response.ok === false) {
-    const handlerError = response.error;
-    const handlerErrorCode =
-      handlerError && typeof handlerError.code === "string" && handlerError.code.trim() !== ""
-        ? handlerError.code
-        : "ToolHandlerError";
-    const rawMessage =
-      handlerError && typeof handlerError.message === "string"
-        ? handlerError.message
-        : handlerErrorCode;
-    const message = redactSecrets(rawMessage, secretValues);
-    throw new RuntimeFailure(
-      `tool handler returned error ${toolRef} [${handlerErrorCode}]: ${message}`,
-      { toolRef, handlerErrorCode, cause: message },
-      "ToolHandlerReportedError",
-    );
-  }
-
-  throw new RuntimeFailure(
-    `tool handler response ok must be boolean ${toolRef}`,
-    { toolRef },
-    "ToolHandlerInvalidResponse",
-  );
-}
-
-function buildHandlerEnv(secretHandles, secretStore) {
-  const env = {};
-  for (const handle of secretHandles) {
-    const value = secretStore?.valueFor(handle);
-    if (value !== undefined) {
-      env[handle] = value;
-    }
-  }
-  return env;
-}
-
-function secretValuesForRedaction(secretStore) {
-  return resolvedSecretEntries(secretStore)
-    .map((entry) => entry.value)
-    .filter((value) => value.length > 0);
-}
-
-function resolvedSecretEntries(secretStore) {
-  if (!secretStore?.resolvedSecretEntries) {
-    return [];
-  }
-  return secretStore.resolvedSecretEntries();
-}
-
 function assertNoSecretValueInToolArguments(tool, binding, toolArguments, context) {
   const serialized = JSON.stringify(toolArguments);
   if (typeof serialized !== "string") {
@@ -2820,24 +2599,6 @@ function assertNoSecretValueInToolArguments(tool, binding, toolArguments, contex
     },
     "SecretValueInToolArguments",
   );
-}
-
-function assertPayloadWithinLimit(size, limit, label, toolRef, secretValues) {
-  if (size > limit) {
-    throw new RuntimeFailure(
-      `${redactSecrets(label, secretValues)} exceeded max_payload_bytes ${toolRef}`,
-      { toolRef, size, maxPayloadBytes: limit },
-      "ToolHandlerPayloadTooLarge",
-    );
-  }
-}
-
-function redactSecrets(value, secretValues) {
-  let redacted = String(value);
-  for (const secretValue of secretValues) {
-    redacted = redacted.split(secretValue).join("[redacted-secret]");
-  }
-  return redacted;
 }
 
 function toolBindingTracePayload(tool, binding, context) {
