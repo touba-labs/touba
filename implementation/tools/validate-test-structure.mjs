@@ -93,6 +93,7 @@ function main() {
     assertScript(packageJson, "validate:js-sdk-project");
     assertScript(packageJson, "validate:js-sdk-engine-project");
     assertScript(packageJson, "validate:agent-decision-provider-v1");
+    assertScript(packageJson, "validate:agentdojo-benchmark");
     assertScript(packageJson, "validate:team-multi-equipe");
     assertScript(packageJson, "validate:memory-backend-host");
     assertScript(packageJson, "validate:memory-backend-host:docker");
@@ -145,6 +146,7 @@ function main() {
       "pnpm validate:js-sdk-project",
       "pnpm validate:js-sdk-engine-project",
       "pnpm validate:agent-decision-provider-v1",
+      "pnpm validate:agentdojo-benchmark",
       "pnpm validate:team-multi-equipe",
       "pnpm validate:memory-backend-host",
       "pnpm validate:skills-v1",
@@ -263,6 +265,28 @@ function main() {
     assertIncludes(
       "tests/agent-decision-provider-v1/validate.mjs",
       "AgentCapabilityArgumentsInvalid",
+    );
+  });
+
+  check("AgentDojo initial benchmark adapter", () => {
+    assertPath("tests/agentdojo-benchmark/mapping.json");
+    assertPath("tests/agentdojo-benchmark/source/agentdojo-benchmark.tb");
+    assertPath("tests/agentdojo-benchmark/validate.mjs");
+    assertIncludes(
+      "tests/agentdojo-benchmark/mapping.json",
+      "ADJ-TB-N01-email-hidden-capability",
+    );
+    assertIncludes(
+      "tests/agentdojo-benchmark/source/agentdojo-benchmark.tb",
+      "EXTERNAL_INJECTION_SELECT_HIDDEN_CAPABILITY",
+    );
+    assertIncludes(
+      "tests/agentdojo-benchmark/validate.mjs",
+      "agentDecisionProviderContentMode: \"opaque_refs\"",
+    );
+    assertIncludes(
+      "tests/agentdojo-benchmark/validate.mjs",
+      "AgentCapabilityNotAllowed",
     );
   });
 
