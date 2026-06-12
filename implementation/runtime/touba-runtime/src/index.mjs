@@ -1024,6 +1024,7 @@ async function executeTarget(targetRef, context, callArguments = null, options =
         return decision.result;
       }
 
+      assertAgentDecisionDoesNotExecuteSkillPack(decision, agent, capabilityRefs, context);
       if (!capabilityRefs.includes(decision.targetRef)) {
         context.trace.push("agent_capability_refused", {
           payload: {
@@ -1150,6 +1151,7 @@ async function executeAgentDecisionLoop(agent, capabilityRefs, context) {
       continue;
     }
 
+    assertAgentDecisionDoesNotExecuteSkillPack(decision, agent, capabilityRefs, context, stepIndex);
     if (!capabilityRefs.includes(decision.targetRef)) {
       context.trace.push("agent_capability_refused", {
         payload: {
@@ -1801,6 +1803,7 @@ function activeSkillPackResourceRecord(context, pack, resource, agent, providerM
     return base;
   }
 
+  assertSkillPackResourceHasNoResolvedSecret(context, pack, resource, agent, providerMode);
   const approxSizeBytes = Buffer.byteLength(resource.content, "utf8");
   context.trace.push("skill_pack_resource_loaded", {
     payload: compactPayload({
@@ -1817,6 +1820,38 @@ function activeSkillPackResourceRecord(context, pack, resource, agent, providerM
     ...base,
     content: resource.content,
   });
+}
+
+function assertSkillPackResourceHasNoResolvedSecret(context, pack, resource, agent, providerMode) {
+  const leakedSecrets = resolvedSecretEntries(context.secretStore)
+    .filter((entry) => entry.value.length > 0 && String(resource.content).includes(entry.value));
+  if (leakedSecrets.length === 0) {
+    return;
+  }
+  context.trace.push("skill_pack_resource_refused", {
+    payload: compactPayload({
+      agent_ref: agent.id,
+      provider_mode: providerMode,
+      skill_pack_ref: pack.ref,
+      resource_ref: resource.ref,
+      resource_kind: resource.kind,
+      reason: "resolved_secret_value_detected",
+      runtime_error_code: "SkillPackSensitiveContentForbidden",
+      secret_handles_refused: leakedSecrets.map((entry) => entry.handle),
+    }),
+  });
+  throw new RuntimeFailure(
+    `skill pack resource ${resource.ref} contains a resolved secret value`,
+    {
+      agentRef: agent.id,
+      providerMode,
+      skillPackRef: pack.ref,
+      resourceRef: resource.ref,
+      resourceKind: resource.kind,
+      secretHandlesRefused: leakedSecrets.map((entry) => entry.handle),
+    },
+    "SkillPackSensitiveContentForbidden",
+  );
 }
 
 function validatedSkillPackExecutionLink(context, pack, link, agent, providerMode, capabilityRefs) {
@@ -1848,6 +1883,32 @@ function validatedSkillPackExecutionLink(context, pack, link, agent, providerMod
     description: link.description,
     authority: "informative_only",
   });
+}
+
+function assertAgentDecisionDoesNotExecuteSkillPack(decision, agent, capabilityRefs, context, stepIndex) {
+  if (!decision.targetRef?.startsWith?.("skill_pack:")) {
+    return;
+  }
+  context.trace.push("agent_capability_refused", {
+    payload: compactPayload({
+      agent_ref: agent.id,
+      step_index: stepIndex,
+      selected_ref: decision.targetRef,
+      allowed_refs: capabilityRefs,
+      reason: "skill_pack_is_not_executable",
+      runtime_error_code: "SkillPackExecutableConfusion",
+    }),
+  });
+  throw new RuntimeFailure(
+    `skill pack ${decision.targetRef} is procedural context, not an executable capability`,
+    {
+      targetRef: decision.targetRef,
+      agentRef: agent.id,
+      allowedRefs: capabilityRefs,
+      reason: "skill_pack_is_not_executable",
+    },
+    "SkillPackExecutableConfusion",
+  );
 }
 
 function assertSkillPackBudget(context, phase, consumedBytes, maxBytes, details = {}) {

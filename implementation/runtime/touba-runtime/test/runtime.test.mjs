@@ -3109,6 +3109,25 @@ test("refuses skill pack execution links outside the active agent uses", async (
   assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "SkillPackExecutionLinkUnauthorized");
 });
 
+test("refuses a skill pack selected as an executable agent capability", async () => {
+  const document = agentProviderDocument();
+  const result = await executeAirDocument(document, {
+    skillPacks: [
+      skillPackFixture("research-review"),
+    ],
+    activeSkillPackRefs: ["skill_pack:project/research-review"],
+    agentDecisionProvider: () => ({
+      target_ref: "skill_pack:project/research-review",
+      source: "skill_pack_test",
+      reason: "incorrectly execute context pack",
+    }),
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(eventOf(result.trace, "agent_capability_refused").payload.runtime_error_code, "SkillPackExecutableConfusion");
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "SkillPackExecutableConfusion");
+});
+
 test("keeps allowed execution links informative while execution still goes through a governed tool", async () => {
   const document = baseDocument({
     tools: [tool("Search")],
@@ -3261,8 +3280,9 @@ test("refuses resolved secrets in active skill pack context before calling the p
   assert.equal(result.status, "failure");
   assert.equal(providerWasCalled, false);
   const failure = eventOf(result.trace, "failure_detected");
-  assert.equal(failure.payload.runtime_error_code, "SecretValueInAgentDecisionRequest");
+  assert.equal(failure.payload.runtime_error_code, "SkillPackSensitiveContentForbidden");
   assert.deepEqual(failure.payload.secret_handles_refused, ["SEARCH_API_KEY"]);
+  assert.equal(eventOf(result.trace, "skill_pack_resource_refused").payload.runtime_error_code, "SkillPackSensitiveContentForbidden");
   assert.equal(JSON.stringify(result.trace).includes("resolved-secret-value"), false);
 });
 

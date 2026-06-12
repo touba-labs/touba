@@ -92,6 +92,7 @@
     "validate:payload-constraints-pc3a": "node tools/check-node-version.mjs && pnpm test:runtime && pnpm test:cli && pnpm test:project",
     "validate:secrets-sh1": "node tools/check-node-version.mjs && pnpm test:runtime && pnpm test:cli",
     "validate:adp1": "node tools/check-node-version.mjs && pnpm test:runtime && pnpm test:cli && pnpm test:sdk && pnpm validate:agent-decision-provider-v1 && pnpm validate:donnees-quebec-agent-provider && pnpm validate:donnees-quebec-agent:dry-run",
+    "validate:skills-v1": "node tools/check-node-version.mjs && node tests/skills-v1/validate.mjs",
     "validate:ownership-review": "node tools/check-node-version.mjs && pnpm test:project",
     "validate:surfaces-workspace-package": "node tools/check-node-version.mjs && pnpm test:inspect && pnpm test:lsp",
     "validate:surfaces-ownership-review": "node tools/check-node-version.mjs && pnpm test:inspect && pnpm test:lsp && pnpm test:trace-renderer",
@@ -101,7 +102,7 @@
     "validate:memory-postgres-rb2": "node tools/check-node-version.mjs && node tests/memory-postgres-rb2/validate.mjs",
     "validate:memory-postgres-rb2:openai-live": "node tools/check-node-version.mjs && node tests/memory-postgres-rb2/validate.mjs --openai-live",
     "validate:separation-di1": "node tools/check-node-version.mjs && pnpm --dir grammar/tree-sitter-touba test && cargo test -p touba-compiler && pnpm test:lsp",
-    "validate:v1-local": "node tools/check-node-version.mjs && pnpm validate:test-structure && pnpm test:runtime && pnpm test:cli && pnpm test:project && pnpm validate:js-sdk-project && pnpm validate:js-sdk-engine-project && pnpm validate:agent-autonomy-v1 && pnpm validate:agent-decision-provider-v1 && pnpm validate:team-multi-equipe && pnpm validate:memory-backend-host && pnpm test:audit && pnpm test:supply-chain && pnpm test:inspect && pnpm test:lsp && pnpm test:trace-renderer && pnpm validate:corpus && pnpm validate:corpus:anneau1 && pnpm validate:corpus:expressions-v1 && pnpm validate:corpus:bind-define-v1 && pnpm validate:donnees-quebec-agent-provider && pnpm validate:donnees-quebec-agent:dry-run && pnpm check:air-fixtures && pnpm check:trace-fixtures && pnpm check:anneau1-trace-fixtures && pnpm check:architecture-fixtures"
+    "validate:v1-local": "node tools/check-node-version.mjs && pnpm validate:test-structure && pnpm test:runtime && pnpm test:cli && pnpm test:project && pnpm validate:skills-v1 && pnpm validate:js-sdk-project && pnpm validate:js-sdk-engine-project && pnpm validate:agent-autonomy-v1 && pnpm validate:agent-decision-provider-v1 && pnpm validate:team-multi-equipe && pnpm validate:memory-backend-host && pnpm test:audit && pnpm test:supply-chain && pnpm test:inspect && pnpm test:lsp && pnpm test:trace-renderer && pnpm validate:corpus && pnpm validate:corpus:anneau1 && pnpm validate:corpus:expressions-v1 && pnpm validate:corpus:bind-define-v1 && pnpm validate:donnees-quebec-agent-provider && pnpm validate:donnees-quebec-agent:dry-run && pnpm check:air-fixtures && pnpm check:trace-fixtures && pnpm check:anneau1-trace-fixtures && pnpm check:architecture-fixtures"
   },
   "devDependencies": {
     "@vscode/vsce": "3.9.1",

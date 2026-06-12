@@ -249,6 +249,7 @@ function validateSkillPack(packPath) {
   validateActivation(descriptor.activation, diagnostics, descriptorPath);
   const resources = validateResources(descriptor.resources, resolvedPackPath, diagnostics, descriptorPath);
   validateExecutionLinks(descriptor.execution_links, diagnostics, descriptorPath);
+  validateDeclaredResourceFiles(resources, resolvedPackPath, diagnostics, descriptorPath);
 
   if (!resources.some((resource) => resource.path === "SKILL.md" && resource.kind === "procedure")) {
     diagnostics.push(errorDiagnostic("SkillPackResourcePathInvalid", "skill pack must declare SKILL.md as a procedure resource", {
@@ -386,6 +387,42 @@ function validateResources(resources, packPath, diagnostics, descriptorPath) {
     }
   }
   return normalized;
+}
+
+function validateDeclaredResourceFiles(resources, packPath, diagnostics, descriptorPath) {
+  const declaredPaths = new Set(resources.map((resource) => resource.path));
+  for (const relativePath of discoverResourceFiles(packPath)) {
+    if (!declaredPaths.has(relativePath)) {
+      diagnostics.push(errorDiagnostic("SkillPackResourceUndeclared", "resources and scripts must be declared in skill.json before they can be loaded", {
+        descriptor_path: descriptorPath,
+        path: relativePath,
+      }));
+    }
+  }
+}
+
+function discoverResourceFiles(packPath) {
+  const files = [];
+  for (const root of ["resources", "scripts"]) {
+    collectFiles(packPath, root, files);
+  }
+  return files.sort();
+}
+
+function collectFiles(packPath, relativeDir, files) {
+  const dir = join(packPath, relativeDir);
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    return;
+  }
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const relativePath = `${relativeDir}/${entry.name}`;
+    const fullPath = join(packPath, relativePath);
+    if (entry.isDirectory()) {
+      collectFiles(packPath, relativePath, files);
+    } else if (entry.isFile() || entry.isSymbolicLink()) {
+      files.push(toPosixPath(relativePath));
+    }
+  }
 }
 
 function validateResourcePath(resourcePath, packPath, diagnostics, descriptorPath, profile) {
