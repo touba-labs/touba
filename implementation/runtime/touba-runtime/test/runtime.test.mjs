@@ -4003,6 +4003,74 @@ test("refuses explicit human approval pause after external tool dispatch without
   );
 });
 
+test("resumes explicit human approval from checkpoint without redispatching prior effects", async () => {
+  const document = toolThenHumanApprovalDocument();
+  let toolCalls = 0;
+  const toolHandlers = {
+    "tool:test/Fetch": async () => {
+      toolCalls += 1;
+      return "fetched";
+    },
+  };
+
+  const paused = await executeAirDocument(document, {
+    durableHumanApprovals: true,
+    toolHandlers,
+  });
+
+  assert.equal(paused.status, "stopped");
+  assert.equal(toolCalls, 1);
+  assert.ok(paused.checkpoint);
+  assert.equal(paused.checkpoint.checkpoint_schema_version, "touba-run-checkpoint-v0.1");
+  assert.equal(paused.checkpoint.approval_ref, "approval:test/review-after-fetch");
+  assert.equal(paused.checkpoint.resume_target_ref, "give");
+  assert.equal(paused.checkpoint.values["value:fetched"], "fetched");
+  assert.equal(eventOf(paused.trace, "human_approval_checkpoint_created").payload.external_tool_dispatches, 1);
+  assert.equal(eventOf(paused.trace, "human_approval_paused").payload.approval_ref, "approval:test/review-after-fetch");
+
+  const resumed = await executeAirDocument(document, {
+    humanApprovalResumeCheckpoint: paused.checkpoint,
+    humanApprovalDecisions: {
+      "approval:test/review-after-fetch": "approved",
+    },
+    toolHandlers,
+  });
+
+  assert.equal(resumed.status, "success");
+  assert.equal(resumed.result, "approved");
+  assert.equal(toolCalls, 1);
+  assert.equal(eventsOf(resumed.trace, "tool_binding_authorized").length, 0);
+  assert.equal(
+    eventOf(resumed.trace, "human_approval_checkpoint_loaded").payload.approval_ref,
+    "approval:test/review-after-fetch",
+  );
+  assert.equal(eventOf(resumed.trace, "human_approval_decided").payload.decision, "approved");
+  assert.deepEqual(eventOf(resumed.trace, "human_approval_resumed").payload, {
+    approval_ref: "approval:test/review-after-fetch",
+    resume_target_ref: "give",
+    decision_binding: "reviewDecision",
+  });
+});
+
+test("refuses human approval checkpoint resume without an explicit decision", async () => {
+  const paused = await executeAirDocument(toolThenHumanApprovalDocument(), {
+    durableHumanApprovals: true,
+    toolHandlers: {
+      "tool:test/Fetch": async () => "fetched",
+    },
+  });
+
+  const resumed = await executeAirDocument(toolThenHumanApprovalDocument(), {
+    humanApprovalResumeCheckpoint: paused.checkpoint,
+    toolHandlers: {
+      "tool:test/Fetch": async () => "must-not-run",
+    },
+  });
+
+  assert.equal(resumed.status, "failure");
+  assert.equal(eventOf(resumed.trace, "run_completed").payload.status, "failure");
+});
+
 test("fails when an agent decision loop exceeds the configured step limit", async () => {
   const document = multiStepAgentDocument();
 

@@ -239,6 +239,19 @@ if (parsedArgs.humanDecisionsJson !== undefined) {
   }
 }
 
+let humanApprovalResumeCheckpoint;
+if (parsedArgs.humanResumeCheckpointPath !== undefined) {
+  try {
+    humanApprovalResumeCheckpoint = parseJsonObject(
+      readFileSync(parsedArgs.humanResumeCheckpointPath, "utf8"),
+      `human resume checkpoint ${parsedArgs.humanResumeCheckpointPath}`,
+    );
+  } catch (e) {
+    process.stderr.write(`error: invalid human resume checkpoint ${parsedArgs.humanResumeCheckpointPath}: ${e.message}\n`);
+    process.exit(1);
+  }
+}
+
 let userInputs = {};
 if (parsedArgs.userInputsPath !== undefined) {
   try {
@@ -354,6 +367,8 @@ try {
     cancelAuthoritySource: parsedArgs.cancelBeforeDispatch ? "cli" : undefined,
     cancelOnPause: parsedArgs.cancelOnPause,
     killSwitchEnabled: parsedArgs.killSwitchEnabled,
+    durableHumanApprovals: parsedArgs.humanCheckpointOutPath !== undefined,
+    humanApprovalResumeCheckpoint,
   };
   result = parsedArgs.triggerRef
     ? await runTriggerScheduleRunner(document, parsedArgs, executionOptions, triggerState)
@@ -390,6 +405,19 @@ if (parsedArgs.traceOutPath !== undefined) {
     writeFileSync(parsedArgs.traceOutPath, serializeJson(result.trace), "utf8");
   } catch (e) {
     process.stderr.write(`error: cannot write trace ${parsedArgs.traceOutPath}: ${e.message}\n`);
+    process.exit(1);
+  }
+}
+
+if (parsedArgs.humanCheckpointOutPath !== undefined) {
+  if (!result.checkpoint) {
+    process.stderr.write("error: no human approval checkpoint was produced\n");
+    process.exit(1);
+  }
+  try {
+    writeFileSync(parsedArgs.humanCheckpointOutPath, serializeJson(result.checkpoint), "utf8");
+  } catch (e) {
+    process.stderr.write(`error: cannot write human checkpoint ${parsedArgs.humanCheckpointOutPath}: ${e.message}\n`);
     process.exit(1);
   }
 }
@@ -927,6 +955,8 @@ function parseArgs(rawArgs) {
     cancelBeforeDispatch: false,
     cancelOnPause: false,
     killSwitchEnabled: false,
+    humanCheckpointOutPath: undefined,
+    humanResumeCheckpointPath: undefined,
     outputMode: "show",
     traceOutPath: undefined,
     positional: [],
@@ -1010,6 +1040,22 @@ function parseArgs(rawArgs) {
       parsed.humanDecisionsJson = rawArgs[index];
     } else if (arg.startsWith("--human-decisions-json=")) {
       parsed.humanDecisionsJson = arg.slice("--human-decisions-json=".length);
+    } else if (arg === "--human-checkpoint-out") {
+      index += 1;
+      if (index >= rawArgs.length) {
+        return { error: "--human-checkpoint-out requires a path" };
+      }
+      parsed.humanCheckpointOutPath = rawArgs[index];
+    } else if (arg.startsWith("--human-checkpoint-out=")) {
+      parsed.humanCheckpointOutPath = arg.slice("--human-checkpoint-out=".length);
+    } else if (arg === "--human-resume-checkpoint") {
+      index += 1;
+      if (index >= rawArgs.length) {
+        return { error: "--human-resume-checkpoint requires a path" };
+      }
+      parsed.humanResumeCheckpointPath = rawArgs[index];
+    } else if (arg.startsWith("--human-resume-checkpoint=")) {
+      parsed.humanResumeCheckpointPath = arg.slice("--human-resume-checkpoint=".length);
     } else if (arg === "--user-inputs") {
       index += 1;
       if (index >= rawArgs.length) {
@@ -1316,6 +1362,18 @@ function parseArgs(rawArgs) {
     return { error: "--human-decisions cannot be combined with --human-decisions-json" };
   }
 
+  if (parsed.humanCheckpointOutPath !== undefined && parsed.humanResumeCheckpointPath !== undefined) {
+    return { error: "--human-checkpoint-out cannot be combined with --human-resume-checkpoint" };
+  }
+
+  if (
+    parsed.humanResumeCheckpointPath !== undefined
+    && parsed.humanDecisionsPath === undefined
+    && parsed.humanDecisionsJson === undefined
+  ) {
+    return { error: "--human-resume-checkpoint requires --human-decisions or --human-decisions-json" };
+  }
+
   if (parsed.userInputsPath !== undefined && parsed.userInputsJson !== undefined) {
     return { error: "--user-inputs cannot be combined with --user-inputs-json" };
   }
@@ -1375,11 +1433,33 @@ function parseArgs(rawArgs) {
     return { error: "--entry cannot be combined with trigger runner execution" };
   }
 
+  if (parsed.triggerRef !== undefined && parsed.humanCheckpointOutPath !== undefined) {
+    return { error: "--human-checkpoint-out cannot be combined with trigger runner execution" };
+  }
+
+  if (parsed.triggerRef !== undefined && parsed.humanResumeCheckpointPath !== undefined) {
+    return { error: "--human-resume-checkpoint cannot be combined with trigger runner execution" };
+  }
+
   if (
     (parsed.triggerEventPath !== undefined || parsed.triggerEventJson !== undefined)
     && parsed.entryRef !== undefined
   ) {
     return { error: "--entry cannot be combined with trigger execution" };
+  }
+
+  if (
+    (parsed.triggerEventPath !== undefined || parsed.triggerEventJson !== undefined)
+    && parsed.humanCheckpointOutPath !== undefined
+  ) {
+    return { error: "--human-checkpoint-out cannot be combined with trigger execution" };
+  }
+
+  if (
+    (parsed.triggerEventPath !== undefined || parsed.triggerEventJson !== undefined)
+    && parsed.humanResumeCheckpointPath !== undefined
+  ) {
+    return { error: "--human-resume-checkpoint cannot be combined with trigger execution" };
   }
 
   if (
@@ -1414,7 +1494,7 @@ function parseArgs(rawArgs) {
 
 function printUsage() {
   process.stderr.write(
-    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object>] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer>] [--state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>]\n",
+    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object>] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer>] [--state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>]\n",
   );
 }
 

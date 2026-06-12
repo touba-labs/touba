@@ -41,6 +41,7 @@ const BUILTIN_FLOAT = "builtin:Float";
 const TOOL_BINDING_MANIFEST_VERSION = "touba-manifest-v1";
 const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
 const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
+const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-run-checkpoint-v0.1";
 const AGENT_DECISION_PROTOCOL_VERSION = "touba-agent-decision-v1";
 const AGENT_MODEL_INPUT_PROTOCOL_VERSION = "touba-agent-model-input-v1";
 const AGENT_DECISION_PROVIDER_CONTENT_MODES = new Set(["inline", "opaque_refs"]);
@@ -247,7 +248,9 @@ export async function executeAirDocument(document, options = {}) {
   let result;
   try {
     initializeRunControls(context);
-    result = await executeTarget(entryRef, context);
+    result = context.humanApprovalResumeCheckpoint
+      ? await executeHumanApprovalResumeCheckpoint(document, entryRef, context)
+      : await executeTarget(entryRef, context);
   } catch (error) {
     if (error instanceof RuntimeStop) {
       status = "stopped";
@@ -267,11 +270,15 @@ export async function executeAirDocument(document, options = {}) {
     },
   });
 
-  return {
+  const response = {
     status,
     result,
     trace: trace.document(),
   };
+  if (context.pendingHumanApprovalCheckpoint) {
+    response.checkpoint = context.pendingHumanApprovalCheckpoint;
+  }
+  return response;
 }
 
 export async function executeTriggerEvent(document, event, options = {}) {
@@ -331,6 +338,7 @@ function createExecutionContext(document, entryRef, options = {}) {
   validateActiveSkillPackRefs(skillPacks, activeSkillPackRefs);
   return {
     indexes,
+    entryRef,
     trace,
     toolHandlers: options.toolHandlers ?? {},
     toolBindingManifest: normalizeOptionalToolBindingManifest(options.toolBindingManifest),
@@ -383,6 +391,12 @@ function createExecutionContext(document, entryRef, options = {}) {
     ),
     triggerRunCounts: normalizeTriggerRunCounts(options.triggerRunCounts ?? {}),
     effectState: createEffectState(),
+    durableHumanApprovals: options.durableHumanApprovals === true
+      || options.durable_human_approvals === true,
+    humanApprovalResumeCheckpoint: normalizeOptionalHumanApprovalCheckpoint(
+      options.humanApprovalResumeCheckpoint ?? options.human_approval_resume_checkpoint,
+    ),
+    pendingHumanApprovalCheckpoint: null,
     loopState: new Map(),
     maxLoopIterations: options.maxLoopIterations ?? 100,
     activeAgentRef: null,
@@ -395,6 +409,297 @@ function createEffectState() {
   return {
     externalToolDispatches: 0,
   };
+}
+
+function normalizeOptionalHumanApprovalCheckpoint(checkpoint) {
+  if (checkpoint === undefined || checkpoint === null) {
+    return null;
+  }
+  if (!checkpoint || typeof checkpoint !== "object" || Array.isArray(checkpoint)) {
+    throw new ToubaRuntimeError("InvalidHumanApprovalCheckpoint", "human approval checkpoint must be an object");
+  }
+  if (checkpoint.checkpoint_schema_version !== HUMAN_APPROVAL_CHECKPOINT_VERSION) {
+    throw new ToubaRuntimeError(
+      "InvalidHumanApprovalCheckpoint",
+      `checkpoint_schema_version must be ${HUMAN_APPROVAL_CHECKPOINT_VERSION}`,
+      { actual: checkpoint.checkpoint_schema_version },
+    );
+  }
+  return checkpoint;
+}
+
+async function executeHumanApprovalResumeCheckpoint(document, entryRef, context) {
+  const checkpoint = context.humanApprovalResumeCheckpoint;
+  validateHumanApprovalResumeCheckpoint(document, entryRef, context, checkpoint);
+  applyHumanApprovalResumeCheckpoint(context, checkpoint);
+  context.trace.push("human_approval_checkpoint_loaded", {
+    payload: compactPayload({
+      checkpoint_schema_version: checkpoint.checkpoint_schema_version,
+      approval_ref: checkpoint.approval_ref,
+      graph_ref: checkpoint.graph_ref,
+      node_id: checkpoint.node_id,
+      resume_target_ref: checkpoint.resume_target_ref,
+      checkpoint_run_id: checkpoint.run_id,
+      trace_prefix_digest: checkpoint.trace_prefix_digest,
+      external_tool_dispatches: checkpoint.effect_state?.external_tool_dispatches,
+    }),
+  });
+  return executeGraph(checkpoint.graph_ref, context, { startNodeId: checkpoint.node_id });
+}
+
+function validateHumanApprovalResumeCheckpoint(document, entryRef, context, checkpoint) {
+  if (!checkpoint) {
+    throw new RuntimeFailure(
+      "human approval resume checkpoint is required",
+      { entryRef },
+      "HumanApprovalResumeCheckpointRequired",
+    );
+  }
+  if (checkpoint.kind !== "human_approval") {
+    throw new RuntimeFailure(
+      "human approval checkpoint kind is invalid",
+      { entryRef, checkpointKind: checkpoint.kind },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  const expectedDigest = airDocumentDigest(document);
+  const compatibilityErrors = [];
+  if (checkpoint.air_schema_version !== document.air_schema_version) {
+    compatibilityErrors.push("air_schema_version");
+  }
+  if (checkpoint.module_ref !== document.module.id) {
+    compatibilityErrors.push("module_ref");
+  }
+  if (checkpoint.entry_ref !== entryRef) {
+    compatibilityErrors.push("entry_ref");
+  }
+  if (checkpoint.air_digest !== expectedDigest) {
+    compatibilityErrors.push("air_digest");
+  }
+  if (checkpoint.scope !== "entry_graph") {
+    compatibilityErrors.push("scope");
+  }
+  if (compatibilityErrors.length > 0) {
+    throw new RuntimeFailure(
+      "human approval checkpoint is not compatible with this run",
+      {
+        entryRef,
+        approvalRef: checkpoint.approval_ref,
+        compatibilityErrors,
+      },
+      "HumanApprovalCheckpointIncompatible",
+    );
+  }
+
+  const graph = context.indexes.graphs.get(checkpoint.graph_ref);
+  const node = graph?.nodes?.find((candidate) => candidate.id === checkpoint.node_id);
+  if (!graph || !node || node.kind !== "human_approval") {
+    throw new RuntimeFailure(
+      "human approval checkpoint target is invalid",
+      {
+        entryRef,
+        approvalRef: checkpoint.approval_ref,
+        graphRef: checkpoint.graph_ref,
+        nodeId: checkpoint.node_id,
+      },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  const approvalRef = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
+  const resumeTargetRef = nextNodeId(graph, node.id, "next");
+  if (
+    checkpoint.approval_ref !== approvalRef
+    || checkpoint.resume_target_ref !== resumeTargetRef
+    || checkpoint.decision_binding !== node.result_binding
+  ) {
+    throw new RuntimeFailure(
+      "human approval checkpoint target does not match AIR",
+      {
+        entryRef,
+        approvalRef: checkpoint.approval_ref,
+        graphRef: checkpoint.graph_ref,
+        nodeId: checkpoint.node_id,
+      },
+      "HumanApprovalCheckpointIncompatible",
+    );
+  }
+  if (!context.humanApprovalDecisions.has(checkpoint.approval_ref)) {
+    throw new RuntimeFailure(
+      "human approval resume requires an explicit decision",
+      { entryRef, approvalRef: checkpoint.approval_ref },
+      "HumanApprovalResumeDecisionRequired",
+    );
+  }
+}
+
+function applyHumanApprovalResumeCheckpoint(context, checkpoint) {
+  context.values = mapFromCheckpointObject(checkpoint.values, "values");
+  context.inputValueKeys = new Set(checkpointStringArray(checkpoint.input_value_keys, "input_value_keys"));
+  context.valueTypes = mapFromCheckpointObject(checkpoint.value_types ?? {}, "value_types");
+  context.budgetState.counters = {
+    steps: checkpoint.budget_counters?.steps ?? 0,
+    toolCalls: checkpoint.budget_counters?.tool_calls ?? 0,
+    agentInvocations: checkpoint.budget_counters?.agent_invocations ?? 0,
+    providerCalls: checkpoint.budget_counters?.provider_calls ?? 0,
+  };
+  context.effectState.externalToolDispatches = checkpoint.effect_state?.external_tool_dispatches ?? 0;
+  context.nextCallIndex = checkpoint.next_call_index ?? 1;
+  context.activeAgentRef = checkpoint.active_agent_ref ?? null;
+  context.activeCallerRef = checkpoint.active_caller_ref ?? null;
+}
+
+function createHumanApprovalCheckpoint(context, graph, node, payload) {
+  const values = checkpointObjectFromMap(context.values, "values");
+  assertCheckpointHasNoResolvedSecret(values, context, payload.approval_ref);
+  const valueTypes = checkpointObjectFromMap(context.valueTypes, "value_types");
+  const tracePrefixDigest = `sha256:${sha256Json(context.trace.document())}`;
+  const checkpoint = {
+    checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
+    kind: "human_approval",
+    scope: "entry_graph",
+    run_id: context.trace.runId,
+    entry_ref: context.entryRef,
+    module_ref: context.trace.airDocument.module.id,
+    air_schema_version: context.trace.airDocument.air_schema_version,
+    air_digest: airDocumentDigest(context.trace.airDocument),
+    approval_ref: payload.approval_ref,
+    mode: payload.mode,
+    graph_ref: graph.id,
+    node_id: node.id,
+    resume_target_ref: payload.resume_target_ref,
+    decision_binding: node.result_binding,
+    context_refs: payload.context_refs ?? [],
+    caller_ref: payload.caller_ref,
+    agent_ref: payload.agent_ref,
+    requester_ref: payload.requester_ref,
+    required_by_ref: payload.required_by_ref,
+    values,
+    input_value_keys: [...context.inputValueKeys],
+    value_types: valueTypes,
+    budget_counters: {
+      steps: context.budgetState.counters.steps,
+      tool_calls: context.budgetState.counters.toolCalls,
+      agent_invocations: context.budgetState.counters.agentInvocations,
+      provider_calls: context.budgetState.counters.providerCalls,
+    },
+    effect_state: {
+      external_tool_dispatches: context.effectState.externalToolDispatches,
+    },
+    next_call_index: context.nextCallIndex,
+    active_agent_ref: context.activeAgentRef,
+    active_caller_ref: context.activeCallerRef,
+    trace_prefix_digest: tracePrefixDigest,
+  };
+  context.pendingHumanApprovalCheckpoint = checkpoint;
+  context.trace.push("human_approval_checkpoint_created", {
+    airRef: airRefForNode(graph, node),
+    payload: compactPayload({
+      checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
+      approval_ref: payload.approval_ref,
+      graph_ref: graph.id,
+      node_id: node.id,
+      resume_target_ref: payload.resume_target_ref,
+      trace_prefix_digest: tracePrefixDigest,
+      external_tool_dispatches: context.effectState.externalToolDispatches,
+    }),
+  });
+  return checkpoint;
+}
+
+function canCreateHumanApprovalCheckpoint(context, graph) {
+  return context.durableHumanApprovals === true && graph.owner_ref === context.entryRef;
+}
+
+function checkpointObjectFromMap(map, label) {
+  const value = Object.fromEntries(map.entries());
+  return checkpointJsonClone(value, label);
+}
+
+function mapFromCheckpointObject(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RuntimeFailure(
+      `human approval checkpoint ${label} must be an object`,
+      { label },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  return new Map(Object.entries(checkpointJsonClone(value, label)));
+}
+
+function checkpointStringArray(value, label) {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new RuntimeFailure(
+      `human approval checkpoint ${label} must be an array of strings`,
+      { label },
+      "InvalidHumanApprovalCheckpoint",
+    );
+  }
+  return value;
+}
+
+function checkpointJsonClone(value, path) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new RuntimeFailure(
+        `human approval checkpoint ${path} contains a non-finite number`,
+        { path },
+        "HumanApprovalCheckpointValueNotPortable",
+      );
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry, index) => checkpointJsonClone(entry, `${path}[${index}]`));
+  }
+  if (value && typeof value === "object") {
+    const clone = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (child === undefined) {
+        throw new RuntimeFailure(
+          `human approval checkpoint ${path}.${key} contains undefined`,
+          { path: `${path}.${key}` },
+          "HumanApprovalCheckpointValueNotPortable",
+        );
+      }
+      clone[key] = checkpointJsonClone(child, `${path}.${key}`);
+    }
+    return clone;
+  }
+  throw new RuntimeFailure(
+    `human approval checkpoint ${path} contains a non-JSON value`,
+    { path, valueKind: payloadValueKind(value) },
+    "HumanApprovalCheckpointValueNotPortable",
+  );
+}
+
+function assertCheckpointHasNoResolvedSecret(values, context, approvalRef) {
+  const serialized = JSON.stringify(values);
+  if (typeof serialized !== "string") {
+    return;
+  }
+  const leakedSecrets = resolvedSecretEntries(context.secretStore)
+    .filter((entry) => entry.value.length > 0 && serialized.includes(entry.value));
+  if (leakedSecrets.length === 0) {
+    return;
+  }
+  throw new RuntimeFailure(
+    `human approval checkpoint contains a resolved secret value ${approvalRef}`,
+    {
+      approvalRef,
+      secretHandlesRefused: leakedSecrets.map((entry) => entry.handle),
+    },
+    "SecretValueInHumanApprovalCheckpoint",
+  );
+}
+
+function airDocumentDigest(document) {
+  return `sha256:${sha256Json(document)}`;
 }
 
 function validateAirDocument(document) {
@@ -2532,9 +2837,12 @@ function recordExternalToolDispatch(context) {
   context.effectState.externalToolDispatches += 1;
 }
 
-function assertHumanApprovalCanPause(context, payload, airRef = undefined) {
+function assertHumanApprovalCanPause(context, payload, airRef = undefined, options = {}) {
   const externalToolDispatches = context.effectState.externalToolDispatches;
   if (externalToolDispatches === 0) {
+    return;
+  }
+  if (options.durableResumeAvailable === true) {
     return;
   }
 
@@ -4376,7 +4684,7 @@ function assertSecretHandle(value, fieldName, ref, code) {
   }
 }
 
-async function executeGraph(graphRef, context) {
+async function executeGraph(graphRef, context, options = {}) {
   const graph = requireDefinition(context.indexes.graphs, graphRef);
   context.trace.push("scope_entered", {
     airRef: {
@@ -4385,7 +4693,7 @@ async function executeGraph(graphRef, context) {
     },
   });
 
-  let currentNodeId = graph.entry_node_id;
+  let currentNodeId = options.startNodeId ?? graph.entry_node_id;
   let result;
   while (currentNodeId) {
     const node = graph.nodes.find((candidate) => candidate.id === currentNodeId);
@@ -4534,7 +4842,13 @@ function executeHumanApprovalNode(graph, node, context) {
       ...basePayload,
       resume_target_ref: resumeTargetRef,
     });
-    assertHumanApprovalCanPause(context, pausePayload, airRefForNode(graph, node));
+    const durableResumeAvailable = canCreateHumanApprovalCheckpoint(context, graph);
+    assertHumanApprovalCanPause(context, pausePayload, airRefForNode(graph, node), {
+      durableResumeAvailable,
+    });
+    if (durableResumeAvailable) {
+      createHumanApprovalCheckpoint(context, graph, node, pausePayload);
+    }
     context.trace.push("human_approval_paused", {
       airRef: airRefForNode(graph, node),
       payload: pausePayload,

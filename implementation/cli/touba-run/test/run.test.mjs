@@ -1196,6 +1196,65 @@ test("runs human approval with explicit paused and approved decisions", () => {
   }
 });
 
+test("writes and resumes a human approval checkpoint without replaying prior tool dispatch", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-human-checkpoint-"));
+  try {
+    const airPath = writeAirDocument(workspace, toolThenHumanApprovalDocument());
+    const checkpointPath = join(workspace, "human.checkpoint.json");
+
+    const pausedStdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--local-fetch-source-text",
+        "fetched before pause",
+        "--human-checkpoint-out",
+        checkpointPath,
+        "--output",
+        "trace",
+      ],
+      { encoding: "utf8" },
+    );
+    const pausedTrace = JSON.parse(pausedStdout);
+    const checkpoint = JSON.parse(readFileSync(checkpointPath, "utf8"));
+
+    assert.equal(pausedTrace.events.at(-1).payload.status, "stopped");
+    assert.equal(checkpoint.checkpoint_schema_version, "touba-run-checkpoint-v0.1");
+    assert.equal(checkpoint.approval_ref, "approval:examples.cli:after-fetch");
+    assert.equal(checkpoint.values["value:fetched"].content, "fetched before pause");
+    assert.equal(eventOf(pausedTrace, "human_approval_checkpoint_created").payload.external_tool_dispatches, 1);
+
+    const approvedStdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--local-fetch-source-text",
+        "would indicate replay",
+        "--human-resume-checkpoint",
+        checkpointPath,
+        "--human-decisions-json",
+        JSON.stringify({ "approval:examples.cli:after-fetch": "approved" }),
+        "--output",
+        "trace",
+      ],
+      { encoding: "utf8" },
+    );
+    const approvedTrace = JSON.parse(approvedStdout);
+
+    assert.equal(approvedTrace.events.at(-1).payload.status, "success");
+    assert.equal(approvedTrace.events.filter((event) => event.kind === "tool_binding_authorized").length, 0);
+    assert.equal(
+      eventOf(approvedTrace, "human_approval_checkpoint_loaded").payload.approval_ref,
+      "approval:examples.cli:after-fetch",
+    );
+    assert.equal(eventOf(approvedTrace, "human_approval_decided").payload.decision, "approved");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("reports invalid human approval decisions without inventing approval state", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-human-"));
   try {
@@ -3269,6 +3328,71 @@ function humanApprovalDocument() {
           node("n2", "give", { arguments: ["value:approval"] }),
         ],
         [edge("n1", "n2", "next")],
+      ),
+    ],
+    trace_points: [],
+  };
+}
+
+function toolThenHumanApprovalDocument() {
+  return {
+    air_schema_version: "air-minimal-v0.1",
+    module: {
+      id: "module:examples.cli_human_checkpoint",
+      name: "examples.cli_human_checkpoint",
+      source_ref: sourceRef(),
+    },
+    definitions: {
+      types: [],
+      functions: [],
+      tools: [
+        {
+          id: LINEAR_FETCH_SOURCE_TOOL_REF,
+          name: "FetchSource",
+          signature: {
+            inputs: [],
+            output_type: "type:examples.linear_skill/SourceText",
+          },
+          source_ref: sourceRef(),
+        },
+      ],
+      skills: [
+        {
+          id: "skill:examples.cli_human_checkpoint/ReviewFetched",
+          name: "ReviewFetched",
+          signature: {
+            inputs: [],
+            output_type: "builtin:Text",
+          },
+          uses: [LINEAR_FETCH_SOURCE_TOOL_REF],
+          flow_graph_ref: "graph:skill:examples.cli_human_checkpoint/ReviewFetched",
+          source_ref: sourceRef(),
+        },
+      ],
+      agents: [],
+      strategies: [],
+    },
+    execution_graphs: [
+      graph(
+        "graph:skill:examples.cli_human_checkpoint/ReviewFetched",
+        "skill:examples.cli_human_checkpoint/ReviewFetched",
+        [
+          node("fetch", "call_tool", {
+            target_ref: LINEAR_FETCH_SOURCE_TOOL_REF,
+            result_binding: "fetched",
+          }),
+          node("review", "human_approval", {
+            approval_ref: "approval:examples.cli:after-fetch",
+            approval_mode: "required_approval",
+            context_refs: ["value:fetched"],
+            result_binding: "approval",
+          }),
+          node("done", "give", { arguments: ["value:approval"] }),
+        ],
+        [
+          edge("fetch", "review", "next"),
+          edge("review", "done", "next"),
+        ],
       ),
     ],
     trace_points: [],
