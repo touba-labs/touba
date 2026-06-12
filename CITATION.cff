@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use Touba in your work, please cite it as below."
+type: software
+title: "Touba: A Programming Language and Runtime for Governed Agentic Systems"
+authors:
+  - family-names: Lo
+    given-names: Khadim
+    email: khadim.lo@uqtr.ca
+    affiliation: "UQTR School of Engineering, Universite du Quebec a Trois-Rivieres"
+  - family-names: Dessureault
+    given-names: Jean-Sebastien
+    email: jean-sebastien.dessureault@uqtr.ca
+    affiliation: "Universite du Quebec a Trois-Rivieres"
+  - family-names: "Alaoui Ismaili"
+    given-names: Soukaina
+    email: Soukaina.Alaoui.Ismaili@uqtr.ca
+    affiliation: "UQTR School of Engineering, Universite du Quebec a Trois-Rivieres"
+version: 0.1.0
+date-released: "2026-06-12"
+license: MIT
+repository-code: "https://github.com/khadimbambalo/touba"
+url: "https://github.com/khadimbambalo/touba"
+keywords:
+  - agentic systems
+  - programming language
+  - governed autonomy
+  - runtime
+  - traceability
