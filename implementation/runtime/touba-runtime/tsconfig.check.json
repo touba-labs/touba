@@ -16,6 +16,7 @@
     "src/handler-protocol.mjs",
     "src/payload-validation.mjs",
     "src/runtime-errors.mjs",
+    "src/runtime-options.mjs",
     "src/secret-redaction.mjs"
   ]
 }

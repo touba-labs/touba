@@ -9,6 +9,129 @@ import {
   loadSecretsFromJson,
   loadToolBindingManifestFromJson,
 } from "../src/index.mjs";
+import {
+  normalizeAgentDecisionProvider,
+  normalizeAgentDecisionProviderContentMode,
+  normalizeSkillPackActivationReasons,
+  normalizeSkillPackBudgets,
+  normalizeSkillPacks,
+  normalizeStringSet,
+  validateActiveSkillPackRefs,
+} from "../src/runtime-options.mjs";
+
+test("normalizes agent decision provider options at a typed runtime boundary", () => {
+  const functionProvider = () => ({ target_ref: "skill:test/Noop" });
+  functionProvider.metadata = {
+    provider_kind: "fixture",
+    model_id: "local-test",
+  };
+
+  const normalizedFunctionProvider = normalizeAgentDecisionProvider(functionProvider);
+  assert.equal(normalizedFunctionProvider.decide, functionProvider);
+  assert.deepEqual(normalizedFunctionProvider.metadata, {
+    provider_kind: "fixture",
+    model_id: "local-test",
+  });
+  assert.equal(normalizeAgentDecisionProviderContentMode("opaque_refs"), "opaque_refs");
+
+  const boundProvider = {
+    prefix: "bound",
+    provider_metadata: { provider_name: "object-provider" },
+    decideAgentCapability() {
+      return { source: this.prefix, target_ref: "tool:test/Search" };
+    },
+  };
+  assert.deepEqual(normalizeAgentDecisionProvider(boundProvider).decide(), {
+    source: "bound",
+    target_ref: "tool:test/Search",
+  });
+
+  assert.throws(
+    () => normalizeAgentDecisionProvider({ decide: () => ({}), metadata: { unsupported: "field" } }),
+    (error) => error instanceof ToubaRuntimeError && error.code === "InvalidAgentDecisionProvider",
+  );
+  assert.throws(
+    () => normalizeAgentDecisionProviderContentMode("semantic"),
+    (error) => error instanceof ToubaRuntimeError && error.code === "InvalidRuntimeOption",
+  );
+});
+
+test("normalizes skill pack declarations before model disclosure", () => {
+  const skillPacks = normalizeSkillPacks([
+    {
+      ref: "skill_pack:project/research-review",
+      name: "Research review",
+      description: "Review evidence before synthesis.",
+      version: "1.2.0",
+      tags: ["research", "review"],
+      resources: [
+        {
+          ref: "resource:research-review/checklist",
+          path: "resources/checklists/review.md",
+          kind: "procedure",
+          content: "check source credibility",
+          loadable_as_context: true,
+        },
+      ],
+      executionLinks: [
+        {
+          label: "Search",
+          targetRef: "tool:test/Search",
+        },
+      ],
+    },
+  ]);
+  const [pack] = skillPacks;
+
+  assert.equal(pack.ref, "skill_pack:project/research-review");
+  assert.match(pack.digest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(pack.resources[0].loadableAsContext, true);
+  assert.equal(pack.executionLinks[0].target_ref, "tool:test/Search");
+
+  const activeRefs = normalizeStringSet(["skill_pack:project/research-review"], "activeSkillPackRefs");
+  validateActiveSkillPackRefs(skillPacks, activeRefs);
+  assert.deepEqual(
+    normalizeSkillPackActivationReasons({
+      "skill_pack:project/research-review": "host_policy",
+    }),
+    new Map([["skill_pack:project/research-review", "host_policy"]]),
+  );
+  assert.deepEqual(
+    normalizeSkillPackBudgets({
+      skillPackDiscoveryMaxBytes: 100,
+      skill_pack_activation_max_bytes: 200,
+      agent_model_input_max_bytes: 300,
+    }),
+    {
+      discoveryMaxBytes: 100,
+      activationMaxBytes: 200,
+      modelInputMaxBytes: 300,
+    },
+  );
+
+  assert.throws(
+    () => validateActiveSkillPackRefs(skillPacks, new Set(["skill_pack:project/missing"])),
+    (error) => error instanceof ToubaRuntimeError && error.code === "InvalidRuntimeOption",
+  );
+  assert.throws(
+    () => normalizeSkillPacks([
+      {
+        ref: "skill_pack:project/bad",
+        name: "Bad",
+        description: "Bad",
+        resources: [
+          {
+            ref: "resource:bad/script",
+            path: "scripts/bad.mjs",
+            kind: "script",
+            executable_by_pack: true,
+          },
+        ],
+      },
+    ]),
+    (error) => error instanceof ToubaRuntimeError && error.code === "InvalidRuntimeOption",
+  );
+});
 
 test("fuzzes AIR JSON boundary with deterministic invalid documents", async () => {
   const loaded = loadAirFromJson(JSON.stringify(minimalDocument()));

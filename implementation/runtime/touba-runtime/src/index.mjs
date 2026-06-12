@@ -23,6 +23,20 @@ import {
   ToubaRuntimeError,
 } from "./runtime-errors.mjs";
 import {
+  AGENT_PROVIDER_OBSERVATIONS_DEFAULT_MAX_BYTES,
+  normalizeAgentDecisionProvider,
+  normalizeAgentDecisionProviderContentMode,
+  normalizeNonNegativeRuntimeInteger,
+  normalizeOptionalNonNegativeRuntimeInteger,
+  normalizeOptionalPositiveRuntimeInteger,
+  normalizePositiveRuntimeInteger,
+  normalizeSkillPackActivationReasons,
+  normalizeSkillPackBudgets,
+  normalizeSkillPacks,
+  normalizeStringSet,
+  validateActiveSkillPackRefs,
+} from "./runtime-options.mjs";
+import {
   redactSecrets,
   resolvedSecretEntries,
   secretValuesForRedaction,
@@ -44,8 +58,6 @@ const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
 const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-run-checkpoint-v0.1";
 const AGENT_DECISION_PROTOCOL_VERSION = "touba-agent-decision-v1";
 const AGENT_MODEL_INPUT_PROTOCOL_VERSION = "touba-agent-model-input-v1";
-const AGENT_DECISION_PROVIDER_CONTENT_MODES = new Set(["inline", "opaque_refs"]);
-const AGENT_PROVIDER_OBSERVATIONS_DEFAULT_MAX_BYTES = 32768;
 const SECRET_HANDLE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const SECRET_RECORD_STATUS_VALUES = new Set(["active", "revoked"]);
 const DOTENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -153,17 +165,6 @@ const RUN_BUDGET_COUNTERS = Object.freeze({
   max_agent_invocations: "agentInvocations",
   max_provider_calls: "providerCalls",
 });
-const AGENT_DECISION_PROVIDER_METADATA_FIELDS = Object.freeze([
-  "provider_kind",
-  "provider_name",
-  "provider_version",
-  "model_family",
-  "model_id",
-  "prompt_template_id",
-  "decision_schema_version",
-]);
-const AGENT_DECISION_PROVIDER_METADATA_FIELD_SET = new Set(AGENT_DECISION_PROVIDER_METADATA_FIELDS);
-const AGENT_DECISION_PROVIDER_METADATA_MAX_LENGTH = 200;
 const AIR_DEFINITION_COLLECTIONS = Object.freeze([
   "types",
   "constants",
@@ -175,16 +176,6 @@ const AIR_DEFINITION_COLLECTIONS = Object.freeze([
   "strategies",
   "triggers",
 ]);
-const SKILL_PACK_REF_PATTERN = /^skill_pack:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const SKILL_PACK_RESOURCE_REF_PATTERN = /^resource:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const SKILL_PACK_EXECUTION_TARGET_PATTERN = /^(tool|skill):[A-Za-z0-9_.-]+\/[A-Za-z][A-Za-z0-9_]*$/;
-const SHA256_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
-const SKILL_PACK_RESOURCE_KINDS = new Set(["procedure", "reference", "example", "template", "sample", "script", "fixture"]);
-const SKILL_PACK_BUDGET_FIELDS = Object.freeze({
-  discoveryMaxBytes: "skillPackDiscoveryMaxBytes",
-  activationMaxBytes: "skillPackActivationMaxBytes",
-  modelInputMaxBytes: "agentModelInputMaxBytes",
-});
 
 export const RUNTIME_CAPABILITIES = Object.freeze([
   AIR_SCHEMA_VERSION,
@@ -6882,90 +6873,6 @@ function normalizeUserInputProvider(provider) {
   return provider;
 }
 
-function normalizeAgentDecisionProvider(provider, options = {}) {
-  if (provider === undefined || provider === null) {
-    return null;
-  }
-  const metadataOverride = normalizeAgentDecisionProviderMetadata(
-    options.metadata,
-    "agentDecisionProviderMetadata",
-    { optional: true },
-  );
-  if (typeof provider === "function") {
-    return Object.freeze({
-      decide: provider,
-      metadata: metadataOverride
-        ?? normalizeAgentDecisionProviderMetadata(provider.metadata, "agentDecisionProvider.metadata", { optional: true }),
-    });
-  }
-  if (typeof provider.decideAgentCapability === "function") {
-    return Object.freeze({
-      decide: provider.decideAgentCapability.bind(provider),
-      metadata: metadataOverride
-        ?? normalizeAgentDecisionProviderMetadata(
-          provider.provider_metadata ?? provider.providerMetadata ?? provider.metadata,
-          "agentDecisionProvider.metadata",
-          { optional: true },
-        ),
-    });
-  }
-  if (typeof provider.decide === "function") {
-    return Object.freeze({
-      decide: provider.decide.bind(provider),
-      metadata: metadataOverride
-        ?? normalizeAgentDecisionProviderMetadata(
-          provider.provider_metadata ?? provider.providerMetadata ?? provider.metadata,
-          "agentDecisionProvider.metadata",
-          { optional: true },
-        ),
-    });
-  }
-  throw new ToubaRuntimeError(
-    "InvalidAgentDecisionProvider",
-    "agentDecisionProvider must be a function or an object exposing decideAgentCapability",
-  );
-}
-
-function normalizeAgentDecisionProviderContentMode(mode) {
-  if (typeof mode !== "string" || !AGENT_DECISION_PROVIDER_CONTENT_MODES.has(mode)) {
-    throw new ToubaRuntimeError(
-      "InvalidRuntimeOption",
-      "agentDecisionProviderContentMode must be inline or opaque_refs",
-      { mode },
-    );
-  }
-  return mode;
-}
-
-function normalizeAgentDecisionProviderMetadata(metadata, fieldName, options = {}) {
-  if (metadata === undefined || metadata === null) {
-    return options.optional ? null : {};
-  }
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    throw new ToubaRuntimeError("InvalidAgentDecisionProvider", `${fieldName} must be an object`);
-  }
-  const normalized = {};
-  for (const [key, value] of Object.entries(metadata)) {
-    if (!AGENT_DECISION_PROVIDER_METADATA_FIELD_SET.has(key)) {
-      throw new ToubaRuntimeError("InvalidAgentDecisionProvider", `${fieldName} contains unsupported field`, {
-        field: key,
-      });
-    }
-    if (typeof value !== "string" || value.trim() === "") {
-      throw new ToubaRuntimeError("InvalidAgentDecisionProvider", `${fieldName}.${key} must be a non-empty string`, {
-        field: key,
-      });
-    }
-    if (value.length > AGENT_DECISION_PROVIDER_METADATA_MAX_LENGTH) {
-      throw new ToubaRuntimeError("InvalidAgentDecisionProvider", `${fieldName}.${key} is too long`, {
-        field: key,
-      });
-    }
-    normalized[key] = value;
-  }
-  return Object.keys(normalized).length > 0 ? Object.freeze(normalized) : null;
-}
-
 function createRunState(options) {
   const now = normalizeNowProvider(options.now);
   const startedAtMs = now();
@@ -7012,20 +6919,6 @@ function normalizeNowProvider(now) {
     }
     return value;
   };
-}
-
-function normalizeOptionalPositiveRuntimeInteger(value, fieldName) {
-  if (value === undefined || value === null) {
-    return null;
-  }
-  return normalizePositiveRuntimeInteger(value, fieldName);
-}
-
-function normalizeOptionalNonNegativeRuntimeInteger(value, fieldName) {
-  if (value === undefined || value === null) {
-    return null;
-  }
-  return normalizeNonNegativeRuntimeInteger(value, fieldName);
 }
 
 function normalizeCancelAuthoritySource(value) {
@@ -7078,272 +6971,6 @@ function normalizeTriggerRunCountKey(triggerRef) {
     });
   }
   return triggerRef;
-}
-
-function normalizeSkillPacks(skillPacks) {
-  if (skillPacks === undefined || skillPacks === null) {
-    return [];
-  }
-  if (!Array.isArray(skillPacks)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", "skillPacks must be an array");
-  }
-  const refs = new Set();
-  return skillPacks.map((pack, index) => {
-    const fieldName = `skillPacks[${index}]`;
-    if (!pack || typeof pack !== "object" || Array.isArray(pack)) {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an object`);
-    }
-    const ref = normalizeSkillPackRef(pack.ref, `${fieldName}.ref`);
-    if (refs.has(ref)) {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", "skillPacks cannot contain duplicate refs", { ref });
-    }
-    refs.add(ref);
-    const resources = normalizeSkillPackResources(pack.resources ?? [], `${fieldName}.resources`);
-    const executionLinks = normalizeSkillPackExecutionLinks(
-      pack.execution_links ?? pack.executionLinks ?? [],
-      `${fieldName}.execution_links`,
-    );
-    return Object.freeze({
-      ref,
-      name: normalizeNonEmptyRuntimeString(pack.name, `${fieldName}.name`),
-      description: normalizeNonEmptyRuntimeString(pack.description, `${fieldName}.description`),
-      version: normalizeNonEmptyRuntimeString(pack.version ?? "0.0.0", `${fieldName}.version`),
-      tags: normalizeRuntimeStringArray(pack.tags ?? [], `${fieldName}.tags`),
-      source: normalizeNonEmptyRuntimeString(pack.source ?? "project", `${fieldName}.source`),
-      digest: normalizeOptionalSha256Digest(pack.digest, `${fieldName}.digest`)
-        ?? digestSkillPackEvidence(ref, pack.version, resources),
-      activation: normalizeSkillPackActivation(pack.activation ?? {}, `${fieldName}.activation`),
-      resources,
-      executionLinks,
-    });
-  });
-}
-
-function normalizeSkillPackResources(resources, fieldName) {
-  if (!Array.isArray(resources)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an array`);
-  }
-  const refs = new Set();
-  return resources.map((resource, index) => {
-    const entryField = `${fieldName}[${index}]`;
-    if (!resource || typeof resource !== "object" || Array.isArray(resource)) {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", `${entryField} must be an object`);
-    }
-    const ref = normalizeSkillPackResourceRef(resource.ref, `${entryField}.ref`);
-    if (refs.has(ref)) {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} cannot contain duplicate resource refs`, { ref });
-    }
-    refs.add(ref);
-    const kind = normalizeNonEmptyRuntimeString(resource.kind, `${entryField}.kind`);
-    if (!SKILL_PACK_RESOURCE_KINDS.has(kind)) {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", `${entryField}.kind is not supported`, { kind });
-    }
-    if (resource.executable_by_pack === true || resource.executableByPack === true) {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", "skill pack scripts cannot be executable by the pack", {
-        fieldName: entryField,
-      });
-    }
-    const loadableAsContext = resource.loadable_as_context ?? resource.loadableAsContext ?? false;
-    if (typeof loadableAsContext !== "boolean") {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", `${entryField}.loadable_as_context must be boolean`);
-    }
-    return Object.freeze({
-      ref,
-      path: normalizeNonEmptyRuntimeString(resource.path, `${entryField}.path`),
-      kind,
-      digest: normalizeOptionalSha256Digest(resource.digest, `${entryField}.digest`),
-      loadableAsContext,
-      content: normalizeOptionalRuntimeString(resource.content, `${entryField}.content`),
-    });
-  });
-}
-
-function normalizeSkillPackExecutionLinks(links, fieldName) {
-  if (!Array.isArray(links)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an array`);
-  }
-  return links.map((link, index) => {
-    const entryField = `${fieldName}[${index}]`;
-    if (!link || typeof link !== "object" || Array.isArray(link)) {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", `${entryField} must be an object`);
-    }
-    return Object.freeze({
-      label: normalizeNonEmptyRuntimeString(link.label, `${entryField}.label`),
-      target_ref: normalizeSkillPackExecutionTargetRef(link.target_ref ?? link.targetRef, `${entryField}.target_ref`),
-      description: normalizeOptionalRuntimeString(link.description, `${entryField}.description`),
-    });
-  });
-}
-
-function normalizeSkillPackActivation(activation, fieldName) {
-  if (!activation || typeof activation !== "object" || Array.isArray(activation)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an object`);
-  }
-  return Object.freeze({
-    model_invocable: activation.model_invocable !== false,
-    user_invocable: activation.user_invocable !== false,
-  });
-}
-
-function normalizeSkillPackBudgets(options) {
-  return Object.freeze({
-    discoveryMaxBytes: normalizeOptionalPositiveRuntimeInteger(
-      options.skillPackDiscoveryMaxBytes
-        ?? options.skill_pack_discovery_max_bytes
-        ?? null,
-      SKILL_PACK_BUDGET_FIELDS.discoveryMaxBytes,
-    ),
-    activationMaxBytes: normalizeOptionalPositiveRuntimeInteger(
-      options.skillPackActivationMaxBytes
-        ?? options.skill_pack_activation_max_bytes
-        ?? null,
-      SKILL_PACK_BUDGET_FIELDS.activationMaxBytes,
-    ),
-    modelInputMaxBytes: normalizeOptionalPositiveRuntimeInteger(
-      options.agentModelInputMaxBytes
-        ?? options.agent_model_input_max_bytes
-        ?? null,
-      SKILL_PACK_BUDGET_FIELDS.modelInputMaxBytes,
-    ),
-  });
-}
-
-function normalizeSkillPackActivationReasons(reasons) {
-  if (reasons instanceof Map) {
-    return new Map(
-      [...reasons.entries()].map(([ref, reason]) => [
-        normalizeSkillPackRef(ref, "skillPackActivationReasons key"),
-        normalizeNonEmptyRuntimeString(reason, `skillPackActivationReasons.${ref}`),
-      ]),
-    );
-  }
-  if (!reasons || typeof reasons !== "object" || Array.isArray(reasons)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", "skillPackActivationReasons must be an object");
-  }
-  const normalized = new Map();
-  for (const [ref, reason] of Object.entries(reasons)) {
-    normalized.set(
-      normalizeSkillPackRef(ref, "skillPackActivationReasons key"),
-      normalizeNonEmptyRuntimeString(reason, `skillPackActivationReasons.${ref}`),
-    );
-  }
-  return normalized;
-}
-
-function normalizeStringSet(values, fieldName) {
-  if (values instanceof Set) {
-    values = [...values];
-  }
-  if (!Array.isArray(values)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an array`);
-  }
-  const normalized = new Set();
-  for (const value of values) {
-    normalized.add(normalizeSkillPackRef(value, `${fieldName}[]`));
-  }
-  return normalized;
-}
-
-function validateActiveSkillPackRefs(skillPacks, activeRefs) {
-  const knownRefs = new Set(skillPacks.map((pack) => pack.ref));
-  for (const ref of activeRefs) {
-    if (!knownRefs.has(ref)) {
-      throw new ToubaRuntimeError("InvalidRuntimeOption", "activeSkillPackRefs contains an unknown skill pack ref", {
-        ref,
-      });
-    }
-  }
-}
-
-function normalizeSkillPackRef(value, fieldName) {
-  const ref = normalizeNonEmptyRuntimeString(value, fieldName);
-  if (!SKILL_PACK_REF_PATTERN.test(ref)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be a skill_pack ref`, { ref });
-  }
-  return ref;
-}
-
-function normalizeSkillPackResourceRef(value, fieldName) {
-  const ref = normalizeNonEmptyRuntimeString(value, fieldName);
-  if (!SKILL_PACK_RESOURCE_REF_PATTERN.test(ref)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be a resource ref`, { ref });
-  }
-  return ref;
-}
-
-function normalizeSkillPackExecutionTargetRef(value, fieldName) {
-  const ref = normalizeNonEmptyRuntimeString(value, fieldName);
-  if (!SKILL_PACK_EXECUTION_TARGET_PATTERN.test(ref)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be a tool or skill ref`, { ref });
-  }
-  return ref;
-}
-
-function normalizeOptionalSha256Digest(value, fieldName) {
-  if (value === undefined || value === null) {
-    return null;
-  }
-  const digest = normalizeNonEmptyRuntimeString(value, fieldName);
-  if (!SHA256_DIGEST_PATTERN.test(digest)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be sha256:<hex>`);
-  }
-  return digest;
-}
-
-function normalizeNonEmptyRuntimeString(value, fieldName) {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be a non-empty string`);
-  }
-  return value;
-}
-
-function normalizeOptionalRuntimeString(value, fieldName) {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  return normalizeNonEmptyRuntimeString(value, fieldName);
-}
-
-function normalizeRuntimeStringArray(values, fieldName) {
-  if (!Array.isArray(values)) {
-    throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName} must be an array`);
-  }
-  return values.map((value, index) => normalizeNonEmptyRuntimeString(value, `${fieldName}[${index}]`));
-}
-
-function digestSkillPackEvidence(ref, version, resources) {
-  return `sha256:${sha256Json({
-    ref,
-    version,
-    resources: resources.map((resource) => ({
-      ref: resource.ref,
-      digest: resource.digest,
-      path: resource.path,
-      kind: resource.kind,
-    })),
-  })}`;
-}
-
-function normalizePositiveRuntimeInteger(value, fieldName) {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new ToubaRuntimeError(
-      "InvalidRuntimeOption",
-      `${fieldName} must be a positive integer`,
-      { fieldName },
-    );
-  }
-  return value;
-}
-
-function normalizeNonNegativeRuntimeInteger(value, fieldName) {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new ToubaRuntimeError(
-      "InvalidRuntimeOption",
-      `${fieldName} values must be non-negative integers`,
-      { fieldName },
-    );
-  }
-  return value;
 }
 
 function normalizeInputs(inputs) {
