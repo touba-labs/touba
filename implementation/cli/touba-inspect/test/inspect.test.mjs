@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  exportTraceToOpenTelemetry,
   implementationDir,
   inspectExplicitArtifacts,
   inspectPath,
@@ -269,6 +270,50 @@ test("inspects a trace fixture without inventing AIR context", () => {
   assert.match(rendered, /AIR absent: AIR artifact not provided/);
   assert.match(rendered, /Trace trace-minimal-v0\.1/);
   assert.match(rendered, /status=stopped/);
+});
+
+test("exports a Touba trace to an OpenTelemetry JSON projection", () => {
+  const tracePath = path.join(implementationDir, "tests/traces/tb-v01-002-fallback.trace.json");
+  const trace = JSON.parse(readFileSync(tracePath, "utf8"));
+  const otel = exportTraceToOpenTelemetry(trace, { sourcePath: "source.tb" });
+
+  assert.equal(otel.resourceSpans.length, 1);
+  assert.equal(
+    otel.resourceSpans[0].resource.attributes.find((attribute) => attribute.key === "service.name")
+      .value.stringValue,
+    "touba",
+  );
+  const spans = otel.resourceSpans[0].scopeSpans[0].spans;
+  assert.equal(spans.length, trace.events.length);
+  assert.equal(spans[0].name, `touba.${trace.events[0].kind}`);
+  assert.equal(spans[0].traceId.length, 32);
+  assert.equal(spans[0].spanId.length, 16);
+  assert.ok(
+    spans[0].attributes.some(
+      (attribute) =>
+        attribute.key === "touba.event.kind" &&
+        attribute.value.stringValue === trace.events[0].kind,
+    ),
+  );
+});
+
+test("writes an OpenTelemetry JSON projection from the inspect CLI", () => {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "touba-inspect-otel-out-"));
+  try {
+    const inspectScript = path.join(implementationDir, "cli/touba-inspect/src/inspect.mjs");
+    const tracePath = path.join(implementationDir, "tests/traces/tb-v01-002-fallback.trace.json");
+    const otelPath = path.join(tempRoot, "trace.otel.json");
+    const result = spawnSync(process.execPath, [inspectScript, tracePath, "--otel-out", otelPath], {
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const document = JSON.parse(readFileSync(otelPath, "utf8"));
+    assert.equal(document.resourceSpans[0].scopeSpans[0].scope.name, "touba.inspect.otel");
+    assert.ok(document.resourceSpans[0].scopeSpans[0].spans.length > 0);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("inspects human approval trace states from events only", () => {
@@ -1097,8 +1142,8 @@ test("inspects a SC-1 supply chain lock without reading handler content", () => 
     assert.match(rendered, /handler tool:examples\.sc1\/Search/);
     assert.match(rendered, /protocol=touba-tool-handler-v1/);
     assert.match(rendered, /digest=sha256:cccc/);
-    assert.match(rendered, /sdk=@touba\/sdk@0\.0\.0 protocol=touba-tool-handler-v1 status=ok/);
-    assert.match(rendered, /package=examples\.sc1\.handlers@0\.0\.0 kind=local entrypoint=handlers\/search\.handler\.mjs package_root=handlers files=2 dependencies=1/);
+    assert.match(rendered, /sdk=@touba\/sdk@0\.1\.0 protocol=touba-tool-handler-v1 status=ok/);
+    assert.match(rendered, /package=examples\.sc1\.handlers@0\.1\.0 kind=local entrypoint=handlers\/search\.handler\.mjs package_root=handlers files=2 dependencies=1/);
     assert.doesNotMatch(rendered, /raw handler|secret value|compliant|Verified|risk score/i);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -1839,7 +1884,7 @@ function traceAuditManifestFixture() {
     created_at: "2026-06-05T00:00:00.000Z",
     runtime: {
       name: "touba-audit",
-      version: "0.0.0",
+      version: "0.1.0",
     },
     artifacts: {
       trace_digest: {
@@ -2073,7 +2118,7 @@ function supplyChainLockFixture() {
     generated_at: "2026-06-05T12:00:00Z",
     generated_by: {
       tool: "touba prepare",
-      version: "0.0.0",
+      version: "0.1.0",
     },
     provenance: {
       prepared_by: {
@@ -2135,14 +2180,14 @@ function supplyChainLockFixture() {
         },
         sdk: {
           name: "@touba/sdk",
-          version: "0.0.0",
+          version: "0.1.0",
           protocol: "touba-tool-handler-v1",
           status: "ok",
         },
         handler_package: {
           kind: "local",
           name: "examples.sc1.handlers",
-          version: "0.0.0",
+          version: "0.1.0",
           entrypoint: "handlers/search.handler.mjs",
           package_root: "handlers",
           files: [

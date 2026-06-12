@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync as defaultExecFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync as defaultExistsSync,
   mkdirSync as defaultMkdirSync,
@@ -53,6 +54,7 @@ const EXPECTED_SUPPLY_CHAIN_LOCK_SCHEMA_VERSION = "touba-lock-v0.1";
 const EXPECTED_SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-validation-v0.1";
 const EXPECTED_TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
 const INSPECT_REPORT_SUFFIX = ".inspect.txt";
+const OTEL_EXPORT_SUFFIX = ".otel.json";
 const defaultFs = {
   existsSync: defaultExistsSync,
   mkdirSync: defaultMkdirSync,
@@ -564,6 +566,113 @@ function summarizeTrace(trace, sourcePath = undefined) {
     run_controls: summarizeRunControlTrace(events),
     budgets: summarizeBudgetTrace(events),
   };
+}
+
+export function exportTraceToOpenTelemetry(trace, options = {}) {
+  if (!trace || trace.trace_protocol_version !== EXPECTED_TRACE_PROTOCOL_VERSION) {
+    throw new Error(`expected ${EXPECTED_TRACE_PROTOCOL_VERSION} trace for OpenTelemetry export`);
+  }
+  const runId = trace.run?.run_id ?? "run-unknown";
+  const traceId = stableHex(`touba-trace:${runId}`, 32);
+  const resourceAttributes = otelAttributes({
+    "service.name": "touba",
+    "touba.trace.protocol_version": trace.trace_protocol_version,
+    "touba.run.id": runId,
+    "touba.module.ref": trace.run?.module_ref,
+    "touba.entry.ref": trace.run?.entry_ref,
+    "touba.source.path": options.sourcePath,
+    "gen_ai.system": "touba",
+  });
+  const spans = (trace.events ?? []).map((event) => toubaEventToOtelSpan(event, traceId));
+  return {
+    resourceSpans: [
+      {
+        resource: {
+          attributes: resourceAttributes,
+        },
+        scopeSpans: [
+          {
+            scope: {
+              name: "touba.inspect.otel",
+              version: "0.1.0",
+            },
+            spans,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function toubaEventToOtelSpan(event, traceId) {
+  const startTimeUnixNano = syntheticEventTimeUnixNano(event.sequence_index ?? 0);
+  const endTimeUnixNano = (BigInt(startTimeUnixNano) + 1n).toString();
+  return {
+    traceId,
+    spanId: stableHex(`touba-span:${event.run_id}:${event.event_id}`, 16),
+    name: `touba.${event.kind}`,
+    kind: 1,
+    startTimeUnixNano,
+    endTimeUnixNano,
+    attributes: otelAttributes({
+      "touba.event.id": event.event_id,
+      "touba.event.kind": event.kind,
+      "touba.event.sequence_index": event.sequence_index,
+      "touba.run.id": event.run_id,
+      "touba.air.flow_graph_ref": event.air_ref?.flow_graph_ref,
+      "touba.air.owner_ref": event.air_ref?.owner_ref,
+      "touba.air.node_id": event.air_ref?.node_id,
+      "gen_ai.operation.name": "agentic_workflow",
+      ...flattenOtelPayload(event.payload),
+    }),
+  };
+}
+
+function syntheticEventTimeUnixNano(sequenceIndex) {
+  return (BigInt(sequenceIndex) * 1_000_000n).toString();
+}
+
+function flattenOtelPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {};
+  }
+  const entries = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+    entries[`touba.payload.${key}`] = value;
+  }
+  return entries;
+}
+
+function otelAttributes(values) {
+  return Object.entries(values)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => ({
+      key,
+      value: otelAnyValue(value),
+    }));
+}
+
+function otelAnyValue(value) {
+  if (typeof value === "boolean") {
+    return { boolValue: value };
+  }
+  if (Number.isInteger(value)) {
+    return { intValue: String(value) };
+  }
+  if (typeof value === "number") {
+    return { doubleValue: value };
+  }
+  if (typeof value === "string") {
+    return { stringValue: value };
+  }
+  return { stringValue: JSON.stringify(value) };
+}
+
+function stableHex(input, length) {
+  return createHash("sha256").update(input).digest("hex").slice(0, length);
 }
 
 function summarizeArchitecture(projection) {
@@ -2412,7 +2521,7 @@ function finalRunStatus(events) {
 function usage() {
   return [
     "usage: touba-inspect <file.tb|file.air.json|file.trace.json|file.architecture.json|touba.manifest.json|touba.package.json|touba.resources.json|touba.run-plan.json|touba.ownership.json|trace-audit.json|touba.lock.json|touba.trigger-state.json>",
-    "   or: touba-inspect [--source <file.tb>] [--air <file.air.json>] [--trace <file.trace.json>] [--architecture <file.architecture.json>] [--manifest <touba.manifest.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--resource-bindings <touba.resources.json>] [--run-plan <touba.run-plan.json>] [--ownership <touba.ownership.json>] [--trace-audit <trace-audit.json>] [--supply-chain <touba.lock.json|supply-chain-report.json>] [--report-out <report.inspect.txt>]",
+    "   or: touba-inspect [--source <file.tb>] [--air <file.air.json>] [--trace <file.trace.json>] [--architecture <file.architecture.json>] [--manifest <touba.manifest.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--resource-bindings <touba.resources.json>] [--run-plan <touba.run-plan.json>] [--ownership <touba.ownership.json>] [--trace-audit <trace-audit.json>] [--supply-chain <touba.lock.json|supply-chain-report.json>] [--report-out <report.inspect.txt>] [--otel-out <trace.otel.json>]",
     "",
   ].join("\n");
 }
@@ -2421,6 +2530,7 @@ function parseArgs(args) {
   const paths = {};
   const positional = [];
   let reportOutPath;
+  let otelOutPath;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--help" || arg === "-h") {
@@ -2435,6 +2545,18 @@ function parseArgs(args) {
         throw new Error("missing value for option: --report-out");
       }
       reportOutPath = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--otel-out") {
+      if (otelOutPath) {
+        throw new Error("duplicate option: --otel-out");
+      }
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("missing value for option: --otel-out");
+      }
+      otelOutPath = value;
       index += 1;
       continue;
     }
@@ -2474,15 +2596,15 @@ function parseArgs(args) {
     throw new Error("positional input cannot be combined with explicit artifact options");
   }
   if (positional.length === 1) {
-    return { mode: "single", inputPath: positional[0], reportOutPath };
+    return { mode: "single", inputPath: positional[0], reportOutPath, otelOutPath };
   }
   if (positional.length > 1) {
     throw new Error("only one positional artifact path is supported");
   }
   if (Object.keys(paths).length > 0) {
-    return { mode: "multi", paths, reportOutPath };
+    return { mode: "multi", paths, reportOutPath, otelOutPath };
   }
-  return { mode: "usage_error", reportOutPath };
+  return { mode: "usage_error", reportOutPath, otelOutPath };
 }
 
 function optionalResolvedPath(inputPath) {
@@ -2504,6 +2626,33 @@ function writeInspectReport(filePath, rendered, fs = defaultFs) {
   const resolved = path.resolve(filePath);
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   fs.writeFileSync(resolved, rendered, "utf8");
+}
+
+function writeOtelTraceExport(filePath, document, fs = defaultFs) {
+  assertReportOutputPath(filePath, OTEL_EXPORT_SUFFIX);
+  const resolved = path.resolve(filePath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+}
+
+function traceForOtelExport(parsed) {
+  if (parsed.mode === "single") {
+    const artifact = readJsonArtifact(path.resolve(parsed.inputPath), {});
+    if (artifact.trace_protocol_version !== EXPECTED_TRACE_PROTOCOL_VERSION) {
+      throw new Error("--otel-out requires a trace artifact input or --trace <file.trace.json>");
+    }
+    return {
+      trace: artifact,
+      sourcePath: undefined,
+    };
+  }
+  if (parsed.mode === "multi" && parsed.paths.trace) {
+    return {
+      trace: readJsonArtifact(path.resolve(parsed.paths.trace), {}),
+      sourcePath: parsed.paths.source ? path.resolve(parsed.paths.source) : undefined,
+    };
+  }
+  throw new Error("--otel-out requires a trace artifact input or --trace <file.trace.json>");
 }
 
 function assertReportOutputPath(filePath, suffix) {
@@ -2626,6 +2775,10 @@ async function main() {
     const rendered = renderInspection(inspection);
     if (parsed.reportOutPath) {
       writeInspectReport(parsed.reportOutPath, rendered);
+    }
+    if (parsed.otelOutPath) {
+      const { trace, sourcePath } = traceForOtelExport(parsed);
+      writeOtelTraceExport(parsed.otelOutPath, exportTraceToOpenTelemetry(trace, { sourcePath }));
     }
     process.stdout.write(rendered);
   } catch (error) {

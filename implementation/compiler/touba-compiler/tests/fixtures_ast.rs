@@ -120,6 +120,28 @@ fn reports_missing_module() {
 }
 
 #[test]
+fn rejects_tree_sitter_recovery_nodes_before_ast_lowering() {
+    let source = "\
+module recovered.syntax
+
+@@@
+";
+
+    let result = parse_source("recovered-syntax", source);
+
+    assert!(result.document.is_none());
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == AstDiagnosticCode::ParseError)
+        .expect("recovered syntax should produce a parse diagnostic");
+    assert!(
+        diagnostic.message.contains("ERROR") || diagnostic.message.contains("MISSING"),
+        "diagnostic should name Tree-sitter recovery"
+    );
+}
+
+#[test]
 fn accepts_blank_and_comment_lines_inside_indented_block() {
     let source = "\
 module indentation.comments

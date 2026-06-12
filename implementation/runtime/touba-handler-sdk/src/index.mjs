@@ -15,7 +15,7 @@ const SECRET_ENV_NAME_PATTERN = /(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)/iu;
 
 export const TOUBA_SDK_METADATA = Object.freeze({
   name: "@touba/sdk",
-  version: "0.0.0",
+  version: "0.1.0",
   protocol: PROTOCOL,
   status: "ok",
 });

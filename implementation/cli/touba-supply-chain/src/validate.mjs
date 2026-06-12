@@ -18,7 +18,7 @@ const MANIFEST_VERSION = "touba-manifest-v1";
 const DIGEST_KIND = "sha256";
 const EXPECTED_HANDLER_SDK_NAME = "@touba/sdk";
 const EXPECTED_HANDLER_SDK_PROTOCOL = "touba-tool-handler-v1";
-const SUPPORTED_HANDLER_SDK_VERSIONS = new Set(["0.0.0"]);
+const SUPPORTED_HANDLER_SDK_VERSIONS = new Set(["0.1.0"]);
 const SUPPORTED_HANDLER_PACKAGE_KINDS = new Set(["local"]);
 const SUPPLY_CHAIN_REPORT_SUFFIX = ".supply-chain-report.json";
 

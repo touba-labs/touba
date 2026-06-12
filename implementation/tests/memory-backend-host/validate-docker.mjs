@@ -30,7 +30,7 @@ try {
   });
   assertSuccess("memory backend docker validation", validation);
   process.stdout.write(validation.stdout);
-  console.log("memory-backend-host: docker=status=success image=node:24.15.0-alpine");
+  console.log("memory-backend-host: docker=status=success image=node:24-alpine");
 } finally {
   await dockerCompose(["down", "-v"], { allowFailure: true });
 }

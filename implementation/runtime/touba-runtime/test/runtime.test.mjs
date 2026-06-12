@@ -3355,6 +3355,86 @@ test("stops when an agent-requested human review has no host decision", async ()
   assert.equal(eventsOf(result.trace, "human_approval_decided").length, 0);
 });
 
+test("refuses agent-requested human review pause after external tool dispatch without durable resume", async () => {
+  const document = agentReviewAfterToolDocument();
+  const toolCalls = [];
+
+  const result = await executeAirDocument(document, {
+    toolHandlers: {
+      "tool:test/Fetch": async () => {
+        toolCalls.push("Fetch");
+        return "fetched";
+      },
+    },
+    agentDecisionProvider: (request) => {
+      if (request.step_index === 0 && request.mode === "summary") {
+        return { action: "request_capabilities", reason: "need data" };
+      }
+      if (request.step_index === 0 && request.mode === "capabilities") {
+        return {
+          target_ref: "skill:test/FetchData",
+          reason: "fetch once",
+          arguments: {},
+        };
+      }
+      if (request.step_index === 1 && request.mode === "summary") {
+        return { action: "request_capabilities", reason: "human review may be needed" };
+      }
+      return {
+        action: "request_human_review",
+        source: "test_review",
+        reason: "review after external effect",
+        review_prompt: "Review fetched data.",
+      };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.deepEqual(toolCalls, ["Fetch"]);
+  assert.equal(eventsOf(result.trace, "human_approval_paused").length, 0);
+  assert.deepEqual(eventOf(result.trace, "human_approval_pause_refused").payload, {
+    approval_ref: "approval:agent:test/Researcher:step-1:human-review",
+    mode: "agent_review",
+    caller_ref: "agent:test/Researcher",
+    agent_ref: "agent:test/Researcher",
+    reason: "durable_resume_required_after_external_effect",
+    external_tool_dispatches: 1,
+  });
+  assert.equal(
+    eventOf(result.trace, "failure_detected").payload.runtime_error_code,
+    "HumanApprovalPauseRequiresDurableResume",
+  );
+});
+
+test("refuses explicit human approval pause after external tool dispatch without durable resume", async () => {
+  const document = toolThenHumanApprovalDocument();
+  const toolCalls = [];
+
+  const result = await executeAirDocument(document, {
+    toolHandlers: {
+      "tool:test/Fetch": async () => {
+        toolCalls.push("Fetch");
+        return "fetched";
+      },
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.deepEqual(toolCalls, ["Fetch"]);
+  assert.equal(eventsOf(result.trace, "human_approval_paused").length, 0);
+  assert.deepEqual(eventOf(result.trace, "human_approval_pause_refused").payload, {
+    approval_ref: "approval:test/review-after-fetch",
+    mode: "required_approval",
+    caller_ref: "strategy:test/RunReview",
+    reason: "durable_resume_required_after_external_effect",
+    external_tool_dispatches: 1,
+  });
+  assert.equal(
+    eventOf(result.trace, "failure_detected").payload.runtime_error_code,
+    "HumanApprovalPauseRequiresDurableResume",
+  );
+});
+
 test("fails when an agent decision loop exceeds the configured step limit", async () => {
   const document = multiStepAgentDocument();
 
@@ -4401,6 +4481,106 @@ function agentProviderDocument() {
       ]),
       graph("graph:strategy:test/RunResearch", "strategy:test/RunResearch", [
         node("run", "call_agent", { target_ref: "agent:test/Researcher" }),
+      ]),
+    ],
+  });
+}
+
+function agentReviewAfterToolDocument() {
+  return baseDocument({
+    tools: [
+      tool("Fetch", {
+        signature: {
+          inputs: [],
+          output_type: "builtin:Text",
+        },
+      }),
+    ],
+    skills: [
+      {
+        ...skill("FetchData", "graph:skill:test/FetchData", ["tool:test/Fetch"]),
+        signature: {
+          inputs: [],
+          output_type: "builtin:Text",
+        },
+      },
+    ],
+    agents: [
+      {
+        id: "agent:test/Researcher",
+        name: "Researcher",
+        responsibility: "Researcher",
+        uses: ["skill:test/FetchData"],
+        callable_by: [
+          {
+            caller_ref: "strategy:test/RunResearch",
+            caller_kind: "strategy",
+            source_ref: sourceRef(),
+          },
+        ],
+        source_ref: sourceRef(),
+      },
+    ],
+    strategies: [
+      {
+        id: "strategy:test/RunResearch",
+        name: "RunResearch",
+        uses: ["agent:test/Researcher"],
+        flow_graph_ref: "graph:strategy:test/RunResearch",
+        source_ref: sourceRef(),
+      },
+    ],
+    graphs: [
+      graph("graph:skill:test/FetchData", "skill:test/FetchData", [
+        node("fetch", "call_tool", {
+          target_ref: "tool:test/Fetch",
+          result_binding: "fetched",
+        }),
+        node("give", "give", { arguments: ["value:fetched"] }),
+      ], [
+        edge("fetch", "give", "next"),
+      ]),
+      graph("graph:strategy:test/RunResearch", "strategy:test/RunResearch", [
+        node("run", "call_agent", { target_ref: "agent:test/Researcher" }),
+      ]),
+    ],
+  });
+}
+
+function toolThenHumanApprovalDocument() {
+  return baseDocument({
+    tools: [
+      tool("Fetch", {
+        signature: {
+          inputs: [],
+          output_type: "builtin:Text",
+        },
+      }),
+    ],
+    strategies: [
+      {
+        id: "strategy:test/RunReview",
+        name: "RunReview",
+        flow_graph_ref: "graph:strategy:test/RunReview",
+        source_ref: sourceRef(),
+      },
+    ],
+    graphs: [
+      graph("graph:strategy:test/RunReview", "strategy:test/RunReview", [
+        node("fetch", "call_tool", {
+          target_ref: "tool:test/Fetch",
+          result_binding: "fetched",
+        }),
+        node("review", "human_approval", {
+          approval_ref: "approval:test/review-after-fetch",
+          approval_mode: "required_approval",
+          context_refs: ["value:fetched"],
+          result_binding: "reviewDecision",
+        }),
+        node("give", "give", { arguments: ["value:reviewDecision"] }),
+      ], [
+        edge("fetch", "review", "next"),
+        edge("review", "give", "next"),
       ]),
     ],
   });

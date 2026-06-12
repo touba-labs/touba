@@ -19,7 +19,7 @@ const AIR_SCHEMA_VERSION = "air-minimal-v0.1";
 const MANIFEST_VERSION = "touba-manifest-v1";
 const DIGEST_KIND = "sha256";
 const RUNTIME_NAME = "touba-audit";
-const RUNTIME_VERSION = "0.0.0";
+const RUNTIME_VERSION = "0.1.0";
 const TRACE_AUDIT_REPORT_SUFFIX = ".trace-audit-report.json";
 
 const RETENTION_CLASSES = new Set([

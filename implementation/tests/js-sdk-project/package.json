@@ -1,12 +1,12 @@
 {
   "name": "@touba/js-sdk-project-fixture",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node validate.mjs"
   },
   "engines": {
-    "node": "24.15.0"
+    "node": ">=24 <25"
   }
 }

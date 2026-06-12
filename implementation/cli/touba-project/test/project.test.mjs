@@ -1668,10 +1668,10 @@ test("CLI version reports public command and schema versions", () => {
   const result = spawnSync(process.execPath, [cliPath, "version", "--json"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
-  assert.equal(report.cli, "0.0.0");
-  assert.equal(report.runtime, "0.0.0");
-  assert.equal(report.audit, "0.0.0");
-  assert.equal(report.supply_chain, "0.0.0");
+  assert.equal(report.cli, "0.1.0");
+  assert.equal(report.runtime, "0.1.0");
+  assert.equal(report.audit, "0.1.0");
+  assert.equal(report.supply_chain, "0.1.0");
   assert.equal(report.schemas.air, "air-minimal-v0.1");
   assert.equal(report.schemas.trace, "trace-minimal-v0.1");
   assert.equal(report.schemas.manifest, "touba-manifest-v1");
@@ -1928,7 +1928,7 @@ test("CLI supply-chain delegates to Touba Supply Chain validation", () => {
       generated_at: "2026-06-05T12:00:00Z",
       generated_by: {
         tool: "touba prepare",
-        version: "0.0.0",
+        version: "0.1.0",
       },
       air: {
         path: "program.air.json",
@@ -1957,14 +1957,14 @@ test("CLI supply-chain delegates to Touba Supply Chain validation", () => {
           },
           sdk: {
             name: "@touba/sdk",
-            version: "0.0.0",
+            version: "0.1.0",
             protocol: "touba-tool-handler-v1",
             status: "ok",
           },
           handler_package: {
             kind: "local",
             name: "donnees_quebec.live_search.handlers",
-            version: "0.0.0",
+            version: "0.1.0",
             entrypoint: "handlers/search_datasets.handler.mjs",
           },
         },
@@ -2076,7 +2076,7 @@ test("CLI run applies project dev and prod supply-chain profiles", () => {
       generated_at: "2026-06-05T12:00:00Z",
       generated_by: {
         tool: "touba test",
-        version: "0.0.0",
+        version: "0.1.0",
       },
       air: {
         path: "linear.air.json",
@@ -2118,7 +2118,7 @@ test("CLI run prod profile refuses before runtime when project lock drifts", () 
       generated_at: "2026-06-05T12:00:00Z",
       generated_by: {
         tool: "touba test",
-        version: "0.0.0",
+        version: "0.1.0",
       },
       air: {
         path: "linear.air.json",

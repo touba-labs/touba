@@ -328,11 +328,18 @@ function createExecutionContext(document, entryRef, options = {}) {
       "maxAgentSteps",
     ),
     triggerRunCounts: normalizeTriggerRunCounts(options.triggerRunCounts ?? {}),
+    effectState: createEffectState(),
     loopState: new Map(),
     maxLoopIterations: options.maxLoopIterations ?? 100,
     activeAgentRef: null,
     activeCallerRef: null,
     nextCallIndex: 1,
+  };
+}
+
+function createEffectState() {
+  return {
+    externalToolDispatches: 0,
   };
 }
 
@@ -1226,12 +1233,13 @@ function executeAgentHumanReview(agent, decision, context, stepIndex) {
   context.trace.push("human_approval_requested", {
     payload: basePayload,
   });
-  context.trace.push("human_approval_paused", {
-    payload: basePayload,
-  });
 
   const humanDecision = context.humanApprovalDecisions.get(approvalRef);
   if (!humanDecision) {
+    assertHumanApprovalCanPause(context, basePayload);
+    context.trace.push("human_approval_paused", {
+      payload: basePayload,
+    });
     if (context.runState.cancelOnPause) {
       requestRunCancel(context, {
         authoritySource: "host",
@@ -1247,6 +1255,9 @@ function executeAgentHumanReview(agent, decision, context, stepIndex) {
     }
     throw new RuntimeStop("agent human review paused", { approvalRef, agentRef: agent.id });
   }
+  context.trace.push("human_approval_paused", {
+    payload: basePayload,
+  });
   if (!["approved", "rejected", "expired", "cancelled"].includes(humanDecision)) {
     throw new RuntimeFailure(
       `invalid human approval decision ${humanDecision} for ${approvalRef}`,
@@ -2040,6 +2051,7 @@ async function executeTool(tool, context) {
   const handler = context.toolHandlers[toolRef];
   if (!handler) {
     if (binding) {
+      recordExternalToolDispatch(context);
       const handlerResponse = await runProcessToolHandler(tool, binding, context, toolArguments);
       observeToolMemoryMetadata(tool, handlerResponse.memoryMetadata, context);
       const value = handlerResponse.value;
@@ -2050,6 +2062,7 @@ async function executeTool(tool, context) {
     throw new RuntimeFailure(`missing tool binding ${toolRef}`, { toolRef });
   }
   try {
+    recordExternalToolDispatch(context);
     const value = await handler({
       toolRef,
       arguments: toolArguments,
@@ -2073,6 +2086,54 @@ async function executeTool(tool, context) {
       cause: message,
     });
   }
+}
+
+function recordExternalToolDispatch(context) {
+  context.effectState.externalToolDispatches += 1;
+}
+
+function assertHumanApprovalCanPause(context, payload, airRef = undefined) {
+  const externalToolDispatches = context.effectState.externalToolDispatches;
+  if (externalToolDispatches === 0) {
+    return;
+  }
+
+  context.trace.push("human_approval_pause_refused", {
+    airRef,
+    payload: compactPayload({
+      approval_ref: payload.approval_ref,
+      mode: payload.mode,
+      caller_ref: payload.caller_ref,
+      agent_ref: payload.agent_ref,
+      reason: "durable_resume_required_after_external_effect",
+      external_tool_dispatches: externalToolDispatches,
+    }),
+  });
+  const error = new RuntimeFailure(
+    "human approval pause after external tool dispatch requires durable resume",
+    {
+      approvalRef: payload.approval_ref,
+      mode: payload.mode,
+      callerRef: payload.caller_ref,
+      agentRef: payload.agent_ref,
+      externalToolDispatches,
+      reason: "durable_resume_required_after_external_effect",
+    },
+    "HumanApprovalPauseRequiresDurableResume",
+  );
+  context.trace.push("failure_detected", {
+    airRef,
+    payload: compactPayload({
+      failure_mode: "human_approval_pause",
+      runtime_error_code: error.code,
+      approval_ref: payload.approval_ref,
+      caller_ref: payload.caller_ref,
+      agent_ref: payload.agent_ref,
+      external_tool_dispatches: externalToolDispatches,
+    }),
+    message: error.message,
+  });
+  throw error;
 }
 
 async function runProcessToolHandler(tool, binding, context, toolArguments) {
@@ -4571,16 +4632,18 @@ function executeHumanApprovalNode(graph, node, context) {
     airRef: airRefForNode(graph, node),
     payload: basePayload,
   });
-  context.trace.push("human_approval_paused", {
-    airRef: airRefForNode(graph, node),
-    payload: compactPayload({
-      ...basePayload,
-      resume_target_ref: resumeTargetRef,
-    }),
-  });
 
   const decision = context.humanApprovalDecisions.get(approvalRef);
   if (!decision) {
+    const pausePayload = compactPayload({
+      ...basePayload,
+      resume_target_ref: resumeTargetRef,
+    });
+    assertHumanApprovalCanPause(context, pausePayload, airRefForNode(graph, node));
+    context.trace.push("human_approval_paused", {
+      airRef: airRefForNode(graph, node),
+      payload: pausePayload,
+    });
     if (context.runState.cancelOnPause) {
       requestRunCancel(context, {
         authoritySource: "host",
@@ -4598,6 +4661,13 @@ function executeHumanApprovalNode(graph, node, context) {
       status: "stopped",
     };
   }
+  context.trace.push("human_approval_paused", {
+    airRef: airRefForNode(graph, node),
+    payload: compactPayload({
+      ...basePayload,
+      resume_target_ref: resumeTargetRef,
+    }),
+  });
   if (!["approved", "rejected", "expired", "cancelled"].includes(decision)) {
     const error = new RuntimeFailure(
       `invalid human approval decision ${decision} for ${approvalRef}`,

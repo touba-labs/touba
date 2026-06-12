@@ -213,7 +213,7 @@ function writeSupplyChainLock(projectRoot, handlerPath) {
     generated_at: "2026-06-05T00:00:00Z",
     generated_by: {
       tool: "touba validate:team-multi-equipe",
-      version: "0.0.0",
+      version: "0.1.0",
     },
     air: {
       path: relative(projectRoot, airPath),
@@ -233,7 +233,7 @@ function writeSupplyChainLock(projectRoot, handlerPath) {
         digest: digestForFile(handlerPath),
         sdk: {
           name: "@touba/sdk",
-          version: "0.0.0",
+          version: "0.1.0",
           protocol: "touba-tool-handler-v1",
           status: "ok",
         },

@@ -1,6 +1,6 @@
 {
   "name": "@touba/sdk",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Touba JavaScript SDK. Current V1 support covers process tool handlers and a local CLI-backed engine.",
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "engines": {
-    "node": "24.15.0"
+    "node": ">=24 <25"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.65",

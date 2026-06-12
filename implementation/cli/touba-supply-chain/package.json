@@ -1,6 +1,6 @@
 {
   "name": "@touba/supply-chain",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Touba SC-1/SC-2 local supply chain lock validator.",
   "type": "module",
@@ -14,6 +14,6 @@
     "test": "node --test test/*.test.mjs"
   },
   "engines": {
-    "node": "24.15.0"
+    "node": ">=24 <25"
   }
 }

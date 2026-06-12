@@ -1134,7 +1134,7 @@ impl<'a> AstLowerer<'a> {
     }
 }
 
-fn parse_error_message(source: &str) -> String {
+pub(crate) fn parse_error_message(source: &str) -> String {
     if source
         .lines()
         .any(|line| line.trim_start().starts_with("show \""))

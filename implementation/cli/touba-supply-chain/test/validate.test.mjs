@@ -31,12 +31,12 @@ test("validates coherent AIR, manifest and handler artifacts", () => {
     assert.equal(report.artifacts.manifest.drift_status, "ok");
     assert.equal(report.handlers[0].drift_status, "ok");
     assert.equal(report.handlers[0].sdk_name, "@touba/sdk");
-    assert.equal(report.handlers[0].sdk_version, "0.0.0");
+    assert.equal(report.handlers[0].sdk_version, "0.1.0");
     assert.equal(report.handlers[0].sdk_protocol, "touba-tool-handler-v1");
     assert.equal(report.handlers[0].handler_package_status, "ok");
     assert.equal(report.handlers[0].handler_package_kind, "local");
     assert.equal(report.handlers[0].handler_package_name, "examples.sc1.handlers");
-    assert.equal(report.handlers[0].handler_package_version, "0.0.0");
+    assert.equal(report.handlers[0].handler_package_version, "0.1.0");
     assert.equal(report.handlers[0].handler_package_entrypoint, "handlers/search.handler.mjs");
     assert.equal(report.handlers[0].handler_package_root, "handlers");
     assert.equal(report.handlers[0].handler_package_files_status, "ok");
@@ -453,7 +453,7 @@ function withFixtureProject(callback) {
     writeFileSync(paths.handler, handlerText, "utf8");
     const packageManifestText = writeJson(paths.packageManifest, {
       name: "examples.sc1.handlers",
-      version: "0.0.0",
+      version: "0.1.0",
       type: "module",
     });
     const dependencyLockText = "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n";
@@ -508,7 +508,7 @@ function withFixtureProject(callback) {
       generated_at: "2026-06-05T12:00:00Z",
       generated_by: {
         tool: "touba prepare",
-        version: "0.0.0",
+        version: "0.1.0",
       },
       provenance: {
         prepared_by: {
@@ -570,14 +570,14 @@ function withFixtureProject(callback) {
           },
           sdk: {
             name: "@touba/sdk",
-            version: "0.0.0",
+            version: "0.1.0",
             protocol: "touba-tool-handler-v1",
             status: "ok",
           },
           handler_package: {
             kind: "local",
             name: "examples.sc1.handlers",
-            version: "0.0.0",
+            version: "0.1.0",
             entrypoint: "handlers/search.handler.mjs",
             package_root: "handlers",
             files: [

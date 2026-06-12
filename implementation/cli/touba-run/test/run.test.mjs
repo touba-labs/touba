@@ -2820,7 +2820,7 @@ function writeFixtureManifest(workspace, fileName) {
 
 function writeProjectToolRuntimeFixture(workspace, { sdk = {
   name: "@touba/sdk",
-  version: "0.0.0",
+  version: "0.1.0",
   protocol: "touba-tool-handler-v1",
   status: "ok",
 } } = {}) {
@@ -2872,7 +2872,7 @@ function writeProjectToolRuntimeFixture(workspace, { sdk = {
     handler_package: {
       kind: "local",
       name: "project.echo.handlers",
-      version: "0.0.0",
+      version: "0.1.0",
       entrypoint: "handlers/echo.handler.mjs",
     },
   };
@@ -2885,7 +2885,7 @@ function writeProjectToolRuntimeFixture(workspace, { sdk = {
     generated_at: "2026-06-05T12:00:00Z",
     generated_by: {
       tool: "touba test",
-      version: "0.0.0",
+      version: "0.1.0",
     },
     air: {
       path: "../fixture.air.json",
@@ -2966,7 +2966,7 @@ function writeImportedToolRuntimeFixture(workspace) {
     generated_at: "2026-06-05T12:00:00Z",
     generated_by: {
       tool: "touba test",
-      version: "0.0.0",
+      version: "0.1.0",
     },
     air: {
       path: "../fixture.air.json",
@@ -2995,14 +2995,14 @@ function writeImportedToolRuntimeFixture(workspace) {
         },
         sdk: {
           name: "@touba/sdk",
-          version: "0.0.0",
+          version: "0.1.0",
           protocol: "touba-tool-handler-v1",
           status: "ok",
         },
         handler_package: {
           kind: "local",
           name: "examples.data_tools.handlers",
-          version: "0.0.0",
+          version: "0.1.0",
           entrypoint: "handlers/examples/data_tools/search_datasets.handler.mjs",
         },
       },
