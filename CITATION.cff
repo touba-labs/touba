@@ -6,15 +6,15 @@ authors:
   - family-names: Lo
     given-names: Khadim
     email: khadim.lo@uqtr.ca
-    affiliation: "École d'ingénierie, Université du Québec à Trois-Rivières"
+    affiliation: "Electrical and Computer Engineering, LSSI, Université du Québec à Trois-Rivières"
   - family-names: Dessureault
     given-names: Jean-Sébastien
     email: jean-sebastien.dessureault@uqtr.ca
-    affiliation: "Université du Québec à Trois-Rivières"
+    affiliation: "Mathematics and Computer Science, Université du Québec à Trois-Rivières"
   - family-names: "Alaoui Ismaili"
     given-names: Soukaina
     email: Soukaina.Alaoui.Ismaili@uqtr.ca
-    affiliation: "École d'ingénierie, Université du Québec à Trois-Rivières"
+    affiliation: "Electrical and Computer Engineering, LSSI, Université du Québec à Trois-Rivières"
 version: 0.1.0
 date-released: "2026-06-12"
 license: MIT
