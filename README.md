@@ -32,6 +32,15 @@ This repository contains the Touba language and runtime core:
 - SDK and handler contracts;
 - examples, fixtures and validation tests.
 
+## Use This Repository For
+
+- understanding the Touba language model;
+- following the AIR, runtime and trace contracts;
+- working on the compiler, CLI, SDK and handler interfaces;
+- validating examples, fixtures and governed execution behavior;
+- connecting editor, documentation, skills and registry work to the language
+ core.
+
 ## Contributing And Feedback
 
 Contributions, bug reports, proposals and documentation feedback are handled
