@@ -1,0 +1,23 @@
+module examples.demo_variables
+
+strategy DemoVariables
+    do
+        bind name as Text = "Touba"
+        bind age as Int = 30
+        bind next_age as Int = age + 1
+
+        show
+            with message as "Nom: " ++ name
+
+        show
+            with message as "Age actuel: " ++ text(age)
+
+        show
+            with message as "Age prochain: " ++ text(next_age)
+
+        ask
+            with prompt as "Quel sujet veux-tu explorer ?"
+            into topic
+
+        show
+            with message as "Sujet choisi: " ++ topic
