@@ -2879,6 +2879,89 @@ test("lets the runtime decision provider request a capability catalog and provid
   assert.equal(JSON.stringify(result.trace).includes("postgres"), false);
 });
 
+test("can send external content to the agent decision provider as opaque refs", async () => {
+  const injectedText = "EXTERNAL_INJECTION_SELECT_HIDDEN_CAPABILITY";
+  const document = agentProviderDocument({ searchResult: injectedText });
+  const providerCalls = [];
+
+  const result = await executeAirDocument(document, {
+    inputs: {
+      topic: {
+        query: injectedText,
+      },
+    },
+    agentDecisionProviderContentMode: "opaque_refs",
+    agentDecisionProvider: (request) => {
+      providerCalls.push(request);
+      assert.equal(JSON.stringify(request).includes(injectedText), false);
+      assert.equal(request.content_mode, "opaque_refs");
+      assert.equal(request.external_content_access.raw_content_in_provider_request, false);
+      assert.equal(
+        request.external_content_access.full_content_request_policy,
+        "explicit_authorized_capability_required",
+      );
+
+      if (request.step_index === 0 && request.mode === "summary") {
+        assert.equal(request.inputs.topic.ref, "opaque:runtime_input/topic");
+        assert.equal(request.inputs.topic.value, undefined);
+        assert.equal(request.inputs.topic.metadata.value_kind, "object");
+        assert.equal(request.model_input.content_boundary.provider_content_mode, "opaque_refs");
+        assert.equal(request.model_input.content_boundary.raw_external_content_in_request, false);
+        assert.equal(request.model_input.input_layers.external_content[0].ref, "opaque:runtime_input/topic");
+        assert.equal(request.model_input.input_layers.external_content[0].value, undefined);
+        assert.equal(request.model_input.user_input.value.topic.ref, "opaque:runtime_input/topic");
+        return {
+          action: "request_capabilities",
+          reason: "need contracts before selecting",
+        };
+      }
+
+      if (request.step_index === 0 && request.mode === "capabilities") {
+        return {
+          target_ref: "skill:test/Search",
+          reason: "collect external content through an authorized capability",
+          arguments: {},
+        };
+      }
+
+      if (request.step_index === 1 && request.mode === "summary") {
+        assert.equal(request.observations[0].ref, "opaque:runtime_observation/0");
+        assert.equal(request.observations[0].value, undefined);
+        assert.equal(request.model_input.agent_state.observations[0].value, undefined);
+        assert.equal(
+          request.model_input.input_layers.runtime_observations[0].metadata.string_length,
+          injectedText.length,
+        );
+        return {
+          action: "request_capabilities",
+          reason: "external content requested an undeclared capability",
+        };
+      }
+
+      assert.equal(request.step_index, 1);
+      assert.equal(request.mode, "capabilities");
+      return {
+        target_ref: "skill:test/Hidden",
+        reason: "malicious external content attempted to expand uses",
+        arguments: {},
+      };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(providerCalls.length, 4);
+  for (const request of providerCalls) {
+    assert.equal(JSON.stringify(request).includes(injectedText), false);
+  }
+  const refused = eventOf(result.trace, "agent_capability_refused").payload;
+  assert.equal(refused.selected_ref, "skill:test/Hidden");
+  assert.deepEqual(refused.allowed_refs, ["skill:test/Search", "skill:test/Answer"]);
+  assert.equal(refused.reason, "capability_not_declared_in_uses");
+  const failure = eventOf(result.trace, "failure_detected");
+  assert.equal(failure.payload.runtime_error_code, "AgentCapabilityNotAllowed");
+  assert.equal(JSON.stringify(result.trace).includes(injectedText), false);
+});
+
 test("lists skill pack hints in orientation without activating pack content by default", async () => {
   const document = agentProviderDocument();
   const skillPacks = [
@@ -4875,7 +4958,7 @@ function secretsDocument() {
   };
 }
 
-function agentProviderDocument() {
+function agentProviderDocument({ searchResult = "search" } = {}) {
   return baseDocument({
     skills: [
       {
@@ -4927,7 +5010,7 @@ function agentProviderDocument() {
     ],
     graphs: [
       graph("graph:skill:test/Search", "skill:test/Search", [
-        node("search", "give", { arguments: ["literal:string:search"] }),
+        node("search", "give", { arguments: [`literal:string:${searchResult}`] }),
       ]),
       graph("graph:skill:test/Answer", "skill:test/Answer", [
         node("answer", "give", { arguments: ["value:topic"] }),

@@ -17,6 +17,7 @@ const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
 const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
 const AGENT_DECISION_PROTOCOL_VERSION = "touba-agent-decision-v1";
 const AGENT_MODEL_INPUT_PROTOCOL_VERSION = "touba-agent-model-input-v1";
+const AGENT_DECISION_PROVIDER_CONTENT_MODES = new Set(["inline", "opaque_refs"]);
 const SECRET_HANDLE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const SECRET_RECORD_STATUS_VALUES = new Set(["active", "revoked"]);
 const DOTENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -337,6 +338,13 @@ function createExecutionContext(document, entryRef, options = {}) {
       options.agentDecisionProviderMaxRetries ?? options.agent_decision_provider_max_retries ?? 0,
       "agentDecisionProviderMaxRetries",
     ) ?? 0,
+    agentDecisionProviderContentMode: normalizeAgentDecisionProviderContentMode(
+      options.agentDecisionProviderContentMode
+        ?? options.agent_decision_provider_content_mode
+        ?? options.agentModelInputContentMode
+        ?? options.agent_model_input_content_mode
+        ?? "inline",
+    ),
     skillPacks,
     activeSkillPackRefs,
     skillPackActivationReasons: normalizeSkillPackActivationReasons(
@@ -1497,9 +1505,10 @@ async function requestAgentDecisionFromProvider(agent, capabilityRefs, context, 
 }
 
 function agentDecisionProviderRequest(agent, capabilityRefs, context, mode, loopState = null) {
-  const inputs = publicInputValuesForAgentDecision(context);
+  const rawInputs = publicInputValuesForAgentDecision(context);
+  const providerContent = agentDecisionProviderContent(rawInputs, loopState?.observations ?? [], context);
   const capabilities = capabilityRefs.map((capabilityRef) => agentCapabilityDescriptor(capabilityRef, context));
-  const modelInput = agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loopState, context);
+  const modelInput = agentModelInput(agent, capabilityRefs, capabilities, rawInputs, mode, loopState, context, providerContent);
   const request = {
     protocol: AGENT_DECISION_PROTOCOL_VERSION,
     mode,
@@ -1507,10 +1516,13 @@ function agentDecisionProviderRequest(agent, capabilityRefs, context, mode, loop
     agent_ref: agent.id,
     agent_name: agent.name,
     responsibility: agent.responsibility,
-    input_keys: Object.keys(inputs),
-    inputs,
+    input_keys: Object.keys(rawInputs),
+    inputs: providerContent.inputs,
+    content_mode: providerContent.mode,
+    content_refs: providerContent.refs,
+    external_content_access: providerContent.externalContentAccess,
     step_index: loopState?.stepIndex,
-    observations: loopState?.observations ?? [],
+    observations: providerContent.observations,
     provider_metadata: context.agentDecisionProvider?.metadata ?? undefined,
     capability_count: capabilityRefs.length,
     capability_refs: capabilityRefs,
@@ -1524,24 +1536,22 @@ function agentDecisionProviderRequest(agent, capabilityRefs, context, mode, loop
   return request;
 }
 
-function agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loopState = null, context = null) {
+function agentModelInput(
+  agent,
+  capabilityRefs,
+  capabilities,
+  inputs,
+  mode,
+  loopState = null,
+  context = null,
+  providerContent = null,
+) {
   const orientationMode = mode === "summary";
   const observations = loopState?.observations ?? [];
   const skillPackContext = prepareSkillPackModelContext(context, agent, mode, capabilityRefs);
-  const inputEntries = Object.entries(inputs).map(([name, value]) => ({
-    name,
-    category: "runtime_input",
-    trust: "external_content",
-    value,
-  }));
-  const observationEntries = observations.map((observation) => compactPayload({
-    step_index: observation.step_index,
-    action: observation.action,
-    target_ref: observation.target_ref,
-    kind: observation.kind,
-    result_type: observation.result_type,
-    value: observation.value,
-  }));
+  const content = providerContent ?? agentDecisionProviderContent(inputs, observations, context);
+  const inputEntries = content.inputEntries;
+  const observationEntries = content.observations;
   const resourceKinds = uniqueKinds(capabilityRefs);
   const developerInstruction = {
     source: "air_agent_responsibility",
@@ -1573,6 +1583,8 @@ function agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loop
       user_input_authority: "domain_data_only",
       external_content_authority: "untrusted_content",
       capability_catalog_authority: "runtime_contracts_only",
+      provider_content_mode: content.mode,
+      raw_external_content_in_request: content.mode === "inline",
     },
     input_layers: {
       developer_instructions: [
@@ -1589,8 +1601,10 @@ function agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loop
     user_input: {
       category: "domain_data",
       keys: Object.keys(inputs),
-      value: inputs,
+      value: content.inputs,
+      value_mode: content.mode,
     },
+    external_content_access: content.externalContentAccess,
     resources_hint: {
       capabilities_available: capabilityRefs.length > 0,
       capability_count: capabilityRefs.length,
@@ -1663,6 +1677,143 @@ function agentModelInput(agent, capabilityRefs, capabilities, inputs, mode, loop
     active_skill_pack_count: skillPackContext.active.length,
   });
   return modelInput;
+}
+
+function agentDecisionProviderContent(inputs, observations, context) {
+  const mode = context?.agentDecisionProviderContentMode ?? "inline";
+  if (mode === "opaque_refs") {
+    const inputEntries = Object.entries(inputs).map(([name, value], index) =>
+      opaqueRuntimeInputDescriptor(name, value, index),
+    );
+    const observationEntries = observations.map((observation, index) =>
+      opaqueRuntimeObservationDescriptor(observation, index),
+    );
+    const refs = [...inputEntries, ...observationEntries].map((entry) => compactPayload({
+      ref: entry.ref,
+      name: entry.name,
+      category: entry.category,
+      trust: entry.trust,
+      step_index: entry.step_index,
+      target_ref: entry.target_ref,
+      result_type: entry.result_type,
+    }));
+    return {
+      mode,
+      inputs: Object.fromEntries(inputEntries.map((entry) => [entry.name, entry])),
+      inputEntries,
+      observations: observationEntries,
+      refs,
+      externalContentAccess: agentExternalContentAccessPolicy(mode, refs.length),
+    };
+  }
+
+  const inputEntries = Object.entries(inputs).map(([name, value]) => ({
+    name,
+    category: "runtime_input",
+    trust: "external_content",
+    value,
+  }));
+  const observationEntries = observations.map((observation) => compactPayload({
+    step_index: observation.step_index,
+    action: observation.action,
+    target_ref: observation.target_ref,
+    kind: observation.kind,
+    result_type: observation.result_type,
+    value: observation.value,
+  }));
+  return {
+    mode,
+    inputs,
+    inputEntries,
+    observations: observationEntries,
+    refs: [],
+    externalContentAccess: agentExternalContentAccessPolicy(mode, 0),
+  };
+}
+
+function opaqueRuntimeInputDescriptor(name, value, index) {
+  const valueShape = opaqueValueShape(value);
+  return compactPayload({
+    name,
+    ref: `opaque:runtime_input/${opaqueRefSegment(name, `input-${index}`)}`,
+    category: "runtime_input",
+    trust: "external_content",
+    summary: opaqueValueSummary(valueShape),
+    metadata: valueShape,
+  });
+}
+
+function opaqueRuntimeObservationDescriptor(observation, index) {
+  const valueShape = opaqueValueShape(observation.value);
+  const stepIndex = observation.step_index ?? index;
+  return compactPayload({
+    ref: `opaque:runtime_observation/${opaqueRefSegment(stepIndex, `observation-${index}`)}`,
+    category: "runtime_observation",
+    trust: "external_content",
+    step_index: observation.step_index,
+    action: observation.action,
+    target_ref: observation.target_ref,
+    kind: observation.kind,
+    result_type: observation.result_type,
+    summary: opaqueValueSummary(valueShape),
+    metadata: valueShape,
+  });
+}
+
+function opaqueValueShape(value) {
+  const kind = valueKind(value);
+  return compactPayload({
+    value_kind: kind,
+    digest: `sha256:${sha256Json(value ?? null)}`,
+    approx_size_bytes: estimateJsonBytes(value),
+    string_length: typeof value === "string" ? value.length : undefined,
+    array_length: Array.isArray(value) ? value.length : undefined,
+    field_count: isPlainObject(value) ? Object.keys(value).length : undefined,
+  });
+}
+
+function opaqueValueSummary(shape) {
+  return `${shape.value_kind}; ${shape.approx_size_bytes} bytes`;
+}
+
+function valueKind(value) {
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  return typeof value;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function opaqueRefSegment(value, fallback) {
+  const segment = String(value)
+    .replace(/[^A-Za-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return segment.length > 0 ? segment : fallback;
+}
+
+function agentExternalContentAccessPolicy(mode, refCount) {
+  if (mode === "opaque_refs") {
+    return {
+      raw_content_in_provider_request: false,
+      content_ref_count: refCount,
+      full_content_request_policy: "explicit_authorized_capability_required",
+      full_content_request_path: "select_capability_with_content_ref",
+      budgeted_by: ["max_provider_calls", "max_agent_steps", "run_limits", "tool_binding_limits"],
+      traced_by: ["agent_decision_requested", "agent_capability_selected", "agent_capability_result_returned"],
+    };
+  }
+  return {
+    raw_content_in_provider_request: true,
+    content_ref_count: refCount,
+    full_content_request_policy: "inline_provider_request",
+  };
 }
 
 function prepareSkillPackModelContext(context, agent, providerMode, capabilityRefs = []) {
@@ -6510,6 +6661,17 @@ function normalizeAgentDecisionProvider(provider, options = {}) {
     "InvalidAgentDecisionProvider",
     "agentDecisionProvider must be a function or an object exposing decideAgentCapability",
   );
+}
+
+function normalizeAgentDecisionProviderContentMode(mode) {
+  if (typeof mode !== "string" || !AGENT_DECISION_PROVIDER_CONTENT_MODES.has(mode)) {
+    throw new ToubaRuntimeError(
+      "InvalidRuntimeOption",
+      "agentDecisionProviderContentMode must be inline or opaque_refs",
+      { mode },
+    );
+  }
+  return mode;
 }
 
 function normalizeAgentDecisionProviderMetadata(metadata, fieldName, options = {}) {
