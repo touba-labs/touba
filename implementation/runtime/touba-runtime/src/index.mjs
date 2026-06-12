@@ -2,6 +2,10 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import {
+  agentDecisionProviderContent,
+  agentProviderObservationBudgetReport,
+} from "./agent-provider-content.mjs";
 
 export const AIR_SCHEMA_VERSION = "air-minimal-v0.1";
 export const AIR_JSON_PROFILE = "air-json-v0.1";
@@ -1722,60 +1726,6 @@ function agentModelInput(
   return modelInput;
 }
 
-function agentDecisionProviderContent(inputs, observations, context) {
-  const mode = context?.agentDecisionProviderContentMode ?? "inline";
-  if (mode === "opaque_refs") {
-    const inputEntries = Object.entries(inputs).map(([name, value], index) =>
-      opaqueRuntimeInputDescriptor(name, value, index),
-    );
-    const observationEntries = observations.map((observation, index) =>
-      opaqueRuntimeObservationDescriptor(observation, index),
-    );
-    const refs = [...inputEntries, ...observationEntries].map((entry) => compactPayload({
-      ref: entry.ref,
-      name: entry.name,
-      category: entry.category,
-      trust: entry.trust,
-      step_index: entry.step_index,
-      target_ref: entry.target_ref,
-      result_type: entry.result_type,
-    }));
-    return {
-      mode,
-      inputs: Object.fromEntries(inputEntries.map((entry) => [entry.name, entry])),
-      inputEntries,
-      observations: observationEntries,
-      observationsBytes: estimateJsonBytes(observationEntries),
-      refs,
-      externalContentAccess: agentExternalContentAccessPolicy(mode, refs.length),
-    };
-  }
-
-  const inputEntries = Object.entries(inputs).map(([name, value]) => ({
-    name,
-    category: "runtime_input",
-    trust: "external_content",
-    value,
-  }));
-  const observationEntries = observations.map((observation) => compactPayload({
-    step_index: observation.step_index,
-    action: observation.action,
-    target_ref: observation.target_ref,
-    kind: observation.kind,
-    result_type: observation.result_type,
-    value: observation.value,
-  }));
-  return {
-    mode,
-    inputs,
-    inputEntries,
-    observations: observationEntries,
-    observationsBytes: estimateJsonBytes(observationEntries),
-    refs: [],
-    externalContentAccess: agentExternalContentAccessPolicy(mode, 0),
-  };
-}
-
 function assertAgentProviderObservationsBudget(context, agent, providerMode, providerContent) {
   const maxBytes = context?.agentProviderObservationsMaxBytes ?? null;
   if (maxBytes === null || providerContent.observationsBytes <= maxBytes) {
@@ -1804,99 +1754,6 @@ function assertAgentProviderObservationsBudget(context, agent, providerMode, pro
     },
     "AgentProviderObservationsBudgetExceeded",
   );
-}
-
-function agentProviderObservationBudgetReport(context, providerContent) {
-  return compactPayload({
-    max_bytes: context?.agentProviderObservationsMaxBytes ?? null,
-    consumed_bytes: providerContent.observationsBytes,
-    content_mode: providerContent.mode,
-  });
-}
-
-function opaqueRuntimeInputDescriptor(name, value, index) {
-  const valueShape = opaqueValueShape(value);
-  return compactPayload({
-    name,
-    ref: `opaque:runtime_input/${opaqueRefSegment(name, `input-${index}`)}`,
-    category: "runtime_input",
-    trust: "external_content",
-    summary: opaqueValueSummary(valueShape),
-    metadata: valueShape,
-  });
-}
-
-function opaqueRuntimeObservationDescriptor(observation, index) {
-  const valueShape = opaqueValueShape(observation.value);
-  const stepIndex = observation.step_index ?? index;
-  return compactPayload({
-    ref: `opaque:runtime_observation/${opaqueRefSegment(stepIndex, `observation-${index}`)}`,
-    category: "runtime_observation",
-    trust: "external_content",
-    step_index: observation.step_index,
-    action: observation.action,
-    target_ref: observation.target_ref,
-    kind: observation.kind,
-    result_type: observation.result_type,
-    summary: opaqueValueSummary(valueShape),
-    metadata: valueShape,
-  });
-}
-
-function opaqueValueShape(value) {
-  const kind = valueKind(value);
-  return compactPayload({
-    value_kind: kind,
-    digest: `sha256:${sha256Json(value ?? null)}`,
-    approx_size_bytes: estimateJsonBytes(value),
-    string_length: typeof value === "string" ? value.length : undefined,
-    array_length: Array.isArray(value) ? value.length : undefined,
-    field_count: isPlainObject(value) ? Object.keys(value).length : undefined,
-  });
-}
-
-function opaqueValueSummary(shape) {
-  return `${shape.value_kind}; ${shape.approx_size_bytes} bytes`;
-}
-
-function valueKind(value) {
-  if (value === null) {
-    return "null";
-  }
-  if (Array.isArray(value)) {
-    return "array";
-  }
-  return typeof value;
-}
-
-function isPlainObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function opaqueRefSegment(value, fallback) {
-  const segment = String(value)
-    .replace(/[^A-Za-z0-9_.-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-  return segment.length > 0 ? segment : fallback;
-}
-
-function agentExternalContentAccessPolicy(mode, refCount) {
-  if (mode === "opaque_refs") {
-    return {
-      raw_content_in_provider_request: false,
-      content_ref_count: refCount,
-      full_content_request_policy: "explicit_authorized_capability_required",
-      full_content_request_path: "select_capability_with_content_ref",
-      budgeted_by: ["max_provider_calls", "max_agent_steps", "run_limits", "tool_binding_limits"],
-      traced_by: ["agent_decision_requested", "agent_capability_selected", "agent_capability_result_returned"],
-    };
-  }
-  return {
-    raw_content_in_provider_request: true,
-    content_ref_count: refCount,
-    full_content_request_policy: "inline_provider_request",
-  };
 }
 
 function prepareSkillPackModelContext(context, agent, providerMode, capabilityRefs = []) {
