@@ -137,6 +137,17 @@ const AGENT_DECISION_PROVIDER_METADATA_FIELDS = Object.freeze([
 ]);
 const AGENT_DECISION_PROVIDER_METADATA_FIELD_SET = new Set(AGENT_DECISION_PROVIDER_METADATA_FIELDS);
 const AGENT_DECISION_PROVIDER_METADATA_MAX_LENGTH = 200;
+const AIR_DEFINITION_COLLECTIONS = Object.freeze([
+  "types",
+  "constants",
+  "functions",
+  "tools",
+  "memories",
+  "skills",
+  "agents",
+  "strategies",
+  "triggers",
+]);
 const SKILL_PACK_REF_PATTERN = /^skill_pack:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SKILL_PACK_RESOURCE_REF_PATTERN = /^resource:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SKILL_PACK_EXECUTION_TARGET_PATTERN = /^(tool|skill):[A-Za-z0-9_.-]+\/[A-Za-z][A-Za-z0-9_]*$/;
@@ -184,7 +195,14 @@ class RuntimeFailure extends ToubaRuntimeError {
 }
 
 export function loadAirFromJson(json) {
-  const document = JSON.parse(json);
+  let document;
+  try {
+    document = JSON.parse(json);
+  } catch (error) {
+    throw new ToubaRuntimeError("InvalidAirDocument", "AIR JSON is invalid", {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
   validateAirDocument(document);
   return document;
 }
@@ -381,7 +399,7 @@ function createEffectState() {
 }
 
 function validateAirDocument(document) {
-  if (!document || typeof document !== "object") {
+  if (!document || typeof document !== "object" || Array.isArray(document)) {
     throw new ToubaRuntimeError("InvalidAirDocument", "AIR JSON must decode to an object");
   }
   if (document.air_schema_version !== AIR_SCHEMA_VERSION) {
@@ -391,12 +409,13 @@ function validateAirDocument(document) {
       { actual: document.air_schema_version },
     );
   }
-  if (!document.module?.id) {
+  if (typeof document.module?.id !== "string" || document.module.id.trim() === "") {
     throw new ToubaRuntimeError("InvalidAirDocument", "AIR module id is required");
   }
   if (!document.definitions || typeof document.definitions !== "object") {
     throw new ToubaRuntimeError("InvalidAirDocument", "AIR definitions are required");
   }
+  validateAirDefinitionCollections(document.definitions);
   if (!Array.isArray(document.execution_graphs)) {
     throw new ToubaRuntimeError("InvalidAirDocument", "AIR execution_graphs must be an array");
   }
@@ -404,6 +423,21 @@ function validateAirDocument(document) {
     throw new ToubaRuntimeError("InvalidAirDocument", "AIR trace_points must be an array");
   }
   validateAirBudgets(document.budgets);
+}
+
+function validateAirDefinitionCollections(definitions) {
+  if (Array.isArray(definitions)) {
+    throw new ToubaRuntimeError("InvalidAirDocument", "AIR definitions must be an object");
+  }
+  for (const collection of AIR_DEFINITION_COLLECTIONS) {
+    if (definitions[collection] !== undefined && !Array.isArray(definitions[collection])) {
+      throw new ToubaRuntimeError(
+        "InvalidAirDocument",
+        `AIR definitions.${collection} must be an array`,
+        { collection },
+      );
+    }
+  }
 }
 
 function validateAirBudgets(budgets) {
@@ -2906,7 +2940,9 @@ function buildHandlerEnv(secretHandles, secretStore) {
 }
 
 function secretValuesForRedaction(secretStore) {
-  return resolvedSecretEntries(secretStore).map((entry) => entry.value);
+  return resolvedSecretEntries(secretStore)
+    .map((entry) => entry.value)
+    .filter((value) => value.length > 0);
 }
 
 function resolvedSecretEntries(secretStore) {
