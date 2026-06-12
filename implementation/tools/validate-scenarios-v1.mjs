@@ -89,6 +89,7 @@ async function main() {
     await runStep("scenario S17 regulated external effect runtime", validateRegulatedPayment);
     await runStep("scenario S07 tool security refusals", validateToolSecurityRefusals);
     await runStep("scenario S05 Donnees Quebec agent dry-run", runDonneesQuebecAgentDryRun);
+    await runStep("scenario S20 skills-first V1", runSkillsFirstScenario);
 
     process.stdout.write(`scenarios-v1: status=success checked=${checks}\n`);
   } catch (error) {
@@ -386,6 +387,26 @@ function runDonneesQuebecAgentDryRun() {
   }
   if (!result.stdout.includes("agent-work: summary=")) {
     throw new Error(`Donnees Quebec agent dry-run did not expose agent work evidence: ${result.stdout}`);
+  }
+  checks += 1;
+}
+
+function runSkillsFirstScenario() {
+  const result = spawnSync(
+    process.execPath,
+    ["tests/skills-first-v1/validate.mjs"],
+    {
+      cwd: implementationRoot,
+      encoding: "utf8",
+      maxBuffer: 20 * 1024 * 1024,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`skills-first V1 scenario failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  }
+  if (!result.stdout.includes("skills-first-v1: status=success")) {
+    throw new Error(`unexpected skills-first V1 output: ${result.stdout}`);
   }
   checks += 1;
 }

@@ -51,6 +51,8 @@ function main() {
       "tests/memory-postgres-rb2/docker/Dockerfile.memory-api",
       "tests/memory-postgres-rb2/docker/docker-compose.memory-postgres.yml",
       "tests/memory-postgres-rb2/validate.mjs",
+      "tests/skills-first-v1/README.md",
+      "tests/skills-first-v1/validate.mjs",
       "tests/skills-v1/README.md",
       "tests/skills-v1/validate.mjs",
       "docs/developpeur/14-triggers-source-air-anneau-2.md",
@@ -111,6 +113,7 @@ function main() {
     assertScript(packageJson, "test:supply-chain");
     assertScript(packageJson, "validate:supply-chain-sc1");
     assertScript(packageJson, "validate:skills-v1");
+    assertScript(packageJson, "validate:skills-first-v1");
     assertCommandsInclude(packageJson, "validate:triggers", [
       "pnpm validate:triggers-source-air",
       "pnpm validate:triggers-runtime",
