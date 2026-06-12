@@ -142,6 +142,71 @@ module recovered.syntax
 }
 
 #[test]
+fn rejects_recovered_tree_sitter_nodes_across_syntax_boundaries() {
+    for (source_id, source) in [
+        (
+            "missing-declaration-name",
+            "\
+module recovered.missing_name
+
+function
+",
+        ),
+        (
+            "host-method-expression",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/expressions-v1/negative/syntax/tb-expr1-n07-host-method.tb"
+            ),
+        ),
+        (
+            "import-wildcard",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/imports-im1/negative/syntax/tb-im1-n09-import-wildcard.tb"
+            ),
+        ),
+        (
+            "callable-by-list",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/agent-authority-anneau-2/negative/syntax/tb-a2-auth-n06-list-syntax-rejected.tb"
+            ),
+        ),
+        (
+            "invalid-secret-handle",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/tool-binding-v1/negative/syntax/tb-v1-tool-secrets-invalid-handle.tb"
+            ),
+        ),
+        (
+            "inline-memory-backend",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/memory-scopes-anneau-2/negative/syntax/tb-a2-mem-n10-inline-backend-rejected.tb"
+            ),
+        ),
+    ] {
+        let result = parse_source(source_id, source);
+
+        assert!(result.document.is_none(), "{source_id} should not produce an AST");
+        let diagnostic = result
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == AstDiagnosticCode::ParseError)
+            .unwrap_or_else(|| panic!("{source_id} should produce a parse diagnostic"));
+        assert!(
+            diagnostic.message.contains("Tree-sitter")
+                && (diagnostic.message.contains("ERROR")
+                    || diagnostic.message.contains("MISSING")
+                    || diagnostic.message.contains("recovery node")),
+            "{source_id} diagnostic should identify Tree-sitter recovery: {}",
+            diagnostic.message
+        );
+        assert!(
+            diagnostic.source_ref.is_some(),
+            "{source_id} parse diagnostic should keep source location"
+        );
+    }
+}
+
+#[test]
 fn accepts_blank_and_comment_lines_inside_indented_block() {
     let source = "\
 module indentation.comments
