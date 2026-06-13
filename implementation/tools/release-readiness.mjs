@@ -36,13 +36,19 @@ const VERSIONED_PACKAGES = Object.freeze([
   ["distribution", "cli/touba-distribution/package.json"],
 ]);
 
-const CURRENT_BLOCKERS = Object.freeze([
+const CURRENT_RELEASE_GATES = Object.freeze([
   {
     id: "fresh_v1_local_validation",
-    status: "pending",
+    status: "satisfied",
     required: true,
-    evidence: ["implementation/package.json#scripts.validate:v1-local"],
-    reason: "the full local V1 validation must be rerun after the current closure changes",
+    evidence: [
+      "implementation/package.json#scripts.validate:v1-local",
+      "implementation/VALIDATION-REPORT.md",
+    ],
+    details: {
+      last_observed_status: "success",
+      last_observed_date: "2026-06-13",
+    },
   },
   {
     id: "multi_os_ci_observation",
@@ -93,7 +99,7 @@ export function buildReleaseReadinessReport(options = {}) {
     ...scriptGates(packageJson),
     ...fileGates(pathExists),
     packageVersionGate(readJson),
-    ...CURRENT_BLOCKERS,
+    ...CURRENT_RELEASE_GATES,
   ];
   const counts = countGateStatuses(gates);
 

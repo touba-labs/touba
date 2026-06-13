@@ -34,13 +34,13 @@ test("builds a stable blocked V1 release readiness report", () => {
   assert.equal(report.implementation_version, "0.1.0");
   assert.equal(report.overall_status, "blocked");
   assert.deepEqual(report.counts, {
-    satisfied: 13,
-    pending: 1,
+    satisfied: 14,
+    pending: 0,
     blocked: 4,
     failed: 0,
   });
   assert.equal(report.gates.find((gate) => gate.id === "external_user_validation")?.status, "blocked");
-  assert.equal(report.gates.find((gate) => gate.id === "fresh_v1_local_validation")?.status, "pending");
+  assert.equal(report.gates.find((gate) => gate.id === "fresh_v1_local_validation")?.status, "satisfied");
 });
 
 test("reports failed gates when required release evidence is missing", () => {
