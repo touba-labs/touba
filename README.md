@@ -245,6 +245,23 @@ handlers, `mcp.bridge.config.json`, a secrets template and an import report.
 `plan`, `write` and `check` modes make the generated contract diffable before
 the bridge is connected to an approved local MCP `stdio` server.
 
+## REST/OpenAPI Scaffold
+
+HTTP APIs can be scaffolded into Touba contracts from an explicit operation or
+a simple OpenAPI `operationId`:
+
+```sh
+touba rest scaffold rest.search.json \
+  --module integrations.web_search \
+  --out integrations/web-search \
+  --mode plan
+```
+
+The scaffold generates reviewable `.tb` source, a manifest fragment,
+`rest.handler.config.json`, a bounded HTTP handler, a secrets template and a
+generation report. `write` materializes the files, while `check` verifies that
+generated artifacts stay aligned with the input configuration.
+
 ## Agent Decision Providers
 
 `touba run` can delegate an agent's capability choice to an explicit decision

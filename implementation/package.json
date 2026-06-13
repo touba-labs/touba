@@ -105,6 +105,7 @@
     "validate:skills-first-v1": "node tools/check-node-version.mjs && node tests/skills-first-v1/validate.mjs",
     "validate:mcp-import": "node tools/check-node-version.mjs && pnpm test:project",
     "validate:mcp-bridge": "node tools/check-node-version.mjs && pnpm test:sdk && pnpm test:project",
+    "validate:rest-scaffold": "node tools/check-node-version.mjs && pnpm test:project",
     "validate:ownership-review": "node tools/check-node-version.mjs && pnpm test:project",
     "validate:surfaces-workspace-package": "node tools/check-node-version.mjs && pnpm test:inspect && pnpm test:lsp",
     "validate:surfaces-ownership-review": "node tools/check-node-version.mjs && pnpm test:inspect && pnpm test:lsp && pnpm test:trace-renderer",

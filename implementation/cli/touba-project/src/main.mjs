@@ -27,6 +27,10 @@ import {
   importMcpTools,
   renderMcpImportReport,
 } from "./mcp-import.mjs";
+import {
+  renderRestScaffoldReport,
+  scaffoldRestTool,
+} from "./rest-scaffold.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -163,6 +167,9 @@ async function dispatch(rawArgs) {
   }
   if (command === "mcp") {
     return mcpCommand(rest);
+  }
+  if (command === "rest") {
+    return restCommand(rest);
   }
   if (command === "manifest") {
     return manifestCommand(rest);
@@ -426,6 +433,25 @@ async function mcpCommand(rawArgs) {
     return { text: mcpImportUsage(), exitCode: 0 };
   }
   throw new Error("usage: touba mcp import <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--select <tool>] [--force] [--json]");
+}
+
+async function restCommand(rawArgs) {
+  const [subcommand, configPath, ...tail] = rawArgs;
+  if (subcommand === "scaffold" && configPath && configPath !== "--help" && configPath !== "-h") {
+    const options = parseRestScaffoldOptions(tail);
+    if (options.help === true) {
+      return { text: restScaffoldUsage(), exitCode: 0 };
+    }
+    const report = scaffoldRestTool({ ...options, configPath });
+    if (options.json === true) {
+      return { report, json: true, exitCode: report.status === "error" ? 1 : 0 };
+    }
+    return { text: renderRestScaffoldReport(report), exitCode: report.status === "error" ? 1 : 0 };
+  }
+  if (subcommand === undefined || subcommand === "--help" || subcommand === "-h" || (subcommand === "scaffold" && (configPath === "--help" || configPath === "-h"))) {
+    return { text: restScaffoldUsage(), exitCode: 0 };
+  }
+  throw new Error("usage: touba rest scaffold <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--force] [--json]");
 }
 
 function manifestCommand(rawArgs) {
@@ -839,11 +865,58 @@ function parseMcpImportOptions(rawArgs) {
   return options;
 }
 
+function parseRestScaffoldOptions(rawArgs) {
+  const options = {
+    root: process.cwd(),
+    mode: "plan",
+    force: false,
+    json: false,
+  };
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === "--root") {
+      options.root = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--root=")) {
+      options.root = arg.slice("--root=".length);
+    } else if (arg === "--module") {
+      options.moduleName = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--module=")) {
+      options.moduleName = arg.slice("--module=".length);
+    } else if (arg === "--out") {
+      options.out = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--out=")) {
+      options.out = arg.slice("--out=".length);
+    } else if (arg === "--mode") {
+      options.mode = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--mode=")) {
+      options.mode = arg.slice("--mode=".length);
+    } else if (arg === "--force") {
+      options.force = true;
+    } else if (arg === "--json") {
+      options.json = true;
+    } else if (arg === "--help" || arg === "-h") {
+      options.help = true;
+    } else {
+      throw new Error(`unknown option ${arg}`);
+    }
+  }
+  return options;
+}
+
 function mcpImportUsage() {
   return [
     "Usage: touba mcp import <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--select <tool>] [--force] [--json]",
     "",
     "Generates reviewable Touba source, manifest fragment, secrets template, handler bridge and import report from an explicit MCP tools snapshot.",
+    "Authority remains in manifest, secrets, approvals and runtime policy.",
+  ].join("\n");
+}
+
+function restScaffoldUsage() {
+  return [
+    "Usage: touba rest scaffold <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--force] [--json]",
+    "",
+    "Generates reviewable Touba source, manifest fragment, secrets template, minimal HTTP handler and scaffold report from an explicit REST/OpenAPI operation.",
     "Authority remains in manifest, secrets, approvals and runtime policy.",
   ].join("\n");
 }
@@ -895,6 +968,7 @@ function printUsage() {
   touba supply-chain validate --lock <touba.lock.json> --air <program.air.json> [--manifest <touba.manifest.json>] [--report-out <report.supply-chain-report.json>] [--output text|json] [--strict] [--require-review]
   touba registry resolve --registry <path-or-url> --package <pkg:namespace/name> --version <semver> [--source-root <path>] [--allow-draft] [--allow-deprecated] [--out <lock.json>] [--json]
   touba mcp import <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--select <tool>] [--force] [--json]
+  touba rest scaffold <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--force] [--json]
   touba manifest generate <air.json> --out <touba.manifest.json>
   touba manifest generate <air.json> --stdout
   touba handler stub <air.json> [--tool-ref <tool_ref>] [--handler-root <path>] [--force]
