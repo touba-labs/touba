@@ -18,6 +18,7 @@
     "src/runtime-budgets.mjs",
     "src/runtime-errors.mjs",
     "src/runtime-options.mjs",
+    "src/run-controls.mjs",
     "src/secret-redaction.mjs",
     "src/trace-builder.mjs"
   ]

@@ -14,6 +14,7 @@ import {
   createBudgetState,
   normalizeRunLimitMap,
 } from "../src/runtime-budgets.mjs";
+import { RuntimeCancelled } from "../src/runtime-errors.mjs";
 import {
   normalizeAgentDecisionProvider,
   normalizeAgentDecisionProviderContentMode,
@@ -23,6 +24,11 @@ import {
   normalizeStringSet,
   validateActiveSkillPackRefs,
 } from "../src/runtime-options.mjs";
+import {
+  assertRunCanDispatch,
+  initializeRunControls,
+  observeRunTimeout,
+} from "../src/run-controls.mjs";
 import {
   TRACE_PROTOCOL_VERSION,
   TraceBuilder,
@@ -105,6 +111,94 @@ test("computes effective run budgets without widening AIR authority", () => {
     () => normalizeRunLimitMap({ max_tokens: 10 }, "runLimits", "host_policy"),
     (error) => error instanceof ToubaRuntimeError && error.code === "InvalidRuntimeOption",
   );
+});
+
+test("initializes run controls with kill switch cancellation trace", () => {
+  const context = runControlContext({
+    killSwitchInitiallyEnabled: true,
+  });
+  let budgetInitializations = 0;
+
+  initializeRunControls(context, {
+    initializeBudgetControls: () => {
+      budgetInitializations += 1;
+    },
+  });
+
+  assert.equal(budgetInitializations, 1);
+  assert.equal(context.runState.status, "cancel_requested");
+  assert.equal(context.runState.cancelRequested, true);
+  assert.equal(context.runState.cancelAuthoritySource, "kill_switch");
+  assert.equal(context.runState.cancelReason, "kill_switch_enabled");
+  assert.deepEqual(
+    context.trace.document().events.map((event) => event.kind),
+    ["kill_switch_enabled", "run_cancel_requested"],
+  );
+  assert.deepEqual(context.trace.document().events[0].payload, {
+    scope: "runtime",
+    authority_source: "host",
+    reason: "kill_switch_enabled",
+  });
+});
+
+test("observes run timeout as cancellation without dispatching", () => {
+  const context = runControlContext({
+    runTimeoutMs: 10,
+    now: () => 15,
+  });
+
+  observeRunTimeout(context);
+
+  assert.equal(context.runState.timeoutExceeded, true);
+  assert.equal(context.runState.cancelRequested, true);
+  assert.equal(context.runState.cancelAuthoritySource, "timeout");
+  assert.deepEqual(
+    context.trace.document().events.map((event) => event.kind),
+    ["run_timeout_exceeded", "run_cancel_requested"],
+  );
+  assert.deepEqual(context.trace.document().events[0].payload, {
+    timeout_ms: 10,
+    authority_source: "timeout",
+    elapsed_ms: 15,
+    scope: "runtime",
+    reason: "global_timeout_exceeded",
+  });
+});
+
+test("refuses dispatch after cancellation with stable trace payload", () => {
+  const context = runControlContext({
+    cancelRequested: true,
+    cancelAuthoritySource: "host",
+    cancelReason: "cancel_requested",
+  });
+  context.activeCallerRef = "skill:test/Search";
+  context.activeAgentRef = "agent:test/Researcher";
+
+  assert.throws(
+    () => assertRunCanDispatch(context, {
+      targetRef: "tool:test/Search",
+      airRef: { node_id: "n1" },
+    }),
+    (error) =>
+      error instanceof RuntimeCancelled
+      && error.details.targetRef === "tool:test/Search"
+      && error.details.authoritySource === "host",
+  );
+
+  assert.deepEqual(context.trace.document().events[0], {
+    event_id: "event:run-control-test:1",
+    run_id: "run-control-test",
+    sequence_index: 0,
+    kind: "dispatch_refused_cancelled",
+    air_ref: { node_id: "n1" },
+    payload: {
+      target_ref: "tool:test/Search",
+      reason: "cancel_requested",
+      tool_ref: "tool:test/Search",
+      caller_ref: "skill:test/Search",
+      agent_ref: "agent:test/Researcher",
+    },
+  });
 });
 
 test("normalizes agent decision provider options at a typed runtime boundary", () => {
@@ -425,6 +519,40 @@ function assertRejectsToubaAir(name, json, expectedCode) {
       && error.code === expectedCode,
     name,
   );
+}
+
+function runControlContext(overrides = {}) {
+  return {
+    trace: new TraceBuilder(
+      {
+        air_schema_version: AIR_SCHEMA_VERSION,
+        module: { id: "module:test" },
+      },
+      "skill:test/Noop",
+      "run-control-test",
+    ),
+    activeCallerRef: null,
+    activeAgentRef: null,
+    runState: {
+      initialized: false,
+      status: "created",
+      cancelRequested: false,
+      cancelCompleted: false,
+      cancelAuthoritySource: null,
+      cancelReason: null,
+      cancelEventId: null,
+      timeoutExceeded: false,
+      runTimeoutMs: null,
+      startedAtMs: 0,
+      now: () => 0,
+      initialCancelRequested: false,
+      initialCancelAuthoritySource: "host",
+      cancelOnPause: false,
+      killSwitchInitiallyEnabled: false,
+      killSwitchScope: "runtime",
+      ...overrides,
+    },
+  };
 }
 
 function seededRng(seed) {
