@@ -25,6 +25,7 @@
     "check:touba-toolchain": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution check:local",
     "check:touba-install-local": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution check:install-local",
     "package:touba-release": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution package:release",
+    "check:touba-release-archive": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution check:release-archive",
     "test:distribution-release": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution test:release-metadata",
     "release:readiness": "node tools/check-node-version.mjs && node tools/release-readiness.mjs",
     "test:release-readiness": "node tools/check-node-version.mjs && node --test tools/release-readiness.test.mjs",

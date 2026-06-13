@@ -10,6 +10,7 @@
     "install:local": "node src/install-local-toolchain.mjs",
     "check:install-local": "node src/check-local-install.mjs",
     "package:release": "node src/package-release.mjs",
+    "check:release-archive": "node src/check-release-archive.mjs",
     "test:release-metadata": "node --test src/package-release.test.mjs",
     "package:release:macos": "node src/package-macos-release.mjs",
     "check:release:macos": "node src/check-macos-release.mjs"
