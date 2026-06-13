@@ -51,10 +51,22 @@ const CURRENT_RELEASE_GATES = Object.freeze([
   },
   {
     id: "multi_os_ci_observation",
-    status: "blocked",
+    status: "satisfied",
     required: true,
-    evidence: [".github/workflows/source-ci.yml"],
-    reason: "the first remote multi-OS CI run must be observed before additional platforms are announced",
+    evidence: [
+      ".github/workflows/source-ci.yml",
+      "https://github.com/khadimbambalo/touba/actions/runs/27455903211",
+    ],
+    details: {
+      last_observed_status: "success",
+      last_observed_date: "2026-06-13",
+      jobs: {
+        "linux-x64-full": "success",
+        "macos-intel-core": "success",
+        "macos-arm64-core": "success",
+        "windows-x64-core": "success",
+      },
+    },
   },
   {
     id: "external_user_validation",

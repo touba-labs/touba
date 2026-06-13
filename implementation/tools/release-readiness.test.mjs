@@ -34,9 +34,9 @@ test("builds a stable blocked V1 release readiness report", () => {
   assert.equal(report.implementation_version, "0.1.0");
   assert.equal(report.overall_status, "blocked");
   assert.deepEqual(report.counts, {
-    satisfied: 13,
+    satisfied: 14,
     pending: 0,
-    blocked: 4,
+    blocked: 3,
     failed: 0,
   });
   assert.equal(report.gates.find((gate) => gate.id === "external_user_validation")?.status, "blocked");
