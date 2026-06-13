@@ -10,6 +10,16 @@ import {
   loadToolBindingManifestFromJson,
 } from "../src/index.mjs";
 import {
+  HUMAN_APPROVAL_CHECKPOINT_VERSION,
+  airDocumentDigest,
+  assertCheckpointHasNoResolvedSecret,
+  checkpointJsonClone,
+  checkpointObjectFromMap,
+  mapFromCheckpointObject,
+  normalizeOptionalHumanApprovalCheckpoint,
+  validateHumanApprovalCheckpointCompatibility,
+} from "../src/human-approval-checkpoints.mjs";
+import {
   RUN_BUDGET_ERROR_CODES,
   createBudgetState,
   normalizeRunLimitMap,
@@ -64,6 +74,87 @@ test("builds trace documents with stable sequencing and compact payloads", () =>
   assert.equal(
     sha256Json({ ref: "skill_pack:project/research-review" }),
     "9526c9ca8b9bde7ada330e272b124c8c664acd7969da3127720cf3aa641a0af7",
+  );
+});
+
+test("normalizes and validates human approval checkpoints at a typed boundary", () => {
+  const airDocument = minimalDocument();
+  const checkpoint = {
+    checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
+    air_schema_version: airDocument.air_schema_version,
+    module_ref: airDocument.module.id,
+    entry_ref: "skill:test/Noop",
+    air_digest: airDocumentDigest(airDocument),
+    scope: "entry_graph",
+    approval_ref: "approval:test/review",
+  };
+
+  assert.equal(normalizeOptionalHumanApprovalCheckpoint(null), null);
+  assert.equal(normalizeOptionalHumanApprovalCheckpoint(checkpoint), checkpoint);
+  validateHumanApprovalCheckpointCompatibility(airDocument, "skill:test/Noop", checkpoint, {
+    expectedScope: "entry_graph",
+  });
+
+  assert.throws(
+    () => normalizeOptionalHumanApprovalCheckpoint({ checkpoint_schema_version: "wrong" }),
+    (error) => error instanceof ToubaRuntimeError && error.code === "InvalidHumanApprovalCheckpoint",
+  );
+  assert.throws(
+    () => validateHumanApprovalCheckpointCompatibility(
+      airDocument,
+      "skill:test/Other",
+      checkpoint,
+      { expectedScope: "entry_graph" },
+    ),
+    (error) =>
+      error instanceof ToubaRuntimeError
+      && error.code === "HumanApprovalCheckpointIncompatible"
+      && error.details.compatibilityErrors.includes("entry_ref"),
+  );
+});
+
+test("serializes checkpoint values as portable JSON without resolved secrets", () => {
+  const values = new Map([
+    ["value:answer", { text: "ok", rows: [1, 2] }],
+  ]);
+  const checkpointObject = checkpointObjectFromMap(values, "values");
+  assert.deepEqual(checkpointObject, {
+    "value:answer": { text: "ok", rows: [1, 2] },
+  });
+  assert.deepEqual(
+    [...mapFromCheckpointObject(checkpointObject, "values").entries()],
+    [...values.entries()],
+  );
+  assert.deepEqual(checkpointJsonClone({ stable: true }, "root"), { stable: true });
+
+  assert.throws(
+    () => checkpointJsonClone({ bad: undefined }, "values"),
+    (error) =>
+      error instanceof ToubaRuntimeError
+      && error.code === "HumanApprovalCheckpointValueNotPortable",
+  );
+  assert.throws(
+    () => checkpointJsonClone(Number.NaN, "value"),
+    (error) =>
+      error instanceof ToubaRuntimeError
+      && error.code === "HumanApprovalCheckpointValueNotPortable",
+  );
+  assert.throws(
+    () => assertCheckpointHasNoResolvedSecret(
+      { leaked: "resolved-secret-value" },
+      {
+        secretStore: {
+          resolvedSecretEntries: () => [
+            { handle: "SEARCH_API_KEY", value: "resolved-secret-value" },
+          ],
+        },
+      },
+      "approval:test/review",
+    ),
+    (error) =>
+      error instanceof ToubaRuntimeError
+      && error.code === "SecretValueInHumanApprovalCheckpoint"
+      && error.details.secretHandlesRefused.includes("SEARCH_API_KEY"),
   );
 });
 

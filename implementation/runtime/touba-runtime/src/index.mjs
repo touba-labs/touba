@@ -9,6 +9,21 @@ import {
   TOOL_HANDLER_PROTOCOL_VERSION,
 } from "./handler-protocol.mjs";
 import {
+  HUMAN_APPROVAL_CHECKPOINT_VERSION,
+  airDocumentDigest,
+  assertCheckpointHasNoResolvedSecret,
+  checkpointArray,
+  checkpointJsonClone,
+  checkpointNonNegativeSafeInteger,
+  checkpointObjectFromMap,
+  checkpointString,
+  checkpointStringArray,
+  mapFromCheckpointObject,
+  normalizeOptionalHumanApprovalCheckpoint,
+  stringArraysEqual,
+  validateHumanApprovalCheckpointCompatibility,
+} from "./human-approval-checkpoints.mjs";
+import {
   isPortablePayloadConstraintScalar,
   payloadValueKind,
   validateToolInputPayload,
@@ -74,7 +89,6 @@ const BUILTIN_FLOAT = "builtin:Float";
 const TOOL_BINDING_MANIFEST_VERSION = "touba-manifest-v1";
 const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
 const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
-const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-run-checkpoint-v0.1";
 const AGENT_DECISION_PROTOCOL_VERSION = "touba-agent-decision-v1";
 const AGENT_MODEL_INPUT_PROTOCOL_VERSION = "touba-agent-model-input-v1";
 const SECRET_HANDLE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
@@ -401,23 +415,6 @@ function createEffectState() {
   };
 }
 
-function normalizeOptionalHumanApprovalCheckpoint(checkpoint) {
-  if (checkpoint === undefined || checkpoint === null) {
-    return null;
-  }
-  if (!checkpoint || typeof checkpoint !== "object" || Array.isArray(checkpoint)) {
-    throw new ToubaRuntimeError("InvalidHumanApprovalCheckpoint", "human approval checkpoint must be an object");
-  }
-  if (checkpoint.checkpoint_schema_version !== HUMAN_APPROVAL_CHECKPOINT_VERSION) {
-    throw new ToubaRuntimeError(
-      "InvalidHumanApprovalCheckpoint",
-      `checkpoint_schema_version must be ${HUMAN_APPROVAL_CHECKPOINT_VERSION}`,
-      { actual: checkpoint.checkpoint_schema_version },
-    );
-  }
-  return checkpoint;
-}
-
 async function executeHumanApprovalResumeCheckpoint(document, entryRef, context) {
   const checkpoint = context.humanApprovalResumeCheckpoint;
   if (!checkpoint) {
@@ -497,37 +494,6 @@ function validateHumanApprovalResumeCheckpoint(document, entryRef, context, chec
       "human approval resume requires an explicit decision",
       { entryRef, approvalRef: checkpoint.approval_ref },
       "HumanApprovalResumeDecisionRequired",
-    );
-  }
-}
-
-function validateHumanApprovalCheckpointCompatibility(document, entryRef, checkpoint, options = {}) {
-  const expectedDigest = airDocumentDigest(document);
-  const compatibilityErrors = [];
-  if (checkpoint.air_schema_version !== document.air_schema_version) {
-    compatibilityErrors.push("air_schema_version");
-  }
-  if (checkpoint.module_ref !== document.module.id) {
-    compatibilityErrors.push("module_ref");
-  }
-  if (checkpoint.entry_ref !== entryRef) {
-    compatibilityErrors.push("entry_ref");
-  }
-  if (checkpoint.air_digest !== expectedDigest) {
-    compatibilityErrors.push("air_digest");
-  }
-  if (options.expectedScope !== undefined && checkpoint.scope !== options.expectedScope) {
-    compatibilityErrors.push("scope");
-  }
-  if (compatibilityErrors.length > 0) {
-    throw new RuntimeFailure(
-      "human approval checkpoint is not compatible with this run",
-      {
-        entryRef,
-        approvalRef: checkpoint.approval_ref,
-        compatibilityErrors,
-      },
-      "HumanApprovalCheckpointIncompatible",
     );
   }
 }
@@ -1064,138 +1030,6 @@ function callFrameForNode(graph, node, targetRef) {
     success_edge_role: edgeRole,
     resume_target_ref: nextNodeId(graph, node.id, edgeRole),
   });
-}
-
-function checkpointObjectFromMap(map, label) {
-  const value = Object.fromEntries(map.entries());
-  return checkpointJsonClone(value, label);
-}
-
-function mapFromCheckpointObject(value, label) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new RuntimeFailure(
-      `human approval checkpoint ${label} must be an object`,
-      { label },
-      "InvalidHumanApprovalCheckpoint",
-    );
-  }
-  return new Map(Object.entries(checkpointJsonClone(value, label)));
-}
-
-function checkpointStringArray(value, label) {
-  if (value === undefined) {
-    return [];
-  }
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-    throw new RuntimeFailure(
-      `human approval checkpoint ${label} must be an array of strings`,
-      { label },
-      "InvalidHumanApprovalCheckpoint",
-    );
-  }
-  return value;
-}
-
-function checkpointString(value, label) {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new RuntimeFailure(
-      `human approval checkpoint ${label} must be a non-empty string`,
-      { label },
-      "InvalidHumanApprovalCheckpoint",
-    );
-  }
-  return value;
-}
-
-function checkpointArray(value, label) {
-  if (!Array.isArray(value)) {
-    throw new RuntimeFailure(
-      `human approval checkpoint ${label} must be an array`,
-      { label },
-      "InvalidHumanApprovalCheckpoint",
-    );
-  }
-  return value;
-}
-
-function checkpointNonNegativeSafeInteger(value, label) {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new RuntimeFailure(
-      `human approval checkpoint ${label} must be a non-negative safe integer`,
-      { label },
-      "InvalidHumanApprovalCheckpoint",
-    );
-  }
-  return value;
-}
-
-function checkpointJsonClone(value, path) {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw new RuntimeFailure(
-        `human approval checkpoint ${path} contains a non-finite number`,
-        { path },
-        "HumanApprovalCheckpointValueNotPortable",
-      );
-    }
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry, index) => checkpointJsonClone(entry, `${path}[${index}]`));
-  }
-  if (value && typeof value === "object") {
-    const clone = {};
-    for (const [key, child] of Object.entries(value)) {
-      if (child === undefined) {
-        throw new RuntimeFailure(
-          `human approval checkpoint ${path}.${key} contains undefined`,
-          { path: `${path}.${key}` },
-          "HumanApprovalCheckpointValueNotPortable",
-        );
-      }
-      clone[key] = checkpointJsonClone(child, `${path}.${key}`);
-    }
-    return clone;
-  }
-  throw new RuntimeFailure(
-    `human approval checkpoint ${path} contains a non-JSON value`,
-    { path, valueKind: payloadValueKind(value) },
-    "HumanApprovalCheckpointValueNotPortable",
-  );
-}
-
-function stringArraysEqual(left, right) {
-  return Array.isArray(left)
-    && Array.isArray(right)
-    && left.length === right.length
-    && left.every((entry, index) => entry === right[index]);
-}
-
-function assertCheckpointHasNoResolvedSecret(values, context, approvalRef) {
-  const serialized = JSON.stringify(values);
-  if (typeof serialized !== "string") {
-    return;
-  }
-  const leakedSecrets = resolvedSecretEntries(context.secretStore)
-    .filter((entry) => entry.value.length > 0 && serialized.includes(entry.value));
-  if (leakedSecrets.length === 0) {
-    return;
-  }
-  throw new RuntimeFailure(
-    `human approval checkpoint contains a resolved secret value ${approvalRef}`,
-    {
-      approvalRef,
-      secretHandlesRefused: leakedSecrets.map((entry) => entry.handle),
-    },
-    "SecretValueInHumanApprovalCheckpoint",
-  );
-}
-
-function airDocumentDigest(document) {
-  return `sha256:${sha256Json(document)}`;
 }
 
 function validateAirDocument(document) {
