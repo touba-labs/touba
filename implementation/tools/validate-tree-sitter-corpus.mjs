@@ -23,19 +23,21 @@ const fixtures = listTbFixtures(examplesRoot)
 
 run(treeSitterBin, ["generate"], { cwd: grammarRoot });
 if (process.platform === "win32") {
-  run(
-    treeSitterBin,
-    [
-      "parse",
-      "--config-path",
-      "./tree-sitter-cli.config.json",
-      "-p",
-      ".",
-      "-q",
-      ...fixtures,
-    ],
-    { cwd: grammarRoot },
-  );
+  for (const fixtureChunk of chunks(fixtures, 40)) {
+    run(
+      treeSitterBin,
+      [
+        "parse",
+        "--config-path",
+        "./tree-sitter-cli.config.json",
+        "-p",
+        ".",
+        "-q",
+        ...fixtureChunk,
+      ],
+      { cwd: grammarRoot },
+    );
+  }
 } else {
   run(
     "cc",
@@ -60,6 +62,12 @@ if (process.platform === "win32") {
 }
 
 console.log(`tree-sitter-corpus: status=success checked=${fixtures.length}`);
+
+function* chunks(values, size) {
+  for (let index = 0; index < values.length; index += size) {
+    yield values.slice(index, index + size);
+  }
+}
 
 function listTbFixtures(root) {
   const fixtures = [];

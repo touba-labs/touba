@@ -1312,9 +1312,15 @@ test("inspects a TD-1 trigger state artifact without inventing daemon state", ()
 });
 
 test("rejects unsupported artifacts", () => {
-  const readmePath = path.join(implementationDir, "README.md");
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "touba-inspect-unsupported-"));
+  try {
+    const unsupportedPath = path.join(tempRoot, "unsupported.txt");
+    writeFileSync(unsupportedPath, "not a Touba source or JSON artifact", "utf8");
 
-  assert.throws(() => inspectPath(readmePath), /non-JSON input is only allowed for \.tb sources/);
+    assert.throws(() => inspectPath(unsupportedPath), /non-JSON input is only allowed for \.tb sources/);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 function triggerStateFixture() {
