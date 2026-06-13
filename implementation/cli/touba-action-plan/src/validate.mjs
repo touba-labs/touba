@@ -97,7 +97,7 @@ export function renderActionPlanValidation(report) {
     }
   }
 
-  lines.push("Absent data: backend memory contents, .env, secrets, handler discovery, workspace scan, apply side effects");
+  lines.push("Report scope excludes: backend memory contents, .env, secrets, handler discovery, workspace scan, apply side effects");
   return `${lines.join("\n")}\n`;
 }
 

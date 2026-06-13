@@ -36,7 +36,7 @@ test("validates a plan-mode AddMemory fixture without applying patches", () => {
   assert.equal(report.status, "ok");
   assert.match(rendered, /action=AddMemory mode=plan/);
   assert.match(rendered, /Diagnostics ok/);
-  assert.match(rendered, /Absent data: .*backend memory contents/);
+  assert.match(rendered, /Report scope excludes: .*backend memory contents/);
   assert.doesNotMatch(rendered, /secret value|\.env loaded/i);
 });
 

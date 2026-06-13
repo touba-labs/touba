@@ -272,7 +272,7 @@ export function renderSupplyChainValidation(report) {
       lines.push(`- ${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}${diagnostic.tool_ref ? ` [${diagnostic.tool_ref}]` : ""}`);
     }
   }
-  lines.push("Absent data: cryptographic signatures, registry, package installation, vulnerability audit, dependency graph resolution, sandbox, secrets, handler content, workspace scan, compliance proof, Verified/Unverified");
+  lines.push("Report scope excludes: cryptographic signatures, registry, package installation, vulnerability audit, dependency graph resolution, sandbox, secrets, handler content, workspace scan, compliance proof, Verified/Unverified");
   return `${lines.join("\n")}\n`;
 }
 

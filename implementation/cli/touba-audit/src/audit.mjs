@@ -223,7 +223,7 @@ export function renderTraceAuditValidation(validation) {
     }
   }
 
-  lines.push("Absent data: signatures, legal timestamps, compliance status, .env, secrets, Touba store, workspace scan");
+  lines.push("Report scope excludes: signatures, legal timestamps, compliance status, .env, secrets, Touba store, workspace scan");
   return `${lines.join("\n")}\n`;
 }
 
