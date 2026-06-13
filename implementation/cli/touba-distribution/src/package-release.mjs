@@ -34,6 +34,7 @@ export const VALIDATED_RELEASE_PLATFORMS = Object.freeze({
 const EXPERIMENTAL_RELEASE_PROFILE = "touba-local-release-experimental-v0.1";
 const EXPERIMENTAL_INSTALLATION_PROFILE = "touba-local-release-install-experimental-v0.1";
 const EXPERIMENTAL_CHANNEL = "local-release-experimental";
+const LOCAL_RELEASE_SCOPE = "local_validation";
 
 export function packageRelease(options = {}) {
   const plan = createReleasePlan(options);
@@ -102,7 +103,7 @@ export function createReleasePlan(options = {}) {
   const toubaVersion = options.toubaVersion ?? readPackageVersion(join(implementationRoot, "cli", "touba-project", "package.json"));
   const releaseName = `touba-v${toubaVersion}-${platform}`;
   const root = options.releaseRoot ?? releaseRoot;
-  const channel = options.channel ?? validated?.channel ?? EXPERIMENTAL_CHANNEL;
+  const channel = normalizeLocalReleaseChannel(options.channel ?? validated?.channel ?? EXPERIMENTAL_CHANNEL);
   const validationStatus = validated?.validationStatus ?? "experimental_unvalidated";
   const releaseProfile = validated?.releaseProfile ?? EXPERIMENTAL_RELEASE_PROFILE;
   const installationProfile = validated?.installationProfile ?? EXPERIMENTAL_INSTALLATION_PROFILE;
@@ -122,10 +123,21 @@ export function createReleasePlan(options = {}) {
     validationStatus,
     releaseProfile,
     installationProfile,
+    releaseScope: LOCAL_RELEASE_SCOPE,
     platformLimitation,
     publicRelease: false,
     limitations: releaseLimitations(platformLimitation, validationStatus),
   };
+}
+
+function normalizeLocalReleaseChannel(channel) {
+  if (typeof channel !== "string" || channel.trim() === "") {
+    throw new Error("release channel must be a non-empty string");
+  }
+  if (channel === "macos-local-release" || channel === EXPERIMENTAL_CHANNEL || channel.startsWith("local-")) {
+    return channel;
+  }
+  throw new Error(`release channel ${channel} is not allowed for local-only artifacts`);
 }
 
 export function parsePackageReleaseArgs(rawArgs) {
@@ -492,6 +504,7 @@ function writeReleaseReadme(plan) {
 function writeReleaseMetadata(plan, toolchainRoot) {
   writeFileSync(join(plan.releaseDir, "RELEASE.json"), `${JSON.stringify({
     release_profile: plan.releaseProfile,
+    release_scope: plan.releaseScope,
     release_name: plan.releaseName,
     touba_version: plan.toubaVersion,
     platform: plan.platform,

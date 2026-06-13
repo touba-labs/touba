@@ -13,6 +13,15 @@ The public `touba version` command reads package versions from the installed
 package files and falls back only when a package file is missing from an old or
 broken build.
 
+From the source workspace, use:
+
+```sh
+pnpm --dir touba/implementation exec touba version --json
+```
+
+This must resolve the workspace-local `touba` binary and report package versions
+as `0.1.0` with the `local-development` distribution channel.
+
 ## Schemas
 
 Schema and protocol versions are independent from package versions. Examples:

@@ -21,9 +21,20 @@ test("release plan keeps the locally verified macOS profile explicit", () => {
   assert.equal(plan.channel, "macos-local-release");
   assert.equal(plan.validationStatus, "local_verified");
   assert.equal(plan.releaseProfile, "touba-local-release-v0.2");
+  assert.equal(plan.releaseScope, "local_validation");
   assert.equal(plan.publicRelease, false);
   assert.ok(plan.limitations.includes("not signed"));
   assert.ok(plan.limitations.includes("not published through a public update channel"));
+});
+
+test("release plan refuses public channel overrides for local-only artifacts", () => {
+  assert.throws(() => createReleasePlan({
+    platform: "darwin-arm64",
+    hostPlatform: "darwin-arm64",
+    toubaVersion: "1.2.3",
+    releaseRoot: "/tmp/touba-release-test",
+    channel: "public-release",
+  }), /not allowed for local-only artifacts/u);
 });
 
 test("release plan refuses unvalidated platforms unless experimental", () => {

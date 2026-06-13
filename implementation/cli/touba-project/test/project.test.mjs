@@ -1801,8 +1801,10 @@ test("CLI version reports public command and schema versions", () => {
   const report = JSON.parse(result.stdout);
   assert.equal(report.cli, "0.1.0");
   assert.equal(report.runtime, "0.1.0");
+  assert.equal(report.inspect, "0.1.0");
   assert.equal(report.audit, "0.1.0");
   assert.equal(report.supply_chain, "0.1.0");
+  assert.equal(report.manifest, "0.1.0");
   assert.equal(report.schemas.air, "air-minimal-v0.1");
   assert.equal(report.schemas.trace, "trace-minimal-v0.1");
   assert.equal(report.schemas.manifest, "touba-manifest-v1");
@@ -1812,6 +1814,11 @@ test("CLI version reports public command and schema versions", () => {
   assert.equal(report.schemas.trace_audit_export, "trace-audit-export-v0.1-local");
   assert.equal(report.schemas.supply_chain_lock, "touba-lock-v0.1");
   assert.equal(report.schemas.supply_chain_validation, "touba-supply-chain-validation-v0.1");
+  for (const component of ["cli", "runtime", "inspect", "audit", "supply_chain", "manifest"]) {
+    assert.notEqual(report[component], "0.0.0", component);
+    assert.notEqual(report[component], "unknown", component);
+  }
+  assert.equal(report.distribution.channel, "local-development");
   assert.equal(report.distribution.platform, `${process.platform}-${process.arch}`);
 });
 

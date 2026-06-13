@@ -89,6 +89,8 @@ function main() {
   });
 
   check("validation scripts", () => {
+    assert.equal(packageJson.bin?.touba, "./cli/touba-project/src/main.mjs");
+    assert.equal(packageJson.dependencies?.["@touba/project"], "workspace:*");
     assertScript(packageJson, "validate:test-structure");
     assertScript(packageJson, "release:readiness");
     assertScript(packageJson, "test:release-readiness");
