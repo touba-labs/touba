@@ -12,7 +12,9 @@ import {
   ToubaAgentDecisionProviderError,
   ToubaHandlerError,
   TOUBA_SDK_METADATA,
+  MCP_BRIDGE_CONFIG_VERSION,
   createAiSdkDecisionProvider,
+  createMcpStdioToolBridge,
   createOllamaDecisionProvider,
   createToolHandler,
   handleToolRequest,
@@ -220,6 +222,96 @@ test("accepts required grants and secret handles when the envelope is complete",
       handles: ["SEARCH_API_KEY"],
     },
   });
+});
+
+test("createMcpStdioToolBridge executes a stdio MCP tool with structured output", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-sdk-mcp-"));
+  try {
+    const serverPath = writeFakeMcpServer(workspace);
+    const bridge = createMcpStdioToolBridge({
+      mcpToolName: "get_weather",
+      config: mcpBridgeConfig(serverPath, "structured-secret", {
+        env: {
+          MCP_TOKEN: { from_secret_handle: "DEMO_API_KEY" },
+        },
+      }),
+    });
+
+    const result = await bridge({
+      request: { location: "Montreal" },
+      context: {
+        secretHandles: ["DEMO_API_KEY"],
+        env: { DEMO_API_KEY: "secret-value" },
+        limits: { timeout_ms: 1000, max_payload_bytes: 4096 },
+      },
+    });
+
+    assert.deepEqual(result, {
+      temperature: 22.5,
+      conditions: "clear",
+      token_seen: true,
+    });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("createMcpStdioToolBridge normalizes text content fallback", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-sdk-mcp-"));
+  try {
+    const serverPath = writeFakeMcpServer(workspace);
+    const bridge = createMcpStdioToolBridge({
+      mcpToolName: "summarize",
+      config: mcpBridgeConfig(serverPath, "text"),
+    });
+
+    const result = await bridge({
+      request: { topic: "Touba" },
+      context: {
+        secretHandles: [],
+        env: {},
+        limits: { timeout_ms: 1000, max_payload_bytes: 4096 },
+      },
+    });
+
+    assert.deepEqual(result, {
+      content: "Summary for Touba",
+    });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("createMcpStdioToolBridge reports MCP tool and protocol errors", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-sdk-mcp-"));
+  try {
+    const serverPath = writeFakeMcpServer(workspace);
+    const toolErrorBridge = createMcpStdioToolBridge({
+      mcpToolName: "fail_tool",
+      config: mcpBridgeConfig(serverPath, "tool-error"),
+    });
+    await assert.rejects(
+      () => toolErrorBridge({
+        request: { topic: "Touba" },
+        context: { secretHandles: [], env: {}, limits: { timeout_ms: 1000, max_payload_bytes: 4096 } },
+      }),
+      (error) => error instanceof ToubaHandlerError && error.code === "McpToolExecutionError",
+    );
+
+    const protocolErrorBridge = createMcpStdioToolBridge({
+      mcpToolName: "missing_tool",
+      config: mcpBridgeConfig(serverPath, "protocol-error"),
+    });
+    await assert.rejects(
+      () => protocolErrorBridge({
+        request: { topic: "Touba" },
+        context: { secretHandles: [], env: {}, limits: { timeout_ms: 1000, max_payload_bytes: 4096 } },
+      }),
+      (error) => error instanceof ToubaHandlerError && error.code === "McpProtocolError",
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test("rejects malformed handler envelopes before user handler code", async () => {
@@ -756,6 +848,99 @@ function restoreEnv(name, value) {
     return;
   }
   process.env[name] = value;
+}
+
+function mcpBridgeConfig(serverPath, mode, overrides = {}) {
+  return {
+    mcp_bridge_config_version: MCP_BRIDGE_CONFIG_VERSION,
+    server: {
+      transport: "stdio",
+      command: process.execPath,
+      args: [serverPath, mode],
+      timeout_ms: 1000,
+      max_payload_bytes: 4096,
+      max_text_content_length: 4096,
+      env: overrides.env ?? {},
+    },
+  };
+}
+
+function writeFakeMcpServer(workspace) {
+  const serverPath = join(workspace, "fake-mcp-server.mjs");
+  writeFileSync(
+    serverPath,
+    `import { createInterface } from "node:readline";
+
+const mode = process.argv[2] ?? "structured-secret";
+const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+
+for await (const line of lines) {
+  if (line.trim() === "") {
+    continue;
+  }
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    respond(request.id, {
+      protocolVersion: "2025-06-18",
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: "fake-mcp", version: "0.1.0" }
+    });
+  } else if (request.method === "notifications/initialized") {
+    continue;
+  } else if (request.method === "tools/call") {
+    handleToolCall(request);
+  }
+}
+
+function handleToolCall(request) {
+  if (mode === "structured-secret") {
+    respond(request.id, {
+      content: [
+        { type: "text", text: "{\\"temperature\\":22.5,\\"conditions\\":\\"clear\\",\\"token_seen\\":true}" }
+      ],
+      structuredContent: {
+        temperature: 22.5,
+        conditions: "clear",
+        token_seen: process.env.MCP_TOKEN === "secret-value"
+      },
+      isError: false
+    });
+    return;
+  }
+  if (mode === "text") {
+    respond(request.id, {
+      content: [
+        { type: "text", text: "Summary for " + request.params.arguments.topic }
+      ],
+      isError: false
+    });
+    return;
+  }
+  if (mode === "tool-error") {
+    respond(request.id, {
+      content: [
+        { type: "text", text: "Tool failed cleanly" }
+      ],
+      isError: true
+    });
+    return;
+  }
+  if (mode === "protocol-error") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: { code: -32602, message: "Unknown tool" }
+    }) + "\\n");
+  }
+}
+
+function respond(id, result) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+}
+`,
+    "utf8",
+  );
+  return serverPath;
 }
 
 function writeFakeToubaCli(workspace) {

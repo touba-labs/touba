@@ -11,6 +11,7 @@ export const TOUBA_MCP_IMPORT_CONFIG_VERSION = "touba-mcp-import-config-v0.1";
 export const TOUBA_MCP_IMPORT_REPORT_VERSION = "touba-mcp-import-report-v0.1";
 export const TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v0.1";
 export const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
+export const TOUBA_MCP_BRIDGE_CONFIG_VERSION = "touba-mcp-bridge-config-v0.1";
 
 const MODULE_NAME_PATTERN = /^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -336,6 +337,7 @@ function mapJsonSchemaType(property) {
 function buildFiles({ root, outputRoot, moduleName, server, tools }) {
   const sourcePath = join(outputRoot, "src", `${moduleName.split(".").at(-1)}.tb`);
   const manifestPath = join(outputRoot, "touba.manifest.fragment.json");
+  const bridgeConfigPath = join(outputRoot, "mcp.bridge.config.json");
   const secretsPath = join(outputRoot, "touba.secrets.template.json");
   const reportPath = join(outputRoot, "mcp-import-report.json");
   const readmePath = join(outputRoot, "README.md");
@@ -351,6 +353,7 @@ function buildFiles({ root, outputRoot, moduleName, server, tools }) {
     generated_files: [
       relative(root, sourcePath),
       relative(root, manifestPath),
+      relative(root, bridgeConfigPath),
       ...handlerFiles.map((file) => relative(root, file.path)),
       relative(root, secretsPath),
       relative(root, readmePath),
@@ -366,6 +369,7 @@ function buildFiles({ root, outputRoot, moduleName, server, tools }) {
   return [
     { kind: "source", path: sourcePath, content: renderToubaSource(moduleName, tools) },
     { kind: "binding_fragment", path: manifestPath, content: renderManifestFragment(server, tools, handlerFiles, outputRoot) },
+    { kind: "mcp_bridge_config", path: bridgeConfigPath, content: renderMcpBridgeConfig(server, tools) },
     ...handlerFiles,
     { kind: "secrets_template", path: secretsPath, content: renderSecretsTemplate(server, tools) },
     { kind: "import_report", path: reportPath, content: `${JSON.stringify(report, null, 2)}\n` },
@@ -428,9 +432,13 @@ function renderManifestFragment(server, tools, handlerFiles, outputRoot) {
 }
 
 function renderHandlerBridge(server, tool) {
-  return `import { defineTool } from "@touba/sdk";
+  return `import {
+  createMcpStdioToolBridge,
+  defineTool,
+} from "@touba/sdk";
 
 const MCP_TOOL_NAME = ${JSON.stringify(tool.mcpName)};
+const MCP_BRIDGE_CONFIG = new URL("../mcp.bridge.config.json", import.meta.url);
 
 await defineTool({
   toolRef: ${JSON.stringify(tool.toolRef)},
@@ -438,17 +446,33 @@ await defineTool({
   outputType: ${JSON.stringify(`type:${tool.toolRef.slice("tool:".length).split("/")[0]}/${tool.outputTypeName}`)},
   requiredGrants: ${JSON.stringify(tool.secretHandles.length > 0 ? ["network", "secret_read"] : ["network"])},
   requiredSecretHandles: ${JSON.stringify(tool.secretHandles)},
-  run: async (input) => {
-    return callMcpTool(MCP_TOOL_NAME, input);
-  },
+  run: createMcpStdioToolBridge({
+    mcpToolName: MCP_TOOL_NAME,
+    configPath: MCP_BRIDGE_CONFIG,
+  }),
 });
-
-async function callMcpTool(name, argumentsPayload) {
-  throw new Error(
-    \`MCP live transport is not configured for \${name}. Bind this generated bridge to an approved MCP client before use.\`,
-  );
-}
 `;
+}
+
+function renderMcpBridgeConfig(server, tools) {
+  const env = {};
+  for (const handle of [...new Set(tools.flatMap((tool) => tool.secretHandles))].sort()) {
+    env[handle] = {
+      from_secret_handle: handle,
+    };
+  }
+  return `${JSON.stringify({
+    mcp_bridge_config_version: TOUBA_MCP_BRIDGE_CONFIG_VERSION,
+    server: {
+      transport: "stdio",
+      command: "",
+      args: [],
+      timeout_ms: server.timeoutMs,
+      max_payload_bytes: server.maxPayloadBytes,
+      max_text_content_length: server.maxPayloadBytes,
+      env,
+    },
+  }, null, 2)}\n`;
 }
 
 function renderSecretsTemplate(server, tools) {
@@ -485,7 +509,7 @@ ${tools.map((tool) => `- \`${tool.mcpName}\` -> \`${tool.toolRef}\``).join("\n")
 
 - Review the generated Touba source before importing it into an agent.
 - Review grants and secret handles in \`touba.manifest.fragment.json\`.
-- Bind the generated bridge to an approved MCP client before execution.
+- Configure \`mcp.bridge.config.json\` with an approved stdio MCP server before execution.
 - Keep secrets as handles only; never commit secret values.
 - Run with \`--trace-out\` when validating the integration.
 `;

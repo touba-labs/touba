@@ -241,9 +241,9 @@ touba mcp import mcp.github.json \
 ```
 
 The importer generates reviewable `.tb` source, a manifest fragment, bridge
-handlers, a secrets template and an import report. `plan`, `write` and `check`
-modes make the generated contract diffable before it is connected to a runtime
-bridge.
+handlers, `mcp.bridge.config.json`, a secrets template and an import report.
+`plan`, `write` and `check` modes make the generated contract diffable before
+the bridge is connected to an approved local MCP `stdio` server.
 
 ## Agent Decision Providers
 

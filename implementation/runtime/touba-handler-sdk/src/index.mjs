@@ -7,11 +7,15 @@ import { isAbsolute, join, resolve } from "node:path";
 const PROTOCOL = "touba-tool-handler-v1";
 const AGENT_DECISION_PROTOCOL = "touba-agent-decision-v1";
 const AGENT_MODEL_INPUT_PROTOCOL = "touba-agent-model-input-v1";
+export const MCP_BRIDGE_CONFIG_VERSION = "touba-mcp-bridge-config-v0.1";
+const MCP_PROTOCOL_VERSION = "2025-06-18";
 const BUILTIN_TEXT = "builtin:Text";
 const BUILTIN_BOOLEAN = "builtin:Boolean";
 const BUILTIN_INT = "builtin:Int";
 const BUILTIN_FLOAT = "builtin:Float";
 const SECRET_ENV_NAME_PATTERN = /(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)/iu;
+const DEFAULT_MCP_BRIDGE_TIMEOUT_MS = 5000;
+const DEFAULT_MCP_MAX_PAYLOAD_BYTES = 1048576;
 
 export const TOUBA_SDK_METADATA = Object.freeze({
   name: "@touba/sdk",
@@ -301,6 +305,19 @@ export function createOllamaDecisionProvider(options = {}) {
     },
   };
   return createAiSdkDecisionProvider(normalized);
+}
+
+export function createMcpStdioToolBridge(options = {}) {
+  const normalized = normalizeMcpBridgeOptions(options);
+  return async ({ request, context }) => {
+    const config = await loadMcpBridgeConfig(normalized);
+    return callMcpStdioTool({
+      config,
+      toolName: normalized.mcpToolName,
+      argumentsPayload: normalizeMcpArguments(request),
+      context: context ?? {},
+    });
+  };
 }
 
 export async function defineTool(definition) {
@@ -701,6 +718,453 @@ function compactObject(value) {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
   );
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+async function loadMcpBridgeConfig(options) {
+  if (options.config !== undefined) {
+    return normalizeMcpBridgeConfig(options.config);
+  }
+  const raw = await readFile(options.configPath, "utf8");
+  let document;
+  try {
+    document = JSON.parse(raw);
+  } catch (error) {
+    throw new ToubaHandlerError(
+      "InvalidMcpBridgeConfig",
+      `MCP bridge config must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return normalizeMcpBridgeConfig(document);
+}
+
+async function callMcpStdioTool({ config, toolName, argumentsPayload, context }) {
+  const limits = effectiveMcpLimits(config, context);
+  const secretValues = [];
+  const child = spawn(config.server.command, config.server.args, {
+    cwd: config.server.cwd,
+    env: buildMcpServerEnv(config, context, secretValues),
+    stdio: ["pipe", "pipe", "pipe"],
+    shell: false,
+    windowsHide: true,
+  });
+
+  const client = createMcpJsonRpcClient(child, {
+    timeoutMs: limits.timeoutMs,
+    maxPayloadBytes: limits.maxPayloadBytes,
+    redactionValues: secretValues,
+  });
+
+  try {
+    await client.request("initialize", {
+      protocolVersion: MCP_PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: {
+        name: "touba-mcp-bridge",
+        version: TOUBA_SDK_METADATA.version,
+      },
+    });
+    client.notify("notifications/initialized");
+    const result = await client.request("tools/call", {
+      name: toolName,
+      arguments: argumentsPayload,
+    });
+    return normalizeMcpToolResult(result, limits.maxTextContentLength, secretValues);
+  } finally {
+    await client.close();
+  }
+}
+
+function createMcpJsonRpcClient(child, options) {
+  let nextId = 1;
+  let stdoutSize = 0;
+  let stderrSize = 0;
+  let bufferedStdout = "";
+  let closed = false;
+  const pending = new Map();
+
+  const failAll = (error) => {
+    for (const { reject, timer } of pending.values()) {
+      clearTimeout(timer);
+      reject(error);
+    }
+    pending.clear();
+  };
+
+  const failAndKill = (error) => {
+    if (!child.killed) {
+      child.kill("SIGTERM");
+    }
+    failAll(error);
+  };
+
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdoutSize += Buffer.byteLength(chunk, "utf8");
+    if (stdoutSize > options.maxPayloadBytes) {
+      failAndKill(new ToubaHandlerError("McpPayloadTooLarge", "MCP server stdout exceeded max payload bytes"));
+      return;
+    }
+    bufferedStdout += chunk;
+    let newlineIndex = bufferedStdout.indexOf("\n");
+    while (newlineIndex !== -1) {
+      const line = bufferedStdout.slice(0, newlineIndex).trim();
+      bufferedStdout = bufferedStdout.slice(newlineIndex + 1);
+      if (line !== "") {
+        handleMcpLine(line);
+      }
+      newlineIndex = bufferedStdout.indexOf("\n");
+    }
+  });
+
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderrSize += Buffer.byteLength(chunk, "utf8");
+    if (stderrSize > options.maxPayloadBytes) {
+      failAndKill(new ToubaHandlerError("McpPayloadTooLarge", "MCP server stderr exceeded max payload bytes"));
+    }
+  });
+
+  child.on("error", (error) => {
+    failAll(new ToubaHandlerError(
+      "McpServerProcessError",
+      `MCP server process failed: ${redactText(error instanceof Error ? error.message : String(error), options.redactionValues)}`,
+    ));
+  });
+
+  child.on("close", (code, signal) => {
+    closed = true;
+    if (pending.size > 0) {
+      failAll(new ToubaHandlerError(
+        "McpServerClosed",
+        `MCP server closed before responding (${code ?? signal ?? "unknown"})`,
+      ));
+    }
+  });
+
+  function handleMcpLine(line) {
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      failAndKill(new ToubaHandlerError("InvalidMcpJson", "MCP server emitted invalid JSON-RPC"));
+      return;
+    }
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      failAndKill(new ToubaHandlerError("InvalidMcpMessage", "MCP server emitted a non-object JSON-RPC message"));
+      return;
+    }
+    if (!Object.hasOwn(message, "id")) {
+      return;
+    }
+    const entry = pending.get(message.id);
+    if (!entry) {
+      return;
+    }
+    clearTimeout(entry.timer);
+    pending.delete(message.id);
+    if (message.error !== undefined) {
+      const errorMessage = isPlainObject(message.error) && typeof message.error.message === "string"
+        ? redactText(message.error.message, options.redactionValues)
+        : "MCP protocol error";
+      entry.reject(new ToubaHandlerError("McpProtocolError", errorMessage));
+      return;
+    }
+    if (!Object.hasOwn(message, "result")) {
+      entry.reject(new ToubaHandlerError("InvalidMcpResponse", "MCP response is missing result"));
+      return;
+    }
+    entry.resolve(message.result);
+  }
+
+  function writeMessage(message) {
+    if (closed || child.stdin.destroyed) {
+      throw new ToubaHandlerError("McpServerClosed", "MCP server stdin is closed");
+    }
+    const payload = `${JSON.stringify(message)}\n`;
+    if (Buffer.byteLength(payload, "utf8") > options.maxPayloadBytes) {
+      throw new ToubaHandlerError("McpPayloadTooLarge", "MCP request exceeded max payload bytes");
+    }
+    child.stdin.write(payload);
+  }
+
+  return {
+    request(method, params) {
+      const id = nextId;
+      nextId += 1;
+      return new Promise((resolveRequest, rejectRequest) => {
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          rejectRequest(new ToubaHandlerError("McpRequestTimeout", `MCP request timed out: ${method}`));
+          if (!child.killed) {
+            child.kill("SIGTERM");
+          }
+        }, options.timeoutMs);
+        pending.set(id, { resolve: resolveRequest, reject: rejectRequest, timer });
+        try {
+          writeMessage({
+            jsonrpc: "2.0",
+            id,
+            method,
+            params,
+          });
+        } catch (error) {
+          clearTimeout(timer);
+          pending.delete(id);
+          rejectRequest(error);
+        }
+      });
+    },
+    notify(method, params = {}) {
+      writeMessage({
+        jsonrpc: "2.0",
+        method,
+        params,
+      });
+    },
+    close() {
+      return new Promise((resolveClose) => {
+        if (closed) {
+          resolveClose();
+          return;
+        }
+        const timer = setTimeout(() => {
+          if (!child.killed) {
+            child.kill("SIGTERM");
+          }
+          resolveClose();
+        }, 200);
+        child.once("close", () => {
+          clearTimeout(timer);
+          resolveClose();
+        });
+        child.stdin.end();
+      });
+    },
+  };
+}
+
+function normalizeMcpToolResult(result, maxTextContentLength, redactionValues) {
+  if (!isPlainObject(result)) {
+    throw new ToubaHandlerError("InvalidMcpToolResult", "MCP tool result must be an object");
+  }
+  if (result.isError === true) {
+    const message = textContentForMcpResult(result, maxTextContentLength, redactionValues)
+      || "MCP tool returned an execution error";
+    throw new ToubaHandlerError("McpToolExecutionError", message);
+  }
+  if (isPlainObject(result.structuredContent)) {
+    return result.structuredContent;
+  }
+  return {
+    content: textContentForMcpResult(result, maxTextContentLength, redactionValues),
+  };
+}
+
+function textContentForMcpResult(result, maxTextContentLength, redactionValues) {
+  if (!Array.isArray(result.content)) {
+    return "";
+  }
+  const textParts = [];
+  for (const item of result.content) {
+    if (!isPlainObject(item)) {
+      throw new ToubaHandlerError("InvalidMcpToolResult", "MCP content entries must be objects");
+    }
+    if (item.type === "text") {
+      if (typeof item.text !== "string") {
+        throw new ToubaHandlerError("InvalidMcpToolResult", "MCP text content must contain text");
+      }
+      textParts.push(item.text);
+      continue;
+    }
+    throw new ToubaHandlerError("UnsupportedMcpContent", `unsupported MCP content type ${item.type ?? "unknown"}`);
+  }
+  const content = redactText(textParts.join("\n"), redactionValues);
+  if (content.length > maxTextContentLength) {
+    throw new ToubaHandlerError("McpResultTooLarge", "MCP text result exceeded max text content length");
+  }
+  return content;
+}
+
+function normalizeMcpBridgeOptions(options) {
+  if (!isPlainObject(options)) {
+    throw new ToubaHandlerError("InvalidMcpBridgeOptions", "MCP bridge options must be an object");
+  }
+  if (typeof options.mcpToolName !== "string" || options.mcpToolName.trim() === "") {
+    throw new ToubaHandlerError("InvalidMcpBridgeOptions", "mcpToolName must be a non-empty string");
+  }
+  if (options.config === undefined && options.configPath === undefined) {
+    throw new ToubaHandlerError("InvalidMcpBridgeOptions", "config or configPath is required");
+  }
+  return {
+    mcpToolName: options.mcpToolName,
+    config: options.config,
+    configPath: options.configPath,
+  };
+}
+
+function normalizeMcpBridgeConfig(config) {
+  if (!isPlainObject(config)) {
+    throw new ToubaHandlerError("InvalidMcpBridgeConfig", "MCP bridge config must be an object");
+  }
+  if (config.mcp_bridge_config_version !== MCP_BRIDGE_CONFIG_VERSION) {
+    throw new ToubaHandlerError(
+      "InvalidMcpBridgeConfig",
+      `mcp_bridge_config_version must be ${MCP_BRIDGE_CONFIG_VERSION}`,
+    );
+  }
+  if (!isPlainObject(config.server)) {
+    throw new ToubaHandlerError("InvalidMcpBridgeConfig", "MCP bridge config must contain server object");
+  }
+  if (config.server.transport !== "stdio") {
+    throw new ToubaHandlerError("UnsupportedMcpTransport", "only MCP stdio transport is supported by this bridge");
+  }
+  if (typeof config.server.command !== "string" || config.server.command.trim() === "") {
+    throw new ToubaHandlerError("InvalidMcpBridgeConfig", "server.command must be configured");
+  }
+  if (config.server.args !== undefined && !Array.isArray(config.server.args)) {
+    throw new ToubaHandlerError("InvalidMcpBridgeConfig", "server.args must be an array of strings");
+  }
+  return {
+    mcp_bridge_config_version: config.mcp_bridge_config_version,
+    server: {
+      transport: "stdio",
+      command: config.server.command,
+      args: normalizeStringArray(config.server.args ?? [], "server.args"),
+      cwd: typeof config.server.cwd === "string" && config.server.cwd.trim() !== ""
+        ? config.server.cwd
+        : undefined,
+      timeout_ms: normalizeMcpPositiveInteger(
+        config.server.timeout_ms,
+        DEFAULT_MCP_BRIDGE_TIMEOUT_MS,
+        "server.timeout_ms",
+      ),
+      max_payload_bytes: normalizeMcpPositiveInteger(
+        config.server.max_payload_bytes,
+        DEFAULT_MCP_MAX_PAYLOAD_BYTES,
+        "server.max_payload_bytes",
+      ),
+      max_text_content_length: normalizeMcpPositiveInteger(
+        config.server.max_text_content_length,
+        config.server.max_payload_bytes ?? DEFAULT_MCP_MAX_PAYLOAD_BYTES,
+        "server.max_text_content_length",
+      ),
+      env: normalizeMcpEnv(config.server.env ?? {}),
+    },
+  };
+}
+
+function effectiveMcpLimits(config, context) {
+  const contextLimits = isPlainObject(context.limits) ? context.limits : {};
+  const timeoutCandidates = [
+    config.server.timeout_ms,
+    Number.isSafeInteger(contextLimits.timeout_ms) && contextLimits.timeout_ms > 0
+      ? contextLimits.timeout_ms
+      : undefined,
+  ].filter((value) => value !== undefined);
+  const payloadCandidates = [
+    config.server.max_payload_bytes,
+    Number.isSafeInteger(contextLimits.max_payload_bytes) && contextLimits.max_payload_bytes > 0
+      ? contextLimits.max_payload_bytes
+      : undefined,
+  ].filter((value) => value !== undefined);
+  const maxPayloadBytes = Math.min(...payloadCandidates);
+  return {
+    timeoutMs: Math.min(...timeoutCandidates),
+    maxPayloadBytes,
+    maxTextContentLength: Math.min(config.server.max_text_content_length, maxPayloadBytes),
+  };
+}
+
+function buildMcpServerEnv(config, context, secretValues) {
+  const env = {};
+  const contextEnv = isPlainObject(context.env) ? context.env : process.env;
+  const allowedSecretHandles = new Set(Array.isArray(context.secretHandles) ? context.secretHandles : []);
+  for (const [name, spec] of Object.entries(config.server.env)) {
+    if (spec.value !== undefined) {
+      env[name] = spec.value;
+      continue;
+    }
+    const handle = spec.from_secret_handle;
+    if (!allowedSecretHandles.has(handle)) {
+      throw new ToubaHandlerError("McpSecretNotGranted", `secret handle ${handle} is not granted to this bridge`);
+    }
+    const value = contextEnv[handle];
+    if (typeof value !== "string" || value === "") {
+      throw new ToubaHandlerError("McpSecretMissing", `secret handle ${handle} is not available to this bridge`);
+    }
+    env[name] = value;
+    if (value.length >= 4) {
+      secretValues.push(value);
+    }
+  }
+  return env;
+}
+
+function normalizeMcpArguments(value) {
+  if (!isPlainObject(value)) {
+    throw new ToubaHandlerError("InvalidMcpArguments", "MCP tool arguments must be an object");
+  }
+  return value;
+}
+
+function normalizeMcpEnv(env) {
+  if (!isPlainObject(env)) {
+    throw new ToubaHandlerError("InvalidMcpBridgeConfig", "server.env must be an object");
+  }
+  const entries = {};
+  for (const [name, spec] of Object.entries(env)) {
+    if (!/^[A-Z_][A-Z0-9_]*$/u.test(name)) {
+      throw new ToubaHandlerError("InvalidMcpBridgeConfig", "server.env keys must be uppercase environment names");
+    }
+    if (!isPlainObject(spec)) {
+      throw new ToubaHandlerError("InvalidMcpBridgeConfig", "server.env entries must be objects");
+    }
+    if (typeof spec.value === "string" && spec.from_secret_handle === undefined) {
+      if (SECRET_ENV_NAME_PATTERN.test(name)) {
+        throw new ToubaHandlerError(
+          "InvalidMcpBridgeConfig",
+          "secret-shaped server.env entries must use from_secret_handle",
+        );
+      }
+      entries[name] = { value: spec.value };
+      continue;
+    }
+    if (typeof spec.from_secret_handle === "string" && spec.from_secret_handle.trim() !== "" && spec.value === undefined) {
+      entries[name] = { from_secret_handle: spec.from_secret_handle };
+      continue;
+    }
+    throw new ToubaHandlerError(
+      "InvalidMcpBridgeConfig",
+      "server.env entries must declare exactly one of value or from_secret_handle",
+    );
+  }
+  return entries;
+}
+
+function normalizeMcpPositiveInteger(value, fallback, label) {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ToubaHandlerError("InvalidMcpBridgeConfig", `${label} must be a positive integer`);
+  }
+  return value;
+}
+
+function normalizeStringArray(value, label) {
+  if (!Array.isArray(value)) {
+    throw new ToubaHandlerError("InvalidMcpBridgeConfig", `${label} must be an array`);
+  }
+  return value.map((item) => {
+    if (typeof item !== "string") {
+      throw new ToubaHandlerError("InvalidMcpBridgeConfig", `${label} entries must be strings`);
+    }
+    return item;
+  });
 }
 
 export function createToolHandler(definition) {

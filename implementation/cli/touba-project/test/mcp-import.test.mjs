@@ -60,6 +60,7 @@ test("mcp import plans and writes governed Touba artifacts from a tools snapshot
     assert.equal(written.status, "success");
     assert.equal(existsSync(join(root, "integrations/demo/src/demo.tb")), true);
     assert.equal(existsSync(join(root, "integrations/demo/touba.manifest.fragment.json")), true);
+    assert.equal(existsSync(join(root, "integrations/demo/mcp.bridge.config.json")), true);
     assert.equal(existsSync(join(root, "integrations/demo/handlers/get-weather.mcp-bridge.mjs")), true);
     assert.equal(existsSync(join(root, "integrations/demo/handlers/post-comment.mcp-bridge.mjs")), true);
 
@@ -81,6 +82,16 @@ test("mcp import plans and writes governed Touba artifacts from a tools snapshot
       manifest.bindings["tool:integrations.mcp.demo/GetWeather"].secrets,
       ["DEMO_MCP_TOKEN"],
     );
+
+    const bridgeConfig = JSON.parse(readFileSync(join(root, "integrations/demo/mcp.bridge.config.json"), "utf8"));
+    assert.equal(bridgeConfig.mcp_bridge_config_version, "touba-mcp-bridge-config-v0.1");
+    assert.equal(bridgeConfig.server.transport, "stdio");
+    assert.equal(bridgeConfig.server.command, "");
+    assert.deepEqual(bridgeConfig.server.env.GITHUB_TOKEN, { from_secret_handle: "GITHUB_TOKEN" });
+
+    const handler = readFileSync(join(root, "integrations/demo/handlers/get-weather.mcp-bridge.mjs"), "utf8");
+    assert.match(handler, /createMcpStdioToolBridge/);
+    assert.match(handler, /mcp\.bridge\.config\.json/);
 
     const secretsTemplate = readFileSync(join(root, "integrations/demo/touba.secrets.template.json"), "utf8");
     assert.match(secretsTemplate, /DEMO_MCP_TOKEN/);
