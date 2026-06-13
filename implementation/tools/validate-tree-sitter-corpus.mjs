@@ -18,32 +18,12 @@ const libPath = join(buildDir, `tree-sitter-touba.${sharedLibraryExtension()}`);
 
 const fixtures = listTbFixtures(examplesRoot)
   .map((file) => relative(grammarRoot, file))
-  .filter((file) => !file.includes("/negative/syntax/"))
+  .filter((file) => !file.replaceAll("\\", "/").includes("/negative/syntax/"))
   .sort();
 
 run(treeSitterBin, ["generate"], { cwd: grammarRoot });
-if (process.platform === "win32") {
-  for (const fixtureChunk of chunks(fixtures, 40)) {
-    run(
-      treeSitterBin,
-      [
-        "parse",
-        "--config-path",
-        "./tree-sitter-cli.config.json",
-        "-p",
-        ".",
-        "-q",
-        ...fixtureChunk,
-      ],
-      { cwd: grammarRoot },
-    );
-  }
-} else {
-  run(
-    "cc",
-    ["-fPIC", "-I./src", "-shared", "src/parser.c", "src/scanner.c", "-o", libPath],
-    { cwd: grammarRoot },
-  );
+run(cCompiler(), cCompilerArgs(libPath), { cwd: grammarRoot });
+for (const fixtureChunk of chunks(fixtures, 40)) {
   run(
     treeSitterBin,
     [
@@ -55,7 +35,7 @@ if (process.platform === "win32") {
       "--lang-name",
       "touba",
       "-q",
-      ...fixtures,
+      ...fixtureChunk,
     ],
     { cwd: grammarRoot },
   );
@@ -102,4 +82,16 @@ function sharedLibraryExtension() {
   if (process.platform === "darwin") return "dylib";
   if (process.platform === "win32") return "dll";
   return "so";
+}
+
+function cCompiler() {
+  if (process.platform === "win32") return "clang";
+  return "cc";
+}
+
+function cCompilerArgs(outputPath) {
+  if (process.platform === "win32") {
+    return ["-shared", "-I./src", "src/parser.c", "src/scanner.c", "-o", outputPath];
+  }
+  return ["-fPIC", "-I./src", "-shared", "src/parser.c", "src/scanner.c", "-o", outputPath];
 }
