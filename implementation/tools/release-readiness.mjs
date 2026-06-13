@@ -14,6 +14,7 @@ const REQUIRED_SCRIPTS = Object.freeze([
   ["cli_tests_command", "test:cli"],
   ["release_metadata_tests_command", "test:distribution-release"],
   ["release_packaging_command", "package:touba-release"],
+  ["release_archive_smoke_command", "check:touba-release-archive"],
   ["public_docs_validation_command", "validate:docs-user"],
   ["public_boundary_validation_command", "validate:docs-public-boundary"],
 ]);
@@ -55,7 +56,7 @@ const CURRENT_RELEASE_GATES = Object.freeze([
     required: true,
     evidence: [
       ".github/workflows/source-ci.yml",
-      "https://github.com/khadimbambalo/touba/actions/runs/27455903211",
+      "https://github.com/khadimbambalo/touba/actions/runs/27456539602",
     ],
     details: {
       last_observed_status: "success",
@@ -66,6 +67,12 @@ const CURRENT_RELEASE_GATES = Object.freeze([
         "macos-arm64-core": "success",
         "windows-x64-core": "success",
       },
+      release_artifacts: [
+        "touba-release-linux-x64",
+        "touba-release-darwin-x64",
+        "touba-release-darwin-arm64",
+        "touba-release-win32-x64",
+      ],
     },
   },
   {
@@ -77,10 +84,31 @@ const CURRENT_RELEASE_GATES = Object.freeze([
   },
   {
     id: "public_release_artifacts",
-    status: "blocked",
+    status: "satisfied",
     required: true,
-    evidence: ["implementation/package.json#scripts.package:touba-release"],
-    reason: "public release artifacts, checksums and release notes must be prepared separately",
+    evidence: [
+      "implementation/package.json#scripts.package:touba-release",
+      "implementation/package.json#scripts.check:touba-release-archive",
+      ".github/workflows/source-ci.yml",
+      "https://github.com/khadimbambalo/touba/actions/runs/27456539602",
+    ],
+    details: {
+      run_status: "success",
+      run_date: "2026-06-13",
+      artifacts: [
+        "touba-release-linux-x64",
+        "touba-release-darwin-x64",
+        "touba-release-darwin-arm64",
+        "touba-release-win32-x64",
+      ],
+      attached_files: [
+        "*.tar.gz",
+        "SHA256SUMS",
+        "CHECKSUMS.json",
+        "GITHUB_RELEASE_DRAFT.md",
+      ],
+      publication: "manual Go/No-Go only",
+    },
   },
   {
     id: "public_distribution_channel",

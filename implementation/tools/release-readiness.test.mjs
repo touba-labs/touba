@@ -14,6 +14,7 @@ const requiredScripts = {
   "test:cli": "pnpm test:cli",
   "test:distribution-release": "pnpm test:distribution-release",
   "package:touba-release": "pnpm package:touba-release",
+  "check:touba-release-archive": "pnpm check:touba-release-archive",
   "validate:docs-user": "pnpm validate:docs-user",
   "validate:docs-public-boundary": "pnpm validate:docs-public-boundary",
 };
@@ -34,9 +35,9 @@ test("builds a stable blocked V1 release readiness report", () => {
   assert.equal(report.implementation_version, "0.1.0");
   assert.equal(report.overall_status, "blocked");
   assert.deepEqual(report.counts, {
-    satisfied: 14,
+    satisfied: 16,
     pending: 0,
-    blocked: 3,
+    blocked: 2,
     failed: 0,
   });
   assert.equal(report.gates.find((gate) => gate.id === "external_user_validation")?.status, "blocked");
