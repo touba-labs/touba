@@ -271,6 +271,10 @@ publish a public release channel.
 
 ## Origins
 
+Touba grew out of the PAP research program. The public research overview and
+the citation reference are maintained in the official documentation:
+https://khadimbambalo.github.io/documentation-site/recherche/
+
 ## Contributing And Feedback
 
 Contributions, bug reports, proposals and documentation feedback are handled
