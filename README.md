@@ -18,6 +18,8 @@ what a system can do, reviewers see who is allowed to invoke it, and operators
 get observable refusals instead of silent failures. It is the executable path
 of the PAP research program (`Probabilistic Agentic Programming`).
 
+Documentation: https://khadimbambalo.github.io/documentation-site/
+
 ## Why Touba
 
 Touba gives agentic software an explicit programming model. It separates what a

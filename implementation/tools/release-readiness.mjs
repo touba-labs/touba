@@ -117,6 +117,13 @@ const CURRENT_RELEASE_GATES = Object.freeze([
     evidence: ["implementation/VERSIONING.md"],
     reason: "current source and local release channels are not a public update channel",
   },
+  {
+    id: "public_docs_site_deployment",
+    status: "blocked",
+    required: true,
+    evidence: ["https://khadimbambalo.github.io/documentation-site/"],
+    reason: "the public documentation site must be deployed and reachable before V1 public release",
+  },
 ]);
 
 /**
