@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -22,7 +23,7 @@ test("release plan keeps the locally verified macOS profile explicit", () => {
   assert.equal(plan.validationStatus, "local_verified");
   assert.equal(plan.releaseProfile, "touba-local-release-v0.2");
   assert.equal(plan.releaseScope, "local_validation");
-  assert.equal(plan.draftPath, "/tmp/touba-release-test/GITHUB_RELEASE_DRAFT.md");
+  assert.equal(plan.draftPath, join("/tmp/touba-release-test", "GITHUB_RELEASE_DRAFT.md"));
   assert.equal(plan.publicRelease, false);
   assert.ok(plan.limitations.includes("not signed"));
   assert.ok(plan.limitations.includes("not published through a public update channel"));
