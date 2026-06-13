@@ -325,7 +325,7 @@ async function validateToolSecurityRefusals() {
   const manifest = generateManifestFromAirDocument(document);
   const secretStore = loadSecretsFromJson(
     readFileSync(
-      resolve(implementationRoot, "tests/tool-binding-v1/secrets/touba.secrets.env.json"),
+      resolve(implementationRoot, "tests/tool-binding-v1/secrets/touba.secret-handles.fixture.json"),
       "utf8",
     ),
     { env: { SEARCH_API_TOKEN: "resolved-secret-value" } },

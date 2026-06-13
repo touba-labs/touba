@@ -95,7 +95,7 @@ function fixtureManifest(fileName) {
 }
 
 function fixtureSecrets(env) {
-  const raw = readFileSync(resolve(fixtureRoot, "secrets/touba.secrets.env.json"), "utf8");
+  const raw = readFileSync(resolve(fixtureRoot, "secrets/touba.secret-handles.fixture.json"), "utf8");
   return loadSecretsFromJson(raw, { env });
 }
 

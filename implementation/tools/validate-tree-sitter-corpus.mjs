@@ -9,7 +9,10 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const implementationRoot = resolve(__dir, "..");
 const grammarRoot = join(implementationRoot, "grammar/tree-sitter-touba");
 const examplesRoot = join(grammarRoot, "examples");
-const treeSitterBin = join(implementationRoot, "node_modules/.bin/tree-sitter");
+const treeSitterBin = join(
+  implementationRoot,
+  process.platform === "win32" ? "node_modules/.bin/tree-sitter.cmd" : "node_modules/.bin/tree-sitter",
+);
 const buildDir = mkdtempSync(join(tmpdir(), "touba-tree-sitter-"));
 const libPath = join(buildDir, `tree-sitter-touba.${sharedLibraryExtension()}`);
 
@@ -19,26 +22,42 @@ const fixtures = listTbFixtures(examplesRoot)
   .sort();
 
 run(treeSitterBin, ["generate"], { cwd: grammarRoot });
-run(
-  "cc",
-  ["-fPIC", "-I./src", "-shared", "src/parser.c", "src/scanner.c", "-o", libPath],
-  { cwd: grammarRoot },
-);
-run(
-  treeSitterBin,
-  [
-    "parse",
-    "--config-path",
-    "./tree-sitter-cli.config.json",
-    "--lib-path",
-    libPath,
-    "--lang-name",
-    "touba",
-    "-q",
-    ...fixtures,
-  ],
-  { cwd: grammarRoot },
-);
+if (process.platform === "win32") {
+  run(
+    treeSitterBin,
+    [
+      "parse",
+      "--config-path",
+      "./tree-sitter-cli.config.json",
+      "-p",
+      ".",
+      "-q",
+      ...fixtures,
+    ],
+    { cwd: grammarRoot },
+  );
+} else {
+  run(
+    "cc",
+    ["-fPIC", "-I./src", "-shared", "src/parser.c", "src/scanner.c", "-o", libPath],
+    { cwd: grammarRoot },
+  );
+  run(
+    treeSitterBin,
+    [
+      "parse",
+      "--config-path",
+      "./tree-sitter-cli.config.json",
+      "--lib-path",
+      libPath,
+      "--lang-name",
+      "touba",
+      "-q",
+      ...fixtures,
+    ],
+    { cwd: grammarRoot },
+  );
+}
 
 console.log(`tree-sitter-corpus: status=success checked=${fixtures.length}`);
 
@@ -60,6 +79,7 @@ function run(command, args, options) {
   const result = spawnSync(command, args, {
     ...options,
     env: process.env,
+    shell: process.platform === "win32" && command.endsWith(".cmd"),
     stdio: "inherit",
   });
   if (result.error) {

@@ -31,7 +31,7 @@ const toolBindingV1SourceFixture = join(
 );
 const toolBindingV1SecretsFixture = join(
   toolBindingV1FixtureRoot,
-  "secrets/touba.secrets.env.json",
+  "secrets/touba.secret-handles.fixture.json",
 );
 const donneesQuebecLiveValidatePath = join(
   toolBindingV1FixtureRoot,
