@@ -12,9 +12,13 @@ const PACKAGE_KINDS = new Set(["skill_pack", "touba_package", "tool_handler", "m
 const SUPPORTED_PROTOCOLS = new Set([
   "touba-skill-pack-v0.1",
   "touba-package-v0.1",
+  "budget-bq1-v0.1",
+  "memory-pi1-v0.1",
   "tool-handler-v1",
   "agent-decision-v1",
   "model-input-v1",
+  "touba-agent-decision-v1",
+  "touba-agent-model-input-v1",
 ]);
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
