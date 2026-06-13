@@ -146,7 +146,7 @@ test("loads explicit dotenv and touba_store secret sources without serializing v
       },
     })],
   ]);
-  const normalizeTestPath = (path) => path.replaceAll("\\", "/");
+  const normalizeTestPath = (path) => path.replaceAll("\\", "/").replace(/^[A-Za-z]:/u, "");
   const secretStore = loadSecretsFromJson(JSON.stringify({
     secrets_version: "touba-secrets-v1",
     secrets: {
