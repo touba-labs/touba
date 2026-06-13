@@ -2,7 +2,7 @@
   "name": "@touba/implementation",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal Touba implementation monorepo bootstrap.",
+  "description": "Minimal Touba implementation workspace.",
   "bin": {
     "touba": "./cli/touba-project/src/main.mjs"
   },
