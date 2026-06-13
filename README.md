@@ -170,7 +170,9 @@ fixture validations used to qualify a local build.
 ## Source CI
 
 The repository includes a source-build workflow for pull requests, pushes to
-`main` and manual runs. It does not publish release artifacts.
+`main` and manual runs. It also uploads release archives as CI artifacts for
+inspection. Those artifacts are not a public release channel until a manual
+release approval publishes them through a public distribution path.
 
 The matrix is:
 
@@ -179,14 +181,13 @@ The matrix is:
 | Linux x64 | `ubuntu-24.04` | full source validation |
 | macOS Intel | `macos-15-intel` | core build/runtime/CLI validation |
 | macOS Apple Silicon | `macos-14` | core build/runtime/CLI validation |
-| Windows x64 | `windows-2025` | diagnostic core validation, allowed to fail until Windows hardening is complete |
+| Windows x64 | `windows-2025` | core build/runtime/CLI validation |
 
 Linux carries the heavier corpus and local toolchain smoke checks to keep macOS
 minutes controlled. The workflow validates source builds only; it is not a
 public release, package publication, notarization or platform support claim.
-All jobs run release metadata tests. The Windows job also attempts an
-experimental release packaging diagnostic and is allowed to fail until Windows
-hardening is complete.
+All jobs run release metadata tests and upload a platform release archive with
+`SHA256SUMS`, `CHECKSUMS.json` and a generated `GITHUB_RELEASE_DRAFT.md`.
 
 ## Local Release Packaging
 
@@ -247,15 +248,15 @@ trusted by default.
 
 | Platform | Status | Artifact |
 | --- | --- | --- |
-| macOS Apple Silicon | Local release validation artifact | `touba-v0.1.0-darwin-arm64.tar.gz`, generated from source |
+| macOS Apple Silicon | CI release artifact prepared; local smoke validation available | `touba-v0.1.0-darwin-arm64.tar.gz` |
 | VS Code extension | Local validation artifact | `touba-vscode-0.1.0.vsix`, generated from source |
-| macOS Intel | Source CI target, no public bundle claim | `darwin-x64` |
-| Linux | Source CI target, no public bundle claim | `linux-x64 / linux-arm64` |
-| Windows | Diagnostic CI target, no public bundle claim | `win32-x64` |
+| macOS Intel | CI release artifact prepared, no public distribution claim | `darwin-x64` |
+| Linux | CI release artifact prepared, no public distribution claim | `linux-x64` |
+| Windows | CI release artifact prepared, no public distribution claim | `win32-x64` |
 
-Prepared channels can be published only after their bundles reach the same
-validation level as the local macOS Apple Silicon artifact. This repository
-does not currently publish a public release channel.
+Prepared artifacts can be published only after external user validation and
+public distribution-channel gates are closed. This repository does not currently
+publish a public release channel.
 
 ## Use This Repository For
 
