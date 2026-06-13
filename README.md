@@ -228,6 +228,23 @@ version, protocol compatibility and status. When `--source-root` is provided,
 it also verifies source artifact digests. It does not provide a hosted registry
 service, package installation, signature verification or runtime authority.
 
+## MCP Import
+
+Existing MCP tools can be brought under Touba contracts through an explicit
+tools snapshot:
+
+```sh
+touba mcp import mcp.github.json \
+  --module integrations.mcp.github \
+  --out integrations/github \
+  --mode plan
+```
+
+The importer generates reviewable `.tb` source, a manifest fragment, bridge
+handlers, a secrets template and an import report. `plan`, `write` and `check`
+modes make the generated contract diffable before it is connected to a runtime
+bridge.
+
 ## Agent Decision Providers
 
 `touba run` can delegate an agent's capability choice to an explicit decision

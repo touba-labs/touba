@@ -23,6 +23,10 @@ import {
   renderRegistryResolution,
   resolveRegistryPackage,
 } from "./registry.mjs";
+import {
+  importMcpTools,
+  renderMcpImportReport,
+} from "./mcp-import.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -156,6 +160,9 @@ async function dispatch(rawArgs) {
   }
   if (command === "registry") {
     return registryCommand(rest);
+  }
+  if (command === "mcp") {
+    return mcpCommand(rest);
   }
   if (command === "manifest") {
     return manifestCommand(rest);
@@ -400,6 +407,25 @@ async function registryCommand(rawArgs) {
     };
   }
   throw new Error(`unknown registry command ${subcommand}`);
+}
+
+async function mcpCommand(rawArgs) {
+  const [subcommand, configPath, ...tail] = rawArgs;
+  if (subcommand === "import" && configPath && configPath !== "--help" && configPath !== "-h") {
+    const options = parseMcpImportOptions(tail);
+    if (options.help === true) {
+      return { text: mcpImportUsage(), exitCode: 0 };
+    }
+    const report = importMcpTools({ ...options, configPath });
+    if (options.json === true) {
+      return { report, json: true, exitCode: report.status === "error" ? 1 : 0 };
+    }
+    return { text: renderMcpImportReport(report), exitCode: report.status === "error" ? 1 : 0 };
+  }
+  if (subcommand === undefined || subcommand === "--help" || subcommand === "-h" || (subcommand === "import" && (configPath === "--help" || configPath === "-h"))) {
+    return { text: mcpImportUsage(), exitCode: 0 };
+  }
+  throw new Error("usage: touba mcp import <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--select <tool>] [--force] [--json]");
 }
 
 function manifestCommand(rawArgs) {
@@ -772,6 +798,56 @@ function parseRegistryResolveOptions(rawArgs) {
   return options;
 }
 
+function parseMcpImportOptions(rawArgs) {
+  const options = {
+    json: false,
+    mode: "plan",
+    selectedTools: [],
+  };
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === "--root") {
+      options.root = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--root=")) {
+      options.root = arg.slice("--root=".length);
+    } else if (arg === "--module") {
+      options.moduleName = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--module=")) {
+      options.moduleName = arg.slice("--module=".length);
+    } else if (arg === "--out") {
+      options.out = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--out=")) {
+      options.out = arg.slice("--out=".length);
+    } else if (arg === "--mode") {
+      options.mode = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--mode=")) {
+      options.mode = arg.slice("--mode=".length);
+    } else if (arg === "--select") {
+      options.selectedTools.push(requiredValue(arg, rawArgs, ++index));
+    } else if (arg.startsWith("--select=")) {
+      options.selectedTools.push(arg.slice("--select=".length));
+    } else if (arg === "--force") {
+      options.force = true;
+    } else if (arg === "--json") {
+      options.json = true;
+    } else if (arg === "--help" || arg === "-h") {
+      options.help = true;
+    } else {
+      throw new Error(`unknown option ${arg}`);
+    }
+  }
+  return options;
+}
+
+function mcpImportUsage() {
+  return [
+    "Usage: touba mcp import <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--select <tool>] [--force] [--json]",
+    "",
+    "Generates reviewable Touba source, manifest fragment, secrets template, handler bridge and import report from an explicit MCP tools snapshot.",
+    "Authority remains in manifest, secrets, approvals and runtime policy.",
+  ].join("\n");
+}
+
 function registryResolveUsage() {
   return [
     "Usage: touba registry resolve --registry <path-or-url> --package <pkg:namespace/name> --version <semver> [--source-root <path>] [--allow-draft] [--allow-deprecated] [--out <lock.json>] [--json]",
@@ -818,6 +894,7 @@ function printUsage() {
   touba audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--output text|json]
   touba supply-chain validate --lock <touba.lock.json> --air <program.air.json> [--manifest <touba.manifest.json>] [--report-out <report.supply-chain-report.json>] [--output text|json] [--strict] [--require-review]
   touba registry resolve --registry <path-or-url> --package <pkg:namespace/name> --version <semver> [--source-root <path>] [--allow-draft] [--allow-deprecated] [--out <lock.json>] [--json]
+  touba mcp import <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--select <tool>] [--force] [--json]
   touba manifest generate <air.json> --out <touba.manifest.json>
   touba manifest generate <air.json> --stdout
   touba handler stub <air.json> [--tool-ref <tool_ref>] [--handler-root <path>] [--force]
