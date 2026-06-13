@@ -469,7 +469,6 @@ export function renderInspection(inspection) {
   renderSupplyChain(lines, inspection.supply_chain);
   renderTriggerState(lines, inspection.trigger_state);
   renderCompatibility(lines, inspection.compatibility);
-  lines.push(`Artifact scope excludes: ${inspection.absent_data.join(", ")}`);
 
   return `${lines.join("\n")}\n`;
 }

@@ -32,7 +32,7 @@ test("inspects a Touba source by compiling it to AIR without attaching unprovide
   assert.match(rendered, /AIR air-minimal-v0\.1/);
   assert.match(rendered, /Trace absent: trace artifact not provided/);
   assert.match(rendered, /Architecture absent:/);
-  assert.match(rendered, /Artifact scope excludes: .*policies/);
+  assert.doesNotMatch(rendered, /Artifact scope excludes|Absent data/);
   assert.doesNotMatch(rendered, /cost=/);
   assert.doesNotMatch(rendered, /confidence=/);
 });

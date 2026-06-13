@@ -223,7 +223,6 @@ export function renderTraceAuditValidation(validation) {
     }
   }
 
-  lines.push("Report scope excludes: signatures, legal timestamps, compliance status, .env, secrets, Touba store, workspace scan");
   return `${lines.join("\n")}\n`;
 }
 
