@@ -5,6 +5,12 @@ import {
   agentProviderObservationBudgetReport,
 } from "./agent-provider-content.mjs";
 import {
+  AIR_JSON_PROFILE,
+  AIR_SCHEMA_VERSION,
+  indexAirDocument,
+  validateAirDocument,
+} from "./air-runtime-profile.mjs";
+import {
   runProcessToolHandler,
   TOOL_HANDLER_PROTOCOL_VERSION,
 } from "./handler-protocol.mjs";
@@ -35,7 +41,6 @@ import {
   RUN_BUDGET_ERROR_CODES,
   RUN_BUDGET_KIND_SET,
   createBudgetState,
-  normalizeAirRunLimits,
 } from "./runtime-budgets.mjs";
 import {
   RuntimeCancelled,
@@ -78,9 +83,8 @@ import {
 
 export { ToubaRuntimeError };
 export { TRACE_PROTOCOL_VERSION };
+export { AIR_JSON_PROFILE, AIR_SCHEMA_VERSION };
 
-export const AIR_SCHEMA_VERSION = "air-minimal-v0.1";
-export const AIR_JSON_PROFILE = "air-json-v0.1";
 const TOUBA_MAX_SAFE_INT = 9007199254740991n;
 const BUILTIN_TEXT = "builtin:Text";
 const BUILTIN_BOOLEAN = "builtin:Boolean";
@@ -177,18 +181,6 @@ const MEMORY_METADATA_LEAK_FIELDS = new Set([
   "secret",
   "connection_string",
 ]);
-const AIR_DEFINITION_COLLECTIONS = Object.freeze([
-  "types",
-  "constants",
-  "functions",
-  "tools",
-  "memories",
-  "skills",
-  "agents",
-  "strategies",
-  "triggers",
-]);
-
 export const RUNTIME_CAPABILITIES = Object.freeze([
   AIR_SCHEMA_VERSION,
   AIR_JSON_PROFILE,
@@ -1030,96 +1022,6 @@ function callFrameForNode(graph, node, targetRef) {
     success_edge_role: edgeRole,
     resume_target_ref: nextNodeId(graph, node.id, edgeRole),
   });
-}
-
-function validateAirDocument(document) {
-  if (!document || typeof document !== "object" || Array.isArray(document)) {
-    throw new ToubaRuntimeError("InvalidAirDocument", "AIR JSON must decode to an object");
-  }
-  if (document.air_schema_version !== AIR_SCHEMA_VERSION) {
-    throw new ToubaRuntimeError(
-      "UnsupportedAirSchemaVersion",
-      `expected ${AIR_SCHEMA_VERSION}`,
-      { actual: document.air_schema_version },
-    );
-  }
-  if (typeof document.module?.id !== "string" || document.module.id.trim() === "") {
-    throw new ToubaRuntimeError("InvalidAirDocument", "AIR module id is required");
-  }
-  if (!document.definitions || typeof document.definitions !== "object") {
-    throw new ToubaRuntimeError("InvalidAirDocument", "AIR definitions are required");
-  }
-  validateAirDefinitionCollections(document.definitions);
-  if (!Array.isArray(document.execution_graphs)) {
-    throw new ToubaRuntimeError("InvalidAirDocument", "AIR execution_graphs must be an array");
-  }
-  if (!Array.isArray(document.trace_points)) {
-    throw new ToubaRuntimeError("InvalidAirDocument", "AIR trace_points must be an array");
-  }
-  validateAirBudgets(document.budgets);
-}
-
-function validateAirDefinitionCollections(definitions) {
-  if (Array.isArray(definitions)) {
-    throw new ToubaRuntimeError("InvalidAirDocument", "AIR definitions must be an object");
-  }
-  for (const collection of AIR_DEFINITION_COLLECTIONS) {
-    if (definitions[collection] !== undefined && !Array.isArray(definitions[collection])) {
-      throw new ToubaRuntimeError(
-        "InvalidAirDocument",
-        `AIR definitions.${collection} must be an array`,
-        { collection },
-      );
-    }
-  }
-}
-
-function validateAirBudgets(budgets) {
-  if (budgets === undefined) {
-    return;
-  }
-  if (!budgets || typeof budgets !== "object" || Array.isArray(budgets)) {
-    throw new ToubaRuntimeError("InvalidAirDocument", "AIR budgets must be an object");
-  }
-  const keys = Object.keys(budgets);
-  const unknownTopLevel = keys.filter((key) => key !== "run");
-  if (unknownTopLevel.length > 0) {
-    throw new ToubaRuntimeError("InvalidAirDocument", "AIR budgets contains unknown sections", {
-      unknownBudgetSections: unknownTopLevel,
-    });
-  }
-  normalizeAirRunLimits(budgets.run, "AIR budgets.run");
-}
-
-function indexAirDocument(document) {
-  const definitions = document.definitions;
-  return {
-    types: indexById(definitions.types ?? []),
-    constants: indexById(definitions.constants ?? []),
-    functions: indexById(definitions.functions ?? []),
-    tools: indexById(definitions.tools ?? []),
-    memories: indexById(definitions.memories ?? []),
-    skills: indexById(definitions.skills ?? []),
-    agents: indexById(definitions.agents ?? []),
-    strategies: indexById(definitions.strategies ?? []),
-    triggers: indexById(definitions.triggers ?? []),
-    graphs: indexById(document.execution_graphs),
-    tracePoints: indexById(document.trace_points),
-  };
-}
-
-function indexById(items) {
-  const index = new Map();
-  for (const item of items) {
-    if (!item?.id) {
-      throw new ToubaRuntimeError("InvalidAirDocument", "AIR item without id");
-    }
-    if (index.has(item.id)) {
-      throw new ToubaRuntimeError("InvalidAirDocument", `duplicate AIR id ${item.id}`);
-    }
-    index.set(item.id, item);
-  }
-  return index;
 }
 
 function defaultEntryRef(document) {

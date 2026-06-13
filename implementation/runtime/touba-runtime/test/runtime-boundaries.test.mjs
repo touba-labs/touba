@@ -10,6 +10,12 @@ import {
   loadToolBindingManifestFromJson,
 } from "../src/index.mjs";
 import {
+  indexAirDocument,
+  validateAirBudgets,
+  validateAirDefinitionCollections,
+  validateAirDocument,
+} from "../src/air-runtime-profile.mjs";
+import {
   HUMAN_APPROVAL_CHECKPOINT_VERSION,
   airDocumentDigest,
   assertCheckpointHasNoResolvedSecret,
@@ -74,6 +80,56 @@ test("builds trace documents with stable sequencing and compact payloads", () =>
   assert.equal(
     sha256Json({ ref: "skill_pack:project/research-review" }),
     "9526c9ca8b9bde7ada330e272b124c8c664acd7969da3127720cf3aa641a0af7",
+  );
+});
+
+test("validates and indexes the AIR runtime profile at a typed boundary", () => {
+  const document = minimalDocument();
+
+  validateAirDocument(document);
+  const indexes = indexAirDocument(document);
+
+  assert.equal(indexes.skills.get("skill:test/Noop")?.id, "skill:test/Noop");
+  assert.equal(indexes.graphs.get("graph:skill:test/Noop")?.owner_ref, "skill:test/Noop");
+  assert.equal(indexes.tracePoints.size, 0);
+
+  assert.throws(
+    () => validateAirDefinitionCollections({ skills: {} }),
+    (error) =>
+      error instanceof ToubaRuntimeError
+      && error.code === "InvalidAirDocument"
+      && error.details.collection === "skills",
+  );
+  assert.throws(
+    () => validateAirBudgets({ network: {} }),
+    (error) =>
+      error instanceof ToubaRuntimeError
+      && error.code === "InvalidAirDocument"
+      && error.details.unknownBudgetSections.includes("network"),
+  );
+  assert.throws(
+    () => validateAirBudgets({ run: { max_steps: { value: 0, source_ref: sourceRef() } } }),
+    (error) => error instanceof ToubaRuntimeError && error.code === "InvalidAirDocument",
+  );
+
+  const duplicate = cloneJson(document);
+  duplicate.definitions.skills.push({ ...duplicate.definitions.skills[0] });
+  assert.throws(
+    () => indexAirDocument(duplicate),
+    (error) =>
+      error instanceof ToubaRuntimeError
+      && error.code === "InvalidAirDocument"
+      && /duplicate AIR id skill:test\/Noop/.test(error.message),
+  );
+
+  const missingId = cloneJson(document);
+  delete missingId.execution_graphs[0].id;
+  assert.throws(
+    () => indexAirDocument(missingId),
+    (error) =>
+      error instanceof ToubaRuntimeError
+      && error.code === "InvalidAirDocument"
+      && /AIR item without id/.test(error.message),
   );
 });
 

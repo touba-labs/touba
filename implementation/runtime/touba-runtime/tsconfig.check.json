@@ -13,6 +13,7 @@
   },
   "include": [
     "src/agent-provider-content.mjs",
+    "src/air-runtime-profile.mjs",
     "src/handler-protocol.mjs",
     "src/human-approval-checkpoints.mjs",
     "src/payload-validation.mjs",
