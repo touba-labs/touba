@@ -56,6 +56,8 @@ function main() {
       "tests/skills-first-v1/validate.mjs",
       "tests/skills-v1/README.md",
       "tests/skills-v1/validate.mjs",
+      "tools/release-readiness.mjs",
+      "tools/release-readiness.test.mjs",
       "docs/developpeur/14-triggers-source-air-anneau-2.md",
       "tools/validate-tree-sitter-corpus.mjs",
       "tools/validate-trigger-parser.mjs",
@@ -88,6 +90,8 @@ function main() {
 
   check("validation scripts", () => {
     assertScript(packageJson, "validate:test-structure");
+    assertScript(packageJson, "release:readiness");
+    assertScript(packageJson, "test:release-readiness");
     assertScript(packageJson, "validate:v1-local");
     assertScript(packageJson, "validate:tool-binding-dx");
     assertScript(packageJson, "validate:js-sdk-project");
