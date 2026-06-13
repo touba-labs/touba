@@ -20,6 +20,8 @@ of the PAP research program (`Probabilistic Agentic Programming`).
 
 Documentation: https://khadimbambalo.github.io/documentation-site/
 
+Release history: [`CHANGELOG.md`](CHANGELOG.md)
+
 ## Why Touba
 
 Touba gives agentic software an explicit programming model. It separates what a
