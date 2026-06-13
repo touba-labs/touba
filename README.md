@@ -126,9 +126,9 @@ runtime refuses anything outside these declarations before any external effect.
 
 ## Architecture
 
-```text
-source .tb -> compiler -> AIR JSON -> runtime -> traces
-```
+<p align="center">
+ <img src="assets/diagrams/touba-pipeline.svg" alt="Touba execution pipeline: source .tb compiles to AIR, the runtime executes AIR under checks, and every run emits traces." width="720">
+</p>
 
 - the compiler turns `.tb` sources into AIR, an explicit intermediate
  representation of every executable node;

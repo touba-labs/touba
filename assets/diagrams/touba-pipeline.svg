@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 130" role="img" aria-label="Touba execution pipeline: source .tb compiles to AIR, the runtime executes AIR under checks, and every run emits traces.">
+  <title>source .tb -&gt; compiler -&gt; AIR JSON -&gt; runtime -&gt; traces</title>
+  <style>
+    .node {
+      fill: none;
+      stroke: #8b949e;
+      stroke-width: 2;
+      animation: pulseStroke 6s ease-in-out infinite;
+    }
+    .label {
+      fill: #8b949e;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 17px;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      animation: pulseFill 6s ease-in-out infinite;
+    }
+    .arrow {
+      stroke: #8b949e;
+      stroke-width: 2;
+      stroke-linecap: round;
+      fill: none;
+      animation: pulseStroke 6s ease-in-out infinite;
+    }
+    .head {
+      fill: #8b949e;
+      animation: pulseFill 6s ease-in-out infinite;
+    }
+    .d0 { animation-delay: 0s; }
+    .d1 { animation-delay: 0.9s; }
+    .d2 { animation-delay: 1.8s; }
+    .d3 { animation-delay: 2.7s; }
+    .d4 { animation-delay: 3.6s; }
+    .a0 { animation-delay: 0.45s; }
+    .a1 { animation-delay: 1.35s; }
+    .a2 { animation-delay: 2.25s; }
+    .a3 { animation-delay: 3.15s; }
+
+    @keyframes pulseStroke {
+      0%, 78%, 100% { stroke: #8b949e; }
+      14%, 30% { stroke: #2f63c6; }
+    }
+    @keyframes pulseFill {
+      0%, 78%, 100% { fill: #8b949e; }
+      14%, 30% { fill: #2f63c6; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .node, .label, .arrow, .head { animation: none; }
+    }
+  </style>
+
+  <!-- nodes -->
+  <rect class="node d0" x="8" y="37" width="150" height="56" rx="10" ry="10" />
+  <text class="label d0" x="83" y="66">source .tb</text>
+
+  <rect class="node d1" x="196" y="37" width="150" height="56" rx="10" ry="10" />
+  <text class="label d1" x="271" y="66">compiler</text>
+
+  <rect class="node d2" x="384" y="37" width="150" height="56" rx="10" ry="10" />
+  <text class="label d2" x="459" y="66">AIR JSON</text>
+
+  <rect class="node d3" x="572" y="37" width="150" height="56" rx="10" ry="10" />
+  <text class="label d3" x="647" y="66">runtime</text>
+
+  <rect class="node d4" x="760" y="37" width="150" height="56" rx="10" ry="10" />
+  <text class="label d4" x="835" y="66">traces</text>
+
+  <!-- arrows -->
+  <line class="arrow a0" x1="158" y1="65" x2="188" y2="65" />
+  <polygon class="head a0" points="188,59 196,65 188,71" />
+
+  <line class="arrow a1" x1="346" y1="65" x2="376" y2="65" />
+  <polygon class="head a1" points="376,59 384,65 376,71" />
+
+  <line class="arrow a2" x1="534" y1="65" x2="564" y2="65" />
+  <polygon class="head a2" points="564,59 572,65 564,71" />
+
+  <line class="arrow a3" x1="722" y1="65" x2="752" y2="65" />
+  <polygon class="head a3" points="752,59 760,65 752,71" />
+</svg>
