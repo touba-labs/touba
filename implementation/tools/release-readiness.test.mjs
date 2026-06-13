@@ -34,7 +34,7 @@ test("builds a stable blocked V1 release readiness report", () => {
   assert.equal(report.implementation_version, "0.1.0");
   assert.equal(report.overall_status, "blocked");
   assert.deepEqual(report.counts, {
-    satisfied: 14,
+    satisfied: 13,
     pending: 0,
     blocked: 4,
     failed: 0,

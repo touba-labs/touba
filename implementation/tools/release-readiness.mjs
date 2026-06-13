@@ -20,10 +20,9 @@ const REQUIRED_SCRIPTS = Object.freeze([
 
 const REQUIRED_FILES = Object.freeze([
   ["versioning_policy", "VERSIONING.md"],
+  ["repository_readme", "../README.md"],
   ["source_ci_workflow", "../.github/workflows/source-ci.yml"],
-  ["installation_docs", "../docs/demarrer/installation.md"],
-  ["first_program_docs", "../docs/demarrer/premier-programme.md"],
-  ["external_user_session_protocol", "../validation/session-utilisateur-externe-v1.md"],
+  ["external_user_session_kit", "EXTERNAL-USER-SESSION.md"],
 ]);
 
 const VERSIONED_PACKAGES = Object.freeze([
@@ -61,7 +60,7 @@ const CURRENT_RELEASE_GATES = Object.freeze([
     id: "external_user_validation",
     status: "blocked",
     required: true,
-    evidence: ["validation/session-utilisateur-externe-v1.md"],
+    evidence: ["implementation/EXTERNAL-USER-SESSION.md"],
     reason: "an external user must complete the documented installation and first-run session",
   },
   {
