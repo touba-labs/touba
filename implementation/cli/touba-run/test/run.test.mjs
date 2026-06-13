@@ -3054,8 +3054,8 @@ function compileFixtureToAir(workspace, fixturePath, name) {
 
 function writeFixtureManifest(workspace, fileName) {
   const raw = readFileSync(join(toolBindingV1FixtureRoot, "manifests", fileName), "utf8")
-    .replaceAll("__NODE_EXECUTABLE_SET_BY_TEST__", process.execPath)
-    .replaceAll("__FIXTURE_ROOT_SET_BY_TEST__", toolBindingV1FixtureRoot);
+    .replaceAll("\"__NODE_EXECUTABLE_SET_BY_TEST__\"", JSON.stringify(process.execPath))
+    .replaceAll("\"__FIXTURE_ROOT_SET_BY_TEST__\"", JSON.stringify(toolBindingV1FixtureRoot));
   const manifestPath = join(workspace, fileName);
   writeFileSync(manifestPath, raw, "utf8");
   return manifestPath;

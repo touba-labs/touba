@@ -89,8 +89,8 @@ test("refuses negative tool binding V1 fixture manifests before or during handle
 
 function fixtureManifest(fileName) {
   const raw = readFileSync(resolve(fixtureRoot, "manifests", fileName), "utf8")
-    .replaceAll("__NODE_EXECUTABLE_SET_BY_TEST__", process.execPath)
-    .replaceAll("__FIXTURE_ROOT_SET_BY_TEST__", fixtureRoot);
+    .replaceAll("\"__NODE_EXECUTABLE_SET_BY_TEST__\"", JSON.stringify(process.execPath))
+    .replaceAll("\"__FIXTURE_ROOT_SET_BY_TEST__\"", JSON.stringify(fixtureRoot));
   return loadToolBindingManifestFromJson(raw);
 }
 

@@ -146,6 +146,7 @@ test("loads explicit dotenv and touba_store secret sources without serializing v
       },
     })],
   ]);
+  const normalizeTestPath = (path) => path.replaceAll("\\", "/");
   const secretStore = loadSecretsFromJson(JSON.stringify({
     secrets_version: "touba-secrets-v1",
     secrets: {
@@ -162,8 +163,8 @@ test("loads explicit dotenv and touba_store secret sources without serializing v
     },
   }), {
     baseDir: "/project",
-    fileExists: (path) => files.has(path),
-    readTextFile: (path) => files.get(path),
+    fileExists: (path) => files.has(normalizeTestPath(path)),
+    readTextFile: (path) => files.get(normalizeTestPath(path)),
   });
 
   assert.equal(secretStore.has("OPENAI_API_KEY"), true);
