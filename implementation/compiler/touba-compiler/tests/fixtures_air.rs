@@ -610,6 +610,12 @@ const HUMAN_APPROVAL_POSITIVE_AIR_FIXTURES: &[(&str, &str)] = &[
             "../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/tb-human-v1-p03-strategy-approval.tb"
         ),
     ),
+    (
+        "tb-human-v1-p04",
+        include_str!(
+            "../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/tb-human-v1-p04-approval-after-effect-checkpointable.tb"
+        ),
+    ),
 ];
 
 const HUMAN_APPROVAL_NEGATIVE_AIR_FIXTURES: &[NegativeAirFixture] = &[
@@ -640,13 +646,6 @@ const HUMAN_APPROVAL_NEGATIVE_AIR_FIXTURES: &[NegativeAirFixture] = &[
             "../../../grammar/tree-sitter-touba/examples/human-approval-v1/negative/semantic/tb-human-v1-n04-function-approval.tb"
         ),
         expected_code: AirDiagnosticCode::HumanApprovalInFunction,
-    },
-    NegativeAirFixture {
-        source_id: "tb-human-v1-n07",
-        source: include_str!(
-            "../../../grammar/tree-sitter-touba/examples/human-approval-v1/negative/semantic/tb-human-v1-n07-approval-after-effect.tb"
-        ),
-        expected_code: AirDiagnosticCode::HumanApprovalAfterEffectRequiresDurableResume,
     },
 ];
 

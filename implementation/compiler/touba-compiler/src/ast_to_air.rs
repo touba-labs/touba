@@ -2132,15 +2132,6 @@ impl<'a> FlowGraphBuilder<'a> {
             ));
             return FlowFragment::empty();
         }
-        if self.external_effect_possible {
-            self.diagnostics.push(AirDiagnostic::new(
-                AirDiagnosticCode::HumanApprovalAfterEffectRequiresDurableResume,
-                "human approval after a possible external effect requires durable resume, which is not part of V1",
-                Some(statement.source_ref.clone()),
-            ));
-            return FlowFragment::empty();
-        }
-
         let context_refs = self.lower_human_approval_context_refs(statement);
         let result_binding = statement
             .result_binding
