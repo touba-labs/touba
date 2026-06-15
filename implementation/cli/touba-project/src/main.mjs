@@ -377,7 +377,7 @@ function newestExistingCompiler(paths) {
 }
 
 function runCommand(rawArgs) {
-  if (rawArgs.length === 0 || rawArgs[0] === "--help" || rawArgs[0] === "-h") {
+  if (rawArgs.length === 0 || rawArgs.includes("--help") || rawArgs.includes("-h")) {
     return { text: runUsage(), exitCode: 0 };
   }
   const profiledArgs = applyRunProfileToArgs(rawArgs);

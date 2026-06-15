@@ -1832,6 +1832,11 @@ test("CLI run help exposes project profiles before runtime options", () => {
   assert.match(result.stdout, /--human-checkpoint-out <path> \| --human-resume-checkpoint <path>/);
   assert.match(result.stdout, /--trace-out <path>/);
   assert.match(result.stdout, /--evidence-out <run\.evidence\.json>/);
+
+  const profiledResult = spawnSync(process.execPath, [cliPath, "run", "--profile", "prod", "--help"], { encoding: "utf8" });
+  assert.equal(profiledResult.status, 0, profiledResult.stderr);
+  assert.match(profiledResult.stdout, /Usage: touba run <program\.air\.json> \[--profile dev\|prod\]/);
+  assert.equal(profiledResult.stderr, "");
 });
 
 test("CLI version reports public command and schema versions", () => {
