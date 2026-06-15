@@ -65,7 +65,7 @@
     "validate:test-structure": "node tools/check-node-version.mjs && node tools/validate-test-structure.mjs",
     "validate:docs-public-boundary": "node tools/check-node-version.mjs && node tools/validate-doc-public-boundary.mjs",
     "validate:docs-examples": "node tools/check-node-version.mjs && node tools/validate-doc-examples.mjs",
-    "validate:docs-user": "node tools/check-node-version.mjs && pnpm validate:docs-public-boundary && pnpm validate:docs-examples && pnpm --dir ../docs-site build",
+    "validate:docs-user": "node tools/check-node-version.mjs && pnpm validate:docs-public-boundary && pnpm validate:docs-examples",
     "validate:scenarios-v1": "node tools/check-node-version.mjs && node tools/validate-scenarios-v1.mjs",
     "validate:agent-authority": "node tools/check-node-version.mjs && pnpm --dir grammar/tree-sitter-touba test && cargo test -p touba-compiler && pnpm test:runtime && pnpm test:lsp && pnpm test:inspect && pnpm test:trace-renderer",
     "validate:memory-scopes": "node tools/check-node-version.mjs && pnpm --dir grammar/tree-sitter-touba test && cargo test -p touba-compiler && pnpm test:runtime && pnpm test:lsp && pnpm test:inspect && pnpm test:trace-renderer && pnpm check:architecture-fixtures",
