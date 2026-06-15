@@ -39,6 +39,7 @@ const implementationRoot = resolve(currentDir, "../../..");
 const args = process.argv.slice(2);
 
 const TOUBA_VERSION = "0.1.0";
+const DOCTOR_SCHEMA_VERSION = "touba-doctor-v0.1";
 const SCHEMA_VERSIONS = Object.freeze({
   air: "air-minimal-v0.1",
   trace: "trace-minimal-v0.1",
@@ -51,6 +52,32 @@ const SCHEMA_VERSIONS = Object.freeze({
   supply_chain_lock: "touba-lock-v0.1",
   supply_chain_validation: "touba-supply-chain-validation-v0.1",
 });
+const FEATURE_VERSIONS = Object.freeze({
+  run_profiles: "touba-run-profile-v0.1",
+  human_checkpoints: "touba-run-checkpoint-v0.1",
+  registry_static_resolve: "touba-static-registry-lock-v0.1",
+  mcp_import: "touba-mcp-import-v0.1",
+  rest_scaffold: "touba-rest-scaffold-v0.1",
+  trace_output: "trace-minimal-v0.1",
+});
+const PUBLIC_COMMANDS = Object.freeze({
+  compile: true,
+  run: true,
+  run_profile: true,
+  doctor: true,
+  trigger_run: true,
+  inspect: true,
+  audit: true,
+  supply_chain_validate: true,
+  registry_resolve: true,
+  mcp_import: true,
+  rest_scaffold: true,
+  manifest_generate: true,
+  handler_stub: true,
+  version: true,
+  update_policy: true,
+});
+const REQUIRED_COMPONENTS = Object.freeze(["cli", "runtime", "inspect", "audit", "supply_chain", "manifest"]);
 
 try {
   const result = await dispatch(args);
@@ -179,6 +206,9 @@ async function dispatch(rawArgs) {
   }
   if (command === "version") {
     return versionCommand(rest);
+  }
+  if (command === "doctor") {
+    return doctorCommand(rest);
   }
   if (command === "update") {
     return updateCommand(rest);
@@ -347,8 +377,35 @@ function newestExistingCompiler(paths) {
 }
 
 function runCommand(rawArgs) {
+  if (rawArgs.length === 0 || rawArgs[0] === "--help" || rawArgs[0] === "-h") {
+    return { text: runUsage(), exitCode: 0 };
+  }
   const profiledArgs = applyRunProfileToArgs(rawArgs);
   return runNodeScript(["cli", "touba-run", "src", "run.mjs"], profiledArgs);
+}
+
+function runUsage() {
+  return [
+    "Usage: touba run <program.air.json> [--profile dev|prod] [runtime options]",
+    "",
+    "Project profiles are read from touba.project.json in the current directory.",
+    "The default prod profile requires touba.lock.json and enables strict supply-chain validation before dispatch.",
+    "",
+    "Common runtime options:",
+    "  --manifest <touba.manifest.json>",
+    "  --secrets <touba.secrets.json>",
+    "  --resource-bindings <touba.resources.json> [--require-resource-bindings]",
+    "  --supply-chain-lock <touba.lock.json> [--require-supply-chain-lock]",
+    "  --inputs-json <json-object>",
+    "  --human-decisions <path> | --human-decisions-json <json-object>",
+    "  --human-checkpoint-out <path> | --human-resume-checkpoint <path>",
+    "  --agent-decision-provider <path>",
+    "  --max-agent-steps <n> --max-provider-calls <n> --max-tool-calls <n>",
+    "  --entry <air-ref>",
+    "  --output show|result|trace|all",
+    "  --trace-out <path>",
+    "  --evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]",
+  ].join("\n");
 }
 
 function triggerCommand(rawArgs) {
@@ -513,6 +570,27 @@ function versionCommand(rawArgs) {
   throw new Error(`unknown option ${rawArgs[0]}`);
 }
 
+function doctorCommand(rawArgs) {
+  const options = parseDoctorOptions(rawArgs);
+  if (options.help === true) {
+    return {
+      text: "Usage: touba doctor [--json]",
+      exitCode: 0,
+    };
+  }
+  const report = toubaDoctor();
+  if (options.json === true) {
+    return {
+      text: JSON.stringify(report, null, 2),
+      exitCode: report.status === "error" ? 1 : 0,
+    };
+  }
+  return {
+    text: renderDoctorText(report),
+    exitCode: report.status === "error" ? 1 : 0,
+  };
+}
+
 function updateCommand(rawArgs) {
   if (rawArgs.length > 0 && rawArgs[0] !== "--help" && rawArgs[0] !== "-h") {
     throw new Error(`unknown option ${rawArgs[0]}`);
@@ -526,6 +604,20 @@ function updateCommand(rawArgs) {
     ].join("\n"),
     exitCode: 1,
   };
+}
+
+function parseDoctorOptions(rawArgs) {
+  const options = { json: false, help: false };
+  for (const arg of rawArgs) {
+    if (arg === "--json") {
+      options.json = true;
+    } else if (arg === "--help" || arg === "-h") {
+      options.help = true;
+    } else {
+      throw new Error(`unknown option ${arg}`);
+    }
+  }
+  return options;
 }
 
 function runNodeScript(relativePath, rawArgs) {
@@ -571,11 +663,171 @@ function toubaVersions() {
     supply_chain: readPackageVersion(join(implementationRoot, "cli", "touba-supply-chain", "package.json"), TOUBA_VERSION),
     manifest: readPackageVersion(join(implementationRoot, "cli", "touba-manifest", "package.json"), TOUBA_VERSION),
     schemas: SCHEMA_VERSIONS,
+    features: FEATURE_VERSIONS,
+    commands: PUBLIC_COMMANDS,
+    build: {
+      id: process.env.TOUBA_BUILD_ID ?? process.env.GITHUB_SHA?.slice(0, 12) ?? "source-local",
+      node: process.version,
+    },
     distribution: {
       channel: process.env.TOUBA_DISTRIBUTION_CHANNEL ?? "local-development",
       platform: `${process.platform}-${process.arch}`,
     },
   };
+}
+
+function toubaDoctor() {
+  const version = toubaVersions();
+  const checks = [
+    checkNodeVersion(),
+    checkComponentVersions(version),
+    checkCommandSurface(),
+    checkCurrentProjectProfiles(),
+  ];
+  const status = aggregateDoctorStatus(checks);
+  return {
+    doctor_schema_version: DOCTOR_SCHEMA_VERSION,
+    status,
+    executable: {
+      node: process.execPath,
+      cli_entrypoint: process.argv[1] ?? null,
+      cwd: process.cwd(),
+    },
+    version,
+    checks,
+  };
+}
+
+function checkNodeVersion() {
+  const [majorText] = process.versions.node.split(".");
+  const major = Number.parseInt(majorText, 10);
+  const ok = major >= 24 && major < 25;
+  return {
+    id: "node_version",
+    status: ok ? "ok" : "error",
+    message: ok ? `Node ${process.versions.node} satisfies >=24 <25` : `Node ${process.versions.node} does not satisfy >=24 <25`,
+    details: {
+      node: process.versions.node,
+      expected: ">=24 <25",
+    },
+  };
+}
+
+function checkComponentVersions(version) {
+  const invalid = REQUIRED_COMPONENTS.filter((component) => {
+    const value = version[component];
+    return value === undefined || value === "unknown" || value === "0.0.0";
+  });
+  return {
+    id: "component_versions",
+    status: invalid.length === 0 ? "ok" : "error",
+    message: invalid.length === 0
+      ? "All public components report concrete versions"
+      : `Invalid component versions: ${invalid.join(", ")}`,
+    details: Object.fromEntries(REQUIRED_COMPONENTS.map((component) => [component, version[component] ?? "unknown"])),
+  };
+}
+
+function checkCommandSurface() {
+  const requiredScripts = {
+    run: join(implementationRoot, "cli", "touba-run", "src", "run.mjs"),
+    inspect: join(implementationRoot, "cli", "touba-inspect", "src", "inspect.mjs"),
+    audit: join(implementationRoot, "cli", "touba-audit", "src", "audit.mjs"),
+    supply_chain_validate: join(implementationRoot, "cli", "touba-supply-chain", "src", "validate.mjs"),
+    manifest_generate: join(implementationRoot, "cli", "touba-manifest", "src", "generate.mjs"),
+    handler_stub: join(implementationRoot, "cli", "touba-manifest", "src", "stub.mjs"),
+  };
+  const missing = Object.entries(requiredScripts)
+    .filter(([, path]) => !existsSync(path))
+    .map(([command]) => command);
+  return {
+    id: "public_command_surface",
+    status: missing.length === 0 ? "ok" : "error",
+    message: missing.length === 0
+      ? "Public command scripts are present"
+      : `Missing public command scripts: ${missing.join(", ")}`,
+    details: {
+      commands: PUBLIC_COMMANDS,
+      missing,
+    },
+  };
+}
+
+function checkCurrentProjectProfiles() {
+  const configPath = resolve(process.cwd(), "touba.project.json");
+  if (!existsSync(configPath)) {
+    return {
+      id: "project_run_profiles",
+      status: "info",
+      message: "No touba.project.json in the current directory; --profile requires a Touba project root",
+      details: {
+        project_config_path: configPath,
+        present: false,
+      },
+    };
+  }
+  try {
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    const profiles = config?.run_profiles && typeof config.run_profiles === "object" && !Array.isArray(config.run_profiles)
+      ? config.run_profiles
+      : {};
+    const hasDev = profiles.dev !== undefined;
+    const hasProd = profiles.prod !== undefined;
+    const prodRequiresLock = profiles.prod?.require_supply_chain_lock === true
+      && typeof profiles.prod?.supply_chain_lock === "string"
+      && profiles.prod.supply_chain_lock.length > 0;
+    const ok = hasDev && hasProd && prodRequiresLock;
+    return {
+      id: "project_run_profiles",
+      status: ok ? "ok" : "warning",
+      message: ok
+        ? "Project declares dev and prod run profiles; prod requires a supply-chain lock"
+        : "Project run profiles are present but incomplete for the default V1 dev/prod workflow",
+      details: {
+        project_config_path: configPath,
+        present: true,
+        profiles: Object.keys(profiles).sort(),
+        prod_requires_supply_chain_lock: prodRequiresLock,
+      },
+    };
+  } catch (error) {
+    return {
+      id: "project_run_profiles",
+      status: "error",
+      message: `Cannot read touba.project.json: ${error instanceof Error ? error.message : String(error)}`,
+      details: {
+        project_config_path: configPath,
+        present: true,
+      },
+    };
+  }
+}
+
+function aggregateDoctorStatus(checks) {
+  if (checks.some((check) => check.status === "error")) {
+    return "error";
+  }
+  if (checks.some((check) => check.status === "warning")) {
+    return "warning";
+  }
+  return "ok";
+}
+
+function renderDoctorText(report) {
+  const lines = [
+    `Touba Doctor ${report.doctor_schema_version}`,
+    `Status ${report.status}`,
+    `CLI ${report.version.cli}`,
+    `Runtime ${report.version.runtime}`,
+    `Distribution ${report.version.distribution.channel} ${report.version.distribution.platform}`,
+    `Node ${report.version.build.node}`,
+    "",
+    "Checks",
+  ];
+  for (const check of report.checks) {
+    lines.push(`- ${check.status} ${check.id}: ${check.message}`);
+  }
+  return lines.join("\n");
 }
 
 function renderVersionsText(info) {
@@ -973,6 +1225,7 @@ function printUsage() {
   touba manifest generate <air.json> --stdout
   touba handler stub <air.json> [--tool-ref <tool_ref>] [--handler-root <path>] [--force]
   touba version [--json]
+  touba doctor [--json]
   touba update
 `);
 }

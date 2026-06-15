@@ -67,6 +67,14 @@ function checkReleaseArchive(plan) {
     assertEqual(versionReport.cli, plan.toubaVersion, "CLI version");
     assertEqual(versionReport.distribution.channel, plan.channel, "distribution channel");
     assertEqual(versionReport.distribution.platform, plan.platform, "distribution platform");
+    assertEqual(versionReport.commands.doctor, true, "doctor command manifest");
+    assertEqual(versionReport.commands.run_profile, true, "run profile command manifest");
+
+    const doctor = runTouba(cliPath, ["doctor", "--json"], releaseEnv(workspace, installPrefix));
+    const doctorReport = JSON.parse(doctor.stdout);
+    assertEqual(doctorReport.status, "ok", "doctor status");
+    assertEqual(doctorReport.version.cli, plan.toubaVersion, "doctor CLI version");
+    assertEqual(doctorReport.version.commands.supply_chain_validate, true, "doctor supply-chain command manifest");
 
     const update = runTouba(cliPath, ["update"], releaseEnv(workspace, installPrefix), 1);
     if (!update.stdout.includes("self-update is not available")) {

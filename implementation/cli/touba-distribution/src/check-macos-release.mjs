@@ -82,6 +82,11 @@ function checkRelease(release) {
     assertEqual(versionReport.manifest, "0.1.0", "manifest version");
     assertEqual(versionReport.distribution.channel, "macos-local-release", "distribution channel");
     assertEqual(versionReport.distribution.platform, "darwin-arm64", "distribution platform");
+    assertEqual(versionReport.commands.doctor, true, "doctor command manifest");
+
+    const doctor = runTouba(["doctor", "--json"], env, 0);
+    const doctorReport = JSON.parse(doctor.stdout);
+    assertEqual(doctorReport.status, "ok", "doctor status");
 
     const projectRoot = join(workspace, "project");
     runTouba(["init", "--root", projectRoot], env, 0);

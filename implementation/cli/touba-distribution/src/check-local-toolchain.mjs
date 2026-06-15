@@ -71,6 +71,12 @@ function checkToolchain(toolchainRoot) {
     const versionReport = JSON.parse(version.stdout);
     assertEqual(versionReport.schemas.air, "air-minimal-v0.1", "AIR schema");
     assertEqual(versionReport.distribution.channel, "local-archive-check", "distribution channel");
+    assertEqual(versionReport.commands.doctor, true, "doctor command manifest");
+
+    const doctor = runTouba(["doctor", "--json"], { env });
+    const doctorReport = JSON.parse(doctor.stdout);
+    assertEqual(doctorReport.status, "ok", "doctor status");
+    assertEqual(doctorReport.version.commands.run_profile, true, "doctor run profile command manifest");
 
     const projectRoot = join(workspace, "project");
     runTouba(["init", "--root", projectRoot], { env });

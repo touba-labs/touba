@@ -33,6 +33,11 @@ function checkInstall(toolchainRoot) {
     const version = runTouba(["version", "--json"], env, 0);
     const versionReport = JSON.parse(version.stdout);
     assertEqual(versionReport.distribution.channel, "local-archive", "distribution channel");
+    assertEqual(versionReport.commands.doctor, true, "doctor command manifest");
+
+    const doctor = runTouba(["doctor", "--json"], env, 0);
+    const doctorReport = JSON.parse(doctor.stdout);
+    assertEqual(doctorReport.status, "ok", "doctor status");
 
     const projectRoot = join(workspace, "project");
     runTouba(["init", "--root", projectRoot], env, 0);

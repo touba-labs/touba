@@ -1772,6 +1772,7 @@ test("CLI help prints usage without a synthetic report", () => {
   assert.match(result.stdout, /touba manifest generate <air\.json> --out <touba\.manifest\.json>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --stdout/);
   assert.match(result.stdout, /touba handler stub <air\.json> \[--tool-ref <tool_ref>\] \[--handler-root <path>\] \[--force\]/);
+  assert.match(result.stdout, /touba doctor \[--json\]/);
   assert.match(result.stdout, /--ownership <touba\.ownership\.json>/);
   assert.match(result.stdout, /touba audit --trace <trace\.json>/);
   assert.match(result.stdout, /--report-out <report\.trace-audit-report\.json>/);
@@ -1822,6 +1823,17 @@ test("CLI trigger, manifest and handler help match current public options", () =
   assert.equal(supplyChainResult.stdout.includes("registry"), false);
 });
 
+test("CLI run help exposes project profiles before runtime options", () => {
+  const result = spawnSync(process.execPath, [cliPath, "run", "--help"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Usage: touba run <program\.air\.json> \[--profile dev\|prod\]/);
+  assert.match(result.stdout, /Project profiles are read from touba\.project\.json/);
+  assert.match(result.stdout, /prod profile requires touba\.lock\.json/);
+  assert.match(result.stdout, /--human-checkpoint-out <path> \| --human-resume-checkpoint <path>/);
+  assert.match(result.stdout, /--trace-out <path>/);
+  assert.match(result.stdout, /--evidence-out <run\.evidence\.json>/);
+});
+
 test("CLI version reports public command and schema versions", () => {
   const result = spawnSync(process.execPath, [cliPath, "version", "--json"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
@@ -1841,12 +1853,33 @@ test("CLI version reports public command and schema versions", () => {
   assert.equal(report.schemas.trace_audit_export, "trace-audit-export-v0.1-local");
   assert.equal(report.schemas.supply_chain_lock, "touba-lock-v0.1");
   assert.equal(report.schemas.supply_chain_validation, "touba-supply-chain-validation-v0.1");
+  assert.equal(report.features.run_profiles, "touba-run-profile-v0.1");
+  assert.equal(report.features.human_checkpoints, "touba-run-checkpoint-v0.1");
+  assert.equal(report.features.registry_static_resolve, "touba-static-registry-lock-v0.1");
+  assert.equal(report.commands.run_profile, true);
+  assert.equal(report.commands.doctor, true);
+  assert.equal(report.build.node, process.version);
   for (const component of ["cli", "runtime", "inspect", "audit", "supply_chain", "manifest"]) {
     assert.notEqual(report[component], "0.0.0", component);
     assert.notEqual(report[component], "unknown", component);
   }
   assert.equal(report.distribution.channel, "local-development");
   assert.equal(report.distribution.platform, `${process.platform}-${process.arch}`);
+});
+
+test("CLI doctor reports installation health and public feature surface", () => {
+  const result = spawnSync(process.execPath, [cliPath, "doctor", "--json"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.doctor_schema_version, "touba-doctor-v0.1");
+  assert.equal(report.status, "ok");
+  assert.equal(report.version.cli, "0.1.0");
+  assert.equal(report.version.commands.supply_chain_validate, true);
+  assert.equal(report.version.commands.registry_resolve, true);
+  assert.equal(report.version.commands.run_profile, true);
+  assert.equal(report.checks.some((check) => check.id === "node_version" && check.status === "ok"), true);
+  assert.equal(report.checks.some((check) => check.id === "component_versions" && check.status === "ok"), true);
+  assert.equal(report.checks.some((check) => check.id === "public_command_surface" && check.status === "ok"), true);
 });
 
 test("CLI update is explicit when self-update is unavailable", () => {

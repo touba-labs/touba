@@ -1559,6 +1559,72 @@ test("prints show messages by default and keeps trace available through --trace-
   }
 });
 
+test("writes optional run evidence manifest separately from trace output", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-evidence-"));
+  try {
+    const airPath = writeAirDocument(workspace, linearSourceDocument());
+    const tracePath = join(workspace, "trace.json");
+    const evidencePath = join(workspace, "run.evidence.json");
+    const stdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--local-fetch-source-text",
+        "local source text",
+        "--output",
+        "result",
+        "--trace-out",
+        tracePath,
+        "--evidence-out",
+        evidencePath,
+        "--evidence-ref",
+        "db=postgres://example.local/runs/123",
+      ],
+      { encoding: "utf8" },
+    );
+
+    assert.equal(JSON.parse(stdout), "done");
+    assert.equal(existsSync(tracePath), true);
+    const evidenceText = readFileSync(evidencePath, "utf8");
+    const evidence = JSON.parse(evidenceText);
+    assert.equal(evidence.evidence_schema_version, "touba-run-evidence-v0.1");
+    assert.equal(evidence.run.status, "success");
+    assert.equal(evidence.run.entry_ref, "skill:examples.linear_skill/BuildNote");
+    assert.equal(evidence.trace.output.path, tracePath);
+    assert.match(evidence.trace.digest.value, /^[0-9a-f]{64}$/u);
+    assert.equal(evidence.result.available, true);
+    assert.equal(evidence.result.json_type, "string");
+    assert.match(evidence.result.digest.value, /^[0-9a-f]{64}$/u);
+    assert.equal(evidence.checkpoint.available, false);
+    assert.deepEqual(evidence.external_evidence_refs, [
+      { label: "db", uri: "postgres://example.local/runs/123" },
+    ]);
+    assert.equal(evidenceText.includes("local source text"), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("refuses external evidence refs without an evidence output manifest", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-evidence-refused-"));
+  try {
+    const airPath = writeAirDocument(workspace, linearSourceDocument());
+    const failure = runCliExpectFailure([
+      runPath,
+      airPath,
+      "--local-fetch-source-text",
+      "local source text",
+      "--evidence-ref",
+      "db=postgres://example.local/runs/123",
+    ]);
+    assert.equal(failure.status, 2);
+    assert.match(failure.stderr, /--evidence-ref requires --evidence-out/);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("prints returned value with --output result", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-output-"));
   try {
@@ -1873,6 +1939,48 @@ test("runs a pure AIR document through an explicit RP-1 run plan", () => {
     );
 
     assert.equal(JSON.parse(stdout), "planned");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("RP-1 run plan routes trace and optional evidence outputs", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-plan-evidence-"));
+  try {
+    const airPath = join(workspace, "program.air.json");
+    writeFileSync(airPath, JSON.stringify(runPlanPureDocument()), "utf8");
+    const tracePath = join(workspace, "planned.trace.json");
+    const evidencePath = join(workspace, "planned.evidence.json");
+    const runPlanPath = join(workspace, "touba.run-plan.json");
+    writeFileSync(runPlanPath, JSON.stringify({
+      run_plan_schema_version: "touba-run-plan-v0.1",
+      entry_ref: "strategy:examples.run_plan/Run",
+      air: "program.air.json",
+      profile: "dev",
+      outputs: {
+        mode: "result",
+        trace_out: "planned.trace.json",
+        evidence_out: "planned.evidence.json",
+        evidence_refs: [
+          { label: "storage", uri: "file://evidence/state.json" },
+        ],
+      },
+    }), "utf8");
+
+    const stdout = execFileSync(
+      process.execPath,
+      [runPath, "--run-plan", runPlanPath],
+      { encoding: "utf8" },
+    );
+
+    assert.equal(JSON.parse(stdout), "planned");
+    assert.equal(existsSync(tracePath), true);
+    const evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
+    assert.equal(evidence.evidence_schema_version, "touba-run-evidence-v0.1");
+    assert.equal(evidence.trace.output.path, tracePath);
+    assert.deepEqual(evidence.external_evidence_refs, [
+      { label: "storage", uri: "file://evidence/state.json" },
+    ]);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

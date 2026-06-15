@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -24,6 +25,7 @@ import {
 
 const args = process.argv.slice(2);
 const RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v0.1";
+const RUN_EVIDENCE_SCHEMA_VERSION = "touba-run-evidence-v0.1";
 const BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v0.1";
 const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
 const TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
@@ -423,6 +425,15 @@ if (parsedArgs.humanCheckpointOutPath !== undefined) {
   }
 }
 
+if (parsedArgs.evidenceOutPath !== undefined) {
+  try {
+    writeFileSync(parsedArgs.evidenceOutPath, serializeJson(buildRunEvidence(result, parsedArgs)), "utf8");
+  } catch (e) {
+    process.stderr.write(`error: cannot write evidence ${parsedArgs.evidenceOutPath}: ${e.message}\n`);
+    process.exit(1);
+  }
+}
+
 process.stdout.write(renderOutput(result, parsedArgs.outputMode));
 process.exit(result.status === "failure" ? 1 : 0);
 
@@ -517,6 +528,12 @@ function applyRunPlan(parsed, runPlan) {
   }
   if (plan.outputs?.trace_out !== undefined && !parsed.traceOutExplicit) {
     parsed.traceOutPath = resolveRunPlanPath(runPlan, plan.outputs.trace_out);
+  }
+  if (plan.outputs?.evidence_out !== undefined && !parsed.evidenceOutExplicit) {
+    parsed.evidenceOutPath = resolveRunPlanPath(runPlan, plan.outputs.evidence_out);
+  }
+  if (Array.isArray(plan.outputs?.evidence_refs) && parsed.evidenceRefs.length === 0) {
+    parsed.evidenceRefs = plan.outputs.evidence_refs.map((ref) => ({ ...ref }));
   }
   if (plan.trigger_manifest !== undefined) {
     const triggerManifestPath = resolveRunPlanPath(runPlan, plan.trigger_manifest);
@@ -623,6 +640,17 @@ function validateRunPlanOutputs(outputs) {
   }
   if (outputs.trace_out !== undefined && (typeof outputs.trace_out !== "string" || outputs.trace_out.trim() === "")) {
     throw new RunPlanCliError("RunPlanSchemaMismatch", "outputs.trace_out must be a non-empty string");
+  }
+  if (outputs.evidence_out !== undefined && (typeof outputs.evidence_out !== "string" || outputs.evidence_out.trim() === "")) {
+    throw new RunPlanCliError("RunPlanSchemaMismatch", "outputs.evidence_out must be a non-empty string");
+  }
+  if (outputs.evidence_refs !== undefined) {
+    if (!Array.isArray(outputs.evidence_refs)) {
+      throw new RunPlanCliError("RunPlanSchemaMismatch", "outputs.evidence_refs must be an array");
+    }
+    for (const [index, ref] of outputs.evidence_refs.entries()) {
+      validateEvidenceRef(ref, `outputs.evidence_refs[${index}]`, RunPlanCliError);
+    }
   }
 }
 
@@ -960,6 +988,9 @@ function parseArgs(rawArgs) {
     humanResumeCheckpointPath: undefined,
     outputMode: "show",
     traceOutPath: undefined,
+    evidenceOutPath: undefined,
+    evidenceOutExplicit: false,
+    evidenceRefs: [],
     positional: [],
   };
 
@@ -1346,6 +1377,32 @@ function parseArgs(rawArgs) {
     } else if (arg.startsWith("--trace-out=")) {
       parsed.traceOutPath = arg.slice("--trace-out=".length);
       parsed.traceOutExplicit = true;
+    } else if (arg === "--evidence-out") {
+      index += 1;
+      if (index >= rawArgs.length) {
+        return { error: "--evidence-out requires a path" };
+      }
+      parsed.evidenceOutPath = rawArgs[index];
+      parsed.evidenceOutExplicit = true;
+    } else if (arg.startsWith("--evidence-out=")) {
+      parsed.evidenceOutPath = arg.slice("--evidence-out=".length);
+      parsed.evidenceOutExplicit = true;
+    } else if (arg === "--evidence-ref") {
+      index += 1;
+      if (index >= rawArgs.length) {
+        return { error: "--evidence-ref requires label=uri" };
+      }
+      try {
+        parsed.evidenceRefs.push(parseEvidenceRef(rawArgs[index]));
+      } catch (error) {
+        return { error: error.message };
+      }
+    } else if (arg.startsWith("--evidence-ref=")) {
+      try {
+        parsed.evidenceRefs.push(parseEvidenceRef(arg.slice("--evidence-ref=".length)));
+      } catch (error) {
+        return { error: error.message };
+      }
     } else if (arg.startsWith("--")) {
       return { error: `unknown option ${arg}` };
     } else {
@@ -1502,12 +1559,16 @@ function parseArgs(rawArgs) {
     return { error: "--output must be one of: show, result, trace, all" };
   }
 
+  if (parsed.evidenceRefs.length > 0 && parsed.evidenceOutPath === undefined) {
+    return { error: "--evidence-ref requires --evidence-out" };
+  }
+
   return parsed;
 }
 
 function printUsage() {
   process.stderr.write(
-    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object>] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer>] [--state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>]\n",
+    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object>] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer>] [--state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
 }
 
@@ -1614,6 +1675,99 @@ function renderAllOutput(result) {
   sections.push(`[result]\n${JSON.stringify(result.result ?? null, null, 2)}`);
   sections.push(`[trace]\n${JSON.stringify(result.trace, null, 2)}`);
   return `${sections.join("\n\n")}\n`;
+}
+
+function buildRunEvidence(result, parsed) {
+  const trace = result.trace ?? {};
+  const terminalEvent = Array.isArray(trace.events) ? trace.events.at(-1) : undefined;
+  const resultValue = result.result ?? null;
+  const checkpointValue = result.checkpoint ?? null;
+  return {
+    evidence_schema_version: RUN_EVIDENCE_SCHEMA_VERSION,
+    generated_at: new Date().toISOString(),
+    run: {
+      run_id: trace.run?.run_id ?? null,
+      status: result.status,
+      module_ref: trace.run?.module_ref ?? null,
+      entry_ref: trace.run?.entry_ref ?? parsed.entryRef ?? null,
+      terminal_event: terminalEvent?.kind ?? null,
+    },
+    trace: {
+      available: trace !== undefined,
+      events_count: Array.isArray(trace.events) ? trace.events.length : 0,
+      digest: digestJson(trace),
+      output: parsed.traceOutPath === undefined ? null : {
+        kind: "file",
+        path: parsed.traceOutPath,
+      },
+    },
+    result: {
+      available: result.result !== undefined,
+      json_type: jsonType(resultValue),
+      digest: digestJson(resultValue),
+    },
+    checkpoint: {
+      available: checkpointValue !== null,
+      digest: checkpointValue === null ? null : digestJson(checkpointValue),
+      output: parsed.humanCheckpointOutPath === undefined ? null : {
+        kind: "file",
+        path: parsed.humanCheckpointOutPath,
+      },
+    },
+    external_evidence_refs: parsed.evidenceRefs,
+  };
+}
+
+function parseEvidenceRef(raw) {
+  const separatorIndex = raw.indexOf("=");
+  if (separatorIndex <= 0 || separatorIndex === raw.length - 1) {
+    throw new Error("--evidence-ref must use label=uri");
+  }
+  const ref = {
+    label: raw.slice(0, separatorIndex),
+    uri: raw.slice(separatorIndex + 1),
+  };
+  validateEvidenceRef(ref, "--evidence-ref", Error);
+  return ref;
+}
+
+function validateEvidenceRef(ref, label, ErrorClass) {
+  if (!ref || typeof ref !== "object" || Array.isArray(ref)) {
+    throwEvidenceRefError(ErrorClass, `${label} must be an object`);
+  }
+  if (typeof ref.label !== "string" || !/^[A-Za-z0-9_.:-]+$/u.test(ref.label)) {
+    throwEvidenceRefError(ErrorClass, `${label}.label must match [A-Za-z0-9_.:-]+`);
+  }
+  if (typeof ref.uri !== "string" || ref.uri.trim() === "") {
+    throwEvidenceRefError(ErrorClass, `${label}.uri must be a non-empty string`);
+  }
+  if (/(api[_-]?key|password|secret|token)=/iu.test(ref.uri)) {
+    throwEvidenceRefError(ErrorClass, `${label}.uri must not contain obvious secret query parameters`);
+  }
+}
+
+function throwEvidenceRefError(ErrorClass, message) {
+  if (ErrorClass === RunPlanCliError) {
+    throw new RunPlanCliError("RunPlanSchemaMismatch", message);
+  }
+  throw new Error(message);
+}
+
+function digestJson(value) {
+  return {
+    kind: "sha256",
+    value: createHash("sha256").update(JSON.stringify(value)).digest("hex"),
+  };
+}
+
+function jsonType(value) {
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  return typeof value;
 }
 
 function serializeJson(value) {
