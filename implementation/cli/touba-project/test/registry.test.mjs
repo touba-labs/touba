@@ -227,7 +227,7 @@ function createRegistryFixture(options = {}) {
     summary: "Example pack.",
     source: {
       type: "git",
-      url: "https://example.com/packages",
+      url: "https://github.com/pap-touba/touba-skills-library",
       path: "skills/example-pack",
       revision: "main",
     },

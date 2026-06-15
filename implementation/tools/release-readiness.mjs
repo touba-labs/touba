@@ -56,7 +56,7 @@ const CURRENT_RELEASE_GATES = Object.freeze([
     required: true,
     evidence: [
       ".github/workflows/source-ci.yml",
-      "https://github.com/khadimbambalo/touba/actions/runs/27456539602",
+      "https://github.com/pap-touba/touba/actions/runs/27456539602",
     ],
     details: {
       last_observed_status: "success",
@@ -90,7 +90,7 @@ const CURRENT_RELEASE_GATES = Object.freeze([
       "implementation/package.json#scripts.package:touba-release",
       "implementation/package.json#scripts.check:touba-release-archive",
       ".github/workflows/source-ci.yml",
-      "https://github.com/khadimbambalo/touba/actions/runs/27456539602",
+      "https://github.com/pap-touba/touba/actions/runs/27456539602",
     ],
     details: {
       run_status: "success",
@@ -121,7 +121,7 @@ const CURRENT_RELEASE_GATES = Object.freeze([
     id: "public_docs_site_deployment",
     status: "blocked",
     required: true,
-    evidence: ["https://khadimbambalo.github.io/documentation-site/"],
+    evidence: ["https://pap-touba.github.io/documentation-site/"],
     reason: "the public documentation site must be deployed and reachable before V1 public release",
   },
 ]);

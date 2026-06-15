@@ -18,7 +18,7 @@ what a system can do, reviewers see who is allowed to invoke it, and operators
 get observable refusals instead of silent failures. It is the executable path
 of the PAP research program (`Probabilistic Agentic Programming`).
 
-Documentation: https://khadimbambalo.github.io/documentation-site/
+Documentation: https://pap-touba.github.io/documentation-site/
 
 Release history: [`CHANGELOG.md`](CHANGELOG.md)
 
@@ -309,7 +309,7 @@ publish a public release channel.
 
 Touba grew out of the PAP research program. The public research overview and
 the citation reference are maintained in the official documentation:
-https://khadimbambalo.github.io/documentation-site/recherche/
+https://pap-touba.github.io/documentation-site/recherche/
 
 ## Contributing And Feedback
 
@@ -326,7 +326,7 @@ Read `CONTRIBUTING.md`, `FEEDBACK.md`, `SECURITY.md` and
   author  = {Lo, Khadim and Dessureault, Jean-S{\'e}bastien and Alaoui Ismaili, Soukaina},
   title   = {Touba: A Programming Language and Runtime for Governed Agentic Systems},
   year    = {2026},
-  url     = {https://github.com/khadimbambalo/touba},
+  url     = {https://github.com/pap-touba/touba},
   version = {0.1.0}
 }
 ```
