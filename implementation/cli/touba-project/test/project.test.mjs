@@ -602,7 +602,7 @@ test("prepare rejects invalid binding fragments without assembling authority", a
   }
 });
 
-test("prepare write uses a portable node command by default", async () => {
+test("prepare write uses the current node executable by default", async () => {
   const root = tempRoot();
   try {
     writeFileSync(join(root, "input.air.json"), JSON.stringify(airDocumentWithTool(), null, 2), "utf8");
@@ -613,7 +613,34 @@ test("prepare write uses a portable node command by default", async () => {
     });
     const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
     const binding = manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
-    assert.equal(binding.handler.command, "node");
+    assert.equal(binding.handler.command, process.execPath);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("prepare write grants agent secret scopes for reachable secret tools", async () => {
+  const root = tempRoot();
+  try {
+    const air = airDocumentWithToolStrategy();
+    air.definitions.agents = [
+      {
+        id: "agent:examples.data_app/Researcher",
+        name: "Researcher",
+        uses: ["skill:examples.data_app/SearchSkill"],
+        callable_by: [{ caller_kind: "strategy", caller_ref: "strategy:examples.data_app/RunSearch" }],
+      },
+    ];
+    writeFileSync(join(root, "input.air.json"), JSON.stringify(air, null, 2), "utf8");
+    await prepareProject({
+      root,
+      mode: "write",
+      airPaths: ["input.air.json"],
+    });
+    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
+    assert.deepEqual(manifest.agent_secret_scopes, {
+      "agent:examples.data_app/Researcher": ["DATA_API_TOKEN"],
+    });
   } finally {
     cleanup(root);
   }

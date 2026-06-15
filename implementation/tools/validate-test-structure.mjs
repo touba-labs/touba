@@ -489,13 +489,13 @@ function main() {
   });
 
   check("VS Code extension packaging includes SDK dependencies without nested node_modules", () => {
-    assertPath("lsp/touba-vscode-ext/package-local-vsix.mjs");
+    assertPath("lsp/touba-vscode-ext/package-vsix.mjs");
     assertIncludes(
-      "lsp/touba-vscode-ext/package-local-vsix.mjs",
+      "lsp/touba-vscode-ext/package-vsix.mjs",
       'path.join(implementationDir, "runtime", "touba-handler-sdk", "package.json")',
     );
     assertIncludes(
-      "lsp/touba-vscode-ext/package-local-vsix.mjs",
+      "lsp/touba-vscode-ext/package-vsix.mjs",
       'for (const entry of ["package.json", "src"])',
     );
   });

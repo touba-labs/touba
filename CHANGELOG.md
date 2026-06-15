@@ -38,7 +38,7 @@ platform-specific installation instructions.
 ### Ecosystem
 
 - Added static registry metadata resolution into local locks.
-- Added public skills-library and registry contracts for reusable skill packs
+- Added public library and registry contracts for reusable skill packs
   and executable Touba packages.
 - Added starter adoption surfaces for MCP import, REST/OpenAPI scaffolding,
   governed skills and package reuse.

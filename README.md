@@ -230,9 +230,9 @@ or executing package content:
 ```sh
 touba registry resolve \
   --registry ../touba-registry \
-  --package pkg:touba-skills-library/donnees-quebec-dataset-brief \
+  --package pkg:touba-library/donnees-quebec-dataset-brief \
   --version 0.1.0 \
-  --source-root ../touba-skills-library \
+  --source-root ../touba-library \
   --allow-draft \
   --out donnees-quebec.lock.json
 ```

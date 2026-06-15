@@ -28,7 +28,7 @@ export const DEFAULT_DOTENV_PATH = ".env";
 export const DEFAULT_DEV_SECRETS_PROFILE = "touba.secrets.dev.json";
 export const DEFAULT_PROD_SECRETS_PROFILE = "touba.secrets.prod.json";
 export const DEFAULT_HANDLER_EXTENSION = "mjs";
-export const DEFAULT_HANDLER_COMMAND = "node";
+export const DEFAULT_HANDLER_COMMAND = process.execPath;
 export const DEFAULT_TIMEOUT_MS = 5000;
 export const DEFAULT_MAX_PAYLOAD_BYTES = 1048576;
 export const TOUBA_PROJECT_CONFIG_VERSION = "touba-project-v1";
@@ -2482,10 +2482,89 @@ function buildExpectedManifest(airDocuments, options) {
       bindings[tool.id] = expectedBindingForTool(tool, options);
     }
   }
-  return {
+  const manifest = {
     manifest_version: TOUBA_MANIFEST_VERSION,
     bindings: Object.fromEntries(Object.entries(bindings).sort(([a], [b]) => a.localeCompare(b))),
   };
+  const agentSecretScopes = inferAgentSecretScopes(airDocuments);
+  if (Object.keys(agentSecretScopes).length > 0) {
+    manifest.agent_secret_scopes = agentSecretScopes;
+  }
+  return manifest;
+}
+
+function inferAgentSecretScopes(airDocuments) {
+  const toolSecrets = new Map();
+  const usesByRef = new Map();
+  const agents = [];
+
+  for (const document of airDocuments) {
+    for (const tool of document.definitions.tools ?? []) {
+      const secrets = normalizeStringArray(tool.required_secrets);
+      toolSecrets.set(tool.id, secrets);
+    }
+    for (const collection of ["functions", "tools", "skills", "strategies", "agents"]) {
+      for (const definition of document.definitions?.[collection] ?? []) {
+        if (typeof definition.id === "string") {
+          usesByRef.set(definition.id, normalizeUseRefs(definition));
+        }
+      }
+    }
+    for (const agent of document.definitions?.agents ?? []) {
+      if (typeof agent.id === "string") {
+        agents.push(agent);
+      }
+    }
+  }
+
+  const scopes = {};
+  for (const agent of agents) {
+    const secrets = collectReachableToolSecrets(agent.id, usesByRef, toolSecrets);
+    if (secrets.length > 0) {
+      scopes[agent.id] = secrets;
+    }
+  }
+  return Object.fromEntries(Object.entries(scopes).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+function normalizeUseRefs(definition) {
+  const refs = [];
+  for (const ref of normalizeStringArray(definition.uses)) {
+    refs.push(ref);
+  }
+  if (Array.isArray(definition.use_refs)) {
+    for (const record of definition.use_refs) {
+      if (record && typeof record === "object" && typeof record.target_ref === "string") {
+        refs.push(record.target_ref);
+      }
+    }
+  }
+  return [...new Set(refs)].sort();
+}
+
+function collectReachableToolSecrets(rootRef, usesByRef, toolSecrets) {
+  const pending = [...(usesByRef.get(rootRef) ?? [])];
+  const visited = new Set([rootRef]);
+  const secrets = new Set();
+
+  while (pending.length > 0) {
+    const ref = pending.shift();
+    if (typeof ref !== "string" || visited.has(ref)) {
+      continue;
+    }
+    visited.add(ref);
+
+    for (const secret of toolSecrets.get(ref) ?? []) {
+      secrets.add(secret);
+    }
+    for (const nextRef of usesByRef.get(ref) ?? []) {
+      if (!visited.has(nextRef)) {
+        pending.push(nextRef);
+      }
+    }
+  }
+
+  return [...secrets].sort();
 }
 
 function composeBindingFragments({ fragmentPaths, expectedManifest, diagnostics, actions, mode }) {
@@ -4014,6 +4093,7 @@ function inspectManifest({ currentManifest, expectedManifest, manifestPath, diag
     }
     validateBindingCoverage(actual, expected, diagnostics, manifestPath, toolRef);
   }
+  validateAgentSecretScopes(currentManifest, expectedManifest, diagnostics, actions, mode, manifestPath);
 }
 
 function validateBindingCoverage(actual, expected, diagnostics, manifestPath, toolRef) {
@@ -4059,6 +4139,40 @@ function validateBindingCoverage(actual, expected, diagnostics, manifestPath, to
         memory_ref: memory.ref,
         access: memory.access,
       }));
+    }
+  }
+}
+
+function validateAgentSecretScopes(actualManifest, expectedManifest, diagnostics, actions, mode, manifestPath) {
+  for (const [agentRef, secrets] of Object.entries(expectedManifest.agent_secret_scopes ?? {})) {
+    const actualSecrets = actualManifest.agent_secret_scopes?.[agentRef];
+    if (!Array.isArray(actualSecrets)) {
+      actions.push(action(mode === "write" ? "add_agent_secret_scope" : "would_add_agent_secret_scope", manifestPath, {
+        agent_ref: agentRef,
+        secrets,
+      }));
+      if (mode === "check") {
+        diagnostics.push(errorDiagnostic("ManifestAgentSecretScopeMissing", `manifest does not grant secret handles to ${agentRef}`, {
+          manifest_path: manifestPath,
+          agent_ref: agentRef,
+        }));
+      }
+      continue;
+    }
+    for (const secret of secrets) {
+      if (!actualSecrets.includes(secret)) {
+        actions.push(action(mode === "write" ? "add_agent_secret_scope_secret" : "would_add_agent_secret_scope_secret", manifestPath, {
+          agent_ref: agentRef,
+          secret,
+        }));
+        if (mode === "check") {
+          diagnostics.push(errorDiagnostic("ManifestAgentSecretScopeSecretMissing", `manifest does not grant ${secret} to ${agentRef}`, {
+            manifest_path: manifestPath,
+            agent_ref: agentRef,
+            secret,
+          }));
+        }
+      }
     }
   }
 }
@@ -4425,6 +4539,15 @@ function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestP
     if (merged.bindings[toolRef] === undefined) {
       merged.bindings[toolRef] = expectedBinding;
     }
+  }
+  for (const [agentRef, secrets] of Object.entries(expectedManifest.agent_secret_scopes ?? {})) {
+    if (merged.agent_secret_scopes === undefined) {
+      merged.agent_secret_scopes = {};
+    }
+    const currentSecrets = Array.isArray(merged.agent_secret_scopes[agentRef])
+      ? merged.agent_secret_scopes[agentRef]
+      : [];
+    merged.agent_secret_scopes[agentRef] = [...new Set([...currentSecrets, ...secrets])].sort();
   }
   return merged;
 }
