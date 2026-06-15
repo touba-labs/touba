@@ -340,4 +340,4 @@ Touba is authored by Khadim Lo, Professor Jean-Sebastien Dessureault and Soukain
 
 ## License
 
-This repository is licensed under the MIT License. See `LICENSE`.
+This repository is licensed under the Apache License 2.0. See `LICENSE`.

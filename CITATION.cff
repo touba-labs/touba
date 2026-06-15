@@ -17,7 +17,7 @@ authors:
     affiliation: "Mathematics and Computer Science, LSSI, Université du Québec à Trois-Rivières"
 version: 0.1.0
 date-released: "2026-06-12"
-license: MIT
+license: Apache-2.0
 repository-code: "https://github.com/pap-touba/touba"
 url: "https://github.com/pap-touba/touba"
 keywords:

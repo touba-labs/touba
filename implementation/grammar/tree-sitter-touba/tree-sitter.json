@@ -11,7 +11,7 @@
   ],
   "metadata": {
     "version": "0.1.0",
-    "license": "UNLICENSED",
+    "license": "Apache-2.0",
     "description": "Initial Tree-sitter grammar for the bounded Touba v0.1 surface.",
     "authors": [
       {

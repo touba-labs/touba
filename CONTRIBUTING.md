@@ -26,6 +26,13 @@ scope described in `README.md`.
 4. Keep the pull request scoped to one topic.
 5. Include validation notes: tests run, documentation checked and known limits.
 
+## Branch Workflow
+
+Use `dev` as the integration branch and keep `main` for validated public
+content. Start focused work from `dev` on a short branch such as
+`work/<topic>`, `feat/<topic>`, `fix/<topic>` or `docs/<topic>`. Merge or push
+to `main` only after maintainer validation.
+
 ## Commit Messages
 
 Use clear, scoped commit messages:
