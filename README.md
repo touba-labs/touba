@@ -37,6 +37,18 @@ The core model is:
 This distinction makes agentic behavior easier to analyze, test, govern and
 operate than prompt-only orchestration.
 
+## Research Mission
+
+Touba is built to produce resources that can be evaluated and reused in
+industrial contexts, but its primary purpose is research: understanding the
+technical, organizational and societal challenges raised by agentic AI, then
+developing programming models, tools and evidence that respond to them.
+
+Researchers, developers, practitioners and institutions working toward
+responsible, safe, secure, transparent and inclusive AI are invited to
+contribute to this effort through code, documentation, examples, reviews,
+evaluations, criticism, educational material or deployment feedback.
+
 ## Agents as Code
 
 Touba treats agent authority as code. Source `.tb` files, AIR, manifests, run
