@@ -184,8 +184,8 @@ function writeMetadata() {
     ],
     limitations: [
       "local archive profile only",
-      "no public update channel",
-      "no checksum or signature policy applied yet",
+      "manual reinstall update policy",
+      "checksums and signatures are applied by release packaging, not by this local toolchain archive",
     ],
   };
   writeFileSync(join(toolchainRoot, "TOOLCHAIN.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");

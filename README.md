@@ -60,18 +60,26 @@ agents act from unreviewed prompts any more than it would let production
 infrastructure be changed by hand. Touba makes tool access, invocation
 authority, budgets, payload boundaries and execution evidence explicit.
 
-Current limits remain explicit. Touba does not provide a hosted agent service,
-a complete system sandbox, automatic compliance, mandatory signatures or a
-public package registry as available runtime capabilities.
+The distribution roadmap continues through signed installers, package managers,
+hosted operation layers and registry services. The V1 core focuses on the
+language, runtime, CLI, traces, packages and release archives that make governed
+agent execution concrete.
 
 ## Quick Start
 
-Use an installed Touba CLI, or build the local macOS Apple Silicon validation
-bundle (`touba-v0.1.0-darwin-arm64.tar.gz`) from source, then check the CLI:
+Install Touba from [Touba Hub](https://pap-touba.github.io/documentation-site/hub/) or
+from the [GitHub Releases](https://github.com/pap-touba/touba/releases/tag/v0.1.0)
+page. Release archives are available for macOS Apple Silicon, macOS Intel,
+Linux x64 and Windows x64.
+
+Follow the
+[installation guide](https://pap-touba.github.io/documentation-site/docs/demarrer/installation)
+for browser downloads, terminal downloads, checksum verification and platform
+commands. After installation, check the CLI:
 
 ```sh
-sh install.sh
-touba version
+touba version --json
+touba doctor --json
 ```
 
 Create `hello.tb`:
@@ -94,6 +102,25 @@ touba run hello.air.json
 
 The run prints `Touba ready`. Add `--output trace` to see the structured
 execution trace of the same run.
+
+## Installation And Updates
+
+The primary installation surface is Touba Hub:
+https://pap-touba.github.io/documentation-site/hub/
+
+The CLI archives are published as GitHub Release assets:
+
+| Platform | Archive |
+| --- | --- |
+| macOS Apple Silicon | `touba-v0.1.0-darwin-arm64.tar.gz` |
+| macOS Intel | `touba-v0.1.0-darwin-x64.tar.gz` |
+| Linux x64 | `touba-v0.1.0-linux-x64.tar.gz` |
+| Windows x64 | `touba-v0.1.0-win32-x64.tar.gz` |
+
+`touba update` is an update-policy command in V1. It reports the installed
+version, channel, platform, Hub URL, expected archive and reinstall commands.
+It does not perform automatic replacement; reinstall from a newer archive or
+from the package manager channel that installed Touba.
 
 ## Example
 
@@ -186,9 +213,10 @@ fixture validations used to qualify a local build.
 ## Source CI
 
 The repository includes a source-build workflow for pull requests, pushes to
-`main` and manual runs. It also uploads release archives as CI artifacts for
-inspection. Those artifacts are not a public release channel until a manual
-release approval publishes them through a public distribution path.
+`main` and manual runs. The workflow validates the source tree and can produce
+release archives for supported platforms. Public downloads are published
+through GitHub Releases and surfaced in Touba Hub; Actions artifacts are for
+build inspection.
 
 The matrix is:
 
@@ -200,10 +228,9 @@ The matrix is:
 | Windows x64 | `windows-2025` | core build/runtime/CLI validation |
 
 Linux carries the heavier corpus and local toolchain smoke checks to keep macOS
-minutes controlled. The workflow validates source builds only; it is not a
-public release, package publication, notarization or platform support claim.
-All jobs run release metadata tests and upload a platform release archive with
-`SHA256SUMS`, `CHECKSUMS.json` and a generated `GITHUB_RELEASE_DRAFT.md`.
+minutes controlled. All jobs run release metadata tests and can upload a
+platform release archive with `SHA256SUMS`, `CHECKSUMS.json` and generated
+release notes for manual publication.
 
 ## Local Release Packaging
 
@@ -298,15 +325,15 @@ trusted by default.
 
 | Platform | Status | Artifact |
 | --- | --- | --- |
-| macOS Apple Silicon | CI release artifact prepared; local smoke validation available | `touba-v0.1.0-darwin-arm64.tar.gz` |
-| VS Code extension | Local validation artifact | `touba-vscode-0.1.0.vsix`, generated from source |
-| macOS Intel | CI release artifact prepared, no public distribution claim | `darwin-x64` |
-| Linux | CI release artifact prepared, no public distribution claim | `linux-x64` |
-| Windows | CI release artifact prepared, no public distribution claim | `win32-x64` |
+| macOS Apple Silicon | Release archive published | `touba-v0.1.0-darwin-arm64.tar.gz` |
+| macOS Intel | Release archive published | `touba-v0.1.0-darwin-x64.tar.gz` |
+| Linux x64 | Release archive published | `touba-v0.1.0-linux-x64.tar.gz` |
+| Windows x64 | Release archive published | `touba-v0.1.0-win32-x64.tar.gz` |
+| VS Code extension | VSIX published from `touba-ide` | `touba-vscode-0.1.0.vsix` |
 
-Prepared artifacts can be published only after external user validation and
-public distribution-channel gates are closed. This repository does not currently
-publish a public release channel.
+Downloads are available through Touba Hub and GitHub Releases. Signed
+installers, package-manager channels and marketplace publication are the next
+distribution layers.
 
 ## Use This Repository For
 

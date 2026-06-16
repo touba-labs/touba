@@ -1887,11 +1887,36 @@ test("CLI doctor reports installation health and public feature surface", () => 
   assert.equal(report.checks.some((check) => check.id === "public_command_surface" && check.status === "ok"), true);
 });
 
-test("CLI update is explicit when self-update is unavailable", () => {
+test("CLI update reports the manual reinstall policy", () => {
   const result = spawnSync(process.execPath, [cliPath, "update"], { encoding: "utf8" });
   assert.equal(result.status, 1);
-  assert.match(result.stdout, /self-update is not available/);
-  assert.match(result.stdout, /local-development/);
+  assert.match(result.stdout, /Status: manual_reinstall_required/);
+  assert.match(result.stdout, /Installed version: 0\.1\.0/);
+  assert.match(result.stdout, /Channel: local-development/);
+  assert.match(result.stdout, new RegExp(`Platform: ${process.platform}-${process.arch}`));
+  assert.match(result.stdout, /Hub: https:\/\/pap-touba\.github\.io\/documentation-site\/hub\//);
+  assert.match(result.stdout, /Expected archive:/);
+  assert.match(result.stdout, /No automatic update was performed/);
+});
+
+test("CLI update can render a machine-readable reinstall policy", () => {
+  const result = spawnSync(process.execPath, [cliPath, "update", "--json"], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.update_schema_version, "touba-update-policy-v0.1");
+  assert.equal(report.status, "manual_reinstall_required");
+  assert.equal(report.automatic_update, false);
+  assert.equal(report.installed_version, "0.1.0");
+  assert.equal(report.channel, "local-development");
+  assert.equal(report.platform, `${process.platform}-${process.arch}`);
+  assert.equal(report.hub_url, "https://pap-touba.github.io/documentation-site/hub/");
+  assert.equal(report.installation_guide_url, "https://pap-touba.github.io/documentation-site/docs/demarrer/installation");
+});
+
+test("CLI update help is available without reporting a failed update", () => {
+  const result = spawnSync(process.execPath, [cliPath, "update", "--help"], { encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Usage: touba update \[--json\]/);
 });
 
 test("CLI compile delegates to the configured compiler binary", () => {

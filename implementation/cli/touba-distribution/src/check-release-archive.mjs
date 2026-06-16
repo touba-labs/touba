@@ -77,8 +77,11 @@ function checkReleaseArchive(plan) {
     assertEqual(doctorReport.version.commands.supply_chain_validate, true, "doctor supply-chain command manifest");
 
     const update = runTouba(cliPath, ["update"], releaseEnv(workspace, installPrefix), 1);
-    if (!update.stdout.includes("self-update is not available")) {
+    if (!update.stdout.includes("Status: manual_reinstall_required")) {
       throw new Error("update command did not explain the release update policy");
+    }
+    if (!update.stdout.includes("Expected archive:")) {
+      throw new Error("update command did not report the expected archive");
     }
 
     if (process.platform === "win32") {

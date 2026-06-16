@@ -174,8 +174,11 @@ function checkRelease(release) {
     assertEqual(trace.events.at(-1).payload.status, "success", "runtime status");
 
     const update = runTouba(["update"], env, 1);
-    if (!update.stdout.includes("self-update is not available")) {
+    if (!update.stdout.includes("Status: manual_reinstall_required")) {
       throw new Error("update command did not explain the local release policy");
+    }
+    if (!update.stdout.includes("Expected archive:")) {
+      throw new Error("update command did not report the expected archive");
     }
 
     runShell(join(release.release_dir, "install.sh"), ["--prefix", prefix, "--force"], 0, shellEnv);

@@ -72,7 +72,7 @@ function writeInstallationMetadata(source, prefix) {
     prefix,
     toolchain_profile: toolchain.toolchain_profile ?? null,
     platform,
-    update_policy: "no self-update; reinstall from the source archive or use the future public package manager channel",
+    update_policy: "manual reinstall from a newer archive or from the package manager channel that installed Touba",
   }, null, 2)}\n`, "utf8");
 }
 

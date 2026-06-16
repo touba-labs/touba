@@ -28,12 +28,12 @@ platform-specific installation instructions.
 
 ### Distribution
 
-- Prepared CI release artifacts for macOS Apple Silicon, macOS Intel, Linux x64
-  and Windows x64.
-- The V1 public distribution channel is GitHub Releases once the manual
-  Go/No-Go gate passes.
-- Current release artifacts are not signed, not notarized and do not provide a
-  self-update channel.
+- Published V1 CLI release archives for macOS Apple Silicon, macOS Intel, Linux
+  x64 and Windows x64.
+- Added release checksums through `SHA256SUMS` and `CHECKSUMS.json`.
+- Hardened `touba update` as an update-policy diagnostic that reports the
+  installed version, channel, platform, Touba Hub URL, expected archive and
+  reinstall commands in text or JSON.
 
 ### Ecosystem
 

@@ -53,7 +53,7 @@ documented reason to require an exact patch.
 | --- | --- |
 | `local-development` | command executed from the source workspace |
 | `local-archive` | local archive installation |
-| `macos-local-release` | local macOS bundle, not signed, not notarized, no public update channel |
+| `macos-local-release` | macOS release archive installed with a manual reinstall policy |
 
 Seeing `0.0.0` or `unknown` in `touba version` indicates an old or incomplete
 installation, not the current source state. Rebuild and reinstall the local
