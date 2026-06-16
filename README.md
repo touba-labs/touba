@@ -314,8 +314,8 @@ publish a public release channel.
 - following the AIR, runtime and trace contracts;
 - working on the compiler, CLI, SDK and handler interfaces;
 - validating examples, fixtures and governed execution behavior;
-- connecting editor, documentation, skills and registry work to the language
- core.
+- connecting editor, documentation, Touba Library and registry work to the
+ language core.
 
 ## Origins
 

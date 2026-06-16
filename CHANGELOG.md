@@ -41,4 +41,4 @@ platform-specific installation instructions.
 - Added public library and registry contracts for reusable skill packs
   and executable Touba packages.
 - Added starter adoption surfaces for MCP import, REST/OpenAPI scaffolding,
-  governed skills and package reuse.
+  Touba Library resources and package reuse.
