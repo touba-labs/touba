@@ -241,6 +241,7 @@ impl<'a> AstLowerer<'a> {
         requires_body: bool,
     ) -> Option<AstCallableDeclaration> {
         let name = self.required_field_text(node, "name")?;
+        let mut description = None;
         let mut signature = AstSignature::default();
         let mut required_capabilities = Vec::new();
         let mut required_secrets = Vec::new();
@@ -249,6 +250,7 @@ impl<'a> AstLowerer<'a> {
 
         for child in named_children(node) {
             match child.kind() {
+                "description_clause" => description = self.lower_description_clause(child),
                 "takes_clause" => signature.inputs.extend(self.lower_takes_clause(child)),
                 "gives_clause" => signature.output = self.lower_gives_clause(child),
                 "requires_clause" => {
@@ -278,6 +280,7 @@ impl<'a> AstLowerer<'a> {
 
         Some(AstCallableDeclaration {
             name,
+            description,
             signature,
             required_capabilities,
             required_secrets,
@@ -289,6 +292,7 @@ impl<'a> AstLowerer<'a> {
 
     fn lower_skill_declaration(&mut self, node: Node<'_>) -> Option<AstSkillDeclaration> {
         let name = self.required_field_text(node, "name")?;
+        let mut description = None;
         let mut signature = AstSignature::default();
         let mut uses = Vec::new();
         let mut memory_scopes = Vec::new();
@@ -297,6 +301,7 @@ impl<'a> AstLowerer<'a> {
 
         for child in named_children(node) {
             match child.kind() {
+                "description_clause" => description = self.lower_description_clause(child),
                 "takes_clause" => signature.inputs.extend(self.lower_takes_clause(child)),
                 "gives_clause" => signature.output = self.lower_gives_clause(child),
                 "uses_clause" => {
@@ -324,6 +329,7 @@ impl<'a> AstLowerer<'a> {
 
         Some(AstSkillDeclaration {
             name,
+            description,
             signature,
             uses,
             memory_scopes,
@@ -335,12 +341,14 @@ impl<'a> AstLowerer<'a> {
 
     fn lower_agent_declaration(&mut self, node: Node<'_>) -> Option<AstAgentDeclaration> {
         let name = self.required_field_text(node, "name")?;
+        let mut description = None;
         let mut uses = Vec::new();
         let mut callable_by = Vec::new();
         let mut memory_scopes = Vec::new();
 
         for child in named_children(node) {
             match child.kind() {
+                "description_clause" => description = self.lower_description_clause(child),
                 "uses_clause" => {
                     if let Some(usage) = self.lower_use(child) {
                         uses.push(usage);
@@ -367,6 +375,7 @@ impl<'a> AstLowerer<'a> {
 
         Some(AstAgentDeclaration {
             name,
+            description,
             uses,
             callable_by,
             memory_scopes,
@@ -376,6 +385,7 @@ impl<'a> AstLowerer<'a> {
 
     fn lower_strategy_declaration(&mut self, node: Node<'_>) -> Option<AstStrategyDeclaration> {
         let name = self.required_field_text(node, "name")?;
+        let mut description = None;
         let mut signature = AstSignature::default();
         let mut uses = Vec::new();
         let mut memory_scopes = Vec::new();
@@ -383,6 +393,7 @@ impl<'a> AstLowerer<'a> {
 
         for child in named_children(node) {
             match child.kind() {
+                "description_clause" => description = self.lower_description_clause(child),
                 "takes_clause" => signature.inputs.extend(self.lower_takes_clause(child)),
                 "gives_clause" => signature.output = self.lower_gives_clause(child),
                 "uses_clause" => {
@@ -409,6 +420,7 @@ impl<'a> AstLowerer<'a> {
 
         Some(AstStrategyDeclaration {
             name,
+            description,
             signature,
             uses,
             memory_scopes,
@@ -536,6 +548,12 @@ impl<'a> AstLowerer<'a> {
     fn lower_gives_clause(&mut self, node: Node<'_>) -> Option<AstTypeRef> {
         let type_node = self.required_field(node, "type")?;
         self.lower_type_ref(type_node)
+    }
+
+    fn lower_description_clause(&mut self, node: Node<'_>) -> Option<String> {
+        let value_node = self.required_field(node, "value")?;
+        let value = self.text(value_node).trim_matches('"').trim().to_string();
+        if value.is_empty() { None } else { Some(value) }
     }
 
     fn lower_requires_clause(&mut self, node: Node<'_>) -> Vec<AstCapabilityRequirement> {

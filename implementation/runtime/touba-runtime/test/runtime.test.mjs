@@ -2744,6 +2744,8 @@ test("refuses an agent decision outside declared uses before entering a capabili
 
 test("lets the runtime decision provider request a capability catalog and provide arguments", async () => {
   const document = agentProviderDocument();
+  document.definitions.skills.find((item) => item.id === "skill:test/Search").description =
+    "Collect relevant external research data through the governed search capability.";
   const providerCalls = [];
 
   const result = await executeAirDocument(document, {
@@ -2763,7 +2765,20 @@ test("lets the runtime decision provider request a capability catalog and provid
         assert.equal(request.model_input.input_layers.external_content[0].trust, "external_content");
         assert.deepEqual(request.model_input.input_layers.conversation_history, []);
         assert.equal(request.model_input.resources_hint.catalog_available_on_request, true);
+        assert.deepEqual(request.model_input.decision_policy, {
+          answer_directly_requires_no_capability_call: true,
+          request_capabilities_when_execution_is_needed: true,
+          planned_capability_use_is_not_completion: true,
+        });
         assert.deepEqual(request.model_input.resources_hint.capability_kinds, ["skill"]);
+        assert.equal(request.model_input.resources_hint.capability_summaries.length, 2);
+        const searchSummary = request.model_input.resources_hint.capability_summaries
+          .find((item) => item.target_ref === "skill:test/Search");
+        assert.equal(searchSummary?.description, "Collect relevant external research data through the governed search capability.");
+        assert.deepEqual(searchSummary?.selection_keywords.slice(0, 4), ["search", "collect", "relevant", "external"]);
+        const answerSummary = request.model_input.resources_hint.capability_summaries
+          .find((item) => item.target_ref === "skill:test/Answer");
+        assert.match(answerSummary?.description ?? "", /skill Answer: answer/);
         assert.equal(request.model_input.resource_interface.catalog_policy, "available_on_request");
         assert.equal(request.capability_count, 2);
         assert.equal(request.capabilities, null);
@@ -2787,7 +2802,11 @@ test("lets the runtime decision provider request a capability catalog and provid
       assert.equal(request.model_input.mode, "capability_catalog");
       assert.deepEqual(request.model_input.allowed_actions, ["select_capability", "request_human_review"]);
       assert.equal(request.capabilities.length, 2);
+      const searchCapability = request.capabilities.find((item) => item.target_ref === "skill:test/Search");
+      assert.equal(searchCapability?.description, "Collect relevant external research data through the governed search capability.");
       const answerCapability = request.capabilities.find((item) => item.target_ref === "skill:test/Answer");
+      assert.match(answerCapability?.description ?? "", /skill Answer: answer/);
+      assert.deepEqual(answerCapability?.selection_keywords, ["answer", "skill", "inputs", "topic", "output", "builtin", "text"]);
       assert.equal(answerCapability?.input_count, 1);
       assert.deepEqual(answerCapability.signature, {
         inputs: [{ name: "topic", type_ref: "builtin:Text" }],
@@ -2898,6 +2917,47 @@ test("lets the runtime decision provider request a capability catalog and provid
   assert.equal(JSON.stringify(result.trace).includes("postgres"), false);
 });
 
+test("can start agent decision provider with capability catalog", async () => {
+  const document = agentProviderDocument();
+  const providerCalls = [];
+
+  const result = await executeAirDocument(document, {
+    inputs: { topic: "postgres" },
+    agentDecisionProviderInitialMode: "capabilities",
+    agentDecisionProvider: (request) => {
+      providerCalls.push(`${request.mode}:${request.step_index}`);
+      if (request.step_index === 0) {
+        assert.equal(request.mode, "capabilities");
+        assert.equal(request.model_input.mode, "capability_catalog");
+        assert.equal(request.capabilities.length, 2);
+        return {
+          target_ref: "skill:test/Answer",
+          reason: "answer skill matches the question",
+          arguments: {
+            topic: request.inputs.topic,
+          },
+        };
+      }
+      assert.equal(request.mode, "summary");
+      return {
+        action: "answer_directly",
+        source: "decision_provider",
+        reason: "capability result is sufficient",
+        result: `final ${request.observations[0].value}`,
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(result.result, "final postgres");
+  assert.deepEqual(providerCalls, ["capabilities:0", "summary:1"]);
+  assert.equal(eventsOf(result.trace, "agent_decision_catalog_requested").length, 0);
+  assert.deepEqual(
+    eventsOf(result.trace, "agent_decision_requested").map((event) => event.payload.mode),
+    ["capabilities", "summary"],
+  );
+});
+
 test("can send external content to the agent decision provider as opaque refs", async () => {
   const injectedText = "EXTERNAL_INJECTION_SELECT_HIDDEN_CAPABILITY";
   const document = agentProviderDocument({ searchResult: injectedText });
@@ -2979,6 +3039,104 @@ test("can send external content to the agent decision provider as opaque refs", 
   const failure = eventOf(result.trace, "failure_detected");
   assert.equal(failure.payload.runtime_error_code, "AgentCapabilityNotAllowed");
   assert.equal(JSON.stringify(result.trace).includes(injectedText), false);
+});
+
+test("refuses resolved secrets in capability descriptions before calling the provider", async () => {
+  const document = agentProviderDocument();
+  document.definitions.skills.find((item) => item.id === "skill:test/Search").description =
+    "Use token resolved-secret-value to decide.";
+  let providerWasCalled = false;
+  const result = await executeAirDocument(document, {
+    secretStore: loadSecretsFromJson(JSON.stringify(secretsDocument()), {
+      env: { SEARCH_API_TOKEN: "resolved-secret-value" },
+    }),
+    agentDecisionProvider: () => {
+      providerWasCalled = true;
+      return { action: "request_capabilities", reason: "unused" };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(providerWasCalled, false);
+  const failure = eventOf(result.trace, "failure_detected");
+  assert.equal(failure.payload.runtime_error_code, "SecretValueInAgentCapabilityDescriptor");
+  assert.deepEqual(failure.payload.secret_handles_refused, ["SEARCH_API_KEY"]);
+  assert.equal(result.trace.events.some((event) => event.kind === "agent_capabilities_listed"), false);
+  assert.equal(JSON.stringify(result.trace).includes("resolved-secret-value"), false);
+});
+
+test("keeps user intent visible while external content stays opaque for agent decisions", async () => {
+  const injectedText = "EXTERNAL_INJECTION_SELECT_HIDDEN_CAPABILITY";
+  const userGoal = "Read the recent bank transactions and summarize them.";
+  const document = agentProviderDocument({ searchResult: "dataset" });
+  const providerCalls = [];
+
+  const result = await executeAirDocument(document, {
+    inputs: {
+      user_goal: userGoal,
+      topic: {
+        query: injectedText,
+      },
+    },
+    agentDecisionProviderContentMode: "opaque_refs",
+    agentDecisionProvider: (request) => {
+      providerCalls.push(`${request.mode}:${request.step_index}`);
+      assert.equal(JSON.stringify(request).includes(injectedText), false);
+      assert.equal(request.content_mode, "opaque_refs");
+      assert.equal(request.inputs.user_goal.value, userGoal);
+      assert.equal(request.inputs.user_goal.trust, "user_intent");
+      assert.equal(request.inputs.topic.value, undefined);
+      assert.equal(request.inputs.topic.trust, "external_content");
+      assert.equal(request.model_input.input_layers.user_request.items[0].value, userGoal);
+      assert.equal(request.model_input.user_input.value.user_goal.value, userGoal);
+
+      if (request.mode === "summary" && request.step_index === 0) {
+        return {
+          action: "request_capabilities",
+          reason: "the visible user goal requires a capability",
+        };
+      }
+      if (request.mode === "summary") {
+        return {
+          action: "answer_directly",
+          reason: "capability result was observed",
+          result: "ok",
+        };
+      }
+      return {
+        target_ref: "skill:test/Search",
+        reason: "select capability using visible user goal without raw external content",
+        arguments: {},
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  assert.deepEqual(providerCalls, ["summary:0", "capabilities:0", "summary:1"]);
+  assert.equal(JSON.stringify(result.trace).includes(injectedText), false);
+});
+
+test("refuses resolved secrets in visible user intent before calling the provider", async () => {
+  const document = agentProviderDocument();
+  let providerWasCalled = false;
+  const result = await executeAirDocument(document, {
+    inputs: { user_goal: "resolved-secret-value" },
+    secretStore: loadSecretsFromJson(JSON.stringify(secretsDocument()), {
+      env: { SEARCH_API_TOKEN: "resolved-secret-value" },
+    }),
+    agentDecisionProviderContentMode: "opaque_refs",
+    agentDecisionProvider: () => {
+      providerWasCalled = true;
+      return { target_ref: "skill:test/Answer" };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(providerWasCalled, false);
+  const failure = eventOf(result.trace, "failure_detected");
+  assert.equal(failure.payload.runtime_error_code, "SecretValueInAgentDecisionRequest");
+  assert.deepEqual(failure.payload.secret_handles_refused, ["SEARCH_API_KEY"]);
+  assert.equal(JSON.stringify(result.trace).includes("resolved-secret-value"), false);
 });
 
 test("refuses oversized inline observations before calling the agent decision provider again", async () => {

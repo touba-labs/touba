@@ -103,6 +103,7 @@ export default grammar({
       $._sp,
       field("name", $.symbol_identifier),
       indentedBlock($, choice(
+        $.description_clause,
         $.takes_clause,
         $.gives_clause,
         $.do_block,
@@ -115,6 +116,7 @@ export default grammar({
       $._sp,
       field("name", $.symbol_identifier),
       indentedBlock($, choice(
+        $.description_clause,
         $.takes_clause,
         $.gives_clause,
         $.tool_memory_access_clause,
@@ -129,6 +131,7 @@ export default grammar({
       $._sp,
       field("name", $.symbol_identifier),
       indentedBlock($, choice(
+        $.description_clause,
         $.takes_clause,
         $.gives_clause,
         $.uses_clause,
@@ -144,6 +147,7 @@ export default grammar({
       $._sp,
       field("name", $.symbol_identifier),
       indentedBlock($, choice(
+        $.description_clause,
         $.uses_clause,
         $.callable_by_clause,
         $.memory_scope_clause,
@@ -156,6 +160,7 @@ export default grammar({
       $._sp,
       field("name", $.symbol_identifier),
       indentedBlock($, choice(
+        $.description_clause,
         $.takes_clause,
         $.gives_clause,
         $.uses_clause,
@@ -226,6 +231,8 @@ export default grammar({
     ),
 
     gives_clause: $ => seq("gives", $._sp, field("type", $.type_ref)),
+
+    description_clause: $ => seq("description", $._sp, field("value", $.string)),
 
     requires_clause: $ => seq("requires", $._sp, commaSep1($.value_identifier, $)),
 

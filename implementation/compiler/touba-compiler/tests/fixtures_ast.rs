@@ -44,6 +44,88 @@ fn lowers_linear_skill_fixture() {
 }
 
 #[test]
+fn lowers_capability_descriptions() {
+    let source = "\
+module examples.described
+
+tool FetchInbox
+    description \"Reads inbox messages for user requested email summaries.\"
+    gives Text
+    requires network
+
+skill ReadInbox
+    description \"Reads the inbox item before producing a summary.\"
+    gives Text
+    do
+        give \"inbox\"
+
+agent Researcher
+    description \"Selects declared reading or summarization capabilities for user goals.\"
+    uses ReadInbox
+    callable_by strategy RunResearch
+
+strategy RunResearch
+    description \"Runs one governed research request through Researcher.\"
+    uses Researcher
+    do
+        Researcher
+";
+
+    let result = parse_source("described-capabilities", source);
+
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.expect("fixture should lower to AST");
+    let tool = document
+        .declarations
+        .iter()
+        .find_map(|declaration| match declaration {
+            AstDeclaration::Tool(tool) if tool.name == "FetchInbox" => Some(tool),
+            _ => None,
+        })
+        .expect("FetchInbox tool should exist");
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Reads inbox messages for user requested email summaries.")
+    );
+    let skill = document
+        .declarations
+        .iter()
+        .find_map(|declaration| match declaration {
+            AstDeclaration::Skill(skill) if skill.name == "ReadInbox" => Some(skill),
+            _ => None,
+        })
+        .expect("ReadInbox skill should exist");
+    assert_eq!(
+        skill.description.as_deref(),
+        Some("Reads the inbox item before producing a summary.")
+    );
+    let agent = document
+        .declarations
+        .iter()
+        .find_map(|declaration| match declaration {
+            AstDeclaration::Agent(agent) if agent.name == "Researcher" => Some(agent),
+            _ => None,
+        })
+        .expect("Researcher agent should exist");
+    assert_eq!(
+        agent.description.as_deref(),
+        Some("Selects declared reading or summarization capabilities for user goals.")
+    );
+    let strategy = document
+        .declarations
+        .iter()
+        .find_map(|declaration| match declaration {
+            AstDeclaration::Strategy(strategy) if strategy.name == "RunResearch" => Some(strategy),
+            _ => None,
+        })
+        .expect("RunResearch strategy should exist");
+    assert_eq!(
+        strategy.description.as_deref(),
+        Some("Runs one governed research request through Researcher.")
+    );
+}
+
+#[test]
 fn lowers_branch_fixture() {
     let source = include_str!("../../../grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb");
 
@@ -185,7 +267,10 @@ function
     ] {
         let result = parse_source(source_id, source);
 
-        assert!(result.document.is_none(), "{source_id} should not produce an AST");
+        assert!(
+            result.document.is_none(),
+            "{source_id} should not produce an AST"
+        );
         let diagnostic = result
             .diagnostics
             .iter()

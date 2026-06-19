@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 /**
  * @typedef {"inline" | "opaque_refs"} AgentDecisionProviderContentMode
  * @typedef {"runtime_input" | "runtime_observation"} ProviderContentCategory
- * @typedef {"external_content"} ProviderContentTrust
+ * @typedef {"external_content" | "user_intent"} ProviderContentTrust
  * @typedef {"string" | "number" | "boolean" | "bigint" | "symbol" | "undefined" | "object" | "function" | "null" | "array"} ValueKind
  *
  * @typedef {object} RuntimeObservation
@@ -82,14 +82,14 @@ import { createHash } from "node:crypto";
  *
  * @param {Record<string, unknown>} inputs
  * @param {RuntimeObservation[]} observations
- * @param {{ agentDecisionProviderContentMode?: AgentDecisionProviderContentMode } | null | undefined} context
+ * @param {{ agentDecisionProviderContentMode?: AgentDecisionProviderContentMode, agentDecisionProviderVisibleInputKeys?: string[] } | null | undefined} context
  * @returns {AgentDecisionProviderContent}
  */
 export function agentDecisionProviderContent(inputs, observations, context) {
   const mode = context?.agentDecisionProviderContentMode ?? "inline";
   if (mode === "opaque_refs") {
     const inputEntries = Object.entries(inputs).map(([name, value], index) =>
-      opaqueRuntimeInputDescriptor(name, value, index),
+      opaqueRuntimeInputDescriptor(name, value, index, isVisibleUserIntentInput(name, value, context)),
     );
     const observationEntries = observations.map((observation, index) =>
       opaqueRuntimeObservationDescriptor(observation, index),
@@ -176,10 +176,22 @@ function runtimeObservationEntry(payload) {
  * @param {string} name
  * @param {unknown} value
  * @param {number} index
+ * @param {boolean=} visibleUserIntent
  * @returns {RuntimeInputEntry}
  */
-function opaqueRuntimeInputDescriptor(name, value, index) {
+function opaqueRuntimeInputDescriptor(name, value, index, visibleUserIntent = false) {
   const valueShape = opaqueValueShape(value);
+  if (visibleUserIntent) {
+    return /** @type {RuntimeInputEntry} */ (compactPayload({
+      name,
+      ref: `visible:runtime_input/${opaqueRefSegment(name, `input-${index}`)}`,
+      category: "runtime_input",
+      trust: "user_intent",
+      value,
+      summary: `visible user intent; ${opaqueValueSummary(valueShape)}`,
+      metadata: valueShape,
+    }));
+  }
   return /** @type {RuntimeInputEntry} */ (compactPayload({
     name,
     ref: `opaque:runtime_input/${opaqueRefSegment(name, `input-${index}`)}`,
@@ -188,6 +200,35 @@ function opaqueRuntimeInputDescriptor(name, value, index) {
     summary: opaqueValueSummary(valueShape),
     metadata: valueShape,
   }));
+}
+
+/**
+ * @param {string} name
+ * @param {unknown} value
+ * @param {{ agentDecisionProviderVisibleInputKeys?: string[] } | null | undefined} context
+ * @returns {boolean}
+ */
+function isVisibleUserIntentInput(name, value, context) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 2000) {
+    return false;
+  }
+  const configuredKeys = Array.isArray(context?.agentDecisionProviderVisibleInputKeys)
+    ? context.agentDecisionProviderVisibleInputKeys
+    : [];
+  const visibleKeys = new Set([
+    "user_goal",
+    "goal",
+    "user_request",
+    "request",
+    "task",
+    "objective",
+    ...configuredKeys,
+  ]);
+  return visibleKeys.has(name);
 }
 
 /**

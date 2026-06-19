@@ -366,6 +366,16 @@ function createExecutionContext(document, entryRef, options = {}) {
         ?? options.agent_model_input_content_mode
         ?? "inline",
     ),
+    agentDecisionProviderInitialMode: normalizeAgentDecisionProviderInitialMode(
+      options.agentDecisionProviderInitialMode
+        ?? options.agent_decision_provider_initial_mode
+        ?? "summary",
+    ),
+    agentDecisionProviderVisibleInputKeys: normalizeAgentDecisionProviderVisibleInputKeys(
+      options.agentDecisionProviderVisibleInputKeys
+        ?? options.agent_decision_provider_visible_input_keys
+        ?? [],
+    ),
     agentProviderObservationsMaxBytes: normalizeOptionalPositiveRuntimeInteger(
       options.agentProviderObservationsMaxBytes
         ?? options.agent_provider_observations_max_bytes
@@ -1424,14 +1434,16 @@ async function executeTarget(targetRef, context, callArguments = null, options =
     }
     const agent = requireDefinition(context.indexes.agents, targetRef);
     const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
+    const capabilities = capabilityRefs.map((capabilityRef) =>
+      agentCapabilityDescriptor(capabilityRef, context)
+    );
+    assertNoSecretValueInAgentCapabilityDescriptors(capabilities, context, agent.id);
     context.trace.push("agent_capabilities_listed", {
       payload: {
         agent_ref: agent.id,
         authority_source: "uses",
         capability_refs: capabilityRefs,
-        capabilities: capabilityRefs.map((capabilityRef) =>
-          agentCapabilityDescriptor(capabilityRef, context)
-        ),
+        capabilities,
       },
     });
 
@@ -1824,10 +1836,14 @@ function agentCapabilityDescriptor(targetRef, context) {
   const definition = definitionForCapability(targetRef, context);
   const signature = signatureDescriptor(definition?.signature, context);
   const nestedUses = Array.isArray(definition?.uses) ? definition.uses : [];
+  const description = capabilityDescription(targetRef, kind, definition, signature, nestedUses);
+  const selectionKeywords = capabilitySelectionKeywords(definition?.name, description);
   return compactPayload({
     target_ref: targetRef,
     kind,
     name: definition?.name,
+    description,
+    selection_keywords: selectionKeywords.length > 0 ? selectionKeywords : undefined,
     responsibility: kind === "agent" ? definition?.responsibility : undefined,
     input_count: signature?.inputs?.length,
     output_type: signature?.output_type,
@@ -1840,6 +1856,88 @@ function agentCapabilityDescriptor(targetRef, context) {
     required_secret_handles: definition?.required_secrets,
     memory_accesses: memoryAccessesForTrace(normalizeAirMemoryAccesses(definition?.memory_accesses ?? [], targetRef)),
   });
+}
+
+function capabilitySummaryDescriptor(descriptor) {
+  return compactPayload({
+    target_ref: descriptor.target_ref,
+    kind: descriptor.kind,
+    name: descriptor.name,
+    description: descriptor.description,
+    selection_keywords: descriptor.selection_keywords,
+  });
+}
+
+function capabilityDescription(targetRef, kind, definition, signature, nestedUses) {
+  const explicit = normalizeCapabilityDescription(definition?.description);
+  if (explicit) {
+    return explicit;
+  }
+  const responsibility = kind === "agent" ? normalizeCapabilityDescription(definition?.responsibility) : null;
+  if (responsibility && responsibility !== definition?.name) {
+    return responsibility;
+  }
+  const name = typeof definition?.name === "string" && definition.name.trim() !== ""
+    ? definition.name.trim()
+    : String(targetRef).split("/").at(-1);
+  const phrase = identifierPhrase(name);
+  if (!phrase) {
+    return undefined;
+  }
+  const inputNames = Array.isArray(signature?.inputs)
+    ? signature.inputs.map((input) => input.name).filter(Boolean)
+    : [];
+  const inputText = inputNames.length > 0
+    ? `inputs: ${inputNames.join(", ")}`
+    : "inputs: none";
+  const outputText = signature?.output_type ? `output: ${signature.output_type}` : null;
+  const usesText = nestedUses.length > 0 ? `nested uses: ${nestedUses.length}` : null;
+  return [
+    `${kind ?? "capability"} ${name}: ${phrase}`,
+    inputText,
+    outputText,
+    usesText,
+  ].filter(Boolean).join("; ");
+}
+
+function normalizeCapabilityDescription(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  if (trimmed === "") {
+    return null;
+  }
+  return trimmed.length > 1000 ? trimmed.slice(0, 1000) : trimmed;
+}
+
+function capabilitySelectionKeywords(name, description) {
+  const words = new Set([
+    ...identifierWords(name),
+    ...identifierWords(description),
+  ]);
+  return [...words].filter((word) => word.length > 1).slice(0, 16);
+}
+
+function identifierPhrase(value) {
+  const words = identifierWords(value);
+  return words.length > 0 ? words.join(" ") : null;
+}
+
+function identifierWords(value) {
+  if (typeof value !== "string") {
+    return [];
+  }
+  const spaced = value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .toLowerCase()
+    .trim();
+  if (spaced === "") {
+    return [];
+  }
+  return [...new Set(spaced.split(/\s+/).filter(Boolean))];
 }
 
 function signatureDescriptor(signature, context) {
@@ -1930,6 +2028,25 @@ async function resolveAgentDecision(agent, capabilityRefs, context, loopState = 
 }
 
 async function requestAgentDecisionFromProvider(agent, capabilityRefs, context, loopState = null) {
+  if (
+    context.agentDecisionProviderInitialMode === "capabilities"
+    && (loopState?.observations?.length ?? 0) === 0
+  ) {
+    const catalogRequest = agentDecisionProviderRequest(agent, capabilityRefs, context, "capabilities", loopState);
+    context.trace.push("agent_decision_requested", {
+      payload: agentDecisionRequestTracePayload(catalogRequest),
+    });
+    const selected = await callAgentDecisionProvider(catalogRequest, context);
+    if (selected.action === "request_capabilities") {
+      throw new RuntimeFailure(
+        `agent decision provider did not select a capability for ${agent.id}`,
+        { agentRef: agent.id, allowedRefs: capabilityRefs },
+        "AgentDecisionProviderNoSelection",
+      );
+    }
+    return selected;
+  }
+
   const summaryRequest = agentDecisionProviderRequest(agent, capabilityRefs, context, "summary", loopState);
   context.trace.push("agent_decision_requested", {
     payload: agentDecisionRequestTracePayload(summaryRequest),
@@ -2070,6 +2187,7 @@ function agentModelInput(
       capabilities_available: capabilityRefs.length > 0,
       capability_count: capabilityRefs.length,
       capability_refs: orientationMode ? capabilityRefs : undefined,
+      capability_summaries: orientationMode ? capabilities.map(capabilitySummaryDescriptor) : undefined,
       capability_kinds: resourceKinds,
       catalog_available_on_request: orientationMode,
       catalog_presented: !orientationMode,
@@ -2087,6 +2205,16 @@ function agentModelInput(
         ? ["capability_refs", "capability_count", "capability_kinds", "skill_pack_hints"]
         : ["capability_descriptors", "signatures", "requirements", "nested_uses", "skill_pack_hints", "active_skill_packs"],
     },
+    decision_policy: orientationMode
+      ? {
+        answer_directly_requires_no_capability_call: true,
+        request_capabilities_when_execution_is_needed: true,
+        planned_capability_use_is_not_completion: true,
+      }
+      : {
+        select_exactly_one_catalog_capability_when_execution_is_needed: true,
+        request_human_review_only_when_no_catalog_capability_suffices: true,
+      },
     human_interaction: {
       request_present: false,
       review_available: !orientationMode,
@@ -2796,11 +2924,7 @@ function assertNoSecretValueInAgentDecisionRequest(request, context, agentRef) {
     model_input: request.model_input,
     observations: request.observations,
   });
-  if (typeof serialized !== "string") {
-    return;
-  }
-  const leakedSecrets = resolvedSecretEntries(context.secretStore)
-    .filter((entry) => entry.value.length > 0 && serialized.includes(entry.value));
+  const leakedSecrets = secretEntriesInSerializedValue(serialized, context);
   if (leakedSecrets.length === 0) {
     return;
   }
@@ -2812,6 +2936,30 @@ function assertNoSecretValueInAgentDecisionRequest(request, context, agentRef) {
     },
     "SecretValueInAgentDecisionRequest",
   );
+}
+
+function assertNoSecretValueInAgentCapabilityDescriptors(capabilities, context, agentRef) {
+  const serialized = JSON.stringify({ capabilities });
+  const leakedSecrets = secretEntriesInSerializedValue(serialized, context);
+  if (leakedSecrets.length === 0) {
+    return;
+  }
+  throw new RuntimeFailure(
+    `agent capability descriptors contain a resolved secret value for ${agentRef}`,
+    {
+      agentRef,
+      secretHandlesRefused: leakedSecrets.map((entry) => entry.handle),
+    },
+    "SecretValueInAgentCapabilityDescriptor",
+  );
+}
+
+function secretEntriesInSerializedValue(serialized, context) {
+  if (typeof serialized !== "string") {
+    return [];
+  }
+  return resolvedSecretEntries(context.secretStore)
+    .filter((entry) => entry.value.length > 0 && serialized.includes(entry.value));
 }
 
 function callArgumentsForAgentDecision(decision, context) {
@@ -6443,6 +6591,34 @@ function normalizeInputs(inputs) {
     values.set(key.startsWith("value:") ? key : `value:${key}`, value);
   }
   return values;
+}
+
+function normalizeAgentDecisionProviderVisibleInputKeys(keys) {
+  if (!Array.isArray(keys)) {
+    throw new ToubaRuntimeError(
+      "InvalidRuntimeOption",
+      "agentDecisionProviderVisibleInputKeys must be an array",
+    );
+  }
+  return keys.map((key) => {
+    if (typeof key !== "string" || key.trim() === "") {
+      throw new ToubaRuntimeError(
+        "InvalidRuntimeOption",
+        "agentDecisionProviderVisibleInputKeys must contain non-empty strings",
+      );
+    }
+    return key.trim();
+  });
+}
+
+function normalizeAgentDecisionProviderInitialMode(value) {
+  if (value === "summary" || value === "capabilities") {
+    return value;
+  }
+  throw new ToubaRuntimeError(
+    "InvalidRuntimeOption",
+    "agentDecisionProviderInitialMode must be summary or capabilities",
+  );
 }
 
 function airRefForNode(graph, node) {

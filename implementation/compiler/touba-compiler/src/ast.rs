@@ -123,6 +123,7 @@ pub struct AstTypeRef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstCallableDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub signature: AstSignature,
     pub required_capabilities: Vec<AstCapabilityRequirement>,
     pub required_secrets: Vec<AstSecretRequirement>,
@@ -160,6 +161,7 @@ pub struct AstMemoryScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstSkillDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub signature: AstSignature,
     pub uses: Vec<AstUse>,
     pub memory_scopes: Vec<AstMemoryScope>,
@@ -171,6 +173,7 @@ pub struct AstSkillDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstAgentDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub uses: Vec<AstUse>,
     pub callable_by: Vec<AstCallableBy>,
     pub memory_scopes: Vec<AstMemoryScope>,
@@ -187,6 +190,7 @@ pub struct AstCallableBy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstStrategyDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub signature: AstSignature,
     pub uses: Vec<AstUse>,
     pub memory_scopes: Vec<AstMemoryScope>,

@@ -497,11 +497,7 @@ impl AirLowerer {
         }
     }
 
-    fn body_contains_effectful_call(
-        &self,
-        body: &AstBody,
-        effectful: &HashSet<String>,
-    ) -> bool {
+    fn body_contains_effectful_call(&self, body: &AstBody, effectful: &HashSet<String>) -> bool {
         self.statements_contain_effectful_call(&body.statements, effectful)
     }
 
@@ -794,6 +790,7 @@ impl AirLowerer {
         Some(AirTool {
             id: tool_id,
             name: declaration.name.clone(),
+            description: declaration.description.clone(),
             signature,
             binding_ref: None,
             required_capabilities,
@@ -1021,6 +1018,7 @@ impl AirLowerer {
             AirSkill {
                 id,
                 name: declaration.name.clone(),
+                description: declaration.description.clone(),
                 signature,
                 uses,
                 use_refs,
@@ -1042,6 +1040,7 @@ impl AirLowerer {
         AirAgent {
             id,
             name: declaration.name.clone(),
+            description: declaration.description.clone(),
             responsibility: declaration.name.clone(),
             uses,
             use_refs,
@@ -1072,6 +1071,7 @@ impl AirLowerer {
             AirStrategy {
                 id,
                 name: declaration.name.clone(),
+                description: declaration.description.clone(),
                 uses,
                 use_refs,
                 memory_scopes,

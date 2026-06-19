@@ -34,7 +34,11 @@ pub fn parse_source(source_id: impl Into<String>, source: &str) -> AstBuildResul
     build_ast(source_id, source, root)
 }
 
-fn recovered_cst_diagnostic(source_id: &str, source: &str, root: Node<'_>) -> Option<AstDiagnostic> {
+fn recovered_cst_diagnostic(
+    source_id: &str,
+    source: &str,
+    root: Node<'_>,
+) -> Option<AstDiagnostic> {
     let recovered = first_recovered_node(root)?;
     let kind = if recovered.is_missing() {
         "MISSING"

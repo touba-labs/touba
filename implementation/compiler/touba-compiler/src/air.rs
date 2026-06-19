@@ -110,6 +110,8 @@ pub struct AirFunction {
 pub struct AirTool {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub signature: AirSignature,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_ref: Option<String>,
@@ -148,6 +150,8 @@ pub struct AirMemoryScope {
 pub struct AirSkill {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub signature: AirSignature,
     pub uses: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -164,6 +168,8 @@ pub struct AirSkill {
 pub struct AirAgent {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub responsibility: String,
     pub uses: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -186,6 +192,8 @@ pub struct AirCallableBy {
 pub struct AirStrategy {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub uses: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub use_refs: Vec<AirUseRef>,

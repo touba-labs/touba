@@ -851,6 +851,83 @@ fn lowers_all_reference_fixtures_to_air() {
 }
 
 #[test]
+fn emits_capability_descriptions_in_air() {
+    let source = "\
+module examples.described
+
+tool FetchInbox
+    description \"Reads inbox messages for user requested email summaries.\"
+    gives Text
+    requires network
+
+skill ReadInbox
+    description \"Reads the inbox item before producing a summary.\"
+    gives Text
+    do
+        give \"inbox\"
+
+agent Researcher
+    description \"Selects declared reading or summarization capabilities for user goals.\"
+    uses ReadInbox
+    callable_by strategy RunResearch
+
+strategy RunResearch
+    description \"Runs one governed research request through Researcher.\"
+    uses Researcher
+    do
+        Researcher
+";
+
+    let result = compile_source_to_air("described-capabilities", source);
+
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.expect("fixture should compile to AIR");
+    let tool = document
+        .definitions
+        .tools
+        .iter()
+        .find(|tool| tool.id == "tool:examples.described/FetchInbox")
+        .expect("FetchInbox tool should exist");
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Reads inbox messages for user requested email summaries.")
+    );
+    let skill = document
+        .definitions
+        .skills
+        .iter()
+        .find(|skill| skill.id == "skill:examples.described/ReadInbox")
+        .expect("ReadInbox skill should exist");
+    assert_eq!(
+        skill.description.as_deref(),
+        Some("Reads the inbox item before producing a summary.")
+    );
+    let agent = document
+        .definitions
+        .agents
+        .iter()
+        .find(|agent| agent.id == "agent:examples.described/Researcher")
+        .expect("Researcher agent should exist");
+    assert_eq!(
+        agent.description.as_deref(),
+        Some("Selects declared reading or summarization capabilities for user goals.")
+    );
+    let strategy = document
+        .definitions
+        .strategies
+        .iter()
+        .find(|strategy| strategy.id == "strategy:examples.described/RunResearch")
+        .expect("RunResearch strategy should exist");
+    assert_eq!(
+        strategy.description.as_deref(),
+        Some("Runs one governed research request through Researcher.")
+    );
+
+    let serialized = serialize_air_to_json(&document).expect("AIR should serialize");
+    assert!(serialized.contains("\"description\": \"Reads the inbox item"));
+}
+
+#[test]
 fn lowers_linear_skill_fixture_to_air() {
     let source =
         include_str!("../../../grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb");
@@ -2563,6 +2640,7 @@ fn reports_empty_flow_graph_for_empty_ast_body_with_source_ref() {
         imports: Vec::new(),
         declarations: vec![AstDeclaration::Function(AstCallableDeclaration {
             name: "Build".to_string(),
+            description: None,
             signature: AstSignature {
                 inputs: Vec::new(),
                 output: Some(AstTypeRef {
