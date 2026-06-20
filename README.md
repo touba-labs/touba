@@ -32,7 +32,7 @@ Release history: [`CHANGELOG.md`](CHANGELOG.md)
 
 Touba benchmark evidence is tracked in two separate forms:
 
-- Live-model PAP-0002 benchmark: 36 cases across simple, medium and complex
+- Live-model comparative benchmark: 36 cases across simple, medium and complex
  levels, comparing Touba with OpenAI-compatible agentic frameworks under real
  model calls. The current minimum evidence batch is five complete runs.
 - Structural Touba benchmark: 24 runtime/CLI cases covering trace forensics,
