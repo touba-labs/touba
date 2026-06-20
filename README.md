@@ -28,6 +28,21 @@ supply-chain drift, cancellation and multi-team authority.
 
 Release history: [`CHANGELOG.md`](CHANGELOG.md)
 
+## Benchmark Evidence
+
+Touba benchmark evidence is tracked in two separate forms:
+
+- Live-model PAP-0002 benchmark: 36 cases across simple, medium and complex
+ levels, comparing Touba with OpenAI-compatible agentic frameworks under real
+ model calls. The current minimum evidence batch is five complete runs.
+- Structural Touba benchmark: 24 runtime/CLI cases covering trace forensics,
+ trigger replay, memory provenance, memory-poisoning sequences, budgets,
+ supply-chain drift, cancellation, kill switch behavior and multi-team
+ responsibility boundaries.
+
+Public summaries are available from the benchmark page:
+https://pap-touba.github.io/documentation-site/benchmarks/
+
 ## Why Touba
 
 Touba gives agentic software an explicit programming model. It separates what a
