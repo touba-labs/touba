@@ -92,6 +92,20 @@
             "target_ref": "skill:examples.loop/NormalizeItems",
             "kind": "skill",
             "name": "NormalizeItems",
+            "description": "skill NormalizeItems: normalize items; inputs: items; output: type:examples.loop/NormalizedItems; nested uses: 1",
+            "selection_keywords": [
+              "normalize",
+              "items",
+              "skill",
+              "inputs",
+              "output",
+              "type",
+              "examples",
+              "loop",
+              "normalized",
+              "nested",
+              "uses"
+            ],
             "input_count": 1,
             "output_type": "type:examples.loop/NormalizedItems",
             "signature": {

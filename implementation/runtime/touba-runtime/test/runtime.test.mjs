@@ -2765,20 +2765,43 @@ test("lets the runtime decision provider request a capability catalog and provid
         assert.equal(request.model_input.input_layers.external_content[0].trust, "external_content");
         assert.deepEqual(request.model_input.input_layers.conversation_history, []);
         assert.equal(request.model_input.resources_hint.catalog_available_on_request, true);
-        assert.deepEqual(request.model_input.decision_policy, {
-          answer_directly_requires_no_capability_call: true,
-          request_capabilities_when_execution_is_needed: true,
-          planned_capability_use_is_not_completion: true,
-        });
-        assert.deepEqual(request.model_input.resources_hint.capability_kinds, ["skill"]);
+	        assert.deepEqual(request.model_input.decision_policy, {
+	          answer_directly_requires_no_capability_call: true,
+	          request_capabilities_when_execution_is_needed: true,
+	          request_capabilities_when_human_review_is_needed: true,
+	          planned_capability_use_is_not_completion: true,
+	          answer_directly_must_not_replace_required_human_review: true,
+	          after_observation_answer_directly_only_if_goal_satisfied: true,
+	          after_observation_request_capabilities_if_remaining_capability_can_complete_goal: true,
+	        });
+	        assert.deepEqual(request.model_input.human_interaction, {
+	          request_present: false,
+	          review_available: true,
+	          review_access: "request_capabilities_first",
+	          available_actions: ["request_capabilities_for_human_review"],
+	        });
+	        assert.deepEqual(request.model_input.resources_hint.capability_kinds, ["skill"]);
         assert.equal(request.model_input.resources_hint.capability_summaries.length, 2);
         const searchSummary = request.model_input.resources_hint.capability_summaries
           .find((item) => item.target_ref === "skill:test/Search");
         assert.equal(searchSummary?.description, "Collect relevant external research data through the governed search capability.");
+        assert.equal(searchSummary?.description_source, "source");
+        assert.equal(searchSummary?.source_description_present, true);
         assert.deepEqual(searchSummary?.selection_keywords.slice(0, 4), ["search", "collect", "relevant", "external"]);
         const answerSummary = request.model_input.resources_hint.capability_summaries
           .find((item) => item.target_ref === "skill:test/Answer");
-        assert.match(answerSummary?.description ?? "", /skill Answer: answer/);
+        assert.equal(answerSummary?.description, "Produce the final answer from the selected research topic or intermediate observation.");
+        assert.equal(answerSummary?.description_source, "source");
+        assert.equal(answerSummary?.source_description_present, true);
+        assert.deepEqual(request.model_input.resources_hint.description_quality, {
+          capability_count: 2,
+          source_description_count: 2,
+          generated_description_count: 0,
+          responsibility_description_count: 0,
+          absent_description_count: 0,
+          missing_source_description_count: 0,
+          production_recommendation: "source_descriptions_complete",
+        });
         assert.equal(request.model_input.resource_interface.catalog_policy, "available_on_request");
         assert.equal(request.capability_count, 2);
         assert.equal(request.capabilities, null);
@@ -2804,9 +2827,13 @@ test("lets the runtime decision provider request a capability catalog and provid
       assert.equal(request.capabilities.length, 2);
       const searchCapability = request.capabilities.find((item) => item.target_ref === "skill:test/Search");
       assert.equal(searchCapability?.description, "Collect relevant external research data through the governed search capability.");
+      assert.equal(searchCapability?.description_source, "source");
+      assert.equal(searchCapability?.source_description_present, true);
       const answerCapability = request.capabilities.find((item) => item.target_ref === "skill:test/Answer");
-      assert.match(answerCapability?.description ?? "", /skill Answer: answer/);
-      assert.deepEqual(answerCapability?.selection_keywords, ["answer", "skill", "inputs", "topic", "output", "builtin", "text"]);
+      assert.equal(answerCapability?.description, "Produce the final answer from the selected research topic or intermediate observation.");
+      assert.equal(answerCapability?.description_source, "source");
+      assert.equal(answerCapability?.source_description_present, true);
+      assert.deepEqual(answerCapability?.selection_keywords.slice(0, 5), ["answer", "produce", "the", "final", "from"]);
       assert.equal(answerCapability?.input_count, 1);
       assert.deepEqual(answerCapability.signature, {
         inputs: [{ name: "topic", type_ref: "builtin:Text" }],
@@ -2825,6 +2852,18 @@ test("lets the runtime decision provider request a capability catalog and provid
   assert.equal(result.status, "success");
   assert.equal(result.result, "final postgres");
   assert.equal(providerCalls.length, 3);
+  const descriptionDiagnostic = eventOf(result.trace, "agent_capability_descriptions_diagnosed");
+  assert.deepEqual(descriptionDiagnostic.payload, {
+    agent_ref: "agent:test/Researcher",
+    provider_mode: "summary",
+    capability_count: 2,
+    source_description_count: 2,
+    generated_description_count: 0,
+    responsibility_description_count: 0,
+    absent_description_count: 0,
+    missing_source_description_count: 0,
+    production_recommendation: "source_descriptions_complete",
+  });
   const {
     request_digest: firstRequestDigest,
     ...firstRequestPayload
@@ -3063,6 +3102,37 @@ test("refuses resolved secrets in capability descriptions before calling the pro
   assert.deepEqual(failure.payload.secret_handles_refused, ["SEARCH_API_KEY"]);
   assert.equal(result.trace.events.some((event) => event.kind === "agent_capabilities_listed"), false);
   assert.equal(JSON.stringify(result.trace).includes("resolved-secret-value"), false);
+});
+
+test("requires source descriptions for capabilities exposed to an agent decision provider", async () => {
+  const document = agentProviderDocument();
+  delete document.definitions.skills.find((item) => item.id === "skill:test/Answer").description;
+  let providerWasCalled = false;
+
+  const result = await executeAirDocument(document, {
+    agentDecisionProvider: () => {
+      providerWasCalled = true;
+      return { action: "request_capabilities", reason: "unused" };
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(providerWasCalled, false);
+  const diagnostic = eventOf(result.trace, "agent_capability_descriptions_diagnosed");
+  assert.deepEqual(diagnostic.payload, {
+    agent_ref: "agent:test/Researcher",
+    provider_mode: "summary",
+    capability_count: 2,
+    source_description_count: 1,
+    generated_description_count: 1,
+    responsibility_description_count: 0,
+    absent_description_count: 0,
+    missing_source_description_count: 1,
+    missing_source_description_refs: ["skill:test/Answer"],
+    production_recommendation: "add_source_descriptions_for_agentic_selection",
+  });
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "AgentCapabilityDescriptionRequired");
+  assert.equal(result.trace.events.some((event) => event.kind === "agent_decision_requested"), false);
 });
 
 test("keeps user intent visible while external content stays opaque for agent decisions", async () => {
@@ -3892,6 +3962,81 @@ test("lets an agent consume multiple resources sequentially before answering", a
   assert.equal(JSON.stringify(result.trace).includes("dataset"), false);
 });
 
+test("exposes continuation guidance after intermediate opaque observations", async () => {
+  const document = multiStepAgentDocument();
+  const calls = [];
+
+  const result = await executeAirDocument(document, {
+    agentDecisionProviderContentMode: "opaque_refs",
+    agentDecisionProvider: (request) => {
+      calls.push(request);
+      if (request.step_index === 0 && request.mode === "summary") {
+        assert.deepEqual(request.model_input.agent_state.completed_capability_refs, []);
+        assert.deepEqual(request.model_input.agent_state.remaining_capability_refs, [
+          "skill:test/Search",
+          "skill:test/Summarize",
+        ]);
+        return { action: "request_capabilities", reason: "need data" };
+      }
+      if (request.step_index === 0 && request.mode === "capabilities") {
+	        assert.deepEqual(request.model_input.decision_policy, {
+	          select_exactly_one_catalog_capability_when_execution_is_needed: true,
+	          request_human_review_only_when_no_catalog_capability_suffices: true,
+	          request_human_review_when_goal_requires_human_judgment: true,
+	          prefer_unselected_capability_when_previous_observation_only_provides_intermediate_data: true,
+	        });
+        return {
+          target_ref: "skill:test/Search",
+          reason: "collect intermediate data",
+          arguments: {},
+        };
+      }
+      if (request.step_index === 1 && request.mode === "summary") {
+        assert.equal(request.observations[0].ref, "opaque:runtime_observation/0");
+        assert.equal(request.observations[0].value, undefined);
+        assert.deepEqual(request.model_input.agent_state.completed_capability_refs, ["skill:test/Search"]);
+        assert.deepEqual(request.model_input.agent_state.remaining_capability_refs, ["skill:test/Summarize"]);
+        assert.equal(
+          request.model_input.decision_policy.after_observation_answer_directly_only_if_goal_satisfied,
+          true,
+        );
+        assert.equal(
+          request.model_input.decision_policy.after_observation_request_capabilities_if_remaining_capability_can_complete_goal,
+          true,
+        );
+        assert.equal(JSON.stringify(request).includes("dataset"), false);
+        return { action: "request_capabilities", reason: "intermediate data still needs summarization" };
+      }
+      if (request.step_index === 1 && request.mode === "capabilities") {
+        assert.deepEqual(request.model_input.agent_state.completed_capability_refs, ["skill:test/Search"]);
+        assert.deepEqual(request.model_input.agent_state.remaining_capability_refs, ["skill:test/Summarize"]);
+        return {
+          target_ref: "skill:test/Summarize",
+          reason: "finalize intermediate data through an unselected capability",
+          arguments: {
+            item: "opaque:runtime_observation/0",
+          },
+        };
+      }
+      return {
+        action: "answer_directly",
+        source: "test_final_answer",
+        reason: "final capability observed",
+        result: "final",
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(result.result, "final");
+  assert.equal(calls.length, 5);
+  assert.deepEqual(
+    eventsOf(result.trace, "agent_capability_selected").map((event) => event.payload.selected_ref),
+    ["skill:test/Search", "skill:test/Summarize"],
+  );
+  assert.equal(JSON.stringify(result.trace).includes("dataset"), false);
+});
+
 test("lets an agent delegate to an authorized sub-agent and continue from its result", async () => {
   const document = delegatedAgentDocument({ authorized: true });
   const calls = [];
@@ -4033,14 +4178,33 @@ test("lets an agent request human review from the catalog and continue after app
     humanApprovalDecisions: {
       [approvalRef]: "approved",
     },
-    agentDecisionProvider: (request) => {
-      if (request.step_index === 0 && request.mode === "summary") {
-        return { action: "request_capabilities", reason: "human judgement may be needed" };
-      }
-      if (request.step_index === 0 && request.mode === "capabilities") {
-        assert.deepEqual(request.model_input.human_interaction.available_actions, ["request_human_review"]);
-        return {
-          action: "request_human_review",
+	    agentDecisionProvider: (request) => {
+	      if (request.step_index === 0 && request.mode === "summary") {
+	        assert.equal(
+	          request.model_input.decision_policy.request_capabilities_when_human_review_is_needed,
+	          true,
+	        );
+	        assert.equal(
+	          request.model_input.decision_policy.answer_directly_must_not_replace_required_human_review,
+	          true,
+	        );
+	        assert.deepEqual(request.model_input.human_interaction, {
+	          request_present: false,
+	          review_available: true,
+	          review_access: "request_capabilities_first",
+	          available_actions: ["request_capabilities_for_human_review"],
+	        });
+	        return { action: "request_capabilities", reason: "human judgement may be needed" };
+	      }
+	      if (request.step_index === 0 && request.mode === "capabilities") {
+	        assert.equal(request.model_input.human_interaction.review_access, "direct_catalog_action");
+	        assert.deepEqual(request.model_input.human_interaction.available_actions, ["request_human_review"]);
+	        assert.equal(
+	          request.model_input.decision_policy.request_human_review_when_goal_requires_human_judgment,
+	          true,
+	        );
+	        return {
+	          action: "request_human_review",
           source: "test_review",
           reason: "need human judgement",
           review_prompt: "Review the proposed answer.",
@@ -5473,6 +5637,7 @@ function agentProviderDocument({ searchResult = "search" } = {}) {
     skills: [
       {
         ...skill("Search", "graph:skill:test/Search"),
+        description: "Collect relevant external research data through the governed search capability.",
         signature: {
           inputs: [],
           output_type: "builtin:Text",
@@ -5480,6 +5645,7 @@ function agentProviderDocument({ searchResult = "search" } = {}) {
       },
       {
         ...skill("Answer", "graph:skill:test/Answer"),
+        description: "Produce the final answer from the selected research topic or intermediate observation.",
         signature: {
           inputs: [parameter("topic", "builtin:Text")],
           output_type: "builtin:Text",
@@ -5487,6 +5653,7 @@ function agentProviderDocument({ searchResult = "search" } = {}) {
       },
       {
         ...skill("Hidden", "graph:skill:test/Hidden"),
+        description: "Hidden control capability that is not declared in the active agent uses.",
         signature: {
           inputs: [],
           output_type: "builtin:Text",
@@ -5619,6 +5786,7 @@ function nestedAgentInvocationReviewAfterToolDocument() {
       {
         id: "agent:test/Coordinator",
         name: "Coordinator",
+        description: "Coordinate nested work by delegating the risky step to an authorized specialist agent.",
         responsibility: "Coordinator",
         uses: ["agent:test/Specialist"],
         callable_by: [
@@ -5633,6 +5801,7 @@ function nestedAgentInvocationReviewAfterToolDocument() {
       {
         id: "agent:test/Specialist",
         name: "Specialist",
+        description: "Perform the specialist fetch workflow before any nested human review decision.",
         responsibility: "Specialist",
         uses: ["skill:test/FetchData"],
         callable_by: [
@@ -5782,6 +5951,7 @@ function delegatedAgentDocument({ authorized }) {
       {
         id: "agent:test/Coordinator",
         name: "Coordinator",
+        description: "Coordinate the task by delegating specialist work to the authorized sub-agent.",
         responsibility: "Coordinator",
         uses: ["agent:test/Specialist"],
         callable_by: [
@@ -5796,6 +5966,7 @@ function delegatedAgentDocument({ authorized }) {
       {
         id: "agent:test/Specialist",
         name: "Specialist",
+        description: "Complete the delegated specialist task through its declared answer skill.",
         responsibility: "Specialist",
         uses: ["skill:test/SpecialistAnswer"],
         callable_by: [
@@ -5834,6 +6005,7 @@ function strategyResourceDocument() {
       {
         id: "agent:test/Planner",
         name: "Planner",
+        description: "Select the governed subprocess strategy when planning requires a separate execution unit.",
         responsibility: "Planner",
         uses: ["strategy:test/Subprocess"],
         callable_by: [
@@ -5857,6 +6029,7 @@ function strategyResourceDocument() {
       {
         id: "strategy:test/Subprocess",
         name: "Subprocess",
+        description: "Execute the bounded subprocess that returns the strategic planning result.",
         uses: [],
         signature: {
           inputs: [],
@@ -5966,6 +6139,7 @@ function tool(name, fields = {}) {
   return {
     id: `tool:test/${name}`,
     name,
+    description: `${name} test tool capability.`,
     signature: {
       inputs: [],
       output_type: "type:test/Text",
@@ -6003,6 +6177,7 @@ function fnDef(name, flowGraphRef, inputs = [], outputType = "type:test/Text") {
   return {
     id: `function:test/${name}`,
     name,
+    description: `${name} test function capability.`,
     signature: {
       inputs,
       output_type: outputType,
@@ -6024,6 +6199,7 @@ function skill(name, flowGraphRef, uses = []) {
   return {
     id: `skill:test/${name}`,
     name,
+    description: `${name} test skill capability.`,
     signature: {
       inputs: [],
       output_type: "type:test/Text",

@@ -92,6 +92,22 @@
             "target_ref": "skill:examples.strategy_agents/MakeChange",
             "kind": "skill",
             "name": "MakeChange",
+            "description": "skill MakeChange: make change; inputs: request; output: type:examples.strategy_agents/ReviewedChange; nested uses: 1",
+            "selection_keywords": [
+              "make",
+              "change",
+              "skill",
+              "inputs",
+              "request",
+              "output",
+              "type",
+              "examples",
+              "strategy",
+              "agents",
+              "reviewed",
+              "nested",
+              "uses"
+            ],
             "input_count": 1,
             "output_type": "type:examples.strategy_agents/ReviewedChange",
             "signature": {
@@ -316,6 +332,19 @@
             "target_ref": "skill:examples.strategy_agents/ReviewChange",
             "kind": "skill",
             "name": "ReviewChange",
+            "description": "skill ReviewChange: review change; inputs: change; output: type:examples.strategy_agents/ReviewedChange",
+            "selection_keywords": [
+              "review",
+              "change",
+              "skill",
+              "inputs",
+              "output",
+              "type",
+              "examples",
+              "strategy",
+              "agents",
+              "reviewed"
+            ],
             "input_count": 1,
             "output_type": "type:examples.strategy_agents/ReviewedChange",
             "signature": {

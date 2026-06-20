@@ -51,9 +51,11 @@ async function validatesLiveOrientationUsesAiSdkStructuredOutput() {
 
   assert.equal(decision.action, "request_capabilities");
   assert.equal(calls.length, 1);
-  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
-  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
-  const modelInput = JSON.parse(calls[0].prompt);
+	  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
+	  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
+	  assert.match(calls[0].system, /revue, approbation, validation ou décision humaine/);
+	  assert.match(calls[0].system, /request_human_review n'est disponible qu'après le catalogue/);
+	  const modelInput = JSON.parse(calls[0].prompt);
   assert.equal(modelInput.protocol, "touba-agent-model-input-v1");
   assert.equal(modelInput.mode, "orientation");
   assert.deepEqual(modelInput.allowed_actions, ["answer_directly", "request_capabilities"]);

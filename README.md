@@ -20,6 +20,12 @@ of the PAP research program (`Probabilistic Agentic Programming`).
 
 Documentation: https://pap-touba.github.io/documentation-site/
 
+Benchmarks: https://pap-touba.github.io/documentation-site/benchmarks/
+
+Benchmark evidence separates five-run live-model comparisons from structural
+runtime/CLI checks for traces, triggers, memory provenance, budgets,
+supply-chain drift, cancellation and multi-team authority.
+
 Release history: [`CHANGELOG.md`](CHANGELOG.md)
 
 ## Why Touba
@@ -136,11 +142,13 @@ type DatasetBrief
     summary is Text
 
 tool SearchDatasets
+    description "Search approved dataset sources for records matching the request."
     takes request as DatasetRequest
     gives DatasetBrief
     requires network
 
 skill BuildDatasetBrief
+    description "Build a governed dataset brief from approved search results."
     takes request as DatasetRequest
     gives DatasetBrief
     uses SearchDatasets
@@ -151,6 +159,8 @@ skill BuildDatasetBrief
         give result
 
 agent Researcher
+    description "Research agent that selects authorized dataset-brief capabilities."
+    responsibility "Select the declared research capability that matches the request."
     uses BuildDatasetBrief
     callable_by strategy RunDatasetResearch
 
@@ -162,8 +172,10 @@ strategy RunDatasetResearch
 
 The `tool` declares a bounded external action, the `skill` composes it into a
 typed capability, the `agent` carries the responsibility for selecting what to
-execute, and `callable_by` declares who is allowed to invoke that agent. The
-runtime refuses anything outside these declarations before any external effect.
+execute, and `callable_by` declares who is allowed to invoke that agent.
+Capabilities exposed through `agent.uses` must carry source descriptions so
+decision providers receive stable semantic contracts. The runtime refuses
+anything outside these declarations before any external effect.
 
 ## Architecture
 

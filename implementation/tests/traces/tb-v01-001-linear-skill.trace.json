@@ -92,6 +92,21 @@
             "target_ref": "skill:examples.linear_skill/BuildNote",
             "kind": "skill",
             "name": "BuildNote",
+            "description": "skill BuildNote: build note; inputs: request; output: type:examples.linear_skill/SourceNote; nested uses: 1",
+            "selection_keywords": [
+              "build",
+              "note",
+              "skill",
+              "inputs",
+              "request",
+              "output",
+              "type",
+              "examples",
+              "linear",
+              "source",
+              "nested",
+              "uses"
+            ],
             "input_count": 1,
             "output_type": "type:examples.linear_skill/SourceNote",
             "signature": {

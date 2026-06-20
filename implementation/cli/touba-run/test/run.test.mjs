@@ -1708,6 +1708,67 @@ test("runs an agent decision provider module through the CLI", () => {
   }
 });
 
+test("passes agent decision provider initial mode through the CLI", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-agent-provider-mode-"));
+  try {
+    const airPath = writeAirDocument(workspace, agentDecisionProviderDocument());
+    const providerPath = join(workspace, "provider.mjs");
+    const tracePath = join(workspace, "trace.json");
+    writeFileSync(
+      providerPath,
+      [
+        "export function decideAgentCapability(request) {",
+        "  if (request.mode === 'summary' && request.observations?.length > 0) {",
+        "    return {",
+        "      action: 'answer_directly',",
+        "      reason: 'answer from observed capability result',",
+        "      result: request.observations[0].value",
+        "    };",
+        "  }",
+        "  if (request.mode !== 'capabilities') {",
+        "    throw new Error(`expected capabilities mode, got ${request.mode}`);",
+        "  }",
+        "  return {",
+        "    target_ref: 'skill:examples.linear_skill/Answer',",
+        "    reason: 'answer skill selected from direct catalog',",
+        "    arguments: { topic: request.inputs.topic }",
+        "  };",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const stdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--inputs-json",
+        JSON.stringify({ topic: "postgres" }),
+        "--agent-decision-provider",
+        providerPath,
+        "--agent-decision-provider-initial-mode",
+        "capabilities",
+        "--max-provider-calls",
+        "2",
+        "--trace-out",
+        tracePath,
+        "--output",
+        "result",
+      ],
+      { encoding: "utf8" },
+    );
+
+    assert.equal(JSON.parse(stdout), "postgres");
+    const trace = JSON.parse(readFileSync(tracePath, "utf8"));
+    assert.equal(eventOf(trace, "agent_decision_requested").payload.mode, "capabilities");
+    assert.equal(trace.events.some((event) => event.kind === "agent_decision_catalog_requested"), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("passes ADP-1 provider metadata and budget flags through the CLI", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-adp1-provider-"));
   try {
@@ -3077,6 +3138,7 @@ function agentDecisionProviderDocument() {
         {
           id: "skill:examples.linear_skill/Search",
           name: "Search",
+          description: "Collect the first research observation required before composing the answer.",
           signature: {
             inputs: [],
             output_type: "builtin:Text",
@@ -3088,6 +3150,7 @@ function agentDecisionProviderDocument() {
         {
           id: "skill:examples.linear_skill/Answer",
           name: "Answer",
+          description: "Compose the final answer from the selected topic and prior observations.",
           signature: {
             inputs: [{ name: "topic", type_ref: "builtin:Text" }],
             output_type: "builtin:Text",
@@ -3724,6 +3787,7 @@ function agentToolThenHumanReviewDocument() {
         {
           id: "skill:examples.cli_agent_human_checkpoint/FetchData",
           name: "FetchData",
+          description: "Fetch the source text that must be reviewed before the run can continue.",
           signature: {
             inputs: [],
             output_type: "type:examples.linear_skill/SourceText",

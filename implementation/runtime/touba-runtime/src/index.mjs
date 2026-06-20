@@ -1836,13 +1836,15 @@ function agentCapabilityDescriptor(targetRef, context) {
   const definition = definitionForCapability(targetRef, context);
   const signature = signatureDescriptor(definition?.signature, context);
   const nestedUses = Array.isArray(definition?.uses) ? definition.uses : [];
-  const description = capabilityDescription(targetRef, kind, definition, signature, nestedUses);
-  const selectionKeywords = capabilitySelectionKeywords(definition?.name, description);
+  const descriptionRecord = capabilityDescriptionRecord(targetRef, kind, definition, signature, nestedUses);
+  const selectionKeywords = capabilitySelectionKeywords(definition?.name, descriptionRecord.text);
   return compactPayload({
     target_ref: targetRef,
     kind,
     name: definition?.name,
-    description,
+    description: descriptionRecord.text,
+    description_source: descriptionRecord.source,
+    source_description_present: descriptionRecord.source === "source",
     selection_keywords: selectionKeywords.length > 0 ? selectionKeywords : undefined,
     responsibility: kind === "agent" ? definition?.responsibility : undefined,
     input_count: signature?.inputs?.length,
@@ -1864,25 +1866,86 @@ function capabilitySummaryDescriptor(descriptor) {
     kind: descriptor.kind,
     name: descriptor.name,
     description: descriptor.description,
+    description_source: descriptor.description_source,
+    source_description_present: descriptor.source_description_present,
     selection_keywords: descriptor.selection_keywords,
   });
 }
 
-function capabilityDescription(targetRef, kind, definition, signature, nestedUses) {
+function capabilityDescriptionQuality(capabilities) {
+  const counts = {
+    source: 0,
+    responsibility: 0,
+    generated: 0,
+    absent: 0,
+  };
+  const missingSourceDescriptionRefs = [];
+  for (const capability of capabilities) {
+    const source = capability.description_source ?? "absent";
+    counts[source] = (counts[source] ?? 0) + 1;
+    if (source !== "source") {
+      missingSourceDescriptionRefs.push(capability.target_ref);
+    }
+  }
+  return compactPayload({
+    capability_count: capabilities.length,
+    source_description_count: counts.source,
+    generated_description_count: counts.generated,
+    responsibility_description_count: counts.responsibility,
+    absent_description_count: counts.absent,
+    missing_source_description_count: missingSourceDescriptionRefs.length,
+    missing_source_description_refs: missingSourceDescriptionRefs.length > 0
+      ? missingSourceDescriptionRefs
+      : undefined,
+    production_recommendation: missingSourceDescriptionRefs.length > 0
+      ? "add_source_descriptions_for_agentic_selection"
+      : "source_descriptions_complete",
+  });
+}
+
+function traceCapabilityDescriptionQuality(context, agent, providerMode, capabilities) {
+  const quality = capabilityDescriptionQuality(capabilities);
+  context.trace.push("agent_capability_descriptions_diagnosed", {
+    payload: compactPayload({
+      agent_ref: agent.id,
+      provider_mode: providerMode,
+      ...quality,
+    }),
+  });
+}
+
+function assertSourceDescriptionsForAgentCapabilities(agent, providerMode, capabilities) {
+  const quality = capabilityDescriptionQuality(capabilities);
+  if ((quality.missing_source_description_count ?? 0) === 0) {
+    return;
+  }
+  throw new RuntimeFailure(
+    `agent ${agent.id} exposes capabilities without source descriptions`,
+    {
+      agentRef: agent.id,
+      providerMode,
+      missingSourceDescriptionRefs: quality.missing_source_description_refs ?? [],
+      missingSourceDescriptionCount: quality.missing_source_description_count,
+    },
+    "AgentCapabilityDescriptionRequired",
+  );
+}
+
+function capabilityDescriptionRecord(targetRef, kind, definition, signature, nestedUses) {
   const explicit = normalizeCapabilityDescription(definition?.description);
   if (explicit) {
-    return explicit;
+    return { text: explicit, source: "source" };
   }
   const responsibility = kind === "agent" ? normalizeCapabilityDescription(definition?.responsibility) : null;
   if (responsibility && responsibility !== definition?.name) {
-    return responsibility;
+    return { text: responsibility, source: "responsibility" };
   }
   const name = typeof definition?.name === "string" && definition.name.trim() !== ""
     ? definition.name.trim()
     : String(targetRef).split("/").at(-1);
   const phrase = identifierPhrase(name);
   if (!phrase) {
-    return undefined;
+    return { text: undefined, source: "absent" };
   }
   const inputNames = Array.isArray(signature?.inputs)
     ? signature.inputs.map((input) => input.name).filter(Boolean)
@@ -1892,12 +1955,13 @@ function capabilityDescription(targetRef, kind, definition, signature, nestedUse
     : "inputs: none";
   const outputText = signature?.output_type ? `output: ${signature.output_type}` : null;
   const usesText = nestedUses.length > 0 ? `nested uses: ${nestedUses.length}` : null;
-  return [
+  const generated = [
     `${kind ?? "capability"} ${name}: ${phrase}`,
     inputText,
     outputText,
     usesText,
   ].filter(Boolean).join("; ");
+  return { text: generated, source: "generated" };
 }
 
 function normalizeCapabilityDescription(value) {
@@ -2085,6 +2149,8 @@ function agentDecisionProviderRequest(agent, capabilityRefs, context, mode, loop
   const providerContent = agentDecisionProviderContent(rawInputs, loopState?.observations ?? [], context);
   assertAgentProviderObservationsBudget(context, agent, mode, providerContent);
   const capabilities = capabilityRefs.map((capabilityRef) => agentCapabilityDescriptor(capabilityRef, context));
+  traceCapabilityDescriptionQuality(context, agent, mode, capabilities);
+  assertSourceDescriptionsForAgentCapabilities(agent, mode, capabilities);
   const modelInput = agentModelInput(agent, capabilityRefs, capabilities, rawInputs, mode, loopState, context, providerContent);
   const request = {
     protocol: AGENT_DECISION_PROTOCOL_VERSION,
@@ -2130,6 +2196,11 @@ function agentModelInput(
   const inputEntries = content.inputEntries;
   const observationEntries = content.observations;
   const resourceKinds = uniqueKinds(capabilityRefs);
+  const descriptionQuality = capabilityDescriptionQuality(capabilities);
+  const completedCapabilityRefs = observations
+    .filter((observation) => observation?.action === "select_capability" && typeof observation.target_ref === "string")
+    .map((observation) => observation.target_ref);
+  const remainingCapabilityRefs = capabilityRefs.filter((capabilityRef) => !completedCapabilityRefs.includes(capabilityRef));
   const developerInstruction = {
     source: "air_agent_responsibility",
     authority: "developer",
@@ -2147,6 +2218,8 @@ function agentModelInput(
       step_index: loopState?.stepIndex ?? 0,
       observation_count: observations.length,
       observations: observationEntries,
+      completed_capability_refs: completedCapabilityRefs,
+      remaining_capability_refs: remainingCapabilityRefs,
       observation_budget: agentProviderObservationBudgetReport(context, content),
     },
     instructions: [
@@ -2191,6 +2264,7 @@ function agentModelInput(
       capability_kinds: resourceKinds,
       catalog_available_on_request: orientationMode,
       catalog_presented: !orientationMode,
+      description_quality: descriptionQuality,
       skill_pack_hints_available: skillPackContext.hints.length > 0,
       skill_pack_hint_count: skillPackContext.hints.length,
       active_skill_pack_count: skillPackContext.active.length,
@@ -2205,21 +2279,30 @@ function agentModelInput(
         ? ["capability_refs", "capability_count", "capability_kinds", "skill_pack_hints"]
         : ["capability_descriptors", "signatures", "requirements", "nested_uses", "skill_pack_hints", "active_skill_packs"],
     },
-    decision_policy: orientationMode
-      ? {
-        answer_directly_requires_no_capability_call: true,
-        request_capabilities_when_execution_is_needed: true,
-        planned_capability_use_is_not_completion: true,
-      }
-      : {
-        select_exactly_one_catalog_capability_when_execution_is_needed: true,
-        request_human_review_only_when_no_catalog_capability_suffices: true,
-      },
-    human_interaction: {
-      request_present: false,
-      review_available: !orientationMode,
-      available_actions: orientationMode ? [] : ["request_human_review"],
-    },
+	    decision_policy: orientationMode
+	      ? {
+	        answer_directly_requires_no_capability_call: true,
+	        request_capabilities_when_execution_is_needed: true,
+	        request_capabilities_when_human_review_is_needed: true,
+	        planned_capability_use_is_not_completion: true,
+	        answer_directly_must_not_replace_required_human_review: true,
+	        after_observation_answer_directly_only_if_goal_satisfied: true,
+	        after_observation_request_capabilities_if_remaining_capability_can_complete_goal: true,
+	      }
+	      : {
+	        select_exactly_one_catalog_capability_when_execution_is_needed: true,
+	        request_human_review_only_when_no_catalog_capability_suffices: true,
+	        request_human_review_when_goal_requires_human_judgment: true,
+	        prefer_unselected_capability_when_previous_observation_only_provides_intermediate_data: true,
+	      },
+	    human_interaction: {
+	      request_present: false,
+	      review_available: true,
+	      review_access: orientationMode ? "request_capabilities_first" : "direct_catalog_action",
+	      available_actions: orientationMode
+	        ? ["request_capabilities_for_human_review"]
+	        : ["request_human_review"],
+	    },
     allowed_actions: orientationMode
       ? ["answer_directly", "request_capabilities"]
       : ["select_capability", "request_human_review"],
@@ -2229,10 +2312,10 @@ function agentModelInput(
         action: {
           enum: ["answer_directly", "request_capabilities"],
         },
-        direct_answer: {
-          type: "JSON",
-          description: "Réponse directe si aucune capacité n'est nécessaire.",
-        },
+	        direct_answer: {
+	          type: "JSON",
+	          description: "Réponse directe si aucune capacité et aucune revue humaine ne sont nécessaires.",
+	        },
         reason: {
           type: "Text",
           description: "Courte raison de la réponse directe ou de la demande de catalogue.",

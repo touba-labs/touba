@@ -361,6 +361,7 @@ try {
     agentDecisionProvider,
     agentDecisionProviderMetadata: parsedArgs.agentDecisionProviderMetadata,
     agentDecisionProviderContentMode: parsedArgs.agentDecisionProviderContentMode,
+    agentDecisionProviderInitialMode: parsedArgs.agentDecisionProviderInitialMode,
     agentDecisionProviderTimeoutMs: parsedArgs.agentDecisionProviderTimeoutMs,
     agentDecisionProviderMaxRetries: parsedArgs.agentDecisionProviderMaxRetries,
     maxAgentSteps: parsedArgs.maxAgentSteps,
@@ -965,6 +966,7 @@ function parseArgs(rawArgs) {
     agentDecisionProviderPath: undefined,
     agentDecisionProviderMetadataJson: undefined,
     agentDecisionProviderMetadata: undefined,
+    agentDecisionProviderInitialMode: undefined,
     agentDecisionProviderTimeoutMs: undefined,
     agentDecisionProviderMaxRetries: undefined,
     triggerEventPath: undefined,
@@ -1176,6 +1178,18 @@ function parseArgs(rawArgs) {
         return { error: "--agent-decision-provider-content-mode must be one of: inline, opaque_refs" };
       }
       parsed.agentDecisionProviderContentMode = contentMode;
+    } else if (arg === "--agent-decision-provider-initial-mode") {
+      index += 1;
+      if (!["summary", "capabilities"].includes(rawArgs[index])) {
+        return { error: "--agent-decision-provider-initial-mode must be one of: summary, capabilities" };
+      }
+      parsed.agentDecisionProviderInitialMode = rawArgs[index];
+    } else if (arg.startsWith("--agent-decision-provider-initial-mode=")) {
+      const initialMode = arg.slice("--agent-decision-provider-initial-mode=".length);
+      if (!["summary", "capabilities"].includes(initialMode)) {
+        return { error: "--agent-decision-provider-initial-mode must be one of: summary, capabilities" };
+      }
+      parsed.agentDecisionProviderInitialMode = initialMode;
     } else if (arg === "--trigger-event") {
       index += 1;
       if (index >= rawArgs.length) {
@@ -1568,7 +1582,7 @@ function parseArgs(rawArgs) {
 
 function printUsage() {
   process.stderr.write(
-    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object>] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer>] [--state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
+    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object>] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer>] [--state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
 }
 

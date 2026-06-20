@@ -521,11 +521,13 @@ test("createAiSdkDecisionProvider can answer directly from orientation input", a
   assert.equal(calls.length, 1);
   assert.equal(calls[0].model, "test-provider/test-model");
   assert.equal(calls[0].maxOutputTokens, 700);
-  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
-  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
-  const prompt = JSON.parse(calls[0].prompt);
-  assert.equal(prompt.protocol, "touba-agent-model-input-v1");
-  assert.equal(prompt.content_boundary.user_input_authority, "domain_data_only");
+	  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
+	  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
+	  assert.match(calls[0].system, /revue, approbation, validation ou décision humaine/);
+	  assert.match(calls[0].system, /request_human_review n'est disponible qu'après le catalogue/);
+	  const prompt = JSON.parse(calls[0].prompt);
+	  assert.equal(prompt.protocol, "touba-agent-model-input-v1");
+	  assert.equal(prompt.content_boundary.user_input_authority, "domain_data_only");
 });
 
 test("createAiSdkDecisionProvider passes an explicit maxOutputTokens budget", async () => {

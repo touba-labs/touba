@@ -94,10 +94,11 @@ function donneesQuebecSystemPrompt(request) {
   ];
   if (request.mode === "summary") {
     base.push("Si des observations runtime existent déjà et contiennent un résultat suffisant, réponds directement.");
-    base.push("Pour un brief Données Québec déjà observé, retourne son champ summary comme result.");
-    base.push("Si la demande est une salutation simple, réponds directement.");
-    base.push("Si la demande exige une recherche, un outil, une skill ou un agent, demande le catalogue.");
-    base.push("Quand tu demandes le catalogue, mets result à une chaîne vide.");
+	    base.push("Pour un brief Données Québec déjà observé, retourne son champ summary comme result.");
+	    base.push("Si la demande est une salutation simple, réponds directement.");
+	    base.push("Si la demande exige une recherche, un outil, une skill ou un agent, demande le catalogue.");
+	    base.push("Si la demande exige une revue, approbation, validation ou décision humaine, demande le catalogue ; request_human_review n'est disponible qu'après le catalogue.");
+	    base.push("Quand tu demandes le catalogue, mets result à une chaîne vide.");
     return base.join(" ");
   }
   base.push("Si le but demande un brief ou une synthèse, choisis BuildDatasetBrief plutôt qu'une recherche seule.");

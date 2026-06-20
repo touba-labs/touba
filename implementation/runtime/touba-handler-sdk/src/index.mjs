@@ -447,12 +447,16 @@ function defaultDecisionSystemPrompt(request) {
     "Ne sélectionne qu'une capacité autorisée par capability_refs.",
     "Renseigne les arguments avec les noms d'inputs indiqués dans les signatures.",
   ];
-  if (request.mode === "summary") {
-    base.push("Réponds directement seulement si aucune capacité n'est nécessaire.");
-    base.push("Demande le catalogue si une ressource Touba est nécessaire.");
-    base.push("Quand tu demandes le catalogue, mets result à une chaîne vide.");
+	  if (request.mode === "summary") {
+	    base.push("Réponds directement seulement si aucune capacité n'est nécessaire.");
+	    base.push("Demande le catalogue si une ressource Touba est nécessaire.");
+	    base.push("Demande aussi le catalogue si le but utilisateur exige une revue, approbation, validation ou décision humaine ; l'action request_human_review n'est disponible qu'après le catalogue.");
+	    base.push("Après une observation, réponds directement seulement si le résultat observé satisfait réellement le but utilisateur.");
+	    base.push("Si une observation est seulement une donnée intermédiaire et qu'une capacité autorisée peut encore traiter, résumer, valider ou finaliser cette donnée, demande le catalogue.");
+	    base.push("Quand tu demandes le catalogue, mets result à une chaîne vide.");
   } else {
     base.push("Choisis une seule capacité du catalogue présenté.");
+    base.push("Si les observations précédentes fournissent seulement des données intermédiaires, préfère une capacité autorisée non encore sélectionnée qui transforme ou finalise ces données.");
     base.push("Demande un review humain seulement si les ressources autorisées ne suffisent pas ou si un jugement humain est nécessaire.");
     base.push("Quand tu demandes un review humain, mets target_ref à human_review, review_prompt à une phrase courte, et renseigne arguments selon le schéma même si le runtime ignore ces arguments pour le review.");
   }
@@ -477,10 +481,10 @@ function decisionSchemaForRequest(request, options) {
         reason: {
           type: "string",
         },
-        result: {
-          type: "string",
-          description: "Réponse directe. Utiliser une chaîne vide quand action=request_capabilities.",
-        },
+	        result: {
+	          type: "string",
+	          description: "Réponse directe seulement si aucune capacité ou revue humaine n'est nécessaire. Utiliser une chaîne vide quand action=request_capabilities.",
+	        },
       },
       required: ["action", "source", "reason", "result"],
       additionalProperties: false,

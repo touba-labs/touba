@@ -92,6 +92,21 @@
             "target_ref": "skill:examples.fallback/BuildSource",
             "kind": "skill",
             "name": "BuildSource",
+            "description": "skill BuildSource: build source; inputs: request; output: type:examples.fallback/SourceText; nested uses: 2",
+            "selection_keywords": [
+              "build",
+              "source",
+              "skill",
+              "inputs",
+              "request",
+              "output",
+              "type",
+              "examples",
+              "fallback",
+              "text",
+              "nested",
+              "uses"
+            ],
             "input_count": 1,
             "output_type": "type:examples.fallback/SourceText",
             "signature": {

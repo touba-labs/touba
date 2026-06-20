@@ -92,6 +92,20 @@
             "target_ref": "skill:examples.branch/ReviewDraft",
             "kind": "skill",
             "name": "ReviewDraft",
+            "description": "skill ReviewDraft: review draft; inputs: accepted; output: type:examples.branch/AcceptedDraft; nested uses: 1",
+            "selection_keywords": [
+              "review",
+              "draft",
+              "skill",
+              "inputs",
+              "accepted",
+              "output",
+              "type",
+              "examples",
+              "branch",
+              "nested",
+              "uses"
+            ],
             "input_count": 1,
             "output_type": "type:examples.branch/AcceptedDraft",
             "signature": {
