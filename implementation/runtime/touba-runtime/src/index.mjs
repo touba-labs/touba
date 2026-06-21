@@ -1061,6 +1061,7 @@ async function executeNormalizedTriggerEvent(triggerEvent, context) {
       trigger_ref: triggerRef,
       event_id: eventId,
       source_kind: sourceKind,
+      arguments_present: triggerEvent.arguments ? true : undefined,
     }),
   });
 
@@ -1154,17 +1155,27 @@ async function executeNormalizedTriggerEvent(triggerEvent, context) {
     });
   }
 
+  let callArguments;
+  try {
+    callArguments = triggerCallArguments(trigger, target, context, triggerEvent);
+  } catch (error) {
+    if (error instanceof RuntimeFailure) {
+      refuseTriggerForRuntimeFailure(context, triggerRef, eventId, sourceKind, trigger.target_ref, error, "payload_invalid");
+    }
+    throw error;
+  }
+
   trace.push("trigger_event_accepted", {
     payload: {
       trigger_ref: triggerRef,
       target_ref: trigger.target_ref,
       source_kind: sourceKind,
       limits: { ...effectiveLimits },
+      arguments_source: triggerEvent.arguments ? "event" : "trigger",
     },
   });
   context.triggerRunCounts.set(triggerRef, observedCount + 1);
 
-  const callArguments = triggerCallArguments(trigger, target, context);
   trace.push("trigger_execution_started", {
     payload: {
       trigger_ref: triggerRef,
@@ -1219,12 +1230,22 @@ function normalizeTriggerEvent(event) {
       triggerRef: null,
       eventId: null,
       sourceKind: null,
+      arguments: null,
+      argumentsInvalid: false,
     };
   }
+  const args = event.arguments ?? event.args;
+  const argumentsInvalid = args !== undefined && (
+    !args
+    || typeof args !== "object"
+    || Array.isArray(args)
+  );
   return {
     triggerRef: normalizeOptionalNonEmptyString(event.trigger_ref ?? event.triggerRef),
     eventId: normalizeOptionalNonEmptyString(event.event_id ?? event.eventId),
     sourceKind: normalizeOptionalNonEmptyString(event.source_kind ?? event.sourceKind ?? event.kind),
+    arguments: argumentsInvalid || args === undefined ? null : { ...args },
+    argumentsInvalid,
   };
 }
 
@@ -1306,15 +1327,57 @@ function effectiveTriggerLimits(trigger, manifestTrigger, context, details) {
   };
 }
 
-function triggerCallArguments(trigger, target, context) {
+function triggerCallArguments(trigger, target, context, triggerEvent) {
   const inputs = target.signature?.inputs ?? [];
   const argumentsByInput = new Map(
     (trigger.arguments ?? []).map((argument) => [argument.input, argument.value_ref]),
   );
+  const eventArguments = triggerEvent.arguments;
+  if (triggerEvent.argumentsInvalid) {
+    throw new RuntimeFailure(
+      `trigger ${trigger.id} received invalid runtime arguments`,
+      {
+        triggerRef: trigger.id,
+        targetRef: trigger.target_ref,
+      },
+      "TriggerPayloadInvalid",
+    );
+  }
   if (inputs.length === 0) {
+    if (eventArguments && Object.keys(eventArguments).length > 0) {
+      throw new RuntimeFailure(
+        `trigger ${trigger.id} received arguments for target without inputs`,
+        {
+          triggerRef: trigger.id,
+          targetRef: trigger.target_ref,
+          unknownFields: Object.keys(eventArguments),
+        },
+        "TriggerPayloadInvalid",
+      );
+    }
     return null;
   }
+  const expectedNames = inputs.map((input) => input.name);
+  const eventArgumentKeys = eventArguments ? Object.keys(eventArguments) : [];
+  const unknownEventArguments = eventArgumentKeys.filter((key) => !expectedNames.includes(key));
+  if (unknownEventArguments.length > 0) {
+    throw new RuntimeFailure(
+      `trigger ${trigger.id} received unknown runtime arguments`,
+      {
+        triggerRef: trigger.id,
+        targetRef: trigger.target_ref,
+        unknownFields: unknownEventArguments,
+      },
+      "TriggerPayloadInvalid",
+    );
+  }
   return inputs.map((input) => {
+    if (eventArguments && Object.hasOwn(eventArguments, input.name)) {
+      const value = eventArguments[input.name];
+      validateTriggerArgumentValue(input, value, context, trigger);
+      assertNoSecretValueInTriggerArgument(trigger, input.name, value, context);
+      return value;
+    }
     const valueRef = argumentsByInput.get(input.name);
     if (!valueRef) {
       throw new RuntimeFailure(
@@ -1329,6 +1392,74 @@ function triggerCallArguments(trigger, target, context) {
     }
     return resolveHandle(valueRef, context, null);
   });
+}
+
+function validateTriggerArgumentValue(input, value, context, trigger) {
+  if (!isValueCompatibleWithType(value, input.type_ref, context)) {
+    throw new RuntimeFailure(
+      `trigger ${trigger.id} runtime argument ${input.name} does not match ${input.type_ref}`,
+      {
+        triggerRef: trigger.id,
+        targetRef: trigger.target_ref,
+        input: input.name,
+        expectedTypeRef: input.type_ref,
+        valueKind: payloadValueKind(value),
+      },
+      "TriggerPayloadInvalid",
+    );
+  }
+}
+
+function isValueCompatibleWithType(value, typeRef, context) {
+  if (typeRef === BUILTIN_TEXT) {
+    return typeof value === "string";
+  }
+  if (typeRef === BUILTIN_BOOLEAN) {
+    return typeof value === "boolean";
+  }
+  if (typeRef === BUILTIN_INT) {
+    return Number.isSafeInteger(value);
+  }
+  if (typeRef === BUILTIN_FLOAT) {
+    return typeof value === "number" && Number.isFinite(value);
+  }
+  if (typeof typeRef === "string" && typeRef.startsWith("builtin:List<")) {
+    return Array.isArray(value);
+  }
+  const type = context.indexes.types.get(typeRef);
+  if (!type || !Array.isArray(type.fields)) {
+    return true;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const expectedFields = type.fields.map((field) => field.name);
+  const keys = Object.keys(value);
+  if (keys.some((key) => !expectedFields.includes(key))) {
+    return false;
+  }
+  return type.fields.every((field) =>
+    Object.hasOwn(value, field.name)
+    && isValueCompatibleWithType(value[field.name], field.type_ref, context)
+  );
+}
+
+function assertNoSecretValueInTriggerArgument(trigger, inputName, value, context) {
+  const serialized = JSON.stringify(value);
+  const leakedSecrets = secretEntriesInSerializedValue(serialized, context);
+  if (leakedSecrets.length === 0) {
+    return;
+  }
+  throw new RuntimeFailure(
+    `trigger argument contains a resolved secret value ${trigger.id}`,
+    {
+      triggerRef: trigger.id,
+      targetRef: trigger.target_ref,
+      input: inputName,
+      secretHandlesRefused: leakedSecrets.map((entry) => entry.handle),
+    },
+    "SecretValueInTriggerArgument",
+  );
 }
 
 function withTriggerTimeout(promise, timeoutMs, triggerRef) {
@@ -1393,6 +1524,23 @@ function refuseTrigger(context, triggerRef, eventId, details) {
     },
     details.code,
   );
+}
+
+function refuseTriggerForRuntimeFailure(context, triggerRef, eventId, sourceKind, targetRef, error, reason) {
+  context.trace.push("trigger_event_refused", {
+    payload: compactPayload({
+      trigger_ref: triggerRef,
+      event_id: eventId,
+      source_kind: sourceKind,
+      reason,
+      runtime_error_code: error.code,
+      target_ref: targetRef,
+      unknown_fields: error.details?.unknownFields,
+      expected_type_ref: error.details?.expectedTypeRef,
+      value_kind: error.details?.valueKind,
+      secret_handles_refused: error.details?.secretHandlesRefused,
+    }),
+  });
 }
 
 function refuseTriggerAfterCancel(context, triggerRef, eventId, sourceKind) {
@@ -4228,6 +4376,72 @@ function normalizeManifestTrigger(triggerRef, trigger) {
       timezone: typeof trigger.source.timezone === "string" ? trigger.source.timezone : undefined,
     }),
     limits: normalizeManifestTriggerLimits(trigger.limits, triggerRef),
+    payload: normalizeManifestTriggerPayload(trigger.payload, triggerRef),
+  });
+}
+
+function normalizeManifestTriggerPayload(payload, triggerRef) {
+  if (payload === undefined) {
+    return undefined;
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "trigger payload must be an object", {
+      triggerRef,
+    });
+  }
+  const format = payload.format ?? "json";
+  if (format !== "json") {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "trigger payload.format must be json", {
+      triggerRef,
+      actual: format,
+    });
+  }
+  const maxBytes = payload.max_bytes ?? 65536;
+  assertPositiveInteger(maxBytes, "payload.max_bytes", triggerRef);
+  if (maxBytes > 65536) {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "trigger payload.max_bytes must be <= 65536", {
+      triggerRef,
+      actual: maxBytes,
+    });
+  }
+  const contentTypes = payload.content_types === undefined
+    ? ["application/json"]
+    : payload.content_types;
+  if (
+    !Array.isArray(contentTypes)
+    || contentTypes.length === 0
+    || contentTypes.some((contentType) => typeof contentType !== "string" || contentType.trim() === "")
+  ) {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "trigger payload.content_types must be a non-empty string array", {
+      triggerRef,
+    });
+  }
+  if (!payload.map || typeof payload.map !== "object" || Array.isArray(payload.map)) {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "trigger payload.map must be an object", {
+      triggerRef,
+    });
+  }
+  const mapped = {};
+  for (const [inputName, jsonPath] of Object.entries(payload.map)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(inputName)) {
+      throw new ToubaRuntimeError("InvalidToolBindingManifest", "trigger payload.map keys must be input names", {
+        triggerRef,
+        inputName,
+      });
+    }
+    if (typeof jsonPath !== "string" || !/^\$(\.[A-Za-z_][A-Za-z0-9_]*)*$/u.test(jsonPath)) {
+      throw new ToubaRuntimeError("InvalidToolBindingManifest", "trigger payload.map values must be JSON paths like $.field", {
+        triggerRef,
+        inputName,
+      });
+    }
+    mapped[inputName] = jsonPath;
+  }
+  return Object.freeze({
+    format,
+    maxBytes,
+    contentTypes: Object.freeze(contentTypes.map((contentType) => contentType.trim().toLowerCase())),
+    map: Object.freeze(mapped),
   });
 }
 

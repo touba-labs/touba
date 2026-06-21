@@ -212,9 +212,9 @@ trigger WebhookResearch
 
 Touba accepte `schedule -> strategy` et `request -> strategy`. Le runner
 `schedule` supporte `every <n>s`, `every <n>m` et `every <n>h`. Le service
-webhook local route `request` par méthode `GET`, `POST`, `PUT`, `PATCH` ou
-`DELETE` et chemin absolu. Les autres familles d’événements et le déclenchement
-direct d’agent ne sont pas documentés comme disponibles.
+webhook route `request` par méthode `GET`, `POST`, `PUT`, `PATCH` ou `DELETE`,
+chemin absolu, contrat payload du manifest et état TD-1. Les autres familles
+d’événements et le déclenchement direct d’agent relèvent des couches futures.
 
 ## Interactions utilisateur
 

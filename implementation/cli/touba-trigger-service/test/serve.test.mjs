@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -104,6 +105,158 @@ test("requires an explicit auth token env var for non-loopback hosts", async () 
   }
 });
 
+test("maps declared JSON webhook payload fields to durable trigger arguments", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-payload-"));
+  try {
+    const fixture = writeFixture(workspace, { payloadMapped: true });
+    const child = spawnService(fixture, ["--max-events", "1"]);
+    const started = await waitForStart(child);
+
+    const response = await fetch(`http://${started.host}:${started.port}/webhook/run`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-touba-event-id": "evt-webhook-payload",
+      },
+      body: JSON.stringify({
+        message: "approved-message",
+        ignored: "raw-secret-payload",
+      }),
+    });
+    assert.equal(response.status, 202);
+    const exit = await once(child, "exit");
+    assert.equal(exit[0], 0);
+
+    const queueText = readFileSync(fixture.queuePath, "utf8");
+    assert.equal(queueText.includes("raw-secret-payload"), false);
+    assert.equal(queueText.includes("approved-message"), true);
+    const queue = JSON.parse(queueText);
+    assert.deepEqual(queue.entries[0].arguments, { message: "approved-message" });
+    assert.deepEqual(queue.entries[0].payload_contract.mapped_inputs, ["message"]);
+
+    const traceText = readFileSync(queue.entries[0].trace_path, "utf8");
+    assert.equal(traceText.includes("raw-secret-payload"), false);
+    assert.equal(eventOf(JSON.parse(traceText), "trigger_event_received").payload.arguments_present, true);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("requires a valid webhook HMAC signature when configured", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-signature-"));
+  try {
+    const fixture = writeFixture(workspace);
+    const body = Buffer.from("signed-body");
+    const secret = "trigger-signing-secret";
+    const child = spawnService(fixture, [
+      "--max-events",
+      "1",
+      "--signature-secret-env",
+      "TOUBA_TRIGGER_SIGNATURE_SECRET",
+    ], {
+      TOUBA_TRIGGER_SIGNATURE_SECRET: secret,
+    });
+    const started = await waitForStart(child);
+
+    const rejected = await fetch(`http://${started.host}:${started.port}/webhook/run`, {
+      method: "POST",
+      headers: {
+        "x-touba-event-id": "evt-webhook-bad-signature",
+        "x-touba-signature": "sha256=0000000000000000000000000000000000000000000000000000000000000000",
+      },
+      body,
+    });
+    assert.equal(rejected.status, 401);
+
+    const signature = createHmac("sha256", secret).update(body).digest("hex");
+    const accepted = await fetch(`http://${started.host}:${started.port}/webhook/run`, {
+      method: "POST",
+      headers: {
+        "x-touba-event-id": "evt-webhook-good-signature",
+        "x-touba-signature": `sha256=${signature}`,
+      },
+      body,
+    });
+    assert.equal(accepted.status, 202);
+    const exit = await once(child, "exit");
+    assert.equal(exit[0], 0);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("rejects mapped webhook payload arguments that do not match the target signature", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-payload-type-"));
+  try {
+    const fixture = writeFixture(workspace, { payloadMapped: true });
+    const child = spawnService(fixture, ["--max-events", "1"]);
+    const started = await waitForStart(child);
+
+    const response = await fetch(`http://${started.host}:${started.port}/webhook/run`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-touba-event-id": "evt-webhook-bad-type",
+      },
+      body: JSON.stringify({
+        message: 42,
+      }),
+    });
+    assert.equal(response.status, 202);
+    const exit = await once(child, "exit");
+    assert.equal(exit[0], 0);
+
+    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    assert.equal(queue.entries[0].status, "failed");
+    assert.equal(queue.entries[0].runtime_error_code, "TriggerPayloadInvalid");
+    assert.equal(queue.entries[0].arguments.message, 42);
+
+    const trace = JSON.parse(readFileSync(queue.entries[0].trace_path, "utf8"));
+    const refusal = eventOf(trace, "trigger_event_refused");
+    assert.equal(refusal.payload.runtime_error_code, "TriggerPayloadInvalid");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("recovers stale processing queue entries when the service starts", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-recover-"));
+  try {
+    const fixture = writeFixture(workspace);
+    writeFileSync(fixture.queuePath, JSON.stringify({
+      trigger_queue_schema_version: "touba-trigger-queue-v0.1",
+      created_at: new Date().toISOString(),
+      entries: [
+        {
+          queue_id: "queue:stale:001",
+          trigger_ref: "trigger:examples.webhook/WebhookRun",
+          event_id: "evt-webhook-stale",
+          source_kind: "request",
+          status: "processing",
+          received_at: new Date(Date.now() - 600000).toISOString(),
+          started_at: new Date(Date.now() - 600000).toISOString(),
+          http: {
+            method: "POST",
+            path: "/webhook/run",
+            payload_bytes: 0,
+            payload_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          },
+        },
+      ],
+    }, null, 2), "utf8");
+    const child = spawnService(fixture, ["--max-events", "1", "--processing-timeout-ms", "1"]);
+    await waitForStart(child);
+    const exit = await once(child, "exit");
+    assert.equal(exit[0], 0);
+
+    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    assert.equal(queue.entries[0].status, "succeeded");
+    assert.equal(queue.entries[0].recovery_reason, "processing_timeout");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 async function postOne(fixture, eventId) {
   const child = spawnService(fixture, ["--max-events", "1"]);
   const started = await waitForStart(child);
@@ -119,7 +272,7 @@ async function postOne(fixture, eventId) {
   assert.equal(exit[0], 0);
 }
 
-function spawnService(fixture, extraArgs = []) {
+function spawnService(fixture, extraArgs = [], extraEnv = {}) {
   const child = spawn(process.execPath, [
     servePath,
     fixture.airPath,
@@ -136,6 +289,10 @@ function spawnService(fixture, extraArgs = []) {
     ...extraArgs,
   ], {
     encoding: "utf8",
+    env: {
+      ...process.env,
+      ...extraEnv,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stderr = "";
@@ -166,14 +323,14 @@ async function waitForStart(child) {
   throw new Error("trigger service exited before reporting its port");
 }
 
-function writeFixture(workspace) {
+function writeFixture(workspace, options = {}) {
   const airPath = join(workspace, "webhook.air.json");
   const manifestPath = join(workspace, "touba.manifest.json");
   const statePath = join(workspace, "touba.trigger-state.json");
   const queuePath = join(workspace, "touba.trigger-queue.json");
   const traceDir = join(workspace, "traces");
-  writeFileSync(airPath, JSON.stringify(webhookAir()), "utf8");
-  writeFileSync(manifestPath, JSON.stringify(webhookManifest()), "utf8");
+  writeFileSync(airPath, JSON.stringify(webhookAir(options)), "utf8");
+  writeFileSync(manifestPath, JSON.stringify(webhookManifest(options)), "utf8");
   return {
     airPath,
     manifestPath,
@@ -183,7 +340,8 @@ function writeFixture(workspace) {
   };
 }
 
-function webhookAir() {
+function webhookAir(options = {}) {
+  const payloadMapped = options.payloadMapped === true;
   return {
     air_schema_version: "air-minimal-v0.1",
     air_json_profile: "air-json-v0.1",
@@ -204,7 +362,14 @@ function webhookAir() {
           id: "strategy:examples.webhook/RunWebhook",
           name: "RunWebhook",
           signature: {
-            inputs: [],
+            inputs: payloadMapped
+              ? [
+                {
+                  name: "message",
+                  type_ref: "builtin:Text",
+                },
+              ]
+              : [],
             output_type: "builtin:Text",
           },
           flow_graph_ref: "graph:strategy:examples.webhook/RunWebhook",
@@ -241,7 +406,7 @@ function webhookAir() {
           {
             id: "n1",
             kind: "give",
-            arguments: ["literal:string:webhook accepted"],
+            arguments: [payloadMapped ? "value:message" : "literal:string:webhook accepted"],
             trace_point_refs: [],
             source_ref: sourceRef(),
           },
@@ -256,21 +421,32 @@ function webhookAir() {
   };
 }
 
-function webhookManifest() {
+function webhookManifest(options = {}) {
+  const trigger = {
+    enabled: true,
+    source: {
+      kind: "request",
+    },
+    limits: {
+      max_runs_per_day: 10,
+      timeout_ms: 30000,
+    },
+  };
+  if (options.payloadMapped === true) {
+    trigger.payload = {
+      format: "json",
+      content_types: ["application/json"],
+      max_bytes: 256,
+      map: {
+        message: "$.message",
+      },
+    };
+  }
   return {
     manifest_version: "touba-manifest-v1",
     bindings: {},
     triggers: {
-      "trigger:examples.webhook/WebhookRun": {
-        enabled: true,
-        source: {
-          kind: "request",
-        },
-        limits: {
-          max_runs_per_day: 10,
-          timeout_ms: 30000,
-        },
-      },
+      "trigger:examples.webhook/WebhookRun": trigger,
     },
   };
 }

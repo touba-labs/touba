@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -17,6 +17,8 @@ const STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const MAX_BODY_BYTES = 64 * 1024;
+const DEFAULT_MAX_ATTEMPTS = 3;
+const DEFAULT_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
 
 if (isMainModule()) {
   try {
@@ -40,6 +42,10 @@ export async function createTriggerService(options) {
   const queuePath = resolve(required(options.queuePath, "--queue"));
   assertSuffix(statePath, ".trigger-state.json", "TriggerStatePathInvalid");
   assertSuffix(queuePath, ".trigger-queue.json", "TriggerQueuePathInvalid");
+  const host = options.host ?? DEFAULT_HOST;
+  const port = options.port ?? DEFAULT_PORT;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const processingTimeoutMs = options.processingTimeoutMs ?? DEFAULT_PROCESSING_TIMEOUT_MS;
 
   const document = loadAirFromJson(readFileSync(airPath, "utf8"));
   const manifest = loadManifestFromPath(manifestPath);
@@ -48,7 +54,7 @@ export async function createTriggerService(options) {
     : loadSecretsFromJson(readFileSync(resolve(options.secretsPath), "utf8"), {
       baseDir: dirname(resolve(options.secretsPath)),
     });
-  const routes = buildRequestRoutes(document, options.triggerRef);
+  const routes = buildRequestRoutes(document, manifest, options.triggerRef);
   if (routes.length === 0) {
     throw serviceError(
       "TriggerServiceNoRequestRoutes",
@@ -63,16 +69,36 @@ export async function createTriggerService(options) {
       `environment variable ${options.authTokenEnv} is required`,
     );
   }
-  if (!isLoopbackHost(options.host) && authToken === undefined) {
+  if (!isLoopbackHost(host) && authToken === undefined) {
     throw serviceError(
       "TriggerServiceAuthRequired",
       "non-loopback trigger service hosts require --auth-token-env",
+    );
+  }
+  const signatureSecret = options.signatureSecretEnv === undefined ? undefined : process.env[options.signatureSecretEnv];
+  if (options.signatureSecretEnv !== undefined && (!signatureSecret || signatureSecret.trim() === "")) {
+    throw serviceError(
+      "TriggerServiceSignatureSecretMissing",
+      `environment variable ${options.signatureSecretEnv} is required`,
     );
   }
 
   const serverState = {
     processedCount: 0,
     stopping: false,
+  };
+  const workerOptions = {
+    document,
+    manifest,
+    secretStore,
+    statePath,
+    queuePath,
+    traceDir: options.traceDir,
+    server: undefined,
+    serverState,
+    maxEvents: options.maxEvents,
+    maxAttempts,
+    processingTimeoutMs,
   };
 
   const server = createServer(async (request, response) => {
@@ -102,7 +128,11 @@ export async function createTriggerService(options) {
         return;
       }
 
-      const body = await readBoundedBody(request);
+      const body = await readBoundedBody(request, route.payload?.maxBytes ?? MAX_BODY_BYTES);
+      if (signatureSecret !== undefined) {
+        assertValidSignature(request, body.buffer, signatureSecret);
+      }
+      const argumentsFromPayload = materializePayloadArguments(route, request, body);
       const eventId = triggerEventId(request, route.trigger, body.digest);
       const queueId = `queue:${Date.now()}:${hashText(`${route.trigger.id}:${eventId}`).slice(0, 12)}`;
       const queue = loadQueue(queuePath);
@@ -119,6 +149,11 @@ export async function createTriggerService(options) {
           payload_bytes: body.bytes,
           payload_sha256: body.digest,
         },
+        arguments: argumentsFromPayload ?? undefined,
+        payload_contract: route.payload === undefined ? undefined : {
+          format: route.payload.format,
+          mapped_inputs: Object.keys(route.payload.map).sort(),
+        },
       };
       queue.entries.push(entry);
       saveQueue(queuePath, queue);
@@ -132,22 +167,15 @@ export async function createTriggerService(options) {
 
       setImmediate(() => {
         processQueue({
-          document,
-          manifest,
-          secretStore,
-          statePath,
-          queuePath,
-          traceDir: options.traceDir,
+          ...workerOptions,
           server,
-          serverState,
-          maxEvents: options.maxEvents,
         }).catch((error) => {
           process.stderr.write(`trigger service worker error [${error.code ?? "TriggerServiceWorkerError"}]: ${error.message}\n`);
         });
       });
     } catch (error) {
       const code = error.code ?? "TriggerServiceRequestFailed";
-      writeJson(response, code === "TriggerPayloadTooLarge" ? 413 : 400, {
+      writeJson(response, httpStatusForServiceError(code), {
         status: "error",
         code,
         message: error.message,
@@ -158,12 +186,12 @@ export async function createTriggerService(options) {
   return {
     async start() {
       await new Promise((resolveListen) => {
-        server.listen(options.port, options.host, resolveListen);
+        server.listen(port, host, resolveListen);
       });
       const address = server.address();
       process.stdout.write(`${JSON.stringify({
         event: "trigger_service_started",
-        host: options.host,
+        host,
         port: address.port,
         routes: routes.map((route) => ({
           method: route.method,
@@ -173,6 +201,14 @@ export async function createTriggerService(options) {
         queue: queuePath,
         state: statePath,
       })}\n`);
+      setImmediate(() => {
+        processQueue({
+          ...workerOptions,
+          server,
+        }).catch((error) => {
+          process.stderr.write(`trigger service worker error [${error.code ?? "TriggerServiceWorkerError"}]: ${error.message}\n`);
+        });
+      });
     },
     server,
   };
@@ -188,58 +224,80 @@ async function processQueue({
   server,
   serverState,
   maxEvents,
+  maxAttempts,
+  processingTimeoutMs,
 }) {
   if (serverState.stopping) {
     return;
   }
-  const queue = loadQueue(queuePath);
-  const entry = queue.entries.find((candidate) => candidate.status === "queued");
-  if (!entry) {
-    return;
-  }
-  entry.status = "processing";
-  entry.started_at = new Date().toISOString();
-  saveQueue(queuePath, queue);
-
-  const triggerState = loadTriggerState(statePath);
-  const event = {
-    trigger_ref: entry.trigger_ref,
-    event_id: entry.event_id,
-    source_kind: entry.source_kind,
-  };
-  const result = await executeTriggerEventWithState(document, event, {
-    toolBindingManifest: manifest,
-    secretStore,
-    statePath,
-    runId: `trigger-service-${entry.queue_id.replaceAll(/[^A-Za-z0-9_-]/gu, "-")}`,
-    triggerRunCounts: {
-      [entry.trigger_ref]: countAcceptedTriggerEvents(triggerState, entry.trigger_ref, currentDayKey()),
-    },
-  }, triggerState);
-
-  const finishedQueue = loadQueue(queuePath);
-  const stored = finishedQueue.entries.find((candidate) => candidate.queue_id === entry.queue_id);
-  if (stored) {
-    const refusal = lastTriggerRefusal(result.trace, entry.trigger_ref, entry.event_id);
-    stored.status = result.status === "success" ? "succeeded" : "failed";
-    stored.completed_at = new Date().toISOString();
-    stored.run_id = result.trace?.run?.run_id;
-    stored.runtime_status = result.status;
-    stored.runtime_error_code = refusal?.payload?.runtime_error_code;
-    stored.refusal_reason = refusal?.payload?.reason;
-    if (traceDir !== undefined) {
-      mkdirSync(resolve(traceDir), { recursive: true });
-      const tracePath = join(resolve(traceDir), `${safeFilePart(entry.queue_id)}.trace.json`);
-      writeFileSync(tracePath, `${JSON.stringify(result.trace, null, 2)}\n`, "utf8");
-      stored.trace_path = tracePath;
+  while (!serverState.stopping) {
+    const queue = loadQueue(queuePath);
+    const recovered = recoverStaleProcessingEntries(queue, processingTimeoutMs);
+    const entry = queue.entries.find((candidate) =>
+      candidate.status === "queued"
+      && (!candidate.next_attempt_at || Date.parse(candidate.next_attempt_at) <= Date.now())
+    );
+    if (!entry) {
+      if (recovered) {
+        saveQueue(queuePath, queue);
+      }
+      return;
     }
-  }
-  saveQueue(queuePath, finishedQueue);
+    entry.status = "processing";
+    entry.started_at = new Date().toISOString();
+    entry.attempt_count = (entry.attempt_count ?? 0) + 1;
+    saveQueue(queuePath, queue);
 
-  serverState.processedCount += 1;
-  if (maxEvents !== undefined && serverState.processedCount >= maxEvents) {
-    serverState.stopping = true;
-    server.close();
+    const triggerState = loadTriggerState(statePath);
+    const event = {
+      trigger_ref: entry.trigger_ref,
+      event_id: entry.event_id,
+      source_kind: entry.source_kind,
+      arguments: entry.arguments,
+    };
+    const result = await executeTriggerEventWithState(document, event, {
+      toolBindingManifest: manifest,
+      secretStore,
+      statePath,
+      runId: `trigger-service-${entry.queue_id.replaceAll(/[^A-Za-z0-9_-]/gu, "-")}-attempt-${entry.attempt_count}`,
+      triggerRunCounts: {
+        [entry.trigger_ref]: countAcceptedTriggerEvents(triggerState, entry.trigger_ref, currentDayKey()),
+      },
+    }, triggerState);
+
+    const finishedQueue = loadQueue(queuePath);
+    const stored = finishedQueue.entries.find((candidate) => candidate.queue_id === entry.queue_id);
+    if (stored) {
+      const refusal = lastTriggerRefusal(result.trace, entry.trigger_ref, entry.event_id);
+      const runtimeErrorCode = refusal?.payload?.runtime_error_code;
+      stored.completed_at = new Date().toISOString();
+      stored.run_id = result.trace?.run?.run_id;
+      stored.runtime_status = result.status;
+      stored.runtime_error_code = runtimeErrorCode;
+      stored.refusal_reason = refusal?.payload?.reason;
+      if (traceDir !== undefined) {
+        mkdirSync(resolve(traceDir), { recursive: true });
+        const tracePath = join(resolve(traceDir), `${safeFilePart(entry.queue_id)}.attempt-${entry.attempt_count}.trace.json`);
+        writeFileSync(tracePath, `${JSON.stringify(result.trace, null, 2)}\n`, "utf8");
+        stored.trace_path = tracePath;
+      }
+      if (result.status === "success") {
+        stored.status = "succeeded";
+      } else if (shouldRetryQueueEntry(stored, runtimeErrorCode, maxAttempts)) {
+        stored.status = "queued";
+        stored.next_attempt_at = new Date(Date.now() + retryDelayMs(stored.attempt_count ?? 1)).toISOString();
+      } else {
+        stored.status = isNonRetryableRuntimeErrorCode(runtimeErrorCode) ? "failed" : "dead_lettered";
+        stored.dead_lettered_at = stored.status === "dead_lettered" ? new Date().toISOString() : undefined;
+      }
+    }
+    saveQueue(queuePath, finishedQueue);
+
+    serverState.processedCount += 1;
+    if (maxEvents !== undefined && serverState.processedCount >= maxEvents) {
+      serverState.stopping = true;
+      server.close();
+    }
   }
 }
 
@@ -268,13 +326,20 @@ function loadManifestFromPath(manifestPath) {
   return loadToolBindingManifestFromJson(JSON.stringify(rawManifest));
 }
 
-function buildRequestRoutes(document, triggerRef) {
+function buildRequestRoutes(document, manifest, triggerRef) {
   return (document.definitions?.triggers ?? [])
     .filter((trigger) => trigger.event?.kind === "request")
     .filter((trigger) => triggerRef === undefined || trigger.id === triggerRef)
     .map((trigger) => {
       const parsed = parseRequestEventValue(trigger.event.value);
-      return parsed === null ? null : { ...parsed, trigger };
+      const manifestTrigger = manifest.triggers.get(trigger.id);
+      if (!manifestTrigger || manifestTrigger.enabled !== true || manifestTrigger.source?.kind !== "request") {
+        return null;
+      }
+      const target = (document.definitions?.strategies ?? [])
+        .find((candidate) => candidate.id === trigger.target_ref);
+      validatePayloadMappingAgainstTarget(manifestTrigger.payload, target, trigger.id);
+      return parsed === null ? null : { ...parsed, trigger, target, payload: manifestTrigger.payload };
     })
     .filter(Boolean);
 }
@@ -298,6 +363,78 @@ function matchRoute(routes, method, url) {
   return routes.find((route) => route.method === method && route.path === parsed.pathname);
 }
 
+function validatePayloadMappingAgainstTarget(payload, target, triggerRef) {
+  if (payload === undefined) {
+    return;
+  }
+  if (!target) {
+    throw serviceError("TriggerPayloadContractInvalid", "payload mapping requires an existing target strategy");
+  }
+  const inputNames = (target.signature?.inputs ?? []).map((input) => input.name);
+  const unknownInputs = Object.keys(payload.map).filter((inputName) => !inputNames.includes(inputName));
+  if (unknownInputs.length > 0) {
+    throw serviceError(
+      "TriggerPayloadContractInvalid",
+      `payload mapping references unknown strategy inputs for ${triggerRef}: ${unknownInputs.join(", ")}`,
+    );
+  }
+}
+
+function materializePayloadArguments(route, request, body) {
+  if (route.payload === undefined) {
+    return undefined;
+  }
+  assertAcceptedContentType(request, route.payload.contentTypes);
+  const text = body.buffer.toString("utf8");
+  let parsed;
+  try {
+    parsed = text.trim() === "" ? null : JSON.parse(text);
+  } catch (error) {
+    throw serviceError(
+      "TriggerPayloadInvalid",
+      `request body must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const args = {};
+  for (const [inputName, jsonPath] of Object.entries(route.payload.map)) {
+    const value = readJsonPath(parsed, jsonPath);
+    if (value === undefined) {
+      throw serviceError("TriggerPayloadInvalid", `request body is missing mapped field ${jsonPath}`);
+    }
+    args[inputName] = value;
+  }
+  return args;
+}
+
+function assertAcceptedContentType(request, acceptedContentTypes) {
+  const header = request.headers["content-type"];
+  const contentType = Array.isArray(header) ? header[0] : header;
+  const normalized = typeof contentType === "string"
+    ? contentType.split(";")[0].trim().toLowerCase()
+    : "";
+  if (!acceptedContentTypes.includes(normalized)) {
+    throw serviceError(
+      "TriggerPayloadContentTypeUnsupported",
+      `content-type must be one of ${acceptedContentTypes.join(", ")}`,
+    );
+  }
+}
+
+function readJsonPath(root, jsonPath) {
+  if (jsonPath === "$") {
+    return root;
+  }
+  const parts = jsonPath.slice(2).split(".");
+  let current = root;
+  for (const part of parts) {
+    if (!current || typeof current !== "object" || Array.isArray(current) || !Object.hasOwn(current, part)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
 function loadQueue(queuePath) {
   if (!existsSync(queuePath)) {
     return {
@@ -314,6 +451,25 @@ function loadQueue(queuePath) {
     throw serviceError("TriggerQueueSchemaMismatch", "trigger queue entries must be an array");
   }
   return queue;
+}
+
+function recoverStaleProcessingEntries(queue, processingTimeoutMs) {
+  let recovered = false;
+  const now = Date.now();
+  for (const entry of queue.entries) {
+    if (entry.status !== "processing") {
+      continue;
+    }
+    const startedAt = Date.parse(entry.started_at ?? "");
+    if (!Number.isFinite(startedAt) || now - startedAt < processingTimeoutMs) {
+      continue;
+    }
+    entry.status = "queued";
+    entry.recovered_at = new Date().toISOString();
+    entry.recovery_reason = "processing_timeout";
+    recovered = true;
+  }
+  return recovered;
 }
 
 function saveQueue(queuePath, queue) {
@@ -509,13 +665,13 @@ function triggerStateEventDayKey(event) {
     : dayKeyFromObservedAt(event.observed_at);
 }
 
-async function readBoundedBody(request) {
+async function readBoundedBody(request, maxBytes = MAX_BODY_BYTES) {
   let bytes = 0;
   const chunks = [];
   for await (const chunk of request) {
     bytes += chunk.byteLength;
-    if (bytes > MAX_BODY_BYTES) {
-      throw serviceError("TriggerPayloadTooLarge", `request body exceeds ${MAX_BODY_BYTES} bytes`);
+    if (bytes > maxBytes) {
+      throw serviceError("TriggerPayloadTooLarge", `request body exceeds ${maxBytes} bytes`);
     }
     chunks.push(chunk);
   }
@@ -523,7 +679,45 @@ async function readBoundedBody(request) {
   return {
     bytes,
     digest: createHash("sha256").update(body).digest("hex"),
+    buffer: body,
   };
+}
+
+function assertValidSignature(request, body, secret) {
+  const header = request.headers["x-touba-signature"];
+  const signature = Array.isArray(header) ? header[0] : header;
+  if (typeof signature !== "string" || !signature.startsWith("sha256=")) {
+    throw serviceError("TriggerSignatureInvalid", "x-touba-signature must use sha256=<hex>");
+  }
+  const expected = createHmac("sha256", secret).update(body).digest("hex");
+  const actual = signature.slice("sha256=".length);
+  if (!/^[a-f0-9]{64}$/iu.test(actual)) {
+    throw serviceError("TriggerSignatureInvalid", "x-touba-signature sha256 digest is invalid");
+  }
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const actualBuffer = Buffer.from(actual, "hex");
+  if (expectedBuffer.length !== actualBuffer.length || !timingSafeEqual(expectedBuffer, actualBuffer)) {
+    throw serviceError("TriggerSignatureInvalid", "request signature mismatch");
+  }
+}
+
+function shouldRetryQueueEntry(entry, runtimeErrorCode, maxAttempts) {
+  if (isNonRetryableRuntimeErrorCode(runtimeErrorCode)) {
+    return false;
+  }
+  return (entry.attempt_count ?? 0) < maxAttempts;
+}
+
+function isNonRetryableRuntimeErrorCode(runtimeErrorCode) {
+  return typeof runtimeErrorCode === "string"
+    && (
+      runtimeErrorCode.startsWith("Trigger")
+      || runtimeErrorCode === "SecretValueInTriggerArgument"
+    );
+}
+
+function retryDelayMs(attemptCount) {
+  return Math.min(1000 * 2 ** Math.max(0, attemptCount - 1), 30000);
 }
 
 function triggerEventId(request, trigger, digest) {
@@ -565,7 +759,10 @@ function parseArgs(rawArgs) {
     port: DEFAULT_PORT,
     traceDir: undefined,
     maxEvents: undefined,
+    maxAttempts: DEFAULT_MAX_ATTEMPTS,
+    processingTimeoutMs: DEFAULT_PROCESSING_TIMEOUT_MS,
     authTokenEnv: undefined,
+    signatureSecretEnv: undefined,
     help: false,
   };
   for (let index = 0; index < rawArgs.length; index += 1) {
@@ -608,10 +805,22 @@ function parseArgs(rawArgs) {
       parsed.maxEvents = parsePositiveInteger(requiredValue(rawArgs, ++index, "--max-events"), "--max-events");
     } else if (arg.startsWith("--max-events=")) {
       parsed.maxEvents = parsePositiveInteger(arg.slice("--max-events=".length), "--max-events");
+    } else if (arg === "--max-attempts") {
+      parsed.maxAttempts = parsePositiveInteger(requiredValue(rawArgs, ++index, "--max-attempts"), "--max-attempts");
+    } else if (arg.startsWith("--max-attempts=")) {
+      parsed.maxAttempts = parsePositiveInteger(arg.slice("--max-attempts=".length), "--max-attempts");
+    } else if (arg === "--processing-timeout-ms") {
+      parsed.processingTimeoutMs = parsePositiveInteger(requiredValue(rawArgs, ++index, "--processing-timeout-ms"), "--processing-timeout-ms");
+    } else if (arg.startsWith("--processing-timeout-ms=")) {
+      parsed.processingTimeoutMs = parsePositiveInteger(arg.slice("--processing-timeout-ms=".length), "--processing-timeout-ms");
     } else if (arg === "--auth-token-env") {
       parsed.authTokenEnv = requiredValue(rawArgs, ++index, "--auth-token-env");
     } else if (arg.startsWith("--auth-token-env=")) {
       parsed.authTokenEnv = nonEmptyValue(arg.slice("--auth-token-env=".length), "--auth-token-env");
+    } else if (arg === "--signature-secret-env") {
+      parsed.signatureSecretEnv = requiredValue(rawArgs, ++index, "--signature-secret-env");
+    } else if (arg.startsWith("--signature-secret-env=")) {
+      parsed.signatureSecretEnv = nonEmptyValue(arg.slice("--signature-secret-env=".length), "--signature-secret-env");
     } else if (arg.startsWith("--")) {
       throw serviceError("TriggerServiceUsage", `unknown option ${arg}`);
     } else if (parsed.airPath === undefined) {
@@ -633,7 +842,10 @@ function usage() {
     "  --port <port>                   Bind port, default 8787; use 0 for an ephemeral test port",
     "  --trace-dir <dir>               Persist one trace JSON file per processed queue entry",
     "  --max-events <n>                Stop after n processed entries, useful for tests and supervised jobs",
+    "  --max-attempts <n>              Retry target failures up to n attempts, default 3",
+    "  --processing-timeout-ms <n>     Requeue stale processing entries after n ms, default 300000",
     "  --auth-token-env <NAME>         Require bearer token or x-touba-trigger-token from the named env var",
+    "  --signature-secret-env <NAME>   Require x-touba-signature: sha256=<hex> HMAC using the named env var",
     "  --secrets <touba.secrets.json>  Resolve declared secret handles for triggered runs",
   ].join("\n");
 }
@@ -707,6 +919,19 @@ function stringOrNull(value) {
 
 function serviceError(code, message) {
   return new ToubaRuntimeError(code, message);
+}
+
+function httpStatusForServiceError(code) {
+  if (code === "TriggerPayloadTooLarge") {
+    return 413;
+  }
+  if (code === "TriggerPayloadContentTypeUnsupported") {
+    return 415;
+  }
+  if (code === "TriggerUnauthorized" || code === "TriggerSignatureInvalid") {
+    return 401;
+  }
+  return 400;
 }
 
 function isMainModule() {

@@ -16,7 +16,7 @@ L’extension VS Code Touba aide à travailler dans l’éditeur, mais elle ne r
 | `touba compile` | Compile une source `.tb` vers AIR JSON |
 | `touba run` | Exécute un AIR JSON |
 | `touba trigger run` | Exécute un trigger `schedule` en runner foreground borné |
-| `touba trigger serve` | Lance un service webhook local pour triggers `request` |
+| `touba trigger serve` | Lance un service webhook pour triggers `request` |
 | `touba inspect` | Inspecte une source, un AIR, une trace ou un manifest |
 | `touba audit` | Valide une trace et peut produire un export d’audit |
 | `touba supply-chain validate` | Valide un lock supply chain pour AIR, manifest, handlers, SDK, paquet handler, provenance et revue déclarées |
@@ -588,7 +588,7 @@ jour courant. Ce fichier ne contient pas de payload brut et n’accorde aucune
 autorité runtime. Le chemin fourni à `--state` doit se terminer par
 `.trigger-state.json`.
 
-Avec le service webhook local :
+Avec le service webhook :
 
 ```sh title="Terminal"
 touba trigger serve program.air.json \
@@ -597,15 +597,20 @@ touba trigger serve program.air.json \
   --queue touba.trigger-queue.json \
   --host 127.0.0.1 \
   --port 8787 \
-  --trace-dir traces
+  --trace-dir traces \
+  --max-attempts 3 \
+  --signature-secret-env TOUBA_TRIGGER_SIGNATURE_SECRET
 ```
 
 Le service route les triggers `request` activés par le manifest. Chaque requête
-acceptée est ajoutée à la queue locale `touba-trigger-queue-v0.1`, puis remise
-au même runtime que `--trigger-event-json`. La queue conserve l’identité
-d’événement, la méthode, le chemin, la taille et le digest SHA-256 du payload ;
-elle ne conserve pas le corps brut. `--state` et `--queue` doivent pointer vers
-des chemins terminant par `.trigger-state.json` et `.trigger-queue.json`.
+acceptée est ajoutée à la queue `touba-trigger-queue-v0.1`, puis remise au même
+runtime que `--trigger-event-json`. La queue conserve l’identité d’événement, la
+méthode, le chemin, la taille et le digest SHA-256 du payload ; elle ne conserve
+pas le corps brut. Si le manifest déclare `payload`, seuls les champs JSON
+référencés par `payload.map` deviennent des arguments persistés pour la
+stratégie. Le runtime revalide ces arguments contre la signature de la cible.
+`--state` et `--queue` doivent pointer vers des chemins terminant par
+`.trigger-state.json` et `.trigger-queue.json`.
 
 Options principales :
 
@@ -614,12 +619,40 @@ Options principales :
 | `--trigger <trigger_ref>` | limite le service à un trigger `request` |
 | `--trace-dir <dir>` | écrit une trace JSON par entrée traitée |
 | `--max-events <n>` | arrête le service après `n` entrées traitées |
+| `--max-attempts <n>` | borne les retries des échecs non structurels |
+| `--processing-timeout-ms <n>` | remet en queue une entrée `processing` périmée |
 | `--auth-token-env <NAME>` | exige un bearer token ou `x-touba-trigger-token` |
+| `--signature-secret-env <NAME>` | exige `x-touba-signature: sha256=<hex>` |
 | `--secrets <path>` | résout les handles de secrets déclarés par les runs déclenchés |
 
-Touba fournit ici un daemon local explicite pour `request -> strategy`. Les
-schedulers distribués, queues distribuées, adapters cloud, supervision système
-et reprise durable multi-process restent des couches séparées.
+Exemple manifest pour un webhook typé :
+
+```json title="touba.manifest.json"
+{
+  "triggers": {
+    "trigger:examples.webhook/WebhookRun": {
+      "enabled": true,
+      "source": { "kind": "request" },
+      "payload": {
+        "format": "json",
+        "content_types": ["application/json"],
+        "max_bytes": 4096,
+        "map": {
+          "request": "$.request"
+        }
+      },
+      "limits": {
+        "max_runs_per_day": 100,
+        "timeout_ms": 30000
+      }
+    }
+  }
+}
+```
+
+Touba fournit ici un daemon explicite pour `request -> strategy`. Les schedulers
+distribués, queues distribuées, adapters cloud, supervision système et reprise
+durable multi-process complète restent des couches séparées.
 
 Avec contrôles de run :
 

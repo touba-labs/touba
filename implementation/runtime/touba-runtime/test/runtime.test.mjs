@@ -4799,6 +4799,7 @@ test("executes an enabled schedule trigger by launching its target strategy", as
       max_runs_per_day: 1,
       timeout_ms: 30000,
     },
+    arguments_source: "trigger",
   });
   assert.equal(eventOf(result.trace, "trigger_execution_completed").payload.status, "success");
   assert.equal(JSON.stringify(result.trace).includes("raw-secret-payload"), false);

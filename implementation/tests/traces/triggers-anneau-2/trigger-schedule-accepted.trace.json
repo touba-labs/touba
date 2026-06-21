@@ -39,7 +39,8 @@
         "limits": {
           "max_runs_per_day": 1,
           "timeout_ms": 30000
-        }
+        },
+        "arguments_source": "trigger"
       }
     },
     {
