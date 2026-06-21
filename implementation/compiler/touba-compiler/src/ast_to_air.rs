@@ -1111,7 +1111,7 @@ impl AirLowerer {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::MissingTriggerEvent,
                 format!(
-                    "trigger `{}` requires an `on schedule <Text>` clause",
+                    "trigger `{}` requires an `on schedule <Text>` or `on request <METHOD> <Path>` clause",
                     declaration.name
                 ),
                 Some(declaration.source_ref.clone()),
@@ -1119,18 +1119,26 @@ impl AirLowerer {
             return None;
         };
 
-        if event.kind != "schedule" {
-            self.diagnostics.push(AirDiagnostic::new(
-                AirDiagnosticCode::UnsupportedTriggerEventKind,
-                format!(
-                    "trigger event family `{}` is outside tranche 1; expected `schedule`",
-                    event.kind
-                ),
-                Some(event.source_ref.clone()),
-            ));
-            return None;
+        if event.kind == "schedule" {
+            return self.lower_schedule_trigger_event(event);
         }
 
+        if event.kind == "request" {
+            return self.lower_request_trigger_event(event);
+        }
+
+        self.diagnostics.push(AirDiagnostic::new(
+            AirDiagnosticCode::UnsupportedTriggerEventKind,
+            format!(
+                "trigger event family `{}` is outside V1; expected `schedule` or `request`",
+                event.kind
+            ),
+            Some(event.source_ref.clone()),
+        ));
+        None
+    }
+
+    fn lower_schedule_trigger_event(&mut self, event: &AstTriggerEvent) -> Option<AirTriggerEvent> {
         if event.detail.is_some() {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::InvalidTriggerEventValue,
@@ -1161,6 +1169,53 @@ impl AirLowerer {
         Some(AirTriggerEvent {
             kind: event.kind.clone(),
             value: value.clone(),
+            source_ref: event.source_ref.clone(),
+        })
+    }
+
+    fn lower_request_trigger_event(&mut self, event: &AstTriggerEvent) -> Option<AirTriggerEvent> {
+        let Some(method) = event.detail.as_ref() else {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidTriggerEventValue,
+                "`on request` requires an HTTP method before the path",
+                Some(event.source_ref.clone()),
+            ));
+            return None;
+        };
+        let normalized_method = method.trim().to_ascii_uppercase();
+        if !matches!(
+            normalized_method.as_str(),
+            "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
+        ) {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidTriggerEventValue,
+                "`on request` supports GET, POST, PUT, PATCH and DELETE",
+                Some(event.source_ref.clone()),
+            ));
+            return None;
+        }
+        let Some(AstExpression::StringLiteral { value, source_ref }) = event.value.as_ref() else {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidTriggerEventValue,
+                "`on request` requires a non-empty path literal",
+                Some(event.source_ref.clone()),
+            ));
+            return None;
+        };
+
+        let path = value.trim();
+        if !path.starts_with('/') || path.contains(char::is_whitespace) {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidTriggerEventValue,
+                "`on request` path must start with `/` and contain no whitespace",
+                Some(source_ref.clone()),
+            ));
+            return None;
+        }
+
+        Some(AirTriggerEvent {
+            kind: event.kind.clone(),
+            value: format!("{} {}", normalized_method, path),
             source_ref: event.source_ref.clone(),
         })
     }

@@ -516,6 +516,12 @@ const TRIGGER_A2_POSITIVE_AIR_FIXTURES: &[(&str, &str)] = &[
             "../../../grammar/tree-sitter-touba/examples/triggers-anneau-2/positive/tb-a2-trigger-p03-schedule-strategy-with-define.tb"
         ),
     ),
+    (
+        "tb-a2-trigger-p05",
+        include_str!(
+            "../../../grammar/tree-sitter-touba/examples/triggers-anneau-2/positive/tb-a2-trigger-p05-request-strategy-webhook.tb"
+        ),
+    ),
 ];
 
 const TRIGGER_A2_NEGATIVE_AIR_FIXTURES: &[NegativeAirFixture] = &[
@@ -529,9 +535,9 @@ const TRIGGER_A2_NEGATIVE_AIR_FIXTURES: &[NegativeAirFixture] = &[
     NegativeAirFixture {
         source_id: "tb-a2-trigger-n02",
         source: include_str!(
-            "../../../grammar/tree-sitter-touba/examples/triggers-anneau-2/negative/semantic/tb-a2-trigger-n02-request-family-rejected.tb"
+            "../../../grammar/tree-sitter-touba/examples/triggers-anneau-2/negative/semantic/tb-a2-trigger-n02-request-method-rejected.tb"
         ),
-        expected_code: AirDiagnosticCode::UnsupportedTriggerEventKind,
+        expected_code: AirDiagnosticCode::InvalidTriggerEventValue,
     },
     NegativeAirFixture {
         source_id: "tb-a2-trigger-n03",
@@ -2072,6 +2078,35 @@ fn lowers_trigger_literal_argument_without_host_payload() {
 }
 
 #[test]
+fn lowers_trigger_request_to_air_contract() {
+    let source = include_str!(
+        "../../../grammar/tree-sitter-touba/examples/triggers-anneau-2/positive/tb-a2-trigger-p05-request-strategy-webhook.tb"
+    );
+
+    let result = compile_source_to_air("tb-a2-trigger-p05", source);
+
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.expect("request trigger fixture should lower");
+    let trigger = document
+        .definitions
+        .triggers
+        .iter()
+        .find(|trigger| trigger.id == "trigger:examples.a2_trigger_request_webhook/WebhookRun")
+        .expect("WebhookRun trigger should exist");
+
+    assert_eq!(trigger.name, "WebhookRun");
+    assert_eq!(trigger.event.kind, "request");
+    assert_eq!(trigger.event.value, "POST /webhook/run");
+    assert_eq!(
+        trigger.target_ref,
+        "strategy:examples.a2_trigger_request_webhook/RunWebhook"
+    );
+    assert_eq!(trigger.target_kind, "strategy");
+    assert_eq!(trigger.limits.max_runs_per_day, 5);
+    assert_eq!(trigger.limits.timeout_ms, 30000);
+}
+
+#[test]
 fn reports_expected_diagnostics_for_trigger_a2_negative_air_fixtures() {
     for fixture in TRIGGER_A2_NEGATIVE_AIR_FIXTURES {
         let result = compile_source_to_air(fixture.source_id, fixture.source);
@@ -2896,7 +2931,7 @@ fn assert_air_references_resolve(document: &AirDocument) {
     for trigger in &document.definitions.triggers {
         assert!(definition_ids.contains(trigger.target_ref.as_str()));
         assert_eq!(trigger.target_kind, "strategy");
-        assert_eq!(trigger.event.kind, "schedule");
+        assert!(matches!(trigger.event.kind.as_str(), "schedule" | "request"));
     }
 
     for graph in &document.execution_graphs {

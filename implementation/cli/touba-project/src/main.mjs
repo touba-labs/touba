@@ -58,6 +58,7 @@ const FEATURE_VERSIONS = Object.freeze({
   registry_static_resolve: "touba-static-registry-lock-v0.1",
   mcp_import: "touba-mcp-import-v0.1",
   rest_scaffold: "touba-rest-scaffold-v0.1",
+  trigger_ingress: "touba-trigger-ingress-v0.1",
   trace_output: "trace-minimal-v0.1",
 });
 const PUBLIC_COMMANDS = Object.freeze({
@@ -66,6 +67,7 @@ const PUBLIC_COMMANDS = Object.freeze({
   run_profile: true,
   doctor: true,
   trigger_run: true,
+  trigger_serve: true,
   inspect: true,
   audit: true,
   supply_chain_validate: true,
@@ -434,9 +436,15 @@ function triggerCommand(rawArgs) {
   if (subcommand === "run") {
     return runCommand(tail);
   }
+  if (subcommand === "serve") {
+    return runNodeScript(["cli", "touba-trigger-service", "src", "serve.mjs"], tail);
+  }
   if (subcommand === undefined || subcommand === "--help" || subcommand === "-h") {
     return {
-      text: "Usage: touba trigger run <air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> [--state <touba.trigger-state.json>] [--trace-out <path>] [--output show|result|trace|all]",
+      text: [
+        "Usage: touba trigger run <air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json> [--trace-out <path>] [--output show|result|trace|all]",
+        "       touba trigger serve <air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--host 127.0.0.1] [--port 8787]",
+      ].join("\n"),
       exitCode: 0,
     };
   }
@@ -853,6 +861,7 @@ function checkComponentVersions(version) {
 function checkCommandSurface() {
   const requiredScripts = {
     run: join(implementationRoot, "cli", "touba-run", "src", "run.mjs"),
+    trigger_serve: join(implementationRoot, "cli", "touba-trigger-service", "src", "serve.mjs"),
     inspect: join(implementationRoot, "cli", "touba-inspect", "src", "inspect.mjs"),
     audit: join(implementationRoot, "cli", "touba-audit", "src", "audit.mjs"),
     supply_chain_validate: join(implementationRoot, "cli", "touba-supply-chain", "src", "validate.mjs"),
@@ -1336,7 +1345,8 @@ function printUsage() {
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
   touba run <program.air.json> [--profile dev|prod] [runtime options]
-  touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> [--state <touba.trigger-state.json>]
+  touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>
+  touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json>
   touba inspect <artifact> [inspect options] [--report-out <report.inspect.txt>]
   touba audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--output text|json]
   touba supply-chain validate --lock <touba.lock.json> --air <program.air.json> [--manifest <touba.manifest.json>] [--report-out <report.supply-chain-report.json>] [--output text|json] [--strict] [--require-review]

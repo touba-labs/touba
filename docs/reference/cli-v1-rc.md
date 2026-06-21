@@ -15,6 +15,8 @@ L’extension VS Code Touba aide à travailler dans l’éditeur, mais elle ne r
 | `touba secret` | Gère le store de secrets de développement |
 | `touba compile` | Compile une source `.tb` vers AIR JSON |
 | `touba run` | Exécute un AIR JSON |
+| `touba trigger run` | Exécute un trigger `schedule` en runner foreground borné |
+| `touba trigger serve` | Lance un service webhook local pour triggers `request` |
 | `touba inspect` | Inspecte une source, un AIR, une trace ou un manifest |
 | `touba audit` | Valide une trace et peut produire un export d’audit |
 | `touba supply-chain validate` | Valide un lock supply chain pour AIR, manifest, handlers, SDK, paquet handler, provenance et revue déclarées |
@@ -573,20 +575,51 @@ every <n>h
 ```
 
 Il génère ensuite un événement trigger normalisé sans payload brut et appelle le
-même runtime que le mode `--trigger-event-json`. `--max-runs` est obligatoire.
+même runtime que le mode `--trigger-event-json`. `--max-runs` et `--state` sont
+obligatoires pour le runner foreground.
 
 `--state <touba.trigger-state.json>` active l’état durable de trigger
 `touba-trigger-state-v0.1`. Le runner y conserve les `event_id` consommés, les
-acceptations et les refus. Un même `event_id` déjà consommé pour le même
-`trigger_ref` est refusé avec `TriggerReplayRejected` avant de relancer la
-stratégie. Ce fichier ne contient pas de payload brut et n’accorde aucune
+acceptations, les refus et la clé du jour UTC utilisée pour appliquer
+`max_runs_per_day`. Un même `event_id` déjà consommé pour le même `trigger_ref`
+est refusé avec `TriggerReplayRejected` avant de relancer la stratégie. Une
+acceptation enregistrée un jour précédent ne bloque pas le premier événement du
+jour courant. Ce fichier ne contient pas de payload brut et n’accorde aucune
 autorité runtime. Le chemin fourni à `--state` doit se terminer par
 `.trigger-state.json`.
 
-Touba ne fournit pas de scheduler permanent, de daemon, de serveur HTTP ou de
-queue. Le runner s’arrête avec son processus et ne lit pas automatiquement
-de manifest. L’état durable persiste la déduplication, pas un service
-en arrière-plan.
+Avec le service webhook local :
+
+```sh title="Terminal"
+touba trigger serve program.air.json \
+  --manifest touba.manifest.json \
+  --state touba.trigger-state.json \
+  --queue touba.trigger-queue.json \
+  --host 127.0.0.1 \
+  --port 8787 \
+  --trace-dir traces
+```
+
+Le service route les triggers `request` activés par le manifest. Chaque requête
+acceptée est ajoutée à la queue locale `touba-trigger-queue-v0.1`, puis remise
+au même runtime que `--trigger-event-json`. La queue conserve l’identité
+d’événement, la méthode, le chemin, la taille et le digest SHA-256 du payload ;
+elle ne conserve pas le corps brut. `--state` et `--queue` doivent pointer vers
+des chemins terminant par `.trigger-state.json` et `.trigger-queue.json`.
+
+Options principales :
+
+| Option | Rôle |
+| --- | --- |
+| `--trigger <trigger_ref>` | limite le service à un trigger `request` |
+| `--trace-dir <dir>` | écrit une trace JSON par entrée traitée |
+| `--max-events <n>` | arrête le service après `n` entrées traitées |
+| `--auth-token-env <NAME>` | exige un bearer token ou `x-touba-trigger-token` |
+| `--secrets <path>` | résout les handles de secrets déclarés par les runs déclenchés |
+
+Touba fournit ici un daemon local explicite pour `request -> strategy`. Les
+schedulers distribués, queues distribuées, adapters cloud, supervision système
+et reprise durable multi-process restent des couches séparées.
 
 Avec contrôles de run :
 

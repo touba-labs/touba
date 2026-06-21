@@ -1,4 +1,4 @@
-module examples.a2_trigger_request_rejected
+module examples.a2_trigger_request_method_rejected
 
 strategy RunResearch
     do
@@ -6,7 +6,7 @@ strategy RunResearch
             with message as "request received"
 
 trigger HttpResearch
-    on request POST "/run"
+    on request CONNECT "/run"
     runs strategy RunResearch
     limits
         max_runs_per_day as 1

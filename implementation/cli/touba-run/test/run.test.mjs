@@ -2328,6 +2328,82 @@ test("persists trigger state and refuses replayed trigger events", () => {
   }
 });
 
+test("applies trigger max_runs_per_day to the current UTC day", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-trigger-state-day-"));
+  try {
+    const airPath = writeAirDocument(workspace, triggerDocument());
+    const manifestPath = writeTriggerManifest(workspace);
+    const statePath = join(workspace, "touba.trigger-state.json");
+    writeFileSync(statePath, JSON.stringify({
+      trigger_state_schema_version: "touba-trigger-state-v0.1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      triggers: {
+        "trigger:examples.cli_trigger/DailyRun": {
+          events: [
+            {
+              event_id: "evt-previous-day",
+              source_kind: "schedule",
+              status: "accepted",
+              observed_at: "2026-01-01T00:00:00.000Z",
+              day_key: "2026-01-01",
+              run_id: "previous-run",
+            },
+          ],
+        },
+      },
+    }), "utf8");
+
+    const currentDay = spawnSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--manifest",
+        manifestPath,
+        "--trigger-event-json",
+        JSON.stringify(triggerEvent({ event_id: "evt-current-day-001" })),
+        "--state",
+        statePath,
+        "--output",
+        "trace",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(currentDay.status, 0, currentDay.stderr);
+    const currentTrace = JSON.parse(currentDay.stdout);
+    assert.equal(eventOf(currentTrace, "trigger_event_accepted").payload.trigger_ref, "trigger:examples.cli_trigger/DailyRun");
+
+    const secondCurrentDay = spawnSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--manifest",
+        manifestPath,
+        "--trigger-event-json",
+        JSON.stringify(triggerEvent({ event_id: "evt-current-day-002" })),
+        "--state",
+        statePath,
+        "--output",
+        "trace",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(secondCurrentDay.status, 1);
+    assert.match(secondCurrentDay.stderr, /TriggerRateLimited/);
+    const secondTrace = JSON.parse(secondCurrentDay.stdout);
+    assert.equal(eventOf(secondTrace, "trigger_event_refused").payload.reason, "max_runs_per_day_reached");
+
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const events = state.triggers["trigger:examples.cli_trigger/DailyRun"].events;
+    assert.equal(events.some((event) => event.event_id === "evt-current-day-001" && event.status === "accepted"), true);
+    assert.equal(events.some((event) => event.event_id === "evt-current-day-002" && event.reason === "max_runs_per_day_reached"), true);
+    assert.equal(events.every((event) => event.day_key === undefined || /^\d{4}-\d{2}-\d{2}$/u.test(event.day_key)), true);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("refuses invalid trigger state artifacts before trigger execution", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-trigger-state-invalid-"));
   try {
@@ -2494,6 +2570,7 @@ test("rejects local schedule trigger runner ambiguity and unsupported schedule f
   try {
     const airPath = writeAirDocument(workspace, triggerDocument());
     const manifestPath = writeTriggerManifest(workspace);
+    const statePath = join(workspace, "touba.trigger-state.json");
 
     const missingMaxRuns = runCliExpectFailure([
       runPath,
@@ -2506,6 +2583,19 @@ test("rejects local schedule trigger runner ambiguity and unsupported schedule f
     assert.equal(missingMaxRuns.status, 2);
     assert.match(missingMaxRuns.stderr, /--trigger requires --max-runs/);
 
+    const missingState = runCliExpectFailure([
+      runPath,
+      airPath,
+      "--manifest",
+      manifestPath,
+      "--trigger",
+      "trigger:examples.cli_trigger/DailyRun",
+      "--max-runs",
+      "1",
+    ]);
+    assert.equal(missingState.status, 2);
+    assert.match(missingState.stderr, /--trigger requires --state/);
+
     const triggerAndEvent = runCliExpectFailure([
       runPath,
       airPath,
@@ -2515,6 +2605,8 @@ test("rejects local schedule trigger runner ambiguity and unsupported schedule f
       "trigger:examples.cli_trigger/DailyRun",
       "--max-runs",
       "1",
+      "--state",
+      statePath,
       "--trigger-event-json",
       JSON.stringify(triggerEvent()),
     ]);
@@ -2530,6 +2622,8 @@ test("rejects local schedule trigger runner ambiguity and unsupported schedule f
       "trigger:examples.cli_trigger/DailyRun",
       "--max-runs",
       "1",
+      "--state",
+      statePath,
     ]);
     assert.equal(unsupportedSchedule.status, 1);
     assert.match(unsupportedSchedule.stderr, /TriggerScheduleUnsupported/);

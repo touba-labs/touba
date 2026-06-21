@@ -652,12 +652,12 @@ fn lowers_trigger_declaration() {
 }
 
 #[test]
-fn keeps_unsupported_trigger_event_for_semantic_diagnostic() {
+fn lowers_request_trigger_event_for_air_validation() {
     let source = include_str!(
-        "../../../grammar/tree-sitter-touba/examples/triggers-anneau-2/negative/semantic/tb-a2-trigger-n02-request-family-rejected.tb"
+        "../../../grammar/tree-sitter-touba/examples/triggers-anneau-2/positive/tb-a2-trigger-p05-request-strategy-webhook.tb"
     );
 
-    let result = parse_source("tb-a2-trigger-n02", source);
+    let result = parse_source("tb-a2-trigger-p05", source);
 
     assert_eq!(result.diagnostics, []);
     let document = result.document.expect("fixture should lower to AST");
@@ -665,17 +665,17 @@ fn keeps_unsupported_trigger_event_for_semantic_diagnostic() {
         .declarations
         .iter()
         .find_map(|declaration| match declaration {
-            AstDeclaration::Trigger(trigger) if trigger.name == "HttpResearch" => Some(trigger),
+            AstDeclaration::Trigger(trigger) if trigger.name == "WebhookRun" => Some(trigger),
             _ => None,
         })
-        .expect("HttpResearch trigger should exist");
+        .expect("WebhookRun trigger should exist");
     let event = trigger.event.as_ref().expect("trigger should have event");
 
     assert_eq!(event.kind, "request");
     assert_eq!(event.detail.as_deref(), Some("POST"));
     assert!(matches!(
         event.value.as_ref(),
-        Some(AstExpression::StringLiteral { value, .. }) if value == "/run"
+        Some(AstExpression::StringLiteral { value, .. }) if value == "/webhook/run"
     ));
 }
 

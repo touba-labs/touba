@@ -1765,7 +1765,8 @@ test("CLI help prints usage without a synthetic report", () => {
   const result = spawnSync(process.execPath, [cliPath, "--help"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Usage:/);
-  assert.match(result.stdout, /touba trigger run <program\.air\.json> --manifest <path> --trigger <trigger_ref> --max-runs <n>/);
+  assert.match(result.stdout, /touba trigger run <program\.air\.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba\.trigger-state\.json>/);
+  assert.match(result.stdout, /touba trigger serve <program\.air\.json> --manifest <path> --state <touba\.trigger-state\.json> --queue <touba\.trigger-queue\.json>/);
   assert.match(result.stdout, /touba skill new <skill-id>/);
   assert.match(result.stdout, /touba skill validate \[<skill-id\|path>\]/);
   assert.match(result.stdout, /--state <touba\.trigger-state\.json>/);

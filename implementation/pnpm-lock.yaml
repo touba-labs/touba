@@ -48,6 +48,12 @@ importers:
 
   cli/touba-supply-chain: {}
 
+  cli/touba-trigger-service:
+    dependencies:
+      '@touba/runtime':
+        specifier: workspace:*
+        version: link:../../runtime/touba-runtime
+
   grammar/tree-sitter-touba: {}
 
   lsp/touba-lsp:

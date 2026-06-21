@@ -1,0 +1,13 @@
+module examples.a2_trigger_request_webhook
+
+strategy RunWebhook
+    do
+        show
+            with message as "request received"
+
+trigger WebhookRun
+    on request POST "/webhook/run"
+    runs strategy RunWebhook
+    limits
+        max_runs_per_day as 5
+        timeout_ms as 30000

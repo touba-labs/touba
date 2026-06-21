@@ -1502,6 +1502,10 @@ function parseArgs(rawArgs) {
     return { error: "--trigger requires --max-runs" };
   }
 
+  if (parsed.triggerRef !== undefined && parsed.triggerStatePath === undefined) {
+    return { error: "--trigger requires --state <*.trigger-state.json> for durable replay and quota checks" };
+  }
+
   if (parsed.triggerRunnerMaxRuns !== undefined && parsed.triggerRef === undefined) {
     return { error: "--max-runs requires --trigger" };
   }
@@ -1582,7 +1586,7 @@ function parseArgs(rawArgs) {
 
 function printUsage() {
   process.stderr.write(
-    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object>] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer>] [--state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
+    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
 }
 
@@ -2135,9 +2139,6 @@ async function runTriggerScheduleRunner(document, parsedArgs, executionOptions, 
   }
 
   const runResults = [];
-  let observedAcceptedCount = triggerState
-    ? countAcceptedTriggerEvents(triggerState.document, triggerRef)
-    : 0;
   for (let runIndex = 1; runIndex <= parsedArgs.triggerRunnerMaxRuns; runIndex += 1) {
     await sleep(schedule.delayMs);
     const event = {
@@ -2149,13 +2150,12 @@ async function runTriggerScheduleRunner(document, parsedArgs, executionOptions, 
       ...executionOptions,
       runId: `trigger-runner-${runIndex}`,
       triggerRunCounts: {
-        [triggerRef]: observedAcceptedCount,
+        [triggerRef]: triggerState
+          ? countAcceptedTriggerEvents(triggerState.document, triggerRef, currentTriggerDayKey())
+          : 0,
       },
     }, triggerState);
     runResults.push({ event, result: runResult });
-    if (hasAcceptedTriggerEvent(runResult.trace, triggerRef, event.event_id)) {
-      observedAcceptedCount += 1;
-    }
     if (runResult.status === "failure") {
       return runResult;
     }
@@ -2185,7 +2185,7 @@ async function executeTriggerEventWithState(document, triggerEvent, executionOpt
     triggerRunCounts: event.triggerRef
       ? {
         ...(executionOptions.triggerRunCounts ?? {}),
-        [event.triggerRef]: countAcceptedTriggerEvents(triggerState.document, event.triggerRef),
+        [event.triggerRef]: countAcceptedTriggerEvents(triggerState.document, event.triggerRef, currentTriggerDayKey()),
       }
       : executionOptions.triggerRunCounts,
   });
@@ -2275,6 +2275,7 @@ function normalizeTriggerStateDocument(document) {
         status: event.status === "accepted" ? "accepted" : "refused",
         reason: typeof event.reason === "string" ? event.reason : undefined,
         observed_at: typeof event.observed_at === "string" ? event.observed_at : undefined,
+        day_key: typeof event.day_key === "string" ? event.day_key : triggerDayKeyFromObservedAt(event.observed_at),
         run_id: typeof event.run_id === "string" ? event.run_id : undefined,
       }))
       .filter((event) => event.event_id);
@@ -2317,8 +2318,15 @@ function isTriggerEventConsumed(state, triggerRef, eventId) {
   return Boolean(state.triggers?.[triggerRef]?.consumed_event_ids?.includes(eventId));
 }
 
-function countAcceptedTriggerEvents(state, triggerRef) {
-  return state.triggers?.[triggerRef]?.accepted_count ?? 0;
+function countAcceptedTriggerEvents(state, triggerRef, dayKey = currentTriggerDayKey()) {
+  const events = state.triggers?.[triggerRef]?.events;
+  if (!Array.isArray(events)) {
+    return 0;
+  }
+  return events.filter((event) =>
+    event?.status === "accepted"
+    && triggerStateEventDayKey(event) === dayKey,
+  ).length;
 }
 
 function recordTriggerStateEvent(state, event, result) {
@@ -2335,9 +2343,28 @@ function recordTriggerStateEvent(state, event, result) {
     status: accepted ? "accepted" : "refused",
     reason: accepted ? undefined : refused?.payload?.reason ?? "execution_failed",
     observed_at: observedAt,
+    day_key: triggerDayKeyFromObservedAt(observedAt),
     run_id: result.trace?.run?.run_id,
   };
   state.triggers[event.triggerRef] = summarizeTriggerStateEntry([...previous, recorded]);
+}
+
+function currentTriggerDayKey() {
+  return triggerDayKeyFromObservedAt(new Date().toISOString());
+}
+
+function triggerDayKeyFromObservedAt(observedAt) {
+  if (typeof observedAt !== "string") {
+    return undefined;
+  }
+  const match = /^(\d{4}-\d{2}-\d{2})T/u.exec(observedAt);
+  return match?.[1];
+}
+
+function triggerStateEventDayKey(event) {
+  return typeof event.day_key === "string"
+    ? event.day_key
+    : triggerDayKeyFromObservedAt(event.observed_at);
 }
 
 function hasAcceptedTriggerEvent(trace, triggerRef, eventId) {

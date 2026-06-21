@@ -201,9 +201,20 @@ trigger DailyResearchSchedule
     limits
         max_runs_per_day as 1
         timeout_ms as 30000
+
+trigger WebhookResearch
+    on request POST "/webhook/research"
+    runs strategy RunResearch
+    limits
+        max_runs_per_day as 10
+        timeout_ms as 30000
 ```
 
-Touba accepte `schedule -> strategy`. Le runner supporte `every <n>s`, `every <n>m` et `every <n>h`. Les autres familles d’événements et le déclenchement direct d’agent ne sont pas documentés comme disponibles.
+Touba accepte `schedule -> strategy` et `request -> strategy`. Le runner
+`schedule` supporte `every <n>s`, `every <n>m` et `every <n>h`. Le service
+webhook local route `request` par méthode `GET`, `POST`, `PUT`, `PATCH` ou
+`DELETE` et chemin absolu. Les autres familles d’événements et le déclenchement
+direct d’agent ne sont pas documentés comme disponibles.
 
 ## Interactions utilisateur
 
