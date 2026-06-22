@@ -50,6 +50,7 @@ const EXPECTED_OWNERSHIP_SCHEMA_VERSION = "touba-ownership-v0.1";
 const EXPECTED_TRACE_AUDIT_SCHEMA_VERSION = "trace-audit-v0.1";
 const EXPECTED_TRACE_AUDIT_VALIDATION_SCHEMA_VERSION = "trace-audit-validation-v0.1";
 const EXPECTED_TRACE_AUDIT_EXPORT_SCHEMA_VERSION = "trace-audit-export-v0.1-local";
+const EXPECTED_TRACE_TIMELINE_SCHEMA_VERSION = "touba-trace-timeline-v1";
 const EXPECTED_SUPPLY_CHAIN_LOCK_SCHEMA_VERSION = "touba-lock-v0.1";
 const EXPECTED_SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-validation-v0.1";
 const EXPECTED_TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
@@ -253,6 +254,19 @@ export function inspectPath(inputPath, options = {}) {
     });
   }
 
+  const traceTimeline = summarizeTraceTimelineArtifact(artifact);
+  if (traceTimeline.present) {
+    return inspectionDocument(absolutePath, "trace_timeline", {
+      source: absent("source artifact not provided"),
+      air: absent("AIR artifact not provided"),
+      trace: absent("trace artifact not provided"),
+      architecture: absent("architecture projection not provided"),
+      manifest: absent("tool binding manifest not provided"),
+      trace_timeline: traceTimeline,
+      compatibility: compatibilityOk(),
+    });
+  }
+
   const supplyChain = summarizeSupplyChainArtifact(artifact);
   if (supplyChain.present) {
     return inspectionDocument(absolutePath, supplyChain.artifact_kind, {
@@ -281,7 +295,7 @@ export function inspectPath(inputPath, options = {}) {
   }
 
   throw new Error(
-    "unsupported Touba artifact: expected .tb, AIR JSON, trace JSON, architecture projection JSON, tool binding manifest JSON, package JSON, binding fragment JSON, resource bindings JSON, run plan JSON, ownership JSON, trace audit JSON, supply chain JSON or trigger state JSON",
+    "unsupported Touba artifact: expected .tb, AIR JSON, trace JSON, architecture projection JSON, tool binding manifest JSON, package JSON, binding fragment JSON, resource bindings JSON, run plan JSON, ownership JSON, trace audit JSON, trace timeline JSON, supply chain JSON or trigger state JSON",
   );
 }
 
@@ -390,16 +404,16 @@ export function inspectExplicitArtifacts(inputPaths, options = {}) {
     source,
     air,
     trace,
-      architecture,
-      manifest,
-      package: packageSummary,
-      binding_fragment: bindingFragment,
-      resource_bindings: resourceBindings,
-      run_plan: runPlan,
-      ownership,
-      traceAudit,
-      supplyChain,
-      artifacts,
+    architecture,
+    manifest,
+    package: packageSummary,
+    binding_fragment: bindingFragment,
+    resource_bindings: resourceBindings,
+    run_plan: runPlan,
+    ownership,
+    traceAudit,
+    supplyChain,
+    artifacts,
   });
 
   return inspectionDocument(
@@ -431,6 +445,7 @@ export function inspectExplicitArtifacts(inputPaths, options = {}) {
       ownership,
       trace_audit: traceAudit,
       supply_chain: supplyChain,
+      trace_timeline: absent("trace timeline artifact not provided"),
       compatibility,
     },
   );
@@ -466,6 +481,7 @@ export function renderInspection(inspection) {
   renderOwnership(lines, inspection.ownership);
   renderWorkspacePackageSurface(lines, inspection.workspace_package_surface);
   renderTraceAudit(lines, inspection.trace_audit);
+  renderTraceTimeline(lines, inspection.trace_timeline);
   renderSupplyChain(lines, inspection.supply_chain);
   renderTriggerState(lines, inspection.trigger_state);
   renderCompatibility(lines, inspection.compatibility);
@@ -634,6 +650,7 @@ function inspectionDocument(inputPath, artifactKind, summaries) {
     run_plan: summaries.run_plan ?? absent("run plan artifact not provided"),
     ownership: summaries.ownership ?? absent("ownership artifact not provided"),
     trace_audit: summaries.trace_audit ?? absent("trace audit artifact not provided"),
+    trace_timeline: summaries.trace_timeline ?? absent("trace timeline artifact not provided"),
     supply_chain: summaries.supply_chain ?? absent("supply chain artifact not provided"),
     trigger_state: summaries.trigger_state ?? absent("trigger state artifact not provided"),
     absent_data: INSPECT_ABSENT_DATA,
@@ -1314,6 +1331,41 @@ function summarizeTraceAuditArtifact(artifact) {
   return absent("trace audit artifact not provided");
 }
 
+function summarizeTraceTimelineArtifact(artifact) {
+  if (artifact.schema_version !== EXPECTED_TRACE_TIMELINE_SCHEMA_VERSION) {
+    return absent("trace timeline artifact not provided");
+  }
+  const events = Array.isArray(artifact.events) ? artifact.events : [];
+  const severityCounts = { debug: 0, info: 0, warning: 0, error: 0 };
+  const typeCounts = new Map();
+  for (const [index, event] of events.entries()) {
+    if (Object.prototype.hasOwnProperty.call(severityCounts, event?.severity)) {
+      severityCounts[event.severity] += 1;
+    }
+    if (typeof event?.type === "string") {
+      const existing = typeCounts.get(event.type);
+      typeCounts.set(event.type, {
+        count: (existing?.count ?? 0) + 1,
+        first_index: existing?.first_index ?? index,
+      });
+    }
+  }
+  return {
+    present: true,
+    schema_version: artifact.schema_version,
+    run_id: artifact.run_id,
+    trace_ref: artifact.trace_ref,
+    events: events.length,
+    severity_counts: severityCounts,
+    first_event_type: events[0]?.type ?? "absent",
+    last_event_type: events.at(-1)?.type ?? "absent",
+    top_event_types: [...typeCounts.entries()]
+      .sort((left, right) => right[1].count - left[1].count || left[1].first_index - right[1].first_index)
+      .slice(0, 5)
+      .map(([type, value]) => ({ type, count: value.count })),
+  };
+}
+
 function summarizeSupplyChainArtifact(artifact) {
   if (artifact.supply_chain_validation_schema_version === EXPECTED_SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION) {
     return {
@@ -1914,6 +1966,32 @@ function renderTraceAudit(lines, traceAudit) {
     `- digests=[${traceAudit.digests.join(",")}] export_artifacts=[${traceAudit.export_artifacts.join(
       ",",
     )}] diagnostics=${traceAudit.diagnostics} codes=[${traceAudit.diagnostic_codes.join(",")}]`,
+  );
+}
+
+function renderTraceTimeline(lines, traceTimeline) {
+  if (!traceTimeline.present) {
+    lines.push(`Trace timeline absent: ${traceTimeline.reason}`);
+    return;
+  }
+  lines.push(`Trace timeline ${traceTimeline.schema_version}`);
+  lines.push(
+    `- run=${valueOrAbsent(traceTimeline.run_id)} trace=${valueOrAbsent(
+      traceTimeline.trace_ref,
+    )} events=${traceTimeline.events}`,
+  );
+  lines.push(
+    `- severities debug=${traceTimeline.severity_counts.debug} info=${traceTimeline.severity_counts.info} warning=${traceTimeline.severity_counts.warning} error=${traceTimeline.severity_counts.error}`,
+  );
+  lines.push(
+    `- first=${valueOrAbsent(traceTimeline.first_event_type)} last=${valueOrAbsent(
+      traceTimeline.last_event_type,
+    )}`,
+  );
+  lines.push(
+    `- top_types=[${traceTimeline.top_event_types
+      .map((item) => `${item.type}:${item.count}`)
+      .join(",")}]`,
   );
 }
 

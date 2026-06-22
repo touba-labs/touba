@@ -1238,6 +1238,32 @@ test("inspects a TA-1 export and accepts explicit trace-audit option", () => {
   }
 });
 
+test("inspects a trace timeline product surface without reading event payloads", () => {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "touba-inspect-trace-timeline-"));
+  try {
+    const timelinePath = path.join(tempRoot, "trace.timeline.json");
+    writeFileSync(timelinePath, JSON.stringify(traceTimelineFixture()), "utf8");
+
+    const inspection = inspectPath(timelinePath);
+    const rendered = renderInspection(inspection);
+
+    assert.equal(inspection.artifact_kind, "trace_timeline");
+    assert.equal(inspection.trace_timeline.present, true);
+    assert.equal(inspection.trace_timeline.schema_version, "touba-trace-timeline-v1");
+    assert.equal(inspection.trace_timeline.run_id, "run-ta1");
+    assert.equal(inspection.trace_timeline.events, 3);
+    assert.equal(inspection.trace_timeline.severity_counts.info, 2);
+    assert.equal(inspection.trace_timeline.severity_counts.warning, 1);
+    assert.match(rendered, /Trace timeline touba-trace-timeline-v1/);
+    assert.match(rendered, /events=3/);
+    assert.match(rendered, /severities debug=0 info=2 warning=1 error=0/);
+    assert.match(rendered, /top_types=\[run.started:1,trigger.event.accepted:1,human.approval.paused:1\]/);
+    assert.doesNotMatch(rendered, /raw prompt|secret value|payload_sha256|compliant|Verified/i);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("inspects a SC-1 supply chain lock without reading handler content", () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "touba-inspect-sc1-lock-"));
   try {
@@ -2099,6 +2125,43 @@ function traceAuditExportFixture() {
         source_id: "program.tb",
       },
     },
+  };
+}
+
+function traceTimelineFixture() {
+  return {
+    schema_version: "touba-trace-timeline-v1",
+    run_id: "run-ta1",
+    trace_ref: "trace:run-ta1",
+    events: [
+      {
+        index: 0,
+        type: "run.started",
+        timestamp: "sequence:0",
+        severity: "info",
+        summary: "Run started for strategy:examples.ta1/Run.",
+        source_ref: "strategy:examples.ta1/Run",
+        redaction: "none",
+      },
+      {
+        index: 1,
+        type: "trigger.event.accepted",
+        timestamp: "2026-06-22T12:00:00.000Z",
+        severity: "info",
+        summary: "Trigger event accepted for trigger:examples.ta1/Nightly.",
+        source_ref: "trigger:examples.ta1/Nightly",
+        redaction: "payload_minimized",
+      },
+      {
+        index: 2,
+        type: "human.approval.paused",
+        timestamp: "sequence:2",
+        severity: "warning",
+        summary: "Run paused for human review.",
+        source_ref: "agent:examples.ta1/Auditor",
+        redaction: "secrets_redacted",
+      },
+    ],
   };
 }
 

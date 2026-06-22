@@ -57,3 +57,14 @@ curl http://127.0.0.1:8787/status
 That endpoint produces `touba-trigger-status-v1` with trigger refs, kinds,
 status, limits, replay/quota state and queue counters. It does not expose auth
 tokens, HMAC secrets or raw webhook payloads.
+
+The audit CLI currently emits:
+
+```bash
+touba audit --trace trace.json --timeline-out trace.trace-timeline.json
+```
+
+When the TA-1 validation report is `ok`, that command produces
+`touba-trace-timeline-v1` for client investigation views. The projection keeps
+event order, severity, source refs and redaction markers without copying raw
+payloads, prompts, memory content or secret values.

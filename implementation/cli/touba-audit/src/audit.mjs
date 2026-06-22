@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 export const TRACE_AUDIT_SCHEMA_VERSION = "trace-audit-v0.1";
 export const TRACE_AUDIT_VALIDATION_SCHEMA_VERSION = "trace-audit-validation-v0.1";
 export const TRACE_AUDIT_EXPORT_SCHEMA_VERSION = "trace-audit-export-v0.1-local";
+export const TRACE_TIMELINE_SCHEMA_VERSION = "touba-trace-timeline-v1";
 
 const TRACE_PROTOCOL_VERSION = "trace-minimal-v0.1";
 const AIR_SCHEMA_VERSION = "air-minimal-v0.1";
@@ -21,6 +22,7 @@ const DIGEST_KIND = "sha256";
 const RUNTIME_NAME = "touba-audit";
 const RUNTIME_VERSION = "0.1.0";
 const TRACE_AUDIT_REPORT_SUFFIX = ".trace-audit-report.json";
+const TRACE_TIMELINE_SUFFIX = ".trace-timeline.json";
 
 const RETENTION_CLASSES = new Set([
   "local_debug",
@@ -199,6 +201,20 @@ export function createTraceAuditExport(artifacts, validation) {
   return exportDocument;
 }
 
+export function createTraceTimeline(trace, options = {}) {
+  if (!trace || trace.trace_protocol_version !== TRACE_PROTOCOL_VERSION) {
+    throw new Error(`expected ${TRACE_PROTOCOL_VERSION} trace for timeline export`);
+  }
+  const runId = trace.run?.run_id || options.runId || "run:absent";
+  const events = Array.isArray(trace.events) ? trace.events : [];
+  return {
+    schema_version: TRACE_TIMELINE_SCHEMA_VERSION,
+    run_id: runId,
+    trace_ref: options.traceRef || `trace:${runId}`,
+    events: events.map((event, arrayIndex) => timelineEvent(event, trace, arrayIndex)),
+  };
+}
+
 export function renderTraceAuditValidation(validation) {
   const report = validation.validationReport;
   const manifest = validation.traceAuditManifest;
@@ -224,6 +240,245 @@ export function renderTraceAuditValidation(validation) {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function timelineEvent(event, trace, arrayIndex) {
+  const index = Number.isInteger(event?.sequence_index) ? event.sequence_index : arrayIndex;
+  const payload = isPlainObject(event?.payload) ? event.payload : {};
+  return {
+    index,
+    type: timelineEventType(event?.kind),
+    timestamp: timelineTimestamp(event, payload, index),
+    severity: timelineSeverity(event, payload),
+    summary: timelineSummary(event, payload, trace),
+    source_ref: timelineSourceRef(event, payload),
+    redaction: timelineRedaction(event, payload),
+  };
+}
+
+function timelineEventType(kind) {
+  return typeof kind === "string" && kind.trim() !== ""
+    ? kind.replaceAll("_", ".")
+    : "event.unknown";
+}
+
+function timelineTimestamp(event, payload, index) {
+  for (const value of [
+    event?.timestamp,
+    event?.observed_at,
+    event?.created_at,
+    payload.observed_at,
+    payload.received_at,
+    payload.started_at,
+    payload.completed_at,
+  ]) {
+    if (typeof value === "string" && value.trim() !== "") {
+      return value;
+    }
+  }
+  return `sequence:${index}`;
+}
+
+function timelineSeverity(event, payload) {
+  const kind = typeof event?.kind === "string" ? event.kind : "";
+  const status = safeToken(payload.status);
+  if (
+    payload.runtime_error_code
+    || payload.error_code
+    || status === "failure"
+    || /(failed|exceeded|invalid|error|denied|rejected)/u.test(kind)
+  ) {
+    return "error";
+  }
+  if (status === "cancelled" || /(refused|cancelled|timeout|paused)/u.test(kind)) {
+    return "warning";
+  }
+  return "info";
+}
+
+function timelineSummary(event, payload, trace) {
+  const kind = typeof event?.kind === "string" ? event.kind : "unknown";
+  const targetRef = firstSafeToken(
+    payload.target_ref,
+    payload.tool_ref,
+    payload.skill_ref,
+    payload.agent_ref,
+    payload.trigger_ref,
+    payload.capability_ref,
+    payload.selected_ref,
+    payload.memory_ref,
+    payload.resource_ref,
+  );
+  const status = safeToken(payload.status);
+  const code = firstSafeToken(payload.runtime_error_code, payload.error_code);
+  const runEntry = safeToken(trace?.run?.entry_ref);
+
+  if (kind === "run_started") {
+    return runEntry ? `Run started for ${runEntry}.` : "Run started.";
+  }
+  if (kind === "run_completed") {
+    return status ? `Run completed with status ${status}.` : "Run completed.";
+  }
+  if (kind === "call_started") {
+    return targetRef ? `Capability ${targetRef} started.` : "Capability call started.";
+  }
+  if (kind === "call_completed") {
+    return targetRef ? `Capability ${targetRef} completed.` : "Capability call completed.";
+  }
+  if (kind === "call_failed") {
+    return code
+      ? `Capability call failed with ${code}.`
+      : targetRef
+        ? `Capability ${targetRef} failed.`
+        : "Capability call failed.";
+  }
+  if (kind === "trigger_event_received") {
+    return targetRef ? `Trigger event received for ${targetRef}.` : "Trigger event received.";
+  }
+  if (kind === "trigger_event_accepted") {
+    return targetRef ? `Trigger event accepted for ${targetRef}.` : "Trigger event accepted.";
+  }
+  if (kind === "trigger_event_refused") {
+    return code
+      ? `Trigger event refused with ${code}.`
+      : targetRef
+        ? `Trigger event refused for ${targetRef}.`
+        : "Trigger event refused.";
+  }
+  if (kind === "trigger_execution_completed") {
+    return status ? `Trigger execution completed with status ${status}.` : "Trigger execution completed.";
+  }
+  if (kind === "human_approval_requested" || kind === "human_review_requested") {
+    return targetRef ? `Human review requested for ${targetRef}.` : "Human review requested.";
+  }
+  if (kind === "human_approval_paused" || kind === "human_review_paused") {
+    return targetRef ? `Run paused for human review of ${targetRef}.` : "Run paused for human review.";
+  }
+  if (kind === "human_approval_resolved" || kind === "human_review_resolved") {
+    return status ? `Human review resolved with status ${status}.` : "Human review resolved.";
+  }
+  if (kind === "agent_decision_requested") {
+    const mode = safeToken(payload.mode);
+    return mode
+      ? `Agent decision requested in ${mode} mode.`
+      : "Agent decision requested.";
+  }
+  if (kind === "agent_capability_selected") {
+    return targetRef ? `Agent selected ${targetRef}.` : "Agent selected a capability.";
+  }
+  if (kind === "agent_decision_failed") {
+    return code ? `Agent decision failed with ${code}.` : "Agent decision failed.";
+  }
+  if (kind === "budget_limit_exceeded" || kind === "dispatch_refused_budget_exceeded") {
+    const budgetKind = safeToken(payload.budget_kind);
+    return budgetKind ? `Budget ${budgetKind} exceeded.` : "Budget exceeded.";
+  }
+  if (kind === "run_cancel_requested") {
+    return "Run cancellation requested.";
+  }
+  if (kind === "run_cancelled") {
+    return "Run cancelled.";
+  }
+  if (kind === "run_timeout_exceeded") {
+    return "Run timeout exceeded.";
+  }
+  if (kind === "kill_switch_enabled") {
+    return "Kill switch enabled.";
+  }
+  if (kind === "dispatch_refused_cancelled") {
+    return targetRef ? `Dispatch refused after cancellation for ${targetRef}.` : "Dispatch refused after cancellation.";
+  }
+  if (kind === "memory_access_authorized") {
+    return targetRef ? `Memory access authorized for ${targetRef}.` : "Memory access authorized.";
+  }
+  if (kind === "memory_access_refused") {
+    return targetRef ? `Memory access refused for ${targetRef}.` : "Memory access refused.";
+  }
+  if (kind === "tool_binding_authorized") {
+    return targetRef ? `Tool binding authorized for ${targetRef}.` : "Tool binding authorized.";
+  }
+  if (kind === "tool_binding_refused") {
+    return targetRef ? `Tool binding refused for ${targetRef}.` : "Tool binding refused.";
+  }
+  if (code) {
+    return `${timelineEventType(kind)} recorded with ${code}.`;
+  }
+  return `${timelineEventType(kind)} recorded.`;
+}
+
+function timelineSourceRef(event, payload) {
+  return firstSafeToken(
+    payload.target_ref,
+    payload.tool_ref,
+    payload.skill_ref,
+    payload.agent_ref,
+    payload.trigger_ref,
+    payload.capability_ref,
+    payload.selected_ref,
+    payload.memory_ref,
+    payload.resource_ref,
+    event?.air_ref?.owner_ref,
+    event?.air_ref?.node_id,
+  ) || null;
+}
+
+function timelineRedaction(event, payload) {
+  if (containsSensitiveKey(event) || containsSensitiveKey(payload)) {
+    return "secrets_redacted";
+  }
+  if (
+    payload.content_mode === "opaque_refs"
+    || payload.external_content_count !== undefined
+    || payload.payload_sha256 !== undefined
+    || payload.payload_bytes !== undefined
+    || payload.approx_size_bytes !== undefined
+    || payload.input_ref !== undefined
+  ) {
+    return "payload_minimized";
+  }
+  return "none";
+}
+
+function containsSensitiveKey(value) {
+  if (Array.isArray(value)) {
+    return value.some((item) => containsSensitiveKey(item));
+  }
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    const normalized = key.toLowerCase();
+    if (
+      SECRET_KEYS.has(normalized)
+      || PROMPT_KEYS.has(normalized)
+      || MEMORY_CONTENT_KEYS.has(normalized)
+      || /secret|credential|password|token|api[_-]?key/u.test(normalized)
+    ) {
+      return true;
+    }
+    if (containsSensitiveKey(nested)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function firstSafeToken(...values) {
+  for (const value of values) {
+    const token = safeToken(value);
+    if (token) {
+      return token;
+    }
+  }
+  return undefined;
+}
+
+function safeToken(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return /^[A-Za-z0-9_./:@-]{1,160}$/u.test(trimmed) ? trimmed : undefined;
 }
 
 function validateAuditManifestShape(manifest, diagnostics) {
@@ -561,6 +816,15 @@ function assertReportOutputPath(filePath, suffix) {
   }
 }
 
+function assertTimelineOutputPath(filePath) {
+  if (typeof filePath !== "string" || filePath.trim() === "") {
+    throw new Error("--timeline-out requires a non-empty path");
+  }
+  if (!path.basename(path.resolve(filePath)).endsWith(TRACE_TIMELINE_SUFFIX)) {
+    throw new Error(`--timeline-out path must end with ${TRACE_TIMELINE_SUFFIX}`);
+  }
+}
+
 function assertExistingFile(filePath, fs) {
   if (!fs.existsSync(filePath)) {
     throw new Error(`missing file ${filePath}`);
@@ -634,6 +898,8 @@ function parseArgs(argv) {
       options.exportPath = next();
     } else if (arg === "--report-out") {
       options.reportOutPath = next();
+    } else if (arg === "--timeline-out") {
+      options.timelineOutPath = next();
     } else if (arg === "--output") {
       options.output = next();
     } else if (arg === "--help" || arg === "-h") {
@@ -646,7 +912,7 @@ function parseArgs(argv) {
 }
 
 function renderUsage() {
-  return `Usage: touba-audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--output text|json]\n`;
+  return `Usage: touba-audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--timeline-out <timeline.trace-timeline.json>] [--output text|json]\n`;
 }
 
 function main(argv) {
@@ -670,6 +936,10 @@ function main(argv) {
 
   if (options.exportPath && validation.validationReport.status === "ok") {
     writeJsonFile(options.exportPath, createTraceAuditExport(artifacts, validation), defaultFs);
+  }
+  if (options.timelineOutPath && validation.validationReport.status === "ok") {
+    assertTimelineOutputPath(options.timelineOutPath);
+    writeJsonFile(options.timelineOutPath, createTraceTimeline(artifacts.trace.json), defaultFs);
   }
   if (options.reportOutPath) {
     writeTraceAuditReport(options.reportOutPath, validation, defaultFs);

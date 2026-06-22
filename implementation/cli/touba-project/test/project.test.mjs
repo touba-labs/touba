@@ -1782,6 +1782,7 @@ test("CLI help prints usage without a synthetic report", () => {
   assert.match(result.stdout, /--ownership <touba\.ownership\.json>/);
   assert.match(result.stdout, /touba audit --trace <trace\.json>/);
   assert.match(result.stdout, /--report-out <report\.trace-audit-report\.json>/);
+  assert.match(result.stdout, /--timeline-out <timeline\.trace-timeline\.json>/);
   assert.match(result.stdout, /touba supply-chain validate --lock <touba\.lock\.json>/);
   assert.match(result.stdout, /--report-out <report\.supply-chain-report\.json>/);
   assert.match(result.stdout, /--require-review/);
@@ -1821,6 +1822,7 @@ test("CLI trigger, manifest and handler help match current public options", () =
   assert.match(auditResult.stdout, /touba-audit --trace <trace\.json>/);
   assert.match(auditResult.stdout, /--export <export\.json>/);
   assert.match(auditResult.stdout, /--report-out <report\.trace-audit-report\.json>/);
+  assert.match(auditResult.stdout, /--timeline-out <timeline\.trace-timeline\.json>/);
 
   const supplyChainResult = spawnSync(process.execPath, [cliPath, "supply-chain", "--help"], { encoding: "utf8" });
   assert.equal(supplyChainResult.status, 0, supplyChainResult.stderr);

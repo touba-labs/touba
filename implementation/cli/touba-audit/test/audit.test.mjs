@@ -10,9 +10,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 import {
   createTraceAuditExport,
   createTraceAuditManifest,
+  createTraceTimeline,
   implementationDir,
   loadTraceAuditArtifacts,
   renderTraceAuditValidation,
@@ -20,6 +22,10 @@ import {
 } from "../src/audit.mjs";
 
 const auditScript = path.join(implementationDir, "cli/touba-audit/src/audit.mjs");
+const traceTimelineSchemaPath = path.join(
+  implementationDir,
+  "contracts/product-surfaces/schemas/touba-trace-timeline-v1.schema.json",
+);
 
 test("generates a TA-1 audit manifest and validation report for coherent artifacts", () => {
   withFixtureProject((fixture) => {
@@ -119,6 +125,34 @@ test("creates a local export document only from explicit artifacts", () => {
   });
 });
 
+test("creates a bounded trace timeline without copying raw payloads", () => {
+  withFixtureProject((fixture) => {
+    fixture.trace.events.push({
+      event_id: "event:run-ta1:3",
+      run_id: "run-ta1",
+      sequence_index: 2,
+      kind: "agent_decision_requested",
+      payload: {
+        agent_ref: "agent:examples.ta1/Auditor",
+        mode: "capabilities",
+        raw_prompt: "TOUBA_SHOULD_NOT_LEAK",
+      },
+    });
+
+    const timeline = createTraceTimeline(fixture.trace);
+    const serialized = JSON.stringify(timeline);
+
+    assert.deepEqual(validateObject(traceTimelineSchema(), timeline), []);
+    assert.equal(timeline.schema_version, "touba-trace-timeline-v1");
+    assert.equal(timeline.run_id, "run-ta1");
+    assert.equal(timeline.events[2].type, "agent.decision.requested");
+    assert.equal(timeline.events[2].timestamp, "sequence:2");
+    assert.equal(timeline.events[2].source_ref, "agent:examples.ta1/Auditor");
+    assert.equal(timeline.events[2].redaction, "secrets_redacted");
+    assert.doesNotMatch(serialized, /TOUBA_SHOULD_NOT_LEAK|raw_prompt/);
+  });
+});
+
 test("CLI validates and writes a bounded export", () => {
   withFixtureProject((fixture) => {
     const exportPath = path.join(fixture.root, "audit.export.json");
@@ -143,6 +177,74 @@ test("CLI validates and writes a bounded export", () => {
     assert.match(result.stdout, /Status ok/);
     const exportDocument = JSON.parse(readFileSync(exportPath, "utf8"));
     assert.equal(exportDocument.validation_report.status, "ok");
+  });
+});
+
+test("CLI writes an explicit trace timeline product surface", () => {
+  withFixtureProject((fixture) => {
+    fixture.trace.events.push({
+      event_id: "event:run-ta1:3",
+      run_id: "run-ta1",
+      sequence_index: 2,
+      kind: "trigger_event_received",
+      payload: {
+        trigger_ref: "trigger:examples.ta1/Nightly",
+        payload_bytes: 128,
+        payload_sha256: "a".repeat(64),
+      },
+    });
+    writeJson(fixture.paths.trace, fixture.trace);
+
+    const timelinePath = path.join(fixture.root, "audit.trace-timeline.json");
+    const result = spawnSync(
+      process.execPath,
+      [
+        auditScript,
+        "--trace",
+        fixture.paths.trace,
+        "--air",
+        fixture.paths.air,
+        "--source",
+        fixture.paths.source,
+        "--timeline-out",
+        timelinePath,
+      ],
+      { encoding: "utf8" },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Touba Trace Audit/);
+    const timeline = JSON.parse(readFileSync(timelinePath, "utf8"));
+    assert.deepEqual(validateObject(traceTimelineSchema(), timeline), []);
+    assert.equal(timeline.events[2].type, "trigger.event.received");
+    assert.equal(timeline.events[2].summary, "Trigger event received for trigger:examples.ta1/Nightly.");
+    assert.equal(timeline.events[2].redaction, "payload_minimized");
+    assert.doesNotMatch(JSON.stringify(timeline), /payload_sha256|payload_bytes|raw-secret-payload/i);
+  });
+});
+
+test("CLI refuses ambiguous trace timeline output suffixes", () => {
+  withFixtureProject((fixture) => {
+    const timelinePath = path.join(fixture.root, "timeline.json");
+    const result = spawnSync(
+      process.execPath,
+      [
+        auditScript,
+        "--trace",
+        fixture.paths.trace,
+        "--air",
+        fixture.paths.air,
+        "--source",
+        fixture.paths.source,
+        "--timeline-out",
+        timelinePath,
+      ],
+      { encoding: "utf8" },
+    );
+
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /--timeline-out path must end with \.trace-timeline\.json/);
+    assert.throws(() => readFileSync(timelinePath, "utf8"));
   });
 });
 
@@ -383,4 +485,8 @@ function assertDiagnostic(validation, code) {
     validation.validationReport.diagnostics.some((diagnostic) => diagnostic.code === code),
     `expected diagnostic ${code}, got ${JSON.stringify(validation.validationReport.diagnostics)}`,
   );
+}
+
+function traceTimelineSchema() {
+  return JSON.parse(readFileSync(traceTimelineSchemaPath, "utf8"));
 }
