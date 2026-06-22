@@ -1837,6 +1837,147 @@ test("passes agent decision provider initial mode through the CLI", () => {
   }
 });
 
+test("RP-1 prod run plan defaults agent decision provider to capabilities", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-plan-prod-agent-provider-"));
+  try {
+    const airPath = writeAirDocument(workspace, agentDecisionProviderDocument());
+    const lockPath = writeAirOnlySupplyChainLock(workspace, airPath);
+    const runPlanPath = join(workspace, "touba.run-plan.json");
+    const providerPath = join(workspace, "provider.mjs");
+    const tracePath = join(workspace, "trace.json");
+
+    writeFileSync(runPlanPath, JSON.stringify({
+      run_plan_schema_version: "touba-run-plan-v0.1",
+      entry_ref: "strategy:examples.linear_skill/RunResearch",
+      air: "fixture.air.json",
+      profile: "prod",
+      supply_chain_lock: "touba.lock.json",
+      outputs: {
+        mode: "result",
+      },
+    }), "utf8");
+    writeFileSync(
+      providerPath,
+      [
+        "export function decideAgentCapability(request) {",
+        "  if (request.mode === 'summary' && request.observations?.length > 0) {",
+        "    return {",
+        "      action: 'answer_directly',",
+        "      reason: 'answer from observed capability result',",
+        "      result: request.observations[0].value",
+        "    };",
+        "  }",
+        "  if (request.mode !== 'capabilities') {",
+        "    throw new Error(`expected prod run plan to start in capabilities, got ${request.mode}`);",
+        "  }",
+        "  return {",
+        "    target_ref: 'skill:examples.linear_skill/Answer',",
+        "    reason: 'prod run plan direct catalog',",
+        "    arguments: { topic: request.inputs.topic }",
+        "  };",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const stdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        "--run-plan",
+        runPlanPath,
+        "--inputs-json",
+        JSON.stringify({ topic: "prod answer" }),
+        "--agent-decision-provider",
+        providerPath,
+        "--trace-out",
+        tracePath,
+      ],
+      { encoding: "utf8" },
+    );
+
+    assert.equal(lockPath, join(workspace, "touba.lock.json"));
+    assert.equal(JSON.parse(stdout), "prod answer");
+    const trace = JSON.parse(readFileSync(tracePath, "utf8"));
+    assert.equal(eventOf(trace, "agent_decision_requested").payload.mode, "capabilities");
+    assert.equal(trace.events.some((event) => event.kind === "agent_decision_catalog_requested"), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("RP-1 prod run plan keeps explicit agent decision provider initial mode", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-plan-prod-agent-provider-explicit-"));
+  try {
+    const airPath = writeAirDocument(workspace, agentDecisionProviderDocument());
+    writeAirOnlySupplyChainLock(workspace, airPath);
+    const runPlanPath = join(workspace, "touba.run-plan.json");
+    const providerPath = join(workspace, "provider.mjs");
+    const tracePath = join(workspace, "trace.json");
+
+    writeFileSync(runPlanPath, JSON.stringify({
+      run_plan_schema_version: "touba-run-plan-v0.1",
+      entry_ref: "strategy:examples.linear_skill/RunResearch",
+      air: "fixture.air.json",
+      profile: "prod",
+      supply_chain_lock: "touba.lock.json",
+      outputs: {
+        mode: "result",
+      },
+    }), "utf8");
+    writeFileSync(
+      providerPath,
+      [
+        "export function decideAgentCapability(request) {",
+        "  if (request.mode === 'summary' && request.observations?.length > 0) {",
+        "    return {",
+        "      action: 'answer_directly',",
+        "      reason: 'answer from observed capability result',",
+        "      result: request.observations[0].value",
+        "    };",
+        "  }",
+        "  if (request.mode === 'summary') {",
+        "    return { action: 'request_capabilities', reason: 'explicit summary mode respected' };",
+        "  }",
+        "  return {",
+        "    target_ref: 'skill:examples.linear_skill/Answer',",
+        "    reason: 'catalog after explicit summary',",
+        "    arguments: { topic: request.inputs.topic }",
+        "  };",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const stdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        "--run-plan",
+        runPlanPath,
+        "--inputs-json",
+        JSON.stringify({ topic: "summary override" }),
+        "--agent-decision-provider",
+        providerPath,
+        "--agent-decision-provider-initial-mode",
+        "summary",
+        "--trace-out",
+        tracePath,
+      ],
+      { encoding: "utf8" },
+    );
+
+    assert.equal(JSON.parse(stdout), "summary override");
+    const trace = JSON.parse(readFileSync(tracePath, "utf8"));
+    assert.equal(eventOf(trace, "agent_decision_requested").payload.mode, "summary");
+    assert.equal(eventOf(trace, "agent_decision_catalog_requested").payload.reason, "explicit summary mode respected");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("passes ADP-1 provider metadata and budget flags through the CLI", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-adp1-provider-"));
   try {
@@ -2838,6 +2979,29 @@ function writeAirDocument(workspace, document) {
   const path = join(workspace, "fixture.air.json");
   writeFileSync(path, JSON.stringify(document), "utf8");
   return path;
+}
+
+function writeAirOnlySupplyChainLock(workspace, airPath) {
+  const airText = readFileSync(airPath, "utf8");
+  const lockPath = join(workspace, "touba.lock.json");
+  writeFileSync(lockPath, `${JSON.stringify({
+    lock_schema_version: "touba-lock-v0.1",
+    lock_kind: "supply_chain",
+    generated_at: "2026-06-22T00:00:00Z",
+    generated_by: {
+      tool: "touba test",
+      version: "0.1.0",
+    },
+    air: {
+      path: "fixture.air.json",
+      digest: {
+        kind: "sha256",
+        value: sha256Text(airText),
+      },
+    },
+    handlers: [],
+  }, null, 2)}\n`, "utf8");
+  return lockPath;
 }
 
 function projectToolDocument() {

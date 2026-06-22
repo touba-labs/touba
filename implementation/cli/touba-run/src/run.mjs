@@ -97,6 +97,7 @@ if (parsedArgs.runPlanPath !== undefined) {
   try {
     const runPlan = loadRunPlanFromPath(parsedArgs.runPlanPath);
     applyRunPlan(parsedArgs, runPlan);
+    applyRunPlanProfileDefaults(parsedArgs);
   } catch (e) {
     process.stderr.write(`run plan error [${e.code ?? "RunPlanInvalid"}]: ${e.message}\n`);
     process.exit(1);
@@ -363,7 +364,7 @@ try {
     agentDecisionProvider,
     agentDecisionProviderMetadata: parsedArgs.agentDecisionProviderMetadata,
     agentDecisionProviderContentMode: parsedArgs.agentDecisionProviderContentMode,
-    agentDecisionProviderInitialMode: parsedArgs.agentDecisionProviderInitialMode,
+    agentDecisionProviderInitialMode: resolvedAgentDecisionProviderInitialMode(parsedArgs),
     agentDecisionProviderTimeoutMs: parsedArgs.agentDecisionProviderTimeoutMs,
     agentDecisionProviderMaxRetries: parsedArgs.agentDecisionProviderMaxRetries,
     maxAgentSteps: parsedArgs.maxAgentSteps,
@@ -511,6 +512,9 @@ function applyRunPlan(parsed, runPlan) {
   }
   if (plan.profile === "prod") {
     parsed.requireSupplyChainLock = true;
+    if (parsed.agentDecisionProviderInitialMode === undefined) {
+      parsed.agentDecisionProviderInitialMode = "capabilities";
+    }
   }
   if (plan.run_limits !== undefined) {
     const normalizedLimits = normalizeRunPlanLimits(plan.run_limits);
@@ -545,6 +549,22 @@ function applyRunPlan(parsed, runPlan) {
     }
     parsed.triggerManifestPath = triggerManifestPath;
   }
+}
+
+function applyRunPlanProfileDefaults(parsed) {
+  if (
+    parsed.runPlanProfile === "prod"
+    && parsed.agentDecisionProviderInitialMode === undefined
+  ) {
+    parsed.agentDecisionProviderInitialMode = "capabilities";
+  }
+}
+
+function resolvedAgentDecisionProviderInitialMode(parsed) {
+  if (parsed.agentDecisionProviderInitialMode !== undefined) {
+    return parsed.agentDecisionProviderInitialMode;
+  }
+  return parsed.runPlanProfile === "prod" ? "capabilities" : undefined;
 }
 
 function validateParsedArgsAfterRunPlan(parsed) {

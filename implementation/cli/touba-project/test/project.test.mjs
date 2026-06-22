@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyRunProfileToArgs,
   checkProjectSecret,
   initProject,
   listProjectSecrets,
@@ -2364,6 +2365,45 @@ test("CLI run applies project dev and prod supply-chain profiles", () => {
     assert.equal(prodResult.status, 0, prodResult.stderr);
     const trace = JSON.parse(prodResult.stdout);
     assert.equal(trace.events.at(-1).payload.status, "success");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CLI run prod profile adds direct catalog provider mode by default", () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    const args = applyRunProfileToArgs([
+      "program.air.json",
+      "--profile",
+      "prod",
+      "--agent-decision-provider",
+      "provider.mjs",
+    ], { root });
+
+    assert.equal(args.includes("--require-supply-chain-lock"), true);
+    assert.deepEqual(args.slice(-2), ["--agent-decision-provider-initial-mode", "capabilities"]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CLI run prod profile keeps explicit provider initial mode", () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    const args = applyRunProfileToArgs([
+      "program.air.json",
+      "--profile=prod",
+      "--agent-decision-provider",
+      "provider.mjs",
+      "--agent-decision-provider-initial-mode=summary",
+    ], { root });
+
+    assert.equal(args.includes("--require-supply-chain-lock"), true);
+    assert.equal(args.filter((arg) => arg.startsWith("--agent-decision-provider-initial-mode")).length, 1);
+    assert.equal(args.includes("--agent-decision-provider-initial-mode=summary"), true);
   } finally {
     cleanup(root);
   }

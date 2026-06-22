@@ -1531,6 +1531,12 @@ export function applyRunProfileToArgs(rawArgs, options = {}) {
       nextArgs.push("--require-supply-chain-lock");
     }
   }
+  if (
+    profileName === "prod"
+    && !hasLongOption(nextArgs, "--agent-decision-provider-initial-mode")
+  ) {
+    nextArgs.push("--agent-decision-provider-initial-mode", "capabilities");
+  }
   return nextArgs;
 }
 
