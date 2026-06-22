@@ -35,3 +35,15 @@ pnpm test:product-surface-contracts
 The validator checks that every contract has a schema and a valid fixture. It
 does not replace runtime validation; it keeps the product-facing boundary
 versioned, testable, and reviewable.
+
+## Current Producers
+
+The runtime CLI currently emits:
+
+```bash
+touba run program.air.json --output run-summary
+```
+
+That command produces `touba-run-summary-v1` for client and Mobile adapters.
+The same output mode is valid in `touba.run-plan.json` through
+`outputs.mode = "run-summary"`.

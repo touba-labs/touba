@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sha256Text } from "@touba/supply-chain";
+import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 
 import {
   LINEAR_FETCH_SOURCE_TOOL_REF,
@@ -16,6 +17,10 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const runPath = join(__dir, "../src/run.mjs");
 const implementationDir = join(__dir, "../../..");
 const cargoManifest = join(implementationDir, "Cargo.toml");
+const runSummarySchema = join(
+  implementationDir,
+  "contracts/product-surfaces/schemas/touba-run-summary-v1.schema.json",
+);
 const linearSkillFixture = join(
   implementationDir,
   "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
@@ -53,6 +58,69 @@ test("runs an AIR document with the bounded local FetchSource handler", () => {
     assert.equal(trace.run.entry_ref, "skill:examples.linear_skill/BuildNote");
     assert.equal(eventOf(trace, "call_completed").payload.target_ref, LINEAR_FETCH_SOURCE_TOOL_REF);
     assert.equal(trace.events.at(-1).payload.status, "success");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("emits touba-run-summary-v1 for a successful run", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-summary-"));
+  try {
+    const airPath = writeAirDocument(workspace, linearSourceDocument());
+    const tracePath = join(workspace, "run.trace.json");
+    const stdout = execFileSync(
+      process.execPath,
+      [
+        runPath,
+        airPath,
+        "--local-fetch-source-text",
+        "local source text",
+        "--max-steps",
+        "10",
+        "--max-tool-calls",
+        "3",
+        "--trace-out",
+        tracePath,
+        "--output",
+        "run-summary",
+      ],
+      { encoding: "utf8" },
+    );
+
+    const summary = JSON.parse(stdout);
+    const schema = JSON.parse(readFileSync(runSummarySchema, "utf8"));
+    assert.deepEqual(validateObject(schema, summary), []);
+    assert.equal(summary.schema_version, "touba-run-summary-v1");
+    assert.equal(summary.status, "succeeded");
+    assert.equal(summary.entrypoint_ref, "skill:examples.linear_skill/BuildNote");
+    assert.equal(summary.trace_ref, `file:${tracePath}`);
+    assert.equal(summary.trigger_ref, null);
+    assert.deepEqual(summary.approvals_pending, []);
+    assert.deepEqual(summary.refusals, []);
+    assert.equal(summary.budgets.tool_calls_used, 1);
+    assert.equal(summary.budgets.steps_used >= 1, true);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("emits approval_pending run summary for a paused approval", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-summary-approval-"));
+  try {
+    const airPath = writeAirDocument(workspace, humanApprovalDocument());
+    const stdout = execFileSync(
+      process.execPath,
+      [runPath, airPath, "--output", "run-summary"],
+      { encoding: "utf8" },
+    );
+
+    const summary = JSON.parse(stdout);
+    const schema = JSON.parse(readFileSync(runSummarySchema, "utf8"));
+    assert.deepEqual(validateObject(schema, summary), []);
+    assert.equal(summary.status, "approval_pending");
+    assert.equal(summary.completed_at, null);
+    assert.deepEqual(summary.approvals_pending, ["approval:examples.cli:required"]);
+    assert.deepEqual(summary.refusals, []);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -2000,6 +2068,38 @@ test("runs a pure AIR document through an explicit RP-1 run plan", () => {
     );
 
     assert.equal(JSON.parse(stdout), "planned");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("RP-1 run plan can request a run summary output", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-plan-summary-"));
+  try {
+    const airPath = join(workspace, "program.air.json");
+    writeFileSync(airPath, JSON.stringify(runPlanPureDocument()), "utf8");
+    const runPlanPath = join(workspace, "touba.run-plan.json");
+    writeFileSync(runPlanPath, JSON.stringify({
+      run_plan_schema_version: "touba-run-plan-v0.1",
+      entry_ref: "strategy:examples.run_plan/Run",
+      air: "program.air.json",
+      profile: "dev",
+      outputs: {
+        mode: "run-summary",
+      },
+    }), "utf8");
+
+    const stdout = execFileSync(
+      process.execPath,
+      [runPath, "--run-plan", runPlanPath],
+      { encoding: "utf8" },
+    );
+
+    const summary = JSON.parse(stdout);
+    const schema = JSON.parse(readFileSync(runSummarySchema, "utf8"));
+    assert.deepEqual(validateObject(schema, summary), []);
+    assert.equal(summary.status, "succeeded");
+    assert.equal(summary.entrypoint_ref, "strategy:examples.run_plan/Run");
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

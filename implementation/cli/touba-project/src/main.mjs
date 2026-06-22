@@ -425,7 +425,7 @@ function runUsage() {
     "  --agent-decision-provider <path>",
     "  --max-agent-steps <n> --max-provider-calls <n> --max-tool-calls <n>",
     "  --entry <air-ref>",
-    "  --output show|result|trace|all",
+    "  --output show|result|trace|all|run-summary",
     "  --trace-out <path>",
     "  --evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]",
   ].join("\n");
@@ -442,7 +442,7 @@ function triggerCommand(rawArgs) {
   if (subcommand === undefined || subcommand === "--help" || subcommand === "-h") {
     return {
       text: [
-        "Usage: touba trigger run <air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json> [--trace-out <path>] [--output show|result|trace|all]",
+        "Usage: touba trigger run <air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json> [--trace-out <path>] [--output show|result|trace|all|run-summary]",
         "       touba trigger serve <air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--host 127.0.0.1] [--port 8787] [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]",
       ].join("\n"),
       exitCode: 0,

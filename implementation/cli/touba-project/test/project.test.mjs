@@ -1794,6 +1794,7 @@ test("CLI trigger, manifest and handler help match current public options", () =
   assert.match(triggerResult.stdout, /touba trigger run <air\.json>/);
   assert.match(triggerResult.stdout, /--max-runs <n>/);
   assert.match(triggerResult.stdout, /--state <touba\.trigger-state\.json>/);
+  assert.match(triggerResult.stdout, /run-summary/);
   assert.equal(triggerResult.stdout.includes("daemon"), false);
 
   const manifestResult = spawnSync(process.execPath, [cliPath, "manifest", "--help"], { encoding: "utf8" });
@@ -1836,6 +1837,7 @@ test("CLI run help exposes project profiles before runtime options", () => {
   assert.match(result.stdout, /Project profiles are read from touba\.project\.json/);
   assert.match(result.stdout, /prod profile requires touba\.lock\.json/);
   assert.match(result.stdout, /--human-checkpoint-out <path> \| --human-resume-checkpoint <path>/);
+  assert.match(result.stdout, /--output show\|result\|trace\|all\|run-summary/);
   assert.match(result.stdout, /--trace-out <path>/);
   assert.match(result.stdout, /--evidence-out <run\.evidence\.json>/);
 

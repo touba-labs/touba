@@ -122,7 +122,8 @@ touba run hello.air.json
 ```
 
 The run prints `Touba ready`. Add `--output trace` to see the structured
-execution trace of the same run.
+execution trace, or `--output run-summary` to emit the compact
+`touba-run-summary-v1` contract used by product integrations.
 
 ## Installation And Updates
 

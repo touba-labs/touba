@@ -26,8 +26,10 @@ import {
 const args = process.argv.slice(2);
 const RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v0.1";
 const RUN_EVIDENCE_SCHEMA_VERSION = "touba-run-evidence-v0.1";
+const RUN_SUMMARY_SCHEMA_VERSION = "touba-run-summary-v1";
 const BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v0.1";
 const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
+const RUN_OUTPUT_MODES = new Set(["show", "result", "trace", "all", "run-summary"]);
 const TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
 const RESOURCE_BINDING_KINDS = new Set(["memory_backend", "event_source", "decision_provider"]);
 const RUN_LIMIT_KEYS = new Set([
@@ -435,7 +437,7 @@ if (parsedArgs.evidenceOutPath !== undefined) {
   }
 }
 
-process.stdout.write(renderOutput(result, parsedArgs.outputMode));
+process.stdout.write(renderOutput(result, parsedArgs.outputMode, parsedArgs));
 process.exit(result.status === "failure" ? 1 : 0);
 
 function loadRunPlanFromPath(runPlanPath) {
@@ -636,8 +638,8 @@ function validateRunPlanOutputs(outputs) {
   if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) {
     throw new RunPlanCliError("RunPlanSchemaMismatch", "outputs must be an object");
   }
-  if (outputs.mode !== undefined && !["show", "result", "trace", "all"].includes(outputs.mode)) {
-    throw new RunPlanCliError("RunPlanSchemaMismatch", "outputs.mode must be one of: show, result, trace, all");
+  if (outputs.mode !== undefined && !RUN_OUTPUT_MODES.has(outputs.mode)) {
+    throw new RunPlanCliError("RunPlanSchemaMismatch", `outputs.mode must be one of: ${runOutputModesLabel()}`);
   }
   if (outputs.trace_out !== undefined && (typeof outputs.trace_out !== "string" || outputs.trace_out.trim() === "")) {
     throw new RunPlanCliError("RunPlanSchemaMismatch", "outputs.trace_out must be a non-empty string");
@@ -1374,7 +1376,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--output") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--output requires one of: show, result, trace, all" };
+        return { error: `--output requires one of: ${runOutputModesLabel()}` };
       }
       parsed.outputMode = rawArgs[index];
       parsed.outputModeExplicit = true;
@@ -1573,8 +1575,8 @@ function parseArgs(rawArgs) {
     parsed.runLimits = undefined;
   }
 
-  if (!["show", "result", "trace", "all"].includes(parsed.outputMode)) {
-    return { error: "--output must be one of: show, result, trace, all" };
+  if (!RUN_OUTPUT_MODES.has(parsed.outputMode)) {
+    return { error: `--output must be one of: ${runOutputModesLabel()}` };
   }
 
   if (parsed.evidenceRefs.length > 0 && parsed.evidenceOutPath === undefined) {
@@ -1586,8 +1588,12 @@ function parseArgs(rawArgs) {
 
 function printUsage() {
   process.stderr.write(
-    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
+    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
+}
+
+function runOutputModesLabel() {
+  return [...RUN_OUTPUT_MODES].join(", ");
 }
 
 function validateSupplyChainGate({ lockPath, airPath, manifestPath, requireLock }) {
@@ -1656,7 +1662,7 @@ function createInteractiveUserInputSession() {
   };
 }
 
-function renderOutput(result, mode) {
+function renderOutput(result, mode, parsed = {}) {
   if (mode === "show") {
     return renderShowOutput(result.trace);
   }
@@ -1665,6 +1671,9 @@ function renderOutput(result, mode) {
   }
   if (mode === "trace") {
     return serializeJson(result.trace);
+  }
+  if (mode === "run-summary") {
+    return serializeJson(buildRunSummary(result, parsed));
   }
   if (mode === "all") {
     return renderAllOutput(result);
@@ -1693,6 +1702,191 @@ function renderAllOutput(result) {
   sections.push(`[result]\n${JSON.stringify(result.result ?? null, null, 2)}`);
   sections.push(`[trace]\n${JSON.stringify(result.trace, null, 2)}`);
   return `${sections.join("\n\n")}\n`;
+}
+
+function buildRunSummary(result, parsed = {}) {
+  const trace = result.trace ?? {};
+  const events = Array.isArray(trace.events) ? trace.events : [];
+  const generatedAt = new Date().toISOString();
+  const runId = stringOrDefault(trace.run?.run_id, "run:unknown");
+  const status = productRunStatus(result, events);
+  return {
+    schema_version: RUN_SUMMARY_SCHEMA_VERSION,
+    run_id: runId,
+    status,
+    entrypoint_ref: stringOrDefault(trace.run?.entry_ref ?? parsed.entryRef, "entry:unknown"),
+    started_at: generatedAt,
+    completed_at: isTerminalProductRunStatus(status) ? generatedAt : null,
+    trigger_ref: triggerRefFromTrace(trace, events),
+    trace_ref: parsed.traceOutPath ? `file:${parsed.traceOutPath}` : `trace:${runId}`,
+    approvals_pending: pendingApprovalRefs(events),
+    refusals: refusalSummaries(events),
+    budgets: budgetCounters(events),
+  };
+}
+
+function productRunStatus(result, events) {
+  const pendingApprovals = pendingApprovalEvents(events);
+  if (pendingApprovals.length > 0) {
+    return pendingApprovals.some((event) => event.payload?.mode === "agent_review")
+      ? "review_pending"
+      : "approval_pending";
+  }
+  if (result.status === "success") {
+    return "succeeded";
+  }
+  if (result.status === "cancelled") {
+    return "cancelled";
+  }
+  if (result.status === "stopped") {
+    return hasHumanApprovalTerminalRefusal(events) || refusalSummaries(events).length > 0
+      ? "refused"
+      : "paused";
+  }
+  if (result.status === "failure") {
+    return refusalSummaries(events).length > 0 ? "refused" : "failed";
+  }
+  return "failed";
+}
+
+function isTerminalProductRunStatus(status) {
+  return ["succeeded", "failed", "cancelled", "refused"].includes(status);
+}
+
+function triggerRefFromTrace(trace, events) {
+  if (typeof trace.run?.entry_ref === "string" && trace.run.entry_ref.startsWith("trigger:")) {
+    return trace.run.entry_ref;
+  }
+  const triggerEvent = events.find((event) => typeof event.payload?.trigger_ref === "string");
+  return triggerEvent?.payload?.trigger_ref ?? null;
+}
+
+function pendingApprovalRefs(events) {
+  return pendingApprovalEvents(events).map((event) => event.payload.approval_ref);
+}
+
+function pendingApprovalEvents(events) {
+  const settled = new Set(
+    events
+      .filter((event) => [
+        "human_approval_decided",
+        "human_approval_resumed",
+        "human_approval_rejected",
+        "human_approval_expired",
+        "human_approval_cancelled",
+      ].includes(event.kind))
+      .map((event) => event.payload?.approval_ref)
+      .filter((approvalRef) => typeof approvalRef === "string"),
+  );
+  return events.filter((event) =>
+    event.kind === "human_approval_paused"
+    && typeof event.payload?.approval_ref === "string"
+    && !settled.has(event.payload.approval_ref),
+  );
+}
+
+function hasHumanApprovalTerminalRefusal(events) {
+  return events.some((event) => [
+    "human_approval_rejected",
+    "human_approval_expired",
+    "human_approval_cancelled",
+  ].includes(event.kind));
+}
+
+function refusalSummaries(events) {
+  return events
+    .filter((event) => isRefusalEvent(event))
+    .map((event) => {
+      const payload = event.payload ?? {};
+      return {
+        code: stringOrDefault(payload.runtime_error_code ?? payload.reason ?? event.kind, event.kind),
+        message: stringOrDefault(event.message ?? refusalMessage(event), event.kind),
+        source_ref: sourceRefForEvent(event),
+      };
+    });
+}
+
+function isRefusalEvent(event) {
+  return (
+    event.kind.endsWith("_refused")
+    || event.kind === "budget_limit_exceeded"
+    || event.kind === "dispatch_refused_budget_exceeded"
+    || event.kind === "agent_step_limit_exceeded"
+    || event.kind === "trigger_rate_limited"
+    || [
+      "human_approval_rejected",
+      "human_approval_expired",
+      "human_approval_cancelled",
+    ].includes(event.kind)
+  );
+}
+
+function refusalMessage(event) {
+  const payload = event.payload ?? {};
+  if (typeof payload.reason === "string") {
+    return `${event.kind}: ${payload.reason}`;
+  }
+  if (typeof payload.runtime_error_code === "string") {
+    return `${event.kind}: ${payload.runtime_error_code}`;
+  }
+  return event.kind;
+}
+
+function sourceRefForEvent(event) {
+  if (typeof event.air_ref === "string") {
+    return event.air_ref;
+  }
+  const payload = event.payload ?? {};
+  return [
+    payload.target_ref,
+    payload.trigger_ref,
+    payload.approval_ref,
+    payload.agent_ref,
+    payload.caller_ref,
+  ].find((value) => typeof value === "string") ?? null;
+}
+
+function budgetCounters(events) {
+  return {
+    steps_used: Math.max(latestBudgetConsumed(events, "max_steps"), observedStepCount(events)),
+    tool_calls_used: Math.max(latestBudgetConsumed(events, "max_tool_calls"), observedToolCallCount(events)),
+    provider_calls_used: Math.max(
+      latestBudgetConsumed(events, "max_provider_calls"),
+      events.filter((event) => event.kind === "agent_decision_provider_call_attempted").length,
+    ),
+  };
+}
+
+function latestBudgetConsumed(events, budgetKind) {
+  const consumedValues = events
+    .filter((event) => event.kind === "budget_consumed" && event.payload?.budget_kind === budgetKind)
+    .map((event) => event.payload?.consumed_value)
+    .filter((value) => Number.isInteger(value) && value >= 0);
+  return consumedValues.length > 0 ? consumedValues.at(-1) : 0;
+}
+
+function observedStepCount(events) {
+  const nodeRefs = new Set();
+  for (const event of events) {
+    const nodeId = event.air_ref?.node_id;
+    const graphRef = event.air_ref?.flow_graph_ref;
+    if (typeof nodeId === "string" && typeof graphRef === "string") {
+      nodeRefs.add(`${graphRef}#${nodeId}`);
+    }
+  }
+  return nodeRefs.size;
+}
+
+function observedToolCallCount(events) {
+  return events.filter((event) =>
+    event.kind === "call_completed"
+    && typeof event.payload?.target_ref === "string"
+    && event.payload.target_ref.startsWith("tool:")
+  ).length;
+}
+
+function stringOrDefault(value, fallback) {
+  return typeof value === "string" && value.trim() !== "" ? value : fallback;
 }
 
 function buildRunEvidence(result, parsed) {
