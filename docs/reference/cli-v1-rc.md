@@ -609,6 +609,9 @@ méthode, le chemin, la taille et le digest SHA-256 du payload ; elle ne conserv
 pas le corps brut. Si le manifest déclare `payload`, seuls les champs JSON
 référencés par `payload.map` deviennent des arguments persistés pour la
 stratégie. Le runtime revalide ces arguments contre la signature de la cible.
+Le mapping peut être déclaré directement dans le source Touba avec
+`with message as payload.message` sur un trigger `on request`; `touba manifest
+generate` émet alors l’entrée `payload.map` correspondante.
 `--state` et `--queue` doivent pointer vers des chemins terminant par
 `.trigger-state.json` et `.trigger-queue.json`.
 
@@ -625,7 +628,25 @@ Options principales :
 | `--signature-secret-env <NAME>` | exige `x-touba-signature: sha256=<hex>` |
 | `--secrets <path>` | résout les handles de secrets déclarés par les runs déclenchés |
 
-Exemple manifest pour un webhook typé :
+Exemple source et manifest pour un webhook typé :
+
+```touba title="webhook.tb"
+module examples.webhook
+
+strategy RunWebhook
+    takes message as Text
+    gives Text
+    do
+        give message
+
+trigger WebhookRun
+    on request POST "/webhook/run"
+    runs strategy RunWebhook
+    with message as payload.message
+    limits
+        max_runs_per_day as 100
+        timeout_ms as 30000
+```
 
 ```json title="touba.manifest.json"
 {
@@ -638,7 +659,7 @@ Exemple manifest pour un webhook typé :
         "content_types": ["application/json"],
         "max_bytes": 4096,
         "map": {
-          "request": "$.request"
+          "message": "$.message"
         }
       },
       "limits": {

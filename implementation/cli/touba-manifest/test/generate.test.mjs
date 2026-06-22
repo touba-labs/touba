@@ -53,6 +53,29 @@ test("generates manifest bindings from AIR tools", () => {
   });
 });
 
+test("generates request trigger payload contracts from AIR", () => {
+  const manifest = generateManifestFromAirDocument(triggerAirDocument());
+
+  assert.deepEqual(manifest.triggers["trigger:examples.webhook/WebhookRun"], {
+    enabled: true,
+    source: {
+      kind: "request",
+    },
+    limits: {
+      max_runs_per_day: 5,
+      timeout_ms: 30000,
+    },
+    payload: {
+      format: "json",
+      content_types: ["application/json"],
+      max_bytes: 65536,
+      map: {
+        message: "$.message",
+      },
+    },
+  });
+});
+
 test("does not infer agent or strategy authority from AIR owners", () => {
   const manifest = generateManifestFromAirDocument({
     air_schema_version: "air-minimal-v0.1",
@@ -280,6 +303,39 @@ function airDocument() {
               access: "read",
             },
           ],
+        },
+      ],
+    },
+  };
+}
+
+function triggerAirDocument() {
+  return {
+    air_schema_version: "air-minimal-v0.1",
+    definitions: {
+      tools: [],
+      triggers: [
+        {
+          id: "trigger:examples.webhook/WebhookRun",
+          name: "WebhookRun",
+          event: {
+            kind: "request",
+            value: "POST /webhook/run",
+          },
+          target_ref: "strategy:examples.webhook/RunWebhook",
+          target_kind: "strategy",
+          payload: {
+            format: "json",
+            content_types: ["application/json"],
+            max_bytes: 65536,
+            map: {
+              message: "$.message",
+            },
+          },
+          limits: {
+            max_runs_per_day: 5,
+            timeout_ms: 30000,
+          },
         },
       ],
     },

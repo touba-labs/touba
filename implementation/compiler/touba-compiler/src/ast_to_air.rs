@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::air::*;
 use crate::ast::*;
@@ -1089,7 +1089,7 @@ impl AirLowerer {
         let event = self.lower_trigger_event(declaration)?;
         let target = self.lower_trigger_target(declaration)?;
         let limits = self.lower_trigger_limits(declaration)?;
-        let arguments = self.lower_trigger_arguments(declaration, &target);
+        let (arguments, payload) = self.lower_trigger_arguments(declaration, &target, &event);
 
         Some(AirTrigger {
             id,
@@ -1098,6 +1098,7 @@ impl AirLowerer {
             target_ref: target.id,
             target_kind: "strategy".to_string(),
             arguments,
+            payload,
             limits,
             source_ref: declaration.source_ref.clone(),
         })
@@ -1362,7 +1363,11 @@ impl AirLowerer {
         &mut self,
         declaration: &AstTriggerDeclaration,
         target: &SymbolRef,
-    ) -> Vec<AirTriggerArgument> {
+        event: &AirTriggerEvent,
+    ) -> (Vec<AirTriggerArgument>, Option<AirTriggerPayloadContract>) {
+        let mut payload_map = BTreeMap::new();
+        let mut payload_source_ref: Option<SourceRef> = None;
+
         if target.imported {
             let mut lowered = Vec::new();
             let mut seen = HashSet::new();
@@ -1378,15 +1383,27 @@ impl AirLowerer {
                     ));
                     continue;
                 }
-                if let Some((value_ref, _)) = self.lower_trigger_argument_value(argument) {
-                    lowered.push(AirTriggerArgument {
-                        input: argument.name.clone(),
-                        value_ref,
-                        source_ref: argument.source_ref.clone(),
-                    });
+                match self.lower_trigger_argument_value(argument, event) {
+                    Some(LoweredTriggerArgumentValue::Static { value_ref, .. }) => {
+                        lowered.push(AirTriggerArgument {
+                            input: argument.name.clone(),
+                            value_ref,
+                            source_ref: argument.source_ref.clone(),
+                        });
+                    }
+                    Some(LoweredTriggerArgumentValue::Payload { json_path }) => {
+                        if payload_source_ref.is_none() {
+                            payload_source_ref = Some(argument.source_ref.clone());
+                        }
+                        payload_map.insert(argument.name.clone(), json_path);
+                    }
+                    None => {}
                 }
             }
-            return lowered;
+            return (
+                lowered,
+                trigger_payload_contract(payload_map, payload_source_ref),
+            );
         }
 
         let signature_inputs: HashSet<&str> = target.signature_input_names().collect();
@@ -1420,18 +1437,29 @@ impl AirLowerer {
         let mut lowered = Vec::new();
         for input in &target.signature_inputs {
             if let Some(argument) = by_name.get(input.name.as_str()) {
-                if let Some((value_ref, actual_type)) = self.lower_trigger_argument_value(argument)
-                {
-                    self.check_trigger_argument_type(
-                        actual_type.as_deref(),
-                        input.type_ref.as_deref(),
-                        argument,
-                    );
-                    lowered.push(AirTriggerArgument {
-                        input: argument.name.clone(),
+                match self.lower_trigger_argument_value(argument, event) {
+                    Some(LoweredTriggerArgumentValue::Static {
                         value_ref,
-                        source_ref: argument.source_ref.clone(),
-                    });
+                        actual_type,
+                    }) => {
+                        self.check_trigger_argument_type(
+                            actual_type.as_deref(),
+                            input.type_ref.as_deref(),
+                            argument,
+                        );
+                        lowered.push(AirTriggerArgument {
+                            input: argument.name.clone(),
+                            value_ref,
+                            source_ref: argument.source_ref.clone(),
+                        });
+                    }
+                    Some(LoweredTriggerArgumentValue::Payload { json_path }) => {
+                        if payload_source_ref.is_none() {
+                            payload_source_ref = Some(argument.source_ref.clone());
+                        }
+                        payload_map.insert(argument.name.clone(), json_path);
+                    }
+                    None => {}
                 }
             } else {
                 self.diagnostics.push(AirDiagnostic::new(
@@ -1445,27 +1473,43 @@ impl AirLowerer {
             }
         }
 
-        lowered
+        (
+            lowered,
+            trigger_payload_contract(payload_map, payload_source_ref),
+        )
     }
 
     fn lower_trigger_argument_value(
         &mut self,
         argument: &AstCallArgument,
-    ) -> Option<(String, Option<String>)> {
+        event: &AirTriggerEvent,
+    ) -> Option<LoweredTriggerArgumentValue> {
+        if let Some(json_path) = self.lower_trigger_payload_argument(argument, event) {
+            return Some(LoweredTriggerArgumentValue::Payload { json_path });
+        }
+
         match &argument.value {
-            AstExpression::StringLiteral { .. } => {
-                Some((expression_handle(&argument.value), Some(builtin_text())))
-            }
-            AstExpression::BooleanLiteral { .. } => {
-                Some((expression_handle(&argument.value), Some(builtin_boolean())))
-            }
+            AstExpression::StringLiteral { .. } => Some(LoweredTriggerArgumentValue::Static {
+                value_ref: expression_handle(&argument.value),
+                actual_type: Some(builtin_text()),
+            }),
+            AstExpression::BooleanLiteral { .. } => Some(LoweredTriggerArgumentValue::Static {
+                value_ref: expression_handle(&argument.value),
+                actual_type: Some(builtin_boolean()),
+            }),
             AstExpression::IntLiteral { value, source_ref } => {
                 self.validate_int_literal(value, source_ref);
-                Some((expression_handle(&argument.value), Some(builtin_int())))
+                Some(LoweredTriggerArgumentValue::Static {
+                    value_ref: expression_handle(&argument.value),
+                    actual_type: Some(builtin_int()),
+                })
             }
             AstExpression::FloatLiteral { value, source_ref } => {
                 self.validate_float_literal(value, source_ref);
-                Some((expression_handle(&argument.value), Some(builtin_float())))
+                Some(LoweredTriggerArgumentValue::Static {
+                    value_ref: expression_handle(&argument.value),
+                    actual_type: Some(builtin_float()),
+                })
             }
             AstExpression::Symbol { value, source_ref } => {
                 match self
@@ -1473,7 +1517,10 @@ impl AirLowerer {
                     .get(value)
                     .filter(|symbol| symbol.kind == SymbolKind::Constant)
                 {
-                    Some(symbol) => Some((symbol.id.clone(), symbol.output_type.clone())),
+                    Some(symbol) => Some(LoweredTriggerArgumentValue::Static {
+                        value_ref: symbol.id.clone(),
+                        actual_type: symbol.output_type.clone(),
+                    }),
                     None => {
                         self.diagnostics.push(AirDiagnostic::new(
                             AirDiagnosticCode::InvalidTriggerArgument,
@@ -1504,6 +1551,41 @@ impl AirLowerer {
                 None
             }
         }
+    }
+
+    fn lower_trigger_payload_argument(
+        &mut self,
+        argument: &AstCallArgument,
+        event: &AirTriggerEvent,
+    ) -> Option<String> {
+        let Some(path) = payload_path_segments(&argument.value) else {
+            return None;
+        };
+        let source_ref = expression_source_ref(&argument.value);
+        if event.kind != "request" {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidTriggerArgument,
+                format!(
+                    "trigger argument `{}` can map `payload.<field>` only on `on request` triggers",
+                    argument.name
+                ),
+                Some(source_ref),
+            ));
+            return None;
+        }
+        if path.is_empty() {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidTriggerArgument,
+                format!(
+                    "trigger argument `{}` must map a JSON field as `payload.<field>`",
+                    argument.name
+                ),
+                Some(source_ref),
+            ));
+            return None;
+        }
+
+        Some(format!("$.{}", path.join(".")))
     }
 
     fn check_trigger_argument_type(
@@ -3547,6 +3629,17 @@ impl LoweredExpression {
     }
 }
 
+#[derive(Debug, Clone)]
+enum LoweredTriggerArgumentValue {
+    Static {
+        value_ref: String,
+        actual_type: Option<String>,
+    },
+    Payload {
+        json_path: String,
+    },
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ExpressionContext {
     CallArgument,
@@ -3646,6 +3739,43 @@ fn are_equality_compatible(left_type: Option<&str>, right_type: Option<&str>) ->
 
 fn is_assignable_to(actual_type: &str, expected_type: &str) -> bool {
     actual_type == expected_type || (actual_type == BUILTIN_INT && expected_type == BUILTIN_FLOAT)
+}
+
+fn trigger_payload_contract(
+    map: BTreeMap<String, String>,
+    source_ref: Option<SourceRef>,
+) -> Option<AirTriggerPayloadContract> {
+    if map.is_empty() {
+        return None;
+    }
+    Some(AirTriggerPayloadContract {
+        format: "json".to_string(),
+        content_types: vec!["application/json".to_string()],
+        max_bytes: 65_536,
+        map,
+        source_ref: source_ref.unwrap_or(SourceRef {
+            source_id: "<generated>".to_string(),
+            start_byte: 0,
+            end_byte: 0,
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 1,
+        }),
+    })
+}
+
+fn payload_path_segments(expression: &AstExpression) -> Option<Vec<String>> {
+    match expression {
+        AstExpression::Value { value, .. } if value == "payload" => Some(Vec::new()),
+        AstExpression::FieldAccess { target, field, .. } => {
+            let mut segments = payload_path_segments(target)?;
+            segments.push(field.clone());
+            Some(segments)
+        }
+        AstExpression::Parenthesized { expression, .. } => payload_path_segments(expression),
+        _ => None,
+    }
 }
 
 fn air_binary_operator(operator: AstBinaryOperator) -> AirExpressionOperator {

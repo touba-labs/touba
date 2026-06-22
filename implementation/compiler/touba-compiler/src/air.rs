@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::ast::SourceRef;
 use serde::{Deserialize, Serialize};
 
@@ -214,6 +216,8 @@ pub struct AirTrigger {
     pub target_kind: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub arguments: Vec<AirTriggerArgument>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<AirTriggerPayloadContract>,
     pub limits: AirTriggerLimits,
     pub source_ref: SourceRef,
 }
@@ -229,6 +233,15 @@ pub struct AirTriggerEvent {
 pub struct AirTriggerArgument {
     pub input: String,
     pub value_ref: String,
+    pub source_ref: SourceRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AirTriggerPayloadContract {
+    pub format: String,
+    pub content_types: Vec<String>,
+    pub max_bytes: u64,
+    pub map: BTreeMap<String, String>,
     pub source_ref: SourceRef,
 }
 

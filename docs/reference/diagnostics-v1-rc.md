@@ -31,7 +31,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `MissingTriggerLimit` | Limite obligatoire absente | Ajouter la limite manquante |
 | `InvalidTriggerLimit` | Limite non positive ou non entière | Fournir un entier strictement positif |
 | `UnknownTriggerTarget` | Strategy cible absente | Déclarer la strategy ciblée |
-| `InvalidTriggerArgument` | Argument trigger non littéral ou non `define` | Utiliser un littéral ou un `define` de module |
+| `InvalidTriggerArgument` | Argument trigger invalide | Utiliser un littéral, un `define` de module, ou `payload.<champ>` sur un trigger `request` |
 
 ## Expressions
 

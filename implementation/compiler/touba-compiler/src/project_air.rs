@@ -762,6 +762,17 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
             output_type: None,
         });
         let mut by_name: HashSet<String> = HashSet::new();
+
+        if let Some(payload) = &trigger.payload
+            && trigger.event.kind != "request"
+        {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidTriggerArgument,
+                "trigger payload mappings are only valid for request triggers",
+                Some(payload.source_ref.clone()),
+            ));
+        }
+
         for argument in &trigger.arguments {
             if !by_name.insert(argument.input.clone()) {
                 self.diagnostics.push(AirDiagnostic::new(
@@ -789,7 +800,41 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
             }
         }
 
+        if let Some(payload) = &trigger.payload {
+            for input_name in payload.map.keys() {
+                if !by_name.insert(input_name.clone()) {
+                    self.diagnostics.push(AirDiagnostic::new(
+                        AirDiagnosticCode::DuplicateTriggerArgument,
+                        format!("trigger argument `{input_name}` is provided more than once"),
+                        Some(payload.source_ref.clone()),
+                    ));
+                }
+                if !signature
+                    .inputs
+                    .iter()
+                    .any(|input| input.name == *input_name)
+                {
+                    self.diagnostics.push(AirDiagnostic::new(
+                        AirDiagnosticCode::UnknownTriggerArgument,
+                        format!(
+                            "trigger argument `{input_name}` does not match target strategy `{}`",
+                            trigger.target_ref
+                        ),
+                        Some(payload.source_ref.clone()),
+                    ));
+                }
+            }
+        }
+
         for input in &signature.inputs {
+            if trigger
+                .payload
+                .as_ref()
+                .is_some_and(|payload| payload.map.contains_key(&input.name))
+            {
+                continue;
+            }
+
             let Some(argument) = trigger.arguments.iter().find(|arg| arg.input == input.name)
             else {
                 self.diagnostics.push(AirDiagnostic::new(
