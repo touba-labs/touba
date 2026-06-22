@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-alert-v1.schema.json",
+  "title": "touba-alert-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "alert_id", "alert_type", "severity", "created_at", "title", "summary", "run_id", "trigger_ref", "trace_ref", "action"],
+  "properties": {
+    "schema_version": { "const": "touba-alert-v1" },
+    "alert_id": { "type": "string" },
+    "alert_type": { "enum": ["trigger_replay_rejected", "rate_limited", "dead_letter", "budget_exceeded", "run_cancelled", "run_failed", "approval_expired", "supply_chain_drift"] },
+    "severity": { "enum": ["info", "warning", "critical"] },
+    "created_at": { "type": "string" },
+    "title": { "type": "string" },
+    "summary": { "type": "string" },
+    "run_id": { "type": ["string", "null"] },
+    "trigger_ref": { "type": ["string", "null"] },
+    "trace_ref": { "type": ["string", "null"] },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label", "target_ref"],
+      "properties": {
+        "kind": { "enum": ["none", "open_trace", "open_run", "open_trigger", "open_resource"] },
+        "label": { "type": "string" },
+        "target_ref": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

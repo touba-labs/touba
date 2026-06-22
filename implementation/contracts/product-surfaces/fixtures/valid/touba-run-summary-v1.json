@@ -1,0 +1,17 @@
+{
+  "schema_version": "touba-run-summary-v1",
+  "run_id": "run_20260622_001",
+  "status": "approval_pending",
+  "entrypoint_ref": "agent:billing/InvoiceAgent",
+  "started_at": "2026-06-22T14:00:00Z",
+  "completed_at": null,
+  "trigger_ref": "trigger:billing/invoice-webhook",
+  "trace_ref": "trace:run_20260622_001",
+  "approvals_pending": ["approval_20260622_001"],
+  "refusals": [],
+  "budgets": {
+    "steps_used": 4,
+    "tool_calls_used": 2,
+    "provider_calls_used": 1
+  }
+}

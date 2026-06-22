@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-registry-resource-v1.schema.json",
+  "title": "touba-registry-resource-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "resource_ref", "resource_type", "version", "status", "digest", "source_repository", "description", "tags"],
+  "properties": {
+    "schema_version": { "const": "touba-registry-resource-v1" },
+    "resource_ref": { "type": "string" },
+    "resource_type": { "enum": ["skill", "agent", "integration", "workflow", "package"] },
+    "version": { "type": "string" },
+    "status": { "enum": ["draft", "reviewed", "validated", "retired", "yanked"] },
+    "digest": { "type": "string" },
+    "source_repository": { "type": "string" },
+    "description": { "type": "string" },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

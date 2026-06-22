@@ -1,0 +1,9 @@
+{
+  "schema_version": "touba-approval-decision-v1",
+  "request_id": "approval_20260622_001",
+  "decision": "approve",
+  "decided_by": "user:khadim",
+  "decided_at": "2026-06-22T14:07:00Z",
+  "comment": "Approved after invoice and supplier review.",
+  "client_ref": "touba-mobile"
+}

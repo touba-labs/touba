@@ -1,0 +1,17 @@
+{
+  "schema_version": "touba-alert-v1",
+  "alert_id": "alert_20260622_001",
+  "alert_type": "trigger_replay_rejected",
+  "severity": "warning",
+  "created_at": "2026-06-22T14:09:00Z",
+  "title": "Trigger replay rejected",
+  "summary": "An event with an already consumed event_id was rejected by the trigger worker.",
+  "run_id": null,
+  "trigger_ref": "trigger:billing/invoice-webhook",
+  "trace_ref": "trace:trigger_evt_20260622_011",
+  "action": {
+    "kind": "open_trigger",
+    "label": "Open trigger status",
+    "target_ref": "trigger:billing/invoice-webhook"
+  }
+}

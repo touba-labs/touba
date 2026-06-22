@@ -1,0 +1,25 @@
+{
+  "schema_version": "touba-trace-timeline-v1",
+  "run_id": "run_20260622_001",
+  "trace_ref": "trace:run_20260622_001",
+  "events": [
+    {
+      "index": 0,
+      "type": "trigger.accepted",
+      "timestamp": "2026-06-22T14:00:00Z",
+      "severity": "info",
+      "summary": "Signed invoice webhook accepted.",
+      "source_ref": "trigger:billing/invoice-webhook",
+      "redaction": "payload_minimized"
+    },
+    {
+      "index": 1,
+      "type": "human.approval_requested",
+      "timestamp": "2026-06-22T14:00:02Z",
+      "severity": "info",
+      "summary": "Payment effect paused for human approval.",
+      "source_ref": "agent:billing/InvoiceAgent",
+      "redaction": "secrets_redacted"
+    }
+  ]
+}

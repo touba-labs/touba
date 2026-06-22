@@ -1,0 +1,14 @@
+{
+  "schema_version": "touba-approval-request-v1",
+  "request_id": "approval_20260622_001",
+  "run_id": "run_20260622_001",
+  "mode": "approval",
+  "requester_ref": "agent:billing/InvoiceAgent",
+  "capability_ref": "tool:payments/SendPayment",
+  "reason": "A payment effect requires an authorized human decision.",
+  "summary": "Approve a payment of 240 CAD to supplier ABC for invoice INV-1024.",
+  "allowed_decisions": ["approve", "reject", "request_review"],
+  "expires_at": "2026-06-22T18:00:00Z",
+  "trace_ref": "trace:run_20260622_001",
+  "redaction": "secrets_redacted"
+}

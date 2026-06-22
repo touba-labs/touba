@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-run-summary-v1.schema.json",
+  "title": "touba-run-summary-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "status", "entrypoint_ref", "started_at", "completed_at", "trigger_ref", "trace_ref", "approvals_pending", "refusals", "budgets"],
+  "properties": {
+    "schema_version": { "const": "touba-run-summary-v1" },
+    "run_id": { "type": "string" },
+    "status": { "enum": ["queued", "running", "paused", "approval_pending", "review_pending", "succeeded", "failed", "cancelled", "refused"] },
+    "entrypoint_ref": { "type": "string" },
+    "started_at": { "type": "string" },
+    "completed_at": { "type": ["string", "null"] },
+    "trigger_ref": { "type": ["string", "null"] },
+    "trace_ref": { "type": "string" },
+    "approvals_pending": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "refusals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "source_ref"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "source_ref": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steps_used", "tool_calls_used", "provider_calls_used"],
+      "properties": {
+        "steps_used": { "type": "integer" },
+        "tool_calls_used": { "type": "integer" },
+        "provider_calls_used": { "type": "integer" }
+      }
+    }
+  }
+}

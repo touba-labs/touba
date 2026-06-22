@@ -1,0 +1,11 @@
+{
+  "schema_version": "touba-registry-resource-v1",
+  "resource_ref": "agent:research/research-triage",
+  "resource_type": "agent",
+  "version": "0.1.0",
+  "status": "reviewed",
+  "digest": "sha256:4b09f1b8a9f58c0f1c3a2b7f5e6d9c8b7a6f5e4d3c2b1a0987654321fedcba09",
+  "source_repository": "https://github.com/pap-touba/touba-library",
+  "description": "Governed research triage agent with bounded search, summarization, and review workflow.",
+  "tags": ["research", "agent", "review"]
+}

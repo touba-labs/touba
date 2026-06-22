@@ -1,0 +1,26 @@
+{
+  "schema_version": "touba-trigger-status-v1",
+  "generated_at": "2026-06-22T14:05:00Z",
+  "triggers": [
+    {
+      "trigger_ref": "trigger:billing/invoice-webhook",
+      "kind": "request",
+      "status": "enabled",
+      "next_run_at": null,
+      "limits": {
+        "max_runs_per_day": 250,
+        "timeout_ms": 30000
+      },
+      "state": {
+        "accepted_count": 12,
+        "refused_count": 1,
+        "last_event_id": "evt_20260622_011"
+      },
+      "queue": {
+        "pending": 1,
+        "processing": 0,
+        "dead_letter": 0
+      }
+    }
+  ]
+}

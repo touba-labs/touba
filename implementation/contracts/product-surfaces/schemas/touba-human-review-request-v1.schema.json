@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-human-review-request-v1.schema.json",
+  "title": "touba-human-review-request-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "run_id", "mode", "requester_ref", "review_prompt", "context_summary", "allowed_outcomes", "expires_at", "trace_ref", "redaction"],
+  "properties": {
+    "schema_version": { "const": "touba-human-review-request-v1" },
+    "request_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "mode": { "const": "human_review" },
+    "requester_ref": { "type": "string" },
+    "review_prompt": { "type": "string" },
+    "context_summary": { "type": "string" },
+    "allowed_outcomes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "enum": ["accepted", "changes_requested", "rejected", "escalated"] }
+    },
+    "expires_at": { "type": "string" },
+    "trace_ref": { "type": "string" },
+    "redaction": { "enum": ["none", "secrets_redacted", "payload_minimized"] }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-approval-request-v1.schema.json",
+  "title": "touba-approval-request-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "run_id", "mode", "requester_ref", "capability_ref", "reason", "summary", "allowed_decisions", "expires_at", "trace_ref", "redaction"],
+  "properties": {
+    "schema_version": { "const": "touba-approval-request-v1" },
+    "request_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "mode": { "const": "approval" },
+    "requester_ref": { "type": "string" },
+    "capability_ref": { "type": "string" },
+    "reason": { "type": "string" },
+    "summary": { "type": "string" },
+    "allowed_decisions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "enum": ["approve", "reject", "request_review"] }
+    },
+    "expires_at": { "type": "string" },
+    "trace_ref": { "type": "string" },
+    "redaction": { "enum": ["none", "secrets_redacted", "payload_minimized"] }
+  }
+}

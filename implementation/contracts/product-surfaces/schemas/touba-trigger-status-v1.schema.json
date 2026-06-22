@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-trigger-status-v1.schema.json",
+  "title": "touba-trigger-status-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "triggers"],
+  "properties": {
+    "schema_version": { "const": "touba-trigger-status-v1" },
+    "generated_at": { "type": "string" },
+    "triggers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trigger_ref", "kind", "status", "next_run_at", "limits", "state", "queue"],
+        "properties": {
+          "trigger_ref": { "type": "string" },
+          "kind": { "enum": ["schedule", "request"] },
+          "status": { "enum": ["enabled", "disabled", "paused", "blocked"] },
+          "next_run_at": { "type": ["string", "null"] },
+          "limits": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["max_runs_per_day", "timeout_ms"],
+            "properties": {
+              "max_runs_per_day": { "type": ["integer", "null"] },
+              "timeout_ms": { "type": ["integer", "null"] }
+            }
+          },
+          "state": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["accepted_count", "refused_count", "last_event_id"],
+            "properties": {
+              "accepted_count": { "type": "integer" },
+              "refused_count": { "type": "integer" },
+              "last_event_id": { "type": ["string", "null"] }
+            }
+          },
+          "queue": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pending", "processing", "dead_letter"],
+            "properties": {
+              "pending": { "type": "integer" },
+              "processing": { "type": "integer" },
+              "dead_letter": { "type": "integer" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

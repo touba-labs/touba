@@ -1,0 +1,13 @@
+{
+  "schema_version": "touba-human-review-request-v1",
+  "request_id": "review_20260622_001",
+  "run_id": "run_20260622_002",
+  "mode": "human_review",
+  "requester_ref": "agent:research/ResearchTriage",
+  "review_prompt": "Review the dataset summary for methodological completeness before publication.",
+  "context_summary": "The agent selected three public datasets and produced a short comparative summary.",
+  "allowed_outcomes": ["accepted", "changes_requested", "rejected", "escalated"],
+  "expires_at": "2026-06-23T14:00:00Z",
+  "trace_ref": "trace:run_20260622_002",
+  "redaction": "payload_minimized"
+}

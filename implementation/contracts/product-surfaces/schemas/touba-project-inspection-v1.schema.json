@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-inspection-v1.schema.json",
+  "title": "touba-project-inspection-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "project", "artifacts", "entrypoints", "diagnostics"],
+  "properties": {
+    "schema_version": { "const": "touba-project-inspection-v1" },
+    "generated_at": { "type": "string" },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "name", "host_language"],
+      "properties": {
+        "root": { "type": "string" },
+        "name": { "type": "string" },
+        "host_language": { "type": "string" }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "path", "status"],
+        "properties": {
+          "kind": { "enum": ["source", "air", "manifest", "lock", "trace", "report"] },
+          "path": { "type": "string" },
+          "status": { "enum": ["present", "missing", "stale", "invalid"] }
+        }
+      }
+    },
+    "entrypoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "ref", "description"],
+        "properties": {
+          "kind": { "enum": ["agent", "skill", "strategy", "trigger"] },
+          "ref": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "enum": ["info", "warning", "error"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "source_ref": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
