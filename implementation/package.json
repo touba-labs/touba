@@ -33,7 +33,7 @@
     "test:release-versioning": "node tools/check-node-version.mjs && node --test tools/validate-release-versioning.test.mjs tools/assemble-release-assets.test.mjs",
     "validate:product-surface-contracts": "node tools/check-node-version.mjs && node tools/validate-product-surface-contracts.mjs",
     "test:product-surface-contracts": "node tools/check-node-version.mjs && node --test tools/validate-product-surface-contracts.test.mjs",
-    "test:local-server": "node tools/check-node-version.mjs && pnpm --filter @touba/local-server test",
+    "test:project-server": "node tools/check-node-version.mjs && pnpm --filter @touba/project-server test",
     "validate:design-tokens": "node tools/check-node-version.mjs && node tools/validate-design-tokens.mjs",
     "test:design-tokens": "node tools/check-node-version.mjs && node --test tools/validate-design-tokens.test.mjs",
     "release:assemble-assets": "node tools/check-node-version.mjs && node tools/assemble-release-assets.mjs",

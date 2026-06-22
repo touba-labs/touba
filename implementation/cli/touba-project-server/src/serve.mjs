@@ -11,14 +11,26 @@ import {
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8791;
-const DEFAULT_DECISIONS_PATH = ".touba/decisions.json";
+const DEFAULT_HUMAN_DECISIONS_PATH = ".touba/human-decisions.json";
 const MAX_BODY_BYTES = 64 * 1024;
-const CONTRACT_INDEX_SCHEMA_VERSION = "touba-local-server-contract-index-v0.1";
-const DECISION_STORE_SCHEMA_VERSION = "touba-local-decisions-v0.1";
+const CONTRACT_INDEX_SCHEMA_VERSION = "touba-project-server-contract-index-v0.1";
+const LIVE_STATE_SCHEMA_VERSION = "touba-project-live-state-v0.1";
+const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v0.1";
+const HUMAN_DECISION_STORE_SCHEMA_VERSION = "touba-human-decisions-v0.1";
 const ACCEPTED_DECISION_CONTRACTS = Object.freeze([
   "touba-approval-decision-v1",
   "touba-human-review-decision-v1",
 ]);
+const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
+  "/project": "touba-project-inspection-v1",
+  "/runs/current": "touba-run-summary-v1",
+  "/trace/current": "touba-trace-timeline-v1",
+  "/triggers": "touba-trigger-status-v1",
+  "/approvals/pending/current": "touba-approval-request-v1",
+  "/reviews/pending/current": "touba-human-review-request-v1",
+  "/resources/featured": "touba-registry-resource-v1",
+  "/alerts/current": "touba-alert-v1",
+});
 
 if (isMainModule()) {
   try {
@@ -27,7 +39,7 @@ if (isMainModule()) {
       process.stdout.write(`${usage()}\n`);
       process.exit(0);
     }
-    const service = createToubaLocalServer(options);
+    const service = createToubaProjectServer(options);
     await service.start();
   } catch (error) {
     process.stderr.write(`touba serve error [${error.code ?? "ToubaServeError"}]: ${error.message}\n`);
@@ -35,22 +47,23 @@ if (isMainModule()) {
   }
 }
 
-export function createToubaLocalServer(options = {}) {
+export function createToubaProjectServer(options = {}) {
   const contractsRoot = resolve(
     options.contractsRoot ?? new URL("../../../contracts/product-surfaces/", import.meta.url).pathname,
   );
-  const decisionsPath = resolve(options.decisionsPath ?? DEFAULT_DECISIONS_PATH);
+  const humanDecisionsPath = resolve(options.humanDecisionsPath ?? DEFAULT_HUMAN_DECISIONS_PATH);
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
   const authToken = options.authTokenEnv === undefined ? undefined : process.env[options.authTokenEnv];
+  const eventClients = new Set();
 
   if (options.authTokenEnv !== undefined && (!authToken || authToken.trim() === "")) {
     throw serviceError("ToubaServeAuthTokenMissing", `environment variable ${options.authTokenEnv} is required`);
   }
   if (!isLoopbackHost(host) && authToken === undefined) {
-    throw serviceError("ToubaServeAuthRequired", "non-loopback Touba local server hosts require --auth-token-env");
+    throw serviceError("ToubaServeAuthRequired", "non-loopback Touba project server hosts require --auth-token-env");
   }
-  preflightServeOptions({ contractsRoot, decisionsPath, strict: options.strict === true });
+  preflightServeOptions({ contractsRoot, humanDecisionsPath, strict: options.strict === true });
 
   const server = createServer(async (request, response) => {
     try {
@@ -62,9 +75,36 @@ export function createToubaLocalServer(options = {}) {
       if (request.method === "GET" && url.pathname === "/health") {
         writeJson(response, 200, {
           status: "ok",
-          service: "touba-local-server",
+          service: "touba-project-server",
           contract_index_schema_version: CONTRACT_INDEX_SCHEMA_VERSION,
+          live_state_schema_version: LIVE_STATE_SCHEMA_VERSION,
+          event_stream_schema_version: EVENT_STREAM_SCHEMA_VERSION,
+          endpoints: {
+            state: "/state",
+            events: "/events",
+            project: "/project",
+            current_run: "/runs/current",
+            trigger_status: "/triggers",
+            pending_approval: "/approvals/pending/current",
+            pending_review: "/reviews/pending/current",
+            human_decisions: "/decisions",
+          },
         });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/state") {
+        writeJson(response, 200, buildLiveState({ contractsRoot }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/events") {
+        openEventStream({ request, response, eventClients });
+        return;
+      }
+      if (request.method === "GET" && Object.hasOwn(LIVE_ENDPOINT_CONTRACTS, url.pathname)) {
+        writeJson(response, 200, readContractFixture({
+          contractsRoot,
+          schemaVersion: LIVE_ENDPOINT_CONTRACTS[url.pathname],
+        }));
         return;
       }
       if (request.method === "GET" && url.pathname === "/contracts") {
@@ -79,7 +119,8 @@ export function createToubaLocalServer(options = {}) {
       }
       if (request.method === "POST" && url.pathname === "/decisions") {
         const body = await readJsonBody(request);
-        const accepted = acceptDecision({ contractsRoot, decisionsPath, decision: body });
+        const accepted = acceptDecision({ contractsRoot, humanDecisionsPath, decision: body });
+        publishEvent(eventClients, "human_decision.accepted", accepted);
         writeJson(response, 202, accepted);
         return;
       }
@@ -111,15 +152,20 @@ export function createToubaLocalServer(options = {}) {
       const address = server.address();
       if (options.quiet !== true) {
         process.stdout.write(`${JSON.stringify({
-          event: "touba_server_started",
+          event: "touba_project_server_started",
           host,
           port: address.port,
           contracts_root: contractsRoot,
-          decisions: decisionsPath ?? null,
+          human_decisions: humanDecisionsPath ?? null,
+          event_stream: `http://${host}:${address.port}/events`,
         })}\n`);
       }
     },
     async stop() {
+      for (const client of eventClients) {
+        client.end();
+      }
+      eventClients.clear();
       await new Promise((resolveClose, rejectClose) => {
         server.close((error) => error ? rejectClose(error) : resolveClose());
       });
@@ -140,15 +186,35 @@ export function buildContractIndex({ contractsRoot, generatedAt = new Date().toI
   };
 }
 
-export function preflightServeOptions({ contractsRoot, decisionsPath, strict = false }) {
+export function buildLiveState({ contractsRoot, generatedAt = new Date().toISOString() }) {
+  return {
+    schema_version: LIVE_STATE_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    project: readContractFixture({ contractsRoot, schemaVersion: "touba-project-inspection-v1" }),
+    current_run: readContractFixture({ contractsRoot, schemaVersion: "touba-run-summary-v1" }),
+    trace_timeline: readContractFixture({ contractsRoot, schemaVersion: "touba-trace-timeline-v1" }),
+    trigger_status: readContractFixture({ contractsRoot, schemaVersion: "touba-trigger-status-v1" }),
+    pending_approval: readContractFixture({ contractsRoot, schemaVersion: "touba-approval-request-v1" }),
+    pending_review: readContractFixture({ contractsRoot, schemaVersion: "touba-human-review-request-v1" }),
+    featured_resource: readContractFixture({ contractsRoot, schemaVersion: "touba-registry-resource-v1" }),
+    alert: readContractFixture({ contractsRoot, schemaVersion: "touba-alert-v1" }),
+    events: {
+      schema_version: EVENT_STREAM_SCHEMA_VERSION,
+      endpoint: "/events",
+      transport: "server_sent_events",
+    },
+  };
+}
+
+export function preflightServeOptions({ contractsRoot, humanDecisionsPath, strict = false }) {
   const diagnostics = [];
   if (!existsSync(contractsRoot)) {
     diagnostics.push(serviceDiagnostic("ToubaServeContractsRootMissing", `${contractsRoot} does not exist`));
   } else if (!statSync(contractsRoot).isDirectory()) {
     diagnostics.push(serviceDiagnostic("ToubaServeContractsRootInvalid", `${contractsRoot} is not a directory`));
   }
-  if (existsSync(decisionsPath) && statSync(decisionsPath).isDirectory()) {
-    diagnostics.push(serviceDiagnostic("ToubaServeDecisionStoreInvalid", `${decisionsPath} is a directory`));
+  if (existsSync(humanDecisionsPath) && statSync(humanDecisionsPath).isDirectory()) {
+    diagnostics.push(serviceDiagnostic("ToubaServeHumanDecisionStoreInvalid", `${humanDecisionsPath} is a directory`));
   }
   for (const schemaVersion of PRODUCT_SURFACE_CONTRACTS) {
     if (!contractFilesExist({ contractsRoot, schemaVersion })) {
@@ -165,7 +231,7 @@ export function preflightServeOptions({ contractsRoot, decisionsPath, strict = f
     error.diagnostics = diagnostics;
     throw error;
   }
-  if (diagnostics.some((diagnostic) => diagnostic.code === "ToubaServeDecisionStoreInvalid")) {
+  if (diagnostics.some((diagnostic) => diagnostic.code === "ToubaServeHumanDecisionStoreInvalid")) {
     const error = serviceError("ToubaServePreflightFailed", "touba serve cannot use a directory as decision store");
     error.diagnostics = diagnostics;
     throw error;
@@ -177,7 +243,7 @@ export function preflightServeOptions({ contractsRoot, decisionsPath, strict = f
   };
 }
 
-export function acceptDecision({ contractsRoot, decisionsPath, decision, acceptedAt = new Date().toISOString() }) {
+export function acceptDecision({ contractsRoot, humanDecisionsPath, decision, acceptedAt = new Date().toISOString() }) {
   const schemaVersion = decision?.schema_version;
   if (!ACCEPTED_DECISION_CONTRACTS.includes(schemaVersion)) {
     throw serviceError("ToubaServeDecisionContractUnsupported", "decision schema_version is not accepted by this service");
@@ -189,7 +255,7 @@ export function acceptDecision({ contractsRoot, decisionsPath, decision, accepte
     error.diagnostics = diagnostics;
     throw error;
   }
-  const store = loadDecisionStore(decisionsPath);
+  const store = loadHumanDecisionStore(humanDecisionsPath);
   const duplicate = store.decisions.some((item) =>
     item.schema_version === schemaVersion && item.request_id === decision.request_id
   );
@@ -201,7 +267,7 @@ export function acceptDecision({ contractsRoot, decisionsPath, decision, accepte
     accepted_at: acceptedAt,
   };
   store.decisions.push(storedDecision);
-  saveDecisionStore(decisionsPath, store);
+  saveHumanDecisionStore(humanDecisionsPath, store);
   return {
     schema_version: "touba-decision-accepted-v0.1",
     status: "accepted",
@@ -240,23 +306,23 @@ function assertKnownContract(schemaVersion) {
   }
 }
 
-function loadDecisionStore(decisionsPath) {
-  if (!existsSync(decisionsPath)) {
+function loadHumanDecisionStore(humanDecisionsPath) {
+  if (!existsSync(humanDecisionsPath)) {
     return {
-      schema_version: DECISION_STORE_SCHEMA_VERSION,
+      schema_version: HUMAN_DECISION_STORE_SCHEMA_VERSION,
       decisions: [],
     };
   }
-  const store = JSON.parse(readFileSync(decisionsPath, "utf8"));
-  if (store.schema_version !== DECISION_STORE_SCHEMA_VERSION || !Array.isArray(store.decisions)) {
-    throw serviceError("ToubaServeDecisionStoreInvalid", `decision store must use ${DECISION_STORE_SCHEMA_VERSION}`);
+  const store = JSON.parse(readFileSync(humanDecisionsPath, "utf8"));
+  if (store.schema_version !== HUMAN_DECISION_STORE_SCHEMA_VERSION || !Array.isArray(store.decisions)) {
+    throw serviceError("ToubaServeHumanDecisionStoreInvalid", `human decision store must use ${HUMAN_DECISION_STORE_SCHEMA_VERSION}`);
   }
   return store;
 }
 
-function saveDecisionStore(decisionsPath, store) {
-  mkdirSync(dirname(decisionsPath), { recursive: true });
-  writeFileSync(decisionsPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+function saveHumanDecisionStore(humanDecisionsPath, store) {
+  mkdirSync(dirname(humanDecisionsPath), { recursive: true });
+  writeFileSync(humanDecisionsPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
 }
 
 function authorized(request, token) {
@@ -285,6 +351,39 @@ function writeJson(response, statusCode, body) {
   response.end(`${JSON.stringify(body, null, 2)}\n`);
 }
 
+function openEventStream({ request, response, eventClients }) {
+  response.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    "connection": "keep-alive",
+  });
+  eventClients.add(response);
+  writeSse(response, "touba.server.ready", {
+    schema_version: EVENT_STREAM_SCHEMA_VERSION,
+    status: "ready",
+  });
+  request.on("close", () => {
+    eventClients.delete(response);
+  });
+}
+
+function publishEvent(eventClients, type, payload) {
+  const event = {
+    schema_version: EVENT_STREAM_SCHEMA_VERSION,
+    type,
+    emitted_at: new Date().toISOString(),
+    payload,
+  };
+  for (const client of eventClients) {
+    writeSse(client, type, event);
+  }
+}
+
+function writeSse(response, event, data) {
+  response.write(`event: ${event}\n`);
+  response.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
 function httpStatusForError(code) {
   if (code === "ToubaServeUnauthorized") return 401;
   if (code === "ToubaServeDecisionReplayRejected") return 409;
@@ -298,7 +397,7 @@ function parseArgs(rawArgs) {
   const options = {
     host: DEFAULT_HOST,
     port: DEFAULT_PORT,
-    decisionsPath: DEFAULT_DECISIONS_PATH,
+    humanDecisionsPath: DEFAULT_HUMAN_DECISIONS_PATH,
     help: false,
     strict: false,
   };
@@ -308,8 +407,8 @@ function parseArgs(rawArgs) {
       options.help = true;
     } else if (arg === "--contracts-root") {
       options.contractsRoot = requiredValue(arg, rawArgs, ++index);
-    } else if (arg === "--decisions") {
-      options.decisionsPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--human-decisions") {
+      options.humanDecisionsPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--host") {
       options.host = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--port") {
@@ -340,14 +439,23 @@ function requiredValue(option, args, index) {
 
 function usage() {
   return [
-    "Usage: touba serve [--contracts-root <path>] [--decisions <decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
-    "Starts the local Touba server for client, Mobile and contract clients.",
+    "Starts the live Touba project server for client, Mobile and contract clients.",
     "",
     "Defaults:",
     `  host: ${DEFAULT_HOST}`,
     `  port: ${DEFAULT_PORT}`,
-    `  decisions: ${DEFAULT_DECISIONS_PATH}`,
+    `  human_decisions: ${DEFAULT_HUMAN_DECISIONS_PATH}`,
+    "",
+    "Live endpoints:",
+    "  GET  /state",
+    "  GET  /events",
+    "  GET  /project",
+    "  GET  /runs/current",
+    "  GET  /triggers",
+    "  GET  /approvals/pending/current",
+    "  POST /decisions",
   ].join("\n");
 }
 
@@ -375,7 +483,7 @@ function normalizeListenError(error, { host, port }) {
   if (error?.code === "EACCES" || error?.code === "EPERM") {
     return serviceError(
       "ToubaServePortUnavailable",
-      `cannot listen on ${host}:${port}; choose another port or check local permissions`,
+      `cannot listen on ${host}:${port}; choose another port or check network permissions`,
     );
   }
   return error;

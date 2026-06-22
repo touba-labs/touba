@@ -296,7 +296,7 @@ test("CLI secret set reads value from stdin and never writes it to stdout", () =
   }
 });
 
-test("CLI serve command exposes the local Touba server", () => {
+test("CLI serve command exposes the Touba project server", () => {
   const result = spawnSync(process.execPath, [
     cliPath,
     "serve",
@@ -305,7 +305,8 @@ test("CLI serve command exposes the local Touba server", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /touba serve/);
-  assert.match(result.stdout, /local Touba server/);
+  assert.match(result.stdout, /Touba project server/);
+  assert.match(result.stdout, /human-decisions/);
   assert.match(result.stdout, /port: 8791/);
 });
 

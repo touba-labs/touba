@@ -82,29 +82,43 @@ client resource browsers. `touba-library/resources.json` is generated from
 and package metadata. They expose resource refs, type, version, status, digest,
 source repository, description and tags.
 
-The local Touba server exposes the contract boundary for client and Mobile
-prototypes:
+The Touba project server exposes the live boundary for client and Mobile:
 
 ```bash
-touba serve --decisions .touba/decisions.json
+touba serve --human-decisions .touba/human-decisions.json
 ```
 
 It serves:
 
 ```text
 GET  /health
+GET  /state
+GET  /events
+GET  /project
+GET  /runs/current
+GET  /trace/current
+GET  /triggers
+GET  /approvals/pending/current
+GET  /reviews/pending/current
+GET  /resources/featured
+GET  /alerts/current
 GET  /contracts
 GET  /contracts/<schema_version>
 POST /decisions
 ```
 
-`/contracts` returns a machine-readable index of product-surface contracts.
-`/contracts/<schema_version>` returns the corresponding fixture contract.
+`/state` returns the current project server state. `/events` is the
+server-sent event stream consumed by live clients. The named endpoints expose
+project inspection, runs, trace timelines, triggers, pending human requests,
+resources and alerts as versioned Touba contracts.
+
+`/contracts` returns a machine-readable index of the contract set.
+`/contracts/<schema_version>` returns the corresponding contract fixture.
 `/decisions` accepts only `touba-approval-decision-v1` and
 `touba-human-review-decision-v1` payloads that validate against their schemas,
-stores them in an append-only decision file and rejects replay for the same
-`schema_version` and `request_id`.
+stores them through the configured human decision backend and rejects replay for
+the same `schema_version` and `request_id`.
 
-The server does not execute agents, grant authority or accept arbitrary UI
-state. It is a local contract boundary for client and Mobile adapters; Touba
-Engine remains responsible for runtime authority and final decision acceptance.
+The server does not grant authority or accept arbitrary UI state. It is the
+project-facing control plane for client and Mobile adapters; Touba Engine
+remains responsible for runtime authority and final decision acceptance.

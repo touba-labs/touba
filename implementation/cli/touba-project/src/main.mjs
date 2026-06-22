@@ -59,7 +59,7 @@ const FEATURE_VERSIONS = Object.freeze({
   mcp_import: "touba-mcp-import-v0.1",
   rest_scaffold: "touba-rest-scaffold-v0.1",
   trigger_ingress: "touba-trigger-ingress-v0.1",
-  local_server: "touba-local-server-v0.1",
+  project_server: "touba-project-server-v0.1",
   trace_output: "trace-minimal-v0.1",
 });
 const PUBLIC_COMMANDS = Object.freeze({
@@ -464,21 +464,21 @@ function serveCommand(rawArgs) {
       exitCode: 0,
     };
   }
-  return runNodeScript(["cli", "touba-local-server", "src", "serve.mjs"], rawArgs);
+  return runNodeScript(["cli", "touba-project-server", "src", "serve.mjs"], rawArgs);
 }
 
 function serveUsage() {
   return [
-    "Usage: touba serve [--contracts-root <path>] [--decisions <decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
-    "Starts the local Touba server for client, Mobile and contract clients.",
+    "Starts the Touba project server for client, Mobile and contract clients.",
     "",
     "Defaults:",
     "  host: 127.0.0.1",
     "  port: 8791",
-    "  decisions: .touba/decisions.json",
+    "  human_decisions: .touba/human-decisions.json",
     "",
-    "The server exposes versioned contracts and validates human decision payloads.",
+    "The server exposes project state, live events, versioned contracts and human decision intake.",
     "It does not execute agents or grant authority.",
   ].join("\n");
 }
@@ -1377,7 +1377,7 @@ function printUsage() {
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
   touba run <program.air.json> [--profile dev|prod] [runtime options]
-  touba serve [--contracts-root <path>] [--decisions <decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
+  touba serve [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
   touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>
   touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]
   touba inspect <artifact> [inspect options] [--report-out <report.inspect.txt>]
