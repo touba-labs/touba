@@ -473,6 +473,152 @@ export function renderInspection(inspection) {
   return `${lines.join("\n")}\n`;
 }
 
+export function projectInspectionContract(inspection, options = {}) {
+  const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const root = projectRootFromInspection(inspection, options);
+  return {
+    schema_version: "touba-project-inspection-v1",
+    generated_at: generatedAt,
+    project: {
+      root,
+      name: projectNameFromInspection(inspection, root),
+      host_language: hostLanguageFromInspection(inspection),
+    },
+    artifacts: projectInspectionArtifacts(inspection),
+    entrypoints: projectInspectionEntrypoints(inspection),
+    diagnostics: projectInspectionDiagnostics(inspection),
+  };
+}
+
+function projectRootFromInspection(inspection, options) {
+  if (typeof options.root === "string" && options.root.trim() !== "") {
+    return options.root;
+  }
+  const firstPath = firstInspectionPath(inspection);
+  return firstPath ? path.dirname(firstPath) : process.cwd();
+}
+
+function firstInspectionPath(inspection) {
+  if (typeof inspection.input_path === "string") {
+    return inspection.input_path;
+  }
+  const paths = inspection.input_paths ?? {};
+  return [
+    paths.source,
+    paths.air,
+    paths.manifest,
+    paths.trace,
+    paths.supply_chain,
+    paths.trace_audit,
+  ].find((item) => typeof item === "string" && item.length > 0);
+}
+
+function projectNameFromInspection(inspection, root) {
+  const moduleName = inspection.air?.present ? inspection.air.module_name : undefined;
+  if (typeof moduleName === "string" && moduleName.trim() !== "") {
+    return moduleName;
+  }
+  const name = path.basename(root);
+  return name && name !== "." ? name : "touba-project";
+}
+
+function hostLanguageFromInspection(inspection) {
+  if (inspection.source?.present) {
+    return "touba";
+  }
+  if (inspection.manifest?.present || inspection.binding_fragment?.present) {
+    return "javascript";
+  }
+  return "unknown";
+}
+
+function projectInspectionArtifacts(inspection) {
+  const artifacts = [];
+  addProjectArtifact(artifacts, "source", inspection.source, artifactPath(inspection, "source"));
+  addProjectArtifact(artifacts, "air", inspection.air, artifactPath(inspection, "air"));
+  addProjectArtifact(artifacts, "manifest", inspection.manifest, artifactPath(inspection, "manifest"));
+  addProjectArtifact(artifacts, "trace", inspection.trace, artifactPath(inspection, "trace"));
+  addProjectArtifact(artifacts, "lock", supplyChainLockSummary(inspection), artifactPath(inspection, "supply_chain"));
+  addProjectArtifact(artifacts, "report", traceAuditReportSummary(inspection), artifactPath(inspection, "trace_audit"));
+  addProjectArtifact(artifacts, "report", supplyChainReportSummary(inspection), artifactPath(inspection, "supply_chain"));
+  return artifacts;
+}
+
+function addProjectArtifact(artifacts, kind, summary, pathValue) {
+  artifacts.push({
+    kind,
+    path: pathValue ?? kind,
+    status: summary?.present === true ? "present" : "missing",
+  });
+}
+
+function artifactPath(inspection, key) {
+  if (inspection.input_paths?.[key]) {
+    return inspection.input_paths[key];
+  }
+  if (inspection.input_path && singleInputMatchesArtifact(inspection, key)) {
+    return inspection.input_path;
+  }
+  if (key === "air" && inspection.input_path && inspection.artifact_kind === "touba_source") {
+    return "compiled-from-source";
+  }
+  return undefined;
+}
+
+function singleInputMatchesArtifact(inspection, key) {
+  return (
+    (key === "source" && inspection.artifact_kind === "touba_source") ||
+    (key === "air" && inspection.artifact_kind === "air") ||
+    (key === "trace" && inspection.artifact_kind === "trace") ||
+    (key === "manifest" && inspection.artifact_kind === "tool_binding_manifest") ||
+    (key === "supply_chain" && inspection.artifact_kind?.startsWith("supply_chain")) ||
+    (key === "trace_audit" && inspection.artifact_kind?.startsWith("trace_audit"))
+  );
+}
+
+function supplyChainLockSummary(inspection) {
+  return inspection.supply_chain?.artifact_kind === "supply_chain_lock"
+    ? inspection.supply_chain
+    : absent("supply chain lock artifact not provided");
+}
+
+function supplyChainReportSummary(inspection) {
+  return inspection.supply_chain?.artifact_kind === "supply_chain_validation_report"
+    ? inspection.supply_chain
+    : absent("supply chain validation report not provided");
+}
+
+function traceAuditReportSummary(inspection) {
+  return inspection.trace_audit?.present === true ? inspection.trace_audit : absent("trace audit report not provided");
+}
+
+function projectInspectionEntrypoints(inspection) {
+  return Array.isArray(inspection.air?.entrypoints) ? inspection.air.entrypoints : [];
+}
+
+function projectInspectionDiagnostics(inspection) {
+  const diagnostics = [];
+  for (const diagnostic of inspection.compatibility?.diagnostics ?? []) {
+    diagnostics.push(projectDiagnostic("warning", diagnostic.code, diagnostic.message));
+  }
+  for (const code of inspection.supply_chain?.diagnostic_codes ?? []) {
+    diagnostics.push(projectDiagnostic("error", code, `Supply-chain diagnostic ${code}`));
+  }
+  for (const code of inspection.trace_audit?.diagnostic_codes ?? []) {
+    diagnostics.push(projectDiagnostic("warning", code, `Trace audit diagnostic ${code}`));
+  }
+  return diagnostics;
+}
+
+function projectDiagnostic(severity, code, message) {
+  return {
+    severity,
+    code: typeof code === "string" && code ? code : "Diagnostic",
+    message: typeof message === "string" && message ? message : "Diagnostic emitted by Touba inspect",
+    source_ref: null,
+  };
+}
+
 function inspectionDocument(inputPath, artifactKind, summaries) {
   const document = {
     inspect_schema_version: "touba-inspect-v0.1",
@@ -573,6 +719,7 @@ function summarizeAir(air) {
     memory_model: summarizeMemoryModel(air),
     callable_by: countCallableBy(air),
     agent_authority: summarizeAgentAuthority(air),
+    entrypoints: summarizeAirEntryPoints(air),
     triggers: summarizeAirTriggers(air),
     run_budgets: summarizeAirRunBudgets(air),
     imports,
@@ -2340,6 +2487,39 @@ function summarizeAirImports(air) {
   };
 }
 
+function summarizeAirEntryPoints(air) {
+  const definitions = air?.definitions ?? {};
+  return [
+    ...entrypointsFromDefinitions(definitions.agents, "agent"),
+    ...entrypointsFromDefinitions(definitions.skills, "skill"),
+    ...entrypointsFromDefinitions(definitions.strategies, "strategy"),
+    ...entrypointsFromDefinitions(definitions.triggers, "trigger"),
+  ];
+}
+
+function entrypointsFromDefinitions(definitions, kind) {
+  if (!Array.isArray(definitions)) {
+    return [];
+  }
+  return definitions
+    .filter((declaration) => typeof declaration?.id === "string")
+    .map((declaration) => ({
+      kind,
+      ref: declaration.id,
+      description: entrypointDescription(declaration, kind),
+    }));
+}
+
+function entrypointDescription(declaration, kind) {
+  if (typeof declaration.description === "string" && declaration.description.trim() !== "") {
+    return declaration.description;
+  }
+  if (kind === "trigger" && typeof declaration.target_ref === "string") {
+    return `${declaration.name ?? declaration.id} targets ${declaration.target_ref}`;
+  }
+  return declaration.name ?? declaration.id;
+}
+
 function collectDefinitionIds(air) {
   const result = new Set();
   for (const values of Object.values(air?.definitions ?? {})) {
@@ -2663,7 +2843,7 @@ function finalRunStatus(events) {
 function usage() {
   return [
     "usage: touba-inspect <file.tb|file.air.json|file.trace.json|file.architecture.json|touba.manifest.json|touba.package.json|touba.resources.json|touba.run-plan.json|touba.ownership.json|trace-audit.json|touba.lock.json|touba.trigger-state.json>",
-    "   or: touba-inspect [--source <file.tb>] [--air <file.air.json>] [--trace <file.trace.json>] [--architecture <file.architecture.json>] [--manifest <touba.manifest.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--resource-bindings <touba.resources.json>] [--run-plan <touba.run-plan.json>] [--ownership <touba.ownership.json>] [--trace-audit <trace-audit.json>] [--supply-chain <touba.lock.json|supply-chain-report.json>] [--report-out <report.inspect.txt>] [--otel-out <trace.otel.json>]",
+    "   or: touba-inspect [--source <file.tb>] [--air <file.air.json>] [--trace <file.trace.json>] [--architecture <file.architecture.json>] [--manifest <touba.manifest.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--resource-bindings <touba.resources.json>] [--run-plan <touba.run-plan.json>] [--ownership <touba.ownership.json>] [--trace-audit <trace-audit.json>] [--supply-chain <touba.lock.json|supply-chain-report.json>] [--json] [--report-out <report.inspect.txt>] [--otel-out <trace.otel.json>]",
     "",
   ].join("\n");
 }
@@ -2673,6 +2853,7 @@ function parseArgs(args) {
   const positional = [];
   let reportOutPath;
   let otelOutPath;
+  let json = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--help" || arg === "-h") {
@@ -2700,6 +2881,10 @@ function parseArgs(args) {
       }
       otelOutPath = value;
       index += 1;
+      continue;
+    }
+    if (arg === "--json") {
+      json = true;
       continue;
     }
     if (
@@ -2738,15 +2923,15 @@ function parseArgs(args) {
     throw new Error("positional input cannot be combined with explicit artifact options");
   }
   if (positional.length === 1) {
-    return { mode: "single", inputPath: positional[0], reportOutPath, otelOutPath };
+    return { mode: "single", inputPath: positional[0], reportOutPath, otelOutPath, json };
   }
   if (positional.length > 1) {
     throw new Error("only one positional artifact path is supported");
   }
   if (Object.keys(paths).length > 0) {
-    return { mode: "multi", paths, reportOutPath, otelOutPath };
+    return { mode: "multi", paths, reportOutPath, otelOutPath, json };
   }
-  return { mode: "usage_error", reportOutPath, otelOutPath };
+  return { mode: "usage_error", reportOutPath, otelOutPath, json };
 }
 
 function optionalResolvedPath(inputPath) {
@@ -2922,7 +3107,11 @@ async function main() {
       const { trace, sourcePath } = traceForOtelExport(parsed);
       writeOtelTraceExport(parsed.otelOutPath, exportTraceToOpenTelemetry(trace, { sourcePath }));
     }
-    process.stdout.write(rendered);
+    if (parsed.json) {
+      process.stdout.write(`${JSON.stringify(projectInspectionContract(inspection), null, 2)}\n`);
+    } else {
+      process.stdout.write(rendered);
+    }
   } catch (error) {
     process.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);

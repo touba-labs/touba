@@ -10,6 +10,7 @@ import {
   implementationDir,
   inspectExplicitArtifacts,
   inspectPath,
+  projectInspectionContract,
   renderInspection,
 } from "../src/inspect.mjs";
 
@@ -45,6 +46,31 @@ test("inspects an AIR fixture and reports existing declarations only from the pr
   assert.equal(inspection.air.declarations.agents, 2);
   assert.equal(inspection.air.declarations.strategies, 1);
   assert.equal(inspection.trace.present, false);
+});
+
+test("projects AIR inspection to touba-project-inspection-v1", () => {
+  const airPath = path.join(implementationDir, "tests/air/tb-v01-005-strategy-agents.air.json");
+  const inspection = inspectPath(airPath);
+  const project = projectInspectionContract(inspection, {
+    generatedAt: "2026-06-22T00:00:00Z",
+    root: "/workspace/example",
+  });
+
+  assert.equal(project.schema_version, "touba-project-inspection-v1");
+  assert.equal(project.generated_at, "2026-06-22T00:00:00Z");
+  assert.equal(project.project.root, "/workspace/example");
+  assert.equal(project.project.name, "examples.strategy_agents");
+  assert.equal(project.project.host_language, "unknown");
+  assert.equal(project.artifacts.some((artifact) => artifact.kind === "air" && artifact.status === "present"), true);
+  assert.equal(
+    project.entrypoints.some((entrypoint) => entrypoint.ref === "strategy:examples.strategy_agents/RunChange"),
+    true,
+  );
+  assert.equal(
+    project.entrypoints.some((entrypoint) => entrypoint.ref === "agent:examples.strategy_agents/Engineer"),
+    true,
+  );
+  assert.deepEqual(project.diagnostics, []);
 });
 
 test("inspects AIR callable_by authority without deriving policy", () => {

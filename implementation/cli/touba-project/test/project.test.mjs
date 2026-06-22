@@ -20,11 +20,16 @@ import {
   newSkillPack,
   validateSkillPacks,
 } from "../src/skill-packs.mjs";
+import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const cliPath = new URL("../src/main.mjs", import.meta.url).pathname;
 const implementationRoot = join(testDir, "../../..");
 const linearAirFixture = join(implementationRoot, "tests/air/tb-v01-001-linear-skill.air.json");
+const projectInspectionSchema = join(
+  implementationRoot,
+  "contracts/product-surfaces/schemas/touba-project-inspection-v1.schema.json",
+);
 const triggerRunnerFixture = join(
   implementationRoot,
   "grammar/tree-sitter-touba/examples/triggers-anneau-2/positive/tb-a2-trigger-p04-runner-revue-matinale.tb",
@@ -2068,6 +2073,29 @@ test("CLI inspect delegates to Touba Inspect for AIR artifacts", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Touba Inspect touba-inspect-v0\.1/);
     assert.match(result.stdout, /AIR air-minimal-v0\.1/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CLI inspect --json emits the project inspection contract", () => {
+  const root = tempRoot();
+  try {
+    const airPath = join(root, "input.air.json");
+    writeFileSync(airPath, JSON.stringify(airDocumentWithoutTools(), null, 2), "utf8");
+    const result = spawnSync(process.execPath, [cliPath, "inspect", airPath, "--json"], {
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    const schema = JSON.parse(readFileSync(projectInspectionSchema, "utf8"));
+    assert.equal(report.schema_version, "touba-project-inspection-v1");
+    assert.deepEqual(validateObject(schema, report), []);
+    assert.equal(report.project.root, root);
+    assert.equal(report.artifacts.some((artifact) => artifact.kind === "air" && artifact.status === "present"), true);
+    assert.equal(Array.isArray(report.entrypoints), true);
+    assert.equal(Array.isArray(report.diagnostics), true);
   } finally {
     cleanup(root);
   }
