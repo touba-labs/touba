@@ -3786,6 +3786,20 @@ test("retries ADP-1 provider unavailability within a bounded retry limit", async
   assert.equal(eventsOf(result.trace, "agent_decision_provider_call_attempted").length, 2);
 });
 
+test("records ADP-1 provider unavailable cause in failure evidence", async () => {
+  const result = await executeAirDocument(agentProviderDocument(), {
+    agentDecisionProvider: () => {
+      throw new Error("temporary provider outage");
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  const failure = eventOf(result.trace, "failure_detected");
+  assert.equal(failure.payload.runtime_error_code, "AgentDecisionProviderUnavailable");
+  assert.equal(failure.payload.provider_cause, "temporary provider outage");
+  assert.equal(eventsOf(result.trace, "agent_decision_provider_call_attempted").length, 1);
+});
+
 test("reports ADP-1 timeout and schema violation distinctly", async () => {
   const timeoutResult = await executeAirDocument(agentProviderDocument(), {
     agentDecisionProviderTimeoutMs: 1,

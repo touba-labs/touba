@@ -6939,6 +6939,7 @@ function runtimeFailureTracePayload(error, context) {
     provider_mode: error.details?.providerMode,
     provider_attempt: error.details?.providerAttempt,
     provider_timeout_ms: error.details?.timeoutMs,
+    provider_cause: error.details?.cause,
     provider_cause_code: error.details?.providerCauseCode ?? error.details?.causeCode,
     provider_metadata: error.details?.provider_metadata,
     retry_limit: error.details?.retryLimit,
