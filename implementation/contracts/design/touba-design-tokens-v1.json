@@ -1,0 +1,106 @@
+{
+  "schema_version": "touba-design-tokens-v1",
+  "brand": "Touba",
+  "source": "touba-logo-and-public-docs",
+  "themes": ["light", "dark"],
+  "palette": {
+    "blue": "#2f63c6",
+    "blue_dark": "#214f9f",
+    "blue_darker": "#173a78",
+    "blue_logo_shadow": "#143f92",
+    "blue_logo_highlight": "#3f78dc",
+    "blue_logo_light": "#6ba2f2",
+    "ink": "#111827",
+    "black": "#0b1020",
+    "white": "#ffffff",
+    "teal": "#0f766e",
+    "teal_soft": "#d9f3ef",
+    "gold": "#9a6700",
+    "gold_soft": "#fff4cc",
+    "red": "#dc2626",
+    "red_soft": "#fef2f2",
+    "gray_50": "#f8fafc",
+    "gray_100": "#eef2f7",
+    "gray_200": "#d8dee9",
+    "gray_300": "#c7d0dd",
+    "gray_600": "#4b5563",
+    "gray_800": "#1f2937"
+  },
+  "semantic": {
+    "light": {
+      "background": "#ffffff",
+      "surface": "#ffffff",
+      "surface_muted": "#f7f9fc",
+      "surface_raised": "#ffffff",
+      "text": "#121826",
+      "text_muted": "#526071",
+      "border": "#d8dee9",
+      "border_soft": "#d4e2fb",
+      "primary": "#2f63c6",
+      "primary_hover": "#214f9f",
+      "primary_text": "#ffffff",
+      "secondary": "#ffffff",
+      "secondary_text": "#214f9f",
+      "focus": "#6ba2f2",
+      "success": "#0f766e",
+      "success_soft": "#d9f3ef",
+      "warning": "#9a6700",
+      "warning_soft": "#fff4cc",
+      "danger": "#dc2626",
+      "danger_soft": "#fef2f2",
+      "neutral": "#4b5563",
+      "white": "#ffffff"
+    },
+    "dark": {
+      "background": "#111827",
+      "surface": "#151d2b",
+      "surface_muted": "#101827",
+      "surface_raised": "#172033",
+      "text": "#f8fafc",
+      "text_muted": "#cbd5e1",
+      "border": "#334155",
+      "border_soft": "#263244",
+      "primary": "#7ea6f2",
+      "primary_hover": "#d4e2fb",
+      "primary_text": "#07111f",
+      "secondary": "#151d2b",
+      "secondary_text": "#d4e2fb",
+      "focus": "#9fc4ff",
+      "success": "#7dd3c7",
+      "success_soft": "#0f2f2d",
+      "warning": "#facc15",
+      "warning_soft": "#34280f",
+      "danger": "#f87171",
+      "danger_soft": "#2a1a1a",
+      "neutral": "#94a3b8",
+      "white": "#ffffff"
+    }
+  },
+  "status": {
+    "success": {
+      "color": "teal",
+      "purpose": "validation, evidence, completed checks"
+    },
+    "pending_review": {
+      "color": "gold",
+      "purpose": "human review, approval pending, attention without failure"
+    },
+    "warning": {
+      "color": "gold",
+      "purpose": "non-critical warning or quota pressure"
+    },
+    "error": {
+      "color": "red",
+      "purpose": "failure, refusal, drift, unsafe state"
+    },
+    "neutral": {
+      "color": "gray_600",
+      "purpose": "secondary metadata and inactive states"
+    }
+  },
+  "radii": {
+    "control": 6,
+    "card": 8,
+    "panel": 8
+  }
+}

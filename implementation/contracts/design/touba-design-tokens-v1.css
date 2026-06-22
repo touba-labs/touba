@@ -1,0 +1,74 @@
+:root,
+.touba-theme-light {
+  --touba-blue: #2f63c6;
+  --touba-blue-dark: #214f9f;
+  --touba-blue-darker: #173a78;
+  --touba-blue-logo-shadow: #143f92;
+  --touba-blue-logo-highlight: #3f78dc;
+  --touba-blue-logo-light: #6ba2f2;
+  --touba-ink: #111827;
+  --touba-black: #0b1020;
+  --touba-white: #ffffff;
+  --touba-teal: #0f766e;
+  --touba-teal-soft: #d9f3ef;
+  --touba-gold: #9a6700;
+  --touba-gold-soft: #fff4cc;
+  --touba-red: #dc2626;
+  --touba-red-soft: #fef2f2;
+  --touba-gray-50: #f8fafc;
+  --touba-gray-100: #eef2f7;
+  --touba-gray-200: #d8dee9;
+  --touba-gray-300: #c7d0dd;
+  --touba-gray-600: #4b5563;
+  --touba-gray-800: #1f2937;
+  --touba-background: #ffffff;
+  --touba-surface: #ffffff;
+  --touba-surface-muted: #f7f9fc;
+  --touba-surface-raised: #ffffff;
+  --touba-text: #121826;
+  --touba-text-muted: #526071;
+  --touba-border: #d8dee9;
+  --touba-border-soft: #d4e2fb;
+  --touba-primary: #2f63c6;
+  --touba-primary-hover: #214f9f;
+  --touba-primary-text: #ffffff;
+  --touba-secondary: #ffffff;
+  --touba-secondary-text: #214f9f;
+  --touba-focus: #6ba2f2;
+  --touba-success: #0f766e;
+  --touba-success-soft: #d9f3ef;
+  --touba-warning: #9a6700;
+  --touba-warning-soft: #fff4cc;
+  --touba-danger: #dc2626;
+  --touba-danger-soft: #fef2f2;
+  --touba-neutral: #4b5563;
+  --touba-radius-control: 6px;
+  --touba-radius-card: 8px;
+  --touba-radius-panel: 8px;
+}
+
+[data-theme="dark"],
+.touba-theme-dark {
+  --touba-background: #111827;
+  --touba-surface: #151d2b;
+  --touba-surface-muted: #101827;
+  --touba-surface-raised: #172033;
+  --touba-text: #f8fafc;
+  --touba-text-muted: #cbd5e1;
+  --touba-border: #334155;
+  --touba-border-soft: #263244;
+  --touba-primary: #7ea6f2;
+  --touba-primary-hover: #d4e2fb;
+  --touba-primary-text: #07111f;
+  --touba-secondary: #151d2b;
+  --touba-secondary-text: #d4e2fb;
+  --touba-focus: #9fc4ff;
+  --touba-success: #7dd3c7;
+  --touba-success-soft: #0f2f2d;
+  --touba-warning: #facc15;
+  --touba-warning-soft: #34280f;
+  --touba-danger: #f87171;
+  --touba-danger-soft: #2a1a1a;
+  --touba-neutral: #94a3b8;
+  --touba-white: #ffffff;
+}
