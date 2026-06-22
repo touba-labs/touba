@@ -7,7 +7,8 @@ import test from "node:test";
 import {
   acceptDecision,
   buildContractIndex,
-  createProductSurfaceService,
+  createToubaLocalServer,
+  preflightServeOptions,
 } from "../src/serve.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
@@ -15,14 +16,31 @@ const contractsRoot = new URL("../../../contracts/product-surfaces/", import.met
 test("contract index lists product-surface contracts without filesystem paths", () => {
   const index = buildContractIndex({ contractsRoot, generatedAt: "2026-06-22T00:00:00Z" });
 
-  assert.equal(index.schema_version, "touba-product-service-contract-index-v0.1");
+  assert.equal(index.schema_version, "touba-local-server-contract-index-v0.1");
   assert.equal(index.contracts.some((item) => item.schema_version === "touba-run-summary-v1"), true);
   assert.equal(index.contracts.every((item) => item.status === "available"), true);
   assert.equal(JSON.stringify(index).includes(contractsRoot), false);
 });
 
+test("preflight rejects invalid contracts root and decision store path", () => {
+  assert.throws(
+    () => preflightServeOptions({
+      contractsRoot: join(tmpdir(), "missing-touba-contracts"),
+      decisionsPath: join(tmpdir(), "decisions.json"),
+    }),
+    /valid contracts root/,
+  );
+  assert.throws(
+    () => preflightServeOptions({
+      contractsRoot,
+      decisionsPath: contractsRoot,
+    }),
+    /directory as decision store/,
+  );
+});
+
 test("accepts valid decisions and rejects replay", () => {
-  const root = mkdtempSync(join(tmpdir(), "touba-product-service-"));
+  const root = mkdtempSync(join(tmpdir(), "touba-local-server-"));
   try {
     const decisionsPath = join(root, "decisions.json");
     const decision = readJson("fixtures/valid/touba-approval-decision-v1.json");
@@ -35,7 +53,7 @@ test("accepts valid decisions and rejects replay", () => {
 
     assert.equal(accepted.status, "accepted");
     const store = JSON.parse(readFileSync(decisionsPath, "utf8"));
-    assert.equal(store.schema_version, "touba-product-decisions-v0.1");
+    assert.equal(store.schema_version, "touba-local-decisions-v0.1");
     assert.equal(store.decisions.length, 1);
     assert.throws(
       () => acceptDecision({ contractsRoot, decisionsPath, decision }),
@@ -47,8 +65,8 @@ test("accepts valid decisions and rejects replay", () => {
 });
 
 test("HTTP service exposes contracts and accepts decisions", async () => {
-  const root = mkdtempSync(join(tmpdir(), "touba-product-service-"));
-  const service = createProductSurfaceService({
+  const root = mkdtempSync(join(tmpdir(), "touba-local-server-"));
+  const service = createToubaLocalServer({
     contractsRoot,
     decisionsPath: join(root, "decisions.json"),
     port: 0,
@@ -59,6 +77,7 @@ test("HTTP service exposes contracts and accepts decisions", async () => {
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const health = await getJson(`${baseUrl}/health`);
     assert.equal(health.status, "ok");
+    assert.equal(health.service, "touba-local-server");
 
     const runSummary = await getJson(`${baseUrl}/contracts/touba-run-summary-v1`);
     assert.equal(runSummary.schema_version, "touba-run-summary-v1");

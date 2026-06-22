@@ -82,11 +82,11 @@ client resource browsers. `touba-library/resources.json` is generated from
 and package metadata. They expose resource refs, type, version, status, digest,
 source repository, description and tags.
 
-The local product service currently exposes the contract boundary for product
+The local Touba server exposes the contract boundary for client and Mobile
 prototypes:
 
 ```bash
-touba product serve --decisions product-decisions.json
+touba serve --decisions .touba/decisions.json
 ```
 
 It serves:
@@ -105,6 +105,6 @@ POST /decisions
 stores them in an append-only decision file and rejects replay for the same
 `schema_version` and `request_id`.
 
-The service does not execute agents, grant authority or accept arbitrary UI
-state. It is a local product surface for client/Mobile adapters; Touba Engine
-remains responsible for runtime authority and final decision acceptance.
+The server does not execute agents, grant authority or accept arbitrary UI
+state. It is a local contract boundary for client and Mobile adapters; Touba
+Engine remains responsible for runtime authority and final decision acceptance.

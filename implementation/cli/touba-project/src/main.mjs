@@ -59,7 +59,7 @@ const FEATURE_VERSIONS = Object.freeze({
   mcp_import: "touba-mcp-import-v0.1",
   rest_scaffold: "touba-rest-scaffold-v0.1",
   trigger_ingress: "touba-trigger-ingress-v0.1",
-  product_surfaces: "touba-product-surfaces-v0.1",
+  local_server: "touba-local-server-v0.1",
   trace_output: "trace-minimal-v0.1",
 });
 const PUBLIC_COMMANDS = Object.freeze({
@@ -75,6 +75,7 @@ const PUBLIC_COMMANDS = Object.freeze({
   registry_resolve: true,
   mcp_import: true,
   rest_scaffold: true,
+  serve: true,
   manifest_generate: true,
   handler_stub: true,
   version: true,
@@ -204,8 +205,8 @@ async function dispatch(rawArgs) {
   if (command === "trigger") {
     return triggerCommand(rest);
   }
-  if (command === "product") {
-    return productCommand(rest);
+  if (command === "serve") {
+    return serveCommand(rest);
   }
   if (command === "inspect") {
     return inspectCommand(rest);
@@ -456,22 +457,30 @@ function triggerCommand(rawArgs) {
   throw new Error(`unknown trigger command ${subcommand}`);
 }
 
-function productCommand(rawArgs) {
-  const [subcommand, ...tail] = rawArgs;
-  if (subcommand === "serve") {
-    return runNodeScript(["cli", "touba-product-service", "src", "serve.mjs"], tail);
-  }
-  if (subcommand === undefined || subcommand === "--help" || subcommand === "-h") {
+function serveCommand(rawArgs) {
+  if (rawArgs.length === 1 && (rawArgs[0] === "--help" || rawArgs[0] === "-h")) {
     return {
-      text: [
-        "Usage: touba product serve [--contracts-root <path>] [--decisions <decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME]",
-        "",
-        "Serves versioned product-surface contracts for client/Mobile and accepts validated human decision payloads.",
-      ].join("\n"),
+      text: serveUsage(),
       exitCode: 0,
     };
   }
-  throw new Error(`unknown product command ${subcommand}`);
+  return runNodeScript(["cli", "touba-local-server", "src", "serve.mjs"], rawArgs);
+}
+
+function serveUsage() {
+  return [
+    "Usage: touba serve [--contracts-root <path>] [--decisions <decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "",
+    "Starts the local Touba server for client, Mobile and contract clients.",
+    "",
+    "Defaults:",
+    "  host: 127.0.0.1",
+    "  port: 8791",
+    "  decisions: .touba/decisions.json",
+    "",
+    "The server exposes versioned contracts and validates human decision payloads.",
+    "It does not execute agents or grant authority.",
+  ].join("\n");
 }
 
 function inspectCommand(rawArgs) {
@@ -1368,9 +1377,9 @@ function printUsage() {
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
   touba run <program.air.json> [--profile dev|prod] [runtime options]
+  touba serve [--contracts-root <path>] [--decisions <decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
   touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>
   touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]
-  touba product serve [--contracts-root <path>] [--decisions <decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME]
   touba inspect <artifact> [inspect options] [--report-out <report.inspect.txt>]
   touba audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--timeline-out <timeline.trace-timeline.json>] [--output text|json]
   touba supply-chain validate --lock <touba.lock.json> --air <program.air.json> [--manifest <touba.manifest.json>] [--report-out <report.supply-chain-report.json>] [--output text|json] [--strict] [--require-review]

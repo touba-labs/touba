@@ -296,16 +296,28 @@ test("CLI secret set reads value from stdin and never writes it to stdout", () =
   }
 });
 
-test("CLI product command exposes the local product service", () => {
+test("CLI serve command exposes the local Touba server", () => {
+  const result = spawnSync(process.execPath, [
+    cliPath,
+    "serve",
+    "--help",
+  ], { encoding: "utf8" });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /touba serve/);
+  assert.match(result.stdout, /local Touba server/);
+  assert.match(result.stdout, /port: 8791/);
+});
+
+test("CLI rejects the legacy product command", () => {
   const result = spawnSync(process.execPath, [
     cliPath,
     "product",
     "--help",
   ], { encoding: "utf8" });
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /touba product serve/);
-  assert.match(result.stdout, /product-surface contracts/);
+  assert.equal(result.status, 2);
+  assert.doesNotMatch(result.stdout, /\bproduct\b/);
 });
 
 test("prepare plan reports AIR, manifest and handler stub actions for tools", async () => {
