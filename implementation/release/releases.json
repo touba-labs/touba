@@ -26,9 +26,10 @@
       "breaking_changes": [],
       "migration_guide": null,
       "evidence": [
+        "CHANGELOG.md",
+        "implementation/release/notes/v0.1.0.md",
         "implementation/tools/validate-release-versioning.mjs",
-        "implementation/tools/assemble-release-assets.mjs",
-        "implementation/VERSIONING.md"
+        "implementation/tools/assemble-release-assets.mjs"
       ],
       "compare_url": null,
       "channels": [

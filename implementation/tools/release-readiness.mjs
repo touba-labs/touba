@@ -22,10 +22,11 @@ const REQUIRED_SCRIPTS = Object.freeze([
 ]);
 
 const REQUIRED_FILES = Object.freeze([
-  ["versioning_policy", "VERSIONING.md"],
   ["repository_readme", "../README.md"],
+  ["public_changelog", "../CHANGELOG.md"],
   ["source_ci_workflow", "../.github/workflows/source-ci.yml"],
   ["external_user_session_kit", "EXTERNAL-USER-SESSION.md"],
+  ["public_release_index", "release/releases.json"],
 ]);
 
 const VERSIONED_PACKAGES = Object.freeze([
@@ -153,6 +154,7 @@ export function buildReleaseReadinessReport(options = {}) {
   const gates = [
     ...scriptGates(packageJson),
     ...fileGates(pathExists),
+    currentReleaseNoteGate(packageJson, pathExists),
     packageVersionGate(readJson),
     ...CURRENT_RELEASE_GATES,
   ];
@@ -217,6 +219,32 @@ function fileGates(pathExists) {
       reason: `missing required release file ${publicEvidencePath(relativePath)}`,
     };
   });
+}
+
+/**
+ * @param {Record<string, any>} packageJson
+ * @param {(relativePath: string) => boolean} pathExists
+ * @returns {ReleaseGate}
+ */
+function currentReleaseNoteGate(packageJson, pathExists) {
+  const version = typeof packageJson.version === "string" ? packageJson.version : "unknown";
+  const relativePath = `release/notes/v${version}.md`;
+  const evidence = [publicEvidencePath(relativePath)];
+  if (version !== "unknown" && pathExists(relativePath)) {
+    return {
+      id: "current_release_note",
+      status: "satisfied",
+      required: true,
+      evidence,
+    };
+  }
+  return {
+    id: "current_release_note",
+    status: "failed",
+    required: true,
+    evidence,
+    reason: `missing structured release note ${publicEvidencePath(relativePath)}`,
+  };
 }
 
 /**

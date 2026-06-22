@@ -37,7 +37,7 @@ test("builds a stable blocked V1 release readiness report", () => {
   assert.equal(report.implementation_version, "0.1.0");
   assert.equal(report.overall_status, "blocked");
   assert.deepEqual(report.counts, {
-    satisfied: 19,
+    satisfied: 21,
     pending: 0,
     blocked: 2,
     failed: 0,
@@ -56,7 +56,7 @@ test("reports failed gates when required release evidence is missing", () => {
         "test:cli": undefined,
       },
     },
-    pathExists: (relativePath) => relativePath !== "VERSIONING.md",
+    pathExists: (relativePath) => relativePath !== "release/notes/v0.1.0.md",
     readJson: (relativePath) => ({
       version: relativePath === "runtime/touba-runtime/package.json" ? "0.0.0" : "0.1.0",
     }),
@@ -64,7 +64,7 @@ test("reports failed gates when required release evidence is missing", () => {
 
   assert.equal(report.overall_status, "failed");
   assert.equal(report.gates.find((gate) => gate.id === "cli_tests_command")?.status, "failed");
-  assert.equal(report.gates.find((gate) => gate.id === "versioning_policy")?.status, "failed");
+  assert.equal(report.gates.find((gate) => gate.id === "current_release_note")?.status, "failed");
   assert.equal(report.gates.find((gate) => gate.id === "package_versions")?.status, "failed");
 });
 
