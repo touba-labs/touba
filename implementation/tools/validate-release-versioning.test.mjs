@@ -74,6 +74,25 @@ test("requires retired releases to carry maintainer decision metadata", () => {
   }
 });
 
+test("requires structured release notes for each managed version", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
+  try {
+    const repoRoot = join(workspace, "touba");
+    const implementationRoot = join(repoRoot, "implementation");
+    writeFixtureRepo({ repoRoot, implementationRoot, version: "1.2.3", omitReleaseNote: true });
+
+    const report = buildReleaseVersioningReport({
+      repoRoot,
+      implementationRoot,
+    });
+
+    assert.equal(report.status, "failed");
+    assert.equal(report.diagnostics.some((item) => item.code === "ReleaseNotesMissing"), true);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("parses release versioning CLI flags", () => {
   assert.deepEqual(parseReleaseVersioningArgs(["--version=1.2.3", "--compact"]), {
     expectedVersion: "1.2.3",
@@ -81,13 +100,16 @@ test("parses release versioning CLI flags", () => {
   });
 });
 
-function writeFixtureRepo({ repoRoot, implementationRoot, version, childVersion = version, retiredCurrent = false }) {
-  mkdirSync(join(implementationRoot, "release"), { recursive: true });
+function writeFixtureRepo({ repoRoot, implementationRoot, version, childVersion = version, retiredCurrent = false, omitReleaseNote = false }) {
+  mkdirSync(join(implementationRoot, "release", "notes"), { recursive: true });
   mkdirSync(join(implementationRoot, "runtime", "touba-runtime"), { recursive: true });
   mkdirSync(join(repoRoot, ".github", "workflows"), { recursive: true });
   writeJson(join(implementationRoot, "package.json"), { name: "@touba/implementation", version });
   writeJson(join(implementationRoot, "runtime", "touba-runtime", "package.json"), { name: "@touba/runtime", version: childVersion });
   writeFileSync(join(repoRoot, "CHANGELOG.md"), `# Changelog\n\n## ${version}\n\n- Release.\n`, "utf8");
+  if (!omitReleaseNote) {
+    writeFileSync(join(implementationRoot, "release", "notes", `v${version}.md`), releaseNote(version), "utf8");
+  }
   writeFileSync(
     join(repoRoot, ".github", "workflows", "release.yml"),
     "on: workflow_dispatch\nsteps:\n  - run: pnpm --filter @touba/distribution package:release --public\n  - run: node tools/assemble-release-assets.mjs\n  - run: gh release create\n",
@@ -114,6 +136,13 @@ function releaseIndex(version, retiredCurrent) {
         version,
         tag: `v${version}`,
         status: retiredCurrent ? "retired" : "published",
+        released_on: "2026-06-22",
+        summary: "Fixture release.",
+        release_notes: `release/notes/v${version}.md`,
+        breaking_changes: [],
+        migration_guide: null,
+        evidence: ["release/releases.json"],
+        compare_url: null,
         channels: ["github_release", "touba_hub"],
         artifacts: [
           `touba-v${version}-darwin-arm64.tar.gz`,
@@ -127,6 +156,49 @@ function releaseIndex(version, retiredCurrent) {
       },
     ],
   };
+}
+
+function releaseNote(version) {
+  return [
+    `# Touba ${version}`,
+    "",
+    "## Executive Summary",
+    "",
+    "Fixture release.",
+    "",
+    "## Added",
+    "",
+    "- Fixture.",
+    "",
+    "## Changed",
+    "",
+    "- Fixture.",
+    "",
+    "## Fixed",
+    "",
+    "- Fixture.",
+    "",
+    "## Security And Governance",
+    "",
+    "- Fixture.",
+    "",
+    "## Breaking Changes",
+    "",
+    "- None.",
+    "",
+    "## Migration",
+    "",
+    "- None.",
+    "",
+    "## Validation Evidence",
+    "",
+    "- Fixture.",
+    "",
+    "## Known Limits",
+    "",
+    "- None.",
+    "",
+  ].join("\n");
 }
 
 function writeJson(path, value) {

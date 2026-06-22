@@ -14,6 +14,18 @@ const RELEASE_STATUSES = new Set(["planned", "candidate", "published", "retired"
 const CHANNELS = new Set(["github_release", "touba_hub"]);
 const PUBLIC_PLATFORMS = Object.freeze(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]);
 const SEMVER_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/;
+const DATE_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+const RELEASE_NOTE_REQUIRED_HEADINGS = Object.freeze([
+  "Executive Summary",
+  "Added",
+  "Changed",
+  "Fixed",
+  "Security And Governance",
+  "Breaking Changes",
+  "Migration",
+  "Validation Evidence",
+  "Known Limits",
+]);
 
 export function buildReleaseVersioningReport(options = {}) {
   const implementationRoot = resolve(options.implementationRoot ?? new URL("..", import.meta.url).pathname);
@@ -25,7 +37,7 @@ export function buildReleaseVersioningReport(options = {}) {
   const releaseIndex = readJson(join(implementationRoot, "release", "releases.json"), diagnostics);
   const packageVersions = collectPackageVersions(implementationRoot, diagnostics);
 
-  validateReleaseIndex(releaseIndex, diagnostics);
+  validateReleaseIndex(releaseIndex, diagnostics, implementationRoot);
   validateExpectedVersion({ expectedVersion, rootPackage, releaseIndex, diagnostics });
   validatePackageVersions({ packageVersions, currentVersion: releaseIndex?.current_version, diagnostics });
   validateChangelog({ repoRoot, currentVersion: releaseIndex?.current_version, diagnostics });
@@ -67,7 +79,7 @@ export function parseReleaseVersioningArgs(rawArgs) {
   return options;
 }
 
-function validateReleaseIndex(index, diagnostics) {
+function validateReleaseIndex(index, diagnostics, implementationRoot) {
   if (!isObject(index)) {
     diagnostics.push(error("ReleaseIndexInvalid", "release/releases.json must be a JSON object", "release/releases.json"));
     return;
@@ -113,6 +125,7 @@ function validateReleaseIndex(index, diagnostics) {
       currentEntry = entry;
     }
     validateChannels(entry, label, diagnostics);
+    validateReleaseEntryDocumentation(entry, label, implementationRoot, diagnostics);
     validateArtifacts(entry, label, diagnostics);
     validateRetirement(entry, label, diagnostics);
   }
@@ -121,6 +134,45 @@ function validateReleaseIndex(index, diagnostics) {
     diagnostics.push(error("CurrentReleaseMissing", `current version ${index.current_version} is not listed`, "release/releases.json"));
   } else if (currentEntry.status === "retired" || currentEntry.status === "yanked") {
     diagnostics.push(error("CurrentReleaseRetired", `current version ${index.current_version} cannot be ${currentEntry.status}`, "release/releases.json"));
+  }
+}
+
+function validateReleaseEntryDocumentation(entry, label, implementationRoot, diagnostics) {
+  if (entry.status === "published" || entry.status === "retired" || entry.status === "yanked") {
+    if (typeof entry.released_on !== "string" || !DATE_PATTERN.test(entry.released_on)) {
+      diagnostics.push(error("ReleaseDateInvalid", `${label}.released_on must be YYYY-MM-DD for published releases`, "release/releases.json"));
+    }
+  }
+  validateNonEmptyString(entry.summary, `${label}.summary`, "release/releases.json", diagnostics);
+  validateStringArray(entry.breaking_changes, `${label}.breaking_changes`, "release/releases.json", diagnostics);
+  if (entry.migration_guide !== null && entry.migration_guide !== undefined && typeof entry.migration_guide !== "string") {
+    diagnostics.push(error("ReleaseMigrationGuideInvalid", `${label}.migration_guide must be a string or null`, "release/releases.json"));
+  }
+  validateStringArray(entry.evidence, `${label}.evidence`, "release/releases.json", diagnostics);
+  if (entry.compare_url !== null && entry.compare_url !== undefined) {
+    validateUrl(entry.compare_url, `${label}.compare_url`, "release/releases.json", diagnostics);
+  }
+  if (typeof entry.release_notes !== "string" || entry.release_notes.trim() === "") {
+    diagnostics.push(error("ReleaseNotesMissing", `${label}.release_notes is required`, "release/releases.json"));
+    return;
+  }
+  const notePath = resolve(implementationRoot, entry.release_notes);
+  if (!notePath.startsWith(`${implementationRoot}${sep}`)) {
+    diagnostics.push(error("ReleaseNotesPathInvalid", `${label}.release_notes must stay inside implementation/`, "release/releases.json"));
+    return;
+  }
+  if (!existsSync(notePath)) {
+    diagnostics.push(error("ReleaseNotesMissing", `${entry.release_notes} does not exist`, entry.release_notes));
+    return;
+  }
+  const note = readFileSync(notePath, "utf8");
+  if (!new RegExp(`^#\\s+Touba\\s+${escapeRegExp(entry.version)}\\s*$`, "mu").test(note)) {
+    diagnostics.push(error("ReleaseNotesTitleMismatch", `${entry.release_notes} must start with '# Touba ${entry.version}'`, entry.release_notes));
+  }
+  for (const heading of RELEASE_NOTE_REQUIRED_HEADINGS) {
+    if (!new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, "mu").test(note)) {
+      diagnostics.push(error("ReleaseNotesSectionMissing", `${entry.release_notes} must contain section '${heading}'`, entry.release_notes));
+    }
   }
 }
 
@@ -151,6 +203,36 @@ function validateArtifacts(entry, label, diagnostics) {
     if (!entry.artifacts.includes(artifact)) {
       diagnostics.push(error("ReleaseArtifactMissing", `${label}.artifacts must include ${artifact}`, "release/releases.json"));
     }
+  }
+}
+
+function validateNonEmptyString(value, label, path, diagnostics) {
+  if (typeof value !== "string" || value.trim() === "") {
+    diagnostics.push(error("ReleaseFieldInvalid", `${label} must be a non-empty string`, path));
+  }
+}
+
+function validateStringArray(value, label, path, diagnostics) {
+  if (!Array.isArray(value)) {
+    diagnostics.push(error("ReleaseFieldInvalid", `${label} must be an array`, path));
+    return;
+  }
+  for (const [index, item] of value.entries()) {
+    if (typeof item !== "string" || item.trim() === "") {
+      diagnostics.push(error("ReleaseFieldInvalid", `${label}[${index}] must be a non-empty string`, path));
+    }
+  }
+}
+
+function validateUrl(value, label, path, diagnostics) {
+  if (typeof value !== "string" || value.trim() === "") {
+    diagnostics.push(error("ReleaseFieldInvalid", `${label} must be a URL string or null`, path));
+    return;
+  }
+  try {
+    new URL(value);
+  } catch {
+    diagnostics.push(error("ReleaseFieldInvalid", `${label} must be a valid URL`, path));
   }
 }
 

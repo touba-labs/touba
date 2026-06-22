@@ -19,12 +19,15 @@ export const PUBLIC_RELEASE_PLATFORMS = Object.freeze([
   "linux-x64",
   "win32-x64",
 ]);
+const DEFAULT_IMPLEMENTATION_ROOT = resolve(new URL("..", import.meta.url).pathname);
 
 export function assembleReleaseAssets(options = {}) {
   const inputDir = resolveRequiredDir(options.inputDir, "inputDir");
   const outputDir = resolve(options.outputDir ?? join(inputDir, "publish"));
   const version = normalizeVersion(options.version);
   const tag = `v${version}`;
+  const releaseNotesPath = resolve(options.releaseNotesPath ?? join(DEFAULT_IMPLEMENTATION_ROOT, "release", "notes", `${tag}.md`));
+  const canonicalReleaseNotes = readCanonicalReleaseNotes(releaseNotesPath, version);
 
   const tarballs = collectFiles(inputDir)
     .filter((path) => basename(path).startsWith(`touba-v${version}-`) && basename(path).endsWith(".tar.gz"))
@@ -72,7 +75,7 @@ export function assembleReleaseAssets(options = {}) {
 
   writeFileSync(join(outputDir, "SHA256SUMS"), `${checksumLines.join("\n")}\n`, "utf8");
   writeFileSync(join(outputDir, "CHECKSUMS.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  writeFileSync(join(outputDir, "GITHUB_RELEASE_NOTES.md"), renderReleaseNotes(manifest), "utf8");
+  writeFileSync(join(outputDir, "GITHUB_RELEASE_NOTES.md"), renderReleaseNotes(manifest, canonicalReleaseNotes), "utf8");
 
   return {
     output_dir: outputDir,
@@ -110,13 +113,22 @@ export function parseAssembleArgs(rawArgs) {
   return options;
 }
 
-function renderReleaseNotes(manifest) {
+function readCanonicalReleaseNotes(path, version) {
+  if (!existsSync(path)) {
+    throw new Error(`release notes are required for ${version}: ${path}`);
+  }
+  const source = readFileSync(path, "utf8").trim();
+  if (!new RegExp(`^#\\s+Touba\\s+${escapeRegExp(version)}\\s*$`, "mu").test(source)) {
+    throw new Error(`release notes for ${version} must start with '# Touba ${version}'`);
+  }
+  return source;
+}
+
+function renderReleaseNotes(manifest, canonicalReleaseNotes) {
   return [
-    `# Touba ${manifest.tag}`,
+    canonicalReleaseNotes,
     "",
-    "Touba CLI release archives are provided for macOS Apple Silicon, macOS Intel, Linux x64 and Windows x64.",
-    "",
-    "## Assets",
+    "## Release Assets",
     "",
     ...manifest.assets.map((asset) => `- \`${asset.name}\` (${asset.platform})`),
     "",
@@ -128,6 +140,10 @@ function renderReleaseNotes(manifest) {
     "https://pap-touba.github.io/documentation-site/docs/demarrer/installation",
     "",
   ].join("\n");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function validateTarballs(tarballs, version) {

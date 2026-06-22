@@ -67,6 +67,20 @@ The machine-readable public release index lives at
 the expected public platforms, the release tag, the archive names, checksum
 assets and the status of each managed version.
 
+Each managed version must also point to a structured release note under
+`implementation/release/notes/v<version>.md`. The note is the canonical
+human-readable description of the delta from the previous published version:
+what was added, what changed, what was fixed, what affects security and
+governance, whether a migration is required, what validation evidence supports
+the release and which known limits remain on the roadmap.
+
+Use `implementation/release/notes/TEMPLATE.md` for every new version. Do not
+publish a version from ad hoc commit inspection alone. The release index must
+carry the matching `summary`, `released_on`, `release_notes`,
+`breaking_changes`, `migration_guide`, `evidence` and `compare_url` fields so
+agents, maintainers and external users can understand version differences
+without reverse-engineering the repository history.
+
 Published versions are retained by default. A version is not removed from the
 release index because a newer version exists. If a version must no longer be
 recommended, the maintainer marks it `retired` or `yanked` with an explicit
@@ -81,8 +95,8 @@ pnpm --dir touba/implementation test:release-versioning
 ```
 
 The release workflow runs the same gates before building archives. It refuses a
-version when `package.json`, `release/releases.json`, `CHANGELOG.md` and the
-GitHub Release workflow are not aligned.
+version when `package.json`, `release/releases.json`, the structured release
+note, `CHANGELOG.md` and the GitHub Release workflow are not aligned.
 
 ## Public Release Workflow
 
@@ -93,7 +107,8 @@ manual `workflow_dispatch` run. The workflow:
 2. builds and smoke-tests native archives for macOS Apple Silicon, macOS Intel,
    Linux x64 and Windows x64;
 3. assembles a single publishable asset set with `SHA256SUMS`,
-   `CHECKSUMS.json` and release notes;
+   `CHECKSUMS.json` and release notes generated from the canonical version
+   note;
 4. creates or updates the GitHub Release without deleting previous versions.
 
 The workflow can create a draft release first. Publication remains a maintainer

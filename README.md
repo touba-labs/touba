@@ -147,7 +147,13 @@ Published Touba versions are preserved by default. Older versions stay
 available through GitHub Releases unless the principal maintainer explicitly
 marks a version retired or yanked. The release index in
 `implementation/release/releases.json` records the current version, supported
-platforms, release assets and retirement status.
+platforms, release assets, release notes and retirement status.
+
+Each public version has structured release notes under
+`implementation/release/notes/`. The notes describe additions, changes, fixes,
+security and governance updates, migration guidance and validation evidence, so
+maintainers and users can understand version differences without reconstructing
+them from commits.
 
 ## Example
 

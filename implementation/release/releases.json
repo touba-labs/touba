@@ -20,6 +20,17 @@
       "version": "0.1.0",
       "tag": "v0.1.0",
       "status": "published",
+      "released_on": "2026-06-22",
+      "summary": "Initial public release with the Touba language surface, AIR generation, runtime execution, CLI distribution, traces, triggers, registry resolution and reusable package foundations.",
+      "release_notes": "release/notes/v0.1.0.md",
+      "breaking_changes": [],
+      "migration_guide": null,
+      "evidence": [
+        "implementation/tools/validate-release-versioning.mjs",
+        "implementation/tools/assemble-release-assets.mjs",
+        "implementation/VERSIONING.md"
+      ],
+      "compare_url": null,
       "channels": [
         "github_release",
         "touba_hub"

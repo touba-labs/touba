@@ -1,10 +1,13 @@
 # Changelog
 
-All notable public changes to Touba are summarized here. GitHub Release notes
-remain the source of truth for downloadable artifacts, checksums and
-platform-specific installation instructions.
+All notable public changes to Touba are summarized here. Structured release
+notes remain the source of truth for version deltas, validation evidence,
+downloadable artifacts, checksums and platform-specific installation
+instructions.
 
-## 0.1.0 - V1 Candidate
+## 0.1.0 - Initial Public Release
+
+Detailed release note: `implementation/release/notes/v0.1.0.md`.
 
 ### Language And Runtime
 
