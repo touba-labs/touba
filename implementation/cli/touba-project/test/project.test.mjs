@@ -296,6 +296,18 @@ test("CLI secret set reads value from stdin and never writes it to stdout", () =
   }
 });
 
+test("CLI product command exposes the local product service", () => {
+  const result = spawnSync(process.execPath, [
+    cliPath,
+    "product",
+    "--help",
+  ], { encoding: "utf8" });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /touba product serve/);
+  assert.match(result.stdout, /product-surface contracts/);
+});
+
 test("prepare plan reports AIR, manifest and handler stub actions for tools", async () => {
   const root = tempRoot();
   try {

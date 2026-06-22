@@ -59,6 +59,7 @@ const FEATURE_VERSIONS = Object.freeze({
   mcp_import: "touba-mcp-import-v0.1",
   rest_scaffold: "touba-rest-scaffold-v0.1",
   trigger_ingress: "touba-trigger-ingress-v0.1",
+  product_surfaces: "touba-product-surfaces-v0.1",
   trace_output: "trace-minimal-v0.1",
 });
 const PUBLIC_COMMANDS = Object.freeze({
@@ -202,6 +203,9 @@ async function dispatch(rawArgs) {
   }
   if (command === "trigger") {
     return triggerCommand(rest);
+  }
+  if (command === "product") {
+    return productCommand(rest);
   }
   if (command === "inspect") {
     return inspectCommand(rest);
@@ -450,6 +454,24 @@ function triggerCommand(rawArgs) {
     };
   }
   throw new Error(`unknown trigger command ${subcommand}`);
+}
+
+function productCommand(rawArgs) {
+  const [subcommand, ...tail] = rawArgs;
+  if (subcommand === "serve") {
+    return runNodeScript(["cli", "touba-product-service", "src", "serve.mjs"], tail);
+  }
+  if (subcommand === undefined || subcommand === "--help" || subcommand === "-h") {
+    return {
+      text: [
+        "Usage: touba product serve [--contracts-root <path>] [--decisions <decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME]",
+        "",
+        "Serves versioned product-surface contracts for client/Mobile and accepts validated human decision payloads.",
+      ].join("\n"),
+      exitCode: 0,
+    };
+  }
+  throw new Error(`unknown product command ${subcommand}`);
 }
 
 function inspectCommand(rawArgs) {
@@ -1348,6 +1370,7 @@ function printUsage() {
   touba run <program.air.json> [--profile dev|prod] [runtime options]
   touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>
   touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]
+  touba product serve [--contracts-root <path>] [--decisions <decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME]
   touba inspect <artifact> [inspect options] [--report-out <report.inspect.txt>]
   touba audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--timeline-out <timeline.trace-timeline.json>] [--output text|json]
   touba supply-chain validate --lock <touba.lock.json> --air <program.air.json> [--manifest <touba.manifest.json>] [--report-out <report.supply-chain-report.json>] [--output text|json] [--strict] [--require-review]

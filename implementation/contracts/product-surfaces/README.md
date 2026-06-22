@@ -81,3 +81,30 @@ client resource browsers. `touba-library/resources.json` is generated from
 `catalog.json`; `touba-registry/resources.json` is generated from `index.json`
 and package metadata. They expose resource refs, type, version, status, digest,
 source repository, description and tags.
+
+The local product service currently exposes the contract boundary for product
+prototypes:
+
+```bash
+touba product serve --decisions product-decisions.json
+```
+
+It serves:
+
+```text
+GET  /health
+GET  /contracts
+GET  /contracts/<schema_version>
+POST /decisions
+```
+
+`/contracts` returns a machine-readable index of product-surface contracts.
+`/contracts/<schema_version>` returns the corresponding fixture contract.
+`/decisions` accepts only `touba-approval-decision-v1` and
+`touba-human-review-decision-v1` payloads that validate against their schemas,
+stores them in an append-only decision file and rejects replay for the same
+`schema_version` and `request_id`.
+
+The service does not execute agents, grant authority or accept arbitrary UI
+state. It is a local product surface for client/Mobile adapters; Touba Engine
+remains responsible for runtime authority and final decision acceptance.
