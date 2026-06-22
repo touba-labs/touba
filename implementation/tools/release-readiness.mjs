@@ -13,6 +13,8 @@ const REQUIRED_SCRIPTS = Object.freeze([
   ["runtime_tests_command", "test:runtime"],
   ["cli_tests_command", "test:cli"],
   ["release_metadata_tests_command", "test:distribution-release"],
+  ["release_versioning_command", "release:versioning"],
+  ["release_versioning_tests_command", "test:release-versioning"],
   ["release_packaging_command", "package:touba-release"],
   ["release_archive_smoke_command", "check:touba-release-archive"],
   ["public_docs_validation_command", "validate:docs-user"],
@@ -112,10 +114,17 @@ const CURRENT_RELEASE_GATES = Object.freeze([
   },
   {
     id: "public_distribution_channel",
-    status: "blocked",
+    status: "satisfied",
     required: true,
-    evidence: ["implementation/VERSIONING.md"],
-    reason: "current source and local release channels are not a public update channel",
+    evidence: [
+      "implementation/release/releases.json",
+      ".github/workflows/release.yml",
+      "implementation/tools/assemble-release-assets.mjs",
+    ],
+    details: {
+      channel: "github-release",
+      publication: "manual workflow_dispatch with preserved GitHub Release assets",
+    },
   },
   {
     id: "public_docs_site_deployment",

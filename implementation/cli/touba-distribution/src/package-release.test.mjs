@@ -39,6 +39,36 @@ test("release plan refuses public channel overrides for local-only artifacts", (
   }), /not allowed for local-only artifacts/u);
 });
 
+test("release plan supports public GitHub Release artifacts for validated platforms", () => {
+  const plan = createReleasePlan({
+    platform: "linux-x64",
+    hostPlatform: "linux-x64",
+    toubaVersion: "1.2.3",
+    releaseRoot: "/tmp/touba-release-test",
+    publicRelease: true,
+  });
+
+  assert.equal(plan.releaseName, "touba-v1.2.3-linux-x64");
+  assert.equal(plan.channel, "github-release");
+  assert.equal(plan.validationStatus, "ci_verified");
+  assert.equal(plan.releaseProfile, "touba-github-release-v0.1");
+  assert.equal(plan.installationProfile, "touba-github-release-install-v0.1");
+  assert.equal(plan.releaseScope, "public_distribution");
+  assert.equal(plan.publicRelease, true);
+  assert.ok(plan.limitations.includes("manual update policy; automatic self-update is not enabled in V1"));
+  assert.equal(plan.limitations.includes("not published through a public update channel"), false);
+});
+
+test("release plan refuses unsupported public release platforms", () => {
+  assert.throws(() => createReleasePlan({
+    platform: "freebsd-x64",
+    hostPlatform: "freebsd-x64",
+    toubaVersion: "1.2.3",
+    releaseRoot: "/tmp/touba-release-test",
+    publicRelease: true,
+  }), /not part of the public release platform set/u);
+});
+
 test("release plan refuses unvalidated platforms unless experimental", () => {
   assert.throws(() => createReleasePlan({
     platform: "linux-x64",
@@ -74,16 +104,18 @@ test("release plan refuses cross-platform packaging by default", () => {
   }), /cross-platform release packaging is not supported/u);
 });
 
-test("release CLI parser accepts platform, experimental and json flags", () => {
+test("release CLI parser accepts platform, public, experimental and json flags", () => {
   assert.deepEqual(parsePackageReleaseArgs([
     "--platform",
     "linux-x64",
     "--experimental",
+    "--public",
     "--json",
     "--no-build-compiler",
   ]), {
     platform: "linux-x64",
     experimental: true,
+    publicRelease: true,
     json: true,
     buildCompiler: false,
   });
@@ -122,6 +154,22 @@ test("PowerShell install script writes touba.cmd and INSTALLATION metadata", () 
   assert.match(script, /installation_profile = "touba-local-release-install-experimental-v0\.1"/u);
   assert.match(script, /validation_status = "experimental_unvalidated"/u);
   assert.match(script, /public_release = \$false/u);
+});
+
+test("PowerShell install script marks public release metadata", () => {
+  const plan = createReleasePlan({
+    platform: "win32-x64",
+    hostPlatform: "win32-x64",
+    toubaVersion: "1.2.3",
+    releaseRoot: "/tmp/touba-release-test",
+    publicRelease: true,
+  });
+
+  const script = renderInstallPowerShell(plan);
+  assert.match(script, /installation_profile = "touba-github-release-install-v0\.1"/u);
+  assert.match(script, /validation_status = "ci_verified"/u);
+  assert.match(script, /public_release = \$true/u);
+  assert.match(script, /newer GitHub Release archive/u);
 });
 
 test("PowerShell uninstall script removes launcher, toolchain and metadata paths", () => {

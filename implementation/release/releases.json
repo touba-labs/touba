@@ -1,0 +1,40 @@
+{
+  "schema_version": "touba-release-index-v0.1",
+  "product": "touba",
+  "current_version": "0.1.0",
+  "policy": {
+    "versioning": "semver",
+    "canonical_public_channel": "github_release",
+    "public_entrypoint": "touba_hub",
+    "default_retention": "preserve_published_versions",
+    "retirement_rule": "published versions are retained unless the principal maintainer explicitly marks a version retired or yanked"
+  },
+  "platforms": [
+    "darwin-arm64",
+    "darwin-x64",
+    "linux-x64",
+    "win32-x64"
+  ],
+  "versions": [
+    {
+      "version": "0.1.0",
+      "tag": "v0.1.0",
+      "status": "published",
+      "channels": [
+        "github_release",
+        "touba_hub"
+      ],
+      "artifacts": [
+        "touba-v0.1.0-darwin-arm64.tar.gz",
+        "touba-v0.1.0-darwin-x64.tar.gz",
+        "touba-v0.1.0-linux-x64.tar.gz",
+        "touba-v0.1.0-win32-x64.tar.gz",
+        "SHA256SUMS",
+        "CHECKSUMS.json"
+      ],
+      "retirement": {
+        "status": "active"
+      }
+    }
+  ]
+}

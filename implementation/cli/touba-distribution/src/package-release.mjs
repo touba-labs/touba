@@ -31,10 +31,28 @@ export const VALIDATED_RELEASE_PLATFORMS = Object.freeze({
   }),
 });
 
+export const PUBLIC_RELEASE_PLATFORMS = Object.freeze({
+  "darwin-arm64": publicReleasePlatform("macOS Apple Silicon"),
+  "darwin-x64": publicReleasePlatform("macOS Intel"),
+  "linux-x64": publicReleasePlatform("Linux x64"),
+  "win32-x64": publicReleasePlatform("Windows x64"),
+});
+
 const EXPERIMENTAL_RELEASE_PROFILE = "touba-local-release-experimental-v0.1";
 const EXPERIMENTAL_INSTALLATION_PROFILE = "touba-local-release-install-experimental-v0.1";
 const EXPERIMENTAL_CHANNEL = "local-release-experimental";
 const LOCAL_RELEASE_SCOPE = "local_validation";
+const PUBLIC_RELEASE_SCOPE = "public_distribution";
+
+function publicReleasePlatform(label) {
+  return Object.freeze({
+    channel: "github-release",
+    releaseProfile: "touba-github-release-v0.1",
+    installationProfile: "touba-github-release-install-v0.1",
+    validationStatus: "ci_verified",
+    platformLimitation: `${label} release archive built and smoke-tested by the GitHub Release workflow`,
+  });
+}
 
 export function packageRelease(options = {}) {
   const plan = createReleasePlan(options);
@@ -97,7 +115,11 @@ export function createReleasePlan(options = {}) {
     throw new Error(`cross-platform release packaging is not supported: requested ${platform}, host is ${hostPlatform}`);
   }
 
-  const validated = VALIDATED_RELEASE_PLATFORMS[platform];
+  const publicRelease = options.publicRelease === true;
+  const validated = publicRelease ? PUBLIC_RELEASE_PLATFORMS[platform] : VALIDATED_RELEASE_PLATFORMS[platform];
+  if (!validated && publicRelease) {
+    throw new Error(`release platform ${platform} is not part of the public release platform set`);
+  }
   if (!validated && options.experimental !== true) {
     throw new Error(`release platform ${platform} is not validated; use --experimental to create a clearly marked local artifact`);
   }
@@ -105,7 +127,9 @@ export function createReleasePlan(options = {}) {
   const toubaVersion = options.toubaVersion ?? readPackageVersion(join(implementationRoot, "cli", "touba-project", "package.json"));
   const releaseName = `touba-v${toubaVersion}-${platform}`;
   const root = options.releaseRoot ?? releaseRoot;
-  const channel = normalizeLocalReleaseChannel(options.channel ?? validated?.channel ?? EXPERIMENTAL_CHANNEL);
+  const channel = publicRelease
+    ? normalizePublicReleaseChannel(options.channel ?? validated.channel)
+    : normalizeLocalReleaseChannel(options.channel ?? validated?.channel ?? EXPERIMENTAL_CHANNEL);
   const validationStatus = validated?.validationStatus ?? "experimental_unvalidated";
   const releaseProfile = validated?.releaseProfile ?? EXPERIMENTAL_RELEASE_PROFILE;
   const installationProfile = validated?.installationProfile ?? EXPERIMENTAL_INSTALLATION_PROFILE;
@@ -126,10 +150,10 @@ export function createReleasePlan(options = {}) {
     validationStatus,
     releaseProfile,
     installationProfile,
-    releaseScope: LOCAL_RELEASE_SCOPE,
+    releaseScope: publicRelease ? PUBLIC_RELEASE_SCOPE : LOCAL_RELEASE_SCOPE,
     platformLimitation,
-    publicRelease: false,
-    limitations: releaseLimitations(platformLimitation, validationStatus),
+    publicRelease,
+    limitations: releaseLimitations({ platformLimitation, validationStatus, publicRelease }),
   };
 }
 
@@ -141,6 +165,16 @@ function normalizeLocalReleaseChannel(channel) {
     return channel;
   }
   throw new Error(`release channel ${channel} is not allowed for local-only artifacts`);
+}
+
+function normalizePublicReleaseChannel(channel) {
+  if (typeof channel !== "string" || channel.trim() === "") {
+    throw new Error("release channel must be a non-empty string");
+  }
+  if (channel === "github-release") {
+    return channel;
+  }
+  throw new Error(`release channel ${channel} is not allowed for public release artifacts`);
 }
 
 export function parsePackageReleaseArgs(rawArgs) {
@@ -157,6 +191,8 @@ export function parsePackageReleaseArgs(rawArgs) {
       options.channel = valueFromEquals(arg, "--channel");
     } else if (arg === "--experimental") {
       options.experimental = true;
+    } else if (arg === "--public") {
+      options.publicRelease = true;
     } else if (arg === "--allow-other-platform") {
       options.allowOtherPlatform = true;
     } else if (arg === "--no-build-compiler") {
@@ -272,8 +308,8 @@ cat > "$PREFIX/INSTALLATION.json" <<EOF
   "validation_status": "${plan.validationStatus}",
   "prefix": "$PREFIX",
   "cli_path": "$PREFIX/bin/touba",
-  "update_policy": "rerun install.sh --force from a newer local release archive",
-  "public_release": false
+  "update_policy": "${plan.publicRelease ? "reinstall from a newer GitHub Release archive or package-manager channel" : "rerun install.sh --force from a newer local release archive"}",
+  "public_release": ${String(plan.publicRelease)}
 }
 EOF
 
@@ -433,8 +469,8 @@ $Installation = [ordered]@{
   validation_status = "${plan.validationStatus}"
   prefix = $Prefix
   cli_path = (Join-Path $Prefix "bin\\touba.cmd")
-  update_policy = "rerun install.ps1 -Force from a newer local release archive"
-  public_release = $false
+  update_policy = "${plan.publicRelease ? "reinstall from a newer GitHub Release archive or package-manager channel" : "rerun install.ps1 -Force from a newer local release archive"}"
+  public_release = $${plan.publicRelease ? "true" : "false"}
 }
 $Installation | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $Prefix "INSTALLATION.json") -Encoding UTF8
 
@@ -479,8 +515,17 @@ function writeReleaseReadme(plan) {
   const platformLine = plan.validationStatus === "local_verified"
     ? `Platform validation: ${plan.validationStatus}`
     : `Platform validation: ${plan.validationStatus} (${plan.platformLimitation})`;
+  const releaseScopeLines = plan.publicRelease
+    ? [
+      "This archive is a Touba GitHub Release artifact.",
+      "Verify the downloaded archive with SHA256SUMS or CHECKSUMS.json before installing.",
+    ]
+    : [
+      "This bundle is a local release validation artifact.",
+      "It is not signed, not notarized and not distributed through a public update channel.",
+    ];
   writeFileSync(join(plan.releaseDir, "README.txt"), [
-    "Touba local release bundle",
+    plan.publicRelease ? "Touba release bundle" : "Touba local release bundle",
     "",
     "Install on POSIX shells:",
     "  sh install.sh --prefix \"$HOME/.touba\" --force",
@@ -496,8 +541,7 @@ function writeReleaseReadme(plan) {
     "  powershell -ExecutionPolicy Bypass -File uninstall.ps1 -Prefix \"$HOME\\.touba\"",
     "",
     platformLine,
-    "This bundle is a local release validation artifact.",
-    "It is not signed, not notarized and not distributed through a public update channel.",
+    ...releaseScopeLines,
     "",
     `Archive name: ${plan.releaseName}.tar.gz`,
     "",
@@ -554,10 +598,12 @@ function writeChecksums(plan, tarballSha256) {
 }
 
 function writeGithubReleaseDraft(plan, tarballSha256) {
-  writeFileSync(plan.draftPath, [
+  const lines = [
     `# Touba v${plan.toubaVersion} ${plan.platform}`,
     "",
-    "Manual GitHub Release draft. Keep this release unpublished until the V1 Go/No-Go gate is explicitly passed.",
+    plan.publicRelease
+      ? "GitHub Release notes for the Touba public archive generated by the release pipeline."
+      : "Manual GitHub Release draft. Keep this release unpublished until the V1 Go/No-Go gate is explicitly passed.",
     "",
     "## Artifacts",
     "",
@@ -577,11 +623,11 @@ function writeGithubReleaseDraft(plan, tarballSha256) {
     "",
     ...releaseInstallInstructions(plan),
     "",
-    "## Limits",
-    "",
-    ...plan.limitations.map((item) => `- ${item}`),
-    "",
-  ].join("\n"), "utf8");
+  ];
+  if (plan.limitations.length > 0) {
+    lines.push("## Notes", "", ...plan.limitations.map((item) => `- ${item}`), "");
+  }
+  writeFileSync(plan.draftPath, lines.join("\n"), "utf8");
 }
 
 function releaseInstallInstructions(plan) {
@@ -607,7 +653,13 @@ function releaseInstallInstructions(plan) {
   ];
 }
 
-function releaseLimitations(platformLimitation, validationStatus) {
+function releaseLimitations({ platformLimitation, validationStatus, publicRelease }) {
+  if (publicRelease) {
+    return [
+      "manual update policy; automatic self-update is not enabled in V1",
+      "signing and package-manager channels are separate release hardening tracks",
+    ];
+  }
   const limitations = [
     "local release bundle only",
     "not signed",
@@ -671,11 +723,12 @@ function readPackageVersion(packageJsonPath) {
 
 function usage() {
   return [
-    "Usage: package-release [--platform <platform>] [--experimental] [--json]",
+    "Usage: package-release [--platform <platform>] [--public] [--experimental] [--json]",
     "",
-    "Creates a local Touba release bundle for the current host platform.",
+    "Creates a Touba release bundle for the current host platform.",
     "Cross-platform packaging is refused by default.",
-    "Unvalidated platforms require --experimental and remain non-public artifacts.",
+    "Use --public only from the release workflow for validated public platforms.",
+    "Unvalidated local platforms require --experimental and remain non-public artifacts.",
   ].join("\n");
 }
 

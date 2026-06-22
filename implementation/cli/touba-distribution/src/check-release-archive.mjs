@@ -126,7 +126,7 @@ function verifyReleaseMetadata(plan, metadataPath) {
   assertEqual(metadata.platform, plan.platform, "release metadata platform");
   assertEqual(metadata.channel, plan.channel, "release metadata channel");
   assertEqual(metadata.validation_status, plan.validationStatus, "release metadata validation status");
-  assertEqual(metadata.public_release, false, "release metadata public flag");
+  assertEqual(metadata.public_release, plan.publicRelease, "release metadata public flag");
 }
 
 function releaseEnv(workspace, installPrefix) {

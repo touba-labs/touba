@@ -31,6 +31,7 @@ const copiedPackages = [
   "cli/touba-supply-chain",
   "cli/touba-manifest",
   "cli/touba-action-plan",
+  "cli/touba-trigger-service",
   "runtime/touba-runtime",
   "runtime/touba-handler-sdk",
 ];
@@ -174,6 +175,7 @@ function writeMetadata() {
       "touba-compile release binary",
       "Touba runtime Node packages",
       "Touba inspect and manifest CLI tools",
+      "Touba trigger ingress service",
       "Node runtime used to package the archive",
     ],
     excluded_prerequisites_for_users: [

@@ -129,7 +129,7 @@ execution trace of the same run.
 The primary installation surface is Touba Hub:
 https://pap-touba.github.io/documentation-site/hub/
 
-The CLI archives are published as GitHub Release assets:
+The CLI archives are published as versioned GitHub Release assets:
 
 | Platform | Archive |
 | --- | --- |
@@ -142,6 +142,12 @@ The CLI archives are published as GitHub Release assets:
 version, channel, platform, Hub URL, expected archive and reinstall commands.
 It does not perform automatic replacement; reinstall from a newer archive or
 from the package manager channel that installed Touba.
+
+Published Touba versions are preserved by default. Older versions stay
+available through GitHub Releases unless the principal maintainer explicitly
+marks a version retired or yanked. The release index in
+`implementation/release/releases.json` records the current version, supported
+platforms, release assets and retirement status.
 
 ## Example
 
