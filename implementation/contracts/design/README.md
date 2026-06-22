@@ -8,6 +8,16 @@ The source contract is `touba-design-tokens-v1.json`. The CSS file is a direct
 web export for Docusaurus, Tauri, and other web-based surfaces. Flutter and
 native clients should derive their constants from the JSON contract.
 
+Current consumers:
+
+- `documentation-site` keeps a generated CSS snapshot at
+ `src/css/touba-design-tokens-v1.css` and validates it against this contract
+ when the full workspace is available.
+- Touba IDE uses the same brand token family for icons and maps semantic roles
+ to VS Code light and dark themes.
+- client and Mobile prototypes must consume this contract before introducing
+ custom components.
+
 ## Themes
 
 The contract defines two semantic contexts:
