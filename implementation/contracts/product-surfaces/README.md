@@ -68,3 +68,16 @@ When the TA-1 validation report is `ok`, that command produces
 `touba-trace-timeline-v1` for client investigation views. The projection keeps
 event order, severity, source refs and redaction markers without copying raw
 payloads, prompts, memory content or secret values.
+
+The resource repositories currently emit:
+
+```bash
+https://raw.githubusercontent.com/pap-touba/touba-library/main/resources.json
+https://raw.githubusercontent.com/pap-touba/touba-registry/main/resources.json
+```
+
+Those files contain arrays of `touba-registry-resource-v1` entries for Hub and
+client resource browsers. `touba-library/resources.json` is generated from
+`catalog.json`; `touba-registry/resources.json` is generated from `index.json`
+and package metadata. They expose resource refs, type, version, status, digest,
+source repository, description and tags.
