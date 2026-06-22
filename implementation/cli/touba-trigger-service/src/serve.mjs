@@ -111,6 +111,22 @@ export async function createTriggerService(options) {
         });
         return;
       }
+      if (request.method === "GET" && request.url === "/status") {
+        if (authToken !== undefined && !authorized(request, authToken)) {
+          writeJson(response, 401, {
+            status: "error",
+            code: "TriggerUnauthorized",
+          });
+          return;
+        }
+        writeJson(response, 200, buildTriggerStatusContract({
+          document,
+          manifest,
+          state: loadTriggerState(statePath),
+          queue: loadQueue(queuePath),
+        }));
+        return;
+      }
 
       const route = matchRoute(routes, request.method, request.url);
       if (!route) {
@@ -189,18 +205,20 @@ export async function createTriggerService(options) {
         server.listen(port, host, resolveListen);
       });
       const address = server.address();
-      process.stdout.write(`${JSON.stringify({
-        event: "trigger_service_started",
-        host,
-        port: address.port,
-        routes: routes.map((route) => ({
-          method: route.method,
-          path: route.path,
-          trigger_ref: route.trigger.id,
-        })),
-        queue: queuePath,
-        state: statePath,
-      })}\n`);
+      if (options.quiet !== true) {
+        process.stdout.write(`${JSON.stringify({
+          event: "trigger_service_started",
+          host,
+          port: address.port,
+          routes: routes.map((route) => ({
+            method: route.method,
+            path: route.path,
+            trigger_ref: route.trigger.id,
+          })),
+          queue: queuePath,
+          state: statePath,
+        })}\n`);
+      }
       setImmediate(() => {
         processQueue({
           ...workerOptions,
@@ -497,6 +515,93 @@ function saveTriggerState(statePath, state) {
   state.updated_at = new Date().toISOString();
   mkdirSync(dirname(statePath), { recursive: true });
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+export function buildTriggerStatusContract({
+  document,
+  manifest,
+  state,
+  queue,
+  generatedAt = new Date().toISOString(),
+  triggerRef,
+}) {
+  const triggers = (document.definitions?.triggers ?? [])
+    .filter((trigger) => triggerRef === undefined || trigger.id === triggerRef)
+    .filter((trigger) => ["request", "schedule"].includes(trigger.event?.kind))
+    .map((trigger) => triggerStatusEntry(trigger, manifest, state, queue));
+  return {
+    schema_version: "touba-trigger-status-v1",
+    generated_at: generatedAt,
+    triggers,
+  };
+}
+
+function triggerStatusEntry(trigger, manifest, state, queue) {
+  const manifestTrigger = manifestTriggerForStatus(manifest, trigger.id);
+  const triggerState = state?.triggers?.[trigger.id] ?? {};
+  const queueEntries = queueEntriesForTrigger(queue, trigger.id);
+  const limits = triggerStatusLimits(trigger, manifestTrigger);
+  return {
+    trigger_ref: trigger.id,
+    kind: trigger.event.kind,
+    status: triggerStatus(trigger, manifestTrigger),
+    next_run_at: null,
+    limits,
+    state: {
+      accepted_count: safeNonNegativeInteger(triggerState.accepted_count),
+      refused_count: safeNonNegativeInteger(triggerState.refused_count),
+      last_event_id: typeof triggerState.last_event_id === "string" ? triggerState.last_event_id : null,
+    },
+    queue: {
+      pending: queueEntries.filter((entry) => entry.status === "queued").length,
+      processing: queueEntries.filter((entry) => entry.status === "processing").length,
+      dead_letter: queueEntries.filter((entry) => entry.status === "dead_lettered").length,
+    },
+  };
+}
+
+function manifestTriggerForStatus(manifest, triggerRef) {
+  if (manifest?.triggers instanceof Map) {
+    return manifest.triggers.get(triggerRef);
+  }
+  if (manifest?.triggers && typeof manifest.triggers === "object" && !Array.isArray(manifest.triggers)) {
+    return manifest.triggers[triggerRef];
+  }
+  return undefined;
+}
+
+function triggerStatus(trigger, manifestTrigger) {
+  if (!manifestTrigger) {
+    return "blocked";
+  }
+  if (manifestTrigger.enabled === false) {
+    return "disabled";
+  }
+  if (manifestTrigger.source?.kind !== trigger.event?.kind) {
+    return "blocked";
+  }
+  return "enabled";
+}
+
+function triggerStatusLimits(trigger, manifestTrigger) {
+  const source = manifestTrigger?.limits ?? trigger.limits ?? {};
+  return {
+    max_runs_per_day: safeNullableInteger(source.max_runs_per_day),
+    timeout_ms: safeNullableInteger(source.timeout_ms),
+  };
+}
+
+function queueEntriesForTrigger(queue, triggerRef) {
+  return (Array.isArray(queue?.entries) ? queue.entries : [])
+    .filter((entry) => entry?.trigger_ref === triggerRef);
+}
+
+function safeNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function safeNullableInteger(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function normalizeTriggerStateDocument(document) {

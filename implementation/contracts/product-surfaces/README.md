@@ -47,3 +47,13 @@ touba run program.air.json --output run-summary
 That command produces `touba-run-summary-v1` for client and Mobile adapters.
 The same output mode is valid in `touba.run-plan.json` through
 `outputs.mode = "run-summary"`.
+
+The trigger service currently emits:
+
+```bash
+curl http://127.0.0.1:8787/status
+```
+
+That endpoint produces `touba-trigger-status-v1` with trigger refs, kinds,
+status, limits, replay/quota state and queue counters. It does not expose auth
+tokens, HMAC secrets or raw webhook payloads.

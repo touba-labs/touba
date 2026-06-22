@@ -6,9 +6,18 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createTriggerService } from "../src/serve.mjs";
+import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
+import {
+  buildTriggerStatusContract,
+  createTriggerService,
+} from "../src/serve.mjs";
 
 const servePath = new URL("../src/serve.mjs", import.meta.url).pathname;
+const implementationDir = new URL("../../..", import.meta.url).pathname;
+const triggerStatusSchemaPath = join(
+  implementationDir,
+  "contracts/product-surfaces/schemas/touba-trigger-status-v1.schema.json",
+);
 
 test("serves a request trigger through HTTP, durable queue, state and trace", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-"));
@@ -83,6 +92,128 @@ test("refuses replayed webhook event ids before rerunning the target strategy", 
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("serves touba-trigger-status-v1 without exposing webhook payloads", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-status-"));
+  let service;
+  try {
+    const fixture = writeFixture(workspace);
+    service = await createTriggerService({
+      airPath: fixture.airPath,
+      manifestPath: fixture.manifestPath,
+      statePath: fixture.statePath,
+      queuePath: fixture.queuePath,
+      traceDir: fixture.traceDir,
+      port: 0,
+      quiet: true,
+    });
+    await service.start();
+    const address = service.server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const initialResponse = await fetch(`${baseUrl}/status`);
+    assert.equal(initialResponse.status, 200);
+    const initialStatus = await initialResponse.json();
+    assert.deepEqual(validateObject(triggerStatusSchema(), initialStatus), []);
+    assert.equal(initialStatus.triggers[0].queue.pending, 0);
+
+    const response = await fetch(`${baseUrl}/webhook/run`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-touba-event-id": "evt-webhook-status",
+      },
+      body: JSON.stringify({ payload: "raw-secret-payload" }),
+    });
+    assert.equal(response.status, 202);
+    await waitForQueueEntryStatus(fixture.queuePath, "evt-webhook-status", "succeeded");
+
+    const statusResponse = await fetch(`${baseUrl}/status`);
+    assert.equal(statusResponse.status, 200);
+    const status = await statusResponse.json();
+    assert.deepEqual(validateObject(triggerStatusSchema(), status), []);
+    assert.equal(JSON.stringify(status).includes("raw-secret-payload"), false);
+    assert.equal(status.triggers[0].trigger_ref, "trigger:examples.webhook/WebhookRun");
+    assert.equal(status.triggers[0].kind, "request");
+    assert.equal(status.triggers[0].status, "enabled");
+    assert.equal(status.triggers[0].state.accepted_count, 1);
+    assert.equal(status.triggers[0].state.last_event_id, "evt-webhook-status");
+    assert.equal(status.triggers[0].queue.pending, 0);
+    assert.equal(status.triggers[0].queue.processing, 0);
+    assert.equal(status.triggers[0].queue.dead_letter, 0);
+  } finally {
+    if (service?.server.listening) {
+      await closeServer(service.server);
+    }
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("projects request and schedule triggers to touba-trigger-status-v1", () => {
+  const document = webhookAir();
+  document.definitions.triggers.push({
+    id: "trigger:examples.webhook/DailyRun",
+    name: "DailyRun",
+    event: {
+      kind: "schedule",
+      value: "every 1h",
+      source_ref: sourceRef(),
+    },
+    target_ref: "strategy:examples.webhook/RunWebhook",
+    target_kind: "strategy",
+    arguments: [],
+    limits: {
+      max_runs_per_day: 1,
+      timeout_ms: 30000,
+      source_ref: sourceRef(),
+    },
+    source_ref: sourceRef(),
+  });
+  const manifest = webhookManifest();
+  manifest.triggers["trigger:examples.webhook/DailyRun"] = {
+    enabled: true,
+    source: { kind: "schedule" },
+    limits: {
+      max_runs_per_day: 1,
+      timeout_ms: 30000,
+    },
+  };
+  const status = buildTriggerStatusContract({
+    document,
+    manifest,
+    generatedAt: "2026-06-22T00:00:00Z",
+    state: {
+      triggers: {
+        "trigger:examples.webhook/WebhookRun": {
+          accepted_count: 2,
+          refused_count: 1,
+          last_event_id: "evt-webhook-last",
+        },
+        "trigger:examples.webhook/DailyRun": {
+          accepted_count: 1,
+          refused_count: 0,
+          last_event_id: "evt-schedule-last",
+        },
+      },
+    },
+    queue: {
+      entries: [
+        { trigger_ref: "trigger:examples.webhook/WebhookRun", status: "queued" },
+        { trigger_ref: "trigger:examples.webhook/WebhookRun", status: "processing" },
+        { trigger_ref: "trigger:examples.webhook/WebhookRun", status: "dead_lettered" },
+      ],
+    },
+  });
+
+  assert.deepEqual(validateObject(triggerStatusSchema(), status), []);
+  assert.equal(status.generated_at, "2026-06-22T00:00:00Z");
+  assert.deepEqual(status.triggers.map((trigger) => trigger.kind), ["request", "schedule"]);
+  assert.equal(status.triggers[0].queue.pending, 1);
+  assert.equal(status.triggers[0].queue.processing, 1);
+  assert.equal(status.triggers[0].queue.dead_letter, 1);
+  assert.equal(status.triggers[1].limits.max_runs_per_day, 1);
+  assert.equal(status.triggers[1].next_run_at, null);
 });
 
 test("requires an explicit auth token env var for non-loopback hosts", async () => {
@@ -270,6 +401,29 @@ async function postOne(fixture, eventId) {
   assert.equal(response.status, 202);
   const exit = await once(child, "exit");
   assert.equal(exit[0], 0);
+}
+
+async function closeServer(server) {
+  await new Promise((resolveClose) => server.close(resolveClose));
+}
+
+async function waitForQueueEntryStatus(queuePath, eventId, status) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    if (existsSync(queuePath)) {
+      const queue = JSON.parse(readFileSync(queuePath, "utf8"));
+      const entry = queue.entries?.find((candidate) => candidate.event_id === eventId);
+      if (entry?.status === status) {
+        return entry;
+      }
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+  }
+  throw new Error(`queue entry ${eventId} did not reach ${status}`);
+}
+
+function triggerStatusSchema() {
+  return JSON.parse(readFileSync(triggerStatusSchemaPath, "utf8"));
 }
 
 function spawnService(fixture, extraArgs = [], extraEnv = {}) {
