@@ -26,7 +26,6 @@ export const PRODUCT_SURFACE_CONTRACTS = Object.freeze([
   "touba-trigger-queue-health-v0.1",
   "touba-supply-chain-status-v0.1",
   "touba-governance-readiness-v0.1",
-  "touba-benchmark-regression-v0.1",
   "touba-cost-observatory-v0.1",
   "touba-handler-sandbox-status-v0.1",
   "touba-mobile-notification-v0.1",

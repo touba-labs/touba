@@ -11,7 +11,6 @@ import {
   buildGovernanceReadiness,
   buildHandlerSandboxStatus,
   buildSupplyChainStatus,
-  readBenchmarkRegression,
   readCostObservatory,
   readMobileEscalation,
   readMobileNotifications,
@@ -79,7 +78,6 @@ test("live state composes project, run, trigger, decision and event surfaces", (
   assert.equal(state.trigger_queue_health.schema_version, "touba-trigger-queue-health-v0.1");
   assert.equal(state.supply_chain_status.schema_version, "touba-supply-chain-status-v0.1");
   assert.equal(state.governance_readiness.schema_version, "touba-governance-readiness-v0.1");
-  assert.equal(state.benchmark_regressions.schema_version, "touba-benchmark-regression-v0.1");
   assert.equal(state.cost_observatory.schema_version, "touba-cost-observatory-v0.1");
   assert.equal(state.handler_sandbox_status.schema_version, "touba-handler-sandbox-status-v0.1");
   assert.equal(state.mobile_notifications.schema_version, "touba-mobile-notification-v0.1");
@@ -480,10 +478,6 @@ test("product identity surface reads fixture and project identity stores", () =>
 });
 
 test("observability and mobile product surfaces read fixture contracts", () => {
-  const benchmark = readBenchmarkRegression({
-    contractsRoot,
-    benchmarkRegressionPath: join(tmpdir(), "missing-benchmark-regression.json"),
-  });
   const costs = readCostObservatory({
     contractsRoot,
     costObservatoryPath: join(tmpdir(), "missing-cost-observatory.json"),
@@ -501,12 +495,10 @@ test("observability and mobile product surfaces read fixture contracts", () => {
     mobileEscalationPath: join(tmpdir(), "missing-mobile-escalation.json"),
   });
 
-  assertMatchesSchema("touba-benchmark-regression-v0.1", benchmark);
   assertMatchesSchema("touba-cost-observatory-v0.1", costs);
   assertMatchesSchema("touba-mobile-notification-v0.1", notifications);
   assertMatchesSchema("touba-mobile-quick-approval-policy-v0.1", quickApproval);
   assertMatchesSchema("touba-mobile-escalation-v0.1", escalation);
-  assert.equal(benchmark.groups.some((group) => group.scope === "common_surface"), true);
   assert.equal(costs.summary.estimate_basis.includes("estimate"), true);
   assert.equal(notifications.notifications.every((item) => !JSON.stringify(item).includes("FAKE_SECRET")), true);
   assert.equal(quickApproval.require_biometric, true);

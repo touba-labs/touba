@@ -32,7 +32,6 @@ const DEFAULT_TRACE_TIMELINE_PATH = ".touba/current-trace-timeline.json";
 const DEFAULT_TRIGGER_STATUS_PATH = ".touba/trigger-status.json";
 const DEFAULT_HUMAN_REQUESTS_PATH = ".touba/human-requests.json";
 const DEFAULT_PRODUCT_IDENTITY_PATH = ".touba/product-identity.json";
-const DEFAULT_BENCHMARK_REGRESSION_PATH = ".touba/benchmark-regression.json";
 const DEFAULT_COST_OBSERVATORY_PATH = ".touba/cost-observatory.json";
 const DEFAULT_HANDLER_SANDBOX_STATUS_PATH = ".touba/handler-sandbox-status.json";
 const DEFAULT_MOBILE_NOTIFICATIONS_PATH = ".touba/mobile-notifications.json";
@@ -55,7 +54,6 @@ const PRODUCT_IDENTITY_SCHEMA_VERSION = "touba-product-identity-v0.1";
 const SUPPLY_CHAIN_STATUS_SCHEMA_VERSION = "touba-supply-chain-status-v0.1";
 const GOVERNANCE_READINESS_SCHEMA_VERSION = "touba-governance-readiness-v0.1";
 const TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION = "touba-trigger-queue-health-v0.1";
-const BENCHMARK_REGRESSION_SCHEMA_VERSION = "touba-benchmark-regression-v0.1";
 const COST_OBSERVATORY_SCHEMA_VERSION = "touba-cost-observatory-v0.1";
 const HANDLER_SANDBOX_STATUS_SCHEMA_VERSION = "touba-handler-sandbox-status-v0.1";
 const MOBILE_NOTIFICATION_SCHEMA_VERSION = "touba-mobile-notification-v0.1";
@@ -112,7 +110,6 @@ const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
   "/triggers/queue-health": TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION,
   "/supply-chain/status": SUPPLY_CHAIN_STATUS_SCHEMA_VERSION,
   "/governance/readiness": GOVERNANCE_READINESS_SCHEMA_VERSION,
-  "/benchmarks/regressions": BENCHMARK_REGRESSION_SCHEMA_VERSION,
   "/budgets/costs": COST_OBSERVATORY_SCHEMA_VERSION,
   "/runtime/sandbox": HANDLER_SANDBOX_STATUS_SCHEMA_VERSION,
   "/mobile/notifications": MOBILE_NOTIFICATION_SCHEMA_VERSION,
@@ -165,9 +162,6 @@ export function createToubaProjectServer(options = {}) {
   );
   const productIdentityPath = resolve(
     options.productIdentityPath ?? join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
-  );
-  const benchmarkRegressionPath = resolve(
-    options.benchmarkRegressionPath ?? join(projectRoot, DEFAULT_BENCHMARK_REGRESSION_PATH),
   );
   const costObservatoryPath = resolve(
     options.costObservatoryPath ?? join(projectRoot, DEFAULT_COST_OBSERVATORY_PATH),
@@ -252,7 +246,6 @@ export function createToubaProjectServer(options = {}) {
             trigger_queue_health: "/triggers/queue-health",
             supply_chain_status: "/supply-chain/status",
             governance_readiness: "/governance/readiness",
-            benchmark_regressions: "/benchmarks/regressions",
             cost_observatory: "/budgets/costs",
             runtime_sandbox: "/runtime/sandbox",
             mobile_notifications: "/mobile/notifications",
@@ -287,7 +280,6 @@ export function createToubaProjectServer(options = {}) {
           humanRequestsPath,
           humanDecisionsPath,
           productIdentityPath,
-          benchmarkRegressionPath,
           costObservatoryPath,
           handlerSandboxStatusPath,
           mobileNotificationsPath,
@@ -357,13 +349,6 @@ export function createToubaProjectServer(options = {}) {
           humanRequestsPath,
           humanDecisionsPath,
           kind: "human_review",
-        }));
-        return;
-      }
-      if (request.method === "GET" && url.pathname === "/benchmarks/regressions") {
-        writeJson(response, 200, readBenchmarkRegression({
-          contractsRoot,
-          benchmarkRegressionPath,
         }));
         return;
       }
@@ -595,7 +580,6 @@ export function buildLiveState({
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   humanDecisionsPath = join(projectRoot, DEFAULT_HUMAN_DECISIONS_PATH),
   productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
-  benchmarkRegressionPath = join(projectRoot, DEFAULT_BENCHMARK_REGRESSION_PATH),
   costObservatoryPath = join(projectRoot, DEFAULT_COST_OBSERVATORY_PATH),
   handlerSandboxStatusPath = join(projectRoot, DEFAULT_HANDLER_SANDBOX_STATUS_PATH),
   mobileNotificationsPath = join(projectRoot, DEFAULT_MOBILE_NOTIFICATIONS_PATH),
@@ -633,7 +617,6 @@ export function buildLiveState({
       changeProposalsPath,
       generatedAt,
     }),
-    benchmark_regressions: readBenchmarkRegression({ contractsRoot, benchmarkRegressionPath }),
     cost_observatory: readCostObservatory({ contractsRoot, costObservatoryPath }),
     handler_sandbox_status: buildHandlerSandboxStatus({
       contractsRoot,
@@ -1496,17 +1479,6 @@ export function readProductIdentity({ contractsRoot, productIdentityPath }) {
     message: "project product identity does not match touba-product-identity-v0.1",
   });
   return stored ?? readContractFixture({ contractsRoot, schemaVersion: PRODUCT_IDENTITY_SCHEMA_VERSION });
-}
-
-export function readBenchmarkRegression({ contractsRoot, benchmarkRegressionPath }) {
-  const stored = readOptionalContractFile({
-    contractsRoot,
-    filePath: benchmarkRegressionPath,
-    schemaVersion: BENCHMARK_REGRESSION_SCHEMA_VERSION,
-    errorCode: "ToubaServeBenchmarkRegressionInvalid",
-    message: "project benchmark regression report does not match touba-benchmark-regression-v0.1",
-  });
-  return stored ?? readContractFixture({ contractsRoot, schemaVersion: BENCHMARK_REGRESSION_SCHEMA_VERSION });
 }
 
 export function readCostObservatory({ contractsRoot, costObservatoryPath }) {
