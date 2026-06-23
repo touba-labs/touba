@@ -880,6 +880,147 @@ test("change proposals reject unsafe paths and invalid Touba JSON metadata", () 
   }
 });
 
+test("change proposals validate Touba project metadata schemas before review", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-metadata-"));
+  try {
+    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    assert.throws(
+      () => proposeProjectChange({
+        projectRoot: root,
+        changeProposalsPath,
+        proposal: {
+          schema_version: "touba-project-change-proposal-v0.1",
+          proposal_id: "bad_manifest",
+          action: "write_text_file",
+          target: { path: "touba.manifest.json" },
+          requested_by: { kind: "studio", id: "touba-studio" },
+          content: JSON.stringify({ bindings: [] }),
+        },
+      }),
+      /failed validation/,
+    );
+    assert.throws(
+      () => proposeProjectChange({
+        projectRoot: root,
+        changeProposalsPath,
+        proposal: {
+          schema_version: "touba-project-change-proposal-v0.1",
+          proposal_id: "bad_ownership",
+          action: "write_text_file",
+          target: { path: "touba.ownership.json" },
+          requested_by: { kind: "studio", id: "touba-studio" },
+          content: JSON.stringify({
+            ownership_schema_version: "touba-ownership-v0.1",
+            grants: ["network"],
+          }),
+        },
+      }),
+      /failed validation/,
+    );
+    assert.throws(
+      () => proposeProjectChange({
+        projectRoot: root,
+        changeProposalsPath,
+        proposal: {
+          schema_version: "touba-project-change-proposal-v0.1",
+          proposal_id: "bad_resources",
+          action: "write_text_file",
+          target: { path: "touba.resources.json" },
+          requested_by: { kind: "studio", id: "touba-studio" },
+          content: JSON.stringify({
+            resource_bindings_schema_version: "touba-resource-bindings-v0.1",
+          }),
+        },
+      }),
+      /failed validation/,
+    );
+
+    const accepted = proposeProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      proposal: {
+        schema_version: "touba-project-change-proposal-v0.1",
+        proposal_id: "package_ok",
+        action: "write_text_file",
+        target: { path: "touba.package.json" },
+        requested_by: { kind: "studio", id: "touba-studio" },
+        content: JSON.stringify({
+          package_schema_version: "touba-package-v0.1",
+          name: "org.example.demo",
+          version: "0.1.0",
+          exports: {
+            agents: [],
+            skills: [],
+            tools: [],
+          },
+        }),
+      },
+    });
+    assert.equal(accepted.status, "proposed");
+    assert.equal(accepted.validations[0].code, "ToubaServeChangeContentValidated");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("change proposals allow guarded handler stubs but reject arbitrary handler code", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-handler-stub-"));
+  try {
+    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const accepted = proposeProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      proposal: {
+        schema_version: "touba-project-change-proposal-v0.1",
+        proposal_id: "handler_stub_ok",
+        action: "write_text_file",
+        target: { path: "handlers/studio/studio_draft_tool.handler.mjs" },
+        requested_by: { kind: "studio", id: "touba-studio" },
+        content: [
+          "#!/usr/bin/env node",
+          "// Touba Studio generated handler stub v0.1",
+          "const chunks = [];",
+          "for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));",
+          "const response = {",
+          "  protocol: \"touba-tool-handler-v1\",",
+          "  ok: false,",
+          "  error: {",
+          "    code: \"HandlerStubNotImplemented\",",
+          "    message: \"Complete this handler before binding it.\"",
+          "  }",
+          "};",
+          "process.stdout.write(`${JSON.stringify(response)}\\n`);",
+          "",
+        ].join("\n"),
+      },
+    });
+    assert.equal(accepted.status, "proposed");
+
+    assert.throws(
+      () => proposeProjectChange({
+        projectRoot: root,
+        changeProposalsPath,
+        proposal: {
+          schema_version: "touba-project-change-proposal-v0.1",
+          proposal_id: "handler_arbitrary",
+          action: "write_text_file",
+          target: { path: "handlers/studio/arbitrary.handler.mjs" },
+          requested_by: { kind: "studio", id: "touba-studio" },
+          content: [
+            "// Touba Studio generated handler stub v0.1",
+            "import { readFileSync } from 'node:fs';",
+            "process.stdout.write(process.env.SECRET);",
+            "",
+          ].join("\n"),
+        },
+      }),
+      /failed validation/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("accepts valid decisions and rejects replay", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-"));
   try {

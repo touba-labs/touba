@@ -97,6 +97,7 @@ const NAMED_PROJECT_ARTIFACTS = Object.freeze(new Set([
   "touba.package.json",
   "touba.ownership.json",
   "touba.lock.json",
+  "touba.resources.json",
   "resources.json",
 ]));
 const CHANGE_TARGET_JSON_FILES = Object.freeze(new Set([
@@ -104,6 +105,7 @@ const CHANGE_TARGET_JSON_FILES = Object.freeze(new Set([
   "touba.manifest.json",
   "touba.package.json",
   "touba.ownership.json",
+  "touba.resources.json",
   "resources.json",
 ]));
 const ACCEPTED_DECISION_CONTRACTS = Object.freeze([
@@ -2828,7 +2830,8 @@ function validateChangeContent(proposal, { projectRoot } = {}) {
   const targetPath = proposal.target.path;
   if (CHANGE_TARGET_JSON_FILES.has(basename(targetPath))) {
     try {
-      JSON.parse(proposal.content);
+      const document = JSON.parse(proposal.content);
+      diagnostics.push(...validateProjectMetadataDocument(basename(targetPath), document));
     } catch (cause) {
       diagnostics.push(serviceDiagnostic("ToubaServeChangeJsonInvalid", `${targetPath} is not valid JSON: ${cause.message}`));
     }
@@ -2836,9 +2839,97 @@ function validateChangeContent(proposal, { projectRoot } = {}) {
   if (targetPath.endsWith(".tb")) {
     diagnostics.push(...validateToubaSourcePatch(proposal.content, { projectRoot }));
   }
+  if (isAllowedHandlerStubTarget(targetPath)) {
+    diagnostics.push(...validateHandlerStubPatch(targetPath, proposal.content));
+  }
   return diagnostics.length === 0
     ? [serviceDiagnostic("ToubaServeChangeContentValidated", "change content passed project-server validation", "info")]
     : diagnostics;
+}
+
+function validateProjectMetadataDocument(fileName, document) {
+  if (!isPlainObject(document)) {
+    return [serviceDiagnostic("ToubaServeChangeJsonShapeInvalid", `${fileName} must be a JSON object`)];
+  }
+  if (fileName === "touba.project.json") {
+    return validateVersionedProjectMetadata({
+      document,
+      fileName,
+      field: "project_version",
+      expected: "touba-project-v1",
+    });
+  }
+  if (fileName === "touba.manifest.json") {
+    const diagnostics = validateVersionedProjectMetadata({
+      document,
+      fileName,
+      field: "manifest_version",
+      expected: "touba-manifest-v1",
+    });
+    for (const field of ["bindings", "triggers"]) {
+      if (document[field] !== undefined && !isPlainObject(document[field])) {
+        diagnostics.push(serviceDiagnostic("ToubaServeChangeManifestShapeInvalid", `${fileName}.${field} must be an object when present`));
+      }
+    }
+    return diagnostics;
+  }
+  if (fileName === "touba.package.json") {
+    const diagnostics = validateVersionedProjectMetadata({
+      document,
+      fileName,
+      field: "package_schema_version",
+      expected: "touba-package-v0.1",
+    });
+    if (typeof document.name !== "string" || document.name.trim() === "") {
+      diagnostics.push(serviceDiagnostic("ToubaServeChangePackageNameMissing", `${fileName}.name is required`));
+    }
+    if (typeof document.version !== "string" || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(document.version)) {
+      diagnostics.push(serviceDiagnostic("ToubaServeChangePackageVersionInvalid", `${fileName}.version must be semver`));
+    }
+    if (!isPlainObject(document.exports)) {
+      diagnostics.push(serviceDiagnostic("ToubaServeChangePackageExportsMissing", `${fileName}.exports must be an object`));
+    }
+    return diagnostics;
+  }
+  if (fileName === "touba.ownership.json") {
+    const diagnostics = validateVersionedProjectMetadata({
+      document,
+      fileName,
+      field: "ownership_schema_version",
+      expected: "touba-ownership-v0.1",
+    });
+    for (const field of ["teams", "owners", "review_gates"]) {
+      if (document[field] !== undefined && !isPlainObject(document[field])) {
+        diagnostics.push(serviceDiagnostic("ToubaServeChangeOwnershipShapeInvalid", `${fileName}.${field} must be an object when present`));
+      }
+    }
+    if (document.grants !== undefined || document.secrets !== undefined || document.capabilities !== undefined) {
+      diagnostics.push(serviceDiagnostic("ToubaServeChangeOwnershipAuthorityFieldForbidden", `${fileName} must not grant runtime authority`));
+    }
+    return diagnostics;
+  }
+  if (fileName === "touba.resources.json" || fileName === "resources.json") {
+    const diagnostics = validateVersionedProjectMetadata({
+      document,
+      fileName,
+      field: "resource_bindings_schema_version",
+      expected: "touba-resource-bindings-v0.1",
+    });
+    if (!isPlainObject(document.resources)) {
+      diagnostics.push(serviceDiagnostic("ToubaServeChangeResourcesMissing", `${fileName}.resources must be an object`));
+    }
+    return diagnostics;
+  }
+  return [];
+}
+
+function validateVersionedProjectMetadata({ document, expected, field, fileName }) {
+  return document[field] === expected
+    ? []
+    : [serviceDiagnostic(
+      "ToubaServeChangeMetadataSchemaInvalid",
+      `${fileName}.${field} must be ${expected}`,
+    )];
 }
 
 function projectChangeSummary(proposal) {
@@ -2925,7 +3016,44 @@ function isAllowedChangeTarget(relativePath) {
   if (normalized.startsWith(".git/") || normalized.startsWith(".touba/") || normalized.startsWith("node_modules/")) {
     return false;
   }
-  return normalized.endsWith(".tb") || CHANGE_TARGET_JSON_FILES.has(basename(normalized));
+  return normalized.endsWith(".tb")
+    || CHANGE_TARGET_JSON_FILES.has(basename(normalized))
+    || isAllowedHandlerStubTarget(normalized);
+}
+
+function isAllowedHandlerStubTarget(relativePath) {
+  const normalized = normalizeRelativePath(relativePath);
+  return normalized.startsWith("handlers/")
+    && normalized.endsWith(".handler.mjs")
+    && !normalized.split("/").includes("..");
+}
+
+function validateHandlerStubPatch(targetPath, content) {
+  const diagnostics = [];
+  if (!content.includes("project client generated handler stub v0.1")) {
+    diagnostics.push(serviceDiagnostic("ToubaServeChangeHandlerStubMarkerMissing", `${targetPath} must be a client-generated handler stub`));
+  }
+  if (!content.includes("HandlerStubNotImplemented")) {
+    diagnostics.push(serviceDiagnostic("ToubaServeChangeHandlerStubNotImplementedMissing", `${targetPath} must remain explicitly not implemented`));
+  }
+  const forbiddenPatterns = [
+    /\bimport\b/u,
+    /\brequire\s*\(/u,
+    /\bfetch\s*\(/u,
+    /\bchild_process\b/u,
+    /\bexec\s*\(/u,
+    /\bspawn\s*\(/u,
+    /\bprocess\.env\b/u,
+    /\bfs\b/u,
+    /\bnode:/u,
+    /\bhttps?\b/u,
+    /\beval\s*\(/u,
+    /\bFunction\s*\(/u,
+  ];
+  if (forbiddenPatterns.some((pattern) => pattern.test(content))) {
+    diagnostics.push(serviceDiagnostic("ToubaServeChangeHandlerStubUnsafeContent", `${targetPath} contains code outside the handler-stub guard`));
+  }
+  return diagnostics;
 }
 
 function safeProjectPath(projectRoot, relativePath) {
