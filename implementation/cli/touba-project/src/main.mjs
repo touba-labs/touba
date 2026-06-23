@@ -60,6 +60,7 @@ const FEATURE_VERSIONS = Object.freeze({
   rest_scaffold: "touba-rest-scaffold-v0.1",
   trigger_ingress: "touba-trigger-ingress-v0.1",
   project_server: "touba-project-server-v0.1",
+  project_refresh: "touba-project-refresh-v0.1",
   trace_output: "trace-minimal-v0.1",
 });
 const PUBLIC_COMMANDS = Object.freeze({
@@ -76,6 +77,7 @@ const PUBLIC_COMMANDS = Object.freeze({
   mcp_import: true,
   rest_scaffold: true,
   serve: true,
+  refresh: true,
   manifest_generate: true,
   handler_stub: true,
   version: true,
@@ -207,6 +209,9 @@ async function dispatch(rawArgs) {
   }
   if (command === "serve") {
     return serveCommand(rest);
+  }
+  if (command === "refresh") {
+    return refreshCommand(rest);
   }
   if (command === "inspect") {
     return inspectCommand(rest);
@@ -469,7 +474,7 @@ function serveCommand(rawArgs) {
 
 function serveUsage() {
   return [
-    "Usage: touba serve [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--change-proposals <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the Touba project server for client, Mobile and contract clients.",
     "",
@@ -481,6 +486,78 @@ function serveUsage() {
     "The server exposes project state, live events, versioned contracts and human decision intake.",
     "It does not execute agents or grant authority.",
   ].join("\n");
+}
+
+async function refreshCommand(rawArgs) {
+  const options = parseRefreshOptions(rawArgs);
+  if (options.help === true) {
+    return {
+      text: "Usage: touba refresh --url <touba-serve-url> [--auth-token-env NAME] [--reason <text>]",
+      exitCode: 0,
+    };
+  }
+  const endpoint = new URL("/project/refresh", options.url.replace(/\/$/u, ""));
+  const headers = { "content-type": "application/json" };
+  if (options.authTokenEnv !== undefined) {
+    const token = process.env[options.authTokenEnv];
+    if (!token || token.trim() === "") {
+      throw new Error(`environment variable ${options.authTokenEnv} is required`);
+    }
+    headers.authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      schema_version: "touba-project-refresh-request-v0.1",
+      requested_by: { kind: "cli", id: "touba refresh" },
+      reason: options.reason,
+    }),
+  });
+  const body = await response.text();
+  let report;
+  try {
+    report = JSON.parse(body);
+  } catch {
+    throw new Error(`touba refresh received non-JSON response from ${endpoint}`);
+  }
+  if (!response.ok) {
+    const code = report.code ? ` [${report.code}]` : "";
+    throw new Error(`touba refresh failed${code}: ${report.message ?? response.status}`);
+  }
+  return { json: true, report, exitCode: 0 };
+}
+
+function parseRefreshOptions(rawArgs) {
+  const options = { help: false, reason: "cli-refresh" };
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === "--help" || arg === "-h") {
+      options.help = true;
+    } else if (arg === "--url") {
+      options.url = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--auth-token-env") {
+      options.authTokenEnv = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--reason") {
+      options.reason = requiredValue(arg, rawArgs, ++index);
+    } else {
+      throw new Error(`unknown refresh option ${arg}`);
+    }
+  }
+  if (options.help !== true && options.url === undefined) {
+    throw new Error("touba refresh requires --url <touba-serve-url>");
+  }
+  if (options.url !== undefined) {
+    try {
+      const parsed = new URL(options.url);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error("unsupported protocol");
+      }
+    } catch {
+      throw new Error("touba refresh --url must be an http(s) URL");
+    }
+  }
+  return options;
 }
 
 function inspectCommand(rawArgs) {
@@ -1377,7 +1454,8 @@ function printUsage() {
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
   touba run <program.air.json> [--profile dev|prod] [runtime options]
-  touba serve [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
+  touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--change-proposals <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
+  touba refresh --url <touba-serve-url> [--auth-token-env NAME] [--reason <text>]
   touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>
   touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]
   touba inspect <artifact> [inspect options] [--report-out <report.inspect.txt>]

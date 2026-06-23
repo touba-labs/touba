@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -22,6 +22,7 @@ import {
   validateSkillPacks,
 } from "../src/skill-packs.mjs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
+import { createToubaProjectServer } from "../../touba-project-server/src/serve.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const cliPath = new URL("../src/main.mjs", import.meta.url).pathname;
@@ -307,7 +308,55 @@ test("CLI serve command exposes the Touba project server", () => {
   assert.match(result.stdout, /touba serve/);
   assert.match(result.stdout, /Touba project server/);
   assert.match(result.stdout, /human-decisions/);
+  assert.match(result.stdout, /project-root/);
+  assert.match(result.stdout, /change-proposals/);
   assert.match(result.stdout, /port: 8791/);
+});
+
+test("CLI refresh signals an existing Touba project server", async () => {
+  const root = tempRoot();
+  const contractsRoot = join(implementationRoot, "contracts", "product-surfaces");
+  writeFileSync(join(root, "main.tb"), "module demo.main\n", "utf8");
+  const service = createToubaProjectServer({
+    contractsRoot,
+    projectRoot: root,
+    humanDecisionsPath: join(root, ".touba", "human-decisions.json"),
+    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    port: 0,
+    quiet: true,
+  });
+  try {
+    await service.start();
+    const url = `http://127.0.0.1:${service.server.address().port}`;
+    writeFileSync(join(root, "main.tb"), "module demo.main\n// changed\n", "utf8");
+    const result = await runCliAsync([
+      cliPath,
+      "refresh",
+      "--url",
+      url,
+      "--reason",
+      "test-refresh",
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.schema_version, "touba-project-refresh-v0.1");
+    assert.equal(report.status, "refreshed");
+    assert.deepEqual(report.changes.changed_artifacts.map((item) => item.relative_path), ["main.tb"]);
+  } finally {
+    await service.stop();
+    cleanup(root);
+  }
+});
+
+test("CLI refresh requires an explicit project server URL", () => {
+  const result = spawnSync(process.execPath, [
+    cliPath,
+    "refresh",
+  ], { encoding: "utf8" });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /requires --url/);
 });
 
 test("CLI rejects the legacy product command", () => {
@@ -1897,7 +1946,9 @@ test("CLI version reports public command and schema versions", () => {
   assert.equal(report.features.run_profiles, "touba-run-profile-v0.1");
   assert.equal(report.features.human_checkpoints, "touba-run-checkpoint-v0.1");
   assert.equal(report.features.registry_static_resolve, "touba-static-registry-lock-v0.1");
+  assert.equal(report.features.project_refresh, "touba-project-refresh-v0.1");
   assert.equal(report.commands.run_profile, true);
+  assert.equal(report.commands.refresh, true);
   assert.equal(report.commands.doctor, true);
   assert.equal(report.build.node, process.version);
   for (const component of ["cli", "runtime", "inspect", "audit", "supply_chain", "manifest"]) {
@@ -3685,6 +3736,29 @@ function tempRoot() {
 
 function cleanup(root) {
   rmSync(root, { recursive: true, force: true });
+}
+
+async function runCliAsync(args, options = {}) {
+  const child = spawn(process.execPath, args, {
+    cwd: options.cwd,
+    env: options.env ?? process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const status = await new Promise((resolveStatus, rejectStatus) => {
+    child.on("error", rejectStatus);
+    child.on("close", resolveStatus);
+  });
+  return { status, stdout, stderr };
 }
 
 function writeJson(filePath, value) {

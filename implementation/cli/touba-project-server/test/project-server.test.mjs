@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
 import {
   acceptDecision,
+  applyProjectChange,
   buildContractIndex,
   buildLiveState,
   createToubaProjectServer,
   preflightServeOptions,
+  proposeProjectChange,
+  refreshProject,
 } from "../src/serve.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
@@ -49,6 +52,122 @@ test("live state composes project, run, trigger, decision and event surfaces", (
   assert.equal(state.pending_approval.schema_version, "touba-approval-request-v1");
   assert.equal(state.pending_review.schema_version, "touba-human-review-request-v1");
   assert.equal(state.events.transport, "server_sent_events");
+  assert.equal(state.project_server.refresh.schema_version, "touba-project-refresh-v0.1");
+});
+
+test("refresh project reports artifacts, stale state and changed files", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-refresh-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "main.tb"), "module demo.main\n", "utf8");
+    const first = refreshProject({
+      projectRoot: root,
+      refreshedAt: "2026-06-22T00:00:00Z",
+      request: { schema_version: "touba-project-refresh-request-v0.1" },
+    });
+    assert.equal(first.report.schema_version, "touba-project-refresh-v0.1");
+    assert.equal(first.report.summary.artifact_count, 1);
+    assert.equal(first.report.changes.changed_artifacts.length, 1);
+    assert.equal(first.report.diagnostics.some((item) => item.code === "ToubaServeProjectAirStale"), true);
+
+    writeFileSync(join(root, "src", "main.tb"), "module demo.main\n// changed\n", "utf8");
+    const second = refreshProject({
+      projectRoot: root,
+      previousSnapshot: first.snapshot,
+      refreshedAt: "2026-06-22T00:00:01Z",
+      request: { schema_version: "touba-project-refresh-request-v0.1" },
+    });
+    assert.deepEqual(second.report.changes.changed_artifacts.map((item) => item.relative_path), ["src/main.tb"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("change proposals are stored, applied atomically and cannot be replayed", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-change-"));
+  try {
+    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const proposed = proposeProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      proposedAt: "2026-06-22T00:00:00Z",
+      proposal: {
+        schema_version: "touba-project-change-proposal-v0.1",
+        proposal_id: "change_001",
+        action: "write_text_file",
+        target: { path: "src/main.tb" },
+        requested_by: { kind: "user", id: "khadim" },
+        content: "module demo.main\n",
+      },
+    });
+    assert.equal(proposed.status, "proposed");
+    assert.equal(existsSync(changeProposalsPath), true);
+
+    const applied = applyProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      decidedAt: "2026-06-22T00:00:01Z",
+      applyRequest: {
+        schema_version: "touba-project-change-apply-v0.1",
+        proposal_id: "change_001",
+        decision: "apply",
+        decided_by: { kind: "user", id: "khadim" },
+      },
+    });
+    assert.equal(applied.status, "applied");
+    assert.equal(readFileSync(join(root, "src", "main.tb"), "utf8"), "module demo.main\n");
+    assert.throws(
+      () => applyProjectChange({
+        projectRoot: root,
+        changeProposalsPath,
+        applyRequest: {
+          schema_version: "touba-project-change-apply-v0.1",
+          proposal_id: "change_001",
+          decision: "apply",
+        },
+      }),
+      /no longer pending/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("change proposals reject unsafe paths and invalid Touba JSON metadata", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-reject-"));
+  try {
+    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    assert.throws(
+      () => proposeProjectChange({
+        projectRoot: root,
+        changeProposalsPath,
+        proposal: {
+          schema_version: "touba-project-change-proposal-v0.1",
+          proposal_id: "escape",
+          action: "write_text_file",
+          target: { path: "../outside.tb" },
+          content: "module bad",
+        },
+      }),
+      /escapes the project root/,
+    );
+    assert.throws(
+      () => proposeProjectChange({
+        projectRoot: root,
+        changeProposalsPath,
+        proposal: {
+          schema_version: "touba-project-change-proposal-v0.1",
+          proposal_id: "bad_json",
+          action: "write_text_file",
+          target: { path: "touba.manifest.json" },
+          content: "{not-json",
+        },
+      }),
+      /failed validation/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("accepts valid decisions and rejects replay", () => {
@@ -78,9 +197,13 @@ test("accepts valid decisions and rejects replay", () => {
 
 test("HTTP project server exposes live state, events and decisions", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src", "main.tb"), "module demo.main\n", "utf8");
   const service = createToubaProjectServer({
     contractsRoot,
+    projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.json"),
+    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
     port: 0,
     quiet: true,
   });
@@ -94,6 +217,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
 
     const state = await getJson(`${baseUrl}/state`);
     assert.equal(state.schema_version, "touba-project-live-state-v0.1");
+    assert.equal(state.project_server.refresh.summary.artifact_count, 1);
 
     const project = await getJson(`${baseUrl}/project`);
     assert.equal(project.schema_version, "touba-project-inspection-v1");
@@ -115,8 +239,49 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     const accepted = await response.json();
     assert.equal(accepted.request_id, decision.request_id);
 
+    writeFileSync(join(root, "src", "main.tb"), "module demo.main\n// refresh\n", "utf8");
+    const refreshResponse = await fetch(`${baseUrl}/project/refresh`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ schema_version: "touba-project-refresh-request-v0.1" }),
+    });
+    assert.equal(refreshResponse.status, 202);
+    const refresh = await refreshResponse.json();
+    assert.deepEqual(refresh.changes.changed_artifacts.map((item) => item.relative_path), ["src/main.tb"]);
+
+    const proposedResponse = await fetch(`${baseUrl}/changes/propose`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        schema_version: "touba-project-change-proposal-v0.1",
+        proposal_id: "http_change_001",
+        action: "write_text_file",
+        target: { path: "touba.project.json" },
+        requested_by: { kind: "user", id: "khadim" },
+        content: JSON.stringify({ project_version: "touba-project-v1", language: "javascript" }, null, 2),
+      }),
+    });
+    assert.equal(proposedResponse.status, 202);
+    const proposed = await proposedResponse.json();
+    assert.equal(proposed.status, "proposed");
+
+    const applyResponse = await fetch(`${baseUrl}/changes/apply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        schema_version: "touba-project-change-apply-v0.1",
+        proposal_id: "http_change_001",
+        decision: "apply",
+        decided_by: { kind: "user", id: "khadim" },
+      }),
+    });
+    assert.equal(applyResponse.status, 202);
+    const applied = await applyResponse.json();
+    assert.equal(applied.status, "applied");
+    assert.equal(existsSync(join(root, "touba.project.json")), true);
+
     const { text: eventText, reader } = await readNextEvent(eventStream);
-    assert.match(eventText, /touba\.server\.ready|human_decision\.accepted/);
+    assert.match(eventText, /touba\.server\.ready|human_decision\.accepted|project\.changed|change\.proposed|change\.applied/);
     await reader.cancel();
   } finally {
     await service.stop();
