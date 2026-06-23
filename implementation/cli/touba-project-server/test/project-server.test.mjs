@@ -694,6 +694,16 @@ test("HTTP project server requires bearer auth when configured", async () => {
     const unauthorized = await fetch(`${baseUrl}/state`);
     assert.equal(unauthorized.status, 401);
 
+    const wrongShortToken = await fetch(`${baseUrl}/state`, {
+      headers: { authorization: "Bearer secret" },
+    });
+    assert.equal(wrongShortToken.status, 401);
+
+    const wrongSameLengthToken = await fetch(`${baseUrl}/state`, {
+      headers: { authorization: "Bearer secret-tokem" },
+    });
+    assert.equal(wrongSameLengthToken.status, 401);
+
     const authorized = await fetch(`${baseUrl}/state`, {
       headers: { authorization: "Bearer secret-token" },
     });

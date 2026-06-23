@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
@@ -1579,7 +1579,17 @@ function decodeDecisionPath(pathname) {
 }
 
 function authorized(request, token) {
-  return request.headers.authorization === `Bearer ${token}`;
+  return constantTimeTextEqual(request.headers.authorization, `Bearer ${token}`);
+}
+
+function constantTimeTextEqual(actual, expected) {
+  if (typeof actual !== "string" || typeof expected !== "string") {
+    return false;
+  }
+  const actualDigest = createHash("sha256").update(actual, "utf8").digest();
+  const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(actualDigest, expectedDigest)
+    && Buffer.byteLength(actual, "utf8") === Buffer.byteLength(expected, "utf8");
 }
 
 async function readJsonBody(request) {
