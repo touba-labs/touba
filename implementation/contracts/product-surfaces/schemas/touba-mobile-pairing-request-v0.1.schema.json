@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-mobile-pairing-request-v0.1.schema.json",
+  "title": "touba-mobile-pairing-request-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pairing_id",
+    "server_url",
+    "bearer_token",
+    "device_ref",
+    "user_ref",
+    "nonce",
+    "expires_at",
+    "scopes",
+    "deep_link"
+  ],
+  "properties": {
+    "schema_version": { "const": "touba-mobile-pairing-request-v0.1" },
+    "pairing_id": { "type": "string" },
+    "server_url": { "type": "string" },
+    "bearer_token": { "type": "string" },
+    "device_ref": { "type": "string" },
+    "user_ref": { "type": "string" },
+    "nonce": { "type": "string" },
+    "expires_at": { "type": "string" },
+    "scopes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "deep_link": { "type": "string" }
+  }
+}

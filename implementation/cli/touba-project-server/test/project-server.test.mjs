@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import {
+  acceptMobilePairing,
   acceptDecision,
   buildAuthorityGraph,
   buildGovernanceReadiness,
@@ -23,6 +24,7 @@ import {
   createToubaProjectServer,
   getProjectChangeDetail,
   getHumanDecisionDetail,
+  issueMobilePairingRequest,
   appendProjectEventJournal,
   listHumanDecisions,
   listProjectChanges,
@@ -35,6 +37,7 @@ import {
   readProjectTriggerStatus,
   readProductIdentity,
   replayProjectEvents,
+  revokeMobilePairing,
   refreshProject,
 } from "../src/serve.mjs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
@@ -503,6 +506,95 @@ test("observability and mobile product surfaces read fixture contracts", () => {
   assert.equal(notifications.notifications.every((item) => !JSON.stringify(item).includes("FAKE_SECRET")), true);
   assert.equal(quickApproval.require_biometric, true);
   assert.equal(escalation.assignments[0].backup_reviewer_ref, "user:soukaina");
+});
+
+test("mobile pairing requests are bounded, accepted once and revocable without persisting raw secrets", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-mobile-pairing-"));
+  try {
+    const mobilePairingsPath = join(root, ".touba", "mobile-pairings.json");
+    const issued = issueMobilePairingRequest({
+      contractsRoot,
+      mobilePairingsPath,
+      serverUrl: "http://127.0.0.1:8791",
+      issuedAt: "2026-06-23T12:00:00.000Z",
+      request: {
+        pairing_id: "pair_test_001",
+        device_ref: "device:phone-01",
+        user_ref: "user:khadim",
+        expires_at: "2026-06-23T12:05:00.000Z",
+        scopes: ["decisions:write", "approvals:read"],
+      },
+    });
+
+    assertMatchesSchema("touba-mobile-pairing-request-v0.1", issued);
+    assert.match(issued.deep_link, /^touba-mobile:\/\/pair\?/u);
+    const storeText = readFileSync(mobilePairingsPath, "utf8");
+    assert.equal(storeText.includes(issued.bearer_token), false);
+    assert.equal(storeText.includes(issued.nonce), false);
+
+    const accepted = acceptMobilePairing({
+      contractsRoot,
+      mobilePairingsPath,
+      pairingRequest: issued,
+      acceptedAt: "2026-06-23T12:01:00.000Z",
+    });
+    assert.equal(accepted.status, "accepted");
+    assert.equal(accepted.device_ref, "device:phone-01");
+
+    assert.throws(
+      () => acceptMobilePairing({
+        contractsRoot,
+        mobilePairingsPath,
+        pairingRequest: issued,
+        acceptedAt: "2026-06-23T12:02:00.000Z",
+      }),
+      /already been accepted/,
+    );
+
+    const revoked = revokeMobilePairing({
+      mobilePairingsPath,
+      deviceRef: "device:phone-01",
+      revokedBy: { kind: "user", id: "khadim" },
+      reason: "device replaced",
+      revokedAt: "2026-06-23T12:03:00.000Z",
+    });
+    assert.equal(revoked.status, "revoked");
+    assert.equal(revoked.reason, "device replaced");
+
+    assert.throws(
+      () => issueMobilePairingRequest({
+        contractsRoot,
+        mobilePairingsPath: join(root, ".touba", "mobile-pairings-invalid-scope.json"),
+        serverUrl: "http://127.0.0.1:8791",
+        issuedAt: "2026-06-23T12:00:00.000Z",
+        request: { scopes: ["filesystem:write"] },
+      }),
+      /not allowed/,
+    );
+
+    const expired = issueMobilePairingRequest({
+      contractsRoot,
+      mobilePairingsPath: join(root, ".touba", "mobile-pairings-expired.json"),
+      serverUrl: "http://127.0.0.1:8791",
+      issuedAt: "2026-06-23T12:00:00.000Z",
+      request: {
+        pairing_id: "pair_expired",
+        device_ref: "device:expired",
+        expires_at: "2026-06-23T12:01:00.000Z",
+      },
+    });
+    assert.throws(
+      () => acceptMobilePairing({
+        contractsRoot,
+        mobilePairingsPath: join(root, ".touba", "mobile-pairings-expired.json"),
+        pairingRequest: expired,
+        acceptedAt: "2026-06-23T12:02:00.000Z",
+      }),
+      /expired/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("pending human request store filters decisions already accepted", () => {
@@ -1156,6 +1248,72 @@ test("HTTP project server requires bearer auth when configured", async () => {
     assert.equal(authorized.status, 200);
     const state = await authorized.json();
     assert.equal(state.schema_version, "touba-project-live-state-v0.1");
+
+    const unauthorizedPairingIssue = await fetch(`${baseUrl}/mobile/pairings/request`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ device_ref: "device:mobile-http" }),
+    });
+    assert.equal(unauthorizedPairingIssue.status, 401);
+
+    const issuedResponse = await fetch(`${baseUrl}/mobile/pairings/request`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        pairing_id: "pair_http_001",
+        device_ref: "device:mobile-http",
+        user_ref: "user:khadim",
+        scopes: ["notifications:read", "decisions:write"],
+      }),
+    });
+    assert.equal(issuedResponse.status, 201);
+    const issued = await issuedResponse.json();
+    assertMatchesSchema("touba-mobile-pairing-request-v0.1", issued);
+
+    const acceptedResponse = await fetch(`${baseUrl}/mobile/pairings/accept`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(issued),
+    });
+    assert.equal(acceptedResponse.status, 202);
+    const accepted = await acceptedResponse.json();
+    assert.equal(accepted.status, "accepted");
+
+    const replayResponse = await fetch(`${baseUrl}/mobile/pairings/accept`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(issued),
+    });
+    assert.equal(replayResponse.status, 409);
+    assert.equal((await replayResponse.json()).code, "ToubaServeMobilePairingReplayRejected");
+
+    const mobileAuthorized = await fetch(`${baseUrl}/mobile/notifications`, {
+      headers: { authorization: `Bearer ${issued.bearer_token}` },
+    });
+    assert.equal(mobileAuthorized.status, 200);
+
+    const revokedResponse = await fetch(`${baseUrl}/mobile/pairings/revoke`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${issued.bearer_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        device_ref: "device:mobile-http",
+        revoked_by: { kind: "user", id: "khadim" },
+        reason: "test revocation",
+      }),
+    });
+    assert.equal(revokedResponse.status, 202);
+    assert.equal((await revokedResponse.json()).status, "revoked");
+
+    const revokedTokenResponse = await fetch(`${baseUrl}/mobile/notifications`, {
+      headers: { authorization: `Bearer ${issued.bearer_token}` },
+    });
+    assert.equal(revokedTokenResponse.status, 401);
 
     const eventStream = await fetch(`${baseUrl}/events`, {
       headers: { authorization: "Bearer secret-token" },

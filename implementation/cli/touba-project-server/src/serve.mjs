@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
@@ -35,6 +35,7 @@ const DEFAULT_PRODUCT_IDENTITY_PATH = ".touba/product-identity.json";
 const DEFAULT_COST_OBSERVATORY_PATH = ".touba/cost-observatory.json";
 const DEFAULT_HANDLER_SANDBOX_STATUS_PATH = ".touba/handler-sandbox-status.json";
 const DEFAULT_MOBILE_NOTIFICATIONS_PATH = ".touba/mobile-notifications.json";
+const DEFAULT_MOBILE_PAIRINGS_PATH = ".touba/mobile-pairings.json";
 const DEFAULT_MOBILE_QUICK_APPROVAL_POLICY_PATH = ".touba/mobile-quick-approval-policy.json";
 const DEFAULT_MOBILE_ESCALATION_PATH = ".touba/mobile-escalation.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
@@ -57,6 +58,8 @@ const TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION = "touba-trigger-queue-health-v0.1";
 const COST_OBSERVATORY_SCHEMA_VERSION = "touba-cost-observatory-v0.1";
 const HANDLER_SANDBOX_STATUS_SCHEMA_VERSION = "touba-handler-sandbox-status-v0.1";
 const MOBILE_NOTIFICATION_SCHEMA_VERSION = "touba-mobile-notification-v0.1";
+const MOBILE_PAIRING_REQUEST_SCHEMA_VERSION = "touba-mobile-pairing-request-v0.1";
+const MOBILE_PAIRING_STORE_SCHEMA_VERSION = "touba-mobile-pairings-v0.1";
 const MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION = "touba-mobile-quick-approval-policy-v0.1";
 const MOBILE_ESCALATION_SCHEMA_VERSION = "touba-mobile-escalation-v0.1";
 const PROJECT_REFRESH_REQUEST_SCHEMA_VERSION = "touba-project-refresh-request-v0.1";
@@ -71,6 +74,13 @@ const PROJECT_EVENT_SCHEMA_VERSION = "touba-project-event-v0.1";
 const CHANGE_STORE_SCHEMA_VERSION = "touba-studio-change-proposals-v0.1";
 const CHANGE_ACTIONS = Object.freeze(["write_text_file"]);
 const CHANGE_DECISIONS = Object.freeze(["apply", "refuse"]);
+const MOBILE_PAIRING_ALLOWED_SCOPES = Object.freeze([
+  "approvals:read",
+  "reviews:read",
+  "decisions:write",
+  "notifications:read",
+  "events:read",
+]);
 const TOUBA_CLI_PATH = new URL("../../touba-project/src/main.mjs", import.meta.url).pathname;
 const PROJECT_SCAN_EXCLUDED_DIRS = Object.freeze(new Set([
   ".git",
@@ -172,6 +182,9 @@ export function createToubaProjectServer(options = {}) {
   const mobileNotificationsPath = resolve(
     options.mobileNotificationsPath ?? join(projectRoot, DEFAULT_MOBILE_NOTIFICATIONS_PATH),
   );
+  const mobilePairingsPath = resolve(
+    options.mobilePairingsPath ?? join(projectRoot, DEFAULT_MOBILE_PAIRINGS_PATH),
+  );
   const mobileQuickApprovalPolicyPath = resolve(
     options.mobileQuickApprovalPolicyPath ?? join(projectRoot, DEFAULT_MOBILE_QUICK_APPROVAL_POLICY_PATH),
   );
@@ -209,6 +222,7 @@ export function createToubaProjectServer(options = {}) {
     triggerStatusPath,
     humanRequestsPath,
     productIdentityPath,
+    mobilePairingsPath,
     eventJournalLimit,
     strict: options.strict === true,
   });
@@ -221,11 +235,12 @@ export function createToubaProjectServer(options = {}) {
 
   const server = createServer(async (request, response) => {
     try {
-      if (authToken !== undefined && !authorized(request, authToken)) {
+      const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${host}:${port}`}`);
+      const isPairingAccept = request.method === "POST" && url.pathname === "/mobile/pairings/accept";
+      if (authToken !== undefined && !isPairingAccept && !authorized(request, authToken, mobilePairingsPath)) {
         writeJson(response, 401, { status: "error", code: "ToubaServeUnauthorized" });
         return;
       }
-      const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${host}:${port}`}`);
       if (request.method === "GET" && url.pathname === "/health") {
         writeJson(response, 200, {
           status: "ok",
@@ -249,6 +264,9 @@ export function createToubaProjectServer(options = {}) {
             cost_observatory: "/budgets/costs",
             runtime_sandbox: "/runtime/sandbox",
             mobile_notifications: "/mobile/notifications",
+            mobile_pairing_request: "/mobile/pairings/request",
+            mobile_pairing_accept: "/mobile/pairings/accept",
+            mobile_pairing_revoke: "/mobile/pairings/revoke",
             mobile_quick_approval_policy: "/mobile/quick-approval-policy",
             mobile_escalations: "/mobile/escalations",
             pending_approval: "/approvals/pending/current",
@@ -373,6 +391,42 @@ export function createToubaProjectServer(options = {}) {
           contractsRoot,
           mobileNotificationsPath,
         }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/mobile/pairings/request") {
+        const body = await readOptionalJsonBody(request);
+        const issued = issueMobilePairingRequest({
+          contractsRoot,
+          mobilePairingsPath,
+          serverUrl: `http://${request.headers.host ?? `${host}:${port}`}`,
+          request: body,
+        });
+        publishEvent(eventClients, "mobile_pairing.issued", mobilePairingEventPayload(issued), nextEvent);
+        writeJson(response, 201, issued);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/mobile/pairings/accept") {
+        const body = await readJsonBody(request);
+        const accepted = acceptMobilePairing({
+          contractsRoot,
+          mobilePairingsPath,
+          pairingRequest: body,
+        });
+        publishEvent(eventClients, "mobile_pairing.accepted", accepted, nextEvent);
+        writeJson(response, 202, accepted);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/mobile/pairings/revoke") {
+        const body = await readJsonBody(request);
+        const revoked = revokeMobilePairing({
+          mobilePairingsPath,
+          deviceRef: body?.device_ref,
+          pairingId: body?.pairing_id,
+          revokedBy: body?.revoked_by,
+          reason: body?.reason,
+        });
+        publishEvent(eventClients, "mobile_pairing.revoked", revoked, nextEvent);
+        writeJson(response, 202, revoked);
         return;
       }
       if (request.method === "GET" && url.pathname === "/mobile/quick-approval-policy") {
@@ -540,6 +594,7 @@ export function createToubaProjectServer(options = {}) {
           trace_timeline: traceTimelinePath,
           trigger_status: triggerStatusPath,
           human_requests: humanRequestsPath,
+          mobile_pairings: mobilePairingsPath,
           product_identity: productIdentityPath,
           event_stream: `http://${host}:${address.port}/events`,
         })}\n`);
@@ -691,6 +746,7 @@ export function preflightServeOptions({
   triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
+  mobilePairingsPath = join(projectRoot, DEFAULT_MOBILE_PAIRINGS_PATH),
   eventJournalLimit = DEFAULT_EVENT_JOURNAL_LIMIT,
   strict = false,
 }) {
@@ -727,6 +783,7 @@ export function preflightServeOptions({
     ["ToubaServeTriggerStatusPathInvalid", "trigger status", triggerStatusPath],
     ["ToubaServeHumanRequestsPathInvalid", "human request store", humanRequestsPath],
     ["ToubaServeProductIdentityPathInvalid", "product identity", productIdentityPath],
+    ["ToubaServeMobilePairingsPathInvalid", "mobile pairing store", mobilePairingsPath],
   ]) {
     if (!isPathInside(projectRoot, filePath)) {
       diagnostics.push(serviceDiagnostic(code, `${label} path must stay inside the project root`));
@@ -779,6 +836,7 @@ export function preflightServeOptions({
     || diagnostic.code === "ToubaServeTriggerStatusPathInvalid"
     || diagnostic.code === "ToubaServeHumanRequestsPathInvalid"
     || diagnostic.code === "ToubaServeProductIdentityPathInvalid"
+    || diagnostic.code === "ToubaServeMobilePairingsPathInvalid"
   )) {
     const error = serviceError("ToubaServePreflightFailed", "touba serve cannot use the configured project data paths");
     error.diagnostics = diagnostics;
@@ -1501,6 +1559,173 @@ export function readMobileNotifications({ contractsRoot, mobileNotificationsPath
     message: "mobile notification report does not match mobile client-notification-v0.1",
   });
   return stored ?? readContractFixture({ contractsRoot, schemaVersion: MOBILE_NOTIFICATION_SCHEMA_VERSION });
+}
+
+export function issueMobilePairingRequest({
+  contractsRoot,
+  mobilePairingsPath,
+  serverUrl,
+  request = {},
+  issuedAt = new Date().toISOString(),
+}) {
+  const issuedMs = parseMobilePairingInstant(issuedAt, "issued_at");
+  const expiresAt = nonEmptyString(request.expires_at)
+    ?? new Date(issuedMs + 5 * 60 * 1000).toISOString();
+  const expiresMs = parseMobilePairingInstant(expiresAt, "expires_at");
+  if (expiresMs <= issuedMs) {
+    throw serviceError("ToubaServeMobilePairingExpired", "mobile pairing expiration must be after issuance");
+  }
+  const pairingId = nonEmptyString(request.pairing_id) ?? `pair_${compactTimestamp(issuedAt)}_${randomBytes(4).toString("hex")}`;
+  const deviceRef = nonEmptyString(request.device_ref) ?? `device:${pairingId}`;
+  const userRef = nonEmptyString(request.user_ref) ?? "user:mobile-reviewer";
+  const scopes = normalizeMobilePairingScopes(request.scopes);
+  const token = `mbp_${randomBytes(24).toString("base64url")}`;
+  const nonce = `nonce_${randomBytes(16).toString("hex")}`;
+  const normalizedServerUrl = requiredMobilePairingString(serverUrl, "server_url");
+  const pairingRequest = {
+    schema_version: MOBILE_PAIRING_REQUEST_SCHEMA_VERSION,
+    pairing_id: pairingId,
+    server_url: normalizedServerUrl,
+    bearer_token: token,
+    device_ref: deviceRef,
+    user_ref: userRef,
+    nonce,
+    expires_at: expiresAt,
+    scopes,
+    deep_link: buildMobilePairingDeepLink({
+      pairingId,
+      serverUrl: normalizedServerUrl,
+      token,
+      deviceRef,
+      userRef,
+      nonce,
+      expiresAt,
+      scopes,
+    }),
+  };
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion: MOBILE_PAIRING_REQUEST_SCHEMA_VERSION,
+    value: pairingRequest,
+    errorCode: "ToubaServeMobilePairingInvalid",
+    message: "mobile pairing request does not match mobile client-pairing-request-v0.1",
+  });
+  const store = loadMobilePairingStore(mobilePairingsPath);
+  if (store.pairings.some((item) => item.pairing_id === pairingId && item.status !== "revoked")) {
+    throw serviceError("ToubaServeMobilePairingDuplicate", "mobile pairing_id is already active or pending");
+  }
+  store.pairings.push({
+    pairing_id: pairingId,
+    status: "issued",
+    device_ref: deviceRef,
+    user_ref: userRef,
+    scopes,
+    token_sha256: sha256Text(token),
+    nonce_sha256: sha256Text(nonce),
+    issued_at: issuedAt,
+    expires_at: expiresAt,
+    accepted_at: null,
+    revoked_at: null,
+    revoked_by: null,
+    revocation_reason: null,
+  });
+  saveMobilePairingStore(mobilePairingsPath, store);
+  return pairingRequest;
+}
+
+export function acceptMobilePairing({
+  contractsRoot,
+  mobilePairingsPath,
+  pairingRequest,
+  acceptedAt = new Date().toISOString(),
+}) {
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion: MOBILE_PAIRING_REQUEST_SCHEMA_VERSION,
+    value: pairingRequest,
+    errorCode: "ToubaServeMobilePairingInvalid",
+    message: "mobile pairing request does not match mobile client-pairing-request-v0.1",
+  });
+  const scopes = normalizeMobilePairingScopes(pairingRequest.scopes);
+  const store = loadMobilePairingStore(mobilePairingsPath);
+  const tokenDigest = sha256Text(requiredMobilePairingString(pairingRequest.bearer_token, "bearer_token"));
+  const nonceDigest = sha256Text(requiredMobilePairingString(pairingRequest.nonce, "nonce"));
+  const pairing = store.pairings.find((item) => item.pairing_id === pairingRequest.pairing_id);
+  if (pairing === undefined) {
+    throw serviceError("ToubaServeMobilePairingUnknown", "mobile pairing_id is unknown");
+  }
+  if (pairing.status === "revoked") {
+    throw serviceError("ToubaServeMobilePairingRevoked", "mobile pairing has been revoked");
+  }
+  if (pairing.status === "active") {
+    throw serviceError("ToubaServeMobilePairingReplayRejected", "mobile pairing invitation has already been accepted");
+  }
+  if (!constantTimeTextEqual(pairing.token_sha256, tokenDigest) || !constantTimeTextEqual(pairing.nonce_sha256, nonceDigest)) {
+    throw serviceError("ToubaServeMobilePairingInvalid", "mobile pairing token or nonce does not match the issued invitation");
+  }
+  if (pairing.device_ref !== pairingRequest.device_ref || pairing.user_ref !== pairingRequest.user_ref) {
+    throw serviceError("ToubaServeMobilePairingInvalid", "mobile pairing identity does not match the issued invitation");
+  }
+  if (!sameStringSet(pairing.scopes, scopes)) {
+    throw serviceError("ToubaServeMobilePairingScopeRejected", "mobile pairing scopes do not match the issued invitation");
+  }
+  const acceptedMs = parseMobilePairingInstant(acceptedAt, "accepted_at");
+  if (parseMobilePairingInstant(pairing.expires_at, "expires_at") <= acceptedMs) {
+    throw serviceError("ToubaServeMobilePairingExpired", "mobile pairing invitation has expired");
+  }
+  pairing.status = "active";
+  pairing.accepted_at = acceptedAt;
+  saveMobilePairingStore(mobilePairingsPath, store);
+  return {
+    schema_version: "touba-mobile-pairing-accepted-v0.1",
+    status: "accepted",
+    pairing_id: pairing.pairing_id,
+    device_ref: pairing.device_ref,
+    user_ref: pairing.user_ref,
+    scopes: pairing.scopes,
+    accepted_at: acceptedAt,
+  };
+}
+
+export function revokeMobilePairing({
+  mobilePairingsPath,
+  deviceRef,
+  pairingId,
+  revokedBy,
+  reason,
+  revokedAt = new Date().toISOString(),
+}) {
+  const normalizedPairingId = nonEmptyString(pairingId);
+  const normalizedDeviceRef = nonEmptyString(deviceRef);
+  if (normalizedPairingId === undefined && normalizedDeviceRef === undefined) {
+    throw serviceError("ToubaServeMobilePairingInvalid", "pairing_id or device_ref is required to revoke a mobile pairing");
+  }
+  const store = loadMobilePairingStore(mobilePairingsPath);
+  const pairing = store.pairings.find((item) =>
+    (normalizedPairingId !== undefined && item.pairing_id === normalizedPairingId)
+    || (normalizedDeviceRef !== undefined && item.device_ref === normalizedDeviceRef)
+  );
+  if (pairing === undefined) {
+    throw serviceError("ToubaServeMobilePairingUnknown", "mobile pairing is unknown");
+  }
+  if (pairing.status === "revoked") {
+    throw serviceError("ToubaServeMobilePairingRevoked", "mobile pairing has already been revoked");
+  }
+  pairing.status = "revoked";
+  pairing.revoked_at = revokedAt;
+  pairing.revoked_by = normalizeActor(revokedBy);
+  pairing.revocation_reason = nonEmptyString(reason) ?? "revoked";
+  saveMobilePairingStore(mobilePairingsPath, store);
+  return {
+    schema_version: "touba-mobile-pairing-revoked-v0.1",
+    status: "revoked",
+    pairing_id: pairing.pairing_id,
+    device_ref: pairing.device_ref,
+    user_ref: pairing.user_ref,
+    revoked_at: revokedAt,
+    revoked_by: pairing.revoked_by,
+    reason: pairing.revocation_reason,
+  };
 }
 
 export function readMobileQuickApprovalPolicy({ contractsRoot, mobileQuickApprovalPolicyPath }) {
@@ -2853,6 +3078,54 @@ function saveHumanDecisionStore(humanDecisionsPath, store) {
   writeFileSync(humanDecisionsPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
 }
 
+function loadMobilePairingStore(mobilePairingsPath) {
+  if (!existsSync(mobilePairingsPath)) {
+    return {
+      schema_version: MOBILE_PAIRING_STORE_SCHEMA_VERSION,
+      pairings: [],
+    };
+  }
+  if (statSync(mobilePairingsPath).isDirectory()) {
+    throw serviceError("ToubaServeMobilePairingStoreInvalid", "mobile pairing store path is a directory");
+  }
+  let store;
+  try {
+    store = JSON.parse(readFileSync(mobilePairingsPath, "utf8"));
+  } catch (cause) {
+    throw serviceError("ToubaServeMobilePairingStoreInvalid", `mobile pairing store is not valid JSON: ${cause.message}`);
+  }
+  if (store?.schema_version !== MOBILE_PAIRING_STORE_SCHEMA_VERSION || !Array.isArray(store.pairings)) {
+    throw serviceError("ToubaServeMobilePairingStoreInvalid", `mobile pairing store must use ${MOBILE_PAIRING_STORE_SCHEMA_VERSION}`);
+  }
+  return store;
+}
+
+function saveMobilePairingStore(mobilePairingsPath, store) {
+  mkdirSync(dirname(mobilePairingsPath), { recursive: true });
+  writeFileSync(mobilePairingsPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+}
+
+function activeMobilePairingTokenAuthorized({
+  mobilePairingsPath,
+  bearerToken,
+  now = new Date().toISOString(),
+}) {
+  let store;
+  try {
+    store = loadMobilePairingStore(mobilePairingsPath);
+  } catch {
+    return false;
+  }
+  const tokenDigest = sha256Text(bearerToken);
+  const nowMs = Date.parse(now);
+  return store.pairings.some((pairing) =>
+    pairing.status === "active"
+    && typeof pairing.token_sha256 === "string"
+    && constantTimeTextEqual(pairing.token_sha256, tokenDigest)
+    && Date.parse(pairing.expires_at) > nowMs
+  );
+}
+
 function readHumanRequestStore(humanRequestsPath) {
   let store;
   try {
@@ -3035,8 +3308,18 @@ function decodeDecisionPath(pathname) {
   return segments.map((segment) => decodeURIComponent(segment));
 }
 
-function authorized(request, token) {
-  return constantTimeTextEqual(request.headers.authorization, `Bearer ${token}`);
+function authorized(request, token, mobilePairingsPath) {
+  if (constantTimeTextEqual(request.headers.authorization, `Bearer ${token}`)) {
+    return true;
+  }
+  const bearerToken = bearerTokenFromAuthorization(request.headers.authorization);
+  if (bearerToken === undefined) {
+    return false;
+  }
+  return activeMobilePairingTokenAuthorized({
+    mobilePairingsPath,
+    bearerToken,
+  });
 }
 
 function constantTimeTextEqual(actual, expected) {
@@ -3047,6 +3330,14 @@ function constantTimeTextEqual(actual, expected) {
   const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
   return timingSafeEqual(actualDigest, expectedDigest)
     && Buffer.byteLength(actual, "utf8") === Buffer.byteLength(expected, "utf8");
+}
+
+function bearerTokenFromAuthorization(authorization) {
+  if (typeof authorization !== "string") {
+    return undefined;
+  }
+  const match = /^Bearer\s+(.+)$/u.exec(authorization.trim());
+  return match === null ? undefined : nonEmptyString(match[1]);
 }
 
 async function readJsonBody(request) {
@@ -3172,16 +3463,25 @@ function httpStatusForError(code) {
     code === "ToubaServeDecisionReplayRejected"
     || code === "ToubaServeChangeProposalDuplicate"
     || code === "ToubaServeChangeAlreadyDecided"
+    || code === "ToubaServeMobilePairingDuplicate"
+    || code === "ToubaServeMobilePairingReplayRejected"
+    || code === "ToubaServeMobilePairingRevoked"
   ) return 409;
+  if (code === "ToubaServeMobilePairingExpired") return 410;
   if (
     code === "ToubaServeRouteNotFound"
     || code === "ToubaServeContractUnknown"
     || code === "ToubaServeDecisionNotFound"
     || code === "ToubaServePendingHumanRequestNotFound"
     || code === "ToubaServeChangeProposalNotFound"
+    || code === "ToubaServeMobilePairingUnknown"
   ) return 404;
   if (code === "ToubaServeBodyTooLarge" || code === "ToubaServeChangeTooLarge") return 413;
-  if (code === "ToubaServeChangeTargetRejected" || code === "ToubaServeChangePathRejected") return 403;
+  if (
+    code === "ToubaServeChangeTargetRejected"
+    || code === "ToubaServeChangePathRejected"
+    || code === "ToubaServeMobilePairingScopeRejected"
+  ) return 403;
   if (
     code === "ToubaServeDecisionInvalid"
     || code === "ToubaServeDecisionContractUnsupported"
@@ -3198,6 +3498,8 @@ function httpStatusForError(code) {
     || code === "ToubaServeTriggerStatusInvalid"
     || code === "ToubaServeHumanRequestStoreInvalid"
     || code === "ToubaServePendingHumanRequestInvalid"
+    || code === "ToubaServeMobilePairingInvalid"
+    || code === "ToubaServeMobilePairingStoreInvalid"
   ) return 400;
   return 500;
 }
@@ -3235,6 +3537,8 @@ function parseArgs(rawArgs) {
       options.triggerStatusPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--human-requests") {
       options.humanRequestsPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--mobile-pairings") {
+      options.mobilePairingsPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--host") {
       options.host = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--port") {
@@ -3268,7 +3572,7 @@ function requiredValue(option, args, index) {
 
 function usage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for client, Mobile and contract clients.",
     "",
@@ -3283,6 +3587,7 @@ function usage() {
     `  trace_timeline: ${DEFAULT_TRACE_TIMELINE_PATH}`,
     `  trigger_status: ${DEFAULT_TRIGGER_STATUS_PATH}`,
     `  human_requests: ${DEFAULT_HUMAN_REQUESTS_PATH}`,
+    `  mobile_pairings: ${DEFAULT_MOBILE_PAIRINGS_PATH}`,
     "",
     "Live endpoints:",
     "  GET  /state",
@@ -3296,6 +3601,10 @@ function usage() {
     "  GET  /triggers/queue-health",
     "  GET  /supply-chain/status",
     "  GET  /governance/readiness",
+    "  GET  /mobile/notifications",
+    "  POST /mobile/pairings/request",
+    "  POST /mobile/pairings/accept",
+    "  POST /mobile/pairings/revoke",
     "  GET  /approvals/pending/current",
     "  GET  /decisions",
     "  GET  /decisions/<schema_version>/<request_id>",
@@ -3323,6 +3632,79 @@ function serviceDiagnostic(code, message, severity = "error") {
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+function requiredMobilePairingString(value, field) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw serviceError("ToubaServeMobilePairingInvalid", `${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function normalizeMobilePairingScopes(value) {
+  const requestedScopes = Array.isArray(value) && value.length > 0
+    ? value
+    : ["approvals:read", "reviews:read", "decisions:write", "notifications:read", "events:read"];
+  const scopes = Array.from(new Set(requestedScopes.map((item) => requiredMobilePairingString(item, "scope"))));
+  const rejected = scopes.filter((scope) => !MOBILE_PAIRING_ALLOWED_SCOPES.includes(scope));
+  if (rejected.length > 0) {
+    throw serviceError("ToubaServeMobilePairingScopeRejected", `mobile pairing scopes are not allowed: ${rejected.join(", ")}`);
+  }
+  return scopes.sort();
+}
+
+function parseMobilePairingInstant(value, field) {
+  const text = requiredMobilePairingString(value, field);
+  const timestamp = Date.parse(text);
+  if (!Number.isFinite(timestamp)) {
+    throw serviceError("ToubaServeMobilePairingInvalid", `${field} must be an ISO timestamp`);
+  }
+  return timestamp;
+}
+
+function compactTimestamp(value) {
+  return value.replaceAll(/[^0-9A-Za-z]/gu, "").slice(0, 14) || "now";
+}
+
+function buildMobilePairingDeepLink({
+  pairingId,
+  serverUrl,
+  token,
+  deviceRef,
+  userRef,
+  nonce,
+  expiresAt,
+  scopes,
+}) {
+  const params = new URLSearchParams({
+    pairing_id: pairingId,
+    server_url: serverUrl,
+    token,
+    device: deviceRef,
+    user: userRef,
+    nonce,
+    expires: expiresAt,
+    scopes: scopes.join(","),
+  });
+  return `touba-mobile://pair?${params.toString()}`;
+}
+
+function mobilePairingEventPayload(pairingRequest) {
+  return {
+    schema_version: "touba-mobile-pairing-event-v0.1",
+    pairing_id: pairingRequest.pairing_id,
+    server_url: pairingRequest.server_url,
+    device_ref: pairingRequest.device_ref,
+    user_ref: pairingRequest.user_ref,
+    expires_at: pairingRequest.expires_at,
+    scopes: pairingRequest.scopes,
+  };
+}
+
+function sameStringSet(left, right) {
+  const leftSet = new Set(Array.isArray(left) ? left : []);
+  const rightSet = new Set(Array.isArray(right) ? right : []);
+  return leftSet.size === rightSet.size && Array.from(leftSet).every((item) => rightSet.has(item));
 }
 
 function isPathInside(root, candidate) {
