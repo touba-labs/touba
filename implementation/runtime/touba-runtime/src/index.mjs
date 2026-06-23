@@ -4525,6 +4525,7 @@ function normalizeManifestBinding(toolRef, binding) {
       toolRef,
     });
   }
+  const sandbox = normalizeManifestBindingSandbox(toolRef, binding.sandbox);
   assertPositiveInteger(binding.timeout_ms, "timeout_ms", toolRef);
   assertPositiveInteger(binding.max_payload_bytes, "max_payload_bytes", toolRef);
 
@@ -4540,6 +4541,7 @@ function normalizeManifestBinding(toolRef, binding) {
       args: Object.freeze([...binding.handler.args]),
       cwd: binding.handler.cwd,
     }),
+    sandbox,
     grants: Object.freeze(grants),
     grantSet: new Set(grants),
     secrets: Object.freeze(secrets),
@@ -4551,6 +4553,50 @@ function normalizeManifestBinding(toolRef, binding) {
       max_payload_bytes: binding.max_payload_bytes,
     }),
     payloadConstraints,
+  });
+}
+
+function normalizeManifestBindingSandbox(toolRef, sandbox) {
+  if (sandbox === undefined) {
+    return Object.freeze({
+      required: false,
+      profile: "default",
+      box_name: "ToubaHandler",
+    });
+  }
+  if (!sandbox || typeof sandbox !== "object" || Array.isArray(sandbox)) {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding sandbox must be an object", {
+      toolRef,
+    });
+  }
+  const allowed = new Set(["required", "profile", "box_name"]);
+  for (const key of Object.keys(sandbox)) {
+    if (!allowed.has(key)) {
+      throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding sandbox contains unknown fields", {
+        toolRef,
+        field: key,
+      });
+    }
+  }
+  if (sandbox.required !== undefined && typeof sandbox.required !== "boolean") {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding sandbox.required must be boolean", {
+      toolRef,
+    });
+  }
+  if (sandbox.profile !== undefined && (typeof sandbox.profile !== "string" || sandbox.profile.trim() === "")) {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding sandbox.profile must be a non-empty string", {
+      toolRef,
+    });
+  }
+  if (sandbox.box_name !== undefined && (typeof sandbox.box_name !== "string" || sandbox.box_name.trim() === "")) {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding sandbox.box_name must be a non-empty string", {
+      toolRef,
+    });
+  }
+  return Object.freeze({
+    required: sandbox.required === true,
+    profile: sandbox.profile ?? "default",
+    box_name: sandbox.box_name ?? "ToubaHandler",
   });
 }
 

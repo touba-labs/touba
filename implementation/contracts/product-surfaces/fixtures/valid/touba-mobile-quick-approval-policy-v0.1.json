@@ -1,0 +1,15 @@
+{
+  "schema_version": "touba-mobile-quick-approval-policy-v0.1",
+  "generated_at": "2026-06-23T12:00:00Z",
+  "policy_ref": "policy:mobile/low-risk-biometric-approval",
+  "status": "enabled",
+  "max_risk": "low",
+  "allowed_modes": ["approval"],
+  "allowed_decisions": ["approve", "reject"],
+  "require_biometric": true,
+  "fallback_target": "full_review",
+  "evidence": {
+    "source": "touba-product-identity-v0.1",
+    "message": "Quick approval is limited to low-risk approval requests and biometric device confirmation."
+  }
+}

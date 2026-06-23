@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-cost-observatory-v0.1.schema.json",
+  "title": "touba-cost-observatory-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "project_root", "currency", "summary", "runs", "diagnostics"],
+  "properties": {
+    "schema_version": { "const": "touba-cost-observatory-v0.1" },
+    "generated_at": { "type": "string" },
+    "project_root": { "type": "string" },
+    "currency": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_count", "provider_call_count", "tool_call_count", "duration_ms", "estimated_cost", "estimate_basis"],
+      "properties": {
+        "run_count": { "type": "integer" },
+        "provider_call_count": { "type": "integer" },
+        "tool_call_count": { "type": "integer" },
+        "duration_ms": { "type": "integer" },
+        "estimated_cost": { "type": "number" },
+        "estimate_basis": { "type": "string" }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_ref", "label", "provider", "model", "provider_calls", "tool_calls", "duration_ms", "estimated_cost", "evidence_ref"],
+        "properties": {
+          "run_ref": { "type": "string" },
+          "label": { "type": "string" },
+          "provider": { "type": "string" },
+          "model": { "type": "string" },
+          "provider_calls": { "type": "integer" },
+          "tool_calls": { "type": "integer" },
+          "duration_ms": { "type": "integer" },
+          "estimated_cost": { "type": "number" },
+          "evidence_ref": { "type": "string" }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "enum": ["info", "warning", "error"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -32,6 +32,12 @@ const DEFAULT_TRACE_TIMELINE_PATH = ".touba/current-trace-timeline.json";
 const DEFAULT_TRIGGER_STATUS_PATH = ".touba/trigger-status.json";
 const DEFAULT_HUMAN_REQUESTS_PATH = ".touba/human-requests.json";
 const DEFAULT_PRODUCT_IDENTITY_PATH = ".touba/product-identity.json";
+const DEFAULT_BENCHMARK_REGRESSION_PATH = ".touba/benchmark-regression.json";
+const DEFAULT_COST_OBSERVATORY_PATH = ".touba/cost-observatory.json";
+const DEFAULT_HANDLER_SANDBOX_STATUS_PATH = ".touba/handler-sandbox-status.json";
+const DEFAULT_MOBILE_NOTIFICATIONS_PATH = ".touba/mobile-notifications.json";
+const DEFAULT_MOBILE_QUICK_APPROVAL_POLICY_PATH = ".touba/mobile-quick-approval-policy.json";
+const DEFAULT_MOBILE_ESCALATION_PATH = ".touba/mobile-escalation.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CHANGE_CONTENT_BYTES = 64 * 1024;
@@ -49,6 +55,12 @@ const PRODUCT_IDENTITY_SCHEMA_VERSION = "touba-product-identity-v0.1";
 const SUPPLY_CHAIN_STATUS_SCHEMA_VERSION = "touba-supply-chain-status-v0.1";
 const GOVERNANCE_READINESS_SCHEMA_VERSION = "touba-governance-readiness-v0.1";
 const TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION = "touba-trigger-queue-health-v0.1";
+const BENCHMARK_REGRESSION_SCHEMA_VERSION = "touba-benchmark-regression-v0.1";
+const COST_OBSERVATORY_SCHEMA_VERSION = "touba-cost-observatory-v0.1";
+const HANDLER_SANDBOX_STATUS_SCHEMA_VERSION = "touba-handler-sandbox-status-v0.1";
+const MOBILE_NOTIFICATION_SCHEMA_VERSION = "touba-mobile-notification-v0.1";
+const MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION = "touba-mobile-quick-approval-policy-v0.1";
+const MOBILE_ESCALATION_SCHEMA_VERSION = "touba-mobile-escalation-v0.1";
 const PROJECT_REFRESH_REQUEST_SCHEMA_VERSION = "touba-project-refresh-request-v0.1";
 const PROJECT_REFRESH_SCHEMA_VERSION = "touba-project-refresh-v0.1";
 const CHANGE_PROPOSAL_SCHEMA_VERSION = "touba-project-change-proposal-v0.1";
@@ -100,6 +112,12 @@ const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
   "/triggers/queue-health": TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION,
   "/supply-chain/status": SUPPLY_CHAIN_STATUS_SCHEMA_VERSION,
   "/governance/readiness": GOVERNANCE_READINESS_SCHEMA_VERSION,
+  "/benchmarks/regressions": BENCHMARK_REGRESSION_SCHEMA_VERSION,
+  "/budgets/costs": COST_OBSERVATORY_SCHEMA_VERSION,
+  "/runtime/sandbox": HANDLER_SANDBOX_STATUS_SCHEMA_VERSION,
+  "/mobile/notifications": MOBILE_NOTIFICATION_SCHEMA_VERSION,
+  "/mobile/quick-approval-policy": MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION,
+  "/mobile/escalations": MOBILE_ESCALATION_SCHEMA_VERSION,
   "/approvals/pending/current": "touba-approval-request-v1",
   "/reviews/pending/current": "touba-human-review-request-v1",
   "/resources/featured": "touba-registry-resource-v1",
@@ -147,6 +165,24 @@ export function createToubaProjectServer(options = {}) {
   );
   const productIdentityPath = resolve(
     options.productIdentityPath ?? join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
+  );
+  const benchmarkRegressionPath = resolve(
+    options.benchmarkRegressionPath ?? join(projectRoot, DEFAULT_BENCHMARK_REGRESSION_PATH),
+  );
+  const costObservatoryPath = resolve(
+    options.costObservatoryPath ?? join(projectRoot, DEFAULT_COST_OBSERVATORY_PATH),
+  );
+  const handlerSandboxStatusPath = resolve(
+    options.handlerSandboxStatusPath ?? join(projectRoot, DEFAULT_HANDLER_SANDBOX_STATUS_PATH),
+  );
+  const mobileNotificationsPath = resolve(
+    options.mobileNotificationsPath ?? join(projectRoot, DEFAULT_MOBILE_NOTIFICATIONS_PATH),
+  );
+  const mobileQuickApprovalPolicyPath = resolve(
+    options.mobileQuickApprovalPolicyPath ?? join(projectRoot, DEFAULT_MOBILE_QUICK_APPROVAL_POLICY_PATH),
+  );
+  const mobileEscalationPath = resolve(
+    options.mobileEscalationPath ?? join(projectRoot, DEFAULT_MOBILE_ESCALATION_PATH),
   );
   const eventJournalLimit = options.eventJournalLimit ?? DEFAULT_EVENT_JOURNAL_LIMIT;
   const host = options.host ?? DEFAULT_HOST;
@@ -216,6 +252,12 @@ export function createToubaProjectServer(options = {}) {
             trigger_queue_health: "/triggers/queue-health",
             supply_chain_status: "/supply-chain/status",
             governance_readiness: "/governance/readiness",
+            benchmark_regressions: "/benchmarks/regressions",
+            cost_observatory: "/budgets/costs",
+            runtime_sandbox: "/runtime/sandbox",
+            mobile_notifications: "/mobile/notifications",
+            mobile_quick_approval_policy: "/mobile/quick-approval-policy",
+            mobile_escalations: "/mobile/escalations",
             pending_approval: "/approvals/pending/current",
             pending_review: "/reviews/pending/current",
             human_decisions: "/decisions",
@@ -245,6 +287,12 @@ export function createToubaProjectServer(options = {}) {
           humanRequestsPath,
           humanDecisionsPath,
           productIdentityPath,
+          benchmarkRegressionPath,
+          costObservatoryPath,
+          handlerSandboxStatusPath,
+          mobileNotificationsPath,
+          mobileQuickApprovalPolicyPath,
+          mobileEscalationPath,
         }));
         return;
       }
@@ -309,6 +357,50 @@ export function createToubaProjectServer(options = {}) {
           humanRequestsPath,
           humanDecisionsPath,
           kind: "human_review",
+        }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/benchmarks/regressions") {
+        writeJson(response, 200, readBenchmarkRegression({
+          contractsRoot,
+          benchmarkRegressionPath,
+        }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/budgets/costs") {
+        writeJson(response, 200, readCostObservatory({
+          contractsRoot,
+          costObservatoryPath,
+        }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/runtime/sandbox") {
+        writeJson(response, 200, buildHandlerSandboxStatus({
+          contractsRoot,
+          projectRoot,
+          handlerSandboxStatusPath,
+          generatedAt: new Date().toISOString(),
+        }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/mobile/notifications") {
+        writeJson(response, 200, readMobileNotifications({
+          contractsRoot,
+          mobileNotificationsPath,
+        }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/mobile/quick-approval-policy") {
+        writeJson(response, 200, readMobileQuickApprovalPolicy({
+          contractsRoot,
+          mobileQuickApprovalPolicyPath,
+        }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/mobile/escalations") {
+        writeJson(response, 200, readMobileEscalation({
+          contractsRoot,
+          mobileEscalationPath,
         }));
         return;
       }
@@ -503,6 +595,12 @@ export function buildLiveState({
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   humanDecisionsPath = join(projectRoot, DEFAULT_HUMAN_DECISIONS_PATH),
   productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
+  benchmarkRegressionPath = join(projectRoot, DEFAULT_BENCHMARK_REGRESSION_PATH),
+  costObservatoryPath = join(projectRoot, DEFAULT_COST_OBSERVATORY_PATH),
+  handlerSandboxStatusPath = join(projectRoot, DEFAULT_HANDLER_SANDBOX_STATUS_PATH),
+  mobileNotificationsPath = join(projectRoot, DEFAULT_MOBILE_NOTIFICATIONS_PATH),
+  mobileQuickApprovalPolicyPath = join(projectRoot, DEFAULT_MOBILE_QUICK_APPROVAL_POLICY_PATH),
+  mobileEscalationPath = join(projectRoot, DEFAULT_MOBILE_ESCALATION_PATH),
   changeProposalsPath = join(projectRoot, DEFAULT_CHANGE_PROPOSALS_PATH),
   eventJournalPath = join(projectRoot, DEFAULT_EVENT_JOURNAL_PATH),
   generatedAt = new Date().toISOString(),
@@ -535,6 +633,20 @@ export function buildLiveState({
       changeProposalsPath,
       generatedAt,
     }),
+    benchmark_regressions: readBenchmarkRegression({ contractsRoot, benchmarkRegressionPath }),
+    cost_observatory: readCostObservatory({ contractsRoot, costObservatoryPath }),
+    handler_sandbox_status: buildHandlerSandboxStatus({
+      contractsRoot,
+      projectRoot,
+      handlerSandboxStatusPath,
+      generatedAt,
+    }),
+    mobile_notifications: readMobileNotifications({ contractsRoot, mobileNotificationsPath }),
+    mobile_quick_approval_policy: readMobileQuickApprovalPolicy({
+      contractsRoot,
+      mobileQuickApprovalPolicyPath,
+    }),
+    mobile_escalation: readMobileEscalation({ contractsRoot, mobileEscalationPath }),
     pending_approval: readPendingHumanRequest({
       contractsRoot,
       humanRequestsPath,
@@ -1384,6 +1496,159 @@ export function readProductIdentity({ contractsRoot, productIdentityPath }) {
     message: "project product identity does not match touba-product-identity-v0.1",
   });
   return stored ?? readContractFixture({ contractsRoot, schemaVersion: PRODUCT_IDENTITY_SCHEMA_VERSION });
+}
+
+export function readBenchmarkRegression({ contractsRoot, benchmarkRegressionPath }) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: benchmarkRegressionPath,
+    schemaVersion: BENCHMARK_REGRESSION_SCHEMA_VERSION,
+    errorCode: "ToubaServeBenchmarkRegressionInvalid",
+    message: "project benchmark regression report does not match touba-benchmark-regression-v0.1",
+  });
+  return stored ?? readContractFixture({ contractsRoot, schemaVersion: BENCHMARK_REGRESSION_SCHEMA_VERSION });
+}
+
+export function readCostObservatory({ contractsRoot, costObservatoryPath }) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: costObservatoryPath,
+    schemaVersion: COST_OBSERVATORY_SCHEMA_VERSION,
+    errorCode: "ToubaServeCostObservatoryInvalid",
+    message: "project cost observatory report does not match touba-cost-observatory-v0.1",
+  });
+  return stored ?? readContractFixture({ contractsRoot, schemaVersion: COST_OBSERVATORY_SCHEMA_VERSION });
+}
+
+export function readMobileNotifications({ contractsRoot, mobileNotificationsPath }) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: mobileNotificationsPath,
+    schemaVersion: MOBILE_NOTIFICATION_SCHEMA_VERSION,
+    errorCode: "ToubaServeMobileNotificationsInvalid",
+    message: "mobile notification report does not match mobile client-notification-v0.1",
+  });
+  return stored ?? readContractFixture({ contractsRoot, schemaVersion: MOBILE_NOTIFICATION_SCHEMA_VERSION });
+}
+
+export function readMobileQuickApprovalPolicy({ contractsRoot, mobileQuickApprovalPolicyPath }) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: mobileQuickApprovalPolicyPath,
+    schemaVersion: MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION,
+    errorCode: "ToubaServeMobileQuickApprovalPolicyInvalid",
+    message: "mobile quick approval policy does not match mobile client-quick-approval-policy-v0.1",
+  });
+  return stored ?? readContractFixture({ contractsRoot, schemaVersion: MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION });
+}
+
+export function readMobileEscalation({ contractsRoot, mobileEscalationPath }) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: mobileEscalationPath,
+    schemaVersion: MOBILE_ESCALATION_SCHEMA_VERSION,
+    errorCode: "ToubaServeMobileEscalationInvalid",
+    message: "mobile escalation report does not match mobile client-escalation-v0.1",
+  });
+  return stored ?? readContractFixture({ contractsRoot, schemaVersion: MOBILE_ESCALATION_SCHEMA_VERSION });
+}
+
+export function buildHandlerSandboxStatus({
+  contractsRoot,
+  projectRoot = process.cwd(),
+  handlerSandboxStatusPath = join(projectRoot, DEFAULT_HANDLER_SANDBOX_STATUS_PATH),
+  platform = process.platform,
+  generatedAt = new Date().toISOString(),
+}) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: handlerSandboxStatusPath,
+    schemaVersion: HANDLER_SANDBOX_STATUS_SCHEMA_VERSION,
+    errorCode: "ToubaServeHandlerSandboxStatusInvalid",
+    message: "handler sandbox status does not match touba-handler-sandbox-status-v0.1",
+  });
+  if (stored !== undefined) {
+    return stored;
+  }
+
+  const diagnostics = [];
+  const artifacts = collectProjectArtifacts(projectRoot, diagnostics);
+  const manifestArtifact = artifacts.find((item) => item.kind === "manifest");
+  const manifest = manifestArtifact === undefined
+    ? undefined
+    : readJsonArtifact(join(projectRoot, manifestArtifact.relative_path), manifestArtifact.relative_path, diagnostics);
+  const bindings = isPlainObject(manifest?.bindings) ? manifest.bindings : {};
+  const handlers = Object.entries(bindings)
+    .filter(([, binding]) => isPlainObject(binding) && isPlainObject(binding.handler))
+    .map(([toolRef, binding]) => handlerSandboxRow({
+      toolRef,
+      binding,
+      platform,
+      sourceRef: manifestArtifact?.relative_path ?? null,
+    }))
+    .sort((left, right) => left.tool_ref.localeCompare(right.tool_ref));
+
+  return {
+    schema_version: HANDLER_SANDBOX_STATUS_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    project_root: projectRoot,
+    platform,
+    summary: {
+      handler_count: handlers.length,
+      isolated: handlers.filter((item) => item.status === "isolated").length,
+      not_isolated: handlers.filter((item) => item.status === "not_isolated").length,
+      unsupported: handlers.filter((item) => item.status === "unsupported").length,
+      unknown: handlers.filter((item) => item.status === "unknown").length,
+    },
+    handlers,
+    diagnostics: diagnostics.map((diagnostic) => ({
+      severity: ["info", "warning", "error"].includes(diagnostic.severity) ? diagnostic.severity : "warning",
+      code: nonEmptyString(diagnostic.code) ?? "ToubaHandlerSandboxDiagnostic",
+      message: nonEmptyString(diagnostic.message) ?? "handler sandbox diagnostic",
+    })),
+  };
+}
+
+function handlerSandboxRow({ toolRef, binding, platform, sourceRef }) {
+  const required = binding.sandbox?.required === true || binding.sandbox?.mode === "required";
+  const mechanism = sandboxMechanismForPlatform(platform);
+  let status = "not_isolated";
+  let message = "handler binding does not require sandbox isolation";
+  if (required && mechanism !== null) {
+    status = "isolated";
+    message = "handler binding requires platform sandbox isolation";
+  } else if (required && mechanism === null) {
+    status = "unsupported";
+    message = "handler binding requires sandbox isolation on an unsupported platform";
+  }
+  const handler = isPlainObject(binding.handler) ? binding.handler : {};
+  return {
+    tool_ref: toolRef,
+    handler_kind: nonEmptyString(handler.kind) ?? "unknown",
+    command_ref: nonEmptyString(handler.command) ?? "unknown",
+    status,
+    mechanism: required ? mechanism : null,
+    grants: normalizeStringList(binding.grants),
+    required,
+    evidence: {
+      source: "touba.manifest.json",
+      source_ref: sourceRef === null ? toolRef : `${sourceRef}#${toolRef}`,
+      message,
+    },
+  };
+}
+
+function sandboxMechanismForPlatform(platform) {
+  if (platform === "linux") return "bubblewrap";
+  if (platform === "darwin") return "sandbox-exec";
+  if (platform === "win32") return "Sandboxie-Plus";
+  return null;
+}
+
+function normalizeStringList(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string" && item.trim() !== "")
+    : [];
 }
 
 export function buildAuthorityGraph({

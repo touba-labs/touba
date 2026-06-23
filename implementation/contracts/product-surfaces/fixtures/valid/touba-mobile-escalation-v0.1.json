@@ -1,0 +1,32 @@
+{
+  "schema_version": "touba-mobile-escalation-v0.1",
+  "generated_at": "2026-06-23T12:00:00Z",
+  "summary": {
+    "assignment_count": 1,
+    "active": 1,
+    "escalated": 0,
+    "expired": 0
+  },
+  "assignments": [
+    {
+      "assignment_ref": "assignment:req_20260622_001:user:khadim",
+      "request_id": "req_20260622_001",
+      "primary_reviewer_ref": "user:khadim",
+      "backup_reviewer_ref": "user:soukaina",
+      "status": "assigned",
+      "deadline_at": "2026-06-23T13:00:00Z",
+      "escalated_at": null,
+      "trace_ref": "trace:run_20260622_001",
+      "evidence_ref": "touba-product-identity-v0.1#assignment:req_20260622_001:user:khadim"
+    }
+  ],
+  "events": [
+    {
+      "event_id": "identity_evt_000001",
+      "type": "assignment.created",
+      "assignment_ref": "assignment:req_20260622_001:user:khadim",
+      "emitted_at": "2026-06-23T12:00:00Z",
+      "trace_ref": "trace:run_20260622_001"
+    }
+  ]
+}

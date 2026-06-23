@@ -21,10 +21,18 @@ export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
  * @typedef {object} ProcessToolBinding
  * @property {ProcessToolBindingHandler} handler
  * @property {ProcessToolBindingLimits} limits
+ * @property {string[]=} grants
+ * @property {{required?: boolean, profile?: string, box_name?: string}=} sandbox
  *
  * @typedef {object} ToolHandlerResult
  * @property {unknown} value
  * @property {unknown=} memoryMetadata
+ *
+ * @typedef {object} HandlerSandboxPlan
+ * @property {boolean} enabled
+ * @property {string | null} mechanism
+ * @property {string} command
+ * @property {string[]} args
  *
  * @typedef {object} RunProcessToolHandlerInput
  * @property {string} toolRef
@@ -32,6 +40,8 @@ export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
  * @property {Record<string, unknown>} request
  * @property {string[]} secretHandles
  * @property {SecretStore | null | undefined} secretStore
+ * @property {string=} platform
+ * @property {Record<string, string | undefined>=} env
  */
 
 /**
@@ -51,7 +61,12 @@ export async function runProcessToolHandler(input) {
   );
 
   const childEnv = buildHandlerEnv(secretHandles, secretStore);
-  const child = spawnProcess(binding.handler.command, binding.handler.args, {
+  const sandboxPlan = buildHandlerSandboxPlan({
+    binding,
+    platform: input.platform ?? process.platform,
+    env: input.env ?? process.env,
+  });
+  const child = spawnProcess(sandboxPlan.command, sandboxPlan.args, {
     cwd: binding.handler.cwd,
     env: childEnv,
     stdio: ["pipe", "pipe", "pipe"],
@@ -216,6 +231,105 @@ export async function runProcessToolHandler(input) {
     });
     child.stdin.end(requestPayload);
   });
+}
+
+/**
+ * @param {{binding: ProcessToolBinding, platform?: string, env?: Record<string, string | undefined>}} input
+ * @returns {HandlerSandboxPlan}
+ */
+export function buildHandlerSandboxPlan({
+  binding,
+  platform = process.platform,
+  env = process.env,
+}) {
+  const sandbox = binding?.sandbox;
+  if (sandbox?.required !== true) {
+    return {
+      enabled: false,
+      mechanism: null,
+      command: binding.handler.command,
+      args: binding.handler.args,
+    };
+  }
+  const grants = Array.isArray(binding.grants) ? binding.grants : [];
+  if (platform === "linux") {
+    const command = env.TOUBA_BWRAP_COMMAND || "bwrap";
+    const args = [
+      "--die-with-parent",
+      "--unshare-pid",
+      "--unshare-ipc",
+      "--unshare-uts",
+      "--proc",
+      "/proc",
+      "--dev",
+      "/dev",
+      "--ro-bind",
+      "/",
+      "/",
+      "--tmpfs",
+      "/tmp",
+    ];
+    if (!grants.includes("network")) {
+      args.unshift("--unshare-net");
+    }
+    if (binding.handler.cwd) {
+      args.push(grants.includes("filesystem_write") ? "--bind" : "--ro-bind", binding.handler.cwd, binding.handler.cwd);
+    }
+    args.push(binding.handler.command, ...binding.handler.args);
+    return {
+      enabled: true,
+      mechanism: "bubblewrap",
+      command,
+      args,
+    };
+  }
+  if (platform === "darwin") {
+    const command = env.TOUBA_SANDBOX_EXEC_COMMAND || "sandbox-exec";
+    const policy = macosSeatbeltPolicy({ grants, cwd: binding.handler.cwd });
+    return {
+      enabled: true,
+      mechanism: "sandbox-exec",
+      command,
+      args: ["-p", policy, binding.handler.command, ...binding.handler.args],
+    };
+  }
+  if (platform === "win32") {
+    const command = env.TOUBA_SANDBOXIE_START_COMMAND || "Start.exe";
+    const boxName = sandbox.box_name || "ToubaHandler";
+    return {
+      enabled: true,
+      mechanism: "Sandboxie-Plus",
+      command,
+      args: [`/box:${boxName}`, binding.handler.command, ...binding.handler.args],
+    };
+  }
+  throw new RuntimeFailure(
+    `handler sandbox is not supported on ${platform}`,
+    { platform, handlerCommand: binding.handler.command },
+    "HandlerSandboxUnsupportedPlatform",
+  );
+}
+
+/**
+ * @param {{grants: string[], cwd?: string | undefined}} input
+ * @returns {string}
+ */
+function macosSeatbeltPolicy({ grants, cwd }) {
+  const rules = [
+    "(version 1)",
+    "(deny default)",
+    "(allow process*)",
+    "(allow sysctl*)",
+    "(allow file-read*)",
+    "(allow file-write* (subpath \"/tmp\"))",
+  ];
+  if (cwd && grants.includes("filesystem_write")) {
+    rules.push(`(allow file-write* (subpath ${JSON.stringify(cwd)}))`);
+  }
+  if (grants.includes("network")) {
+    rules.push("(allow network*)");
+  }
+  return rules.join("\n");
 }
 
 /**

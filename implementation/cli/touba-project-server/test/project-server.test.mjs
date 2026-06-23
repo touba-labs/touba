@@ -9,7 +9,13 @@ import {
   acceptDecision,
   buildAuthorityGraph,
   buildGovernanceReadiness,
+  buildHandlerSandboxStatus,
   buildSupplyChainStatus,
+  readBenchmarkRegression,
+  readCostObservatory,
+  readMobileEscalation,
+  readMobileNotifications,
+  readMobileQuickApprovalPolicy,
   applyProjectChange,
   buildContractIndex,
   buildLiveState,
@@ -73,6 +79,12 @@ test("live state composes project, run, trigger, decision and event surfaces", (
   assert.equal(state.trigger_queue_health.schema_version, "touba-trigger-queue-health-v0.1");
   assert.equal(state.supply_chain_status.schema_version, "touba-supply-chain-status-v0.1");
   assert.equal(state.governance_readiness.schema_version, "touba-governance-readiness-v0.1");
+  assert.equal(state.benchmark_regressions.schema_version, "touba-benchmark-regression-v0.1");
+  assert.equal(state.cost_observatory.schema_version, "touba-cost-observatory-v0.1");
+  assert.equal(state.handler_sandbox_status.schema_version, "touba-handler-sandbox-status-v0.1");
+  assert.equal(state.mobile_notifications.schema_version, "touba-mobile-notification-v0.1");
+  assert.equal(state.mobile_quick_approval_policy.schema_version, "touba-mobile-quick-approval-policy-v0.1");
+  assert.equal(state.mobile_escalation.schema_version, "touba-mobile-escalation-v0.1");
   assert.equal(state.pending_approval.schema_version, "touba-approval-request-v1");
   assert.equal(state.pending_review.schema_version, "touba-human-review-request-v1");
   assert.equal(state.events.transport, "server_sent_events");
@@ -309,7 +321,16 @@ test("operational project surfaces report supply chain, governance readiness and
       bindings: {
         "tool:demo.governance/ReadInvoice": {
           requires: ["network"],
+          grants: ["network", "filesystem_read"],
+          handler: {
+            kind: "process",
+            command: "node",
+            args: ["handlers/read-invoice.handler.mjs"],
+          },
           handler_package_ref: "package:demo.handlers",
+          sandbox: {
+            required: true,
+          },
         },
       },
     }, null, 2), "utf8");
@@ -414,6 +435,17 @@ test("operational project surfaces report supply chain, governance readiness and
     assertMatchesSchema("touba-trigger-queue-health-v0.1", queueHealth);
     assert.equal(queueHealth.triggers[0].status, "watch");
     assert.equal(queueHealth.triggers[0].replay_rejected, 1);
+
+    const sandbox = buildHandlerSandboxStatus({
+      contractsRoot,
+      projectRoot: root,
+      platform: "darwin",
+      generatedAt: "2026-06-23T00:00:02.000Z",
+    });
+    assertMatchesSchema("touba-handler-sandbox-status-v0.1", sandbox);
+    assert.equal(sandbox.handlers[0].tool_ref, "tool:demo.governance/ReadInvoice");
+    assert.equal(sandbox.handlers[0].status, "isolated");
+    assert.equal(sandbox.handlers[0].mechanism, "sandbox-exec");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -445,6 +477,40 @@ test("product identity surface reads fixture and project identity stores", () =>
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("observability and mobile product surfaces read fixture contracts", () => {
+  const benchmark = readBenchmarkRegression({
+    contractsRoot,
+    benchmarkRegressionPath: join(tmpdir(), "missing-benchmark-regression.json"),
+  });
+  const costs = readCostObservatory({
+    contractsRoot,
+    costObservatoryPath: join(tmpdir(), "missing-cost-observatory.json"),
+  });
+  const notifications = readMobileNotifications({
+    contractsRoot,
+    mobileNotificationsPath: join(tmpdir(), "missing-mobile-notifications.json"),
+  });
+  const quickApproval = readMobileQuickApprovalPolicy({
+    contractsRoot,
+    mobileQuickApprovalPolicyPath: join(tmpdir(), "missing-mobile-quick-approval-policy.json"),
+  });
+  const escalation = readMobileEscalation({
+    contractsRoot,
+    mobileEscalationPath: join(tmpdir(), "missing-mobile-escalation.json"),
+  });
+
+  assertMatchesSchema("touba-benchmark-regression-v0.1", benchmark);
+  assertMatchesSchema("touba-cost-observatory-v0.1", costs);
+  assertMatchesSchema("touba-mobile-notification-v0.1", notifications);
+  assertMatchesSchema("touba-mobile-quick-approval-policy-v0.1", quickApproval);
+  assertMatchesSchema("touba-mobile-escalation-v0.1", escalation);
+  assert.equal(benchmark.groups.some((group) => group.scope === "common_surface"), true);
+  assert.equal(costs.summary.estimate_basis.includes("estimate"), true);
+  assert.equal(notifications.notifications.every((item) => !JSON.stringify(item).includes("FAKE_SECRET")), true);
+  assert.equal(quickApproval.require_biometric, true);
+  assert.equal(escalation.assignments[0].backup_reviewer_ref, "user:soukaina");
 });
 
 test("pending human request store filters decisions already accepted", () => {

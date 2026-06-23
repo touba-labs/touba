@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-mobile-escalation-v0.1.schema.json",
+  "title": "touba-mobile-escalation-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "summary", "assignments", "events"],
+  "properties": {
+    "schema_version": { "const": "touba-mobile-escalation-v0.1" },
+    "generated_at": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assignment_count", "active", "escalated", "expired"],
+      "properties": {
+        "assignment_count": { "type": "integer" },
+        "active": { "type": "integer" },
+        "escalated": { "type": "integer" },
+        "expired": { "type": "integer" }
+      }
+    },
+    "assignments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["assignment_ref", "request_id", "primary_reviewer_ref", "backup_reviewer_ref", "status", "deadline_at", "escalated_at", "trace_ref", "evidence_ref"],
+        "properties": {
+          "assignment_ref": { "type": "string" },
+          "request_id": { "type": "string" },
+          "primary_reviewer_ref": { "type": "string" },
+          "backup_reviewer_ref": { "type": ["string", "null"] },
+          "status": { "enum": ["assigned", "escalated", "expired", "accepted"] },
+          "deadline_at": { "type": "string" },
+          "escalated_at": { "type": ["string", "null"] },
+          "trace_ref": { "type": "string" },
+          "evidence_ref": { "type": "string" }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "type", "assignment_ref", "emitted_at", "trace_ref"],
+        "properties": {
+          "event_id": { "type": "string" },
+          "type": { "enum": ["assignment.created", "notification.sent", "assignment.escalated"] },
+          "assignment_ref": { "type": "string" },
+          "emitted_at": { "type": "string" },
+          "trace_ref": { "type": "string" }
+        }
+      }
+    }
+  }
+}
