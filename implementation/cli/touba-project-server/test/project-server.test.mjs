@@ -14,6 +14,7 @@ import {
   proposeProjectChange,
   refreshProject,
 } from "../src/serve.mjs";
+import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
 
@@ -243,10 +244,15 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     const refreshResponse = await fetch(`${baseUrl}/project/refresh`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ schema_version: "touba-project-refresh-request-v0.1" }),
+      body: JSON.stringify({
+        schema_version: "touba-project-refresh-request-v0.1",
+        requested_by: { kind: "studio", id: "test-suite" },
+        reason: "http-test-refresh",
+      }),
     });
     assert.equal(refreshResponse.status, 202);
     const refresh = await refreshResponse.json();
+    assertMatchesSchema("touba-project-refresh-v0.1", refresh);
     assert.deepEqual(refresh.changes.changed_artifacts.map((item) => item.relative_path), ["src/main.tb"]);
 
     const proposedResponse = await fetch(`${baseUrl}/changes/propose`, {
@@ -258,11 +264,13 @@ test("HTTP project server exposes live state, events and decisions", async () =>
         action: "write_text_file",
         target: { path: "touba.project.json" },
         requested_by: { kind: "user", id: "khadim" },
+        reason: "http change test",
         content: JSON.stringify({ project_version: "touba-project-v1", language: "javascript" }, null, 2),
       }),
     });
     assert.equal(proposedResponse.status, 202);
     const proposed = await proposedResponse.json();
+    assertMatchesSchema("touba-project-change-proposed-v0.1", proposed);
     assert.equal(proposed.status, "proposed");
 
     const applyResponse = await fetch(`${baseUrl}/changes/apply`, {
@@ -273,10 +281,12 @@ test("HTTP project server exposes live state, events and decisions", async () =>
         proposal_id: "http_change_001",
         decision: "apply",
         decided_by: { kind: "user", id: "khadim" },
+        reason: "http apply test",
       }),
     });
     assert.equal(applyResponse.status, 202);
     const applied = await applyResponse.json();
+    assertMatchesSchema("touba-project-change-result-v0.1", applied);
     assert.equal(applied.status, "applied");
     assert.equal(existsSync(join(root, "touba.project.json")), true);
 
@@ -309,4 +319,10 @@ async function readNextEvent(response) {
 
 function readJson(relativePath) {
   return JSON.parse(readFileSync(join(contractsRoot, relativePath), "utf8"));
+}
+
+function assertMatchesSchema(schemaVersion, value) {
+  const schema = readJson(`schemas/${schemaVersion}.schema.json`);
+  const diagnostics = validateObject(schema, value);
+  assert.deepEqual(diagnostics, []);
 }

@@ -13,6 +13,12 @@ lossless mapping to the source contract and its `schema_version`.
 | Contract | Primary consumers | Purpose |
 | --- | --- | --- |
 | `touba-project-inspection-v1` | client | Project structure, generated artifacts, entrypoints, diagnostics. |
+| `touba-project-refresh-request-v0.1` | client, CLI | Request a project refresh from the project server. |
+| `touba-project-refresh-v0.1` | client | Project refresh result, artifact snapshot, changed files, diagnostics. |
+| `touba-project-change-proposal-v0.1` | client | Reviewable project change proposal. |
+| `touba-project-change-proposed-v0.1` | client | Accepted change proposal with validation evidence. |
+| `touba-project-change-apply-v0.1` | client | Apply or refuse a pending change proposal. |
+| `touba-project-change-result-v0.1` | client | Final applied/refused change result and evidence. |
 | `touba-run-summary-v1` | client, Mobile | Compact run status, trace reference, budget usage, pending approvals. |
 | `touba-trace-timeline-v1` | client | Ordered trace timeline for review and investigation. |
 | `touba-trigger-status-v1` | client, Mobile | Trigger state, queue state, replay/rate-limit surface. |
@@ -95,6 +101,7 @@ GET  /health
 GET  /state
 GET  /events
 GET  /project
+POST /project/refresh
 GET  /runs/current
 GET  /trace/current
 GET  /triggers
@@ -105,6 +112,8 @@ GET  /alerts/current
 GET  /contracts
 GET  /contracts/<schema_version>
 POST /decisions
+POST /changes/propose
+POST /changes/apply
 ```
 
 `/state` returns the current project server state. `/events` is the
@@ -118,6 +127,19 @@ resources and alerts as versioned Touba contracts.
 `touba-human-review-decision-v1` payloads that validate against their schemas,
 stores them through the configured human decision backend and rejects replay for
 the same `schema_version` and `request_id`.
+
+`/project/refresh` accepts `touba-project-refresh-request-v0.1` and returns
+`touba-project-refresh-v0.1`. The refresh result includes a bounded artifact
+snapshot, changed artifacts and diagnostics such as stale AIR.
+
+`/changes/propose` accepts `touba-project-change-proposal-v0.1` and returns
+`touba-project-change-proposed-v0.1`. The server refuses unsafe paths, internal
+directories, unapproved target files, invalid Touba JSON metadata and `.tb`
+patches that fail `touba compile --stdout`.
+
+`/changes/apply` accepts `touba-project-change-apply-v0.1` and returns
+`touba-project-change-result-v0.1`. It applies or refuses a pending proposal,
+rejects replay and emits refresh/change events.
 
 The server does not grant authority or accept arbitrary UI state. It is the
 project-facing control plane for client and Mobile adapters; Touba Engine

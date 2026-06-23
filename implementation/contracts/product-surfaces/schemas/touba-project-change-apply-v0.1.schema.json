@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-change-apply-v0.1.schema.json",
+  "title": "touba-project-change-apply-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "proposal_id", "decision", "decided_by", "reason"],
+  "properties": {
+    "schema_version": { "const": "touba-project-change-apply-v0.1" },
+    "proposal_id": { "type": "string" },
+    "decision": { "enum": ["apply", "refuse"] },
+    "decided_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["studio", "user", "service"] },
+        "id": { "type": "string" }
+      }
+    },
+    "reason": { "type": "string" }
+  }
+}

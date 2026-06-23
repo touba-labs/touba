@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-change-result-v0.1.schema.json",
+  "title": "touba-project-change-result-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "proposal_id", "target", "decided_at", "decided_by", "reason", "content_sha256", "validations", "evidence"],
+  "properties": {
+    "schema_version": { "const": "touba-project-change-result-v0.1" },
+    "status": { "enum": ["applied", "refused"] },
+    "proposal_id": { "type": "string" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" }
+      }
+    },
+    "decided_at": { "type": "string" },
+    "decided_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string" },
+        "id": { "type": "string" }
+      }
+    },
+    "reason": { "type": "string" },
+    "content_sha256": { "type": "string" },
+    "validations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "enum": ["info", "warning", "error"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["write_mode", "project_root", "relative_path"],
+      "properties": {
+        "write_mode": { "enum": ["atomic_rename", "none"] },
+        "project_root": { "type": "string" },
+        "relative_path": { "type": "string" }
+      }
+    }
+  }
+}

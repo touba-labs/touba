@@ -1,0 +1,43 @@
+{
+  "schema_version": "touba-project-refresh-v0.1",
+  "status": "refreshed",
+  "project_root": "/workspace/example",
+  "refreshed_at": "2026-06-22T18:00:00.000Z",
+  "summary": {
+    "artifact_count": 2,
+    "changed_count": 1,
+    "diagnostic_count": 1
+  },
+  "artifacts": [
+    {
+      "relative_path": "src/main.tb",
+      "kind": "source",
+      "size_bytes": 128,
+      "mtime_ms": 1782151200000,
+      "sha256": "8f1a0fbd7c92b4ad3d8e8f8fc8b9f9c2e0e9f2a049d6f88e8dbd94ac8b0b0c01"
+    },
+    {
+      "relative_path": "program.air.json",
+      "kind": "air",
+      "size_bytes": 512,
+      "mtime_ms": 1782151199000,
+      "sha256": "1a0fbd7c92b4ad3d8e8f8fc8b9f9c2e0e9f2a049d6f88e8dbd94ac8b0b0c018f"
+    }
+  ],
+  "changes": {
+    "changed_artifacts": [
+      {
+        "relative_path": "src/main.tb",
+        "kind": "source",
+        "sha256": "8f1a0fbd7c92b4ad3d8e8f8fc8b9f9c2e0e9f2a049d6f88e8dbd94ac8b0b0c01"
+      }
+    ]
+  },
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "code": "ToubaServeProjectAirStale",
+      "message": "source is newer than generated AIR or no AIR was found"
+    }
+  ]
+}

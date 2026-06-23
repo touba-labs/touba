@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-change-proposal-v0.1.schema.json",
+  "title": "touba-project-change-proposal-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "proposal_id", "action", "target", "requested_by", "reason", "content"],
+  "properties": {
+    "schema_version": { "const": "touba-project-change-proposal-v0.1" },
+    "proposal_id": { "type": "string" },
+    "action": { "enum": ["write_text_file"] },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" }
+      }
+    },
+    "requested_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["studio", "user", "service"] },
+        "id": { "type": "string" }
+      }
+    },
+    "reason": { "type": "string" },
+    "content": { "type": "string" }
+  }
+}

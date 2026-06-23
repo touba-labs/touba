@@ -196,6 +196,13 @@ export function createToubaProjectServer(options = {}) {
       }
       if (request.method === "POST" && url.pathname === "/project/refresh") {
         const body = await readOptionalJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: PROJECT_REFRESH_REQUEST_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeRefreshInvalid",
+          message: "refresh request payload does not match its contract",
+        });
         const refreshed = refreshProject({
           projectRoot,
           previousSnapshot: projectSnapshot,
@@ -208,6 +215,13 @@ export function createToubaProjectServer(options = {}) {
       }
       if (request.method === "POST" && url.pathname === "/changes/propose") {
         const body = await readJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: CHANGE_PROPOSAL_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeChangeInvalid",
+          message: "change proposal payload does not match its contract",
+        });
         const proposed = proposeProjectChange({
           projectRoot,
           changeProposalsPath,
@@ -219,6 +233,13 @@ export function createToubaProjectServer(options = {}) {
       }
       if (request.method === "POST" && url.pathname === "/changes/apply") {
         const body = await readJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: CHANGE_APPLY_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeChangeApplyInvalid",
+          message: "change apply payload does not match its contract",
+        });
         const result = applyProjectChange({
           projectRoot,
           changeProposalsPath,
@@ -511,6 +532,13 @@ export function applyProjectChange({
       decided_at: decidedAt,
       decided_by: request.decided_by,
       reason: proposal.refusal_reason,
+      content_sha256: proposal.content_sha256,
+      validations: proposal.validations ?? [],
+      evidence: {
+        write_mode: "none",
+        project_root: projectRoot,
+        relative_path: proposal.target.path,
+      },
     };
   }
 
@@ -537,6 +565,7 @@ export function applyProjectChange({
     target: proposal.target,
     decided_at: decidedAt,
     decided_by: request.decided_by,
+    reason: request.reason,
     content_sha256: proposal.content_sha256,
     validations,
     evidence: {
@@ -854,6 +883,16 @@ function readContractSchema({ contractsRoot, schemaVersion }) {
     throw serviceError("ToubaServeSchemaMissing", `${schemaVersion} schema is missing`);
   }
   return JSON.parse(readFileSync(schemaPath, "utf8"));
+}
+
+function validateContractPayload({ contractsRoot, schemaVersion, value, errorCode, message }) {
+  const schema = readContractSchema({ contractsRoot, schemaVersion });
+  const diagnostics = validateObject(schema, value);
+  if (diagnostics.length > 0) {
+    const error = serviceError(errorCode, message);
+    error.diagnostics = diagnostics;
+    throw error;
+  }
 }
 
 function contractFilesExist({ contractsRoot, schemaVersion }) {

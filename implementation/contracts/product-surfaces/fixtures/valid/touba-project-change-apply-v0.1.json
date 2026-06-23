@@ -1,0 +1,10 @@
+{
+  "schema_version": "touba-project-change-apply-v0.1",
+  "proposal_id": "change_demo_001",
+  "decision": "apply",
+  "decided_by": {
+    "kind": "user",
+    "id": "khadim"
+  },
+  "reason": "Reviewed and accepted"
+}
