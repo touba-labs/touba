@@ -34,6 +34,8 @@ const CONTRACT_INDEX_SCHEMA_VERSION = "touba-project-server-contract-index-v0.1"
 const LIVE_STATE_SCHEMA_VERSION = "touba-project-live-state-v0.1";
 const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v0.1";
 const HUMAN_DECISION_STORE_SCHEMA_VERSION = "touba-human-decisions-v0.1";
+const HUMAN_DECISION_HISTORY_SCHEMA_VERSION = "touba-human-decision-history-v0.1";
+const HUMAN_DECISION_DETAIL_SCHEMA_VERSION = "touba-human-decision-detail-v0.1";
 const PROJECT_REFRESH_REQUEST_SCHEMA_VERSION = "touba-project-refresh-request-v0.1";
 const PROJECT_REFRESH_SCHEMA_VERSION = "touba-project-refresh-v0.1";
 const CHANGE_PROPOSAL_SCHEMA_VERSION = "touba-project-change-proposal-v0.1";
@@ -165,6 +167,7 @@ export function createToubaProjectServer(options = {}) {
             pending_approval: "/approvals/pending/current",
             pending_review: "/reviews/pending/current",
             human_decisions: "/decisions",
+            human_decision_detail: "/decisions/<schema_version>/<request_id>",
             change_history: "/changes",
             change_detail: "/changes/<proposal_id>",
             change_propose: "/changes/propose",
@@ -203,6 +206,15 @@ export function createToubaProjectServer(options = {}) {
         const accepted = acceptDecision({ contractsRoot, humanDecisionsPath, decision: body });
         publishEvent(eventClients, "human_decision.accepted", accepted, nextEvent);
         writeJson(response, 202, accepted);
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/decisions") {
+        writeJson(response, 200, listHumanDecisions({ humanDecisionsPath }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname.startsWith("/decisions/")) {
+        const [schemaVersion, requestId] = decodeDecisionPath(url.pathname);
+        writeJson(response, 200, getHumanDecisionDetail({ humanDecisionsPath, schemaVersion, requestId }));
         return;
       }
       if (request.method === "GET" && url.pathname === "/changes") {
@@ -490,6 +502,50 @@ export function acceptDecision({ contractsRoot, humanDecisionsPath, decision, ac
     request_id: decision.request_id,
     decision_schema_version: schemaVersion,
     accepted_at: acceptedAt,
+  };
+}
+
+export function listHumanDecisions({
+  humanDecisionsPath,
+  generatedAt = new Date().toISOString(),
+}) {
+  const store = loadHumanDecisionStore(humanDecisionsPath);
+  const decisions = store.decisions
+    .map(projectHumanDecision)
+    .sort((left, right) => right.accepted_at.localeCompare(left.accepted_at));
+  return {
+    schema_version: HUMAN_DECISION_HISTORY_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    summary: {
+      total: decisions.length,
+      approvals: decisions.filter((item) => item.decision_kind === "approval").length,
+      reviews: decisions.filter((item) => item.decision_kind === "human_review").length,
+    },
+    decisions,
+  };
+}
+
+export function getHumanDecisionDetail({
+  humanDecisionsPath,
+  schemaVersion,
+  requestId,
+  generatedAt = new Date().toISOString(),
+}) {
+  if (!ACCEPTED_DECISION_CONTRACTS.includes(schemaVersion)) {
+    throw serviceError("ToubaServeDecisionContractUnsupported", "decision schema_version is not accepted by this service");
+  }
+  const id = requiredNonEmptyString(requestId, "request_id");
+  const store = loadHumanDecisionStore(humanDecisionsPath);
+  const decision = store.decisions.find((item) =>
+    item.schema_version === schemaVersion && item.request_id === id
+  );
+  if (decision === undefined) {
+    throw serviceError("ToubaServeDecisionNotFound", "decision request_id is unknown");
+  }
+  return {
+    schema_version: HUMAN_DECISION_DETAIL_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    decision: projectHumanDecision(decision),
   };
 }
 
@@ -1056,6 +1112,41 @@ function saveHumanDecisionStore(humanDecisionsPath, store) {
   writeFileSync(humanDecisionsPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
 }
 
+function projectHumanDecision(decision) {
+  if (decision.schema_version === "touba-approval-decision-v1") {
+    return {
+      source_schema_version: decision.schema_version,
+      request_id: decision.request_id,
+      decision_kind: "approval",
+      result: decision.decision,
+      decided_by: decision.decided_by,
+      decided_at: decision.decided_at,
+      comment: decision.comment,
+      client_ref: decision.client_ref,
+      accepted_at: decision.accepted_at ?? decision.decided_at,
+    };
+  }
+  return {
+    source_schema_version: decision.schema_version,
+    request_id: decision.request_id,
+    decision_kind: "human_review",
+    result: decision.outcome,
+    decided_by: decision.reviewed_by,
+    decided_at: decision.reviewed_at,
+    comment: decision.comment,
+    client_ref: decision.client_ref,
+    accepted_at: decision.accepted_at ?? decision.reviewed_at,
+  };
+}
+
+function decodeDecisionPath(pathname) {
+  const segments = pathname.slice("/decisions/".length).split("/");
+  if (segments.length !== 2 || segments.some((item) => item === "")) {
+    throw serviceError("ToubaServeDecisionPathInvalid", "decision detail path must be /decisions/<schema_version>/<request_id>");
+  }
+  return segments.map((segment) => decodeURIComponent(segment));
+}
+
 function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`;
 }
@@ -1160,6 +1251,7 @@ function httpStatusForError(code) {
   if (
     code === "ToubaServeRouteNotFound"
     || code === "ToubaServeContractUnknown"
+    || code === "ToubaServeDecisionNotFound"
     || code === "ToubaServeChangeProposalNotFound"
   ) return 404;
   if (code === "ToubaServeBodyTooLarge" || code === "ToubaServeChangeTooLarge") return 413;
@@ -1167,6 +1259,7 @@ function httpStatusForError(code) {
   if (
     code === "ToubaServeDecisionInvalid"
     || code === "ToubaServeDecisionContractUnsupported"
+    || code === "ToubaServeDecisionPathInvalid"
     || code === "ToubaServeJsonInvalid"
     || code === "ToubaServeRefreshInvalid"
     || code === "ToubaServeChangeInvalid"
@@ -1244,6 +1337,8 @@ function usage() {
     "  GET  /runs/current",
     "  GET  /triggers",
     "  GET  /approvals/pending/current",
+    "  GET  /decisions",
+    "  GET  /decisions/<schema_version>/<request_id>",
     "  GET  /changes",
     "  GET  /changes/<proposal_id>",
     "  POST /decisions",

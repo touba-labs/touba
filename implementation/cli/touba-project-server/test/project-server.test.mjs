@@ -12,6 +12,8 @@ import {
   buildProjectEvent,
   createToubaProjectServer,
   getProjectChangeDetail,
+  getHumanDecisionDetail,
+  listHumanDecisions,
   listProjectChanges,
   preflightServeOptions,
   proposeProjectChange,
@@ -330,6 +332,63 @@ test("accepts valid decisions and rejects replay", () => {
   }
 });
 
+test("human decision history reports approval and review decisions", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-decisions-"));
+  try {
+    const humanDecisionsPath = join(root, "human-decisions.json");
+    const approval = readJson("fixtures/valid/touba-approval-decision-v1.json");
+    const review = readJson("fixtures/valid/touba-human-review-decision-v1.json");
+    acceptDecision({
+      contractsRoot,
+      humanDecisionsPath,
+      decision: approval,
+      acceptedAt: "2026-06-23T00:00:00.000Z",
+    });
+    acceptDecision({
+      contractsRoot,
+      humanDecisionsPath,
+      decision: review,
+      acceptedAt: "2026-06-23T00:00:01.000Z",
+    });
+
+    const history = listHumanDecisions({
+      humanDecisionsPath,
+      generatedAt: "2026-06-23T00:00:02.000Z",
+    });
+    assertMatchesSchema("touba-human-decision-history-v0.1", history);
+    assert.deepEqual(history.summary, { total: 2, approvals: 1, reviews: 1 });
+    assert.deepEqual(new Set(history.decisions.map((item) => item.decision_kind)), new Set(["approval", "human_review"]));
+
+    const detail = getHumanDecisionDetail({
+      humanDecisionsPath,
+      schemaVersion: "touba-human-review-decision-v1",
+      requestId: review.request_id,
+      generatedAt: "2026-06-23T00:00:03.000Z",
+    });
+    assertMatchesSchema("touba-human-decision-detail-v0.1", detail);
+    assert.equal(detail.decision.decision_kind, "human_review");
+    assert.equal(detail.decision.result, review.outcome);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("human decision detail rejects unknown decision ids", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-decisions-missing-"));
+  try {
+    assert.throws(
+      () => getHumanDecisionDetail({
+        humanDecisionsPath: join(root, "human-decisions.json"),
+        schemaVersion: "touba-approval-decision-v1",
+        requestId: "missing",
+      }),
+      /unknown/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("HTTP project server exposes live state, events and decisions", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-"));
   mkdirSync(join(root, "src"), { recursive: true });
@@ -377,6 +436,15 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.equal(response.status, 202);
     const accepted = await response.json();
     assert.equal(accepted.request_id, decision.request_id);
+
+    const decisionHistory = await getJson(`${baseUrl}/decisions`);
+    assertMatchesSchema("touba-human-decision-history-v0.1", decisionHistory);
+    assert.equal(decisionHistory.summary.reviews, 1);
+
+    const decisionDetail = await getJson(`${baseUrl}/decisions/${encodeURIComponent(decision.schema_version)}/${encodeURIComponent(decision.request_id)}`);
+    assertMatchesSchema("touba-human-decision-detail-v0.1", decisionDetail);
+    assert.equal(decisionDetail.decision.request_id, decision.request_id);
+    assert.equal(decisionDetail.decision.decision_kind, "human_review");
 
     writeFileSync(join(root, "src", "main.tb"), "module demo.main\n// refresh\n", "utf8");
     const refreshResponse = await fetch(`${baseUrl}/project/refresh`, {

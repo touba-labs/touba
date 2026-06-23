@@ -25,6 +25,8 @@ export const PRODUCT_SURFACE_CONTRACTS = Object.freeze([
   "touba-approval-decision-v1",
   "touba-human-review-request-v1",
   "touba-human-review-decision-v1",
+  "touba-human-decision-history-v0.1",
+  "touba-human-decision-detail-v0.1",
   "touba-registry-resource-v1",
   "touba-alert-v1",
 ]);

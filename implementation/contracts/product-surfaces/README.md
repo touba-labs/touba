@@ -30,6 +30,8 @@ lossless mapping to the source contract and its `schema_version`.
 | `touba-approval-decision-v1` | Touba Engine | Human approval decision submitted by a client. |
 | `touba-human-review-request-v1` | client, Mobile | Review request that asks for judgement without implying approval. |
 | `touba-human-review-decision-v1` | Touba Engine | Structured review result submitted by a client. |
+| `touba-human-decision-history-v0.1` | client, Mobile | Read-only history of accepted approval and review decisions. |
+| `touba-human-decision-detail-v0.1` | client, Mobile | Normalized accepted human decision detail by schema and request id. |
 | `touba-registry-resource-v1` | client, Hub | Versioned resource metadata for skills, agents, integrations, workflows, packages. |
 | `touba-alert-v1` | client, Mobile | Notification-only alert, separate from runtime decisions. |
 
@@ -116,6 +118,8 @@ GET  /alerts/current
 GET  /contracts
 GET  /contracts/<schema_version>
 POST /decisions
+GET  /decisions
+GET  /decisions/<schema_version>/<request_id>
 GET  /changes
 GET  /changes/<proposal_id>
 POST /changes/propose
@@ -136,6 +140,11 @@ requests, resources and alerts as versioned Touba contracts.
 `touba-human-review-decision-v1` payloads that validate against their schemas,
 stores them through the configured human decision backend and rejects replay for
 the same `schema_version` and `request_id`.
+
+`GET /decisions` returns `touba-human-decision-history-v0.1`.
+`GET /decisions/<schema_version>/<request_id>` returns
+`touba-human-decision-detail-v0.1`. These routes expose a normalized, read-only
+view of accepted human decisions for client and Mobile.
 
 `/project/refresh` accepts `touba-project-refresh-request-v0.1` and returns
 `touba-project-refresh-v0.1`. The refresh result includes a bounded artifact
