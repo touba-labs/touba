@@ -474,7 +474,7 @@ function serveCommand(rawArgs) {
 
 function serveUsage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--change-proposals <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the Touba project server for client, Mobile and contract clients.",
     "",
@@ -482,8 +482,11 @@ function serveUsage() {
     "  host: 127.0.0.1",
     "  port: 8791",
     "  human_decisions: .touba/human-decisions.json",
+    "  change_proposals: .touba/client-change-proposals.json",
+    "  event_journal: .touba/project-events.jsonl",
+    "  event_journal_limit: 200",
     "",
-    "The server exposes project state, live events, versioned contracts and human decision intake.",
+    "The server exposes project state, replayable live events, versioned contracts and human decision intake.",
     "It does not execute agents or grant authority.",
   ].join("\n");
 }
@@ -1454,7 +1457,7 @@ function printUsage() {
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
   touba run <program.air.json> [--profile dev|prod] [runtime options]
-  touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--change-proposals <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
+  touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
   touba refresh --url <touba-serve-url> [--auth-token-env NAME] [--reason <text>]
   touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>
   touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]

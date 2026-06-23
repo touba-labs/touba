@@ -26,6 +26,8 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8791;
 const DEFAULT_HUMAN_DECISIONS_PATH = ".touba/human-decisions.json";
 const DEFAULT_CHANGE_PROPOSALS_PATH = ".touba/studio-change-proposals.json";
+const DEFAULT_EVENT_JOURNAL_PATH = ".touba/project-events.jsonl";
+const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CHANGE_CONTENT_BYTES = 64 * 1024;
 const MAX_PROJECT_ARTIFACTS = 200;
@@ -112,15 +114,21 @@ export function createToubaProjectServer(options = {}) {
   const changeProposalsPath = resolve(
     options.changeProposalsPath ?? join(projectRoot, DEFAULT_CHANGE_PROPOSALS_PATH),
   );
+  const eventJournalPath = resolve(
+    options.eventJournalPath ?? join(projectRoot, DEFAULT_EVENT_JOURNAL_PATH),
+  );
+  const eventJournalLimit = options.eventJournalLimit ?? DEFAULT_EVENT_JOURNAL_LIMIT;
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
   const authToken = options.authTokenEnv === undefined ? undefined : process.env[options.authTokenEnv];
   const eventClients = new Set();
-  let eventSequence = 0;
   let projectSnapshot;
+  let eventSequence = 0;
   const nextEvent = (type, payload) => {
     eventSequence += 1;
-    return buildProjectEvent({ type, payload, sequence: eventSequence });
+    const event = buildProjectEvent({ type, payload, sequence: eventSequence });
+    appendProjectEventJournal({ eventJournalPath, limit: eventJournalLimit, event });
+    return event;
   };
 
   if (options.authTokenEnv !== undefined && (!authToken || authToken.trim() === "")) {
@@ -134,8 +142,11 @@ export function createToubaProjectServer(options = {}) {
     projectRoot,
     humanDecisionsPath,
     changeProposalsPath,
+    eventJournalPath,
+    eventJournalLimit,
     strict: options.strict === true,
   });
+  eventSequence = latestProjectEventSequence(readProjectEventJournal(eventJournalPath));
   projectSnapshot = buildProjectSnapshot({
     projectRoot,
     previousSnapshot: undefined,
@@ -172,6 +183,8 @@ export function createToubaProjectServer(options = {}) {
             change_detail: "/changes/<proposal_id>",
             change_propose: "/changes/propose",
             change_apply: "/changes/apply",
+            event_replay: "Last-Event-ID",
+            event_journal_limit: eventJournalLimit,
           },
         });
         return;
@@ -181,7 +194,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "GET" && url.pathname === "/events") {
-        openEventStream({ request, response, eventClients, nextEvent });
+        openEventStream({ request, response, eventClients, nextEvent, eventJournalPath });
         return;
       }
       if (request.method === "GET" && Object.hasOwn(LIVE_ENDPOINT_CONTRACTS, url.pathname)) {
@@ -329,6 +342,8 @@ export function createToubaProjectServer(options = {}) {
           contracts_root: contractsRoot,
           human_decisions: humanDecisionsPath ?? null,
           change_proposals: changeProposalsPath,
+          event_journal: eventJournalPath,
+          event_journal_limit: eventJournalLimit,
           event_stream: `http://${host}:${address.port}/events`,
         })}\n`);
       }
@@ -384,6 +399,11 @@ export function buildLiveState({
       endpoint: "/events",
       transport: "server_sent_events",
       event_schema_version: PROJECT_EVENT_SCHEMA_VERSION,
+      replay: {
+        request_header: "Last-Event-ID",
+        event_id_field: "event_id",
+        retention: "bounded_journal",
+      },
     },
   };
 }
@@ -413,6 +433,8 @@ export function preflightServeOptions({
   projectRoot = process.cwd(),
   humanDecisionsPath,
   changeProposalsPath = join(projectRoot, DEFAULT_CHANGE_PROPOSALS_PATH),
+  eventJournalPath = join(projectRoot, DEFAULT_EVENT_JOURNAL_PATH),
+  eventJournalLimit = DEFAULT_EVENT_JOURNAL_LIMIT,
   strict = false,
 }) {
   const diagnostics = [];
@@ -433,6 +455,14 @@ export function preflightServeOptions({
     diagnostics.push(serviceDiagnostic("ToubaServeChangeStoreOutsideProject", "change proposal store must stay inside the project root"));
   } else if (existsSync(changeProposalsPath) && statSync(changeProposalsPath).isDirectory()) {
     diagnostics.push(serviceDiagnostic("ToubaServeChangeStoreInvalid", `${changeProposalsPath} is a directory`));
+  }
+  if (!Number.isInteger(eventJournalLimit) || eventJournalLimit < 1 || eventJournalLimit > 10000) {
+    diagnostics.push(serviceDiagnostic("ToubaServeEventJournalLimitInvalid", "event journal limit must be an integer between 1 and 10000"));
+  }
+  if (!isPathInside(projectRoot, eventJournalPath)) {
+    diagnostics.push(serviceDiagnostic("ToubaServeEventJournalOutsideProject", "event journal must stay inside the project root"));
+  } else if (existsSync(eventJournalPath) && statSync(eventJournalPath).isDirectory()) {
+    diagnostics.push(serviceDiagnostic("ToubaServeEventJournalInvalid", `${eventJournalPath} is a directory`));
   }
   for (const schemaVersion of PRODUCT_SURFACE_CONTRACTS) {
     if (!contractFilesExist({ contractsRoot, schemaVersion })) {
@@ -461,6 +491,15 @@ export function preflightServeOptions({
   }
   if (diagnostics.some((diagnostic) => diagnostic.code === "ToubaServeChangeStoreOutsideProject" || diagnostic.code === "ToubaServeChangeStoreInvalid")) {
     const error = serviceError("ToubaServePreflightFailed", "touba serve cannot use the configured client change proposal store");
+    error.diagnostics = diagnostics;
+    throw error;
+  }
+  if (diagnostics.some((diagnostic) =>
+    diagnostic.code === "ToubaServeEventJournalLimitInvalid"
+    || diagnostic.code === "ToubaServeEventJournalOutsideProject"
+    || diagnostic.code === "ToubaServeEventJournalInvalid"
+  )) {
+    const error = serviceError("ToubaServePreflightFailed", "touba serve cannot use the configured event journal");
     error.diagnostics = diagnostics;
     throw error;
   }
@@ -1112,6 +1151,118 @@ function saveHumanDecisionStore(humanDecisionsPath, store) {
   writeFileSync(humanDecisionsPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
 }
 
+export function readProjectEventJournal(eventJournalPath) {
+  if (!existsSync(eventJournalPath)) {
+    return [];
+  }
+  if (statSync(eventJournalPath).isDirectory()) {
+    throw serviceError("ToubaServeEventJournalInvalid", "event journal path is a directory");
+  }
+  const content = readFileSync(eventJournalPath, "utf8");
+  const events = [];
+  const lines = content.split(/\r?\n/u);
+  for (const [index, line] of lines.entries()) {
+    if (line.trim() === "") {
+      continue;
+    }
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch (cause) {
+      throw serviceError("ToubaServeEventJournalInvalid", `event journal line ${index + 1} is not valid JSON: ${cause.message}`);
+    }
+    if (event?.schema_version !== PROJECT_EVENT_SCHEMA_VERSION || !Number.isInteger(event.sequence)) {
+      throw serviceError("ToubaServeEventJournalInvalid", `event journal line ${index + 1} is not a Touba project event`);
+    }
+    events.push(event);
+  }
+  return events.sort((left, right) => left.sequence - right.sequence);
+}
+
+export function appendProjectEventJournal({ eventJournalPath, limit = DEFAULT_EVENT_JOURNAL_LIMIT, event }) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 10000) {
+    throw serviceError("ToubaServeEventJournalLimitInvalid", "event journal limit must be an integer between 1 and 10000");
+  }
+  const events = [...readProjectEventJournal(eventJournalPath), event]
+    .sort((left, right) => left.sequence - right.sequence)
+    .slice(-limit);
+  mkdirSync(dirname(eventJournalPath), { recursive: true });
+  writeFileSync(
+    eventJournalPath,
+    `${events.map((item) => JSON.stringify(item)).join("\n")}\n`,
+    "utf8",
+  );
+}
+
+export function replayProjectEvents({ eventJournalPath, lastEventId }) {
+  if (lastEventId === undefined || lastEventId === null || String(lastEventId).trim() === "") {
+    const events = readProjectEventJournal(eventJournalPath);
+    return {
+      status: "replayed",
+      requested_last_event_id: null,
+      events: [],
+      retained_from_sequence: events[0]?.sequence ?? null,
+      retained_to_sequence: events.at(-1)?.sequence ?? null,
+    };
+  }
+  const sequence = parseProjectEventId(lastEventId);
+  const events = readProjectEventJournal(eventJournalPath);
+  if (sequence === null) {
+    return {
+      status: "resync_required",
+      requested_last_event_id: lastEventId ?? null,
+      events: [],
+      retained_from_sequence: events[0]?.sequence ?? null,
+      retained_to_sequence: events.at(-1)?.sequence ?? null,
+      reason: "invalid_last_event_id",
+    };
+  }
+  if (events.length === 0) {
+    return {
+      status: "replayed",
+      requested_last_event_id: lastEventId,
+      events: [],
+      retained_from_sequence: null,
+      retained_to_sequence: null,
+    };
+  }
+  const firstSequence = events[0].sequence;
+  const lastSequence = events.at(-1).sequence;
+  if (sequence < firstSequence - 1) {
+    return {
+      status: "resync_required",
+      requested_last_event_id: lastEventId,
+      events: [],
+      retained_from_sequence: firstSequence,
+      retained_to_sequence: lastSequence,
+      reason: "event_window_expired",
+    };
+  }
+  return {
+    status: "replayed",
+    requested_last_event_id: lastEventId,
+    events: events.filter((event) => event.sequence > sequence),
+    retained_from_sequence: firstSequence,
+    retained_to_sequence: lastSequence,
+  };
+}
+
+function latestProjectEventSequence(events) {
+  return events.length === 0 ? 0 : Math.max(...events.map((event) => event.sequence));
+}
+
+function parseProjectEventId(eventId) {
+  if (typeof eventId !== "string" || eventId.trim() === "") {
+    return null;
+  }
+  const match = /^evt_(\d+)$/u.exec(eventId.trim());
+  if (match === null) {
+    return null;
+  }
+  const sequence = Number.parseInt(match[1], 10);
+  return Number.isInteger(sequence) && sequence >= 0 ? sequence : null;
+}
+
 function projectHumanDecision(decision) {
   if (decision.schema_version === "touba-approval-decision-v1") {
     return {
@@ -1193,18 +1344,42 @@ function writeJson(response, statusCode, body) {
   response.end(`${JSON.stringify(body, null, 2)}\n`);
 }
 
-function openEventStream({ request, response, eventClients, nextEvent }) {
+function openEventStream({ request, response, eventClients, nextEvent, eventJournalPath }) {
   response.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache, no-transform",
     "connection": "keep-alive",
   });
   eventClients.add(response);
+  const replay = replayProjectEvents({
+    eventJournalPath,
+    lastEventId: request.headers["last-event-id"],
+  });
+  if (replay.status === "resync_required") {
+    writeSse(response, "touba.server.resync_required", nextEvent("touba.server.resync_required", {
+      schema_version: EVENT_STREAM_SCHEMA_VERSION,
+      requested_last_event_id: replay.requested_last_event_id,
+    retained_from_sequence: replay.retained_from_sequence,
+    retained_to_sequence: replay.retained_to_sequence,
+    reason: replay.reason,
+    }));
+  } else {
+    for (const event of replay.events) {
+      writeSse(response, event.type, event);
+    }
+  }
   writeSse(response, "touba.server.ready", nextEvent("touba.server.ready", {
     schema_version: EVENT_STREAM_SCHEMA_VERSION,
     endpoint: "/events",
     transport: "server_sent_events",
     event_schema_version: PROJECT_EVENT_SCHEMA_VERSION,
+    replay: {
+      request_header: "Last-Event-ID",
+      event_id_field: "event_id",
+      retention: "bounded_journal",
+      retained_from_sequence: replay.retained_from_sequence,
+      retained_to_sequence: replay.retained_to_sequence,
+    },
   }));
   request.on("close", () => {
     eventClients.delete(response);
@@ -1237,6 +1412,9 @@ function publishRefreshEvents(eventClients, report, nextEvent) {
 }
 
 function writeSse(response, event, data) {
+  if (typeof data?.event_id === "string") {
+    response.write(`id: ${data.event_id}\n`);
+  }
   response.write(`event: ${event}\n`);
   response.write(`data: ${JSON.stringify(data)}\n\n`);
 }
@@ -1265,6 +1443,8 @@ function httpStatusForError(code) {
     || code === "ToubaServeChangeInvalid"
     || code === "ToubaServeChangeApplyInvalid"
     || code === "ToubaServeChangeValidationFailed"
+    || code === "ToubaServeEventJournalInvalid"
+    || code === "ToubaServeEventJournalLimitInvalid"
   ) return 400;
   return 500;
 }
@@ -1274,6 +1454,7 @@ function parseArgs(rawArgs) {
     host: DEFAULT_HOST,
     port: DEFAULT_PORT,
     humanDecisionsPath: DEFAULT_HUMAN_DECISIONS_PATH,
+    eventJournalLimit: DEFAULT_EVENT_JOURNAL_LIMIT,
     help: false,
     strict: false,
   };
@@ -1289,6 +1470,10 @@ function parseArgs(rawArgs) {
       options.humanDecisionsPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--change-proposals") {
       options.changeProposalsPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--event-journal") {
+      options.eventJournalPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--event-journal-limit") {
+      options.eventJournalLimit = Number.parseInt(requiredValue(arg, rawArgs, ++index), 10);
     } else if (arg === "--host") {
       options.host = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--port") {
@@ -1306,6 +1491,9 @@ function parseArgs(rawArgs) {
   if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535) {
     throw serviceError("ToubaServePortInvalid", "--port must be an integer between 0 and 65535");
   }
+  if (!Number.isInteger(options.eventJournalLimit) || options.eventJournalLimit < 1 || options.eventJournalLimit > 10000) {
+    throw serviceError("ToubaServeEventJournalLimitInvalid", "--event-journal-limit must be an integer between 1 and 10000");
+  }
   return options;
 }
 
@@ -1319,7 +1507,7 @@ function requiredValue(option, args, index) {
 
 function usage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--change-proposals <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for client, Mobile and contract clients.",
     "",
@@ -1328,6 +1516,8 @@ function usage() {
     `  port: ${DEFAULT_PORT}`,
     `  human_decisions: ${DEFAULT_HUMAN_DECISIONS_PATH}`,
     `  change_proposals: ${DEFAULT_CHANGE_PROPOSALS_PATH}`,
+    `  event_journal: ${DEFAULT_EVENT_JOURNAL_PATH}`,
+    `  event_journal_limit: ${DEFAULT_EVENT_JOURNAL_LIMIT}`,
     "",
     "Live endpoints:",
     "  GET  /state",

@@ -130,9 +130,14 @@ POST /changes/apply
 server-sent event stream consumed by live clients. The stream is described by
 `touba-project-event-stream-v0.1`; each emitted message is a
 `touba-project-event-v0.1` envelope with `event_id`, monotonic `sequence`,
-`type`, `source`, `emitted_at` and the versioned payload. The named endpoints
-expose project inspection, runs, trace timelines, triggers, pending human
-requests, resources and alerts as versioned Touba contracts.
+`type`, `source`, `emitted_at` and the versioned payload. The server writes an
+`id: <event_id>` SSE field and keeps a bounded `.touba/project-events.jsonl`
+journal. A reconnecting client may send `Last-Event-ID`; retained events after
+that id are replayed before the new ready event. If the requested id is outside
+the retained window, the server emits `touba.server.resync_required` so the
+client can reload `/state`. The named endpoints expose project inspection,
+runs, trace timelines, triggers, pending human requests, resources and alerts as
+versioned Touba contracts.
 
 `/contracts` returns a machine-readable index of the contract set.
 `/contracts/<schema_version>` returns the corresponding contract fixture.

@@ -310,6 +310,7 @@ test("CLI serve command exposes the Touba project server", () => {
   assert.match(result.stdout, /human-decisions/);
   assert.match(result.stdout, /project-root/);
   assert.match(result.stdout, /change-proposals/);
+  assert.match(result.stdout, /event-journal/);
   assert.match(result.stdout, /port: 8791/);
 });
 

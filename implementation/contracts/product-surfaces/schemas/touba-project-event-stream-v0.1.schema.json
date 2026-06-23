@@ -4,11 +4,21 @@
   "title": "touba-project-event-stream-v0.1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "endpoint", "transport", "event_schema_version"],
+  "required": ["schema_version", "endpoint", "transport", "event_schema_version", "replay"],
   "properties": {
     "schema_version": { "const": "touba-project-event-stream-v0.1" },
     "endpoint": { "type": "string" },
     "transport": { "enum": ["server_sent_events"] },
-    "event_schema_version": { "const": "touba-project-event-v0.1" }
+    "event_schema_version": { "const": "touba-project-event-v0.1" },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_header", "event_id_field", "retention"],
+      "properties": {
+        "request_header": { "const": "Last-Event-ID" },
+        "event_id_field": { "const": "event_id" },
+        "retention": { "const": "bounded_journal" }
+      }
+    }
   }
 }

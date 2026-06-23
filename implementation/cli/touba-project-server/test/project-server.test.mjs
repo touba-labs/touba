@@ -13,10 +13,13 @@ import {
   createToubaProjectServer,
   getProjectChangeDetail,
   getHumanDecisionDetail,
+  appendProjectEventJournal,
   listHumanDecisions,
   listProjectChanges,
   preflightServeOptions,
   proposeProjectChange,
+  readProjectEventJournal,
+  replayProjectEvents,
   refreshProject,
 } from "../src/serve.mjs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
@@ -77,6 +80,44 @@ test("project events use a stable envelope contract", () => {
   assert.equal(event.event_id, "evt_000007");
   assert.equal(event.sequence, 7);
   assertMatchesSchema("touba-project-event-v0.1", event);
+});
+
+test("event journal keeps a bounded replay window", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-events-"));
+  try {
+    const eventJournalPath = join(root, ".touba", "project-events.jsonl");
+    for (const sequence of [1, 2, 3]) {
+      appendProjectEventJournal({
+        eventJournalPath,
+        limit: 2,
+        event: buildProjectEvent({
+          type: "project.changed",
+          sequence,
+          emittedAt: `2026-06-23T00:00:0${sequence}.000Z`,
+          payload: { sequence },
+        }),
+      });
+    }
+
+    const retained = readProjectEventJournal(eventJournalPath);
+    assert.deepEqual(retained.map((event) => event.sequence), [2, 3]);
+    const replay = replayProjectEvents({
+      eventJournalPath,
+      lastEventId: "evt_000002",
+    });
+    assert.equal(replay.status, "replayed");
+    assert.deepEqual(replay.events.map((event) => event.sequence), [3]);
+
+    const expired = replayProjectEvents({
+      eventJournalPath,
+      lastEventId: "evt_000000",
+    });
+    assert.equal(expired.status, "resync_required");
+    assert.equal(expired.reason, "event_window_expired");
+    assert.equal(expired.retained_from_sequence, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("refresh project reports artifacts, stale state and changed files", () => {
@@ -426,6 +467,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     const readyEvent = parseSseEvent(readyText);
     assertMatchesSchema("touba-project-event-v0.1", readyEvent);
     assert.equal(readyEvent.type, "touba.server.ready");
+    assert.match(readyText, /^id: evt_000001/m);
 
     const decision = readJson("fixtures/valid/touba-human-review-decision-v1.json");
     const response = await fetch(`${baseUrl}/decisions`, {
@@ -436,6 +478,16 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.equal(response.status, 202);
     const accepted = await response.json();
     assert.equal(accepted.request_id, decision.request_id);
+
+    const replayStream = await fetch(`${baseUrl}/events`, {
+      headers: { "last-event-id": readyEvent.event_id },
+    });
+    assert.equal(replayStream.status, 200);
+    const { text: replayText, reader: replayReader } = await readNextEvent(replayStream);
+    const replayedEvent = parseSseEvent(replayText);
+    assertMatchesSchema("touba-project-event-v0.1", replayedEvent);
+    assert.equal(replayedEvent.type, "human_decision.accepted");
+    await replayReader.cancel();
 
     const decisionHistory = await getJson(`${baseUrl}/decisions`);
     assertMatchesSchema("touba-human-decision-history-v0.1", decisionHistory);
