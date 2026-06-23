@@ -46,6 +46,9 @@ const HUMAN_DECISION_HISTORY_SCHEMA_VERSION = "touba-human-decision-history-v0.1
 const HUMAN_DECISION_DETAIL_SCHEMA_VERSION = "touba-human-decision-detail-v0.1";
 const AUTHORITY_GRAPH_SCHEMA_VERSION = "touba-authority-graph-v0.1";
 const PRODUCT_IDENTITY_SCHEMA_VERSION = "touba-product-identity-v0.1";
+const SUPPLY_CHAIN_STATUS_SCHEMA_VERSION = "touba-supply-chain-status-v0.1";
+const GOVERNANCE_READINESS_SCHEMA_VERSION = "touba-governance-readiness-v0.1";
+const TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION = "touba-trigger-queue-health-v0.1";
 const PROJECT_REFRESH_REQUEST_SCHEMA_VERSION = "touba-project-refresh-request-v0.1";
 const PROJECT_REFRESH_SCHEMA_VERSION = "touba-project-refresh-v0.1";
 const CHANGE_PROPOSAL_SCHEMA_VERSION = "touba-project-change-proposal-v0.1";
@@ -94,6 +97,9 @@ const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
   "/runs/current": "touba-run-summary-v1",
   "/trace/current": "touba-trace-timeline-v1",
   "/triggers": "touba-trigger-status-v1",
+  "/triggers/queue-health": TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION,
+  "/supply-chain/status": SUPPLY_CHAIN_STATUS_SCHEMA_VERSION,
+  "/governance/readiness": GOVERNANCE_READINESS_SCHEMA_VERSION,
   "/approvals/pending/current": "touba-approval-request-v1",
   "/reviews/pending/current": "touba-human-review-request-v1",
   "/resources/featured": "touba-registry-resource-v1",
@@ -207,6 +213,9 @@ export function createToubaProjectServer(options = {}) {
             event_schema: PROJECT_EVENT_SCHEMA_VERSION,
             current_run: "/runs/current",
             trigger_status: "/triggers",
+            trigger_queue_health: "/triggers/queue-health",
+            supply_chain_status: "/supply-chain/status",
+            governance_readiness: "/governance/readiness",
             pending_approval: "/approvals/pending/current",
             pending_review: "/reviews/pending/current",
             human_decisions: "/decisions",
@@ -261,6 +270,28 @@ export function createToubaProjectServer(options = {}) {
       }
       if (request.method === "GET" && url.pathname === "/triggers") {
         writeJson(response, 200, readProjectTriggerStatus({ contractsRoot, triggerStatusPath }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/triggers/queue-health") {
+        writeJson(response, 200, buildTriggerQueueHealth({
+          contractsRoot,
+          projectRoot,
+          triggerStatusPath,
+          eventJournalPath,
+        }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/supply-chain/status") {
+        writeJson(response, 200, buildSupplyChainStatus({ projectRoot }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/governance/readiness") {
+        writeJson(response, 200, buildGovernanceReadiness({
+          contractsRoot,
+          projectRoot,
+          productIdentityPath,
+          changeProposalsPath,
+        }));
         return;
       }
       if (request.method === "GET" && url.pathname === "/approvals/pending/current") {
@@ -472,6 +503,8 @@ export function buildLiveState({
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   humanDecisionsPath = join(projectRoot, DEFAULT_HUMAN_DECISIONS_PATH),
   productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
+  changeProposalsPath = join(projectRoot, DEFAULT_CHANGE_PROPOSALS_PATH),
+  eventJournalPath = join(projectRoot, DEFAULT_EVENT_JOURNAL_PATH),
   generatedAt = new Date().toISOString(),
 }) {
   return {
@@ -487,6 +520,21 @@ export function buildLiveState({
     current_run: readProjectRunSummary({ contractsRoot, runSummaryPath }),
     trace_timeline: readProjectTraceTimeline({ contractsRoot, traceTimelinePath }),
     trigger_status: readProjectTriggerStatus({ contractsRoot, triggerStatusPath }),
+    trigger_queue_health: buildTriggerQueueHealth({
+      contractsRoot,
+      projectRoot,
+      triggerStatusPath,
+      eventJournalPath,
+      generatedAt,
+    }),
+    supply_chain_status: buildSupplyChainStatus({ projectRoot, generatedAt }),
+    governance_readiness: buildGovernanceReadiness({
+      contractsRoot,
+      projectRoot,
+      productIdentityPath,
+      changeProposalsPath,
+      generatedAt,
+    }),
     pending_approval: readPendingHumanRequest({
       contractsRoot,
       humanRequestsPath,
@@ -765,6 +813,566 @@ export function readProjectTriggerStatus({
     generated_at: generatedAt,
     triggers: [],
   };
+}
+
+export function buildTriggerQueueHealth({
+  contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname,
+  projectRoot = process.cwd(),
+  triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
+  eventJournalPath = join(projectRoot, DEFAULT_EVENT_JOURNAL_PATH),
+  generatedAt = new Date().toISOString(),
+}) {
+  const triggerStatus = readProjectTriggerStatus({ contractsRoot, triggerStatusPath, generatedAt });
+  const journalEvents = safeReadProjectEventJournal(eventJournalPath);
+  const triggers = (Array.isArray(triggerStatus.triggers) ? triggerStatus.triggers : [])
+    .map((trigger) => triggerQueueHealthRow(trigger, journalEvents))
+    .sort((left, right) => left.trigger_ref.localeCompare(right.trigger_ref));
+
+  return {
+    schema_version: TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    project_root: projectRoot,
+    summary: {
+      trigger_count: triggers.length,
+      healthy: triggers.filter((item) => item.status === "healthy").length,
+      watch: triggers.filter((item) => item.status === "watch").length,
+      blocked: triggers.filter((item) => item.status === "blocked").length,
+      pending: sumIntegerField(triggers, "pending"),
+      processing: sumIntegerField(triggers, "processing"),
+      retry: sumIntegerField(triggers, "retry"),
+      dead_letter: sumIntegerField(triggers, "dead_letter"),
+      replay_rejected: sumIntegerField(triggers, "replay_rejected"),
+      rate_limited: sumIntegerField(triggers, "rate_limited"),
+    },
+    triggers,
+    diagnostics: [],
+  };
+}
+
+export function buildSupplyChainStatus({
+  projectRoot = process.cwd(),
+  generatedAt = new Date().toISOString(),
+}) {
+  const diagnostics = [];
+  const artifacts = collectProjectArtifacts(projectRoot, diagnostics);
+  const manifestArtifact = artifacts.find((item) => item.kind === "manifest");
+  const lockArtifact = artifacts.find((item) => item.kind === "lock");
+  const manifest = manifestArtifact === undefined
+    ? undefined
+    : readJsonArtifact(join(projectRoot, manifestArtifact.relative_path), manifestArtifact.relative_path, diagnostics);
+  const lock = lockArtifact === undefined
+    ? undefined
+    : readJsonArtifact(join(projectRoot, lockArtifact.relative_path), lockArtifact.relative_path, diagnostics);
+  const lockEntries = extractSupplyChainLockEntries(lock);
+  const entries = [];
+  const manifestBindings = isPlainObject(manifest?.bindings) ? manifest.bindings : {};
+
+  for (const [ref, binding] of Object.entries(manifestBindings)) {
+    const lockEntry = lockEntries.find((item) => item.ref === ref);
+    entries.push(supplyChainEntryFromBinding({
+      projectRoot,
+      ref,
+      binding: isPlainObject(binding) ? binding : {},
+      manifestArtifact,
+      lockArtifact,
+      lockEntry,
+    }));
+  }
+
+  for (const lockEntry of lockEntries) {
+    if (entries.some((item) => item.ref === lockEntry.ref)) {
+      continue;
+    }
+    entries.push(supplyChainEntryFromLockEntry({
+      projectRoot,
+      manifestArtifact,
+      lockArtifact,
+      lockEntry,
+    }));
+  }
+
+  if (lockArtifact !== undefined && entries.every((item) => item.kind !== "lock")) {
+    entries.push(supplyChainArtifactEntry({
+      artifact: lockArtifact,
+      kind: "lock",
+      observedDigest: `sha256:${lockArtifact.sha256}`,
+      message: "lock artifact is present",
+    }));
+  }
+
+  return {
+    schema_version: SUPPLY_CHAIN_STATUS_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    project_root: projectRoot,
+    summary: {
+      total: entries.length,
+      ok: entries.filter((item) => item.status === "ok").length,
+      drift: entries.filter((item) => item.status === "drift").length,
+      missing: entries.filter((item) => item.status === "missing").length,
+      unknown: entries.filter((item) => item.status === "unknown").length,
+    },
+    entries: entries.sort((left, right) => `${left.kind}:${left.ref}`.localeCompare(`${right.kind}:${right.ref}`)),
+    diagnostics: diagnostics.map((diagnostic) => ({
+      severity: ["info", "warning", "error"].includes(diagnostic.severity) ? diagnostic.severity : "warning",
+      code: nonEmptyString(diagnostic.code) ?? "ToubaSupplyChainStatusDiagnostic",
+      message: nonEmptyString(diagnostic.message) ?? "supply-chain status diagnostic",
+    })),
+  };
+}
+
+export function buildGovernanceReadiness({
+  contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname,
+  projectRoot = process.cwd(),
+  productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
+  changeProposalsPath = join(projectRoot, DEFAULT_CHANGE_PROPOSALS_PATH),
+  generatedAt = new Date().toISOString(),
+}) {
+  const graph = buildAuthorityGraph({ projectRoot, generatedAt });
+  const identity = readProductIdentity({
+    contractsRoot,
+    productIdentityPath,
+  });
+  const changes = listProjectChanges({ projectRoot, changeProposalsPath, generatedAt });
+  const pendingChanges = (Array.isArray(changes.changes) ? changes.changes : [])
+    .filter((change) => change.status === "pending");
+  const activeAssignments = (Array.isArray(identity.assignments) ? identity.assignments : [])
+    .filter((assignment) => assignment.status === "assigned");
+  const owners = uniqueSorted([
+    ...(Array.isArray(identity.teams) ? identity.teams : []).flatMap((team) => team.owner_refs ?? []),
+  ]);
+  const reviewers = uniqueSorted(activeAssignments.map((assignment) => assignment.user_ref));
+  const graphErrors = (Array.isArray(graph.diagnostics) ? graph.diagnostics : [])
+    .filter((diagnostic) => diagnostic.severity === "error");
+  const graphWarnings = (Array.isArray(graph.diagnostics) ? graph.diagnostics : [])
+    .filter((diagnostic) => diagnostic.severity === "warning");
+  const artifacts = (Array.isArray(graph.nodes) ? graph.nodes : [])
+    .filter((node) => ["agent", "skill", "tool", "strategy", "package"].includes(node.kind))
+    .map((node) => governanceReadinessArtifact({
+      node,
+      graph,
+      owners,
+      reviewers,
+      pendingChanges,
+      activeAssignments,
+      graphErrors,
+      graphWarnings,
+    }));
+  const airDiagnostics = [];
+  const scannedArtifacts = collectProjectArtifacts(projectRoot, airDiagnostics);
+  for (const trigger of governanceTriggerArtifacts({ projectRoot, artifacts: scannedArtifacts })) {
+    artifacts.push(governanceReadinessArtifact({
+      node: trigger,
+      graph,
+      owners,
+      reviewers,
+      pendingChanges,
+      activeAssignments,
+      graphErrors,
+      graphWarnings,
+    }));
+  }
+  for (const artifact of scannedArtifacts.filter((item) => item.kind === "air")) {
+    artifacts.push(governanceRunPlanArtifact({ artifact, owners, pendingChanges, graphWarnings }));
+  }
+  const diagnostics = [
+    ...graphErrors,
+    ...graphWarnings,
+    ...airDiagnostics.map(normalizeAuthorityDiagnostic),
+  ].map((diagnostic) => ({
+    severity: ["info", "warning", "error"].includes(diagnostic.severity) ? diagnostic.severity : "warning",
+    code: nonEmptyString(diagnostic.code) ?? "ToubaGovernanceReadinessDiagnostic",
+    message: nonEmptyString(diagnostic.message) ?? "governance readiness diagnostic",
+  }));
+
+  return {
+    schema_version: GOVERNANCE_READINESS_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    project_root: projectRoot,
+    summary: {
+      artifact_count: artifacts.length,
+      approved: artifacts.filter((item) => item.status_prod === "approved").length,
+      pending_review: artifacts.filter((item) => item.status_prod === "pending_review").length,
+      blocked: artifacts.filter((item) => item.status_prod === "blocked").length,
+      stale: artifacts.filter((item) => item.status_prod === "stale").length,
+    },
+    artifacts: artifacts.sort((left, right) => `${left.kind}:${left.ref}`.localeCompare(`${right.kind}:${right.ref}`)),
+    diagnostics,
+  };
+}
+
+function triggerQueueHealthRow(trigger, journalEvents) {
+  const pending = nonNegativeInteger(trigger.queue?.pending);
+  const processing = nonNegativeInteger(trigger.queue?.processing);
+  const deadLetter = nonNegativeInteger(trigger.queue?.dead_letter);
+  const refused = nonNegativeInteger(trigger.state?.refused_count);
+  const relatedEvents = journalEvents.filter((event) => eventReferencesTrigger(event, trigger.trigger_ref));
+  const replayRejected = relatedEvents.filter((event) => eventMatchesAny(event, ["replay"])).length;
+  const rateLimited = relatedEvents.filter((event) => eventMatchesAny(event, ["rate", "quota", "limit"])).length;
+  const retry = relatedEvents.filter((event) => eventMatchesAny(event, ["retry"])).length;
+  let status = "healthy";
+  if (trigger.status === "blocked" || deadLetter > 0) {
+    status = "blocked";
+  } else if (
+    trigger.status === "paused"
+    || pending > 0
+    || processing > 0
+    || retry > 0
+    || refused > 0
+    || replayRejected > 0
+    || rateLimited > 0
+  ) {
+    status = "watch";
+  }
+  return {
+    trigger_ref: String(trigger.trigger_ref),
+    kind: trigger.kind === "schedule" ? "schedule" : "request",
+    status,
+    transport_status: ["enabled", "disabled", "paused", "blocked"].includes(trigger.status) ? trigger.status : "blocked",
+    pending,
+    processing,
+    retry,
+    dead_letter: deadLetter,
+    replay_rejected: replayRejected,
+    rate_limited: rateLimited,
+    refused,
+    last_event_id: nonEmptyString(trigger.state?.last_event_id) ?? null,
+    evidence: relatedEvents.slice(-5).map((event) => ({
+      source: "project_event_journal",
+      event_id: event.event_id ?? null,
+      message: `${event.type}`,
+    })).concat([{
+      source: "trigger_status",
+      event_id: nonEmptyString(trigger.state?.last_event_id) ?? null,
+      message: status === "healthy" ? "trigger queue is empty" : "trigger queue requires attention",
+    }]).slice(-5),
+  };
+}
+
+function safeReadProjectEventJournal(eventJournalPath) {
+  try {
+    return readProjectEventJournal(eventJournalPath);
+  } catch {
+    return [];
+  }
+}
+
+function eventReferencesTrigger(event, triggerRef) {
+  if (typeof triggerRef !== "string" || triggerRef.trim() === "") {
+    return false;
+  }
+  const text = JSON.stringify({
+    type: event?.type,
+    trigger_ref: event?.payload?.trigger_ref,
+    source_ref: event?.payload?.source_ref,
+    target_ref: event?.payload?.target_ref,
+    code: event?.payload?.code,
+    message: event?.payload?.message,
+  });
+  return text.includes(triggerRef);
+}
+
+function eventMatchesAny(event, needles) {
+  const text = JSON.stringify({
+    type: event?.type,
+    code: event?.payload?.code,
+    message: event?.payload?.message,
+    status: event?.payload?.status,
+  }).toLowerCase();
+  return needles.some((needle) => text.includes(needle));
+}
+
+function supplyChainEntryFromBinding({
+  projectRoot,
+  ref,
+  binding,
+  manifestArtifact,
+  lockArtifact,
+  lockEntry,
+}) {
+  const handlerPackageRef = nonEmptyString(binding.handler_package_ref)
+    ?? nonEmptyString(binding.handler_package)
+    ?? nonEmptyString(binding.package_ref)
+    ?? lockEntry?.handlerPackageRef
+    ?? null;
+  const expectedDigest = lockEntry?.expectedDigest ?? null;
+  const observedDigest = lockEntry === undefined ? null : observedSupplyChainDigest(projectRoot, lockEntry);
+  const status = supplyChainDigestStatus({ expectedDigest, observedDigest });
+  return {
+    ref,
+    kind: "handler",
+    status,
+    handler_package_ref: handlerPackageRef,
+    manifest_path: manifestArtifact?.relative_path ?? null,
+    lock_path: lockArtifact?.relative_path ?? null,
+    expected_digest: expectedDigest,
+    observed_digest: observedDigest,
+    evidence: {
+      source: lockEntry === undefined ? "manifest" : "lock",
+      path: lockEntry === undefined ? manifestArtifact?.relative_path ?? null : lockArtifact?.relative_path ?? null,
+      source_ref: ref,
+      message: supplyChainStatusMessage(status),
+    },
+  };
+}
+
+function supplyChainEntryFromLockEntry({
+  projectRoot,
+  manifestArtifact,
+  lockArtifact,
+  lockEntry,
+}) {
+  const observedDigest = observedSupplyChainDigest(projectRoot, lockEntry);
+  const status = supplyChainDigestStatus({
+    expectedDigest: lockEntry.expectedDigest,
+    observedDigest,
+  });
+  return {
+    ref: lockEntry.ref,
+    kind: lockEntry.kind,
+    status,
+    handler_package_ref: lockEntry.handlerPackageRef,
+    manifest_path: manifestArtifact?.relative_path ?? null,
+    lock_path: lockArtifact?.relative_path ?? null,
+    expected_digest: lockEntry.expectedDigest,
+    observed_digest: observedDigest,
+    evidence: {
+      source: "lock",
+      path: lockArtifact?.relative_path ?? null,
+      source_ref: lockEntry.ref,
+      message: supplyChainStatusMessage(status),
+    },
+  };
+}
+
+function supplyChainArtifactEntry({ artifact, kind, observedDigest, message }) {
+  return {
+    ref: artifact.relative_path,
+    kind,
+    status: "unknown",
+    handler_package_ref: null,
+    manifest_path: kind === "manifest" ? artifact.relative_path : null,
+    lock_path: kind === "lock" ? artifact.relative_path : null,
+    expected_digest: null,
+    observed_digest: observedDigest,
+    evidence: {
+      source: "project_scan",
+      path: artifact.relative_path,
+      source_ref: null,
+      message,
+    },
+  };
+}
+
+function extractSupplyChainLockEntries(lock) {
+  if (!isPlainObject(lock)) {
+    return [];
+  }
+  const handlers = Array.isArray(lock.handlers) ? lock.handlers : [];
+  const packages = Array.isArray(lock.packages) ? lock.packages : [];
+  return [
+    ...handlers.map((entry) => normalizeSupplyChainLockEntry(entry, "handler")).filter(Boolean),
+    ...packages.map((entry) => normalizeSupplyChainLockEntry(entry, "package")).filter(Boolean),
+  ];
+}
+
+function normalizeSupplyChainLockEntry(entry, kind) {
+  if (!isPlainObject(entry)) {
+    return null;
+  }
+  const handlerPackage = isPlainObject(entry.handler_package) ? entry.handler_package : {};
+  const ref = nonEmptyString(entry.tool_ref)
+    ?? nonEmptyString(entry.handler_ref)
+    ?? nonEmptyString(entry.package_ref)
+    ?? nonEmptyString(entry.ref)
+    ?? nonEmptyString(handlerPackage.name);
+  if (ref === undefined) {
+    return null;
+  }
+  const handlerPackageRef = packageRefFromLockEntry(entry, handlerPackage);
+  const packageRoot = nonEmptyString(handlerPackage.package_root) ?? "";
+  const entrypoint = nonEmptyString(handlerPackage.entrypoint) ?? nonEmptyString(entry.entrypoint) ?? nonEmptyString(entry.path) ?? "";
+  const fileEntries = Array.isArray(handlerPackage.files) ? handlerPackage.files : [];
+  const expectedDigest = normalizeDigest(entry.digest)
+    ?? normalizeDigest(entry.handler_digest)
+    ?? normalizeDigest(entry.sha256)
+    ?? normalizeDigest(fileEntries.find((file) => nonEmptyString(file?.path) === entrypoint)?.digest)
+    ?? normalizeDigest(fileEntries[0]?.digest)
+    ?? null;
+  return {
+    ref,
+    kind,
+    handlerPackageRef,
+    expectedDigest,
+    candidatePaths: uniqueSorted([
+      supplyChainRelativePath(packageRoot, entrypoint),
+      ...fileEntries.map((file) => supplyChainRelativePath(packageRoot, nonEmptyString(file?.path) ?? "")),
+    ]),
+  };
+}
+
+function packageRefFromLockEntry(entry, handlerPackage) {
+  const name = nonEmptyString(handlerPackage.name)
+    ?? nonEmptyString(entry.package_ref)
+    ?? nonEmptyString(entry.package_name);
+  if (name === undefined) {
+    return null;
+  }
+  return name.startsWith("package:") ? name : `package:${name}`;
+}
+
+function supplyChainRelativePath(packageRoot, path) {
+  const normalizedPath = nonEmptyString(path);
+  if (normalizedPath === undefined) {
+    return null;
+  }
+  const normalizedRoot = nonEmptyString(packageRoot);
+  if (normalizedRoot === undefined || normalizedPath.startsWith(`${normalizedRoot}/`)) {
+    return normalizeRelativePath(normalizedPath);
+  }
+  return normalizeRelativePath(`${normalizedRoot}/${normalizedPath}`);
+}
+
+function observedSupplyChainDigest(projectRoot, lockEntry) {
+  for (const candidatePath of lockEntry.candidatePaths) {
+    if (candidatePath === null) {
+      continue;
+    }
+    const absolutePath = resolve(projectRoot, candidatePath);
+    if (!isPathInside(projectRoot, absolutePath) || !existsSync(absolutePath) || statSync(absolutePath).isDirectory()) {
+      continue;
+    }
+    return `sha256:${sha256Buffer(readFileSync(absolutePath))}`;
+  }
+  return null;
+}
+
+function supplyChainDigestStatus({ expectedDigest, observedDigest }) {
+  if (expectedDigest === null) {
+    return "unknown";
+  }
+  if (observedDigest === null) {
+    return "missing";
+  }
+  return expectedDigest === observedDigest ? "ok" : "drift";
+}
+
+function supplyChainStatusMessage(status) {
+  if (status === "ok") return "observed digest matches the lock";
+  if (status === "drift") return "observed digest differs from the lock";
+  if (status === "missing") return "locked artifact is missing from the project";
+  return "digest evidence is incomplete";
+}
+
+function normalizeDigest(value) {
+  if (typeof value === "string" && value.trim() !== "") {
+    return value.startsWith("sha256:") ? value : `sha256:${value}`;
+  }
+  if (isPlainObject(value)) {
+    const digestValue = nonEmptyString(value.value) ?? nonEmptyString(value.sha256) ?? nonEmptyString(value.digest);
+    if (digestValue !== undefined) {
+      return digestValue.startsWith("sha256:") ? digestValue : `sha256:${digestValue}`;
+    }
+  }
+  return null;
+}
+
+function governanceReadinessArtifact({
+  node,
+  graph,
+  owners,
+  reviewers,
+  pendingChanges,
+  activeAssignments,
+  graphErrors,
+  graphWarnings,
+}) {
+  const gates = reviewGateRefsForNode(node, graph);
+  const statusDev = graphErrors.length > 0 ? "blocked" : graphWarnings.length > 0 ? "stale" : "approved";
+  let statusProd = statusDev;
+  if (statusProd === "approved" && (pendingChanges.length > 0 || activeAssignments.length > 0 || gates.length > 0)) {
+    statusProd = "pending_review";
+  }
+  return {
+    ref: node.ref,
+    kind: node.kind,
+    label: nonEmptyString(node.label) ?? authorityLabel(node.ref),
+    status_dev: statusDev,
+    status_prod: statusProd,
+    owners,
+    reviewers,
+    review_gates: gates,
+    evidence: {
+      source: node.evidence?.source ?? "authority_graph",
+      path: node.evidence?.path ?? null,
+      source_ref: node.evidence?.source_ref ?? node.ref,
+      message: statusProd === "approved" ? "artifact is ready for production profile" : "artifact requires governance attention",
+    },
+  };
+}
+
+function governanceRunPlanArtifact({ artifact, owners, pendingChanges, graphWarnings }) {
+  const statusDev = graphWarnings.length > 0 ? "stale" : "approved";
+  const statusProd = pendingChanges.length > 0 ? "pending_review" : statusDev;
+  return {
+    ref: `run_plan:${artifact.relative_path}`,
+    kind: "run_plan",
+    label: artifact.relative_path,
+    status_dev: statusDev,
+    status_prod: statusProd,
+    owners,
+    reviewers: [],
+    review_gates: [],
+    evidence: {
+      source: "project_scan",
+      path: artifact.relative_path,
+      source_ref: artifact.relative_path,
+      message: "AIR artifact participates in production readiness",
+    },
+  };
+}
+
+function governanceTriggerArtifacts({ projectRoot, artifacts }) {
+  const triggers = [];
+  for (const artifact of artifacts.filter((item) => item.kind === "source")) {
+    const content = readTextArtifact(join(projectRoot, artifact.relative_path), artifact.relative_path, []);
+    if (content === undefined) {
+      continue;
+    }
+    const moduleName = content.match(/^\s*module\s+([A-Za-z_][\w.]*)/mu)?.[1] ?? "source";
+    for (const match of content.matchAll(/^\s*trigger\s+([A-Za-z_][\w]*)\b/gmu)) {
+      const name = match[1];
+      triggers.push({
+        ref: `trigger:${moduleName}/${name}`,
+        kind: "trigger",
+        label: name,
+        evidence: {
+          source: "source",
+          path: artifact.relative_path,
+          source_ref: `${artifact.relative_path}:${lineNumberAt(content, match.index)}`,
+        },
+      });
+    }
+  }
+  return triggers;
+}
+
+function reviewGateRefsForNode(node, graph) {
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  return uniqueSorted(edges
+    .filter((edge) => edge.from === node.ref && typeof edge.to === "string" && edge.to.startsWith("human_gate:"))
+    .map((edge) => edge.to));
+}
+
+function sumIntegerField(items, field) {
+  return items.reduce((sum, item) => sum + nonNegativeInteger(item[field]), 0);
+}
+
+function nonNegativeInteger(value) {
+  return Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+function uniqueSorted(values) {
+  return Array.from(new Set(values.filter((value) => typeof value === "string" && value.trim() !== ""))).sort();
 }
 
 export function readProductIdentity({ contractsRoot, productIdentityPath }) {
@@ -2448,6 +3056,9 @@ function usage() {
     "  GET  /identity",
     "  GET  /runs/current",
     "  GET  /triggers",
+    "  GET  /triggers/queue-health",
+    "  GET  /supply-chain/status",
+    "  GET  /governance/readiness",
     "  GET  /approvals/pending/current",
     "  GET  /decisions",
     "  GET  /decisions/<schema_version>/<request_id>",

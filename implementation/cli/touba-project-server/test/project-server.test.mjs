@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,10 +8,13 @@ import test from "node:test";
 import {
   acceptDecision,
   buildAuthorityGraph,
+  buildGovernanceReadiness,
+  buildSupplyChainStatus,
   applyProjectChange,
   buildContractIndex,
   buildLiveState,
   buildProjectEvent,
+  buildTriggerQueueHealth,
   createToubaProjectServer,
   getProjectChangeDetail,
   getHumanDecisionDetail,
@@ -66,6 +70,9 @@ test("live state composes project, run, trigger, decision and event surfaces", (
   assert.equal(state.authority_graph.schema_version, "touba-authority-graph-v0.1");
   assert.equal(state.identity.schema_version, "touba-product-identity-v0.1");
   assert.equal(state.current_run.schema_version, "touba-run-summary-v1");
+  assert.equal(state.trigger_queue_health.schema_version, "touba-trigger-queue-health-v0.1");
+  assert.equal(state.supply_chain_status.schema_version, "touba-supply-chain-status-v0.1");
+  assert.equal(state.governance_readiness.schema_version, "touba-governance-readiness-v0.1");
   assert.equal(state.pending_approval.schema_version, "touba-approval-request-v1");
   assert.equal(state.pending_review.schema_version, "touba-human-review-request-v1");
   assert.equal(state.events.transport, "server_sent_events");
@@ -250,6 +257,163 @@ test("authority graph extracts source, AIR and manifest authority", () => {
       && edge.from === "tool:demo.authority/ReadKnowledge"
       && edge.to === "capability:secret:DEMO_SECRET"
     ), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("operational project surfaces report supply chain, governance readiness and trigger queue health", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-ops-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, "handlers"), { recursive: true });
+    mkdirSync(join(root, ".touba"), { recursive: true });
+    const handlerText = "export default async function readInvoice() { return { text: 'ok' }; }\n";
+    const handlerDigest = sha256(handlerText);
+    writeFileSync(join(root, "handlers", "read-invoice.handler.mjs"), handlerText, "utf8");
+    writeFileSync(join(root, "src", "main.tb"), [
+      "module demo.governance",
+      "",
+      "tool ReadInvoice",
+      "    takes input as Text",
+      "    gives Text",
+      "    requires network",
+      "",
+      "skill SummarizeInvoice",
+      "    takes input as Text",
+      "    gives Text",
+      "    uses ReadInvoice",
+      "    do",
+      "        human.approve",
+      "            with context as input",
+      "            into approval",
+      "        give input",
+      "",
+      "agent InvoiceAgent",
+      "    uses SummarizeInvoice",
+      "    callable_by strategy RunInvoice",
+      "",
+      "strategy RunInvoice",
+      "    takes input as Text",
+      "    uses InvoiceAgent",
+      "    do",
+      "        InvoiceAgent",
+      "",
+      "trigger InvoiceWebhook",
+      "    on request POST /invoice",
+      "    run RunInvoice",
+      "",
+    ].join("\n"), "utf8");
+    writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
+      manifest_version: "touba-manifest-v1",
+      bindings: {
+        "tool:demo.governance/ReadInvoice": {
+          requires: ["network"],
+          handler_package_ref: "package:demo.handlers",
+        },
+      },
+    }, null, 2), "utf8");
+    writeFileSync(join(root, "touba.lock.json"), JSON.stringify({
+      lock_schema_version: "touba-lock-v0.1",
+      handlers: [
+        {
+          tool_ref: "tool:demo.governance/ReadInvoice",
+          digest: { kind: "sha256", value: handlerDigest },
+          handler_package: {
+            kind: "local",
+            name: "demo.handlers",
+            version: "0.1.0",
+            package_root: "handlers",
+            entrypoint: "read-invoice.handler.mjs",
+            files: [
+              {
+                path: "read-invoice.handler.mjs",
+                digest: { kind: "sha256", value: handlerDigest },
+              },
+            ],
+          },
+        },
+      ],
+    }, null, 2), "utf8");
+    writeFileSync(
+      join(root, ".touba", "product-identity.json"),
+      JSON.stringify(readJson("fixtures/valid/touba-product-identity-v0.1.json")),
+      "utf8",
+    );
+    writeFileSync(join(root, ".touba", "studio-change-proposals.json"), JSON.stringify({
+      schema_version: "touba-studio-change-proposals-v0.1",
+      proposals: [
+        {
+          schema_version: "touba-project-change-proposal-v0.1",
+          proposal_id: "change_ops_1",
+          status: "proposed",
+          action: "write_text_file",
+          target: { path: "touba.project.json" },
+          requested_by: { kind: "studio", id: "touba-studio" },
+          reason: "governance check",
+          proposed_at: "2026-06-23T00:00:00.000Z",
+          content: "{\"project_version\":\"touba-project-v1\"}",
+          content_sha256: sha256("{\"project_version\":\"touba-project-v1\"}"),
+          validations: [],
+        },
+      ],
+    }), "utf8");
+    writeFileSync(join(root, ".touba", "trigger-status.json"), JSON.stringify({
+      schema_version: "touba-trigger-status-v1",
+      generated_at: "2026-06-23T00:00:00.000Z",
+      triggers: [
+        {
+          trigger_ref: "trigger:demo.governance/InvoiceWebhook",
+          kind: "request",
+          status: "enabled",
+          next_run_at: null,
+          limits: { max_runs_per_day: 3, timeout_ms: 30000 },
+          state: { accepted_count: 3, refused_count: 1, last_event_id: "evt_000001" },
+          queue: { pending: 1, processing: 0, dead_letter: 0 },
+        },
+      ],
+    }), "utf8");
+    appendProjectEventJournal({
+      eventJournalPath: join(root, ".touba", "project-events.jsonl"),
+      event: buildProjectEvent({
+        type: "trigger.refused",
+        sequence: 1,
+        emittedAt: "2026-06-23T00:00:01.000Z",
+        payload: {
+          trigger_ref: "trigger:demo.governance/InvoiceWebhook",
+          code: "TriggerReplayRejected",
+        },
+      }),
+    });
+
+    const supplyChain = buildSupplyChainStatus({
+      projectRoot: root,
+      generatedAt: "2026-06-23T00:00:02.000Z",
+    });
+    assertMatchesSchema("touba-supply-chain-status-v0.1", supplyChain);
+    assert.equal(supplyChain.entries.find((entry) => entry.ref === "tool:demo.governance/ReadInvoice").status, "ok");
+
+    const readiness = buildGovernanceReadiness({
+      contractsRoot,
+      projectRoot: root,
+      productIdentityPath: join(root, ".touba", "product-identity.json"),
+      changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+      generatedAt: "2026-06-23T00:00:02.000Z",
+    });
+    assertMatchesSchema("touba-governance-readiness-v0.1", readiness);
+    assert.equal(readiness.artifacts.some((artifact) => artifact.kind === "trigger"), true);
+    assert.equal(readiness.summary.pending_review > 0, true);
+
+    const queueHealth = buildTriggerQueueHealth({
+      contractsRoot,
+      projectRoot: root,
+      triggerStatusPath: join(root, ".touba", "trigger-status.json"),
+      eventJournalPath: join(root, ".touba", "project-events.jsonl"),
+      generatedAt: "2026-06-23T00:00:02.000Z",
+    });
+    assertMatchesSchema("touba-trigger-queue-health-v0.1", queueHealth);
+    assert.equal(queueHealth.triggers[0].status, "watch");
+    assert.equal(queueHealth.triggers[0].replay_rejected, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -744,6 +908,9 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.equal(health.status, "ok");
     assert.equal(health.service, "touba-project-server");
     assert.equal(health.endpoints.events, "/events");
+    assert.equal(health.endpoints.trigger_queue_health, "/triggers/queue-health");
+    assert.equal(health.endpoints.supply_chain_status, "/supply-chain/status");
+    assert.equal(health.endpoints.governance_readiness, "/governance/readiness");
 
     const state = await getJson(`${baseUrl}/state`);
     assert.equal(state.schema_version, "touba-project-live-state-v0.1");
@@ -762,6 +929,13 @@ test("HTTP project server exposes live state, events and decisions", async () =>
 
     const runSummary = await getJson(`${baseUrl}/runs/current`);
     assert.equal(runSummary.schema_version, "touba-run-summary-v1");
+
+    const triggerQueueHealth = await getJson(`${baseUrl}/triggers/queue-health`);
+    assertMatchesSchema("touba-trigger-queue-health-v0.1", triggerQueueHealth);
+    const supplyChainStatus = await getJson(`${baseUrl}/supply-chain/status`);
+    assertMatchesSchema("touba-supply-chain-status-v0.1", supplyChainStatus);
+    const governanceReadiness = await getJson(`${baseUrl}/governance/readiness`);
+    assertMatchesSchema("touba-governance-readiness-v0.1", governanceReadiness);
 
     const eventStream = await fetch(`${baseUrl}/events`);
     assert.equal(eventStream.status, 200);
@@ -982,6 +1156,10 @@ function assertMatchesSchema(schemaVersion, value) {
   const schema = readJson(`schemas/${schemaVersion}.schema.json`);
   const diagnostics = validateObject(schema, value);
   assert.deepEqual(diagnostics, []);
+}
+
+function sha256(text) {
+  return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
 function parseSseEvent(text) {

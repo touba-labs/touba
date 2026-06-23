@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-supply-chain-status-v0.1.schema.json",
+  "title": "touba-supply-chain-status-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "project_root", "summary", "entries", "diagnostics"],
+  "properties": {
+    "schema_version": { "const": "touba-supply-chain-status-v0.1" },
+    "generated_at": { "type": "string" },
+    "project_root": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "ok", "drift", "missing", "unknown"],
+      "properties": {
+        "total": { "type": "integer" },
+        "ok": { "type": "integer" },
+        "drift": { "type": "integer" },
+        "missing": { "type": "integer" },
+        "unknown": { "type": "integer" }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "kind",
+          "status",
+          "handler_package_ref",
+          "manifest_path",
+          "lock_path",
+          "expected_digest",
+          "observed_digest",
+          "evidence"
+        ],
+        "properties": {
+          "ref": { "type": "string" },
+          "kind": { "enum": ["handler", "package", "manifest", "lock"] },
+          "status": { "enum": ["ok", "drift", "missing", "unknown"] },
+          "handler_package_ref": { "type": ["string", "null"] },
+          "manifest_path": { "type": ["string", "null"] },
+          "lock_path": { "type": ["string", "null"] },
+          "expected_digest": { "type": ["string", "null"] },
+          "observed_digest": { "type": ["string", "null"] },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "path", "source_ref", "message"],
+            "properties": {
+              "source": { "type": "string" },
+              "path": { "type": ["string", "null"] },
+              "source_ref": { "type": ["string", "null"] },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "enum": ["info", "warning", "error"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}
