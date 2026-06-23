@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-event-v0.1.schema.json",
+  "title": "touba-project-event-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "sequence", "type", "source", "emitted_at", "payload"],
+  "properties": {
+    "schema_version": { "const": "touba-project-event-v0.1" },
+    "event_id": { "type": "string" },
+    "sequence": { "type": "integer" },
+    "type": { "type": "string" },
+    "source": { "const": "touba-project-server" },
+    "emitted_at": { "type": "string" },
+    "payload": { "type": "object" }
+  }
+}

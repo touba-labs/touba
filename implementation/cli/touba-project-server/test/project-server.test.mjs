@@ -9,6 +9,7 @@ import {
   applyProjectChange,
   buildContractIndex,
   buildLiveState,
+  buildProjectEvent,
   createToubaProjectServer,
   preflightServeOptions,
   proposeProjectChange,
@@ -53,7 +54,25 @@ test("live state composes project, run, trigger, decision and event surfaces", (
   assert.equal(state.pending_approval.schema_version, "touba-approval-request-v1");
   assert.equal(state.pending_review.schema_version, "touba-human-review-request-v1");
   assert.equal(state.events.transport, "server_sent_events");
+  assert.equal(state.events.event_schema_version, "touba-project-event-v0.1");
   assert.equal(state.project_server.refresh.schema_version, "touba-project-refresh-v0.1");
+});
+
+test("project events use a stable envelope contract", () => {
+  const event = buildProjectEvent({
+    type: "project.changed",
+    sequence: 7,
+    emittedAt: "2026-06-23T00:00:00.000Z",
+    payload: {
+      schema_version: "touba-project-refresh-v0.1",
+      status: "refreshed",
+    },
+  });
+
+  assert.equal(event.schema_version, "touba-project-event-v0.1");
+  assert.equal(event.event_id, "evt_000007");
+  assert.equal(event.sequence, 7);
+  assertMatchesSchema("touba-project-event-v0.1", event);
 });
 
 test("refresh project reports artifacts, stale state and changed files", () => {
@@ -229,6 +248,10 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     const eventStream = await fetch(`${baseUrl}/events`);
     assert.equal(eventStream.status, 200);
     assert.match(eventStream.headers.get("content-type"), /text\/event-stream/);
+    const { text: readyText, reader } = await readNextEvent(eventStream);
+    const readyEvent = parseSseEvent(readyText);
+    assertMatchesSchema("touba-project-event-v0.1", readyEvent);
+    assert.equal(readyEvent.type, "touba.server.ready");
 
     const decision = readJson("fixtures/valid/touba-human-review-decision-v1.json");
     const response = await fetch(`${baseUrl}/decisions`, {
@@ -290,11 +313,57 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.equal(applied.status, "applied");
     assert.equal(existsSync(join(root, "touba.project.json")), true);
 
-    const { text: eventText, reader } = await readNextEvent(eventStream);
+    const { text: eventText } = await readNextEventFromReader(reader);
+    const emittedEvent = parseSseEvent(eventText);
+    assertMatchesSchema("touba-project-event-v0.1", emittedEvent);
     assert.match(eventText, /touba\.server\.ready|human_decision\.accepted|project\.changed|change\.proposed|change\.applied/);
     await reader.cancel();
   } finally {
     await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("HTTP project server requires bearer auth when configured", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-auth-"));
+  const previous = process.env.TOUBA_TEST_PROJECT_SERVER_TOKEN;
+  process.env.TOUBA_TEST_PROJECT_SERVER_TOKEN = "secret-token";
+  const service = createToubaProjectServer({
+    authTokenEnv: "TOUBA_TEST_PROJECT_SERVER_TOKEN",
+    contractsRoot,
+    projectRoot: root,
+    humanDecisionsPath: join(root, "human-decisions.json"),
+    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    port: 0,
+    quiet: true,
+  });
+  try {
+    await service.start();
+    const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const unauthorized = await fetch(`${baseUrl}/state`);
+    assert.equal(unauthorized.status, 401);
+
+    const authorized = await fetch(`${baseUrl}/state`, {
+      headers: { authorization: "Bearer secret-token" },
+    });
+    assert.equal(authorized.status, 200);
+    const state = await authorized.json();
+    assert.equal(state.schema_version, "touba-project-live-state-v0.1");
+
+    const eventStream = await fetch(`${baseUrl}/events`, {
+      headers: { authorization: "Bearer secret-token" },
+    });
+    assert.equal(eventStream.status, 200);
+    const { text, reader } = await readNextEvent(eventStream);
+    assert.equal(parseSseEvent(text).schema_version, "touba-project-event-v0.1");
+    await reader.cancel();
+  } finally {
+    await service.stop();
+    if (previous === undefined) {
+      delete process.env.TOUBA_TEST_PROJECT_SERVER_TOKEN;
+    } else {
+      process.env.TOUBA_TEST_PROJECT_SERVER_TOKEN = previous;
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -307,6 +376,11 @@ async function getJson(url) {
 
 async function readNextEvent(response) {
   const reader = response.body.getReader();
+  const result = await readNextEventFromReader(reader);
+  return { ...result, reader };
+}
+
+async function readNextEventFromReader(reader) {
   const decoder = new TextDecoder();
   let text = "";
   while (!text.includes("\n\n")) {
@@ -314,7 +388,7 @@ async function readNextEvent(response) {
     if (chunk.done) break;
     text += decoder.decode(chunk.value, { stream: true });
   }
-  return { text, reader };
+  return { text };
 }
 
 function readJson(relativePath) {
@@ -325,4 +399,10 @@ function assertMatchesSchema(schemaVersion, value) {
   const schema = readJson(`schemas/${schemaVersion}.schema.json`);
   const diagnostics = validateObject(schema, value);
   assert.deepEqual(diagnostics, []);
+}
+
+function parseSseEvent(text) {
+  const dataLine = text.split(/\r?\n/u).find((line) => line.startsWith("data: "));
+  assert.ok(dataLine, `SSE event has no data line: ${text}`);
+  return JSON.parse(dataLine.slice("data: ".length));
 }

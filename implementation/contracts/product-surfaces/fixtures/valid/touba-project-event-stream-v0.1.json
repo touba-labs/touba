@@ -1,0 +1,6 @@
+{
+  "schema_version": "touba-project-event-stream-v0.1",
+  "endpoint": "/events",
+  "transport": "server_sent_events",
+  "event_schema_version": "touba-project-event-v0.1"
+}

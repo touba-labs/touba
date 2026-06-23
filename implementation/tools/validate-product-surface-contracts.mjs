@@ -14,6 +14,8 @@ export const PRODUCT_SURFACE_CONTRACTS = Object.freeze([
   "touba-project-change-proposed-v0.1",
   "touba-project-change-apply-v0.1",
   "touba-project-change-result-v0.1",
+  "touba-project-event-stream-v0.1",
+  "touba-project-event-v0.1",
   "touba-run-summary-v1",
   "touba-trace-timeline-v1",
   "touba-trigger-status-v1",

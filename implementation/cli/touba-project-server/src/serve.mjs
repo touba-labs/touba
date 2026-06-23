@@ -40,6 +40,7 @@ const CHANGE_PROPOSAL_SCHEMA_VERSION = "touba-project-change-proposal-v0.1";
 const CHANGE_PROPOSED_SCHEMA_VERSION = "touba-project-change-proposed-v0.1";
 const CHANGE_APPLY_SCHEMA_VERSION = "touba-project-change-apply-v0.1";
 const CHANGE_RESULT_SCHEMA_VERSION = "touba-project-change-result-v0.1";
+const PROJECT_EVENT_SCHEMA_VERSION = "touba-project-event-v0.1";
 const CHANGE_STORE_SCHEMA_VERSION = "touba-studio-change-proposals-v0.1";
 const CHANGE_ACTIONS = Object.freeze(["write_text_file"]);
 const CHANGE_DECISIONS = Object.freeze(["apply", "refuse"]);
@@ -111,7 +112,12 @@ export function createToubaProjectServer(options = {}) {
   const port = options.port ?? DEFAULT_PORT;
   const authToken = options.authTokenEnv === undefined ? undefined : process.env[options.authTokenEnv];
   const eventClients = new Set();
+  let eventSequence = 0;
   let projectSnapshot;
+  const nextEvent = (type, payload) => {
+    eventSequence += 1;
+    return buildProjectEvent({ type, payload, sequence: eventSequence });
+  };
 
   if (options.authTokenEnv !== undefined && (!authToken || authToken.trim() === "")) {
     throw serviceError("ToubaServeAuthTokenMissing", `environment variable ${options.authTokenEnv} is required`);
@@ -151,6 +157,7 @@ export function createToubaProjectServer(options = {}) {
             events: "/events",
             project: "/project",
             project_refresh: "/project/refresh",
+            event_schema: PROJECT_EVENT_SCHEMA_VERSION,
             current_run: "/runs/current",
             trigger_status: "/triggers",
             pending_approval: "/approvals/pending/current",
@@ -167,7 +174,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "GET" && url.pathname === "/events") {
-        openEventStream({ request, response, eventClients });
+        openEventStream({ request, response, eventClients, nextEvent });
         return;
       }
       if (request.method === "GET" && Object.hasOwn(LIVE_ENDPOINT_CONTRACTS, url.pathname)) {
@@ -190,7 +197,7 @@ export function createToubaProjectServer(options = {}) {
       if (request.method === "POST" && url.pathname === "/decisions") {
         const body = await readJsonBody(request);
         const accepted = acceptDecision({ contractsRoot, humanDecisionsPath, decision: body });
-        publishEvent(eventClients, "human_decision.accepted", accepted);
+        publishEvent(eventClients, "human_decision.accepted", accepted, nextEvent);
         writeJson(response, 202, accepted);
         return;
       }
@@ -209,7 +216,7 @@ export function createToubaProjectServer(options = {}) {
           request: body,
         });
         projectSnapshot = refreshed.snapshot;
-        publishRefreshEvents(eventClients, refreshed.report);
+        publishRefreshEvents(eventClients, refreshed.report, nextEvent);
         writeJson(response, 202, refreshed.report);
         return;
       }
@@ -227,7 +234,7 @@ export function createToubaProjectServer(options = {}) {
           changeProposalsPath,
           proposal: body,
         });
-        publishEvent(eventClients, "change.proposed", proposed);
+        publishEvent(eventClients, "change.proposed", proposed, nextEvent);
         writeJson(response, 202, proposed);
         return;
       }
@@ -245,7 +252,7 @@ export function createToubaProjectServer(options = {}) {
           changeProposalsPath,
           applyRequest: body,
         });
-        publishEvent(eventClients, result.status === "applied" ? "change.applied" : "change.refused", result);
+        publishEvent(eventClients, result.status === "applied" ? "change.applied" : "change.refused", result, nextEvent);
         if (result.status === "applied") {
           const refreshed = refreshProject({
             projectRoot,
@@ -256,7 +263,7 @@ export function createToubaProjectServer(options = {}) {
             },
           });
           projectSnapshot = refreshed.snapshot;
-          publishRefreshEvents(eventClients, refreshed.report);
+          publishRefreshEvents(eventClients, refreshed.report, nextEvent);
         }
         writeJson(response, 202, result);
         return;
@@ -351,7 +358,28 @@ export function buildLiveState({
       schema_version: EVENT_STREAM_SCHEMA_VERSION,
       endpoint: "/events",
       transport: "server_sent_events",
+      event_schema_version: PROJECT_EVENT_SCHEMA_VERSION,
     },
+  };
+}
+
+export function buildProjectEvent({
+  type,
+  payload,
+  sequence,
+  emittedAt = new Date().toISOString(),
+}) {
+  if (!Number.isInteger(sequence) || sequence < 1) {
+    throw serviceError("ToubaServeEventSequenceInvalid", "event sequence must be a positive integer");
+  }
+  return {
+    schema_version: PROJECT_EVENT_SCHEMA_VERSION,
+    event_id: `evt_${String(sequence).padStart(6, "0")}`,
+    sequence,
+    type: requiredNonEmptyString(type, "type"),
+    source: "touba-project-server",
+    emitted_at: emittedAt,
+    payload: isPlainObject(payload) ? payload : { value: payload },
   };
 }
 
@@ -971,50 +999,47 @@ function writeJson(response, statusCode, body) {
   response.end(`${JSON.stringify(body, null, 2)}\n`);
 }
 
-function openEventStream({ request, response, eventClients }) {
+function openEventStream({ request, response, eventClients, nextEvent }) {
   response.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache, no-transform",
     "connection": "keep-alive",
   });
   eventClients.add(response);
-  writeSse(response, "touba.server.ready", {
+  writeSse(response, "touba.server.ready", nextEvent("touba.server.ready", {
     schema_version: EVENT_STREAM_SCHEMA_VERSION,
-    status: "ready",
-  });
+    endpoint: "/events",
+    transport: "server_sent_events",
+    event_schema_version: PROJECT_EVENT_SCHEMA_VERSION,
+  }));
   request.on("close", () => {
     eventClients.delete(response);
   });
 }
 
-function publishEvent(eventClients, type, payload) {
-  const event = {
-    schema_version: EVENT_STREAM_SCHEMA_VERSION,
-    type,
-    emitted_at: new Date().toISOString(),
-    payload,
-  };
+function publishEvent(eventClients, type, payload, nextEvent) {
+  const event = nextEvent(type, payload);
   for (const client of eventClients) {
     writeSse(client, type, event);
   }
 }
 
-function publishRefreshEvents(eventClients, report) {
-  publishEvent(eventClients, "project.changed", report);
+function publishRefreshEvents(eventClients, report, nextEvent) {
+  publishEvent(eventClients, "project.changed", report, nextEvent);
   if (report.changes.changed_artifacts.length > 0) {
     publishEvent(eventClients, "artifact.changed", {
       schema_version: PROJECT_REFRESH_SCHEMA_VERSION,
       project_root: report.project_root,
       refreshed_at: report.refreshed_at,
       changed_artifacts: report.changes.changed_artifacts,
-    });
+    }, nextEvent);
   }
   publishEvent(eventClients, "validation.changed", {
     schema_version: PROJECT_REFRESH_SCHEMA_VERSION,
     status: report.status,
     refreshed_at: report.refreshed_at,
     diagnostics: report.diagnostics,
-  });
+  }, nextEvent);
 }
 
 function writeSse(response, event, data) {

@@ -19,6 +19,8 @@ lossless mapping to the source contract and its `schema_version`.
 | `touba-project-change-proposed-v0.1` | client | Accepted change proposal with validation evidence. |
 | `touba-project-change-apply-v0.1` | client | Apply or refuse a pending change proposal. |
 | `touba-project-change-result-v0.1` | client | Final applied/refused change result and evidence. |
+| `touba-project-event-stream-v0.1` | client, Mobile | Live event stream descriptor for project-server clients. |
+| `touba-project-event-v0.1` | client, Mobile | Contracted event envelope emitted by the project server. |
 | `touba-run-summary-v1` | client, Mobile | Compact run status, trace reference, budget usage, pending approvals. |
 | `touba-trace-timeline-v1` | client | Ordered trace timeline for review and investigation. |
 | `touba-trigger-status-v1` | client, Mobile | Trigger state, queue state, replay/rate-limit surface. |
@@ -117,9 +119,12 @@ POST /changes/apply
 ```
 
 `/state` returns the current project server state. `/events` is the
-server-sent event stream consumed by live clients. The named endpoints expose
-project inspection, runs, trace timelines, triggers, pending human requests,
-resources and alerts as versioned Touba contracts.
+server-sent event stream consumed by live clients. The stream is described by
+`touba-project-event-stream-v0.1`; each emitted message is a
+`touba-project-event-v0.1` envelope with `event_id`, monotonic `sequence`,
+`type`, `source`, `emitted_at` and the versioned payload. The named endpoints
+expose project inspection, runs, trace timelines, triggers, pending human
+requests, resources and alerts as versioned Touba contracts.
 
 `/contracts` returns a machine-readable index of the contract set.
 `/contracts/<schema_version>` returns the corresponding contract fixture.
@@ -140,6 +145,11 @@ patches that fail `touba compile --stdout`.
 `/changes/apply` accepts `touba-project-change-apply-v0.1` and returns
 `touba-project-change-result-v0.1`. It applies or refuses a pending proposal,
 rejects replay and emits refresh/change events.
+
+When `touba serve` is configured with `--auth-token-env`, clients must send
+`Authorization: Bearer <token>` on normal HTTP requests and on the streaming
+`/events` request. client uses a fetch-based event stream client so the token
+stays in request headers.
 
 The server does not grant authority or accept arbitrary UI state. It is the
 project-facing control plane for client and Mobile adapters; Touba Engine
