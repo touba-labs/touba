@@ -19,6 +19,10 @@ import {
   preflightServeOptions,
   proposeProjectChange,
   readProjectEventJournal,
+  readPendingHumanRequest,
+  readProjectRunSummary,
+  readProjectTraceTimeline,
+  readProjectTriggerStatus,
   replayProjectEvents,
   refreshProject,
 } from "../src/serve.mjs";
@@ -115,6 +119,100 @@ test("event journal keeps a bounded replay window", () => {
     assert.equal(expired.status, "resync_required");
     assert.equal(expired.reason, "event_window_expired");
     assert.equal(expired.retained_from_sequence, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("project data surfaces read run, trace and trigger artifacts", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-surfaces-"));
+  try {
+    const runSummaryPath = join(root, ".touba", "current-run-summary.json");
+    const traceTimelinePath = join(root, ".touba", "current-trace-timeline.json");
+    const triggerStatusPath = join(root, ".touba", "trigger-status.json");
+    mkdirSync(join(root, ".touba"), { recursive: true });
+    writeFileSync(
+      runSummaryPath,
+      JSON.stringify(readJson("fixtures/valid/touba-run-summary-v1.json")),
+      "utf8",
+    );
+    writeFileSync(
+      traceTimelinePath,
+      JSON.stringify(readJson("fixtures/valid/touba-trace-timeline-v1.json")),
+      "utf8",
+    );
+
+    const run = readProjectRunSummary({ contractsRoot, runSummaryPath });
+    const trace = readProjectTraceTimeline({ contractsRoot, traceTimelinePath });
+    const trigger = readProjectTriggerStatus({
+      contractsRoot,
+      triggerStatusPath,
+      generatedAt: "2026-06-23T00:00:00.000Z",
+    });
+
+    assertMatchesSchema("touba-run-summary-v1", run);
+    assert.equal(run.status, "approval_pending");
+    assertMatchesSchema("touba-trace-timeline-v1", trace);
+    assert.equal(trace.events.length, 2);
+    assertMatchesSchema("touba-trigger-status-v1", trigger);
+    assert.deepEqual(trigger.triggers, []);
+
+    writeFileSync(traceTimelinePath, "{bad-json", "utf8");
+    assert.throws(
+      () => readProjectTraceTimeline({ contractsRoot, traceTimelinePath }),
+      /not valid JSON/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pending human request store filters decisions already accepted", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-human-requests-"));
+  try {
+    const humanRequestsPath = join(root, ".touba", "human-requests.json");
+    const humanDecisionsPath = join(root, ".touba", "human-decisions.json");
+    const approval = readJson("fixtures/valid/touba-approval-request-v1.json");
+    mkdirSync(join(root, ".touba"), { recursive: true });
+    writeFileSync(
+      humanRequestsPath,
+      JSON.stringify({
+        schema_version: "touba-human-requests-v0.1",
+        approvals: [approval],
+        reviews: [],
+      }),
+      "utf8",
+    );
+    const pending = readPendingHumanRequest({
+      contractsRoot,
+      humanRequestsPath,
+      humanDecisionsPath,
+      kind: "approval",
+    });
+    assert.equal(pending.request_id, approval.request_id);
+
+    acceptDecision({
+      contractsRoot,
+      humanDecisionsPath,
+      decision: {
+        schema_version: "touba-approval-decision-v1",
+        request_id: approval.request_id,
+        decision: "approve",
+        decided_by: "user:khadim",
+        decided_at: "2026-06-23T00:00:00.000Z",
+        comment: null,
+        client_ref: "touba-mobile",
+      },
+    });
+    assert.throws(
+      () => readPendingHumanRequest({
+        contractsRoot,
+        humanRequestsPath,
+        humanDecisionsPath,
+        kind: "approval",
+      }),
+      /no pending/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

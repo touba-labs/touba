@@ -27,6 +27,10 @@ const DEFAULT_PORT = 8791;
 const DEFAULT_HUMAN_DECISIONS_PATH = ".touba/human-decisions.json";
 const DEFAULT_CHANGE_PROPOSALS_PATH = ".touba/studio-change-proposals.json";
 const DEFAULT_EVENT_JOURNAL_PATH = ".touba/project-events.jsonl";
+const DEFAULT_RUN_SUMMARY_PATH = ".touba/current-run-summary.json";
+const DEFAULT_TRACE_TIMELINE_PATH = ".touba/current-trace-timeline.json";
+const DEFAULT_TRIGGER_STATUS_PATH = ".touba/trigger-status.json";
+const DEFAULT_HUMAN_REQUESTS_PATH = ".touba/human-requests.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CHANGE_CONTENT_BYTES = 64 * 1024;
@@ -36,6 +40,7 @@ const CONTRACT_INDEX_SCHEMA_VERSION = "touba-project-server-contract-index-v0.1"
 const LIVE_STATE_SCHEMA_VERSION = "touba-project-live-state-v0.1";
 const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v0.1";
 const HUMAN_DECISION_STORE_SCHEMA_VERSION = "touba-human-decisions-v0.1";
+const HUMAN_REQUEST_STORE_SCHEMA_VERSION = "touba-human-requests-v0.1";
 const HUMAN_DECISION_HISTORY_SCHEMA_VERSION = "touba-human-decision-history-v0.1";
 const HUMAN_DECISION_DETAIL_SCHEMA_VERSION = "touba-human-decision-detail-v0.1";
 const PROJECT_REFRESH_REQUEST_SCHEMA_VERSION = "touba-project-refresh-request-v0.1";
@@ -117,6 +122,18 @@ export function createToubaProjectServer(options = {}) {
   const eventJournalPath = resolve(
     options.eventJournalPath ?? join(projectRoot, DEFAULT_EVENT_JOURNAL_PATH),
   );
+  const runSummaryPath = resolve(
+    options.runSummaryPath ?? join(projectRoot, DEFAULT_RUN_SUMMARY_PATH),
+  );
+  const traceTimelinePath = resolve(
+    options.traceTimelinePath ?? join(projectRoot, DEFAULT_TRACE_TIMELINE_PATH),
+  );
+  const triggerStatusPath = resolve(
+    options.triggerStatusPath ?? join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
+  );
+  const humanRequestsPath = resolve(
+    options.humanRequestsPath ?? join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
+  );
   const eventJournalLimit = options.eventJournalLimit ?? DEFAULT_EVENT_JOURNAL_LIMIT;
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
@@ -143,6 +160,10 @@ export function createToubaProjectServer(options = {}) {
     humanDecisionsPath,
     changeProposalsPath,
     eventJournalPath,
+    runSummaryPath,
+    traceTimelinePath,
+    triggerStatusPath,
+    humanRequestsPath,
     eventJournalLimit,
     strict: options.strict === true,
   });
@@ -185,16 +206,59 @@ export function createToubaProjectServer(options = {}) {
             change_apply: "/changes/apply",
             event_replay: "Last-Event-ID",
             event_journal_limit: eventJournalLimit,
+            run_summary: "/runs/current",
+            trace_timeline: "/trace/current",
+            pending_approval_source: "/approvals/pending/current",
+            pending_review_source: "/reviews/pending/current",
           },
         });
         return;
       }
       if (request.method === "GET" && url.pathname === "/state") {
-        writeJson(response, 200, buildLiveState({ contractsRoot, projectRoot, projectSnapshot }));
+        writeJson(response, 200, buildLiveState({
+          contractsRoot,
+          projectRoot,
+          projectSnapshot,
+          runSummaryPath,
+          traceTimelinePath,
+          triggerStatusPath,
+          humanRequestsPath,
+          humanDecisionsPath,
+        }));
         return;
       }
       if (request.method === "GET" && url.pathname === "/events") {
         openEventStream({ request, response, eventClients, nextEvent, eventJournalPath });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/runs/current") {
+        writeJson(response, 200, readProjectRunSummary({ contractsRoot, runSummaryPath }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/trace/current") {
+        writeJson(response, 200, readProjectTraceTimeline({ contractsRoot, traceTimelinePath }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/triggers") {
+        writeJson(response, 200, readProjectTriggerStatus({ contractsRoot, triggerStatusPath }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/approvals/pending/current") {
+        writeJson(response, 200, readPendingHumanRequest({
+          contractsRoot,
+          humanRequestsPath,
+          humanDecisionsPath,
+          kind: "approval",
+        }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/reviews/pending/current") {
+        writeJson(response, 200, readPendingHumanRequest({
+          contractsRoot,
+          humanRequestsPath,
+          humanDecisionsPath,
+          kind: "human_review",
+        }));
         return;
       }
       if (request.method === "GET" && Object.hasOwn(LIVE_ENDPOINT_CONTRACTS, url.pathname)) {
@@ -344,6 +408,10 @@ export function createToubaProjectServer(options = {}) {
           change_proposals: changeProposalsPath,
           event_journal: eventJournalPath,
           event_journal_limit: eventJournalLimit,
+          run_summary: runSummaryPath,
+          trace_timeline: traceTimelinePath,
+          trigger_status: triggerStatusPath,
+          human_requests: humanRequestsPath,
           event_stream: `http://${host}:${address.port}/events`,
         })}\n`);
       }
@@ -377,6 +445,11 @@ export function buildLiveState({
   contractsRoot,
   projectRoot = process.cwd(),
   projectSnapshot = buildProjectSnapshot({ projectRoot }),
+  runSummaryPath = join(projectRoot, DEFAULT_RUN_SUMMARY_PATH),
+  traceTimelinePath = join(projectRoot, DEFAULT_TRACE_TIMELINE_PATH),
+  triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
+  humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
+  humanDecisionsPath = join(projectRoot, DEFAULT_HUMAN_DECISIONS_PATH),
   generatedAt = new Date().toISOString(),
 }) {
   return {
@@ -387,11 +460,23 @@ export function buildLiveState({
       refresh: projectSnapshot.report,
     },
     project: readContractFixture({ contractsRoot, schemaVersion: "touba-project-inspection-v1" }),
-    current_run: readContractFixture({ contractsRoot, schemaVersion: "touba-run-summary-v1" }),
-    trace_timeline: readContractFixture({ contractsRoot, schemaVersion: "touba-trace-timeline-v1" }),
-    trigger_status: readContractFixture({ contractsRoot, schemaVersion: "touba-trigger-status-v1" }),
-    pending_approval: readContractFixture({ contractsRoot, schemaVersion: "touba-approval-request-v1" }),
-    pending_review: readContractFixture({ contractsRoot, schemaVersion: "touba-human-review-request-v1" }),
+    current_run: readProjectRunSummary({ contractsRoot, runSummaryPath }),
+    trace_timeline: readProjectTraceTimeline({ contractsRoot, traceTimelinePath }),
+    trigger_status: readProjectTriggerStatus({ contractsRoot, triggerStatusPath }),
+    pending_approval: readPendingHumanRequest({
+      contractsRoot,
+      humanRequestsPath,
+      humanDecisionsPath,
+      kind: "approval",
+      allowFixtureWhenStoreMissing: true,
+    }),
+    pending_review: readPendingHumanRequest({
+      contractsRoot,
+      humanRequestsPath,
+      humanDecisionsPath,
+      kind: "human_review",
+      allowFixtureWhenStoreMissing: true,
+    }),
     featured_resource: readContractFixture({ contractsRoot, schemaVersion: "touba-registry-resource-v1" }),
     alert: readContractFixture({ contractsRoot, schemaVersion: "touba-alert-v1" }),
     events: {
@@ -434,6 +519,10 @@ export function preflightServeOptions({
   humanDecisionsPath,
   changeProposalsPath = join(projectRoot, DEFAULT_CHANGE_PROPOSALS_PATH),
   eventJournalPath = join(projectRoot, DEFAULT_EVENT_JOURNAL_PATH),
+  runSummaryPath = join(projectRoot, DEFAULT_RUN_SUMMARY_PATH),
+  traceTimelinePath = join(projectRoot, DEFAULT_TRACE_TIMELINE_PATH),
+  triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
+  humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   eventJournalLimit = DEFAULT_EVENT_JOURNAL_LIMIT,
   strict = false,
 }) {
@@ -463,6 +552,18 @@ export function preflightServeOptions({
     diagnostics.push(serviceDiagnostic("ToubaServeEventJournalOutsideProject", "event journal must stay inside the project root"));
   } else if (existsSync(eventJournalPath) && statSync(eventJournalPath).isDirectory()) {
     diagnostics.push(serviceDiagnostic("ToubaServeEventJournalInvalid", `${eventJournalPath} is a directory`));
+  }
+  for (const [code, label, filePath] of [
+    ["ToubaServeRunSummaryPathInvalid", "run summary", runSummaryPath],
+    ["ToubaServeTraceTimelinePathInvalid", "trace timeline", traceTimelinePath],
+    ["ToubaServeTriggerStatusPathInvalid", "trigger status", triggerStatusPath],
+    ["ToubaServeHumanRequestsPathInvalid", "human request store", humanRequestsPath],
+  ]) {
+    if (!isPathInside(projectRoot, filePath)) {
+      diagnostics.push(serviceDiagnostic(code, `${label} path must stay inside the project root`));
+    } else if (existsSync(filePath) && statSync(filePath).isDirectory()) {
+      diagnostics.push(serviceDiagnostic(code, `${filePath} is a directory`));
+    }
   }
   for (const schemaVersion of PRODUCT_SURFACE_CONTRACTS) {
     if (!contractFilesExist({ contractsRoot, schemaVersion })) {
@@ -500,6 +601,16 @@ export function preflightServeOptions({
     || diagnostic.code === "ToubaServeEventJournalInvalid"
   )) {
     const error = serviceError("ToubaServePreflightFailed", "touba serve cannot use the configured event journal");
+    error.diagnostics = diagnostics;
+    throw error;
+  }
+  if (diagnostics.some((diagnostic) =>
+    diagnostic.code === "ToubaServeRunSummaryPathInvalid"
+    || diagnostic.code === "ToubaServeTraceTimelinePathInvalid"
+    || diagnostic.code === "ToubaServeTriggerStatusPathInvalid"
+    || diagnostic.code === "ToubaServeHumanRequestsPathInvalid"
+  )) {
+    const error = serviceError("ToubaServePreflightFailed", "touba serve cannot use the configured project data paths");
     error.diagnostics = diagnostics;
     throw error;
   }
@@ -586,6 +697,90 @@ export function getHumanDecisionDetail({
     generated_at: generatedAt,
     decision: projectHumanDecision(decision),
   };
+}
+
+export function readProjectRunSummary({ contractsRoot, runSummaryPath }) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: runSummaryPath,
+    schemaVersion: "touba-run-summary-v1",
+    errorCode: "ToubaServeRunSummaryInvalid",
+    message: "project run summary does not match touba-run-summary-v1",
+  });
+  return stored ?? unavailableRunSummary();
+}
+
+export function readProjectTraceTimeline({ contractsRoot, traceTimelinePath }) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: traceTimelinePath,
+    schemaVersion: "touba-trace-timeline-v1",
+    errorCode: "ToubaServeTraceTimelineInvalid",
+    message: "project trace timeline does not match touba-trace-timeline-v1",
+  });
+  return stored ?? emptyTraceTimeline();
+}
+
+export function readProjectTriggerStatus({
+  contractsRoot,
+  triggerStatusPath,
+  generatedAt = new Date().toISOString(),
+}) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: triggerStatusPath,
+    schemaVersion: "touba-trigger-status-v1",
+    errorCode: "ToubaServeTriggerStatusInvalid",
+    message: "project trigger status does not match touba-trigger-status-v1",
+  });
+  return stored ?? {
+    schema_version: "touba-trigger-status-v1",
+    generated_at: generatedAt,
+    triggers: [],
+  };
+}
+
+export function readPendingHumanRequest({
+  contractsRoot,
+  humanRequestsPath,
+  humanDecisionsPath,
+  kind,
+  allowFixtureWhenStoreMissing = false,
+}) {
+  if (!existsSync(humanRequestsPath)) {
+    if (allowFixtureWhenStoreMissing) {
+      return readContractFixture({
+        contractsRoot,
+        schemaVersion: kind === "approval"
+          ? "touba-approval-request-v1"
+          : "touba-human-review-request-v1",
+      });
+    }
+    throw serviceError("ToubaServePendingHumanRequestNotFound", "pending human request store is not available");
+  }
+  const store = readHumanRequestStore(humanRequestsPath);
+  const decisions = loadHumanDecisionStore(humanDecisionsPath);
+  const decided = new Set(decisions.decisions.map((decision) =>
+    `${decision.schema_version}:${decision.request_id}`
+  ));
+  const schemaVersion = kind === "approval"
+    ? "touba-approval-request-v1"
+    : "touba-human-review-request-v1";
+  const requests = kind === "approval" ? store.approvals : store.reviews;
+  const pending = requests.find((request) =>
+    !decided.has(`${schemaVersionToDecisionSchema(schemaVersion)}:${request.request_id}`)
+  );
+  if (pending === undefined) {
+    throw serviceError("ToubaServePendingHumanRequestNotFound", "no pending human request is available");
+  }
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion,
+    value: pending,
+    errorCode: "ToubaServePendingHumanRequestInvalid",
+    message: "pending human request does not match its contract",
+  });
+  return pending;
 }
 
 export function refreshProject({
@@ -1111,6 +1306,64 @@ function readContractSchema({ contractsRoot, schemaVersion }) {
   return JSON.parse(readFileSync(schemaPath, "utf8"));
 }
 
+function readOptionalContractFile({ contractsRoot, filePath, schemaVersion, errorCode, message }) {
+  if (!existsSync(filePath)) {
+    return undefined;
+  }
+  if (statSync(filePath).isDirectory()) {
+    throw serviceError(errorCode, `${filePath} is a directory`);
+  }
+  let value;
+  try {
+    value = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch (cause) {
+    throw serviceError(errorCode, `${filePath} is not valid JSON: ${cause.message}`);
+  }
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion,
+    value,
+    errorCode,
+    message,
+  });
+  return value;
+}
+
+function unavailableRunSummary(generatedAt = new Date().toISOString()) {
+  return {
+    schema_version: "touba-run-summary-v1",
+    run_id: "run:unavailable",
+    status: "unavailable",
+    entrypoint_ref: "none",
+    started_at: generatedAt,
+    completed_at: null,
+    trigger_ref: null,
+    trace_ref: "trace:unavailable",
+    approvals_pending: [],
+    refusals: [
+      {
+        code: "ToubaServeRunUnavailable",
+        message: "No project run summary is available.",
+        source_ref: null,
+      },
+    ],
+    budgets: {
+      steps_used: 0,
+      tool_calls_used: 0,
+      provider_calls_used: 0,
+    },
+  };
+}
+
+function emptyTraceTimeline() {
+  return {
+    schema_version: "touba-trace-timeline-v1",
+    run_id: "run:unavailable",
+    trace_ref: "trace:unavailable",
+    events: [],
+  };
+}
+
 function validateContractPayload({ contractsRoot, schemaVersion, value, errorCode, message }) {
   const schema = readContractSchema({ contractsRoot, schemaVersion });
   const diagnostics = validateObject(schema, value);
@@ -1149,6 +1402,33 @@ function loadHumanDecisionStore(humanDecisionsPath) {
 function saveHumanDecisionStore(humanDecisionsPath, store) {
   mkdirSync(dirname(humanDecisionsPath), { recursive: true });
   writeFileSync(humanDecisionsPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+}
+
+function readHumanRequestStore(humanRequestsPath) {
+  let store;
+  try {
+    store = JSON.parse(readFileSync(humanRequestsPath, "utf8"));
+  } catch (cause) {
+    throw serviceError("ToubaServeHumanRequestStoreInvalid", `human request store is not valid JSON: ${cause.message}`);
+  }
+  if (
+    store?.schema_version !== HUMAN_REQUEST_STORE_SCHEMA_VERSION
+    || !Array.isArray(store.approvals)
+    || !Array.isArray(store.reviews)
+  ) {
+    throw serviceError("ToubaServeHumanRequestStoreInvalid", `human request store must use ${HUMAN_REQUEST_STORE_SCHEMA_VERSION}`);
+  }
+  return store;
+}
+
+function schemaVersionToDecisionSchema(schemaVersion) {
+  if (schemaVersion === "touba-approval-request-v1") {
+    return "touba-approval-decision-v1";
+  }
+  if (schemaVersion === "touba-human-review-request-v1") {
+    return "touba-human-review-decision-v1";
+  }
+  throw serviceError("ToubaServePendingHumanRequestInvalid", `unsupported pending request schema ${schemaVersion}`);
 }
 
 export function readProjectEventJournal(eventJournalPath) {
@@ -1430,6 +1710,7 @@ function httpStatusForError(code) {
     code === "ToubaServeRouteNotFound"
     || code === "ToubaServeContractUnknown"
     || code === "ToubaServeDecisionNotFound"
+    || code === "ToubaServePendingHumanRequestNotFound"
     || code === "ToubaServeChangeProposalNotFound"
   ) return 404;
   if (code === "ToubaServeBodyTooLarge" || code === "ToubaServeChangeTooLarge") return 413;
@@ -1445,6 +1726,11 @@ function httpStatusForError(code) {
     || code === "ToubaServeChangeValidationFailed"
     || code === "ToubaServeEventJournalInvalid"
     || code === "ToubaServeEventJournalLimitInvalid"
+    || code === "ToubaServeRunSummaryInvalid"
+    || code === "ToubaServeTraceTimelineInvalid"
+    || code === "ToubaServeTriggerStatusInvalid"
+    || code === "ToubaServeHumanRequestStoreInvalid"
+    || code === "ToubaServePendingHumanRequestInvalid"
   ) return 400;
   return 500;
 }
@@ -1474,6 +1760,14 @@ function parseArgs(rawArgs) {
       options.eventJournalPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--event-journal-limit") {
       options.eventJournalLimit = Number.parseInt(requiredValue(arg, rawArgs, ++index), 10);
+    } else if (arg === "--run-summary") {
+      options.runSummaryPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--trace-timeline") {
+      options.traceTimelinePath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--trigger-status") {
+      options.triggerStatusPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--human-requests") {
+      options.humanRequestsPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--host") {
       options.host = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--port") {
@@ -1507,7 +1801,7 @@ function requiredValue(option, args, index) {
 
 function usage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for client, Mobile and contract clients.",
     "",
@@ -1518,6 +1812,10 @@ function usage() {
     `  change_proposals: ${DEFAULT_CHANGE_PROPOSALS_PATH}`,
     `  event_journal: ${DEFAULT_EVENT_JOURNAL_PATH}`,
     `  event_journal_limit: ${DEFAULT_EVENT_JOURNAL_LIMIT}`,
+    `  run_summary: ${DEFAULT_RUN_SUMMARY_PATH}`,
+    `  trace_timeline: ${DEFAULT_TRACE_TIMELINE_PATH}`,
+    `  trigger_status: ${DEFAULT_TRIGGER_STATUS_PATH}`,
+    `  human_requests: ${DEFAULT_HUMAN_REQUESTS_PATH}`,
     "",
     "Live endpoints:",
     "  GET  /state",
