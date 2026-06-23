@@ -648,6 +648,83 @@ test("human decision detail rejects unknown decision ids", () => {
   }
 });
 
+test("HTTP project server rejects invalid client and Mobile contract payloads", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-contracts-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src", "main.tb"), "module demo.contracts\n", "utf8");
+  const service = createToubaProjectServer({
+    contractsRoot,
+    projectRoot: root,
+    humanDecisionsPath: join(root, "human-decisions.json"),
+    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    port: 0,
+    quiet: true,
+  });
+  try {
+    await service.start();
+    const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const decision = readJson("fixtures/valid/touba-approval-decision-v1.json");
+
+    const unsupportedDecision = await postJson(`${baseUrl}/decisions`, {
+      ...decision,
+      schema_version: "touba-approval-decision-v9",
+    });
+    assert.equal(unsupportedDecision.status, 400);
+    assert.equal((await unsupportedDecision.json()).code, "ToubaServeDecisionContractUnsupported");
+
+    const extraFieldDecision = await postJson(`${baseUrl}/decisions`, {
+      ...decision,
+      raw_secret: "FAKE_SECRET_SHOULD_NOT_PASS",
+    });
+    assert.equal(extraFieldDecision.status, 400);
+    const invalidDecision = await extraFieldDecision.json();
+    assert.equal(invalidDecision.code, "ToubaServeDecisionInvalid");
+    assert.equal(JSON.stringify(invalidDecision).includes("FAKE_SECRET_SHOULD_NOT_PASS"), false);
+
+    const validDecision = await postJson(`${baseUrl}/decisions`, decision);
+    assert.equal(validDecision.status, 202);
+    const replayDecision = await postJson(`${baseUrl}/decisions`, decision);
+    assert.equal(replayDecision.status, 409);
+    assert.equal((await replayDecision.json()).code, "ToubaServeDecisionReplayRejected");
+
+    const proposal = {
+      schema_version: "touba-project-change-proposal-v0.1",
+      proposal_id: "contract_change_001",
+      action: "write_text_file",
+      target: { path: "src/main.tb" },
+      requested_by: { kind: "studio", id: "touba-studio" },
+      reason: "contract validation test",
+      content: "module demo.contracts\n",
+    };
+    const invalidProposal = await postJson(`${baseUrl}/changes/propose`, {
+      ...proposal,
+      uncontracted_field: "not allowed",
+    });
+    assert.equal(invalidProposal.status, 400);
+    assert.equal((await invalidProposal.json()).code, "ToubaServeChangeInvalid");
+
+    const proposed = await postJson(`${baseUrl}/changes/propose`, proposal);
+    assert.equal(proposed.status, 202);
+    const duplicateProposal = await postJson(`${baseUrl}/changes/propose`, proposal);
+    assert.equal(duplicateProposal.status, 409);
+    assert.equal((await duplicateProposal.json()).code, "ToubaServeChangeProposalDuplicate");
+
+    const invalidApply = await postJson(`${baseUrl}/changes/apply`, {
+      schema_version: "touba-project-change-apply-v0.1",
+      proposal_id: proposal.proposal_id,
+      decision: "apply",
+      decided_by: { kind: "studio", id: "touba-studio" },
+      reason: "contract validation test",
+      raw_payload: "not allowed",
+    });
+    assert.equal(invalidApply.status, 400);
+    assert.equal((await invalidApply.json()).code, "ToubaServeChangeApplyInvalid");
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("HTTP project server exposes live state, events and decisions", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-"));
   mkdirSync(join(root, "src"), { recursive: true });
@@ -832,6 +909,15 @@ test("HTTP project server requires bearer auth when configured", async () => {
     });
     assert.equal(wrongSameLengthToken.status, 401);
 
+    const unauthorizedEvents = await fetch(`${baseUrl}/events`);
+    assert.equal(unauthorizedEvents.status, 401);
+    assert.equal((await unauthorizedEvents.json()).code, "ToubaServeUnauthorized");
+
+    const wrongEventsToken = await fetch(`${baseUrl}/events`, {
+      headers: { authorization: "Bearer secret-tokem" },
+    });
+    assert.equal(wrongEventsToken.status, 401);
+
     const authorized = await fetch(`${baseUrl}/state`, {
       headers: { authorization: "Bearer secret-token" },
     });
@@ -861,6 +947,14 @@ async function getJson(url) {
   const response = await fetch(url);
   assert.equal(response.status, 200);
   return response.json();
+}
+
+async function postJson(url, body) {
+  return fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 async function readNextEvent(response) {
