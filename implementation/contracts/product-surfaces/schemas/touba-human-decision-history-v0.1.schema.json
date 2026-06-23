@@ -26,6 +26,10 @@
         "required": [
           "source_schema_version",
           "request_id",
+          "run_id",
+          "trace_ref",
+          "user_ref",
+          "device_ref",
           "decision_kind",
           "result",
           "decided_by",
@@ -37,6 +41,10 @@
         "properties": {
           "source_schema_version": { "type": "string" },
           "request_id": { "type": "string" },
+          "run_id": { "type": "string" },
+          "trace_ref": { "type": "string" },
+          "user_ref": { "type": "string" },
+          "device_ref": { "type": "string" },
           "decision_kind": { "enum": ["approval", "human_review"] },
           "result": { "type": "string" },
           "decided_by": { "type": "string" },

@@ -31,6 +31,7 @@ const DEFAULT_RUN_SUMMARY_PATH = ".touba/current-run-summary.json";
 const DEFAULT_TRACE_TIMELINE_PATH = ".touba/current-trace-timeline.json";
 const DEFAULT_TRIGGER_STATUS_PATH = ".touba/trigger-status.json";
 const DEFAULT_HUMAN_REQUESTS_PATH = ".touba/human-requests.json";
+const DEFAULT_PRODUCT_IDENTITY_PATH = ".touba/product-identity.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CHANGE_CONTENT_BYTES = 64 * 1024;
@@ -43,6 +44,8 @@ const HUMAN_DECISION_STORE_SCHEMA_VERSION = "touba-human-decisions-v0.1";
 const HUMAN_REQUEST_STORE_SCHEMA_VERSION = "touba-human-requests-v0.1";
 const HUMAN_DECISION_HISTORY_SCHEMA_VERSION = "touba-human-decision-history-v0.1";
 const HUMAN_DECISION_DETAIL_SCHEMA_VERSION = "touba-human-decision-detail-v0.1";
+const AUTHORITY_GRAPH_SCHEMA_VERSION = "touba-authority-graph-v0.1";
+const PRODUCT_IDENTITY_SCHEMA_VERSION = "touba-product-identity-v0.1";
 const PROJECT_REFRESH_REQUEST_SCHEMA_VERSION = "touba-project-refresh-request-v0.1";
 const PROJECT_REFRESH_SCHEMA_VERSION = "touba-project-refresh-v0.1";
 const CHANGE_PROPOSAL_SCHEMA_VERSION = "touba-project-change-proposal-v0.1";
@@ -86,6 +89,8 @@ const ACCEPTED_DECISION_CONTRACTS = Object.freeze([
 ]);
 const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
   "/project": "touba-project-inspection-v1",
+  "/authority/graph": AUTHORITY_GRAPH_SCHEMA_VERSION,
+  "/identity": PRODUCT_IDENTITY_SCHEMA_VERSION,
   "/runs/current": "touba-run-summary-v1",
   "/trace/current": "touba-trace-timeline-v1",
   "/triggers": "touba-trigger-status-v1",
@@ -134,6 +139,9 @@ export function createToubaProjectServer(options = {}) {
   const humanRequestsPath = resolve(
     options.humanRequestsPath ?? join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   );
+  const productIdentityPath = resolve(
+    options.productIdentityPath ?? join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
+  );
   const eventJournalLimit = options.eventJournalLimit ?? DEFAULT_EVENT_JOURNAL_LIMIT;
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
@@ -164,6 +172,7 @@ export function createToubaProjectServer(options = {}) {
     traceTimelinePath,
     triggerStatusPath,
     humanRequestsPath,
+    productIdentityPath,
     eventJournalLimit,
     strict: options.strict === true,
   });
@@ -193,6 +202,8 @@ export function createToubaProjectServer(options = {}) {
             events: "/events",
             project: "/project",
             project_refresh: "/project/refresh",
+            authority_graph: "/authority/graph",
+            identity: "/identity",
             event_schema: PROJECT_EVENT_SCHEMA_VERSION,
             current_run: "/runs/current",
             trigger_status: "/triggers",
@@ -224,6 +235,7 @@ export function createToubaProjectServer(options = {}) {
           triggerStatusPath,
           humanRequestsPath,
           humanDecisionsPath,
+          productIdentityPath,
         }));
         return;
       }
@@ -237,6 +249,14 @@ export function createToubaProjectServer(options = {}) {
       }
       if (request.method === "GET" && url.pathname === "/trace/current") {
         writeJson(response, 200, readProjectTraceTimeline({ contractsRoot, traceTimelinePath }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/authority/graph") {
+        writeJson(response, 200, buildAuthorityGraph({ projectRoot }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/identity") {
+        writeJson(response, 200, readProductIdentity({ contractsRoot, productIdentityPath }));
         return;
       }
       if (request.method === "GET" && url.pathname === "/triggers") {
@@ -412,6 +432,7 @@ export function createToubaProjectServer(options = {}) {
           trace_timeline: traceTimelinePath,
           trigger_status: triggerStatusPath,
           human_requests: humanRequestsPath,
+          product_identity: productIdentityPath,
           event_stream: `http://${host}:${address.port}/events`,
         })}\n`);
       }
@@ -450,6 +471,7 @@ export function buildLiveState({
   triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   humanDecisionsPath = join(projectRoot, DEFAULT_HUMAN_DECISIONS_PATH),
+  productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
   generatedAt = new Date().toISOString(),
 }) {
   return {
@@ -460,6 +482,8 @@ export function buildLiveState({
       refresh: projectSnapshot.report,
     },
     project: readContractFixture({ contractsRoot, schemaVersion: "touba-project-inspection-v1" }),
+    authority_graph: buildAuthorityGraph({ projectRoot, generatedAt }),
+    identity: readProductIdentity({ contractsRoot, productIdentityPath }),
     current_run: readProjectRunSummary({ contractsRoot, runSummaryPath }),
     trace_timeline: readProjectTraceTimeline({ contractsRoot, traceTimelinePath }),
     trigger_status: readProjectTriggerStatus({ contractsRoot, triggerStatusPath }),
@@ -523,6 +547,7 @@ export function preflightServeOptions({
   traceTimelinePath = join(projectRoot, DEFAULT_TRACE_TIMELINE_PATH),
   triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
+  productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
   eventJournalLimit = DEFAULT_EVENT_JOURNAL_LIMIT,
   strict = false,
 }) {
@@ -558,6 +583,7 @@ export function preflightServeOptions({
     ["ToubaServeTraceTimelinePathInvalid", "trace timeline", traceTimelinePath],
     ["ToubaServeTriggerStatusPathInvalid", "trigger status", triggerStatusPath],
     ["ToubaServeHumanRequestsPathInvalid", "human request store", humanRequestsPath],
+    ["ToubaServeProductIdentityPathInvalid", "product identity", productIdentityPath],
   ]) {
     if (!isPathInside(projectRoot, filePath)) {
       diagnostics.push(serviceDiagnostic(code, `${label} path must stay inside the project root`));
@@ -609,6 +635,7 @@ export function preflightServeOptions({
     || diagnostic.code === "ToubaServeTraceTimelinePathInvalid"
     || diagnostic.code === "ToubaServeTriggerStatusPathInvalid"
     || diagnostic.code === "ToubaServeHumanRequestsPathInvalid"
+    || diagnostic.code === "ToubaServeProductIdentityPathInvalid"
   )) {
     const error = serviceError("ToubaServePreflightFailed", "touba serve cannot use the configured project data paths");
     error.diagnostics = diagnostics;
@@ -737,6 +764,74 @@ export function readProjectTriggerStatus({
     schema_version: "touba-trigger-status-v1",
     generated_at: generatedAt,
     triggers: [],
+  };
+}
+
+export function readProductIdentity({ contractsRoot, productIdentityPath }) {
+  const stored = readOptionalContractFile({
+    contractsRoot,
+    filePath: productIdentityPath,
+    schemaVersion: PRODUCT_IDENTITY_SCHEMA_VERSION,
+    errorCode: "ToubaServeProductIdentityInvalid",
+    message: "project product identity does not match touba-product-identity-v0.1",
+  });
+  return stored ?? readContractFixture({ contractsRoot, schemaVersion: PRODUCT_IDENTITY_SCHEMA_VERSION });
+}
+
+export function buildAuthorityGraph({
+  projectRoot,
+  generatedAt = new Date().toISOString(),
+}) {
+  const diagnostics = [];
+  const artifacts = collectProjectArtifacts(projectRoot, diagnostics);
+  const builder = createAuthorityGraphBuilder(diagnostics);
+
+  for (const artifact of artifacts) {
+    const artifactPath = join(projectRoot, artifact.relative_path);
+    if (artifact.kind === "source") {
+      parseToubaSourceAuthority({
+        builder,
+        content: readTextArtifact(artifactPath, artifact.relative_path, diagnostics),
+        path: artifact.relative_path,
+      });
+      continue;
+    }
+    if (artifact.kind === "air") {
+      const value = readJsonArtifact(artifactPath, artifact.relative_path, diagnostics);
+      if (value !== undefined) {
+        parseAirAuthority({ builder, value, path: artifact.relative_path });
+      }
+      continue;
+    }
+    if (artifact.kind === "manifest") {
+      const value = readJsonArtifact(artifactPath, artifact.relative_path, diagnostics);
+      if (value !== undefined) {
+        parseManifestAuthority({ builder, value, path: artifact.relative_path });
+      }
+      continue;
+    }
+    if (artifact.kind === "package") {
+      const value = readJsonArtifact(artifactPath, artifact.relative_path, diagnostics);
+      if (value !== undefined) {
+        parsePackageAuthority({ builder, value, path: artifact.relative_path });
+      }
+    }
+  }
+
+  const graph = builder.build();
+  const authorityDiagnostics = diagnostics.map(normalizeAuthorityDiagnostic);
+  return {
+    schema_version: AUTHORITY_GRAPH_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    project_root: projectRoot,
+    summary: {
+      node_count: graph.nodes.length,
+      edge_count: graph.edges.length,
+      diagnostic_count: authorityDiagnostics.length,
+    },
+    nodes: graph.nodes,
+    edges: graph.edges,
+    diagnostics: authorityDiagnostics,
   };
 }
 
@@ -1083,6 +1178,515 @@ function projectArtifactKind(relativePath) {
   if (name === "touba.package.json") return "package";
   if (name === "touba.ownership.json") return "ownership";
   return "metadata";
+}
+
+function createAuthorityGraphBuilder(diagnostics) {
+  const nodes = new Map();
+  const pendingEdges = new Map();
+
+  const addNode = ({ ref, kind, label, evidence }) => {
+    const id = normalizeAuthorityRef(ref);
+    if (id === undefined) {
+      return;
+    }
+    const normalizedKind = authorityKind(kind, id);
+    if (normalizedKind === undefined) {
+      diagnostics.push(authorityDiagnostic(
+        "ToubaAuthorityGraphNodeKindUnknown",
+        `cannot classify authority node ${id}`,
+        "warning",
+        id,
+      ));
+      return;
+    }
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        id,
+        kind: normalizedKind,
+        label: nonEmptyString(label) ?? authorityLabel(id),
+        ref: id,
+        evidence,
+      });
+    }
+  };
+
+  const addEdge = ({ kind, from, to, evidence }) => {
+    const fromRef = normalizeAuthorityRef(from);
+    const toRef = normalizeAuthorityRef(to);
+    if (fromRef === undefined || toRef === undefined) {
+      return;
+    }
+    const id = `edge:${kind}:${fromRef}->${toRef}`;
+    if (!pendingEdges.has(id)) {
+      pendingEdges.set(id, {
+        id,
+        kind,
+        from: fromRef,
+        to: toRef,
+        evidence,
+      });
+    }
+  };
+
+  const build = () => {
+    const edges = [];
+    for (const edge of pendingEdges.values()) {
+      if (!nodes.has(edge.from) || !nodes.has(edge.to)) {
+        diagnostics.push(authorityDiagnostic(
+          "ToubaAuthorityGraphDanglingEdge",
+          `${edge.kind} edge ${edge.from} -> ${edge.to} references a missing authority node`,
+          "warning",
+          edge.evidence.source_ref ?? edge.from,
+        ));
+        continue;
+      }
+      edges.push(edge);
+    }
+    return {
+      nodes: Array.from(nodes.values()).sort((left, right) => authoritySortKey(left).localeCompare(authoritySortKey(right))),
+      edges: edges.sort((left, right) => left.id.localeCompare(right.id)),
+    };
+  };
+
+  return { addNode, addEdge, build };
+}
+
+function parseAirAuthority({ builder, value, path }) {
+  const evidence = (sourceRef) => authorityEvidence("air", path, sourceRef);
+  if (isPlainObject(value.module)) {
+    builder.addNode({
+      ref: value.module.id,
+      kind: "module",
+      label: value.module.name,
+      evidence: evidence(value.module.source_ref),
+    });
+  }
+  const definitions = isPlainObject(value.definitions) ? value.definitions : {};
+  for (const [collection, kind] of [
+    ["tools", "tool"],
+    ["skills", "skill"],
+    ["agents", "agent"],
+    ["strategies", "strategy"],
+    ["memories", "memory"],
+  ]) {
+    for (const definition of Array.isArray(definitions[collection]) ? definitions[collection] : []) {
+      if (!isPlainObject(definition)) {
+        continue;
+      }
+      builder.addNode({
+        ref: definition.id,
+        kind,
+        label: definition.name,
+        evidence: evidence(definition.source_ref),
+      });
+    }
+  }
+  for (const collection of ["tools", "skills", "agents", "strategies"]) {
+    for (const definition of Array.isArray(definitions[collection]) ? definitions[collection] : []) {
+      if (!isPlainObject(definition) || typeof definition.id !== "string") {
+        continue;
+      }
+      const useRefs = Array.isArray(definition.use_refs) ? definition.use_refs : [];
+      for (const useRef of useRefs) {
+        if (isPlainObject(useRef)) {
+          builder.addEdge({
+            kind: "uses",
+            from: definition.id,
+            to: useRef.target_ref,
+            evidence: evidence(useRef.source_ref),
+          });
+        }
+      }
+      if (useRefs.length === 0) {
+        for (const targetRef of Array.isArray(definition.uses) ? definition.uses : []) {
+          builder.addEdge({
+            kind: "uses",
+            from: definition.id,
+            to: targetRef,
+            evidence: evidence(definition.source_ref),
+          });
+        }
+      }
+      for (const callableBy of Array.isArray(definition.callable_by) ? definition.callable_by : []) {
+        if (isPlainObject(callableBy)) {
+          builder.addEdge({
+            kind: "callable_by",
+            from: callableBy.caller_ref,
+            to: definition.id,
+            evidence: evidence(callableBy.source_ref),
+          });
+        }
+      }
+    }
+  }
+  for (const graph of Array.isArray(value.execution_graphs) ? value.execution_graphs : []) {
+    if (!isPlainObject(graph)) {
+      continue;
+    }
+    for (const node of Array.isArray(graph.nodes) ? graph.nodes : []) {
+      if (!isPlainObject(node) || !String(node.kind ?? "").startsWith("human")) {
+        continue;
+      }
+      const ref = `human_gate:${graph.owner_ref ?? graph.id}/${node.kind}`;
+      builder.addNode({
+        ref,
+        kind: "human_gate",
+        label: node.kind,
+        evidence: evidence(node.source_ref ?? graph.source_ref),
+      });
+      if (typeof graph.owner_ref === "string") {
+        builder.addEdge({
+          kind: "uses",
+          from: graph.owner_ref,
+          to: ref,
+          evidence: evidence(node.source_ref ?? graph.source_ref),
+        });
+      }
+    }
+  }
+}
+
+function parseManifestAuthority({ builder, value, path }) {
+  const bindings = isPlainObject(value.bindings) ? value.bindings : {};
+  for (const [ref, binding] of Object.entries(bindings)) {
+    const evidence = authorityEvidence("manifest", path, null);
+    builder.addNode({
+      ref,
+      kind: authorityKind(undefined, ref),
+      label: authorityLabel(ref),
+      evidence,
+    });
+    const grants = isPlainObject(binding) && Array.isArray(binding.grants) ? binding.grants : [];
+    for (const grant of grants) {
+      const grantRef = `capability:${grant}`;
+      builder.addNode({ ref: grantRef, kind: "capability", label: String(grant), evidence });
+      builder.addEdge({ kind: "grants", from: ref, to: grantRef, evidence });
+    }
+    const requires = isPlainObject(binding) && Array.isArray(binding.requires) ? binding.requires : [];
+    for (const required of requires) {
+      const capabilityRef = `capability:${required}`;
+      builder.addNode({ ref: capabilityRef, kind: "capability", label: String(required), evidence });
+      builder.addEdge({ kind: "requires", from: ref, to: capabilityRef, evidence });
+    }
+    const secrets = isPlainObject(binding) && Array.isArray(binding.secrets) ? binding.secrets : [];
+    for (const secret of secrets) {
+      const secretRef = `capability:secret:${secret}`;
+      builder.addNode({ ref: secretRef, kind: "capability", label: `secret:${secret}`, evidence });
+      builder.addEdge({ kind: "requires", from: ref, to: secretRef, evidence });
+    }
+  }
+}
+
+function parsePackageAuthority({ builder, value, path }) {
+  const packageRef = nonEmptyString(value.package_ref)
+    ?? nonEmptyString(value.name)
+    ?? nonEmptyString(value.ref);
+  if (packageRef === undefined) {
+    return;
+  }
+  const normalizedPackageRef = packageRef.startsWith("package:")
+    ? packageRef
+    : `package:${packageRef}`;
+  const evidence = authorityEvidence("package", path, null);
+  builder.addNode({
+    ref: normalizedPackageRef,
+    kind: "package",
+    label: authorityLabel(normalizedPackageRef),
+    evidence,
+  });
+  const exportsValue = isPlainObject(value.exports) ? value.exports : {};
+  for (const exported of flattenExportRefs(exportsValue)) {
+    builder.addNode({
+      ref: exported,
+      kind: authorityKind(undefined, exported),
+      label: authorityLabel(exported),
+      evidence,
+    });
+    builder.addEdge({
+      kind: "imports",
+      from: normalizedPackageRef,
+      to: exported,
+      evidence,
+    });
+  }
+}
+
+function parseToubaSourceAuthority({ builder, content, path }) {
+  if (content === undefined) {
+    return;
+  }
+  const moduleName = content.match(/^\s*module\s+([A-Za-z_][\w.]*)/mu)?.[1];
+  const localRefs = new Map();
+  for (const match of content.matchAll(/^([ \t]*)(memory|tool|skill|agent|strategy)\s+([A-Za-z_][\w]*)\b/gmu)) {
+    const kind = match[2] === "memory" ? "memory" : match[2];
+    const name = match[3];
+    const ref = kind === "memory"
+      ? `memory:${moduleName ?? "source"}/${name}`
+      : `${kind}:${moduleName ?? "source"}/${name}`;
+    localRefs.set(name, ref);
+    builder.addNode({
+      ref,
+      kind,
+      label: name,
+      evidence: authorityEvidence("source", path, `${path}:${lineNumberAt(content, match.index)}`),
+    });
+  }
+  for (const match of content.matchAll(/^\s*import\s+(type|define|function|tool|skill|agent|strategy)?\s*([A-Za-z_][\w]*)\s+from\s+([A-Za-z_][\w.]*)/gmu)) {
+    const importedName = match[2];
+    const importedModule = match[3];
+    const importedKind = match[1] === "define" || match[1] === "function" ? "skill" : match[1];
+    const importRef = `${importedKind ?? "module"}:${importedModule}/${importedName}`;
+    builder.addNode({
+      ref: importRef,
+      kind: authorityKind(importedKind, importRef) ?? "module",
+      label: importedName,
+      evidence: authorityEvidence("source", path, `${path}:${lineNumberAt(content, match.index)}`),
+    });
+    const moduleRef = moduleName === undefined ? `module:${path}` : `module:${moduleName}`;
+    builder.addNode({
+      ref: moduleRef,
+      kind: "module",
+      label: moduleName ?? path,
+      evidence: authorityEvidence("source", path, `${path}:1`),
+    });
+    builder.addEdge({
+      kind: "imports",
+      from: moduleRef,
+      to: importRef,
+      evidence: authorityEvidence("source", path, `${path}:${lineNumberAt(content, match.index)}`),
+    });
+  }
+  const blocks = splitToubaDeclarationBlocks(content);
+  for (const block of blocks) {
+    const ownerRef = localRefs.get(block.name);
+    if (ownerRef === undefined) {
+      continue;
+    }
+    for (const useMatch of block.body.matchAll(/^\s*uses\s+([A-Za-z_][\w]*)\b/gmu)) {
+      const targetName = useMatch[1];
+      const targetRef = localRefs.get(targetName);
+      if (targetRef !== undefined) {
+        builder.addEdge({
+          kind: "uses",
+          from: ownerRef,
+          to: targetRef,
+          evidence: authorityEvidence("source", path, `${path}:${block.startLine + lineNumberAt(block.body, useMatch.index) - 1}`),
+        });
+      }
+    }
+    for (const callMatch of block.body.matchAll(/^\s*callable_by\s+strategy\s+([A-Za-z_][\w]*)\b/gmu)) {
+      const callerRef = localRefs.get(callMatch[1]);
+      if (callerRef !== undefined) {
+        builder.addEdge({
+          kind: "callable_by",
+          from: callerRef,
+          to: ownerRef,
+          evidence: authorityEvidence("source", path, `${path}:${block.startLine + lineNumberAt(block.body, callMatch.index) - 1}`),
+        });
+      }
+    }
+    for (const memoryMatch of block.body.matchAll(/^\s*(?:uses\s+)?memory\s+([A-Za-z_][\w]*)\s+(read|write|read_write)\b/gmu)) {
+      const memoryRef = localRefs.get(memoryMatch[1]);
+      if (memoryRef !== undefined) {
+        builder.addEdge({
+          kind: "requires",
+          from: ownerRef,
+          to: memoryRef,
+          evidence: authorityEvidence("source", path, `${path}:${block.startLine + lineNumberAt(block.body, memoryMatch.index) - 1}`),
+        });
+      }
+    }
+    for (const humanMatch of block.body.matchAll(/\bhuman\.(approve|review)\b/gmu)) {
+      const gateRef = `human_gate:${ownerRef}/${humanMatch[1]}`;
+      const gateEvidence = authorityEvidence("source", path, `${path}:${block.startLine + lineNumberAt(block.body, humanMatch.index) - 1}`);
+      builder.addNode({
+        ref: gateRef,
+        kind: "human_gate",
+        label: `human.${humanMatch[1]}`,
+        evidence: gateEvidence,
+      });
+      builder.addEdge({
+        kind: "uses",
+        from: ownerRef,
+        to: gateRef,
+        evidence: gateEvidence,
+      });
+    }
+  }
+}
+
+function splitToubaDeclarationBlocks(content) {
+  const declarations = [];
+  for (const match of content.matchAll(/^([ \t]*)(tool|skill|agent|strategy)\s+([A-Za-z_][\w]*)\b/gmu)) {
+    declarations.push({
+      kind: match[2],
+      name: match[3],
+      index: match.index,
+      startLine: lineNumberAt(content, match.index),
+    });
+  }
+  return declarations.map((declaration, index) => {
+    const next = declarations[index + 1]?.index ?? content.length;
+    return {
+      ...declaration,
+      body: content.slice(declaration.index, next),
+    };
+  });
+}
+
+function flattenExportRefs(value) {
+  const refs = [];
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      refs.push(...flattenExportRefs(item));
+    }
+    return refs;
+  }
+  if (typeof value === "string" && value.includes(":")) {
+    refs.push(value);
+    return refs;
+  }
+  if (isPlainObject(value)) {
+    for (const key of ["ref", "target_ref", "id"]) {
+      if (typeof value[key] === "string" && value[key].includes(":")) {
+        refs.push(value[key]);
+      }
+    }
+    for (const item of Object.values(value)) {
+      refs.push(...flattenExportRefs(item));
+    }
+  }
+  return Array.from(new Set(refs));
+}
+
+function readTextArtifact(path, relativePath, diagnostics) {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (cause) {
+    diagnostics.push(authorityDiagnostic(
+      "ToubaAuthorityGraphArtifactUnreadable",
+      `cannot read ${relativePath}: ${cause.message}`,
+      "warning",
+      relativePath,
+    ));
+    return undefined;
+  }
+}
+
+function readJsonArtifact(path, relativePath, diagnostics) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (cause) {
+    diagnostics.push(authorityDiagnostic(
+      "ToubaAuthorityGraphJsonInvalid",
+      `${relativePath} is not valid JSON: ${cause.message}`,
+      "warning",
+      relativePath,
+    ));
+    return undefined;
+  }
+}
+
+function authorityDiagnostic(code, message, severity = "warning", sourceRef = null) {
+  return {
+    severity,
+    code,
+    message,
+    source_ref: sourceRef ?? null,
+  };
+}
+
+function normalizeAuthorityDiagnostic(diagnostic) {
+  return {
+    severity: ["info", "warning", "error"].includes(diagnostic?.severity) ? diagnostic.severity : "warning",
+    code: nonEmptyString(diagnostic?.code) ?? "ToubaAuthorityGraphDiagnostic",
+    message: nonEmptyString(diagnostic?.message) ?? "authority graph diagnostic",
+    source_ref: nonEmptyString(diagnostic?.source_ref) ?? nonEmptyString(diagnostic?.path) ?? null,
+  };
+}
+
+function authorityKind(kind, ref) {
+  if (["agent", "skill", "tool", "strategy", "human_gate", "memory", "capability", "package", "module"].includes(kind)) {
+    return kind;
+  }
+  if (typeof ref !== "string") {
+    return undefined;
+  }
+  if (ref.startsWith("agent:")) return "agent";
+  if (ref.startsWith("skill:")) return "skill";
+  if (ref.startsWith("tool:")) return "tool";
+  if (ref.startsWith("strategy:")) return "strategy";
+  if (ref.startsWith("human_gate:")) return "human_gate";
+  if (ref.startsWith("memory:")) return "memory";
+  if (ref.startsWith("capability:") || ref.startsWith("secret:")) return "capability";
+  if (ref.startsWith("package:")) return "package";
+  if (ref.startsWith("module:")) return "module";
+  return undefined;
+}
+
+function authorityEvidence(source, path, sourceRef) {
+  return {
+    source,
+    path: path ?? null,
+    source_ref: sourceRefToString(sourceRef),
+  };
+}
+
+function sourceRefToString(sourceRef) {
+  if (sourceRef === null || sourceRef === undefined) {
+    return null;
+  }
+  if (typeof sourceRef === "string") {
+    return sourceRef;
+  }
+  if (isPlainObject(sourceRef)) {
+    const sourceId = nonEmptyString(sourceRef.source_id);
+    const startLine = Number.isInteger(sourceRef.start_line) ? sourceRef.start_line + 1 : undefined;
+    if (sourceId !== undefined && startLine !== undefined) {
+      return `${sourceId}:${startLine}`;
+    }
+    if (sourceId !== undefined) {
+      return sourceId;
+    }
+  }
+  return null;
+}
+
+function normalizeAuthorityRef(ref) {
+  const value = nonEmptyString(ref);
+  return value?.replace(/\s+/gu, " ");
+}
+
+function authorityLabel(ref) {
+  const value = String(ref);
+  const slash = value.lastIndexOf("/");
+  if (slash >= 0 && slash < value.length - 1) {
+    return value.slice(slash + 1);
+  }
+  const colon = value.lastIndexOf(":");
+  if (colon >= 0 && colon < value.length - 1) {
+    return value.slice(colon + 1);
+  }
+  return value;
+}
+
+function authoritySortKey(node) {
+  const order = {
+    module: "0",
+    package: "1",
+    strategy: "2",
+    agent: "3",
+    skill: "4",
+    tool: "5",
+    human_gate: "6",
+    memory: "7",
+    capability: "8",
+  };
+  return `${order[node.kind] ?? "9"}:${node.ref}`;
+}
+
+function lineNumberAt(content, offset) {
+  return content.slice(0, offset).split(/\r?\n/u).length;
 }
 
 function validateChangeProposal({ projectRoot, proposal }) {
@@ -1548,6 +2152,10 @@ function projectHumanDecision(decision) {
     return {
       source_schema_version: decision.schema_version,
       request_id: decision.request_id,
+      run_id: decision.run_id,
+      trace_ref: decision.trace_ref,
+      user_ref: decision.user_ref,
+      device_ref: decision.device_ref,
       decision_kind: "approval",
       result: decision.decision,
       decided_by: decision.decided_by,
@@ -1560,6 +2168,10 @@ function projectHumanDecision(decision) {
   return {
     source_schema_version: decision.schema_version,
     request_id: decision.request_id,
+    run_id: decision.run_id,
+    trace_ref: decision.trace_ref,
+    user_ref: decision.user_ref,
+    device_ref: decision.device_ref,
     decision_kind: "human_review",
     result: decision.outcome,
     decided_by: decision.reviewed_by,
@@ -1832,6 +2444,8 @@ function usage() {
     "  GET  /events",
     "  GET  /project",
     "  POST /project/refresh",
+    "  GET  /authority/graph",
+    "  GET  /identity",
     "  GET  /runs/current",
     "  GET  /triggers",
     "  GET  /approvals/pending/current",
@@ -1857,6 +2471,10 @@ function serviceError(code, message) {
 
 function serviceDiagnostic(code, message, severity = "error") {
   return { severity, code, message };
+}
+
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
 function isPathInside(root, candidate) {

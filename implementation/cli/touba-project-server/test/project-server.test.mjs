@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   acceptDecision,
+  buildAuthorityGraph,
   applyProjectChange,
   buildContractIndex,
   buildLiveState,
@@ -23,6 +24,7 @@ import {
   readProjectRunSummary,
   readProjectTraceTimeline,
   readProjectTriggerStatus,
+  readProductIdentity,
   replayProjectEvents,
   refreshProject,
 } from "../src/serve.mjs";
@@ -61,6 +63,8 @@ test("live state composes project, run, trigger, decision and event surfaces", (
 
   assert.equal(state.schema_version, "touba-project-live-state-v0.1");
   assert.equal(state.project.schema_version, "touba-project-inspection-v1");
+  assert.equal(state.authority_graph.schema_version, "touba-authority-graph-v0.1");
+  assert.equal(state.identity.schema_version, "touba-product-identity-v0.1");
   assert.equal(state.current_run.schema_version, "touba-run-summary-v1");
   assert.equal(state.pending_approval.schema_version, "touba-approval-request-v1");
   assert.equal(state.pending_review.schema_version, "touba-human-review-request-v1");
@@ -167,6 +171,118 @@ test("project data surfaces read run, trace and trigger artifacts", () => {
   }
 });
 
+test("authority graph extracts source, AIR and manifest authority", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-authority-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "main.tb"), [
+      "module demo.authority",
+      "",
+      "memory ProjectKnowledge",
+      "",
+      "type ChangeRequest",
+      "    summary is Text",
+      "",
+      "tool ReadKnowledge",
+      "    uses memory ProjectKnowledge read",
+      "    takes request as ChangeRequest",
+      "    gives ChangeRequest",
+      "    requires memory_read",
+      "",
+      "skill ValidateChange",
+      "    takes request as ChangeRequest",
+      "    gives ChangeRequest",
+      "    uses ReadKnowledge",
+      "    do",
+      "        human.approve",
+      "            with context as request",
+      "            into approval",
+      "        give request",
+      "",
+      "agent Reviewer",
+      "    uses ValidateChange",
+      "    callable_by strategy RunReview",
+      "",
+      "strategy RunReview",
+      "    takes request as ChangeRequest",
+      "    uses Reviewer",
+      "    do",
+      "        Reviewer",
+      "",
+    ].join("\n"), "utf8");
+    writeFileSync(
+      join(root, "program.air.json"),
+      readFileSync(new URL("../../../tests/air/tb-v01-005-strategy-agents.air.json", import.meta.url), "utf8"),
+      "utf8",
+    );
+    writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
+      manifest_version: "touba-manifest-v1",
+      bindings: {
+        "tool:demo.authority/ReadKnowledge": {
+          grants: ["memory_read"],
+          secrets: ["DEMO_SECRET"],
+        },
+      },
+    }, null, 2), "utf8");
+
+    const graph = buildAuthorityGraph({
+      projectRoot: root,
+      generatedAt: "2026-06-23T00:00:00.000Z",
+    });
+    assertMatchesSchema("touba-authority-graph-v0.1", graph);
+    assert.equal(graph.schema_version, "touba-authority-graph-v0.1");
+    assert.equal(graph.nodes.some((node) => node.ref === "agent:examples.strategy_agents/Reviewer"), true);
+    assert.equal(graph.nodes.some((node) => node.ref === "memory:demo.authority/ProjectKnowledge"), true);
+    assert.equal(graph.nodes.some((node) => node.ref === "human_gate:skill:demo.authority/ValidateChange/approve"), true);
+    assert.equal(graph.nodes.some((node) => node.ref === "capability:secret:DEMO_SECRET"), true);
+    assert.equal(graph.edges.some((edge) =>
+      edge.kind === "callable_by"
+      && edge.from === "strategy:examples.strategy_agents/RunChange"
+      && edge.to === "agent:examples.strategy_agents/Reviewer"
+    ), true);
+    assert.equal(graph.edges.some((edge) =>
+      edge.kind === "uses"
+      && edge.from === "skill:demo.authority/ValidateChange"
+      && edge.to === "human_gate:skill:demo.authority/ValidateChange/approve"
+    ), true);
+    assert.equal(graph.edges.some((edge) =>
+      edge.kind === "requires"
+      && edge.from === "tool:demo.authority/ReadKnowledge"
+      && edge.to === "capability:secret:DEMO_SECRET"
+    ), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("product identity surface reads fixture and project identity stores", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-identity-"));
+  try {
+    const productIdentityPath = join(root, ".touba", "product-identity.json");
+    const fixture = readProductIdentity({ contractsRoot, productIdentityPath });
+    assertMatchesSchema("touba-product-identity-v0.1", fixture);
+    assert.equal(fixture.summary.user_count, 2);
+    assert.equal(fixture.assignments[0].run_id, "run_20260622_001");
+
+    mkdirSync(join(root, ".touba"), { recursive: true });
+    const stored = {
+      ...fixture,
+      generated_at: "2026-06-23T01:00:00.000Z",
+      users: fixture.users.slice(0, 1),
+      summary: {
+        ...fixture.summary,
+        user_count: 1,
+      },
+    };
+    writeFileSync(productIdentityPath, JSON.stringify(stored), "utf8");
+    const identity = readProductIdentity({ contractsRoot, productIdentityPath });
+    assertMatchesSchema("touba-product-identity-v0.1", identity);
+    assert.equal(identity.summary.user_count, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("pending human request store filters decisions already accepted", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-human-requests-"));
   try {
@@ -197,6 +313,10 @@ test("pending human request store filters decisions already accepted", () => {
       decision: {
         schema_version: "touba-approval-decision-v1",
         request_id: approval.request_id,
+        run_id: approval.run_id,
+        trace_ref: approval.trace_ref,
+        user_ref: "user:khadim",
+        device_ref: "device:review-phone-01",
         decision: "approve",
         decided_by: "user:khadim",
         decided_at: "2026-06-23T00:00:00.000Z",
@@ -554,6 +674,14 @@ test("HTTP project server exposes live state, events and decisions", async () =>
 
     const project = await getJson(`${baseUrl}/project`);
     assert.equal(project.schema_version, "touba-project-inspection-v1");
+
+    const authorityGraph = await getJson(`${baseUrl}/authority/graph`);
+    assertMatchesSchema("touba-authority-graph-v0.1", authorityGraph);
+    assert.equal(health.endpoints.authority_graph, "/authority/graph");
+
+    const identity = await getJson(`${baseUrl}/identity`);
+    assertMatchesSchema("touba-product-identity-v0.1", identity);
+    assert.equal(health.endpoints.identity, "/identity");
 
     const runSummary = await getJson(`${baseUrl}/runs/current`);
     assert.equal(runSummary.schema_version, "touba-run-summary-v1");

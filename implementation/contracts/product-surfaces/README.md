@@ -23,6 +23,8 @@ lossless mapping to the source contract and its `schema_version`.
 | `touba-project-change-detail-v0.1` | client | Detailed change proposal evidence without raw patch content. |
 | `touba-project-event-stream-v0.1` | client, Mobile | Live event stream descriptor for project-server clients. |
 | `touba-project-event-v0.1` | client, Mobile | Contracted event envelope emitted by the project server. |
+| `touba-authority-graph-v0.1` | client | Project authority graph derived from Touba source, AIR and metadata artifacts. |
+| `touba-product-identity-v0.1` | client, Mobile | Product identity surface for users, teams, devices, assignments and escalation policies. |
 | `touba-run-summary-v1` | client, Mobile | Compact run status, trace reference, budget usage, pending approvals. |
 | `touba-trace-timeline-v1` | client | Ordered trace timeline for review and investigation. |
 | `touba-trigger-status-v1` | client, Mobile | Trigger state, queue state, replay/rate-limit surface. |
@@ -108,6 +110,8 @@ GET  /state
 GET  /events
 GET  /project
 POST /project/refresh
+GET  /authority/graph
+GET  /identity
 GET  /runs/current
 GET  /trace/current
 GET  /triggers
@@ -126,7 +130,18 @@ POST /changes/propose
 POST /changes/apply
 ```
 
-`/state` returns the current project server state. `/events` is the
+`/state` returns the current project server state. `/authority/graph` returns
+`touba-authority-graph-v0.1`, a graph of declared agents, skills, tools,
+strategies, human gates, memory scopes and capability grants extracted from
+project artifacts. The server reports dangling or inconsistent references as
+diagnostics instead of inventing implicit authority.
+
+`/identity` returns `touba-product-identity-v0.1`, the product identity surface
+for users, teams, roles, paired devices, sessions, assignments and escalation
+policies. This contract identifies human actors and product devices; it does
+not grant runtime authority, which remains enforced by Touba Engine.
+
+`/events` is the
 server-sent event stream consumed by live clients. The stream is described by
 `touba-project-event-stream-v0.1`; each emitted message is a
 `touba-project-event-v0.1` envelope with `event_id`, monotonic `sequence`,

@@ -4,6 +4,10 @@
   "decision": {
     "source_schema_version": "touba-human-review-decision-v1",
     "request_id": "review_20260622_001",
+    "run_id": "run_20260622_002",
+    "trace_ref": "trace:run_20260622_002",
+    "user_ref": "user:soukaina",
+    "device_ref": "device:studio-02",
     "decision_kind": "human_review",
     "result": "changes_requested",
     "decided_by": "user:soukaina",

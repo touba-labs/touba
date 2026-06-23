@@ -1,6 +1,10 @@
 {
   "schema_version": "touba-human-review-decision-v1",
   "request_id": "review_20260622_001",
+  "run_id": "run_20260622_002",
+  "trace_ref": "trace:run_20260622_002",
+  "user_ref": "user:soukaina",
+  "device_ref": "device:studio-02",
   "outcome": "changes_requested",
   "reviewed_by": "user:soukaina",
   "reviewed_at": "2026-06-22T15:00:00Z",

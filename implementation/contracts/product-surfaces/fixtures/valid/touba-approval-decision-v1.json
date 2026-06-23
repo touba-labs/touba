@@ -1,6 +1,10 @@
 {
   "schema_version": "touba-approval-decision-v1",
   "request_id": "approval_20260622_001",
+  "run_id": "run_20260622_001",
+  "trace_ref": "trace:run_20260622_001",
+  "user_ref": "user:khadim",
+  "device_ref": "device:review-phone-01",
   "decision": "approve",
   "decided_by": "user:khadim",
   "decided_at": "2026-06-22T14:07:00Z",
