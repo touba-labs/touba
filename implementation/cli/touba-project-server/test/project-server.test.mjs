@@ -11,6 +11,8 @@ import {
   buildLiveState,
   buildProjectEvent,
   createToubaProjectServer,
+  getProjectChangeDetail,
+  listProjectChanges,
   preflightServeOptions,
   proposeProjectChange,
   refreshProject,
@@ -147,6 +149,119 @@ test("change proposals are stored, applied atomically and cannot be replayed", (
         },
       }),
       /no longer pending/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("change history reports pending, applied and refused proposals without raw content", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-history-"));
+  try {
+    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    proposeProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      proposedAt: "2026-06-23T00:00:00.000Z",
+      proposal: {
+        schema_version: "touba-project-change-proposal-v0.1",
+        proposal_id: "pending_change",
+        action: "write_text_file",
+        target: { path: "src/pending.tb" },
+        requested_by: { kind: "studio", id: "touba-studio" },
+        reason: "keep pending",
+        content: "module demo.pending\n",
+      },
+    });
+    proposeProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      proposedAt: "2026-06-23T00:00:01.000Z",
+      proposal: {
+        schema_version: "touba-project-change-proposal-v0.1",
+        proposal_id: "applied_change",
+        action: "write_text_file",
+        target: { path: "src/applied.tb" },
+        requested_by: { kind: "user", id: "khadim" },
+        reason: "apply this",
+        content: "module demo.applied\n",
+      },
+    });
+    applyProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      decidedAt: "2026-06-23T00:00:02.000Z",
+      applyRequest: {
+        schema_version: "touba-project-change-apply-v0.1",
+        proposal_id: "applied_change",
+        decision: "apply",
+        decided_by: { kind: "user", id: "khadim" },
+        reason: "approved",
+      },
+    });
+    proposeProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      proposedAt: "2026-06-23T00:00:03.000Z",
+      proposal: {
+        schema_version: "touba-project-change-proposal-v0.1",
+        proposal_id: "refused_change",
+        action: "write_text_file",
+        target: { path: "src/refused.tb" },
+        requested_by: { kind: "studio", id: "touba-studio" },
+        reason: "refuse this",
+        content: "module demo.refused\n",
+      },
+    });
+    applyProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      decidedAt: "2026-06-23T00:00:04.000Z",
+      applyRequest: {
+        schema_version: "touba-project-change-apply-v0.1",
+        proposal_id: "refused_change",
+        decision: "refuse",
+        decided_by: { kind: "user", id: "khadim" },
+        reason: "not acceptable",
+      },
+    });
+
+    const history = listProjectChanges({
+      projectRoot: root,
+      changeProposalsPath,
+      generatedAt: "2026-06-23T00:00:05.000Z",
+    });
+    assertMatchesSchema("touba-project-change-history-v0.1", history);
+    assert.deepEqual(history.summary, { total: 3, pending: 1, applied: 1, refused: 1 });
+    assert.equal(JSON.stringify(history).includes("module demo"), false);
+    assert.deepEqual(new Set(history.changes.map((item) => item.status)), new Set(["pending", "applied", "refused"]));
+
+    const detail = getProjectChangeDetail({
+      projectRoot: root,
+      changeProposalsPath,
+      proposalId: "applied_change",
+      generatedAt: "2026-06-23T00:00:06.000Z",
+    });
+    assertMatchesSchema("touba-project-change-detail-v0.1", detail);
+    assert.equal(detail.change.status, "applied");
+    assert.equal(detail.change.evidence.write_mode, "atomic_rename");
+    assert.equal(detail.change.decision_reason, "approved");
+    assert.equal(JSON.stringify(detail).includes("module demo"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("change detail rejects unknown proposal ids", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-history-missing-"));
+  try {
+    assert.throws(
+      () => getProjectChangeDetail({
+        projectRoot: root,
+        changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+        proposalId: "missing",
+      }),
+      /unknown/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -296,6 +411,15 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assertMatchesSchema("touba-project-change-proposed-v0.1", proposed);
     assert.equal(proposed.status, "proposed");
 
+    const pendingHistory = await getJson(`${baseUrl}/changes`);
+    assertMatchesSchema("touba-project-change-history-v0.1", pendingHistory);
+    assert.equal(pendingHistory.summary.pending, 1);
+
+    const pendingDetail = await getJson(`${baseUrl}/changes/http_change_001`);
+    assertMatchesSchema("touba-project-change-detail-v0.1", pendingDetail);
+    assert.equal(pendingDetail.change.status, "pending");
+    assert.equal(JSON.stringify(pendingDetail).includes("project_version"), false);
+
     const applyResponse = await fetch(`${baseUrl}/changes/apply`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -312,6 +436,15 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assertMatchesSchema("touba-project-change-result-v0.1", applied);
     assert.equal(applied.status, "applied");
     assert.equal(existsSync(join(root, "touba.project.json")), true);
+
+    const appliedHistory = await getJson(`${baseUrl}/changes`);
+    assertMatchesSchema("touba-project-change-history-v0.1", appliedHistory);
+    assert.equal(appliedHistory.summary.applied, 1);
+
+    const appliedDetail = await getJson(`${baseUrl}/changes/http_change_001`);
+    assertMatchesSchema("touba-project-change-detail-v0.1", appliedDetail);
+    assert.equal(appliedDetail.change.status, "applied");
+    assert.equal(appliedDetail.change.evidence.write_mode, "atomic_rename");
 
     const { text: eventText } = await readNextEventFromReader(reader);
     const emittedEvent = parseSseEvent(eventText);

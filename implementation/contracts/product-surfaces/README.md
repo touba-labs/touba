@@ -19,6 +19,8 @@ lossless mapping to the source contract and its `schema_version`.
 | `touba-project-change-proposed-v0.1` | client | Accepted change proposal with validation evidence. |
 | `touba-project-change-apply-v0.1` | client | Apply or refuse a pending change proposal. |
 | `touba-project-change-result-v0.1` | client | Final applied/refused change result and evidence. |
+| `touba-project-change-history-v0.1` | client | Read-only change proposal inbox with pending, applied and refused states. |
+| `touba-project-change-detail-v0.1` | client | Detailed change proposal evidence without raw patch content. |
 | `touba-project-event-stream-v0.1` | client, Mobile | Live event stream descriptor for project-server clients. |
 | `touba-project-event-v0.1` | client, Mobile | Contracted event envelope emitted by the project server. |
 | `touba-run-summary-v1` | client, Mobile | Compact run status, trace reference, budget usage, pending approvals. |
@@ -114,6 +116,8 @@ GET  /alerts/current
 GET  /contracts
 GET  /contracts/<schema_version>
 POST /decisions
+GET  /changes
+GET  /changes/<proposal_id>
 POST /changes/propose
 POST /changes/apply
 ```
@@ -145,6 +149,11 @@ patches that fail `touba compile --stdout`.
 `/changes/apply` accepts `touba-project-change-apply-v0.1` and returns
 `touba-project-change-result-v0.1`. It applies or refuses a pending proposal,
 rejects replay and emits refresh/change events.
+
+`/changes` returns `touba-project-change-history-v0.1`.
+`/changes/<proposal_id>` returns `touba-project-change-detail-v0.1`. These
+read-only routes expose status, target, actor, reason, content digest,
+validations and write evidence. They do not expose the raw patch content.
 
 When `touba serve` is configured with `--auth-token-env`, clients must send
 `Authorization: Bearer <token>` on normal HTTP requests and on the streaming

@@ -40,6 +40,8 @@ const CHANGE_PROPOSAL_SCHEMA_VERSION = "touba-project-change-proposal-v0.1";
 const CHANGE_PROPOSED_SCHEMA_VERSION = "touba-project-change-proposed-v0.1";
 const CHANGE_APPLY_SCHEMA_VERSION = "touba-project-change-apply-v0.1";
 const CHANGE_RESULT_SCHEMA_VERSION = "touba-project-change-result-v0.1";
+const CHANGE_HISTORY_SCHEMA_VERSION = "touba-project-change-history-v0.1";
+const CHANGE_DETAIL_SCHEMA_VERSION = "touba-project-change-detail-v0.1";
 const PROJECT_EVENT_SCHEMA_VERSION = "touba-project-event-v0.1";
 const CHANGE_STORE_SCHEMA_VERSION = "touba-studio-change-proposals-v0.1";
 const CHANGE_ACTIONS = Object.freeze(["write_text_file"]);
@@ -163,6 +165,8 @@ export function createToubaProjectServer(options = {}) {
             pending_approval: "/approvals/pending/current",
             pending_review: "/reviews/pending/current",
             human_decisions: "/decisions",
+            change_history: "/changes",
+            change_detail: "/changes/<proposal_id>",
             change_propose: "/changes/propose",
             change_apply: "/changes/apply",
           },
@@ -199,6 +203,15 @@ export function createToubaProjectServer(options = {}) {
         const accepted = acceptDecision({ contractsRoot, humanDecisionsPath, decision: body });
         publishEvent(eventClients, "human_decision.accepted", accepted, nextEvent);
         writeJson(response, 202, accepted);
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/changes") {
+        writeJson(response, 200, listProjectChanges({ projectRoot, changeProposalsPath }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname.startsWith("/changes/")) {
+        const proposalId = decodeURIComponent(url.pathname.slice("/changes/".length));
+        writeJson(response, 200, getProjectChangeDetail({ projectRoot, changeProposalsPath, proposalId }));
         return;
       }
       if (request.method === "POST" && url.pathname === "/project/refresh") {
@@ -550,6 +563,7 @@ export function applyProjectChange({
     proposal.status = "refused";
     proposal.decided_at = decidedAt;
     proposal.decided_by = request.decided_by;
+    proposal.decision_reason = request.reason ?? "refused";
     proposal.refusal_reason = request.reason ?? "refused";
     saveChangeProposalStore(changeProposalsPath, store);
     return {
@@ -584,6 +598,8 @@ export function applyProjectChange({
   proposal.status = "applied";
   proposal.decided_at = decidedAt;
   proposal.decided_by = request.decided_by;
+  proposal.decision_reason = request.reason;
+  proposal.validations = validations;
   proposal.applied_path = proposal.target.path;
   saveChangeProposalStore(changeProposalsPath, store);
   return {
@@ -601,6 +617,47 @@ export function applyProjectChange({
       project_root: projectRoot,
       relative_path: proposal.target.path,
     },
+  };
+}
+
+export function listProjectChanges({
+  projectRoot,
+  changeProposalsPath,
+  generatedAt = new Date().toISOString(),
+}) {
+  const store = loadChangeProposalStore(changeProposalsPath);
+  const changes = store.proposals
+    .map((proposal) => projectChangeSummary(proposal))
+    .sort((left, right) => right.proposed_at.localeCompare(left.proposed_at));
+  return {
+    schema_version: CHANGE_HISTORY_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    summary: {
+      total: changes.length,
+      pending: changes.filter((item) => item.status === "pending").length,
+      applied: changes.filter((item) => item.status === "applied").length,
+      refused: changes.filter((item) => item.status === "refused").length,
+    },
+    changes,
+  };
+}
+
+export function getProjectChangeDetail({
+  projectRoot,
+  changeProposalsPath,
+  proposalId,
+  generatedAt = new Date().toISOString(),
+}) {
+  const id = requiredNonEmptyString(proposalId, "proposal_id");
+  const store = loadChangeProposalStore(changeProposalsPath);
+  const proposal = store.proposals.find((item) => item.proposal_id === id);
+  if (proposal === undefined) {
+    throw serviceError("ToubaServeChangeProposalNotFound", "change proposal_id is unknown");
+  }
+  return {
+    schema_version: CHANGE_DETAIL_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    change: projectChangeDetail(proposal, { projectRoot }),
   };
 }
 
@@ -818,6 +875,52 @@ function validateChangeContent(proposal, { projectRoot } = {}) {
   return diagnostics.length === 0
     ? [serviceDiagnostic("ToubaServeChangeContentValidated", "change content passed project-server validation", "info")]
     : diagnostics;
+}
+
+function projectChangeSummary(proposal) {
+  return {
+    proposal_id: proposal.proposal_id,
+    status: publicChangeStatus(proposal.status),
+    action: proposal.action,
+    target: proposal.target,
+    requested_by: proposal.requested_by,
+    proposed_at: proposal.proposed_at,
+    proposal_reason: typeof proposal.reason === "string" ? proposal.reason : "",
+    content_sha256: proposal.content_sha256,
+    decided_at: proposal.decided_at ?? null,
+    decided_by: proposal.decided_by ?? null,
+    decision_reason: publicChangeDecisionReason(proposal),
+  };
+}
+
+function projectChangeDetail(proposal, { projectRoot }) {
+  return {
+    ...projectChangeSummary(proposal),
+    validations: proposal.validations ?? [],
+    evidence: projectChangeEvidence(proposal, { projectRoot }),
+  };
+}
+
+function publicChangeStatus(status) {
+  return status === "proposed" ? "pending" : status;
+}
+
+function publicChangeDecisionReason(proposal) {
+  if (proposal.status === "proposed") {
+    return null;
+  }
+  return proposal.decision_reason ?? proposal.refusal_reason ?? "";
+}
+
+function projectChangeEvidence(proposal, { projectRoot }) {
+  if (proposal.status === "proposed") {
+    return null;
+  }
+  return {
+    write_mode: proposal.status === "applied" ? "atomic_rename" : "none",
+    project_root: projectRoot,
+    relative_path: proposal.applied_path ?? proposal.target.path,
+  };
 }
 
 function validateToubaSourcePatch(content, { projectRoot } = {}) {
@@ -1141,6 +1244,8 @@ function usage() {
     "  GET  /runs/current",
     "  GET  /triggers",
     "  GET  /approvals/pending/current",
+    "  GET  /changes",
+    "  GET  /changes/<proposal_id>",
     "  POST /decisions",
     "  POST /changes/propose",
     "  POST /changes/apply",
