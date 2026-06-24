@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
@@ -1183,7 +1183,35 @@ test("HTTP project server rejects invalid client and Mobile contract payloads", 
 test("HTTP project server exposes live state, events and decisions", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-"));
   mkdirSync(join(root, "src"), { recursive: true });
+  mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "main.tb"), "module demo.main\n", "utf8");
+  writeFileSync(join(root, ".touba", "air", "demo", "main.air.json"), JSON.stringify({
+    air_schema_version: "air-minimal-v0.1",
+    module: { id: "module:demo.main", name: "demo.main" },
+    definitions: {
+      agents: [
+        {
+          id: "agent:demo.main/ReviewAgent",
+          name: "ReviewAgent",
+          description: "Selects review capabilities for the served project.",
+        },
+      ],
+      skills: [
+        {
+          id: "skill:demo.main/ReviewDraft",
+          name: "ReviewDraft",
+          description: "Reviews a draft artifact.",
+        },
+      ],
+      strategies: [
+        {
+          id: "strategy:demo.main/RunReview",
+          name: "RunReview",
+          description: "Runs the review strategy.",
+        },
+      ],
+    },
+  }, null, 2), "utf8");
   const service = createToubaProjectServer({
     contractsRoot,
     projectRoot: root,
@@ -1205,10 +1233,17 @@ test("HTTP project server exposes live state, events and decisions", async () =>
 
     const state = await getJson(`${baseUrl}/state`);
     assert.equal(state.schema_version, "touba-project-live-state-v0.1");
-    assert.equal(state.project_server.refresh.summary.artifact_count, 1);
+    assert.equal(state.project_server.refresh.summary.artifact_count, 2);
+    assert.equal(state.project.project.name, basename(root));
+    assert.equal(state.project.entrypoints.some((entrypoint) => entrypoint.kind === "strategy"), true);
 
     const project = await getJson(`${baseUrl}/project`);
     assert.equal(project.schema_version, "touba-project-inspection-v1");
+    assert.equal(project.project.name, basename(root));
+    assert.equal(project.artifacts.some((artifact) => artifact.path === "src/main.tb"), true);
+    assert.equal(project.entrypoints.some((entrypoint) => entrypoint.kind === "strategy"), true);
+    assert.equal(JSON.stringify(project).includes("billing-agent"), false);
+    assertMatchesSchema("touba-project-inspection-v1", project);
 
     const authorityGraph = await getJson(`${baseUrl}/authority/graph`);
     assertMatchesSchema("touba-authority-graph-v0.1", authorityGraph);

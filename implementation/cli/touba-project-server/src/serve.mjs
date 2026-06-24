@@ -100,6 +100,11 @@ const NAMED_PROJECT_ARTIFACTS = Object.freeze(new Set([
   "touba.resources.json",
   "resources.json",
 ]));
+const AIR_ENTRYPOINT_KINDS = Object.freeze({
+  agents: "agent",
+  skills: "skill",
+  strategies: "strategy",
+});
 const CHANGE_TARGET_JSON_FILES = Object.freeze(new Set([
   "touba.project.json",
   "touba.manifest.json",
@@ -113,7 +118,6 @@ const ACCEPTED_DECISION_CONTRACTS = Object.freeze([
   "touba-human-review-decision-v1",
 ]);
 const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
-  "/project": "touba-project-inspection-v1",
   "/authority/graph": AUTHORITY_GRAPH_SCHEMA_VERSION,
   "/identity": PRODUCT_IDENTITY_SCHEMA_VERSION,
   "/runs/current": "touba-run-summary-v1",
@@ -305,6 +309,13 @@ export function createToubaProjectServer(options = {}) {
           mobileNotificationsPath,
           mobileQuickApprovalPolicyPath,
           mobileEscalationPath,
+        }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/project") {
+        writeJson(response, 200, buildProjectInspection({
+          projectRoot,
+          projectSnapshot,
         }));
         return;
       }
@@ -653,7 +664,7 @@ export function buildLiveState({
       project_root: projectRoot,
       refresh: projectSnapshot.report,
     },
-    project: readContractFixture({ contractsRoot, schemaVersion: "touba-project-inspection-v1" }),
+    project: buildProjectInspection({ projectRoot, projectSnapshot, generatedAt }),
     authority_graph: buildAuthorityGraph({ projectRoot, generatedAt }),
     identity: readProductIdentity({ contractsRoot, productIdentityPath }),
     current_run: readProjectRunSummary({ contractsRoot, runSummaryPath }),
@@ -2147,6 +2158,117 @@ function buildProjectSnapshot({
     artifacts,
     report,
   };
+}
+
+function buildProjectInspection({
+  projectRoot,
+  projectSnapshot = buildProjectSnapshot({ projectRoot }),
+  generatedAt = new Date().toISOString(),
+}) {
+  const diagnostics = [...inspectionDiagnostics(projectSnapshot.report?.diagnostics ?? [])];
+  const projectConfig = readProjectConfig(projectRoot, diagnostics);
+  const artifacts = projectSnapshot.artifacts
+    .filter((artifact) => ["source", "air", "manifest", "lock", "trace"].includes(artifact.kind))
+    .map((artifact) => ({
+      kind: artifact.kind,
+      path: artifact.relative_path,
+      status: inspectionArtifactStatus(artifact, projectSnapshot.report?.diagnostics ?? []),
+    }));
+
+  return {
+    schema_version: "touba-project-inspection-v1",
+    generated_at: generatedAt,
+    project: {
+      root: projectRoot,
+      name: nonEmptyString(projectConfig?.name) ?? basename(projectRoot),
+      host_language: nonEmptyString(projectConfig?.language) ?? "unknown",
+    },
+    artifacts,
+    entrypoints: buildProjectEntrypoints({ projectRoot, artifacts: projectSnapshot.artifacts, diagnostics }),
+    diagnostics,
+  };
+}
+
+function inspectionDiagnostics(diagnostics) {
+  return diagnostics.map((item) => ({
+    severity: item.severity === "error" ? "error" : item.severity === "warning" ? "warning" : "info",
+    code: nonEmptyString(item.code) ?? "ToubaProjectInspectionDiagnostic",
+    message: nonEmptyString(item.message) ?? "project inspection diagnostic",
+    source_ref: item.source_ref ?? null,
+  }));
+}
+
+function readProjectConfig(projectRoot, diagnostics) {
+  const path = join(projectRoot, "touba.project.json");
+  if (!existsSync(path)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (cause) {
+    diagnostics.push(serviceDiagnostic(
+      "ToubaProjectConfigUnreadable",
+      `cannot read touba.project.json: ${cause.message}`,
+      "warning",
+      "touba.project.json",
+    ));
+    return null;
+  }
+}
+
+function inspectionArtifactStatus(artifact, diagnostics) {
+  return diagnostics.some((item) => item.code === "ToubaServeProjectAirStale" && artifact.kind === "air")
+    ? "stale"
+    : "present";
+}
+
+function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
+  const entrypoints = new Map();
+  for (const artifact of artifacts.filter((item) => item.kind === "air")) {
+    const path = join(projectRoot, artifact.relative_path);
+    let air;
+    try {
+      air = JSON.parse(readFileSync(path, "utf8"));
+    } catch (cause) {
+      diagnostics.push(serviceDiagnostic(
+        "ToubaProjectAirUnreadable",
+        `cannot read ${artifact.relative_path}: ${cause.message}`,
+        "warning",
+        artifact.relative_path,
+      ));
+      continue;
+    }
+    for (const [collection, kind] of Object.entries(AIR_ENTRYPOINT_KINDS)) {
+      for (const definition of Array.isArray(air?.definitions?.[collection]) ? air.definitions[collection] : []) {
+        const ref = nonEmptyString(definition.id);
+        if (ref === undefined) {
+          continue;
+        }
+        entrypoints.set(ref, {
+          kind,
+          ref,
+          description: nonEmptyString(definition.description) ?? nonEmptyString(definition.name) ?? ref,
+        });
+      }
+    }
+  }
+  for (const artifact of artifacts.filter((item) => item.kind === "source")) {
+    const content = readTextArtifact(join(projectRoot, artifact.relative_path), artifact.relative_path, diagnostics);
+    if (content === undefined) {
+      continue;
+    }
+    const moduleName = content.match(/^\s*module\s+([A-Za-z_][\w.]*)/mu)?.[1] ?? basename(artifact.relative_path, ".tb");
+    for (const match of content.matchAll(/^\s*trigger\s+([A-Za-z_][\w]*)\b/gmu)) {
+      const name = match[1];
+      const ref = `trigger:${moduleName}/${name}`;
+      entrypoints.set(ref, {
+        kind: "trigger",
+        ref,
+        description: `Trigger ${name}`,
+      });
+    }
+  }
+  return [...entrypoints.values()].sort((left, right) => left.ref.localeCompare(right.ref));
 }
 
 function collectProjectArtifacts(projectRoot, diagnostics) {
