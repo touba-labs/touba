@@ -242,6 +242,16 @@ export function createToubaProjectServer(options = {}) {
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${host}:${port}`}`);
+      const corsAllowed = applyCorsHeaders(request, response);
+      if (request.method === "OPTIONS") {
+        if (corsAllowed) {
+          response.writeHead(204);
+          response.end();
+        } else {
+          writeJson(response, 403, { status: "error", code: "ToubaServeCorsOriginRejected" });
+        }
+        return;
+      }
       const isPairingAccept = request.method === "POST" && url.pathname === "/mobile/pairings/accept";
       if (authToken !== undefined && !isPairingAccept && !authorized(request, authToken, mobilePairingsPath)) {
         writeJson(response, 401, { status: "error", code: "ToubaServeUnauthorized" });
@@ -3630,6 +3640,52 @@ async function readOptionalJsonBody(request) {
 function writeJson(response, statusCode, body) {
   response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
   response.end(`${JSON.stringify(body, null, 2)}\n`);
+}
+
+function applyCorsHeaders(request, response) {
+  const origin = singleHeaderValue(request.headers.origin);
+  if (origin === undefined) {
+    return false;
+  }
+  if (!isAllowedStudioOrigin(origin)) {
+    return false;
+  }
+  response.setHeader("access-control-allow-origin", origin);
+  response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+  response.setHeader("access-control-allow-headers", "authorization, content-type, last-event-id");
+  response.setHeader("access-control-max-age", "600");
+  response.setHeader("vary", "Origin");
+  return true;
+}
+
+function singleHeaderValue(value) {
+  if (Array.isArray(value)) {
+    return value.length === 1 ? value[0] : undefined;
+  }
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function isAllowedStudioOrigin(origin) {
+  try {
+    const url = new URL(origin);
+    if (url.protocol === "tauri:" && url.hostname === "localhost") {
+      return true;
+    }
+    if (!["http:", "https:"].includes(url.protocol)) {
+      return false;
+    }
+    return isLoopbackStudioHost(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackStudioHost(hostname) {
+  return hostname === "localhost"
+    || hostname === "127.0.0.1"
+    || hostname === "::1"
+    || hostname === "tauri.localhost"
+    || hostname.endsWith(".localhost");
 }
 
 function openEventStream({ request, response, eventClients, nextEvent, eventJournalPath }) {

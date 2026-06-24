@@ -1396,6 +1396,18 @@ test("HTTP project server requires bearer auth when configured", async () => {
   try {
     await service.start();
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const preflight = await fetch(`${baseUrl}/state`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://127.0.0.1:5175",
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "authorization",
+      },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), "http://127.0.0.1:5175");
+    assert.match(preflight.headers.get("access-control-allow-headers"), /authorization/);
+
     const unauthorized = await fetch(`${baseUrl}/state`);
     assert.equal(unauthorized.status, 401);
 
@@ -1419,9 +1431,13 @@ test("HTTP project server requires bearer auth when configured", async () => {
     assert.equal(wrongEventsToken.status, 401);
 
     const authorized = await fetch(`${baseUrl}/state`, {
-      headers: { authorization: "Bearer secret-token" },
+      headers: {
+        authorization: "Bearer secret-token",
+        origin: "http://127.0.0.1:5175",
+      },
     });
     assert.equal(authorized.status, 200);
+    assert.equal(authorized.headers.get("access-control-allow-origin"), "http://127.0.0.1:5175");
     const state = await authorized.json();
     assert.equal(state.schema_version, "touba-project-live-state-v0.1");
 
