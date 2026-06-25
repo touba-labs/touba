@@ -17,7 +17,7 @@
       "status_dev": "approved",
       "status_prod": "pending_review",
       "owners": ["user:khadim"],
-      "reviewers": ["user:soukaina"],
+      "reviewers": ["user:backup-reviewer"],
       "review_gates": ["human_gate:billing/ApproveInvoice"],
       "evidence": {
         "source": "authority_graph",

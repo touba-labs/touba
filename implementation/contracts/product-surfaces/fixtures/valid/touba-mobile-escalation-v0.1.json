@@ -12,7 +12,7 @@
       "assignment_ref": "assignment:req_20260622_001:user:khadim",
       "request_id": "req_20260622_001",
       "primary_reviewer_ref": "user:khadim",
-      "backup_reviewer_ref": "user:soukaina",
+      "backup_reviewer_ref": "user:backup-reviewer",
       "status": "assigned",
       "deadline_at": "2026-06-23T13:00:00Z",
       "escalated_at": null,

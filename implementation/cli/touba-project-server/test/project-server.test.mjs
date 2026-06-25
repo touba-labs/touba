@@ -505,7 +505,7 @@ test("observability and mobile product surfaces read fixture contracts", () => {
   assert.equal(costs.summary.estimate_basis.includes("estimate"), true);
   assert.equal(notifications.notifications.every((item) => !JSON.stringify(item).includes("FAKE_SECRET")), true);
   assert.equal(quickApproval.require_biometric, true);
-  assert.equal(escalation.assignments[0].backup_reviewer_ref, "user:soukaina");
+  assert.equal(escalation.assignments[0].backup_reviewer_ref, "user:backup-reviewer");
 });
 
 test("mobile pairing requests are bounded, accepted once and revocable without persisting raw secrets", () => {
