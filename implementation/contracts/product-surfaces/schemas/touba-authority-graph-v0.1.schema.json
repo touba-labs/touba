@@ -27,7 +27,7 @@
         "required": ["id", "kind", "label", "ref", "evidence"],
         "properties": {
           "id": { "type": "string" },
-          "kind": { "enum": ["agent", "skill", "tool", "strategy", "human_gate", "memory", "capability", "package", "module"] },
+          "kind": { "enum": ["agent", "skill", "tool", "strategy", "trigger", "human_gate", "memory", "capability", "package", "module"] },
           "label": { "type": "string" },
           "ref": { "type": "string" },
           "evidence": { "$ref": "#/$defs/evidence" }
@@ -42,7 +42,7 @@
         "required": ["id", "kind", "from", "to", "evidence"],
         "properties": {
           "id": { "type": "string" },
-          "kind": { "enum": ["uses", "callable_by", "requires", "grants", "imports"] },
+          "kind": { "enum": ["uses", "callable_by", "requires", "grants", "imports", "dispatches"] },
           "from": { "type": "string" },
           "to": { "type": "string" },
           "evidence": { "$ref": "#/$defs/evidence" }

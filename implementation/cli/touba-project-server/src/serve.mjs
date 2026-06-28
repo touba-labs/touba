@@ -21,6 +21,13 @@ import {
   PRODUCT_SURFACE_CONTRACTS,
   validateObject,
 } from "../../../tools/validate-product-surface-contracts.mjs";
+import {
+  executeAirDocument,
+  executeTriggerEvent,
+  loadAirFromJson,
+  loadToolBindingManifestFromJson,
+  ToubaRuntimeError,
+} from "@touba/runtime";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8791;
@@ -64,6 +71,8 @@ const MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION = "touba-mobile-quick-approval
 const MOBILE_ESCALATION_SCHEMA_VERSION = "touba-mobile-escalation-v0.1";
 const PROJECT_REFRESH_REQUEST_SCHEMA_VERSION = "touba-project-refresh-request-v0.1";
 const PROJECT_REFRESH_SCHEMA_VERSION = "touba-project-refresh-v0.1";
+const SANDBOX_RUN_REQUEST_SCHEMA_VERSION = "touba-sandbox-run-request-v0.1";
+const SANDBOX_RUN_RESULT_SCHEMA_VERSION = "touba-sandbox-run-result-v0.1";
 const CHANGE_PROPOSAL_SCHEMA_VERSION = "touba-project-change-proposal-v0.1";
 const CHANGE_PROPOSED_SCHEMA_VERSION = "touba-project-change-proposed-v0.1";
 const CHANGE_APPLY_SCHEMA_VERSION = "touba-project-change-apply-v0.1";
@@ -110,6 +119,7 @@ const CHANGE_TARGET_JSON_FILES = Object.freeze(new Set([
   "touba.manifest.json",
   "touba.package.json",
   "touba.ownership.json",
+  "touba.governance-actions.json",
   "touba.resources.json",
   "resources.json",
 ]));
@@ -273,7 +283,9 @@ export function createToubaProjectServer(options = {}) {
             identity: "/identity",
             event_schema: PROJECT_EVENT_SCHEMA_VERSION,
             current_run: "/runs/current",
+            sandbox_run: "/runs/sandbox",
             trigger_status: "/triggers",
+            trigger_fire: "/triggers/fire",
             trigger_queue_health: "/triggers/queue-health",
             supply_chain_status: "/supply-chain/status",
             governance_readiness: "/governance/readiness",
@@ -296,6 +308,7 @@ export function createToubaProjectServer(options = {}) {
             event_replay: "Last-Event-ID",
             event_journal_limit: eventJournalLimit,
             run_summary: "/runs/current",
+            sandbox_run_result_schema_version: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
             trace_timeline: "/trace/current",
             pending_approval_source: "/approvals/pending/current",
             pending_review_source: "/reviews/pending/current",
@@ -337,6 +350,18 @@ export function createToubaProjectServer(options = {}) {
         writeJson(response, 200, readProjectRunSummary({ contractsRoot, runSummaryPath }));
         return;
       }
+      if (request.method === "POST" && url.pathname === "/runs/sandbox") {
+        const body = await readJsonBody(request);
+        const result = await executeProjectSandboxRun({
+          contractsRoot,
+          executionKind: "entrypoint",
+          projectRoot,
+          request: body,
+        });
+        publishEvent(eventClients, "sandbox_run.completed", sandboxRunEventPayload(result), nextEvent);
+        writeJson(response, 200, result);
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/trace/current") {
         writeJson(response, 200, readProjectTraceTimeline({ contractsRoot, traceTimelinePath }));
         return;
@@ -351,6 +376,18 @@ export function createToubaProjectServer(options = {}) {
       }
       if (request.method === "GET" && url.pathname === "/triggers") {
         writeJson(response, 200, readProjectTriggerStatus({ contractsRoot, triggerStatusPath }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/triggers/fire") {
+        const body = await readJsonBody(request);
+        const result = await executeProjectSandboxRun({
+          contractsRoot,
+          executionKind: "trigger",
+          projectRoot,
+          request: body,
+        });
+        publishEvent(eventClients, "trigger.fire.completed", sandboxRunEventPayload(result), nextEvent);
+        writeJson(response, 200, result);
         return;
       }
       if (request.method === "GET" && url.pathname === "/triggers/queue-health") {
@@ -988,6 +1025,211 @@ export function readProjectTriggerStatus({
     schema_version: "touba-trigger-status-v1",
     generated_at: generatedAt,
     triggers: [],
+  };
+}
+
+export async function executeProjectSandboxRun({
+  contractsRoot,
+  executionKind,
+  projectRoot,
+  request,
+  generatedAt = new Date().toISOString(),
+}) {
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion: SANDBOX_RUN_REQUEST_SCHEMA_VERSION,
+    value: request,
+    errorCode: "ToubaServeSandboxInvalid",
+    message: "sandbox run request does not match touba-sandbox-run-request-v0.1",
+  });
+  if (request.execution_kind !== executionKind) {
+    throw serviceError("ToubaServeSandboxInvalid", `sandbox route expects execution_kind ${executionKind}`);
+  }
+  const targetRef = requiredNonEmptyString(request.target_ref, "target_ref");
+  const effectPolicy = request.effect_policy;
+  const resolved = resolveSandboxAirDocument({ projectRoot, targetRef });
+  const targetExecutionRef = executionKind === "trigger"
+    ? sandboxTriggerTargetRef(resolved.document, targetRef)
+    : targetRef;
+  if (effectPolicy === "runtime_only" && targetMayDispatchExternalTool(resolved.document, targetExecutionRef)) {
+    throw serviceError(
+      "ToubaServeSandboxExternalEffectsRejected",
+      "sandbox runtime_only runs refuse targets that may dispatch external tools",
+    );
+  }
+
+  const startedAt = generatedAt;
+  const startedMs = Date.now();
+  const runId = `sandbox_${compactTimestamp(startedAt)}_${randomBytes(3).toString("hex")}`;
+  const toolBindingManifest = loadOptionalProjectManifest({ projectRoot });
+  let runtimeResult;
+  try {
+    runtimeResult = executionKind === "trigger"
+      ? await executeTriggerEvent(resolved.document, {
+        trigger_ref: targetRef,
+        event_id: nonEmptyString(request.event_id) ?? `sandbox-event-${runId}`,
+        source_kind: nonEmptyString(request.source_kind) ?? sandboxTriggerSourceKind(resolved.document, targetRef),
+        arguments: isPlainObject(request.inputs) ? request.inputs : {},
+      }, {
+        runId,
+        toolBindingManifest,
+      })
+      : await executeAirDocument(resolved.document, {
+        entryRef: targetRef,
+        inputs: isPlainObject(request.inputs) ? request.inputs : {},
+        runId,
+        toolBindingManifest,
+      });
+  } catch (cause) {
+    if (cause instanceof ToubaRuntimeError) {
+      const error = serviceError("ToubaServeSandboxRuntimeRejected", cause.message);
+      error.diagnostics = [serviceDiagnostic(cause.code ?? "ToubaRuntimeError", cause.message, "error", resolved.relativePath)];
+      throw error;
+    }
+    throw cause;
+  }
+
+  const completedAt = new Date().toISOString();
+  const result = {
+    schema_version: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
+    run_id: runId,
+    execution_kind: executionKind,
+    target_ref: targetRef,
+    status: runtimeResult.status,
+    started_at: startedAt,
+    completed_at: completedAt,
+    duration_ms: Math.max(0, Date.now() - startedMs),
+    effect_policy: effectPolicy,
+    result: runtimeResult.result ?? null,
+    trace: sandboxTraceSummary(runtimeResult.trace),
+    diagnostics: [
+      serviceDiagnostic(
+        runtimeResult.status === "success" ? "ToubaSandboxRunCompleted" : "ToubaSandboxRunFinishedWithStatus",
+        `sandbox ${executionKind} run completed with status ${runtimeResult.status}`,
+        runtimeResult.status === "success" ? "info" : "warning",
+      ),
+    ],
+  };
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
+    value: result,
+    errorCode: "ToubaServeSandboxResultInvalid",
+    message: "sandbox run result does not match touba-sandbox-run-result-v0.1",
+  });
+  return result;
+}
+
+function resolveSandboxAirDocument({ projectRoot, targetRef }) {
+  const diagnostics = [];
+  const artifacts = collectProjectArtifacts(projectRoot, diagnostics).filter((artifact) => artifact.kind === "air");
+  if (artifacts.length === 0) {
+    const error = serviceError("ToubaServeSandboxAirUnavailable", "project has no AIR artifact to execute");
+    error.diagnostics = diagnostics;
+    throw error;
+  }
+  for (const artifact of artifacts) {
+    const path = join(projectRoot, artifact.relative_path);
+    try {
+      const document = loadAirFromJson(readFileSync(path, "utf8"));
+      if (airDocumentContainsRef(document, targetRef)) {
+        return { document, relativePath: artifact.relative_path };
+      }
+    } catch (cause) {
+      diagnostics.push(serviceDiagnostic(
+        "ToubaServeSandboxAirInvalid",
+        `${artifact.relative_path} cannot be loaded by the runtime: ${cause.message}`,
+        "warning",
+        artifact.relative_path,
+      ));
+    }
+  }
+  const error = serviceError("ToubaServeSandboxTargetNotFound", `target_ref ${targetRef} is not present in project AIR artifacts`);
+  error.diagnostics = diagnostics;
+  throw error;
+}
+
+function loadOptionalProjectManifest({ projectRoot }) {
+  const manifestPath = join(projectRoot, "touba.manifest.json");
+  if (!existsSync(manifestPath)) {
+    return undefined;
+  }
+  try {
+    return loadToolBindingManifestFromJson(readFileSync(manifestPath, "utf8"));
+  } catch (cause) {
+    throw serviceError("ToubaServeSandboxManifestInvalid", `touba.manifest.json cannot be loaded by the runtime: ${cause.message}`);
+  }
+}
+
+function airDocumentContainsRef(document, ref) {
+  return ["agents", "skills", "strategies", "functions", "triggers"].some((collection) =>
+    (document.definitions?.[collection] ?? []).some((definition) => definition.id === ref)
+  );
+}
+
+function sandboxTriggerTargetRef(document, triggerRef) {
+  const trigger = (document.definitions?.triggers ?? []).find((definition) => definition.id === triggerRef);
+  if (!trigger) return triggerRef;
+  return nonEmptyString(trigger.target_ref) ?? triggerRef;
+}
+
+function sandboxTriggerSourceKind(document, triggerRef) {
+  const trigger = (document.definitions?.triggers ?? []).find((definition) => definition.id === triggerRef);
+  return nonEmptyString(trigger?.event?.kind) ?? "request";
+}
+
+function targetMayDispatchExternalTool(document, targetRef, seen = new Set()) {
+  if (seen.has(targetRef)) return false;
+  seen.add(targetRef);
+  const graph = executionGraphForTarget(document, targetRef);
+  if (!graph) return false;
+  for (const node of graph.nodes ?? []) {
+    if (node.kind === "call_tool") return true;
+    const nestedRef = nonEmptyString(node.target_ref ?? node.targetRef);
+    if (nestedRef && /^(agent|skill|strategy|function):/u.test(nestedRef)) {
+      if (targetMayDispatchExternalTool(document, nestedRef, seen)) return true;
+    }
+  }
+  return false;
+}
+
+function executionGraphForTarget(document, targetRef) {
+  const definition = ["agents", "skills", "strategies", "functions"]
+    .flatMap((collection) => document.definitions?.[collection] ?? [])
+    .find((candidate) => candidate.id === targetRef);
+  const graphRef = nonEmptyString(definition?.flow_graph_ref);
+  return (document.execution_graphs ?? []).find((graph) =>
+    graph.id === graphRef || graph.owner_ref === targetRef
+  );
+}
+
+function sandboxTraceSummary(trace) {
+  const events = Array.isArray(trace?.events) ? trace.events : [];
+  return {
+    run_id: nonEmptyString(trace?.run?.run_id) ?? "unknown",
+    entry_ref: nonEmptyString(trace?.run?.entry_ref) ?? "unknown",
+    event_count: events.length,
+    events: events.slice(-24).map((event, index) => {
+      const type = nonEmptyString(event.kind ?? event.type) ?? "event";
+      return {
+        index: Number.isInteger(event.sequence_index) ? event.sequence_index : index,
+        type,
+        summary: type,
+      };
+    }),
+  };
+}
+
+function sandboxRunEventPayload(result) {
+  return {
+    schema_version: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
+    run_id: result.run_id,
+    execution_kind: result.execution_kind,
+    target_ref: result.target_ref,
+    status: result.status,
+    effect_policy: result.effect_policy,
+    completed_at: result.completed_at,
+    trace_event_count: result.trace.event_count,
   };
 }
 
@@ -2471,6 +2713,7 @@ function parseAirAuthority({ builder, value, path }) {
     ["skills", "skill"],
     ["agents", "agent"],
     ["strategies", "strategy"],
+    ["triggers", "trigger"],
     ["memories", "memory"],
   ]) {
     for (const definition of Array.isArray(definitions[collection]) ? definitions[collection] : []) {
@@ -2521,6 +2764,19 @@ function parseAirAuthority({ builder, value, path }) {
           });
         }
       }
+    }
+  }
+  for (const trigger of Array.isArray(definitions.triggers) ? definitions.triggers : []) {
+    if (!isPlainObject(trigger) || typeof trigger.id !== "string") {
+      continue;
+    }
+    if (typeof trigger.target_ref === "string") {
+      builder.addEdge({
+        kind: "dispatches",
+        from: trigger.id,
+        to: trigger.target_ref,
+        evidence: evidence(trigger.source_ref),
+      });
     }
   }
   for (const graph of Array.isArray(value.execution_graphs) ? value.execution_graphs : []) {
@@ -2621,7 +2877,7 @@ function parseToubaSourceAuthority({ builder, content, path }) {
   }
   const moduleName = content.match(/^\s*module\s+([A-Za-z_][\w.]*)/mu)?.[1];
   const localRefs = new Map();
-  for (const match of content.matchAll(/^([ \t]*)(memory|tool|skill|agent|strategy)\s+([A-Za-z_][\w]*)\b/gmu)) {
+  for (const match of content.matchAll(/^([ \t]*)(memory|tool|skill|agent|strategy|trigger)\s+([A-Za-z_][\w]*)\b/gmu)) {
     const kind = match[2] === "memory" ? "memory" : match[2];
     const name = match[3];
     const ref = kind === "memory"
@@ -2716,12 +2972,25 @@ function parseToubaSourceAuthority({ builder, content, path }) {
         evidence: gateEvidence,
       });
     }
+    if (block.kind === "trigger") {
+      for (const runMatch of block.body.matchAll(/^\s*runs\s+(strategy|agent|skill)\s+([A-Za-z_][\w]*)\b/gmu)) {
+        const targetRef = localRefs.get(runMatch[2]);
+        if (targetRef !== undefined) {
+          builder.addEdge({
+            kind: "dispatches",
+            from: ownerRef,
+            to: targetRef,
+            evidence: authorityEvidence("source", path, `${path}:${block.startLine + lineNumberAt(block.body, runMatch.index) - 1}`),
+          });
+        }
+      }
+    }
   }
 }
 
 function splitToubaDeclarationBlocks(content) {
   const declarations = [];
-  for (const match of content.matchAll(/^([ \t]*)(tool|skill|agent|strategy)\s+([A-Za-z_][\w]*)\b/gmu)) {
+  for (const match of content.matchAll(/^([ \t]*)(tool|skill|agent|strategy|trigger)\s+([A-Za-z_][\w]*)\b/gmu)) {
     declarations.push({
       kind: match[2],
       name: match[3],
@@ -2810,7 +3079,7 @@ function normalizeAuthorityDiagnostic(diagnostic) {
 }
 
 function authorityKind(kind, ref) {
-  if (["agent", "skill", "tool", "strategy", "human_gate", "memory", "capability", "package", "module"].includes(kind)) {
+  if (["agent", "skill", "tool", "strategy", "trigger", "human_gate", "memory", "capability", "package", "module"].includes(kind)) {
     return kind;
   }
   if (typeof ref !== "string") {
@@ -2820,6 +3089,7 @@ function authorityKind(kind, ref) {
   if (ref.startsWith("skill:")) return "skill";
   if (ref.startsWith("tool:")) return "tool";
   if (ref.startsWith("strategy:")) return "strategy";
+  if (ref.startsWith("trigger:")) return "trigger";
   if (ref.startsWith("human_gate:")) return "human_gate";
   if (ref.startsWith("memory:")) return "memory";
   if (ref.startsWith("capability:") || ref.startsWith("secret:")) return "capability";
@@ -3040,6 +3310,9 @@ function validateProjectMetadataDocument(fileName, document) {
     }
     return diagnostics;
   }
+  if (fileName === "touba.governance-actions.json") {
+    return validateGovernanceActionMetadata({ document, fileName });
+  }
   if (fileName === "touba.resources.json" || fileName === "resources.json") {
     const diagnostics = validateVersionedProjectMetadata({
       document,
@@ -3053,6 +3326,38 @@ function validateProjectMetadataDocument(fileName, document) {
     return diagnostics;
   }
   return [];
+}
+
+function validateGovernanceActionMetadata({ document, fileName }) {
+  const diagnostics = validateVersionedProjectMetadata({
+    document,
+    fileName,
+    field: "governance_action_schema_version",
+    expected: "touba-studio-governance-action-v0.1",
+  });
+  const allowedOperations = new Set(["grant_authority", "revoke_authority", "require_review", "set_quota"]);
+  const allowedIntents = new Set(["grant", "revoke", "review", "quota"]);
+  if (typeof document.operation !== "string" || !allowedOperations.has(document.operation)) {
+    diagnostics.push(serviceDiagnostic("ToubaServeChangeGovernanceOperationInvalid", `${fileName}.operation is not supported`));
+  }
+  if (!isPlainObject(document.relation)) {
+    diagnostics.push(serviceDiagnostic("ToubaServeChangeGovernanceRelationMissing", `${fileName}.relation must be an object`));
+  } else {
+    for (const field of ["kind", "source_ref", "target_ref"]) {
+      if (typeof document.relation[field] !== "string" || document.relation[field].trim() === "") {
+        diagnostics.push(serviceDiagnostic("ToubaServeChangeGovernanceRelationInvalid", `${fileName}.relation.${field} is required`));
+      }
+    }
+  }
+  if (!isPlainObject(document.intent)) {
+    diagnostics.push(serviceDiagnostic("ToubaServeChangeGovernanceIntentMissing", `${fileName}.intent must be an object`));
+  } else if (typeof document.intent.kind !== "string" || !allowedIntents.has(document.intent.kind)) {
+    diagnostics.push(serviceDiagnostic("ToubaServeChangeGovernanceIntentInvalid", `${fileName}.intent.kind is not supported`));
+  }
+  if (!isPlainObject(document.review) || document.review.required !== true) {
+    diagnostics.push(serviceDiagnostic("ToubaServeChangeGovernanceReviewRequired", `${fileName}.review.required must be true`));
+  }
+  return diagnostics;
 }
 
 function validateVersionedProjectMetadata({ document, expected, field, fileName }) {
@@ -3787,7 +4092,12 @@ function httpStatusForError(code) {
     code === "ToubaServeChangeTargetRejected"
     || code === "ToubaServeChangePathRejected"
     || code === "ToubaServeMobilePairingScopeRejected"
+    || code === "ToubaServeSandboxExternalEffectsRejected"
   ) return 403;
+  if (
+    code === "ToubaServeSandboxAirUnavailable"
+    || code === "ToubaServeSandboxTargetNotFound"
+  ) return 404;
   if (
     code === "ToubaServeDecisionInvalid"
     || code === "ToubaServeDecisionContractUnsupported"
@@ -3806,6 +4116,10 @@ function httpStatusForError(code) {
     || code === "ToubaServePendingHumanRequestInvalid"
     || code === "ToubaServeMobilePairingInvalid"
     || code === "ToubaServeMobilePairingStoreInvalid"
+    || code === "ToubaServeSandboxInvalid"
+    || code === "ToubaServeSandboxManifestInvalid"
+    || code === "ToubaServeSandboxResultInvalid"
+    || code === "ToubaServeSandboxRuntimeRejected"
   ) return 400;
   return 500;
 }
@@ -3903,7 +4217,9 @@ function usage() {
     "  GET  /authority/graph",
     "  GET  /identity",
     "  GET  /runs/current",
+    "  POST /runs/sandbox",
     "  GET  /triggers",
+    "  POST /triggers/fire",
     "  GET  /triggers/queue-health",
     "  GET  /supply-chain/status",
     "  GET  /governance/readiness",

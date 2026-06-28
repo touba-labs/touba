@@ -229,6 +229,13 @@ test("authority graph extracts source, AIR and manifest authority", () => {
       "    do",
       "        Reviewer",
       "",
+      "trigger ReviewWebhook",
+      "    on request POST \"/review\"",
+      "    runs strategy RunReview",
+      "    limits",
+      "        max_runs_per_day as 5",
+      "        timeout_ms as 30000",
+      "",
     ].join("\n"), "utf8");
     writeFileSync(
       join(root, "program.air.json"),
@@ -253,6 +260,7 @@ test("authority graph extracts source, AIR and manifest authority", () => {
     assert.equal(graph.schema_version, "touba-authority-graph-v0.1");
     assert.equal(graph.nodes.some((node) => node.ref === "agent:examples.strategy_agents/Reviewer"), true);
     assert.equal(graph.nodes.some((node) => node.ref === "memory:demo.authority/ProjectKnowledge"), true);
+    assert.equal(graph.nodes.some((node) => node.ref === "trigger:demo.authority/ReviewWebhook"), true);
     assert.equal(graph.nodes.some((node) => node.ref === "human_gate:skill:demo.authority/ValidateChange/approve"), true);
     assert.equal(graph.nodes.some((node) => node.ref === "capability:secret:DEMO_SECRET"), true);
     assert.equal(graph.edges.some((edge) =>
@@ -269,6 +277,11 @@ test("authority graph extracts source, AIR and manifest authority", () => {
       edge.kind === "requires"
       && edge.from === "tool:demo.authority/ReadKnowledge"
       && edge.to === "capability:secret:DEMO_SECRET"
+    ), true);
+    assert.equal(graph.edges.some((edge) =>
+      edge.kind === "dispatches"
+      && edge.from === "trigger:demo.authority/ReviewWebhook"
+      && edge.to === "strategy:demo.authority/RunReview"
     ), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -935,6 +948,41 @@ test("change proposals validate Touba project metadata schemas before review", (
       /failed validation/,
     );
 
+    const governanceAction = proposeProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      proposal: {
+        schema_version: "touba-project-change-proposal-v0.1",
+        proposal_id: "governance_action_ok",
+        action: "write_text_file",
+        target: { path: "touba.governance-actions.json" },
+        requested_by: { kind: "studio", id: "touba-studio" },
+        content: JSON.stringify({
+          governance_action_schema_version: "touba-studio-governance-action-v0.1",
+          action_id: "studio-governance-test",
+          operation: "revoke_authority",
+          relation: {
+            kind: "uses",
+            source_ref: "agent:billing/InvoiceAgent",
+            target_ref: "tool:billing/SendPayment",
+          },
+          intent: {
+            kind: "revoke",
+            source_ref: "agent:billing/InvoiceAgent",
+            target_ref: "tool:billing/SendPayment",
+            relation_kind: "uses",
+          },
+          rationale: "Revoke an accidental authority relation.",
+          review: {
+            required: true,
+            profile: "prod",
+          },
+        }),
+      },
+    });
+    assert.equal(governanceAction.status, "proposed");
+    assert.equal(governanceAction.validations[0].code, "ToubaServeChangeContentValidated");
+
     const accepted = proposeProjectChange({
       projectRoot: root,
       changeProposalsPath,
@@ -1380,6 +1428,101 @@ test("HTTP project server exposes live state, events and decisions", async () =>
   }
 });
 
+test("HTTP project server executes sandbox entrypoints and triggers through the runtime", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+  writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
+  writeFileSync(join(root, ".touba", "air", "demo", "main.air.json"), JSON.stringify(sandboxAirDocument(), null, 2), "utf8");
+  writeFileSync(join(root, "touba.manifest.json"), JSON.stringify(sandboxManifestDocument(), null, 2), "utf8");
+  const service = createToubaProjectServer({
+    contractsRoot,
+    projectRoot: root,
+    humanDecisionsPath: join(root, "human-decisions.json"),
+    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    port: 0,
+    quiet: true,
+  });
+  try {
+    await service.start();
+    const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const health = await getJson(`${baseUrl}/health`);
+    assert.equal(health.endpoints.sandbox_run, "/runs/sandbox");
+    assert.equal(health.endpoints.trigger_fire, "/triggers/fire");
+
+    const runResponse = await postJson(`${baseUrl}/runs/sandbox`, {
+      schema_version: "touba-sandbox-run-request-v0.1",
+      execution_kind: "entrypoint",
+      target_ref: "strategy:demo.sandbox/RunReady",
+      effect_policy: "runtime_only",
+      inputs: {},
+      requested_by: { kind: "studio", id: "test-suite" },
+      reason: "test sandbox run",
+    });
+    assert.equal(runResponse.status, 200);
+    const run = await runResponse.json();
+    assertMatchesSchema("touba-sandbox-run-result-v0.1", run);
+    assert.equal(run.status, "success");
+    assert.equal(run.result, "ready");
+    assert.equal(run.trace.entry_ref, "strategy:demo.sandbox/RunReady");
+
+    const triggerResponse = await postJson(`${baseUrl}/triggers/fire`, {
+      schema_version: "touba-sandbox-run-request-v0.1",
+      execution_kind: "trigger",
+      target_ref: "trigger:demo.sandbox/ManualCheck",
+      effect_policy: "runtime_only",
+      event_id: "manual-check-001",
+      source_kind: "schedule",
+      inputs: {},
+      requested_by: { kind: "studio", id: "test-suite" },
+      reason: "test trigger fire",
+    });
+    assert.equal(triggerResponse.status, 200);
+    const triggerRun = await triggerResponse.json();
+    assertMatchesSchema("touba-sandbox-run-result-v0.1", triggerRun);
+    assert.equal(triggerRun.status, "success");
+    assert.equal(triggerRun.result, "triggered");
+    assert.equal(triggerRun.trace.entry_ref, "trigger:demo.sandbox/ManualCheck");
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("HTTP project server refuses sandbox runtime-only runs that may dispatch tools", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-effects-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+  writeFileSync(join(root, "src", "main.tb"), "module demo.effects\n", "utf8");
+  writeFileSync(join(root, ".touba", "air", "demo", "main.air.json"), JSON.stringify(sandboxAirDocument({ withTool: true }), null, 2), "utf8");
+  const service = createToubaProjectServer({
+    contractsRoot,
+    projectRoot: root,
+    humanDecisionsPath: join(root, "human-decisions.json"),
+    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    port: 0,
+    quiet: true,
+  });
+  try {
+    await service.start();
+    const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const response = await postJson(`${baseUrl}/runs/sandbox`, {
+      schema_version: "touba-sandbox-run-request-v0.1",
+      execution_kind: "entrypoint",
+      target_ref: "strategy:demo.sandbox/RunTool",
+      effect_policy: "runtime_only",
+      inputs: {},
+      requested_by: { kind: "studio", id: "test-suite" },
+      reason: "tool effect refusal",
+    });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).code, "ToubaServeSandboxExternalEffectsRejected");
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("HTTP project server requires bearer auth when configured", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-auth-"));
   const previous = process.env.TOUBA_TEST_PROJECT_SERVER_TOKEN;
@@ -1574,4 +1717,153 @@ function parseSseEvent(text) {
   const dataLine = text.split(/\r?\n/u).find((line) => line.startsWith("data: "));
   assert.ok(dataLine, `SSE event has no data line: ${text}`);
   return JSON.parse(dataLine.slice("data: ".length));
+}
+
+function sandboxAirDocument({ withTool = false } = {}) {
+  const definitions = {
+    types: [],
+    constants: [],
+    functions: [],
+    tools: withTool ? [
+      {
+        id: "tool:demo.sandbox/ReadExternal",
+        name: "ReadExternal",
+        signature: { inputs: [], output_type: "builtin:Text" },
+        required_capabilities: ["network"],
+        required_secrets: [],
+        memory_accesses: [],
+        source_ref: sourceRef(),
+      },
+    ] : [],
+    memories: [],
+    skills: [],
+    agents: [],
+    strategies: [
+      {
+        id: "strategy:demo.sandbox/RunReady",
+        name: "RunReady",
+        signature: { inputs: [], output_type: "builtin:Text" },
+        flow_graph_ref: "graph:strategy:demo.sandbox/RunReady",
+        source_ref: sourceRef(),
+      },
+      {
+        id: "strategy:demo.sandbox/RunTriggered",
+        name: "RunTriggered",
+        signature: { inputs: [], output_type: "builtin:Text" },
+        flow_graph_ref: "graph:strategy:demo.sandbox/RunTriggered",
+        source_ref: sourceRef(),
+      },
+      ...(withTool ? [
+        {
+          id: "strategy:demo.sandbox/RunTool",
+          name: "RunTool",
+          signature: { inputs: [], output_type: "builtin:Text" },
+          flow_graph_ref: "graph:strategy:demo.sandbox/RunTool",
+          source_ref: sourceRef(),
+        },
+      ] : []),
+    ],
+    triggers: [
+      {
+        id: "trigger:demo.sandbox/ManualCheck",
+        name: "ManualCheck",
+        event: { kind: "schedule", value: "every 1h", source_ref: sourceRef() },
+        target_ref: "strategy:demo.sandbox/RunTriggered",
+        target_kind: "strategy",
+        arguments: [],
+        limits: { max_runs_per_day: 24, timeout_ms: 30000, source_ref: sourceRef() },
+        source_ref: sourceRef(),
+      },
+    ],
+  };
+  return {
+    air_schema_version: "air-minimal-v0.1",
+    module: { id: "module:demo.sandbox", name: "demo.sandbox", source_ref: sourceRef() },
+    definitions,
+    execution_graphs: [
+      graph("graph:strategy:demo.sandbox/RunReady", "strategy:demo.sandbox/RunReady", [
+        node("ready", "give", { arguments: ["literal:string:ready"] }),
+      ]),
+      graph("graph:strategy:demo.sandbox/RunTriggered", "strategy:demo.sandbox/RunTriggered", [
+        node("triggered", "give", { arguments: ["literal:string:triggered"] }),
+      ]),
+      ...(withTool ? [
+        graph("graph:strategy:demo.sandbox/RunTool", "strategy:demo.sandbox/RunTool", [
+          node("tool", "call_tool", { target_ref: "tool:demo.sandbox/ReadExternal", result_binding: "result" }),
+          node("done", "give", { arguments: ["value:result"] }),
+        ], [
+          edge("tool", "done", "next"),
+        ]),
+      ] : []),
+    ],
+    trace_points: [],
+  };
+}
+
+function sandboxManifestDocument() {
+  return {
+    manifest_version: "touba-manifest-v1",
+    bindings: {},
+    triggers: {
+      "trigger:demo.sandbox/ManualCheck": {
+        enabled: true,
+        source: {
+          kind: "schedule",
+          value: "every 1h",
+        },
+        target_ref: "strategy:demo.sandbox/RunTriggered",
+        target_kind: "strategy",
+        limits: {
+          max_runs_per_day: 24,
+          timeout_ms: 30000,
+        },
+      },
+    },
+  };
+}
+
+function graph(id, ownerRef, nodes, edges = []) {
+  return {
+    id,
+    owner_ref: ownerRef,
+    entry_node_id: nodes[0].id,
+    nodes,
+    edges,
+    expressions: [],
+    failure_paths: [],
+    failure_path_refs: [],
+    source_ref: sourceRef(),
+  };
+}
+
+function node(id, kind, fields = {}) {
+  return {
+    id,
+    kind,
+    arguments: [],
+    trace_point_refs: [],
+    source_ref: sourceRef(),
+    ...fields,
+  };
+}
+
+function edge(fromNodeId, toNodeId, role) {
+  return {
+    from_node_id: fromNodeId,
+    to_node_id: toNodeId,
+    role,
+    source_ref: sourceRef(),
+  };
+}
+
+function sourceRef() {
+  return {
+    source_id: "src/main.tb",
+    start_byte: 0,
+    end_byte: 0,
+    start_line: 1,
+    start_column: 1,
+    end_line: 1,
+    end_column: 1,
+  };
 }

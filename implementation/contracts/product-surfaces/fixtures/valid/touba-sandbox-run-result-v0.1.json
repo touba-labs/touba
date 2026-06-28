@@ -1,0 +1,36 @@
+{
+  "schema_version": "touba-sandbox-run-result-v0.1",
+  "run_id": "sandbox_20260627_001",
+  "execution_kind": "entrypoint",
+  "target_ref": "strategy:billing/RunInvoiceReview",
+  "status": "success",
+  "started_at": "2026-06-27T14:00:00Z",
+  "completed_at": "2026-06-27T14:00:01Z",
+  "duration_ms": 1000,
+  "effect_policy": "runtime_only",
+  "result": "ready",
+  "trace": {
+    "run_id": "sandbox_20260627_001",
+    "entry_ref": "strategy:billing/RunInvoiceReview",
+    "event_count": 2,
+    "events": [
+      {
+        "index": 0,
+        "type": "run_started",
+        "summary": "run_started"
+      },
+      {
+        "index": 1,
+        "type": "run_completed",
+        "summary": "run_completed"
+      }
+    ]
+  },
+  "diagnostics": [
+    {
+      "severity": "info",
+      "code": "ToubaSandboxRunCompleted",
+      "message": "sandbox run completed through the Touba runtime"
+    }
+  ]
+}

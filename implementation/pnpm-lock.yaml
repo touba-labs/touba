@@ -37,6 +37,12 @@ importers:
 
   cli/touba-project: {}
 
+  cli/touba-project-server:
+    dependencies:
+      '@touba/runtime':
+        specifier: workspace:*
+        version: link:../../runtime/touba-runtime
+
   cli/touba-run:
     dependencies:
       '@touba/runtime':
