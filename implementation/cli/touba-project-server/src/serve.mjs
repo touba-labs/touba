@@ -105,6 +105,7 @@ const NAMED_PROJECT_ARTIFACTS = Object.freeze(new Set([
   "touba.manifest.json",
   "touba.package.json",
   "touba.ownership.json",
+  "touba.governance-actions.json",
   "touba.lock.json",
   "touba.resources.json",
   "resources.json",
@@ -2161,9 +2162,14 @@ export function buildAuthorityGraph({
   const diagnostics = [];
   const artifacts = collectProjectArtifacts(projectRoot, diagnostics);
   const builder = createAuthorityGraphBuilder(diagnostics);
+  const governanceActionArtifacts = [];
 
   for (const artifact of artifacts) {
     const artifactPath = join(projectRoot, artifact.relative_path);
+    if (basename(artifact.relative_path) === "touba.governance-actions.json") {
+      governanceActionArtifacts.push(artifact);
+      continue;
+    }
     if (artifact.kind === "source") {
       parseToubaSourceAuthority({
         builder,
@@ -2191,6 +2197,13 @@ export function buildAuthorityGraph({
       if (value !== undefined) {
         parsePackageAuthority({ builder, value, path: artifact.relative_path });
       }
+    }
+  }
+  for (const artifact of governanceActionArtifacts) {
+    const artifactPath = join(projectRoot, artifact.relative_path);
+    const value = readJsonArtifact(artifactPath, artifact.relative_path, diagnostics);
+    if (value !== undefined) {
+      parseGovernanceActionAuthority({ builder, value, path: artifact.relative_path });
     }
   }
 
@@ -2715,6 +2728,23 @@ function createAuthorityGraphBuilder(diagnostics) {
     }
   };
 
+  const removeEdge = ({ kind, from, to, evidence }) => {
+    const fromRef = normalizeAuthorityRef(from);
+    const toRef = normalizeAuthorityRef(to);
+    if (fromRef === undefined || toRef === undefined) {
+      return;
+    }
+    const id = `edge:${kind}:${fromRef}->${toRef}`;
+    if (!pendingEdges.delete(id)) {
+      diagnostics.push(authorityDiagnostic(
+        "ToubaAuthorityGraphGovernanceActionNoop",
+        `${kind} edge ${fromRef} -> ${toRef} was not present when applying governance action`,
+        "info",
+        evidence?.source_ref ?? fromRef,
+      ));
+    }
+  };
+
   const build = () => {
     const edges = [];
     for (const edge of pendingEdges.values()) {
@@ -2735,7 +2765,7 @@ function createAuthorityGraphBuilder(diagnostics) {
     };
   };
 
-  return { addNode, addEdge, build };
+  return { addNode, addEdge, removeEdge, build };
 }
 
 function parseAirAuthority({ builder, value, path }) {
@@ -2909,6 +2939,63 @@ function parsePackageAuthority({ builder, value, path }) {
       to: exported,
       evidence,
     });
+  }
+}
+
+function parseGovernanceActionAuthority({ builder, value, path }) {
+  if (!isPlainObject(value)) {
+    return;
+  }
+  const relation = isPlainObject(value.relation) ? value.relation : {};
+  const operation = nonEmptyString(value.operation);
+  const relationKind = nonEmptyString(relation.kind) ?? "relation";
+  const sourceRef = nonEmptyString(relation.source_ref);
+  const targetRef = nonEmptyString(relation.target_ref);
+  if (operation === undefined || sourceRef === undefined || targetRef === undefined) {
+    return;
+  }
+  const evidence = authorityEvidence("governance_action", path, value.action_id ?? path);
+  builder.addNode({
+    ref: sourceRef,
+    kind: authorityKind(undefined, sourceRef),
+    label: authorityLabel(sourceRef),
+    evidence,
+  });
+  builder.addNode({
+    ref: targetRef,
+    kind: authorityKind(undefined, targetRef),
+    label: authorityLabel(targetRef),
+    evidence,
+  });
+  if (operation === "grant_authority") {
+    builder.addEdge({ kind: relationKind, from: sourceRef, to: targetRef, evidence });
+    return;
+  }
+  if (operation === "revoke_authority") {
+    builder.removeEdge({ kind: relationKind, from: sourceRef, to: targetRef, evidence });
+    return;
+  }
+  if (operation === "require_review") {
+    const gateRef = `human_gate:${sourceRef}/${relationKind}-review`;
+    builder.addNode({
+      ref: gateRef,
+      kind: "human_gate",
+      label: "review required",
+      evidence,
+    });
+    builder.addEdge({ kind: "requires", from: sourceRef, to: gateRef, evidence });
+    builder.addEdge({ kind: "requires", from: gateRef, to: targetRef, evidence });
+    return;
+  }
+  if (operation === "set_quota") {
+    const quotaRef = `capability:quota:${relationKind}:${targetRef}`;
+    builder.addNode({
+      ref: quotaRef,
+      kind: "capability",
+      label: `quota:${relationKind}`,
+      evidence,
+    });
+    builder.addEdge({ kind: "requires", from: sourceRef, to: quotaRef, evidence });
   }
 }
 

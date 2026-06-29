@@ -288,6 +288,89 @@ test("authority graph extracts source, AIR and manifest authority", () => {
   }
 });
 
+test("authority graph applies persisted client governance actions", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-governance-action-"));
+  try {
+    writeFileSync(join(root, "workflow.tb"), [
+      "module demo.governance",
+      "",
+      "tool ReadAccount",
+      "",
+      "tool SendPayment",
+      "",
+      "agent InvoiceAgent",
+      "    uses ReadAccount",
+      "",
+      "strategy RunInvoice",
+      "    uses InvoiceAgent",
+      "",
+    ].join("\n"), "utf8");
+
+    const initialGraph = buildAuthorityGraph({ projectRoot: root });
+    assert.equal(initialGraph.edges.some((edge) =>
+      edge.kind === "uses"
+      && edge.from === "agent:demo.governance/InvoiceAgent"
+      && edge.to === "tool:demo.governance/ReadAccount"
+    ), true);
+
+    writeFileSync(join(root, "touba.governance-actions.json"), JSON.stringify({
+      governance_action_schema_version: "touba-studio-governance-action-v0.1",
+      action_id: "studio-governance-revoke-read",
+      operation: "revoke_authority",
+      relation: {
+        kind: "uses",
+        source_ref: "agent:demo.governance/InvoiceAgent",
+        target_ref: "tool:demo.governance/ReadAccount",
+      },
+      intent: {
+        kind: "revoke",
+        source_ref: "agent:demo.governance/InvoiceAgent",
+        target_ref: "tool:demo.governance/ReadAccount",
+        relation_kind: "uses",
+      },
+      review: {
+        required: true,
+        profile: "prod",
+      },
+    }, null, 2), "utf8");
+    const revokedGraph = buildAuthorityGraph({ projectRoot: root });
+    assert.equal(revokedGraph.edges.some((edge) =>
+      edge.kind === "uses"
+      && edge.from === "agent:demo.governance/InvoiceAgent"
+      && edge.to === "tool:demo.governance/ReadAccount"
+    ), false);
+
+    writeFileSync(join(root, "touba.governance-actions.json"), JSON.stringify({
+      governance_action_schema_version: "touba-studio-governance-action-v0.1",
+      action_id: "studio-governance-grant-payment",
+      operation: "grant_authority",
+      relation: {
+        kind: "uses",
+        source_ref: "agent:demo.governance/InvoiceAgent",
+        target_ref: "tool:demo.governance/SendPayment",
+      },
+      intent: {
+        kind: "grant",
+        source_ref: "agent:demo.governance/InvoiceAgent",
+        target_ref: "tool:demo.governance/SendPayment",
+        relation_kind: "uses",
+      },
+      review: {
+        required: true,
+        profile: "prod",
+      },
+    }, null, 2), "utf8");
+    const grantedGraph = buildAuthorityGraph({ projectRoot: root });
+    assert.equal(grantedGraph.edges.some((edge) =>
+      edge.kind === "uses"
+      && edge.from === "agent:demo.governance/InvoiceAgent"
+      && edge.to === "tool:demo.governance/SendPayment"
+    ), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("operational project surfaces report supply chain, governance readiness and trigger queue health", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-ops-"));
   try {
