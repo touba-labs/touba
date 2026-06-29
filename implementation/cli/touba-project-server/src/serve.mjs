@@ -154,6 +154,9 @@ if (isMainModule()) {
       process.stdout.write(`${usage()}\n`);
       process.exit(0);
     }
+    if (options.agentDecisionProviderPath !== undefined) {
+      options.agentDecisionProvider = await loadAgentDecisionProviderFromPath(options.agentDecisionProviderPath);
+    }
     const service = createToubaProjectServer(options);
     await service.start();
   } catch (error) {
@@ -211,6 +214,7 @@ export function createToubaProjectServer(options = {}) {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
   const authToken = options.authTokenEnv === undefined ? undefined : process.env[options.authTokenEnv];
+  const agentDecisionProvider = options.agentDecisionProvider;
   const eventClients = new Set();
   let projectSnapshot;
   let eventSequence = 0;
@@ -353,6 +357,12 @@ export function createToubaProjectServer(options = {}) {
       if (request.method === "POST" && url.pathname === "/runs/sandbox") {
         const body = await readJsonBody(request);
         const result = await executeProjectSandboxRun({
+          agentDecisionProvider,
+          agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
+          agentDecisionProviderInitialMode: options.agentDecisionProviderInitialMode,
+          agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
+          agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
+          agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           contractsRoot,
           executionKind: "entrypoint",
           projectRoot,
@@ -381,6 +391,12 @@ export function createToubaProjectServer(options = {}) {
       if (request.method === "POST" && url.pathname === "/triggers/fire") {
         const body = await readJsonBody(request);
         const result = await executeProjectSandboxRun({
+          agentDecisionProvider,
+          agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
+          agentDecisionProviderInitialMode: options.agentDecisionProviderInitialMode,
+          agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
+          agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
+          agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           contractsRoot,
           executionKind: "trigger",
           projectRoot,
@@ -1029,6 +1045,12 @@ export function readProjectTriggerStatus({
 }
 
 export async function executeProjectSandboxRun({
+  agentDecisionProvider,
+  agentDecisionProviderContentMode,
+  agentDecisionProviderInitialMode,
+  agentDecisionProviderMaxRetries,
+  agentDecisionProviderMetadata,
+  agentDecisionProviderTimeoutMs,
   contractsRoot,
   executionKind,
   projectRoot,
@@ -1071,10 +1093,22 @@ export async function executeProjectSandboxRun({
         source_kind: nonEmptyString(request.source_kind) ?? sandboxTriggerSourceKind(resolved.document, targetRef),
         arguments: isPlainObject(request.inputs) ? request.inputs : {},
       }, {
+        agentDecisionProvider,
+        agentDecisionProviderContentMode,
+        agentDecisionProviderInitialMode,
+        agentDecisionProviderMaxRetries,
+        agentDecisionProviderMetadata,
+        agentDecisionProviderTimeoutMs,
         runId,
         toolBindingManifest,
       })
       : await executeAirDocument(resolved.document, {
+        agentDecisionProvider,
+        agentDecisionProviderContentMode,
+        agentDecisionProviderInitialMode,
+        agentDecisionProviderMaxRetries,
+        agentDecisionProviderMetadata,
+        agentDecisionProviderTimeoutMs,
         entryRef: targetRef,
         inputs: isPlainObject(request.inputs) ? request.inputs : {},
         runId,
@@ -1155,7 +1189,14 @@ function loadOptionalProjectManifest({ projectRoot }) {
     return undefined;
   }
   try {
-    return loadToolBindingManifestFromJson(readFileSync(manifestPath, "utf8"));
+    const rawManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const manifestDir = dirname(resolve(manifestPath));
+    for (const binding of Object.values(rawManifest.bindings ?? {})) {
+      if (binding?.handler?.cwd && !isAbsolute(binding.handler.cwd)) {
+        binding.handler.cwd = resolve(manifestDir, binding.handler.cwd);
+      }
+    }
+    return loadToolBindingManifestFromJson(JSON.stringify(rawManifest));
   } catch (cause) {
     throw serviceError("ToubaServeSandboxManifestInvalid", `touba.manifest.json cannot be loaded by the runtime: ${cause.message}`);
   }
@@ -4120,6 +4161,7 @@ function httpStatusForError(code) {
     || code === "ToubaServeSandboxManifestInvalid"
     || code === "ToubaServeSandboxResultInvalid"
     || code === "ToubaServeSandboxRuntimeRejected"
+    || code === "ToubaServeAgentDecisionProviderInvalid"
   ) return 400;
   return 500;
 }
@@ -4165,6 +4207,36 @@ function parseArgs(rawArgs) {
       options.port = Number.parseInt(requiredValue(arg, rawArgs, ++index), 10);
     } else if (arg === "--auth-token-env") {
       options.authTokenEnv = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--agent-decision-provider") {
+      options.agentDecisionProviderPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--agent-decision-provider=")) {
+      options.agentDecisionProviderPath = arg.slice("--agent-decision-provider=".length);
+    } else if (arg === "--agent-decision-provider-metadata-json") {
+      options.agentDecisionProviderMetadata = parseJsonObjectOption(
+        "--agent-decision-provider-metadata-json",
+        requiredValue(arg, rawArgs, ++index),
+      );
+    } else if (arg.startsWith("--agent-decision-provider-metadata-json=")) {
+      options.agentDecisionProviderMetadata = parseJsonObjectOption(
+        "--agent-decision-provider-metadata-json",
+        arg.slice("--agent-decision-provider-metadata-json=".length),
+      );
+    } else if (arg === "--agent-decision-provider-content-mode") {
+      options.agentDecisionProviderContentMode = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--agent-decision-provider-content-mode=")) {
+      options.agentDecisionProviderContentMode = arg.slice("--agent-decision-provider-content-mode=".length);
+    } else if (arg === "--agent-decision-provider-initial-mode") {
+      options.agentDecisionProviderInitialMode = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--agent-decision-provider-initial-mode=")) {
+      options.agentDecisionProviderInitialMode = arg.slice("--agent-decision-provider-initial-mode=".length);
+    } else if (arg === "--agent-decision-provider-timeout-ms") {
+      options.agentDecisionProviderTimeoutMs = Number.parseInt(requiredValue(arg, rawArgs, ++index), 10);
+    } else if (arg.startsWith("--agent-decision-provider-timeout-ms=")) {
+      options.agentDecisionProviderTimeoutMs = Number.parseInt(arg.slice("--agent-decision-provider-timeout-ms=".length), 10);
+    } else if (arg === "--agent-decision-provider-max-retries") {
+      options.agentDecisionProviderMaxRetries = Number.parseInt(requiredValue(arg, rawArgs, ++index), 10);
+    } else if (arg.startsWith("--agent-decision-provider-max-retries=")) {
+      options.agentDecisionProviderMaxRetries = Number.parseInt(arg.slice("--agent-decision-provider-max-retries=".length), 10);
     } else if (arg === "--strict") {
       options.strict = true;
     } else if (arg === "--quiet") {
@@ -4179,6 +4251,30 @@ function parseArgs(rawArgs) {
   if (!Number.isInteger(options.eventJournalLimit) || options.eventJournalLimit < 1 || options.eventJournalLimit > 10000) {
     throw serviceError("ToubaServeEventJournalLimitInvalid", "--event-journal-limit must be an integer between 1 and 10000");
   }
+  if (
+    options.agentDecisionProviderContentMode !== undefined
+    && !["inline", "opaque_refs"].includes(options.agentDecisionProviderContentMode)
+  ) {
+    throw serviceError("ToubaServeAgentDecisionProviderInvalid", "--agent-decision-provider-content-mode must be inline or opaque_refs");
+  }
+  if (
+    options.agentDecisionProviderInitialMode !== undefined
+    && !["summary", "capabilities"].includes(options.agentDecisionProviderInitialMode)
+  ) {
+    throw serviceError("ToubaServeAgentDecisionProviderInvalid", "--agent-decision-provider-initial-mode must be summary or capabilities");
+  }
+  if (
+    options.agentDecisionProviderTimeoutMs !== undefined
+    && (!Number.isInteger(options.agentDecisionProviderTimeoutMs) || options.agentDecisionProviderTimeoutMs < 1)
+  ) {
+    throw serviceError("ToubaServeAgentDecisionProviderInvalid", "--agent-decision-provider-timeout-ms must be a positive integer");
+  }
+  if (
+    options.agentDecisionProviderMaxRetries !== undefined
+    && (!Number.isInteger(options.agentDecisionProviderMaxRetries) || options.agentDecisionProviderMaxRetries < 0)
+  ) {
+    throw serviceError("ToubaServeAgentDecisionProviderInvalid", "--agent-decision-provider-max-retries must be a non-negative integer");
+  }
   return options;
 }
 
@@ -4190,9 +4286,49 @@ function requiredValue(option, args, index) {
   return value;
 }
 
+function parseJsonObjectOption(option, rawValue) {
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("expected object");
+    }
+    return parsed;
+  } catch (error) {
+    throw serviceError(
+      "ToubaServeAgentDecisionProviderInvalid",
+      `${option} must be a JSON object: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function loadAgentDecisionProviderFromPath(providerPath) {
+  const moduleUrl = pathToFileURL(resolve(providerPath)).href;
+  const providerModule = await import(moduleUrl);
+  const provider =
+    providerModule.decideAgentCapability
+    ?? providerModule.decide
+    ?? providerModule.default;
+  if (typeof provider !== "function") {
+    throw serviceError(
+      "ToubaServeAgentDecisionProviderInvalid",
+      "provider module must export decideAgentCapability, decide, or a default function",
+    );
+  }
+  const metadata = providerModule.provider_metadata
+    ?? providerModule.providerMetadata
+    ?? provider.metadata
+    ?? providerModule.default?.metadata;
+  return metadata === undefined
+    ? provider
+    : {
+      decide: provider,
+      metadata,
+    };
+}
+
 function usage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for client, Mobile and contract clients.",
     "",

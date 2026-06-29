@@ -247,10 +247,11 @@ export function buildHandlerSandboxPlan({
     return {
       enabled: false,
       mechanism: null,
-      command: binding.handler.command,
+      command: resolveHandlerCommand(binding.handler.command),
       args: binding.handler.args,
     };
   }
+  const handlerCommand = resolveHandlerCommand(binding.handler.command);
   const grants = Array.isArray(binding.grants) ? binding.grants : [];
   if (platform === "linux") {
     const command = env.TOUBA_BWRAP_COMMAND || "bwrap";
@@ -275,7 +276,7 @@ export function buildHandlerSandboxPlan({
     if (binding.handler.cwd) {
       args.push(grants.includes("filesystem_write") ? "--bind" : "--ro-bind", binding.handler.cwd, binding.handler.cwd);
     }
-    args.push(binding.handler.command, ...binding.handler.args);
+    args.push(handlerCommand, ...binding.handler.args);
     return {
       enabled: true,
       mechanism: "bubblewrap",
@@ -290,7 +291,7 @@ export function buildHandlerSandboxPlan({
       enabled: true,
       mechanism: "sandbox-exec",
       command,
-      args: ["-p", policy, binding.handler.command, ...binding.handler.args],
+      args: ["-p", policy, handlerCommand, ...binding.handler.args],
     };
   }
   if (platform === "win32") {
@@ -300,7 +301,7 @@ export function buildHandlerSandboxPlan({
       enabled: true,
       mechanism: "Sandboxie-Plus",
       command,
-      args: [`/box:${boxName}`, binding.handler.command, ...binding.handler.args],
+      args: [`/box:${boxName}`, handlerCommand, ...binding.handler.args],
     };
   }
   throw new RuntimeFailure(
@@ -308,6 +309,12 @@ export function buildHandlerSandboxPlan({
     { platform, handlerCommand: binding.handler.command },
     "HandlerSandboxUnsupportedPlatform",
   );
+}
+
+function resolveHandlerCommand(command) {
+  return command === "node" || command === "node.exe"
+    ? process.execPath
+    : command;
 }
 
 /**

@@ -1523,6 +1523,62 @@ test("HTTP project server refuses sandbox runtime-only runs that may dispatch to
   }
 });
 
+test("HTTP project server runs sandbox agents through a configured decision provider", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-agent-"));
+  mkdirSync(join(root, "src", "demo"), { recursive: true });
+  mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+  writeFileSync(join(root, "src", "demo", "agent.tb"), "module demo.agent\n", "utf8");
+  writeFileSync(join(root, ".touba", "air", "demo", "agent.air.json"), JSON.stringify(sandboxAgentAirDocument(), null, 2), "utf8");
+  const providerCalls = [];
+  const service = createToubaProjectServer({
+    agentDecisionProvider: (request) => {
+      providerCalls.push(request);
+      if (request.mode === "summary" && request.observations?.length > 0) {
+        return {
+          action: "answer_directly",
+          result: request.observations[0].value,
+          reason: "capability result is sufficient",
+        };
+      }
+      return {
+        target_ref: "skill:demo.agent/BuildOverview",
+        reason: "sandbox provider selects the overview capability",
+      };
+    },
+    agentDecisionProviderInitialMode: "capabilities",
+    contractsRoot,
+    projectRoot: root,
+    humanDecisionsPath: join(root, "human-decisions.json"),
+    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    port: 0,
+    quiet: true,
+  });
+  try {
+    await service.start();
+    const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const response = await postJson(`${baseUrl}/runs/sandbox`, {
+      schema_version: "touba-sandbox-run-request-v0.1",
+      execution_kind: "entrypoint",
+      target_ref: "strategy:demo.agent/RunAgent",
+      effect_policy: "runtime_only",
+      inputs: {},
+      requested_by: { kind: "studio", id: "test-suite" },
+      reason: "test sandbox agent provider",
+    });
+    assert.equal(response.status, 200);
+    const run = await response.json();
+    assertMatchesSchema("touba-sandbox-run-result-v0.1", run);
+    assert.equal(run.status, "success");
+    assert.equal(run.result, "overview");
+    assert.equal(providerCalls.length, 2);
+    assert.equal(providerCalls[0].mode, "capabilities");
+    assert.equal(providerCalls[0].agent_ref, "agent:demo.agent/StudioAgent");
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("HTTP project server requires bearer auth when configured", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-auth-"));
   const previous = process.env.TOUBA_TEST_PROJECT_SERVER_TOKEN;
@@ -1795,6 +1851,96 @@ function sandboxAirDocument({ withTool = false } = {}) {
           edge("tool", "done", "next"),
         ]),
       ] : []),
+    ],
+    trace_points: [],
+  };
+}
+
+function sandboxAgentAirDocument() {
+  const definitions = {
+    types: [],
+    constants: [],
+    functions: [],
+    tools: [],
+    memories: [],
+    skills: [
+      {
+        id: "skill:demo.agent/BuildOverview",
+        name: "BuildOverview",
+        description: "Builds the project overview for client sandbox testing.",
+        signature: { inputs: [], output_type: "builtin:Text" },
+        uses: [],
+        use_refs: [],
+        memory_accesses: [],
+        flow_graph_ref: "graph:skill:demo.agent/BuildOverview",
+        source_ref: sourceRef(),
+      },
+      {
+        id: "skill:demo.agent/BuildOperations",
+        name: "BuildOperations",
+        description: "Builds the operations snapshot for client sandbox testing.",
+        signature: { inputs: [], output_type: "builtin:Text" },
+        uses: [],
+        use_refs: [],
+        memory_accesses: [],
+        flow_graph_ref: "graph:skill:demo.agent/BuildOperations",
+        source_ref: sourceRef(),
+      },
+    ],
+    agents: [
+      {
+        id: "agent:demo.agent/StudioAgent",
+        name: "StudioAgent",
+        description: "Chooses between overview and operations capabilities for client sandbox testing.",
+        responsibility: "Select a declared client sandbox capability.",
+        uses: [
+          "skill:demo.agent/BuildOverview",
+          "skill:demo.agent/BuildOperations",
+        ],
+        use_refs: [
+          { target_ref: "skill:demo.agent/BuildOverview", source_ref: sourceRef() },
+          { target_ref: "skill:demo.agent/BuildOperations", source_ref: sourceRef() },
+        ],
+        callable_by: [
+          {
+            caller_ref: "strategy:demo.agent/RunAgent",
+            caller_kind: "strategy",
+            source_ref: sourceRef(),
+          },
+        ],
+        source_ref: sourceRef(),
+      },
+    ],
+    strategies: [
+      {
+        id: "strategy:demo.agent/RunAgent",
+        name: "RunAgent",
+        description: "Runs a client sandbox agent through a configured decision provider.",
+        uses: ["agent:demo.agent/StudioAgent"],
+        use_refs: [{ target_ref: "agent:demo.agent/StudioAgent", source_ref: sourceRef() }],
+        flow_graph_ref: "graph:strategy:demo.agent/RunAgent",
+        source_ref: sourceRef(),
+      },
+    ],
+    triggers: [],
+  };
+  return {
+    air_schema_version: "air-minimal-v0.1",
+    module: { id: "module:demo.agent", name: "demo.agent", source_ref: sourceRef() },
+    definitions,
+    execution_graphs: [
+      graph("graph:skill:demo.agent/BuildOverview", "skill:demo.agent/BuildOverview", [
+        node("overview", "give", { arguments: ["literal:string:overview"] }),
+      ]),
+      graph("graph:skill:demo.agent/BuildOperations", "skill:demo.agent/BuildOperations", [
+        node("operations", "give", { arguments: ["literal:string:operations"] }),
+      ]),
+      graph("graph:strategy:demo.agent/RunAgent", "strategy:demo.agent/RunAgent", [
+        node("agent", "call_agent", { target_ref: "agent:demo.agent/StudioAgent", result_binding: "result" }),
+        node("done", "give", { arguments: ["value:result"] }),
+      ], [
+        edge("agent", "done", "next"),
+      ]),
     ],
     trace_points: [],
   };

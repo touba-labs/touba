@@ -26,6 +26,22 @@ const binding = Object.freeze({
   }),
 });
 
+test("handler sandbox plan resolves node handlers to the current executable", () => {
+  const plan = buildHandlerSandboxPlan({
+    binding: {
+      ...binding,
+      sandbox: Object.freeze({ required: false }),
+    },
+    platform: "darwin",
+    env: {},
+  });
+
+  assert.equal(plan.enabled, false);
+  assert.equal(plan.mechanism, null);
+  assert.equal(plan.command, process.execPath);
+  assert.deepEqual(plan.args, ["handler.mjs"]);
+});
+
 test("handler sandbox plan wraps process handlers on Linux", () => {
   const plan = buildHandlerSandboxPlan({
     binding,
@@ -37,7 +53,7 @@ test("handler sandbox plan wraps process handlers on Linux", () => {
   assert.equal(plan.mechanism, "bubblewrap");
   assert.equal(plan.command, "/usr/bin/bwrap");
   assert.equal(plan.args.includes("--unshare-net"), true);
-  assert.deepEqual(plan.args.slice(-2), ["node", "handler.mjs"]);
+  assert.deepEqual(plan.args.slice(-2), [process.execPath, "handler.mjs"]);
 });
 
 test("handler sandbox plan wraps process handlers on macOS", () => {
@@ -52,7 +68,7 @@ test("handler sandbox plan wraps process handlers on macOS", () => {
   assert.equal(plan.command, "/usr/bin/sandbox-exec");
   assert.equal(plan.args[0], "-p");
   assert.match(plan.args[1], /\(deny default\)/u);
-  assert.deepEqual(plan.args.slice(-2), ["node", "handler.mjs"]);
+  assert.deepEqual(plan.args.slice(-2), [process.execPath, "handler.mjs"]);
 });
 
 test("handler sandbox plan wraps process handlers on Windows", () => {
@@ -65,7 +81,7 @@ test("handler sandbox plan wraps process handlers on Windows", () => {
   assert.equal(plan.enabled, true);
   assert.equal(plan.mechanism, "Sandboxie-Plus");
   assert.equal(plan.command, "C:\\Sandboxie\\Start.exe");
-  assert.deepEqual(plan.args, ["/box:ToubaHandler", "node", "handler.mjs"]);
+  assert.deepEqual(plan.args, ["/box:ToubaHandler", process.execPath, "handler.mjs"]);
 });
 
 test("handler sandbox refuses unsupported required platforms", () => {
