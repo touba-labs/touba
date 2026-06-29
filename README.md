@@ -402,7 +402,7 @@ Read `CONTRIBUTING.md`, `FEEDBACK.md`, `SECURITY.md` and
 
 ```bibtex
 @software{touba2026,
-  author  = {Lo, Khadim and Dessureault, Jean-S{\'e}bastien},
+  author  = {Lo, Khadim and Dessureault, Jean-S{\'e}bastien and Alaoui Ismaili, Soukaina},
   title   = {Touba: A Programming Language and Runtime for Governed Agentic Systems},
   year    = {2026},
   url     = {https://github.com/pap-touba/touba},
@@ -415,7 +415,7 @@ GitHub also renders this metadata from `CITATION.cff` through the
 
 ## Authors
 
-Touba is authored by Khadim Lo and Professor Jean-Sebastien Dessureault. Khadim Lo is the principal maintainer; Jean-Sebastien Dessureault is the research supervisor. See `AUTHORS.md` for roles and contact addresses.
+Touba is authored by Khadim Lo, Professor Jean-Sebastien Dessureault and Soukaina Alaoui Ismaili. Khadim Lo is the principal maintainer; Jean-Sebastien Dessureault is the research supervisor. See `AUTHORS.md` for roles and contact addresses.
 
 ## License
 

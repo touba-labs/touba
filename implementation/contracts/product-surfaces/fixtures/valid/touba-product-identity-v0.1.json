@@ -18,8 +18,8 @@
       "role_refs": ["role:maintainer", "role:reviewer"]
     },
     {
-      "user_ref": "user:backup-reviewer",
-      "display_name": "Backup Reviewer",
+      "user_ref": "user:soukaina",
+      "display_name": "Soukaina Alaoui Ismaili",
       "email": null,
       "status": "active",
       "team_refs": ["team:research"],
@@ -96,7 +96,7 @@
       "steps": [
         {
           "after_ms": 900000,
-          "reviewer_ref": "user:backup-reviewer"
+          "reviewer_ref": "user:soukaina"
         }
       ]
     }
