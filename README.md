@@ -217,7 +217,8 @@ anything outside these declarations before any external effect.
 - every run can emit structured trace events that reference AIR nodes and
  source locations.
 - the authenticated project server exposes versioned contracts, transactional
- changes and sandbox execution to client and Mobile;
+ changes and sandbox execution to client and Mobile, with optional human
+ session and permission enforcement through the Touba control plane;
 - deployment bundles are content-addressed, secret-free and promoted through
  explicit publish, activate and rollback operations.
 

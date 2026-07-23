@@ -7,6 +7,10 @@ export const PRODUCT_SURFACE_CONTRACTS_SCHEMA_VERSION =
   "touba-product-surface-contracts-report-v0.1";
 
 export const PRODUCT_SURFACE_CONTRACTS = Object.freeze([
+  "touba-auth-session-v0.1",
+  "touba-identity-directory-v0.1",
+  "touba-device-pairing-v0.1",
+  "touba-identity-audit-v0.1",
   "touba-project-inspection-v1",
   "touba-project-refresh-request-v0.1",
   "touba-project-refresh-v0.1",

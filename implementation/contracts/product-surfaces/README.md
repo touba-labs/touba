@@ -12,6 +12,10 @@ lossless mapping to the source contract and its `schema_version`.
 
 | Contract | Primary consumers | Purpose |
 | --- | --- | --- |
+| `touba-auth-session-v0.1` | client, Mobile, project server | Authenticated human identity, organization membership, permissions and bounded session metadata. |
+| `touba-identity-directory-v0.1` | client | Organization members and role definitions without devices, sessions or credentials. |
+| `touba-device-pairing-v0.1` | client, Mobile | One-time, expiring identity pairing issued for a specific user. |
+| `touba-identity-audit-v0.1` | client | Bounded audit trail for identity and access-management actions. |
 | `touba-project-inspection-v1` | client | Project structure, generated artifacts, executable input contracts, entrypoints, installed packages, diagnostics. |
 | `touba-project-refresh-request-v0.1` | client, CLI | Request a project refresh from the project server. |
 | `touba-project-refresh-v0.1` | client | Project refresh result, artifact snapshot, changed files, diagnostics. |

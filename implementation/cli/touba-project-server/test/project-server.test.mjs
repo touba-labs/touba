@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -8,6 +9,7 @@ import test from "node:test";
 import {
   acceptMobilePairing,
   acceptDecision,
+  authorizeHumanIdentity,
   buildAuthorityGraph,
   buildGovernanceReadiness,
   buildHandlerSandboxStatus,
@@ -33,6 +35,7 @@ import {
   proposeProjectChange,
   proposeProjectChangeSet,
   proposeGovernanceRelationChange,
+  requiredIdentityPermission,
   recoverProjectChangeTransactions,
   readProjectEventJournal,
   readPendingHumanRequest,
@@ -73,6 +76,156 @@ test("preflight rejects invalid contracts root and decision store path", () => {
     }),
     /directory as decision store/,
   );
+});
+
+test("human identity permissions map project reads and governed actions", () => {
+  assert.equal(requiredIdentityPermission("GET", "/health"), null);
+  assert.equal(requiredIdentityPermission("GET", "/state"), "projects.read");
+  assert.equal(requiredIdentityPermission("GET", "/events"), "executions.read");
+  assert.equal(requiredIdentityPermission("POST", "/runs/sandbox"), "executions.run");
+  assert.equal(requiredIdentityPermission("POST", "/decisions"), "decisions.act");
+  assert.equal(requiredIdentityPermission("GET", "/decisions"), "decisions.read");
+  assert.equal(requiredIdentityPermission("POST", "/changes/propose"), "governance.propose");
+  assert.equal(requiredIdentityPermission("POST", "/changes/apply"), "governance.apply");
+  assert.equal(requiredIdentityPermission("POST", "/deployments/publish"), "deployments.publish");
+});
+
+test("human identity introspection separates active sessions from permissions", async () => {
+  const accepted = await authorizeHumanIdentity({
+    accessToken: "identity-access",
+    controlPlaneUrl: "https://identity.example.test",
+    permission: "projects.read",
+    serviceToken: "service-secret",
+    fetchImpl: async (_url, init) => {
+      assert.equal(init.headers["x-touba-service-token"], "service-secret");
+      assert.deepEqual(JSON.parse(init.body), { access_token: "identity-access" });
+      return new Response(JSON.stringify({
+        active: true,
+        permissions: ["projects.read"],
+        user: { id: "user-1" },
+      }), { status: 200 });
+    },
+  });
+  assert.equal(accepted.active, true);
+  assert.equal(accepted.allowed, true);
+
+  const denied = await authorizeHumanIdentity({
+    accessToken: "identity-access",
+    controlPlaneUrl: "https://identity.example.test",
+    permission: "governance.apply",
+    serviceToken: "service-secret",
+    fetchImpl: async () => new Response(JSON.stringify({
+      active: true,
+      permissions: ["projects.read"],
+    }), { status: 200 }),
+  });
+  assert.equal(denied.active, false);
+  assert.equal(denied.allowed, false);
+});
+
+test("HTTP project server enforces human sessions and permissions", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-identity-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src", "main.tb"), "module demo.identity\n", "utf8");
+  const serviceToken = "identity-service-token-at-least-32-characters";
+  const identityServer = createHttpServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    assert.equal(request.headers["x-touba-service-token"], serviceToken);
+    const permissions = body.access_token === "viewer-token"
+      ? ["projects.read"]
+      : body.access_token === "operator-token"
+        ? ["projects.read", "projects.manage"]
+        : body.access_token === "governor-token"
+          ? ["projects.read", "governance.propose"]
+        : [];
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      active: permissions.length > 0,
+      permissions,
+      user: { id: "human-1" },
+    }));
+  });
+  await listenHttpServer(identityServer);
+  const identityAddress = identityServer.address();
+  const projectServer = createToubaProjectServer({
+    contractsRoot,
+    projectRoot: root,
+    port: 0,
+    quiet: true,
+    identityControlPlaneUrl: `http://127.0.0.1:${identityAddress.port}`,
+    identityServiceToken: serviceToken,
+  });
+  try {
+    await projectServer.start();
+    const baseUrl = `http://127.0.0.1:${projectServer.server.address().port}`;
+
+    assert.equal((await fetch(`${baseUrl}/health`)).status, 200);
+    const anonymous = await fetch(`${baseUrl}/state`);
+    assert.equal(anonymous.status, 401);
+    assert.equal((await anonymous.json()).code, "ToubaServeIdentityUnauthorized");
+
+    const viewerRead = await fetch(`${baseUrl}/state`, {
+      headers: { "x-touba-identity-token": "viewer-token" },
+    });
+    assert.equal(viewerRead.status, 200);
+
+    const viewerWrite = await fetch(`${baseUrl}/project/refresh`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-touba-identity-token": "viewer-token",
+      },
+      body: JSON.stringify({
+        schema_version: "touba-project-refresh-request-v0.1",
+        reason: "identity-test",
+        requested_by: { kind: "studio", id: "identity-test" },
+      }),
+    });
+    assert.equal(viewerWrite.status, 403);
+    assert.equal((await viewerWrite.json()).code, "ToubaServeIdentityPermissionDenied");
+
+    const operatorWrite = await fetch(`${baseUrl}/project/refresh`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-touba-identity-token": "operator-token",
+      },
+      body: JSON.stringify({
+        schema_version: "touba-project-refresh-request-v0.1",
+        reason: "identity-test",
+        requested_by: { kind: "studio", id: "identity-test" },
+      }),
+    });
+    assert.equal(operatorWrite.status, 202);
+
+    const proposed = await fetch(`${baseUrl}/changes/propose`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-touba-identity-token": "governor-token",
+      },
+      body: JSON.stringify({
+        schema_version: "touba-project-change-proposal-v0.1",
+        proposal_id: "identity_actor_binding",
+        action: "write_text_file",
+        target: { path: "src/identity-note.tb" },
+        requested_by: { kind: "user", id: "spoofed-user" },
+        reason: "verify server-derived human identity",
+        content: "module demo.identity_note\n",
+      }),
+    });
+    assert.equal(proposed.status, 202);
+    assert.deepEqual((await proposed.json()).requested_by, {
+      kind: "user",
+      id: "human-1",
+    });
+  } finally {
+    await projectServer.stop();
+    await closeHttpServer(identityServer);
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("live state composes project, run, trigger, decision and event surfaces", () => {
@@ -2947,6 +3100,20 @@ async function postJson(url, body) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+async function listenHttpServer(server) {
+  await new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+}
+
+async function closeHttpServer(server) {
+  if (!server.listening) return;
+  await new Promise((resolveClose, rejectClose) => {
+    server.close((error) => error ? rejectClose(error) : resolveClose());
   });
 }
 

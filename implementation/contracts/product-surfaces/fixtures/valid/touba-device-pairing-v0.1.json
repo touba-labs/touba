@@ -1,0 +1,6 @@
+{
+  "schema_version": "touba-device-pairing-v0.1",
+  "pairing_id": "pairing-01",
+  "pairing_token": "tba-pairing-token-example",
+  "expires_at": "2026-07-23T12:10:00.000Z"
+}

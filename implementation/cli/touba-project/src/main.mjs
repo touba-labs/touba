@@ -485,7 +485,7 @@ function serveCommand(rawArgs) {
 
 function serveUsage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--deployment-target-url <url>] [--deployment-target-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--deployment-target-url <url>] [--deployment-target-token-env NAME] [--identity-control-plane-url URL] [--identity-service-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the Touba project server for client, Mobile and contract clients.",
     "",
@@ -1641,7 +1641,7 @@ function printUsage() {
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
   touba run <program.air.json> [--profile dev|prod] [runtime options]
-  touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
+  touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--identity-control-plane-url URL] [--identity-service-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
   touba deploy plan|publish|list|activate|rollback|target ...
   touba refresh --url <touba-serve-url> [--auth-token-env NAME] [--reason <text>]
   touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>

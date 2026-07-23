@@ -244,6 +244,11 @@ export function createToubaProjectServer(options = {}) {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
   const authToken = options.authTokenEnv === undefined ? undefined : process.env[options.authTokenEnv];
+  const identityControlPlaneUrl = options.identityControlPlaneUrl;
+  const identityServiceToken = options.identityServiceToken
+    ?? (options.identityServiceTokenEnv === undefined
+      ? undefined
+      : process.env[options.identityServiceTokenEnv]);
   const agentDecisionProvider = options.agentDecisionProvider;
   const eventClients = new Set();
   let projectSnapshot;
@@ -257,6 +262,24 @@ export function createToubaProjectServer(options = {}) {
 
   if (options.authTokenEnv !== undefined && (!authToken || authToken.trim() === "")) {
     throw serviceError("ToubaServeAuthTokenMissing", `environment variable ${options.authTokenEnv} is required`);
+  }
+  if ((identityControlPlaneUrl === undefined) !== (identityServiceToken === undefined)) {
+    throw serviceError(
+      "ToubaServeIdentityNotConfigured",
+      "--identity-control-plane-url and --identity-service-token-env must be configured together",
+    );
+  }
+  if (identityServiceToken !== undefined && identityServiceToken.length < 32) {
+    throw serviceError(
+      "ToubaServeIdentityNotConfigured",
+      `environment variable ${options.identityServiceTokenEnv} must contain at least 32 characters`,
+    );
+  }
+  if (identityControlPlaneUrl !== undefined) {
+    assertIdentityControlPlaneConfigured({
+      controlPlaneUrl: identityControlPlaneUrl,
+      serviceToken: identityServiceToken,
+    });
   }
   if (
     options.deploymentTargetTokenEnv !== undefined
@@ -319,9 +342,40 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       const isPairingAccept = request.method === "POST" && url.pathname === "/mobile/pairings/accept";
+      let humanIdentity = null;
       if (authToken !== undefined && !isPairingAccept && !authorized(request, authToken, mobilePairingsPath)) {
         writeJson(response, 401, { status: "error", code: "ToubaServeUnauthorized" });
         return;
+      }
+      const identityPermission = requiredIdentityPermission(request.method, url.pathname);
+      if (
+        identityControlPlaneUrl !== undefined
+        && !isPairingAccept
+        && identityPermission !== null
+      ) {
+        const identityResult = await authorizeHumanIdentity({
+          accessToken: request.headers["x-touba-identity-token"],
+          controlPlaneUrl: identityControlPlaneUrl,
+          permission: identityPermission,
+          serviceToken: identityServiceToken,
+        });
+        if (!identityResult.active) {
+          writeJson(response, 401, {
+            status: "error",
+            code: "ToubaServeIdentityUnauthorized",
+            message: "an active human identity session is required",
+          });
+          return;
+        }
+        if (!identityResult.allowed) {
+          writeJson(response, 403, {
+            status: "error",
+            code: "ToubaServeIdentityPermissionDenied",
+            message: `permission required: ${identityPermission}`,
+          });
+          return;
+        }
+        humanIdentity = identityResult;
       }
       if (request.method === "GET" && url.pathname === "/health") {
         writeJson(response, 200, {
@@ -330,6 +384,7 @@ export function createToubaProjectServer(options = {}) {
           contract_index_schema_version: CONTRACT_INDEX_SCHEMA_VERSION,
           live_state_schema_version: LIVE_STATE_SCHEMA_VERSION,
           event_stream_schema_version: EVENT_STREAM_SCHEMA_VERSION,
+          human_identity_enforced: identityControlPlaneUrl !== undefined,
           endpoints: {
             state: "/state",
             events: "/events",
@@ -415,7 +470,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/runs/sandbox") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
         const result = await executeProjectSandboxRun({
           agentDecisionProvider,
           agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
@@ -453,7 +508,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/triggers/fire") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
         const result = await executeProjectSandboxRun({
           agentDecisionProvider,
           agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
@@ -507,7 +562,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/deployments/plan") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "actor", humanIdentity);
         validateContractPayload({
           contractsRoot,
           schemaVersion: DEPLOYMENT_ACTION_SCHEMA_VERSION,
@@ -524,7 +579,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/deployments/publish") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "actor", humanIdentity);
         validateContractPayload({
           contractsRoot,
           schemaVersion: DEPLOYMENT_ACTION_SCHEMA_VERSION,
@@ -565,7 +620,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/deployments/activate") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "actor", humanIdentity);
         validateContractPayload({
           contractsRoot,
           schemaVersion: DEPLOYMENT_ACTION_SCHEMA_VERSION,
@@ -588,7 +643,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/deployments/rollback") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "actor", humanIdentity);
         validateContractPayload({
           contractsRoot,
           schemaVersion: DEPLOYMENT_ACTION_SCHEMA_VERSION,
@@ -652,7 +707,11 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/mobile/pairings/request") {
-        const body = await readOptionalJsonBody(request);
+        const body = bindHumanActor(
+          await readOptionalJsonBody(request),
+          "user_ref",
+          humanIdentity,
+        );
         const issued = issueMobilePairingRequest({
           contractsRoot,
           mobilePairingsPath,
@@ -675,7 +734,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/mobile/pairings/revoke") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "revoked_by", humanIdentity);
         const revoked = revokeMobilePairing({
           mobilePairingsPath,
           deviceRef: body?.device_ref,
@@ -773,7 +832,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/project/refresh") {
-        const body = await readOptionalJsonBody(request);
+        const body = bindHumanActor(await readOptionalJsonBody(request), "requested_by", humanIdentity);
         validateContractPayload({
           contractsRoot,
           schemaVersion: PROJECT_REFRESH_REQUEST_SCHEMA_VERSION,
@@ -792,7 +851,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/changes/propose") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
         validateContractPayload({
           contractsRoot,
           schemaVersion: CHANGE_PROPOSAL_SCHEMA_VERSION,
@@ -810,7 +869,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/governance/relations/propose") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
         validateContractPayload({
           contractsRoot,
           schemaVersion: GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION,
@@ -828,7 +887,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/elements/propose") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
         validateContractPayload({
           contractsRoot,
           schemaVersion: ELEMENT_AUTHORING_SCHEMA_VERSION,
@@ -867,7 +926,7 @@ export function createToubaProjectServer(options = {}) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/changes/apply") {
-        const body = await readJsonBody(request);
+        const body = bindHumanActor(await readJsonBody(request), "decided_by", humanIdentity);
         validateContractPayload({
           contractsRoot,
           schemaVersion: CHANGE_APPLY_SCHEMA_VERSION,
@@ -5741,6 +5800,118 @@ function bearerTokenFromAuthorization(authorization) {
   return match === null ? undefined : nonEmptyString(match[1]);
 }
 
+export function requiredIdentityPermission(method, pathname) {
+  if (method === "GET" && pathname === "/health") return null;
+  if (method === "POST" && pathname === "/mobile/pairings/accept") return null;
+  if (method === "GET" && pathname === "/events") return "executions.read";
+  if (method === "POST" && pathname === "/runs/sandbox") return "executions.run";
+  if (method === "POST" && pathname === "/runs/sandbox/resume") return "executions.run";
+  if (method === "POST" && pathname === "/triggers/fire") return "executions.run";
+  if (pathname.startsWith("/decisions")) {
+    return method === "POST" ? "decisions.act" : "decisions.read";
+  }
+  if (pathname.startsWith("/deployments")) {
+    if (method === "GET" || pathname === "/deployments/plan") return "deployments.read";
+    if (pathname === "/deployments/publish") return "deployments.publish";
+    return "deployments.activate";
+  }
+  if (
+    pathname === "/governance/relations/propose"
+    || pathname === "/elements/propose"
+    || pathname === "/changes/propose"
+  ) {
+    return "governance.propose";
+  }
+  if (pathname === "/changes/apply") return "governance.apply";
+  if (pathname.startsWith("/changes")) return "governance.read";
+  if (pathname === "/project/refresh") return "projects.manage";
+  if (method === "GET") return "projects.read";
+  return "projects.manage";
+}
+
+export async function authorizeHumanIdentity({
+  accessToken,
+  controlPlaneUrl,
+  fetchImpl = fetch,
+  permission,
+  serviceToken,
+}) {
+  if (typeof accessToken !== "string" || accessToken.trim() === "") {
+    return { active: false, allowed: false };
+  }
+  let endpoint;
+  try {
+    endpoint = new URL("/auth/introspect", controlPlaneUrl);
+  } catch {
+    throw serviceError(
+      "ToubaServeIdentityNotConfigured",
+      "identity control-plane URL must be an absolute HTTP(S) URL",
+    );
+  }
+  let response;
+  try {
+    response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-touba-service-token": serviceToken,
+      },
+      body: JSON.stringify({ access_token: accessToken.trim() }),
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch (cause) {
+    throw serviceError(
+      "ToubaServeIdentityUnavailable",
+      `identity control plane is unavailable: ${cause.message}`,
+    );
+  }
+  if (!response.ok) {
+    throw serviceError(
+      "ToubaServeIdentityUnavailable",
+      `identity control plane refused introspection (${response.status})`,
+    );
+  }
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw serviceError(
+      "ToubaServeIdentityUnavailable",
+      "identity control plane returned an invalid response",
+    );
+  }
+  const permissions = Array.isArray(result.permissions) ? result.permissions : [];
+  const active = result.active === true && nonEmptyString(result.user?.id) !== undefined;
+  return {
+    active,
+    allowed: active
+      && (permissions.includes("*") || permissions.includes(permission)),
+    organization_id: result.organization_id,
+    session_id: result.session_id,
+    user: result.user,
+  };
+}
+
+function bindHumanActor(body, field, identity) {
+  if (identity === null) return body;
+  const userId = nonEmptyString(identity.user?.id);
+  if (userId === undefined) {
+    throw serviceError(
+      "ToubaServeIdentityUnauthorized",
+      "identity introspection did not return a user id",
+    );
+  }
+  const actor = ["requested_by", "decided_by"].includes(field)
+    ? { kind: "user", id: userId }
+    : userId.startsWith("user:")
+      ? userId
+      : `user:${userId}`;
+  return {
+    ...(body ?? {}),
+    [field]: actor,
+  };
+}
+
 async function readJsonBody(request) {
   const chunks = [];
   let size = 0;
@@ -5793,7 +5964,10 @@ function applyCorsHeaders(request, response) {
   }
   response.setHeader("access-control-allow-origin", origin);
   response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
-  response.setHeader("access-control-allow-headers", "authorization, content-type, last-event-id");
+  response.setHeader(
+    "access-control-allow-headers",
+    "authorization, content-type, last-event-id, x-touba-identity-token",
+  );
   response.setHeader("access-control-max-age", "600");
   response.setHeader("vary", "Origin");
   return true;
@@ -5905,7 +6079,12 @@ function writeSse(response, event, data) {
 }
 
 function httpStatusForError(code) {
-  if (code === "ToubaServeUnauthorized") return 401;
+  if (
+    code === "ToubaServeUnauthorized"
+    || code === "ToubaServeIdentityUnauthorized"
+  ) return 401;
+  if (code === "ToubaServeIdentityPermissionDenied") return 403;
+  if (code === "ToubaServeIdentityUnavailable") return 503;
   if (
     code === "ToubaServeDecisionReplayRejected"
     || code === "ToubaServeDecisionRequestMismatch"
@@ -6029,6 +6208,10 @@ function parseArgs(rawArgs) {
       options.port = Number.parseInt(requiredValue(arg, rawArgs, ++index), 10);
     } else if (arg === "--auth-token-env") {
       options.authTokenEnv = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--identity-control-plane-url") {
+      options.identityControlPlaneUrl = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--identity-service-token-env") {
+      options.identityServiceTokenEnv = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--deployment-target-url") {
       options.deploymentTargetUrl = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--deployment-target-token-env") {
@@ -6154,7 +6337,7 @@ async function loadAgentDecisionProviderFromPath(providerPath) {
 
 function usage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for client, Mobile and contract clients.",
     "",
@@ -6249,6 +6432,41 @@ function assertDeploymentTargetConfigured({ deploymentTargetToken, deploymentTar
   }
   if (target.protocol !== "https:" && !isLoopbackHost(target.hostname)) {
     throw serviceError("ToubaServeDeploymentTargetInsecure", "remote deployment targets require HTTPS");
+  }
+}
+
+function assertIdentityControlPlaneConfigured({ controlPlaneUrl, serviceToken }) {
+  if (
+    typeof controlPlaneUrl !== "string"
+    || controlPlaneUrl.trim() === ""
+    || typeof serviceToken !== "string"
+    || serviceToken.length < 32
+  ) {
+    throw serviceError(
+      "ToubaServeIdentityNotConfigured",
+      "identity control-plane URL and strong server-side token are required",
+    );
+  }
+  let target;
+  try {
+    target = new URL(controlPlaneUrl);
+  } catch {
+    throw serviceError(
+      "ToubaServeIdentityNotConfigured",
+      "identity control-plane URL must be an absolute HTTP(S) URL",
+    );
+  }
+  if (!["http:", "https:"].includes(target.protocol)) {
+    throw serviceError(
+      "ToubaServeIdentityNotConfigured",
+      "identity control-plane URL must use HTTP or HTTPS",
+    );
+  }
+  if (target.protocol !== "https:" && !isLoopbackHost(target.hostname)) {
+    throw serviceError(
+      "ToubaServeIdentityNotConfigured",
+      "remote identity control planes require HTTPS",
+    );
   }
 }
 
