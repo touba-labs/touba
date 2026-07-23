@@ -254,6 +254,7 @@ export async function executeAirDocument(document, options = {}) {
       traceRunCancelled(context, error.details);
     } else if (error instanceof RuntimeFailure) {
       status = "failure";
+      traceUnhandledRuntimeFailure(context, error);
     } else {
       throw error;
     }
@@ -294,7 +295,9 @@ export async function executeTriggerEvent(document, event, options = {}) {
   let result;
   try {
     initializeRunControls(context);
-    result = await executeNormalizedTriggerEvent(triggerEvent, context);
+    result = context.humanApprovalResumeCheckpoint
+      ? await executeHumanApprovalResumeCheckpoint(document, entryRef, context)
+      : await executeNormalizedTriggerEvent(triggerEvent, context);
   } catch (error) {
     if (error instanceof RuntimeStop) {
       status = "stopped";
@@ -303,6 +306,7 @@ export async function executeTriggerEvent(document, event, options = {}) {
       traceRunCancelled(context, error.details);
     } else if (error instanceof RuntimeFailure) {
       status = "failure";
+      traceUnhandledRuntimeFailure(context, error);
     } else {
       throw error;
     }
@@ -314,11 +318,15 @@ export async function executeTriggerEvent(document, event, options = {}) {
     },
   });
 
-  return {
+  const response = {
     status,
     result,
     trace: trace.document(),
   };
+  if (context.pendingHumanApprovalCheckpoint) {
+    response.checkpoint = context.pendingHumanApprovalCheckpoint;
+  }
+  return response;
 }
 
 function createExecutionContext(document, entryRef, options = {}) {
@@ -882,6 +890,8 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
     agent_ref: agent.id,
     caller_ref: payload.caller_ref,
     requester_ref: payload.requester_ref,
+    review_prompt: decision.reviewPrompt ?? "Review the requested agent decision.",
+    review_reason: decision.reason ?? "Human review requested by the agent.",
     step_index: stepIndex,
     agent_loop_state: {
       agent_ref: agent.id,
@@ -7023,5 +7033,25 @@ function runtimeFailureTracePayload(error, context) {
     secret_handles_granted: error.details?.grantedSecrets,
     secret_handles_refused: error.details?.secretHandlesRefused ?? error.details?.missingSecrets,
     secret_refusal_reasons: error.details?.secretRefusalReasons,
+  });
+}
+
+function traceUnhandledRuntimeFailure(context, error) {
+  const events = context.trace.document().events ?? [];
+  const alreadyTraced = events.some((event) =>
+    event.kind === "failure_detected"
+    && event.payload?.runtime_error_code === error.code
+  );
+  if (alreadyTraced) return;
+  context.trace.push("failure_detected", {
+    payload: compactPayload({
+      failure_mode: "run",
+      ...runtimeFailureTracePayload(error, {
+        fallbackTargetRef: context.entryRef,
+        callerRef: context.activeCallerRef,
+        agentRef: context.activeAgentRef,
+      }),
+    }),
+    message: error.message,
   });
 }

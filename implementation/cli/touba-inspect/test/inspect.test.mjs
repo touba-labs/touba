@@ -70,6 +70,15 @@ test("projects AIR inspection to touba-project-inspection-v1", () => {
     project.entrypoints.some((entrypoint) => entrypoint.ref === "agent:examples.strategy_agents/Engineer"),
     true,
   );
+  const agentEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.ref === "agent:examples.strategy_agents/Engineer");
+  assert.equal(agentEntrypoint.input_contract.mode, "open");
+  const skillEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.ref === "skill:examples.strategy_agents/MakeChange");
+  assert.equal(skillEntrypoint.input_contract.mode, "declared");
+  assert.equal(skillEntrypoint.input_contract.fields[0].type_ref, "type:examples.strategy_agents/ChangeRequest");
+  assert.equal(skillEntrypoint.input_contract.types[0].name, "ChangeRequest");
+  const toolEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.ref === "tool:examples.strategy_agents/ApplyChange");
+  assert.equal(toolEntrypoint.kind, "tool");
+  assert.equal(toolEntrypoint.input_contract.mode, "declared");
   assert.deepEqual(project.diagnostics, []);
 });
 

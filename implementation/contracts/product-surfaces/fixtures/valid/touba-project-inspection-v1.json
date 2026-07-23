@@ -32,13 +32,84 @@
     {
       "kind": "agent",
       "ref": "agent:billing/InvoiceAgent",
-      "description": "Reviews invoice summaries and requests approval before payment effects."
+      "description": "Reviews invoice summaries and requests approval before payment effects.",
+      "input_contract": {
+        "mode": "open",
+        "fields": [],
+        "types": []
+      }
+    },
+    {
+      "kind": "function",
+      "ref": "function:billing/FormatInvoiceReference",
+      "description": "Formats an invoice reference without external effects.",
+      "input_contract": {
+        "mode": "declared",
+        "fields": [
+          {
+            "name": "invoice_id",
+            "type_ref": "builtin:Text",
+            "required": true
+          }
+        ],
+        "types": []
+      }
+    },
+    {
+      "kind": "tool",
+      "ref": "tool:billing/StoreInvoiceReview",
+      "description": "Stores an approved invoice review through a declared handler.",
+      "input_contract": {
+        "mode": "declared",
+        "fields": [
+          {
+            "name": "invoice_id",
+            "type_ref": "builtin:Text",
+            "required": true
+          }
+        ],
+        "types": []
+      }
     },
     {
       "kind": "trigger",
       "ref": "trigger:billing/invoice-webhook",
-      "description": "Accepts signed invoice events through the trigger service."
+      "description": "Accepts signed invoice events through the trigger service.",
+      "input_contract": {
+        "mode": "declared",
+        "fields": [
+          {
+            "name": "invoice",
+            "type_ref": "type:billing/InvoiceEvent",
+            "required": true
+          }
+        ],
+        "types": [
+          {
+            "ref": "type:billing/InvoiceEvent",
+            "name": "InvoiceEvent",
+            "fields": [
+              {
+                "name": "invoice_id",
+                "type_ref": "builtin:Text",
+                "required": true
+              },
+              {
+                "name": "amount",
+                "type_ref": "builtin:Float",
+                "required": true
+              },
+              {
+                "name": "urgent",
+                "type_ref": "builtin:Boolean",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
+  "packages": [],
   "diagnostics": []
 }

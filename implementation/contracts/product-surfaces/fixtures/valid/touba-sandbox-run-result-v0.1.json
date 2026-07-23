@@ -17,12 +17,18 @@
       {
         "index": 0,
         "type": "run_started",
-        "summary": "run_started"
+        "summary": "run_started",
+        "authority_ref": "strategy:billing/RunInvoiceReview",
+        "severity": "info",
+        "redaction": "payload_minimized"
       },
       {
         "index": 1,
         "type": "run_completed",
-        "summary": "run_completed"
+        "summary": "run_completed",
+        "authority_ref": "strategy:billing/RunInvoiceReview",
+        "severity": "info",
+        "redaction": "payload_minimized"
       }
     ]
   },

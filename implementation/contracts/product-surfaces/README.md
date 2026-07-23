@@ -12,7 +12,7 @@ lossless mapping to the source contract and its `schema_version`.
 
 | Contract | Primary consumers | Purpose |
 | --- | --- | --- |
-| `touba-project-inspection-v1` | client | Project structure, generated artifacts, entrypoints, diagnostics. |
+| `touba-project-inspection-v1` | client | Project structure, generated artifacts, executable input contracts, entrypoints, installed packages, diagnostics. |
 | `touba-project-refresh-request-v0.1` | client, CLI | Request a project refresh from the project server. |
 | `touba-project-refresh-v0.1` | client | Project refresh result, artifact snapshot, changed files, diagnostics. |
 | `touba-project-change-proposal-v0.1` | client | Reviewable project change proposal. |
@@ -131,10 +131,11 @@ POST /changes/apply
 ```
 
 `/state` returns the current project server state. `/authority/graph` returns
-`touba-authority-graph-v0.1`, a graph of declared agents, skills, tools,
-strategies, human gates, memory scopes and capability grants extracted from
-project artifacts. The server reports dangling or inconsistent references as
-diagnostics instead of inventing implicit authority.
+`touba-authority-graph-v0.1`, a graph of declared modules, packages, triggers,
+strategies, agents, skills, functions, tools, human gates, memory scopes and
+capability grants extracted from project artifacts. The server reports dangling
+or inconsistent references as diagnostics instead of inventing implicit
+authority.
 
 `/identity` returns `touba-product-identity-v0.1`, the product identity surface
 for users, teams, roles, paired devices, sessions, assignments and escalation

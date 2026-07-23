@@ -27,7 +27,7 @@
         "required": ["id", "kind", "label", "ref", "evidence"],
         "properties": {
           "id": { "type": "string" },
-          "kind": { "enum": ["agent", "skill", "tool", "strategy", "trigger", "human_gate", "memory", "capability", "package", "module"] },
+          "kind": { "enum": ["agent", "function", "skill", "tool", "strategy", "trigger", "human_gate", "memory", "capability", "package", "module"] },
           "label": { "type": "string" },
           "ref": { "type": "string" },
           "evidence": { "$ref": "#/$defs/evidence" }
@@ -45,6 +45,7 @@
           "kind": { "enum": ["uses", "callable_by", "requires", "grants", "imports", "dispatches"] },
           "from": { "type": "string" },
           "to": { "type": "string" },
+          "access": { "enum": ["read", "write"] },
           "evidence": { "$ref": "#/$defs/evidence" }
         }
       }

@@ -311,6 +311,10 @@ export function buildHandlerSandboxPlan({
   );
 }
 
+/**
+ * @param {string} command
+ * @returns {string}
+ */
 function resolveHandlerCommand(command) {
   return command === "node" || command === "node.exe"
     ? process.execPath

@@ -22,6 +22,10 @@ import {
   validateObject,
 } from "../../../tools/validate-product-surface-contracts.mjs";
 import {
+  buildAirInputContract,
+  unavailableAirInputContract,
+} from "../../../contracts/product-surfaces/input-contracts.mjs";
+import {
   executeAirDocument,
   executeTriggerEvent,
   loadAirFromJson,
@@ -38,6 +42,7 @@ const DEFAULT_RUN_SUMMARY_PATH = ".touba/current-run-summary.json";
 const DEFAULT_TRACE_TIMELINE_PATH = ".touba/current-trace-timeline.json";
 const DEFAULT_TRIGGER_STATUS_PATH = ".touba/trigger-status.json";
 const DEFAULT_HUMAN_REQUESTS_PATH = ".touba/human-requests.json";
+const DEFAULT_SANDBOX_CHECKPOINTS_PATH = ".touba/sandbox-checkpoints.json";
 const DEFAULT_PRODUCT_IDENTITY_PATH = ".touba/product-identity.json";
 const DEFAULT_COST_OBSERVATORY_PATH = ".touba/cost-observatory.json";
 const DEFAULT_HANDLER_SANDBOX_STATUS_PATH = ".touba/handler-sandbox-status.json";
@@ -55,6 +60,7 @@ const LIVE_STATE_SCHEMA_VERSION = "touba-project-live-state-v0.1";
 const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v0.1";
 const HUMAN_DECISION_STORE_SCHEMA_VERSION = "touba-human-decisions-v0.1";
 const HUMAN_REQUEST_STORE_SCHEMA_VERSION = "touba-human-requests-v0.1";
+const SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION = "touba-sandbox-checkpoints-v0.1";
 const HUMAN_DECISION_HISTORY_SCHEMA_VERSION = "touba-human-decision-history-v0.1";
 const HUMAN_DECISION_DETAIL_SCHEMA_VERSION = "touba-human-decision-detail-v0.1";
 const AUTHORITY_GRAPH_SCHEMA_VERSION = "touba-authority-graph-v0.1";
@@ -79,6 +85,7 @@ const CHANGE_APPLY_SCHEMA_VERSION = "touba-project-change-apply-v0.1";
 const CHANGE_RESULT_SCHEMA_VERSION = "touba-project-change-result-v0.1";
 const CHANGE_HISTORY_SCHEMA_VERSION = "touba-project-change-history-v0.1";
 const CHANGE_DETAIL_SCHEMA_VERSION = "touba-project-change-detail-v0.1";
+const GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION = "touba-governance-relation-change-v0.1";
 const PROJECT_EVENT_SCHEMA_VERSION = "touba-project-event-v0.1";
 const CHANGE_STORE_SCHEMA_VERSION = "touba-studio-change-proposals-v0.1";
 const CHANGE_ACTIONS = Object.freeze(["write_text_file"]);
@@ -105,22 +112,22 @@ const NAMED_PROJECT_ARTIFACTS = Object.freeze(new Set([
   "touba.manifest.json",
   "touba.package.json",
   "touba.ownership.json",
-  "touba.governance-actions.json",
   "touba.lock.json",
   "touba.resources.json",
   "resources.json",
 ]));
 const AIR_ENTRYPOINT_KINDS = Object.freeze({
   agents: "agent",
+  functions: "function",
   skills: "skill",
   strategies: "strategy",
+  tools: "tool",
 });
 const CHANGE_TARGET_JSON_FILES = Object.freeze(new Set([
   "touba.project.json",
   "touba.manifest.json",
   "touba.package.json",
   "touba.ownership.json",
-  "touba.governance-actions.json",
   "touba.resources.json",
   "resources.json",
 ]));
@@ -144,8 +151,6 @@ const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
   "/mobile/escalations": MOBILE_ESCALATION_SCHEMA_VERSION,
   "/approvals/pending/current": "touba-approval-request-v1",
   "/reviews/pending/current": "touba-human-review-request-v1",
-  "/resources/featured": "touba-registry-resource-v1",
-  "/alerts/current": "touba-alert-v1",
 });
 
 if (isMainModule()) {
@@ -171,7 +176,9 @@ export function createToubaProjectServer(options = {}) {
     options.contractsRoot ?? new URL("../../../contracts/product-surfaces/", import.meta.url).pathname,
   );
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
-  const humanDecisionsPath = resolve(options.humanDecisionsPath ?? DEFAULT_HUMAN_DECISIONS_PATH);
+  const humanDecisionsPath = resolve(
+    options.humanDecisionsPath ?? join(projectRoot, DEFAULT_HUMAN_DECISIONS_PATH),
+  );
   const changeProposalsPath = resolve(
     options.changeProposalsPath ?? join(projectRoot, DEFAULT_CHANGE_PROPOSALS_PATH),
   );
@@ -189,6 +196,9 @@ export function createToubaProjectServer(options = {}) {
   );
   const humanRequestsPath = resolve(
     options.humanRequestsPath ?? join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
+  );
+  const sandboxCheckpointsPath = resolve(
+    options.sandboxCheckpointsPath ?? join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
   );
   const productIdentityPath = resolve(
     options.productIdentityPath ?? join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
@@ -242,6 +252,7 @@ export function createToubaProjectServer(options = {}) {
     traceTimelinePath,
     triggerStatusPath,
     humanRequestsPath,
+    sandboxCheckpointsPath,
     productIdentityPath,
     mobilePairingsPath,
     eventJournalLimit,
@@ -305,11 +316,13 @@ export function createToubaProjectServer(options = {}) {
             pending_approval: "/approvals/pending/current",
             pending_review: "/reviews/pending/current",
             human_decisions: "/decisions",
+            sandbox_resume: "/runs/sandbox/resume",
             human_decision_detail: "/decisions/<schema_version>/<request_id>",
             change_history: "/changes",
             change_detail: "/changes/<proposal_id>",
             change_propose: "/changes/propose",
             change_apply: "/changes/apply",
+            governance_relation_propose: "/governance/relations/propose",
             event_replay: "Last-Event-ID",
             event_journal_limit: eventJournalLimit,
             run_summary: "/runs/current",
@@ -366,8 +379,12 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           contractsRoot,
           executionKind: "entrypoint",
+          humanRequestsPath,
           projectRoot,
           request: body,
+          runSummaryPath,
+          sandboxCheckpointsPath,
+          traceTimelinePath,
         });
         publishEvent(eventClients, "sandbox_run.completed", sandboxRunEventPayload(result), nextEvent);
         writeJson(response, 200, result);
@@ -400,8 +417,12 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           contractsRoot,
           executionKind: "trigger",
+          humanRequestsPath,
           projectRoot,
           request: body,
+          runSummaryPath,
+          sandboxCheckpointsPath,
+          traceTimelinePath,
         });
         publishEvent(eventClients, "trigger.fire.completed", sandboxRunEventPayload(result), nextEvent);
         writeJson(response, 200, result);
@@ -451,6 +472,7 @@ export function createToubaProjectServer(options = {}) {
         writeJson(response, 200, readCostObservatory({
           contractsRoot,
           costObservatoryPath,
+          projectRoot,
         }));
         return;
       }
@@ -539,9 +561,38 @@ export function createToubaProjectServer(options = {}) {
       }
       if (request.method === "POST" && url.pathname === "/decisions") {
         const body = await readJsonBody(request);
-        const accepted = acceptDecision({ contractsRoot, humanDecisionsPath, decision: body });
+        const accepted = acceptDecision({
+          contractsRoot,
+          humanDecisionsPath,
+          humanRequestsPath,
+          productIdentityPath,
+          decision: body,
+          requireProjectAuthorization: true,
+        });
         publishEvent(eventClients, "human_decision.accepted", accepted, nextEvent);
         writeJson(response, 202, accepted);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/runs/sandbox/resume") {
+        const body = await readJsonBody(request);
+        const result = await resumeProjectSandboxRun({
+          agentDecisionProvider,
+          agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
+          agentDecisionProviderInitialMode: options.agentDecisionProviderInitialMode,
+          agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
+          agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
+          agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+          contractsRoot,
+          humanDecisionsPath,
+          humanRequestsPath,
+          projectRoot,
+          request: body,
+          runSummaryPath,
+          sandboxCheckpointsPath,
+          traceTimelinePath,
+        });
+        publishEvent(eventClients, "sandbox_run.resumed", sandboxRunEventPayload(result), nextEvent);
+        writeJson(response, 200, result);
         return;
       }
       if (request.method === "GET" && url.pathname === "/decisions") {
@@ -594,6 +645,24 @@ export function createToubaProjectServer(options = {}) {
           projectRoot,
           changeProposalsPath,
           proposal: body,
+        });
+        publishEvent(eventClients, "change.proposed", proposed, nextEvent);
+        writeJson(response, 202, proposed);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/governance/relations/propose") {
+        const body = await readJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeGovernanceRelationInvalid",
+          message: "governance relation change does not match its contract",
+        });
+        const proposed = proposeGovernanceRelationChange({
+          projectRoot,
+          changeProposalsPath,
+          request: body,
         });
         publishEvent(eventClients, "change.proposed", proposed, nextEvent);
         writeJson(response, 202, proposed);
@@ -682,6 +751,9 @@ export function createToubaProjectServer(options = {}) {
         client.end();
       }
       eventClients.clear();
+      if (!server.listening) {
+        return;
+      }
       await new Promise((resolveClose, rejectClose) => {
         server.close((error) => error ? rejectClose(error) : resolveClose());
       });
@@ -730,7 +802,7 @@ export function buildLiveState({
     },
     project: buildProjectInspection({ projectRoot, projectSnapshot, generatedAt }),
     authority_graph: buildAuthorityGraph({ projectRoot, generatedAt }),
-    identity: readProductIdentity({ contractsRoot, productIdentityPath }),
+    identity: readProductIdentity({ contractsRoot, productIdentityPath, generatedAt }),
     current_run: readProjectRunSummary({ contractsRoot, runSummaryPath }),
     trace_timeline: readProjectTraceTimeline({ contractsRoot, traceTimelinePath }),
     trigger_status: readProjectTriggerStatus({ contractsRoot, triggerStatusPath }),
@@ -749,35 +821,42 @@ export function buildLiveState({
       changeProposalsPath,
       generatedAt,
     }),
-    cost_observatory: readCostObservatory({ contractsRoot, costObservatoryPath }),
+    cost_observatory: readCostObservatory({
+      contractsRoot,
+      costObservatoryPath,
+      generatedAt,
+      projectRoot,
+    }),
     handler_sandbox_status: buildHandlerSandboxStatus({
       contractsRoot,
       projectRoot,
       handlerSandboxStatusPath,
       generatedAt,
     }),
-    mobile_notifications: readMobileNotifications({ contractsRoot, mobileNotificationsPath }),
+    mobile_notifications: readMobileNotifications({
+      contractsRoot,
+      mobileNotificationsPath,
+      generatedAt,
+    }),
     mobile_quick_approval_policy: readMobileQuickApprovalPolicy({
       contractsRoot,
       mobileQuickApprovalPolicyPath,
     }),
     mobile_escalation: readMobileEscalation({ contractsRoot, mobileEscalationPath }),
-    pending_approval: readPendingHumanRequest({
+    pending_approval: optionalPendingHumanRequest({
       contractsRoot,
       humanRequestsPath,
       humanDecisionsPath,
       kind: "approval",
-      allowFixtureWhenStoreMissing: true,
     }),
-    pending_review: readPendingHumanRequest({
+    pending_review: optionalPendingHumanRequest({
       contractsRoot,
       humanRequestsPath,
       humanDecisionsPath,
       kind: "human_review",
-      allowFixtureWhenStoreMissing: true,
     }),
-    featured_resource: readContractFixture({ contractsRoot, schemaVersion: "touba-registry-resource-v1" }),
-    alert: readContractFixture({ contractsRoot, schemaVersion: "touba-alert-v1" }),
+    featured_resource: null,
+    alert: null,
     events: {
       schema_version: EVENT_STREAM_SCHEMA_VERSION,
       endpoint: "/events",
@@ -822,6 +901,7 @@ export function preflightServeOptions({
   traceTimelinePath = join(projectRoot, DEFAULT_TRACE_TIMELINE_PATH),
   triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
+  sandboxCheckpointsPath = join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
   productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
   mobilePairingsPath = join(projectRoot, DEFAULT_MOBILE_PAIRINGS_PATH),
   eventJournalLimit = DEFAULT_EVENT_JOURNAL_LIMIT,
@@ -859,6 +939,7 @@ export function preflightServeOptions({
     ["ToubaServeTraceTimelinePathInvalid", "trace timeline", traceTimelinePath],
     ["ToubaServeTriggerStatusPathInvalid", "trigger status", triggerStatusPath],
     ["ToubaServeHumanRequestsPathInvalid", "human request store", humanRequestsPath],
+    ["ToubaServeSandboxCheckpointPathInvalid", "sandbox checkpoint store", sandboxCheckpointsPath],
     ["ToubaServeProductIdentityPathInvalid", "product identity", productIdentityPath],
     ["ToubaServeMobilePairingsPathInvalid", "mobile pairing store", mobilePairingsPath],
   ]) {
@@ -926,7 +1007,15 @@ export function preflightServeOptions({
   };
 }
 
-export function acceptDecision({ contractsRoot, humanDecisionsPath, decision, acceptedAt = new Date().toISOString() }) {
+export function acceptDecision({
+  contractsRoot,
+  humanDecisionsPath,
+  humanRequestsPath,
+  productIdentityPath,
+  decision,
+  acceptedAt = new Date().toISOString(),
+  requireProjectAuthorization = false,
+}) {
   const schemaVersion = decision?.schema_version;
   if (!ACCEPTED_DECISION_CONTRACTS.includes(schemaVersion)) {
     throw serviceError("ToubaServeDecisionContractUnsupported", "decision schema_version is not accepted by this service");
@@ -937,6 +1026,15 @@ export function acceptDecision({ contractsRoot, humanDecisionsPath, decision, ac
     const error = serviceError("ToubaServeDecisionInvalid", "decision payload does not match its contract");
     error.diagnostics = diagnostics;
     throw error;
+  }
+  if (requireProjectAuthorization) {
+    assertProjectDecisionAuthorized({
+      acceptedAt,
+      contractsRoot,
+      decision,
+      humanRequestsPath,
+      productIdentityPath,
+    });
   }
   const store = loadHumanDecisionStore(humanDecisionsPath);
   const duplicate = store.decisions.some((item) =>
@@ -958,6 +1056,63 @@ export function acceptDecision({ contractsRoot, humanDecisionsPath, decision, ac
     decision_schema_version: schemaVersion,
     accepted_at: acceptedAt,
   };
+}
+
+function assertProjectDecisionAuthorized({
+  acceptedAt,
+  contractsRoot,
+  decision,
+  humanRequestsPath,
+  productIdentityPath,
+}) {
+  if (!humanRequestsPath || !existsSync(humanRequestsPath)) {
+    throw serviceError("ToubaServeDecisionRequestNotFound", "decision does not match a pending project request");
+  }
+  const requestStore = readHumanRequestStore(humanRequestsPath);
+  const isReview = decision.schema_version === "touba-human-review-decision-v1";
+  const requests = isReview ? requestStore.reviews : requestStore.approvals;
+  const pendingRequest = requests.find((request) => request.request_id === decision.request_id);
+  if (!pendingRequest) {
+    throw serviceError("ToubaServeDecisionRequestNotFound", "decision does not match a pending project request");
+  }
+  const expectedRequestSchema = isReview ? "touba-human-review-request-v1" : "touba-approval-request-v1";
+  const result = isReview ? decision.outcome : decision.decision;
+  const allowedResults = isReview ? pendingRequest.allowed_outcomes : pendingRequest.allowed_decisions;
+  if (
+    pendingRequest.schema_version !== expectedRequestSchema
+    || pendingRequest.run_id !== decision.run_id
+    || pendingRequest.trace_ref !== decision.trace_ref
+    || !allowedResults.includes(result)
+  ) {
+    throw serviceError("ToubaServeDecisionRequestMismatch", "decision does not match the pending request contract");
+  }
+  if (Date.parse(pendingRequest.expires_at) <= Date.parse(acceptedAt)) {
+    throw serviceError("ToubaServeDecisionRequestExpired", "pending human request has expired");
+  }
+
+  const identity = readProductIdentity({ contractsRoot, productIdentityPath, generatedAt: acceptedAt });
+  const user = identity.users.find((candidate) => candidate.user_ref === decision.user_ref && candidate.status === "active");
+  const device = identity.devices.find((candidate) =>
+    candidate.device_ref === decision.device_ref
+    && candidate.user_ref === decision.user_ref
+    && candidate.status === "paired"
+  );
+  const signerRef = isReview ? decision.reviewed_by : decision.decided_by;
+  if (!user || !device || signerRef !== decision.user_ref) {
+    throw serviceError("ToubaServeDecisionIdentityUnauthorized", "decision signer is not an active paired project identity");
+  }
+  const assigned = identity.assignments.some((assignment) =>
+    assignment.request_id === decision.request_id
+    && assignment.user_ref === decision.user_ref
+    && assignment.device_ref === decision.device_ref
+    && ["assigned", "accepted"].includes(assignment.status)
+  );
+  const roleScopes = new Set(identity.roles
+    .filter((role) => user.role_refs.includes(role.role_ref))
+    .map((role) => role.scope));
+  if (!assigned && !roleScopes.has("human_decision")) {
+    throw serviceError("ToubaServeDecisionIdentityUnauthorized", "decision signer lacks a human-decision assignment or role");
+  }
 }
 
 export function listHumanDecisions({
@@ -1054,8 +1209,12 @@ export async function executeProjectSandboxRun({
   agentDecisionProviderTimeoutMs,
   contractsRoot,
   executionKind,
+  humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   projectRoot,
   request,
+  runSummaryPath,
+  sandboxCheckpointsPath = join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
+  traceTimelinePath,
   generatedAt = new Date().toISOString(),
 }) {
   validateContractPayload({
@@ -1100,6 +1259,7 @@ export async function executeProjectSandboxRun({
         agentDecisionProviderMaxRetries,
         agentDecisionProviderMetadata,
         agentDecisionProviderTimeoutMs,
+        durableHumanApprovals: true,
         runId,
         toolBindingManifest,
       })
@@ -1110,6 +1270,7 @@ export async function executeProjectSandboxRun({
         agentDecisionProviderMaxRetries,
         agentDecisionProviderMetadata,
         agentDecisionProviderTimeoutMs,
+        durableHumanApprovals: true,
         entryRef: targetRef,
         inputs: isPlainObject(request.inputs) ? request.inputs : {},
         runId,
@@ -1125,7 +1286,57 @@ export async function executeProjectSandboxRun({
   }
 
   const completedAt = new Date().toISOString();
-  const result = {
+  const result = buildSandboxRunResult({
+    completedAt,
+    effectPolicy,
+    executionKind,
+    runId,
+    runtimeResult,
+    startedAt,
+    startedMs,
+    targetRef,
+  });
+  if (runtimeResult.checkpoint) {
+    persistSandboxCheckpoint({
+      checkpoint: runtimeResult.checkpoint,
+      contractsRoot,
+      createdAt: completedAt,
+      effectPolicy,
+      executionKind,
+      humanRequestsPath,
+      result,
+      sandboxCheckpointsPath,
+      targetRef,
+    });
+  }
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
+    value: result,
+    errorCode: "ToubaServeSandboxResultInvalid",
+    message: "sandbox run result does not match touba-sandbox-run-result-v0.1",
+  });
+  persistSandboxCurrentSurfaces({
+    contractsRoot,
+    result,
+    runSummaryPath,
+    runtimeResult,
+    traceTimelinePath,
+  });
+  return result;
+}
+
+function buildSandboxRunResult({
+  completedAt,
+  effectPolicy,
+  executionKind,
+  runId,
+  runtimeResult,
+  startedAt,
+  startedMs,
+  targetRef,
+}) {
+  return {
     schema_version: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
     run_id: runId,
     execution_kind: executionKind,
@@ -1137,21 +1348,155 @@ export async function executeProjectSandboxRun({
     effect_policy: effectPolicy,
     result: runtimeResult.result ?? null,
     trace: sandboxTraceSummary(runtimeResult.trace),
-    diagnostics: [
-      serviceDiagnostic(
-        runtimeResult.status === "success" ? "ToubaSandboxRunCompleted" : "ToubaSandboxRunFinishedWithStatus",
-        `sandbox ${executionKind} run completed with status ${runtimeResult.status}`,
-        runtimeResult.status === "success" ? "info" : "warning",
-      ),
-    ],
+    diagnostics: [sandboxRunDiagnostic(runtimeResult, executionKind)],
   };
+}
+
+function sandboxRunDiagnostic(runtimeResult, executionKind) {
+  if (runtimeResult.status === "success") {
+    return serviceDiagnostic("ToubaSandboxRunCompleted", `sandbox ${executionKind} run completed`, "info");
+  }
+  if (runtimeResult.status === "stopped" && runtimeResult.checkpoint) {
+    return serviceDiagnostic(
+      "ToubaSandboxRunAwaitingHumanDecision",
+      `sandbox ${executionKind} run is paused at a durable human decision checkpoint`,
+      "warning",
+    );
+  }
+  const runtimeFailure = [...(runtimeResult.trace?.events ?? [])]
+    .reverse()
+    .find((event) => (event.kind ?? event.type) === "failure_detected");
+  if (runtimeFailure) {
+    return serviceDiagnostic(
+      runtimeFailure.payload?.runtime_error_code ?? "ToubaSandboxRuntimeFailure",
+      runtimeFailure.message ?? `sandbox ${executionKind} run failed`,
+      "error",
+    );
+  }
+  return serviceDiagnostic(
+    "ToubaSandboxRunFinishedWithStatus",
+    `sandbox ${executionKind} run finished with status ${runtimeResult.status}`,
+    "warning",
+  );
+}
+
+export async function resumeProjectSandboxRun({
+  agentDecisionProvider,
+  agentDecisionProviderContentMode,
+  agentDecisionProviderInitialMode,
+  agentDecisionProviderMaxRetries,
+  agentDecisionProviderMetadata,
+  agentDecisionProviderTimeoutMs,
+  contractsRoot,
+  humanDecisionsPath,
+  humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
+  projectRoot,
+  request,
+  runSummaryPath,
+  sandboxCheckpointsPath = join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
+  traceTimelinePath,
+  generatedAt = new Date().toISOString(),
+}) {
+  const requestId = requiredNonEmptyString(request?.request_id, "request_id");
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const record = store.records.find((candidate) => candidate.request_id === requestId);
+  if (!record) {
+    throw serviceError("ToubaServeSandboxCheckpointNotFound", "sandbox checkpoint request_id is unknown");
+  }
+  if (record.status === "completed" && record.result) {
+    return record.result;
+  }
+  const decision = loadHumanDecisionStore(humanDecisionsPath).decisions.find((candidate) =>
+    candidate.request_id === requestId
+  );
+  if (!decision) {
+    throw serviceError("ToubaServeSandboxDecisionRequired", "a stored human decision is required before resume");
+  }
+  if (decision.run_id !== record.run_id) {
+    throw serviceError("ToubaServeSandboxDecisionMismatch", "human decision run_id does not match the checkpoint");
+  }
+  const resolved = resolveSandboxAirDocument({ projectRoot, targetRef: record.target_ref });
+  const toolBindingManifest = loadOptionalProjectManifest({ projectRoot });
+  const startedMs = Date.now();
+  let runtimeResult;
+  try {
+    const runtimeOptions = {
+      agentDecisionProvider,
+      agentDecisionProviderContentMode,
+      agentDecisionProviderInitialMode,
+      agentDecisionProviderMaxRetries,
+      agentDecisionProviderMetadata,
+      agentDecisionProviderTimeoutMs,
+      durableHumanApprovals: true,
+      entryRef: record.target_ref,
+      humanApprovalDecisions: {
+        [record.approval_ref]: runtimeDecisionFromStoredDecision(decision),
+      },
+      humanApprovalResumeCheckpoint: record.checkpoint,
+      runId: record.run_id,
+      toolBindingManifest,
+    };
+    runtimeResult = record.execution_kind === "trigger"
+      ? await executeTriggerEvent(resolved.document, {
+        trigger_ref: record.target_ref,
+        event_id: `resume-${record.run_id}`,
+        source_kind: sandboxTriggerSourceKind(resolved.document, record.target_ref),
+        arguments: {},
+      }, runtimeOptions)
+      : await executeAirDocument(resolved.document, {
+        ...runtimeOptions,
+        entryRef: record.target_ref,
+      });
+  } catch (cause) {
+    if (cause instanceof ToubaRuntimeError) {
+      const error = serviceError("ToubaServeSandboxRuntimeRejected", cause.message);
+      error.diagnostics = [serviceDiagnostic(cause.code ?? "ToubaRuntimeError", cause.message, "error", resolved.relativePath)];
+      throw error;
+    }
+    throw cause;
+  }
+  const completedAt = new Date().toISOString();
+  const result = buildSandboxRunResult({
+    completedAt,
+    effectPolicy: record.effect_policy,
+    executionKind: record.execution_kind,
+    runId: record.run_id,
+    runtimeResult,
+    startedAt: generatedAt,
+    startedMs,
+    targetRef: record.target_ref,
+  });
   validateContractPayload({
     contractsRoot,
     schemaVersion: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
     value: result,
     errorCode: "ToubaServeSandboxResultInvalid",
-    message: "sandbox run result does not match touba-sandbox-run-result-v0.1",
+    message: "resumed sandbox run result does not match touba-sandbox-run-result-v0.1",
   });
+  persistSandboxCurrentSurfaces({
+    contractsRoot,
+    result,
+    runSummaryPath,
+    runtimeResult,
+    traceTimelinePath,
+  });
+  record.status = runtimeResult.checkpoint ? "superseded" : "completed";
+  record.resumed_at = completedAt;
+  record.result = result;
+  saveSandboxCheckpointStore(sandboxCheckpointsPath, store);
+  if (runtimeResult.checkpoint) {
+    persistSandboxCheckpoint({
+      checkpoint: runtimeResult.checkpoint,
+      contractsRoot,
+      createdAt: completedAt,
+      effectPolicy: record.effect_policy,
+      executionKind: record.execution_kind,
+      humanRequestsPath,
+      result,
+      sandboxCheckpointsPath,
+      targetRef: record.target_ref,
+    });
+  }
   return result;
 }
 
@@ -1204,7 +1549,7 @@ function loadOptionalProjectManifest({ projectRoot }) {
 }
 
 function airDocumentContainsRef(document, ref) {
-  return ["agents", "skills", "strategies", "functions", "triggers"].some((collection) =>
+  return ["agents", "skills", "strategies", "functions", "tools", "triggers"].some((collection) =>
     (document.definitions?.[collection] ?? []).some((definition) => definition.id === ref)
   );
 }
@@ -1221,6 +1566,7 @@ function sandboxTriggerSourceKind(document, triggerRef) {
 }
 
 function targetMayDispatchExternalTool(document, targetRef, seen = new Set()) {
+  if (targetRef.startsWith("tool:")) return true;
   if (seen.has(targetRef)) return false;
   seen.add(targetRef);
   const graph = executionGraphForTarget(document, targetRef);
@@ -1247,18 +1593,125 @@ function executionGraphForTarget(document, targetRef) {
 
 function sandboxTraceSummary(trace) {
   const events = Array.isArray(trace?.events) ? trace.events : [];
+  const entryRef = nonEmptyString(trace?.run?.entry_ref) ?? "unknown";
   return {
     run_id: nonEmptyString(trace?.run?.run_id) ?? "unknown",
-    entry_ref: nonEmptyString(trace?.run?.entry_ref) ?? "unknown",
+    entry_ref: entryRef,
     event_count: events.length,
-    events: events.slice(-24).map((event, index) => {
+    events: events.map((event, index) => {
       const type = nonEmptyString(event.kind ?? event.type) ?? "event";
+      const references = sandboxTraceEventReferences(event);
+      const authorityRef = references.authorityRef
+        ?? (/^run_(started|completed|cancelled)$/u.test(type) ? entryRef : null);
       return {
         index: Number.isInteger(event.sequence_index) ? event.sequence_index : index,
         type,
-        summary: type,
+        summary: sandboxTraceEventSummary(event, type),
+        ...(authorityRef ? { authority_ref: authorityRef } : {}),
+        ...(references.relatedRef ? { related_ref: references.relatedRef } : {}),
+        severity: sandboxTraceEventSeverity(event, type),
+        redaction: type.includes("secret") ? "secrets_redacted" : "payload_minimized",
       };
     }),
+  };
+}
+
+function sandboxTraceEventReferences(event) {
+  const payload = isPlainObject(event?.payload) ? event.payload : {};
+  const selectedFirst = new Set(["agent_decision_recorded", "agent_capability_selected"])
+    .has(event?.kind ?? event?.type);
+  const primaryCandidates = selectedFirst
+    ? [payload.selected_ref, payload.target_ref, payload.tool_ref, payload.skill_ref, payload.agent_ref]
+    : [payload.target_ref, payload.tool_ref, payload.skill_ref, payload.strategy_ref, payload.agent_ref, payload.owner_ref, payload.entry_ref, payload.requester_ref, payload.source_ref];
+  const authorityRef = primaryCandidates.map(nonEmptyString).find((value) => value?.includes(":")) ?? null;
+  const relatedRef = [payload.caller_ref, payload.agent_ref, payload.source_ref, payload.requester_ref]
+    .map(nonEmptyString)
+    .find((value) => value?.includes(":") && value !== authorityRef) ?? null;
+  return { authorityRef, relatedRef };
+}
+
+function sandboxTraceEventSummary(event, type) {
+  const payload = isPlainObject(event?.payload) ? event.payload : {};
+  return nonEmptyString(event?.message)
+    ?? nonEmptyString(payload.runtime_error_code)
+    ?? nonEmptyString(payload.decision_source)
+    ?? nonEmptyString(payload.authority_source)
+    ?? nonEmptyString(payload.status)
+    ?? type;
+}
+
+function sandboxTraceEventSeverity(event, type) {
+  const payload = isPlainObject(event?.payload) ? event.payload : {};
+  const text = `${type} ${payload.runtime_error_code ?? ""} ${payload.status ?? ""}`.toLowerCase();
+  if (/failure|error|refus|reject|denied/u.test(text)) return "error";
+  if (/human|approval|review|cancel|stopped/u.test(text)) return "warning";
+  return "info";
+}
+
+function persistSandboxCurrentSurfaces({ contractsRoot, result, runSummaryPath, runtimeResult, traceTimelinePath }) {
+  if (!runSummaryPath || !traceTimelinePath) return;
+  const traceRef = `trace:${result.run_id}`;
+  const timeline = {
+    schema_version: "touba-trace-timeline-v1",
+    run_id: result.run_id,
+    trace_ref: traceRef,
+    events: result.trace.events.map((event) => ({
+      index: event.index,
+      type: event.type,
+      timestamp: result.started_at,
+      severity: event.severity,
+      summary: event.summary,
+      source_ref: event.authority_ref ?? event.related_ref ?? null,
+      redaction: event.redaction,
+    })),
+  };
+  const summary = {
+    schema_version: "touba-run-summary-v1",
+    run_id: result.run_id,
+    status: sandboxRunSummaryStatus(result.status, runtimeResult?.checkpoint),
+    entrypoint_ref: result.target_ref,
+    started_at: result.started_at,
+    completed_at: result.status === "stopped" ? null : result.completed_at,
+    trigger_ref: result.execution_kind === "trigger" ? result.target_ref : null,
+    trace_ref: traceRef,
+    approvals_pending: runtimeResult?.checkpoint?.approval_ref ? [runtimeResult.checkpoint.approval_ref] : [],
+    refusals: result.diagnostics
+      .filter((diagnostic) => diagnostic.severity === "error")
+      .map((diagnostic) => ({ code: diagnostic.code, message: diagnostic.message, source_ref: result.target_ref })),
+    budgets: sandboxTraceBudgetUsage(result.trace.events),
+  };
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion: "touba-trace-timeline-v1",
+    value: timeline,
+    errorCode: "ToubaServeTraceTimelineInvalid",
+    message: "sandbox trace timeline does not match touba-trace-timeline-v1",
+  });
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion: "touba-run-summary-v1",
+    value: summary,
+    errorCode: "ToubaServeRunSummaryInvalid",
+    message: "sandbox run summary does not match touba-run-summary-v1",
+  });
+  writeJsonStoreAtomic(traceTimelinePath, timeline);
+  writeJsonStoreAtomic(runSummaryPath, summary);
+}
+
+function sandboxRunSummaryStatus(status, checkpoint) {
+  if (status === "success") return "succeeded";
+  if (status === "failure") return "failed";
+  if (status === "cancelled") return "cancelled";
+  if (status === "stopped" && checkpoint?.kind === "agent_human_review") return "review_pending";
+  if (status === "stopped" && checkpoint) return "approval_pending";
+  return "paused";
+}
+
+function sandboxTraceBudgetUsage(events) {
+  return {
+    steps_used: events.filter((event) => event.type === "agent_decision_requested").length,
+    tool_calls_used: events.filter((event) => event.type === "tool_binding_authorized").length,
+    provider_calls_used: events.filter((event) => event.type === "agent_decision_provider_call_attempted").length,
   };
 }
 
@@ -1835,7 +2288,11 @@ function uniqueSorted(values) {
   return Array.from(new Set(values.filter((value) => typeof value === "string" && value.trim() !== ""))).sort();
 }
 
-export function readProductIdentity({ contractsRoot, productIdentityPath }) {
+export function readProductIdentity({
+  contractsRoot,
+  productIdentityPath,
+  generatedAt = new Date().toISOString(),
+}) {
   const stored = readOptionalContractFile({
     contractsRoot,
     filePath: productIdentityPath,
@@ -1843,10 +2300,37 @@ export function readProductIdentity({ contractsRoot, productIdentityPath }) {
     errorCode: "ToubaServeProductIdentityInvalid",
     message: "project product identity does not match touba-product-identity-v0.1",
   });
-  return stored ?? readContractFixture({ contractsRoot, schemaVersion: PRODUCT_IDENTITY_SCHEMA_VERSION });
+  return stored ?? emptyProductIdentity(generatedAt);
 }
 
-export function readCostObservatory({ contractsRoot, costObservatoryPath }) {
+function emptyProductIdentity(generatedAt) {
+  return {
+    schema_version: PRODUCT_IDENTITY_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    summary: {
+      user_count: 0,
+      team_count: 0,
+      device_count: 0,
+      active_assignment_count: 0,
+      revoked_device_count: 0,
+    },
+    users: [],
+    teams: [],
+    roles: [],
+    devices: [],
+    sessions: [],
+    assignments: [],
+    escalation_policies: [],
+    events: [],
+  };
+}
+
+export function readCostObservatory({
+  contractsRoot,
+  costObservatoryPath,
+  generatedAt = new Date().toISOString(),
+  projectRoot = process.cwd(),
+}) {
   const stored = readOptionalContractFile({
     contractsRoot,
     filePath: costObservatoryPath,
@@ -1854,10 +2338,33 @@ export function readCostObservatory({ contractsRoot, costObservatoryPath }) {
     errorCode: "ToubaServeCostObservatoryInvalid",
     message: "project cost observatory report does not match touba-cost-observatory-v0.1",
   });
-  return stored ?? readContractFixture({ contractsRoot, schemaVersion: COST_OBSERVATORY_SCHEMA_VERSION });
+  return stored ?? emptyCostObservatory({ generatedAt, projectRoot });
 }
 
-export function readMobileNotifications({ contractsRoot, mobileNotificationsPath }) {
+function emptyCostObservatory({ generatedAt, projectRoot }) {
+  return {
+    schema_version: COST_OBSERVATORY_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    project_root: projectRoot,
+    currency: "USD",
+    summary: {
+      run_count: 0,
+      provider_call_count: 0,
+      tool_call_count: 0,
+      duration_ms: 0,
+      estimated_cost: 0,
+      estimate_basis: "no recorded cost evidence",
+    },
+    runs: [],
+    diagnostics: [],
+  };
+}
+
+export function readMobileNotifications({
+  contractsRoot,
+  mobileNotificationsPath,
+  generatedAt = new Date().toISOString(),
+}) {
   const stored = readOptionalContractFile({
     contractsRoot,
     filePath: mobileNotificationsPath,
@@ -1865,7 +2372,20 @@ export function readMobileNotifications({ contractsRoot, mobileNotificationsPath
     errorCode: "ToubaServeMobileNotificationsInvalid",
     message: "mobile notification report does not match mobile client-notification-v0.1",
   });
-  return stored ?? readContractFixture({ contractsRoot, schemaVersion: MOBILE_NOTIFICATION_SCHEMA_VERSION });
+  return stored ?? emptyMobileNotifications(generatedAt);
+}
+
+function emptyMobileNotifications(generatedAt) {
+  return {
+    schema_version: MOBILE_NOTIFICATION_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    summary: {
+      notification_count: 0,
+      pending_decisions: 0,
+      alerts: 0,
+    },
+    notifications: [],
+  };
 }
 
 export function issueMobilePairingRequest({
@@ -2043,7 +2563,25 @@ export function readMobileQuickApprovalPolicy({ contractsRoot, mobileQuickApprov
     errorCode: "ToubaServeMobileQuickApprovalPolicyInvalid",
     message: "mobile quick approval policy does not match mobile client-quick-approval-policy-v0.1",
   });
-  return stored ?? readContractFixture({ contractsRoot, schemaVersion: MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION });
+  return stored ?? disabledMobileQuickApprovalPolicy();
+}
+
+function disabledMobileQuickApprovalPolicy(generatedAt = new Date().toISOString()) {
+  return {
+    schema_version: MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    policy_ref: "policy:mobile/quick-approval-disabled",
+    status: "disabled",
+    max_risk: "low",
+    allowed_modes: [],
+    allowed_decisions: [],
+    require_biometric: true,
+    fallback_target: "full_review",
+    evidence: {
+      source: "touba-project-server",
+      message: "No project quick-approval policy is configured.",
+    },
+  };
 }
 
 export function readMobileEscalation({ contractsRoot, mobileEscalationPath }) {
@@ -2054,7 +2592,22 @@ export function readMobileEscalation({ contractsRoot, mobileEscalationPath }) {
     errorCode: "ToubaServeMobileEscalationInvalid",
     message: "mobile escalation report does not match mobile client-escalation-v0.1",
   });
-  return stored ?? readContractFixture({ contractsRoot, schemaVersion: MOBILE_ESCALATION_SCHEMA_VERSION });
+  return stored ?? emptyMobileEscalation();
+}
+
+function emptyMobileEscalation(generatedAt = new Date().toISOString()) {
+  return {
+    schema_version: MOBILE_ESCALATION_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    summary: {
+      assignment_count: 0,
+      active: 0,
+      escalated: 0,
+      expired: 0,
+    },
+    assignments: [],
+    events: [],
+  };
 }
 
 export function buildHandlerSandboxStatus({
@@ -2162,14 +2715,9 @@ export function buildAuthorityGraph({
   const diagnostics = [];
   const artifacts = collectProjectArtifacts(projectRoot, diagnostics);
   const builder = createAuthorityGraphBuilder(diagnostics);
-  const governanceActionArtifacts = [];
 
   for (const artifact of artifacts) {
     const artifactPath = join(projectRoot, artifact.relative_path);
-    if (basename(artifact.relative_path) === "touba.governance-actions.json") {
-      governanceActionArtifacts.push(artifact);
-      continue;
-    }
     if (artifact.kind === "source") {
       parseToubaSourceAuthority({
         builder,
@@ -2199,14 +2747,6 @@ export function buildAuthorityGraph({
       }
     }
   }
-  for (const artifact of governanceActionArtifacts) {
-    const artifactPath = join(projectRoot, artifact.relative_path);
-    const value = readJsonArtifact(artifactPath, artifact.relative_path, diagnostics);
-    if (value !== undefined) {
-      parseGovernanceActionAuthority({ builder, value, path: artifact.relative_path });
-    }
-  }
-
   const graph = builder.build();
   const authorityDiagnostics = diagnostics.map(normalizeAuthorityDiagnostic);
   return {
@@ -2267,6 +2807,17 @@ export function readPendingHumanRequest({
   return pending;
 }
 
+function optionalPendingHumanRequest(options) {
+  try {
+    return readPendingHumanRequest(options);
+  } catch (error) {
+    if (error?.code === "ToubaServePendingHumanRequestNotFound") {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export function refreshProject({
   projectRoot,
   previousSnapshot,
@@ -2299,6 +2850,7 @@ export function proposeProjectChange({
   }
   const stored = {
     ...normalized,
+    ...changeTargetBaseEvidence(projectRoot, normalized.target.path),
     status: "proposed",
     proposed_at: proposedAt,
     validations: validateChangeContent(normalized, { projectRoot }),
@@ -2365,6 +2917,7 @@ export function applyProjectChange({
     throw error;
   }
   const targetPath = safeProjectPath(projectRoot, proposal.target.path);
+  assertChangeTargetUnchanged(proposal, targetPath);
   mkdirSync(dirname(targetPath), { recursive: true });
   const tempPath = `${targetPath}.touba-write-${process.pid}-${Date.now()}`;
   writeFileSync(tempPath, proposal.content, "utf8");
@@ -2392,6 +2945,34 @@ export function applyProjectChange({
       relative_path: proposal.target.path,
     },
   };
+}
+
+export function proposeGovernanceRelationChange({
+  projectRoot,
+  changeProposalsPath,
+  request,
+  proposedAt = new Date().toISOString(),
+}) {
+  const normalized = validateGovernanceRelationChangeRequest(request);
+  const draft = buildGovernanceRelationSourceDraft({
+    operation: normalized.operation,
+    projectRoot,
+    relation: normalized.relation,
+  });
+  return proposeProjectChange({
+    projectRoot,
+    changeProposalsPath,
+    proposedAt,
+    proposal: {
+      schema_version: CHANGE_PROPOSAL_SCHEMA_VERSION,
+      proposal_id: normalized.proposal_id,
+      action: "write_text_file",
+      target: { path: draft.path },
+      requested_by: normalized.requested_by,
+      reason: normalized.reason,
+      content: draft.content,
+    },
+  });
 }
 
 export function listProjectChanges({
@@ -2480,6 +3061,7 @@ function buildProjectInspection({
       path: artifact.relative_path,
       status: inspectionArtifactStatus(artifact, projectSnapshot.report?.diagnostics ?? []),
     }));
+  const packages = buildProjectPackages({ projectRoot, artifacts: projectSnapshot.artifacts, diagnostics });
 
   return {
     schema_version: "touba-project-inspection-v1",
@@ -2491,8 +3073,63 @@ function buildProjectInspection({
     },
     artifacts,
     entrypoints: buildProjectEntrypoints({ projectRoot, artifacts: projectSnapshot.artifacts, diagnostics }),
+    packages,
     diagnostics,
   };
+}
+
+function buildProjectPackages({ projectRoot, artifacts, diagnostics }) {
+  const packages = [];
+  for (const artifact of artifacts.filter((item) => (
+    item.kind === "package" && item.relative_path.startsWith("packages/")
+  ))) {
+    let document;
+    try {
+      document = JSON.parse(readFileSync(join(projectRoot, artifact.relative_path), "utf8"));
+    } catch (cause) {
+      diagnostics.push(serviceDiagnostic(
+        "ToubaProjectPackageUnreadable",
+        `cannot read ${artifact.relative_path}: ${cause.message}`,
+        "warning",
+        artifact.relative_path,
+      ));
+      continue;
+    }
+    const name = nonEmptyString(document?.name);
+    const version = nonEmptyString(document?.version);
+    const valid = document?.package_schema_version === "touba-package-v0.1"
+      && name !== undefined
+      && version !== undefined
+      && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)
+      && isPlainObject(document?.exports);
+    if (!valid) {
+      diagnostics.push(serviceDiagnostic(
+        "ToubaProjectPackageInvalid",
+        `${artifact.relative_path} is not a valid touba-package-v0.1 document`,
+        "warning",
+        artifact.relative_path,
+      ));
+      continue;
+    }
+    const exports = Object.values(document.exports)
+      .filter(Array.isArray)
+      .flat()
+      .filter((ref) => typeof ref === "string" && ref.trim() !== "");
+    packages.push({
+      package_ref: `package:${name}`,
+      name,
+      version,
+      status: "installed",
+      digest: `sha256:${artifact.sha256}`,
+      path: artifact.relative_path,
+      description: nonEmptyString(document.description) ?? "",
+      documentation_url: nonEmptyString(document.documentation_url)
+        ?? nonEmptyString(document.docs_url)
+        ?? "",
+      exports,
+    });
+  }
+  return packages.sort((left, right) => left.package_ref.localeCompare(right.package_ref));
 }
 
 function inspectionDiagnostics(diagnostics) {
@@ -2554,8 +3191,21 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
           kind,
           ref,
           description: nonEmptyString(definition.description) ?? nonEmptyString(definition.name) ?? ref,
+          input_contract: buildAirInputContract({ air, definition, kind }),
         });
       }
+    }
+    for (const trigger of Array.isArray(air?.definitions?.triggers) ? air.definitions.triggers : []) {
+      const ref = nonEmptyString(trigger.id);
+      if (ref === undefined) {
+        continue;
+      }
+      entrypoints.set(ref, {
+        kind: "trigger",
+        ref,
+        description: nonEmptyString(trigger.description) ?? nonEmptyString(trigger.name) ?? ref,
+        input_contract: buildAirInputContract({ air, definition: trigger, kind: "trigger" }),
+      });
     }
   }
   for (const artifact of artifacts.filter((item) => item.kind === "source")) {
@@ -2567,10 +3217,14 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
     for (const match of content.matchAll(/^\s*trigger\s+([A-Za-z_][\w]*)\b/gmu)) {
       const name = match[1];
       const ref = `trigger:${moduleName}/${name}`;
+      if (entrypoints.has(ref)) {
+        continue;
+      }
       entrypoints.set(ref, {
         kind: "trigger",
         ref,
         description: `Trigger ${name}`,
+        input_contract: unavailableAirInputContract(),
       });
     }
   }
@@ -2710,19 +3364,21 @@ function createAuthorityGraphBuilder(diagnostics) {
     }
   };
 
-  const addEdge = ({ kind, from, to, evidence }) => {
+  const addEdge = ({ kind, from, to, evidence, access }) => {
     const fromRef = normalizeAuthorityRef(from);
     const toRef = normalizeAuthorityRef(to);
     if (fromRef === undefined || toRef === undefined) {
       return;
     }
-    const id = `edge:${kind}:${fromRef}->${toRef}`;
+    const normalizedAccess = ["read", "write"].includes(access) ? access : undefined;
+    const id = `edge:${kind}:${fromRef}->${toRef}${normalizedAccess === undefined ? "" : `:${normalizedAccess}`}`;
     if (!pendingEdges.has(id)) {
       pendingEdges.set(id, {
         id,
         kind,
         from: fromRef,
         to: toRef,
+        ...(normalizedAccess === undefined ? {} : { access: normalizedAccess }),
         evidence,
       });
     }
@@ -2780,6 +3436,7 @@ function parseAirAuthority({ builder, value, path }) {
   }
   const definitions = isPlainObject(value.definitions) ? value.definitions : {};
   for (const [collection, kind] of [
+    ["functions", "function"],
     ["tools", "tool"],
     ["skills", "skill"],
     ["agents", "agent"],
@@ -2942,70 +3599,13 @@ function parsePackageAuthority({ builder, value, path }) {
   }
 }
 
-function parseGovernanceActionAuthority({ builder, value, path }) {
-  if (!isPlainObject(value)) {
-    return;
-  }
-  const relation = isPlainObject(value.relation) ? value.relation : {};
-  const operation = nonEmptyString(value.operation);
-  const relationKind = nonEmptyString(relation.kind) ?? "relation";
-  const sourceRef = nonEmptyString(relation.source_ref);
-  const targetRef = nonEmptyString(relation.target_ref);
-  if (operation === undefined || sourceRef === undefined || targetRef === undefined) {
-    return;
-  }
-  const evidence = authorityEvidence("governance_action", path, value.action_id ?? path);
-  builder.addNode({
-    ref: sourceRef,
-    kind: authorityKind(undefined, sourceRef),
-    label: authorityLabel(sourceRef),
-    evidence,
-  });
-  builder.addNode({
-    ref: targetRef,
-    kind: authorityKind(undefined, targetRef),
-    label: authorityLabel(targetRef),
-    evidence,
-  });
-  if (operation === "grant_authority") {
-    builder.addEdge({ kind: relationKind, from: sourceRef, to: targetRef, evidence });
-    return;
-  }
-  if (operation === "revoke_authority") {
-    builder.removeEdge({ kind: relationKind, from: sourceRef, to: targetRef, evidence });
-    return;
-  }
-  if (operation === "require_review") {
-    const gateRef = `human_gate:${sourceRef}/${relationKind}-review`;
-    builder.addNode({
-      ref: gateRef,
-      kind: "human_gate",
-      label: "review required",
-      evidence,
-    });
-    builder.addEdge({ kind: "requires", from: sourceRef, to: gateRef, evidence });
-    builder.addEdge({ kind: "requires", from: gateRef, to: targetRef, evidence });
-    return;
-  }
-  if (operation === "set_quota") {
-    const quotaRef = `capability:quota:${relationKind}:${targetRef}`;
-    builder.addNode({
-      ref: quotaRef,
-      kind: "capability",
-      label: `quota:${relationKind}`,
-      evidence,
-    });
-    builder.addEdge({ kind: "requires", from: sourceRef, to: quotaRef, evidence });
-  }
-}
-
 function parseToubaSourceAuthority({ builder, content, path }) {
   if (content === undefined) {
     return;
   }
   const moduleName = content.match(/^\s*module\s+([A-Za-z_][\w.]*)/mu)?.[1];
   const localRefs = new Map();
-  for (const match of content.matchAll(/^([ \t]*)(memory|tool|skill|agent|strategy|trigger)\s+([A-Za-z_][\w]*)\b/gmu)) {
+  for (const match of content.matchAll(/^([ \t]*)(memory|function|tool|skill|agent|strategy|trigger)\s+([A-Za-z_][\w]*)\b/gmu)) {
     const kind = match[2] === "memory" ? "memory" : match[2];
     const name = match[3];
     const ref = kind === "memory"
@@ -3022,7 +3622,10 @@ function parseToubaSourceAuthority({ builder, content, path }) {
   for (const match of content.matchAll(/^\s*import\s+(type|define|function|tool|skill|agent|strategy)?\s*([A-Za-z_][\w]*)\s+from\s+([A-Za-z_][\w.]*)/gmu)) {
     const importedName = match[2];
     const importedModule = match[3];
-    const importedKind = match[1] === "define" || match[1] === "function" ? "skill" : match[1];
+    const importedKind = match[1];
+    if (importedKind === "type" || importedKind === "define") {
+      continue;
+    }
     const importRef = `${importedKind ?? "module"}:${importedModule}/${importedName}`;
     builder.addNode({
       ref: importRef,
@@ -3062,7 +3665,7 @@ function parseToubaSourceAuthority({ builder, content, path }) {
         });
       }
     }
-    for (const callMatch of block.body.matchAll(/^\s*callable_by\s+strategy\s+([A-Za-z_][\w]*)\b/gmu)) {
+    for (const callMatch of block.body.matchAll(/^\s*callable_by\s+(?:strategy|agent)\s+([A-Za-z_][\w]*)\b/gmu)) {
       const callerRef = localRefs.get(callMatch[1]);
       if (callerRef !== undefined) {
         builder.addEdge({
@@ -3073,13 +3676,14 @@ function parseToubaSourceAuthority({ builder, content, path }) {
         });
       }
     }
-    for (const memoryMatch of block.body.matchAll(/^\s*(?:uses\s+)?memory\s+([A-Za-z_][\w]*)\s+(read|write|read_write)\b/gmu)) {
+    for (const memoryMatch of block.body.matchAll(/^\s*(?:uses\s+)?memory\s+([A-Za-z_][\w]*)\s+(read|write)\b/gmu)) {
       const memoryRef = localRefs.get(memoryMatch[1]);
       if (memoryRef !== undefined) {
         builder.addEdge({
           kind: "requires",
           from: ownerRef,
           to: memoryRef,
+          access: memoryMatch[2],
           evidence: authorityEvidence("source", path, `${path}:${block.startLine + lineNumberAt(block.body, memoryMatch.index) - 1}`),
         });
       }
@@ -3207,13 +3811,14 @@ function normalizeAuthorityDiagnostic(diagnostic) {
 }
 
 function authorityKind(kind, ref) {
-  if (["agent", "skill", "tool", "strategy", "trigger", "human_gate", "memory", "capability", "package", "module"].includes(kind)) {
+  if (["agent", "function", "skill", "tool", "strategy", "trigger", "human_gate", "memory", "capability", "package", "module"].includes(kind)) {
     return kind;
   }
   if (typeof ref !== "string") {
     return undefined;
   }
   if (ref.startsWith("agent:")) return "agent";
+  if (ref.startsWith("function:")) return "function";
   if (ref.startsWith("skill:")) return "skill";
   if (ref.startsWith("tool:")) return "tool";
   if (ref.startsWith("strategy:")) return "strategy";
@@ -3279,16 +3884,311 @@ function authoritySortKey(node) {
     strategy: "2",
     agent: "3",
     skill: "4",
-    tool: "5",
-    human_gate: "6",
-    memory: "7",
-    capability: "8",
+    function: "5",
+    tool: "6",
+    human_gate: "7",
+    memory: "8",
+    capability: "9",
   };
   return `${order[node.kind] ?? "9"}:${node.ref}`;
 }
 
 function lineNumberAt(content, offset) {
   return content.slice(0, offset).split(/\r?\n/u).length;
+}
+
+function validateGovernanceRelationChangeRequest(request) {
+  if (!isPlainObject(request) || request.schema_version !== GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION) {
+    throw serviceError(
+      "ToubaServeGovernanceRelationInvalid",
+      `governance relation change must use ${GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION}`,
+    );
+  }
+  if (!["add", "remove", "replace"].includes(request.operation)) {
+    throw serviceError("ToubaServeGovernanceRelationInvalid", "governance relation operation must be add, remove or replace");
+  }
+  if (!isPlainObject(request.relation) || !["uses", "callable_by", "invokes_agent", "memory_access", "dispatches"].includes(request.relation.kind)) {
+    throw serviceError(
+      "ToubaServeGovernanceRelationInvalid",
+      "governance relation kind must be uses, callable_by, invokes_agent, memory_access or dispatches",
+    );
+  }
+  if (request.relation.kind === "memory_access" && !["read", "write"].includes(request.relation.access)) {
+    throw serviceError("ToubaServeGovernanceRelationInvalid", "memory_access requires read or write access");
+  }
+  if (request.relation.kind === "dispatches" && request.operation !== "replace") {
+    throw serviceError("ToubaServeGovernanceRelationInvalid", "dispatches supports replace operations only");
+  }
+  if (request.relation.kind !== "dispatches" && request.operation === "replace") {
+    throw serviceError("ToubaServeGovernanceRelationInvalid", "replace is reserved for trigger dispatch targets");
+  }
+  return {
+    schema_version: GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION,
+    proposal_id: requiredNonEmptyString(request.proposal_id, "proposal_id"),
+    operation: request.operation,
+    relation: {
+      kind: request.relation.kind,
+      source_ref: requiredNonEmptyString(request.relation.source_ref, "relation.source_ref"),
+      target_ref: requiredNonEmptyString(request.relation.target_ref, "relation.target_ref"),
+      ...(request.relation.kind === "memory_access" ? { access: request.relation.access } : {}),
+    },
+    requested_by: normalizeActor(request.requested_by),
+    reason: requiredNonEmptyString(request.reason, "reason"),
+  };
+}
+
+function buildGovernanceRelationSourceDraft({ operation, projectRoot, relation }) {
+  const sourceIndex = buildToubaEditableSourceIndex(projectRoot);
+  const source = sourceIndex.declarations.get(relation.source_ref);
+  const target = sourceIndex.declarations.get(relation.target_ref);
+  if (source === undefined || target === undefined) {
+    throw serviceError(
+      "ToubaServeGovernanceRelationSourceMissing",
+      "both governance relation endpoints must be declared in Touba source",
+    );
+  }
+  assertGovernanceRelationCompatibility(relation.kind, source, target);
+  if (source.path !== target.path) {
+    throw serviceError(
+      "ToubaServeGovernanceRelationCrossSourceUnsupported",
+      "this governance relation spans multiple source files and cannot be edited as one atomic source change",
+    );
+  }
+  const file = sourceIndex.files.get(source.path);
+  const specs = governanceRelationMutationSpecs({
+    access: relation.access,
+    file,
+    relationKind: relation.kind,
+    source,
+    target,
+  });
+  if (file === undefined || specs.some((spec) => spec.block === undefined)) {
+    throw serviceError("ToubaServeGovernanceRelationSourceMissing", "governance relation source block is unavailable");
+  }
+  const states = specs.map((spec) => ({
+    ...spec,
+    present: spec.matcher.test(file.content.slice(spec.block.bodyStart, spec.block.end)),
+    replacementPresent: spec.replacementMatcher?.test(file.content.slice(spec.block.bodyStart, spec.block.end)) ?? false,
+  }));
+  if (operation === "add" && states.every((state) => state.present)) {
+    throw serviceError("ToubaServeGovernanceRelationAlreadyExists", "the governance relation already exists in source");
+  }
+  if (operation === "remove" && states.every((state) => !state.present)) {
+    throw serviceError("ToubaServeGovernanceRelationNotFound", "the governance relation is not declared in source");
+  }
+  if (operation === "replace" && states.every((state) => state.replacementPresent)) {
+    throw serviceError("ToubaServeGovernanceRelationAlreadyExists", "the trigger already dispatches to this target");
+  }
+  if (operation === "replace" && states.some((state) => !state.present)) {
+    throw serviceError("ToubaServeGovernanceRelationNotFound", "the trigger dispatch target is not declared in source");
+  }
+  const content = states
+    .filter((state) => operation === "add" ? !state.present : state.present)
+    .sort((left, right) => right.block.headerStart - left.block.headerStart)
+    .reduce((current, state) => (
+      operation === "add"
+        ? insertGovernanceRelationLine(current, state.block, state.line, state.kind)
+        : operation === "remove"
+          ? removeGovernanceRelationLine(current, state.block, state.matcher)
+          : replaceGovernanceRelationLine(current, state.block, state.matcher, state.line)
+    ), file.content);
+  return { content, path: source.path };
+}
+
+function buildToubaEditableSourceIndex(projectRoot) {
+  const diagnostics = [];
+  const files = new Map();
+  const declarations = new Map();
+  for (const artifact of collectProjectArtifacts(projectRoot, diagnostics).filter((item) => item.kind === "source")) {
+    const absolutePath = safeProjectPath(projectRoot, artifact.relative_path);
+    const content = readFileSync(absolutePath, "utf8");
+    const moduleName = content.match(/^\s*module\s+([A-Za-z_][\w.]*)/mu)?.[1];
+    if (moduleName === undefined) {
+      continue;
+    }
+    const fileDeclarations = new Map();
+    for (const block of splitEditableToubaDeclarationBlocks(content, moduleName, artifact.relative_path)) {
+      if (declarations.has(block.ref)) {
+        throw serviceError(
+          "ToubaServeGovernanceDeclarationAmbiguous",
+          `authority reference ${block.ref} is declared more than once in source`,
+        );
+      }
+      declarations.set(block.ref, block);
+      fileDeclarations.set(block.ref, block);
+    }
+    files.set(artifact.relative_path, { content, declarations: fileDeclarations });
+  }
+  return { declarations, files };
+}
+
+function splitEditableToubaDeclarationBlocks(content, moduleName, path) {
+  const declarations = [];
+  for (const match of content.matchAll(/^(memory|function|tool|skill|agent|strategy|trigger)\s+([A-Za-z_][\w]*)\b[^\r\n]*(?:\r?\n|$)/gmu)) {
+    declarations.push({
+      bodyStart: match.index + match[0].length,
+      headerStart: match.index,
+      kind: match[1],
+      name: match[2],
+      path,
+      ref: `${match[1]}:${moduleName}/${match[2]}`,
+    });
+  }
+  return declarations.map((declaration, index) => ({
+    ...declaration,
+    end: declarations[index + 1]?.headerStart ?? content.length,
+  }));
+}
+
+function assertGovernanceRelationCompatibility(kind, source, target) {
+  if (kind === "memory_access") {
+    if (target.kind !== "memory" || !["agent", "skill", "strategy", "tool"].includes(source.kind)) {
+      throw serviceError(
+        "ToubaServeGovernanceRelationIncompatible",
+        "memory_access must connect an agent, skill, strategy or tool to a memory",
+      );
+    }
+    return;
+  }
+  if (kind === "dispatches") {
+    if (source.kind !== "trigger" || target.kind !== "strategy") {
+      throw serviceError(
+        "ToubaServeGovernanceRelationIncompatible",
+        "dispatches must connect a trigger to a strategy",
+      );
+    }
+    return;
+  }
+  if (kind === "invokes_agent") {
+    if (target.kind !== "agent" || !["agent", "strategy"].includes(source.kind)) {
+      throw serviceError(
+        "ToubaServeGovernanceRelationIncompatible",
+        "invokes_agent must connect a strategy or agent caller to an agent",
+      );
+    }
+    return;
+  }
+  if (kind === "callable_by") {
+    if (target.kind !== "agent" || !["agent", "strategy"].includes(source.kind)) {
+      throw serviceError(
+        "ToubaServeGovernanceRelationIncompatible",
+        "callable_by must connect a strategy or agent caller to an agent",
+      );
+    }
+    return;
+  }
+  const targetKinds = {
+    agent: new Set(["agent", "skill", "tool"]),
+    skill: new Set(["function", "skill", "tool"]),
+    strategy: new Set(["agent", "function", "skill", "tool"]),
+  };
+  if (!targetKinds[source.kind]?.has(target.kind)) {
+    throw serviceError(
+      "ToubaServeGovernanceRelationIncompatible",
+      `${source.kind} cannot declare a uses relation to ${target.kind}`,
+    );
+  }
+}
+
+function governanceRelationMutationSpecs({ access, file, relationKind, source, target }) {
+  if (relationKind === "memory_access") {
+    const line = source.kind === "tool"
+      ? `uses memory ${target.name} ${access}`
+      : `memory ${target.name} ${access}`;
+    return [governanceLineMutationSpec({
+      block: file?.declarations.get(source.ref),
+      kind: "memory_access",
+      line,
+    })];
+  }
+  if (relationKind === "dispatches") {
+    return [{
+      block: file?.declarations.get(source.ref),
+      kind: "dispatches",
+      line: `runs strategy ${target.name}`,
+      matcher: /^[ \t]+runs\s+strategy\s+[A-Za-z_][\w]*[ \t]*(?:\r?\n|$)/mu,
+      replacementMatcher: governanceSourceLineMatcher(`runs strategy ${target.name}`),
+    }];
+  }
+  if (relationKind === "invokes_agent") {
+    return [
+      governanceLineMutationSpec({
+        block: file?.declarations.get(source.ref),
+        kind: "uses",
+        line: `uses ${target.name}`,
+      }),
+      governanceLineMutationSpec({
+        block: file?.declarations.get(target.ref),
+        kind: "callable_by",
+        line: `callable_by ${source.kind} ${source.name}`,
+      }),
+    ];
+  }
+  const owner = relationKind === "callable_by" ? target : source;
+  return [governanceLineMutationSpec({
+    block: file?.declarations.get(owner.ref),
+    kind: relationKind,
+    line: governanceRelationSourceLine(relationKind, source, target),
+  })];
+}
+
+function governanceLineMutationSpec({ block, kind, line }) {
+  return {
+    block,
+    kind,
+    line,
+    matcher: governanceSourceLineMatcher(line),
+  };
+}
+
+function governanceRelationSourceLine(kind, source, target) {
+  if (kind === "callable_by") {
+    return `callable_by ${source.kind} ${source.name}`;
+  }
+  return `uses ${target.name}`;
+}
+
+function governanceSourceLineMatcher(sourceLine) {
+  const line = sourceLine
+    .split(/\s+/u)
+    .map(escapeRegex)
+    .join("\\s+");
+  return new RegExp(`^[ \\t]+${line}[ \\t]*(?:\\r?\\n|$)`, "mu");
+}
+
+function insertGovernanceRelationLine(content, block, line, kind) {
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const body = content.slice(block.bodyStart, block.end);
+  const boundaryPattern = kind === "uses"
+    ? /^[ \t]+(?:callable_by\b|memory\b|do\s*$|on\s+failure\b)/mu
+    : /^[ \t]+(?:memory\b|do\s*$)/mu;
+  const boundary = boundaryPattern.exec(body);
+  const trailingBlankLines = /(?<first>\r?\n)(?:[ \t]*\r?\n)+[ \t]*$/u.exec(body);
+  const insertionOffset = boundary !== null
+    ? block.bodyStart + boundary.index
+    : trailingBlankLines !== null
+      ? block.bodyStart + trailingBlankLines.index + trailingBlankLines.groups.first.length
+      : block.end;
+  return `${content.slice(0, insertionOffset)}    ${line}${newline}${content.slice(insertionOffset)}`;
+}
+
+function removeGovernanceRelationLine(content, block, matcher) {
+  const body = content.slice(block.bodyStart, block.end);
+  return `${content.slice(0, block.bodyStart)}${body.replace(matcher, "")}${content.slice(block.end)}`;
+}
+
+function replaceGovernanceRelationLine(content, block, matcher, line) {
+  const body = content.slice(block.bodyStart, block.end);
+  const replacement = body.replace(matcher, (matched) => {
+    const indent = matched.match(/^[ \t]*/u)?.[0] ?? "    ";
+    const newline = matched.endsWith("\r\n") ? "\r\n" : matched.endsWith("\n") ? "\n" : "";
+    return `${indent}${line}${newline}`;
+  });
+  return `${content.slice(0, block.bodyStart)}${replacement}${content.slice(block.end)}`;
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function validateChangeProposal({ projectRoot, proposal }) {
@@ -3636,6 +4536,32 @@ function safeProjectPath(projectRoot, relativePath) {
   return absolutePath;
 }
 
+function changeTargetBaseEvidence(projectRoot, relativePath) {
+  const targetPath = safeProjectPath(projectRoot, relativePath);
+  const exists = existsSync(targetPath);
+  return {
+    base_content_exists: exists,
+    base_content_sha256: exists ? sha256Buffer(readFileSync(targetPath)) : null,
+  };
+}
+
+function assertChangeTargetUnchanged(proposal, targetPath) {
+  if (!Object.hasOwn(proposal, "base_content_exists") || !Object.hasOwn(proposal, "base_content_sha256")) {
+    throw serviceError(
+      "ToubaServeChangeBaseEvidenceMissing",
+      "change proposal predates source-drift protection and must be proposed again",
+    );
+  }
+  const exists = existsSync(targetPath);
+  const digest = exists ? sha256Buffer(readFileSync(targetPath)) : null;
+  if (exists !== proposal.base_content_exists || digest !== proposal.base_content_sha256) {
+    throw serviceError(
+      "ToubaServeChangeSourceDrift",
+      "change target changed after validation; propose the governance change again",
+    );
+  }
+}
+
 function loadChangeProposalStore(changeProposalsPath) {
   if (!existsSync(changeProposalsPath)) {
     return {
@@ -3834,6 +4760,135 @@ function readHumanRequestStore(humanRequestsPath) {
     throw serviceError("ToubaServeHumanRequestStoreInvalid", `human request store must use ${HUMAN_REQUEST_STORE_SCHEMA_VERSION}`);
   }
   return store;
+}
+
+function persistSandboxCheckpoint({
+  checkpoint,
+  contractsRoot,
+  createdAt,
+  effectPolicy,
+  executionKind,
+  humanRequestsPath,
+  result,
+  sandboxCheckpointsPath,
+  targetRef,
+}) {
+  const requestId = `${checkpoint.approval_ref}:${checkpoint.run_id}`;
+  const humanRequest = humanRequestFromCheckpoint({
+    checkpoint,
+    createdAt,
+    requestId,
+  });
+  validateContractPayload({
+    contractsRoot,
+    schemaVersion: humanRequest.schema_version,
+    value: humanRequest,
+    errorCode: "ToubaServePendingHumanRequestInvalid",
+    message: "runtime checkpoint could not be represented as a human request",
+  });
+  const humanStore = existsSync(humanRequestsPath)
+    ? readHumanRequestStore(humanRequestsPath)
+    : { schema_version: HUMAN_REQUEST_STORE_SCHEMA_VERSION, approvals: [], reviews: [] };
+  const requestCollection = humanRequest.mode === "approval" ? humanStore.approvals : humanStore.reviews;
+  if (!requestCollection.some((candidate) => candidate.request_id === requestId)) {
+    requestCollection.push(humanRequest);
+    saveHumanRequestStore(humanRequestsPath, humanStore);
+  }
+
+  const checkpointStore = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  if (!checkpointStore.records.some((candidate) => candidate.request_id === requestId)) {
+    checkpointStore.records.push({
+      request_id: requestId,
+      approval_ref: checkpoint.approval_ref,
+      run_id: checkpoint.run_id,
+      target_ref: targetRef,
+      execution_kind: executionKind,
+      effect_policy: effectPolicy,
+      status: "pending",
+      created_at: createdAt,
+      checkpoint,
+      paused_result: result,
+    });
+    saveSandboxCheckpointStore(sandboxCheckpointsPath, checkpointStore);
+  }
+  return humanRequest;
+}
+
+function humanRequestFromCheckpoint({ checkpoint, createdAt, requestId }) {
+  const expiresAt = new Date(Date.parse(createdAt) + 24 * 60 * 60 * 1000).toISOString();
+  const traceRef = `trace:${checkpoint.run_id}`;
+  if (checkpoint.kind === "agent_human_review") {
+    return {
+      schema_version: "touba-human-review-request-v1",
+      request_id: requestId,
+      run_id: checkpoint.run_id,
+      mode: "human_review",
+      requester_ref: checkpoint.requester_ref ?? checkpoint.agent_ref ?? checkpoint.entry_ref,
+      review_prompt: checkpoint.review_prompt ?? "Review the requested agent decision.",
+      context_summary: checkpoint.review_reason ?? `Review requested by ${checkpoint.agent_ref ?? checkpoint.entry_ref}.`,
+      allowed_outcomes: ["accepted", "changes_requested", "rejected", "escalated"],
+      expires_at: expiresAt,
+      trace_ref: traceRef,
+      redaction: "payload_minimized",
+    };
+  }
+  return {
+    schema_version: "touba-approval-request-v1",
+    request_id: requestId,
+    run_id: checkpoint.run_id,
+    mode: "approval",
+    requester_ref: checkpoint.requester_ref ?? checkpoint.caller_ref ?? checkpoint.entry_ref,
+    capability_ref: checkpoint.required_by_ref ?? checkpoint.graph_ref ?? checkpoint.entry_ref,
+    reason: `Approval required by ${checkpoint.graph_ref ?? checkpoint.entry_ref}.`,
+    summary: `Resume ${checkpoint.entry_ref} at its declared human approval boundary.`,
+    allowed_decisions: ["approve", "reject"],
+    expires_at: expiresAt,
+    trace_ref: traceRef,
+    redaction: "payload_minimized",
+  };
+}
+
+function saveHumanRequestStore(humanRequestsPath, store) {
+  writeJsonStoreAtomic(humanRequestsPath, store);
+}
+
+function loadSandboxCheckpointStore(sandboxCheckpointsPath) {
+  if (!existsSync(sandboxCheckpointsPath)) {
+    return { schema_version: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION, records: [] };
+  }
+  let store;
+  try {
+    store = JSON.parse(readFileSync(sandboxCheckpointsPath, "utf8"));
+  } catch (cause) {
+    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `sandbox checkpoint store is not valid JSON: ${cause.message}`);
+  }
+  if (store?.schema_version !== SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION || !Array.isArray(store.records)) {
+    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `sandbox checkpoint store must use ${SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION}`);
+  }
+  return store;
+}
+
+function saveSandboxCheckpointStore(sandboxCheckpointsPath, store) {
+  writeJsonStoreAtomic(sandboxCheckpointsPath, store);
+}
+
+function runtimeDecisionFromStoredDecision(decision) {
+  if (decision.schema_version === "touba-approval-decision-v1") {
+    if (decision.decision === "approve") return "approved";
+    if (decision.decision === "reject") return "rejected";
+    return "cancelled";
+  }
+  if (decision.schema_version === "touba-human-review-decision-v1") {
+    return decision.outcome === "accepted" ? "approved" : "rejected";
+  }
+  throw serviceError("ToubaServeDecisionContractUnsupported", "stored decision cannot resume a sandbox checkpoint");
+}
+
+function writeJsonStoreAtomic(filePath, value) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  renameSync(tempPath, filePath);
 }
 
 function schemaVersionToDecisionSchema(schemaVersion) {
@@ -4200,20 +5255,25 @@ function httpStatusForError(code) {
   if (code === "ToubaServeUnauthorized") return 401;
   if (
     code === "ToubaServeDecisionReplayRejected"
+    || code === "ToubaServeDecisionRequestMismatch"
+    || code === "ToubaServeSandboxDecisionRequired"
+    || code === "ToubaServeSandboxDecisionMismatch"
     || code === "ToubaServeChangeProposalDuplicate"
     || code === "ToubaServeChangeAlreadyDecided"
     || code === "ToubaServeMobilePairingDuplicate"
     || code === "ToubaServeMobilePairingReplayRejected"
     || code === "ToubaServeMobilePairingRevoked"
   ) return 409;
-  if (code === "ToubaServeMobilePairingExpired") return 410;
+  if (code === "ToubaServeMobilePairingExpired" || code === "ToubaServeDecisionRequestExpired") return 410;
   if (
     code === "ToubaServeRouteNotFound"
     || code === "ToubaServeContractUnknown"
     || code === "ToubaServeDecisionNotFound"
+    || code === "ToubaServeDecisionRequestNotFound"
     || code === "ToubaServePendingHumanRequestNotFound"
     || code === "ToubaServeChangeProposalNotFound"
     || code === "ToubaServeMobilePairingUnknown"
+    || code === "ToubaServeSandboxCheckpointNotFound"
   ) return 404;
   if (code === "ToubaServeBodyTooLarge" || code === "ToubaServeChangeTooLarge") return 413;
   if (
@@ -4221,6 +5281,7 @@ function httpStatusForError(code) {
     || code === "ToubaServeChangePathRejected"
     || code === "ToubaServeMobilePairingScopeRejected"
     || code === "ToubaServeSandboxExternalEffectsRejected"
+    || code === "ToubaServeDecisionIdentityUnauthorized"
   ) return 403;
   if (
     code === "ToubaServeSandboxAirUnavailable"
@@ -4257,7 +5318,6 @@ function parseArgs(rawArgs) {
   const options = {
     host: DEFAULT_HOST,
     port: DEFAULT_PORT,
-    humanDecisionsPath: DEFAULT_HUMAN_DECISIONS_PATH,
     eventJournalLimit: DEFAULT_EVENT_JOURNAL_LIMIT,
     help: false,
     strict: false,

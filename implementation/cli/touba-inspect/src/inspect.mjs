@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildAirInputContract } from "../../../contracts/product-surfaces/input-contracts.mjs";
 
 export const INSPECT_ABSENT_DATA = [
   "policies",
@@ -502,6 +503,7 @@ export function projectInspectionContract(inspection, options = {}) {
     },
     artifacts: projectInspectionArtifacts(inspection),
     entrypoints: projectInspectionEntrypoints(inspection),
+    packages: [],
     diagnostics: projectInspectionDiagnostics(inspection),
   };
 }
@@ -2568,14 +2570,16 @@ function summarizeAirImports(air) {
 function summarizeAirEntryPoints(air) {
   const definitions = air?.definitions ?? {};
   return [
-    ...entrypointsFromDefinitions(definitions.agents, "agent"),
-    ...entrypointsFromDefinitions(definitions.skills, "skill"),
-    ...entrypointsFromDefinitions(definitions.strategies, "strategy"),
-    ...entrypointsFromDefinitions(definitions.triggers, "trigger"),
+    ...entrypointsFromDefinitions(air, definitions.agents, "agent"),
+    ...entrypointsFromDefinitions(air, definitions.functions, "function"),
+    ...entrypointsFromDefinitions(air, definitions.skills, "skill"),
+    ...entrypointsFromDefinitions(air, definitions.strategies, "strategy"),
+    ...entrypointsFromDefinitions(air, definitions.tools, "tool"),
+    ...entrypointsFromDefinitions(air, definitions.triggers, "trigger"),
   ];
 }
 
-function entrypointsFromDefinitions(definitions, kind) {
+function entrypointsFromDefinitions(air, definitions, kind) {
   if (!Array.isArray(definitions)) {
     return [];
   }
@@ -2585,6 +2589,7 @@ function entrypointsFromDefinitions(definitions, kind) {
       kind,
       ref: declaration.id,
       description: entrypointDescription(declaration, kind),
+      input_contract: buildAirInputContract({ air, definition: declaration, kind }),
     }));
 }
 

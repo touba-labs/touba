@@ -33,7 +33,11 @@
             "properties": {
               "index": { "type": "integer" },
               "type": { "type": "string" },
-              "summary": { "type": "string" }
+              "summary": { "type": "string" },
+              "authority_ref": { "type": "string" },
+              "related_ref": { "type": "string" },
+              "severity": { "enum": ["info", "warning", "error"] },
+              "redaction": { "enum": ["none", "secrets_redacted", "payload_minimized"] }
             }
           }
         }
