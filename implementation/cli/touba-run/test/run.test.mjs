@@ -2929,8 +2929,8 @@ test("reports trigger refusals and dry-run manifest limit widening without paylo
     ]);
 
     assert.equal(sourceMismatch.status, 1);
-    assert.match(sourceMismatch.stderr, /trigger error \[TriggerSourceMismatch\]/);
-    assert.match(sourceMismatch.stderr, /reason: event_source_mismatch/);
+    assert.match(sourceMismatch.stderr, /runtime error \[TriggerSourceMismatch\]/);
+    assert.match(sourceMismatch.stderr, /: event_source_mismatch/);
     assert.equal(sourceMismatch.stderr.includes("raw-secret-payload"), false);
 
     const widenedManifestPath = writeTriggerManifest(workspace, {

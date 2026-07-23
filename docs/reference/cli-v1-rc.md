@@ -17,6 +17,8 @@ L’extension VS Code Touba aide à travailler dans l’éditeur, mais elle ne r
 | `touba run` | Exécute un AIR JSON |
 | `touba trigger run` | Exécute un trigger `schedule` en runner foreground borné |
 | `touba trigger serve` | Lance un service webhook pour triggers `request` |
+| `touba serve` | Lance le serveur projet authentifié pour client, Mobile et les clients de contrats |
+| `touba deploy` | Planifie, publie, active ou restaure une révision immuable |
 | `touba inspect` | Inspecte une source, un AIR, une trace ou un manifest |
 | `touba audit` | Valide une trace et peut produire un export d’audit |
 | `touba supply-chain validate` | Valide un lock supply chain pour AIR, manifest, handlers, SDK, paquet handler, provenance et revue déclarées |
@@ -934,6 +936,79 @@ déclarées avec `--evidence-ref`. Il ne copie pas le contenu métier et ne remp
 pas la trace. L'utilisateur choisit où sauvegarder l'evidence externe :
 répertoire local, base de données, backend mémoire, stockage hôte ou autre
 support explicite.
+
+## `touba serve`
+
+```sh title="Terminal"
+export TOUBA_STUDIO_TOKEN='replace-with-a-strong-token'
+
+touba serve \
+  --project-root . \
+  --auth-token-env TOUBA_STUDIO_TOKEN
+```
+
+Le serveur projet expose les contrats versionnés du projet, les événements
+live, les décisions humaines, les propositions de changement, les exécutions
+sandbox et les révisions de déploiement. Les entrypoints de test passent par le
+runtime et l’autorité déclarée du projet.
+
+Pour relier une cible de déploiement :
+
+```sh title="Terminal"
+touba serve \
+  --project-root . \
+  --auth-token-env TOUBA_STUDIO_TOKEN \
+  --deployment-target-url https://deploy.example.com \
+  --deployment-target-token-env TOUBA_DEPLOY_TOKEN
+```
+
+Le token de déploiement reste côté serveur. client n’en reçoit ni la valeur ni
+le nom de variable.
+
+## `touba deploy`
+
+Créer un plan :
+
+```sh title="Terminal"
+touba deploy plan --root . --profile prod --target https://deploy.example.com
+```
+
+Publier sans activer :
+
+```sh title="Terminal"
+touba deploy publish \
+  --root . \
+  --profile prod \
+  --target https://deploy.example.com \
+  --auth-token-env TOUBA_DEPLOY_TOKEN
+```
+
+Consulter et promouvoir les révisions :
+
+```sh title="Terminal"
+touba deploy list \
+  --target https://deploy.example.com \
+  --auth-token-env TOUBA_DEPLOY_TOKEN
+
+touba deploy activate \
+  --target https://deploy.example.com \
+  --auth-token-env TOUBA_DEPLOY_TOKEN \
+  --revision sha256:...
+
+touba deploy rollback \
+  --target https://deploy.example.com \
+  --auth-token-env TOUBA_DEPLOY_TOKEN
+```
+
+Lancer une cible :
+
+```sh title="Terminal"
+touba deploy target serve \
+  --storage /srv/touba/revisions \
+  --auth-token-env TOUBA_DEPLOY_TOKEN \
+  --host 127.0.0.1 \
+  --port 8792
+```
 
 ## `touba inspect`
 

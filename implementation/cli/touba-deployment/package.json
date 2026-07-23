@@ -1,0 +1,20 @@
+{
+  "name": "@touba/deployment",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic Touba deployment bundles and immutable revision target.",
+  "type": "module",
+  "exports": "./src/index.mjs",
+  "bin": {
+    "touba-deployment-target": "src/serve.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@touba/runtime": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  }
+}

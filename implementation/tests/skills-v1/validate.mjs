@@ -889,6 +889,7 @@ function tool(name, fields = {}) {
   return {
     id: `tool:test/${name}`,
     name,
+    description: `Execute the governed ${name} tool capability.`,
     signature: {
       inputs: [],
       output_type: "builtin:Text",
@@ -902,6 +903,7 @@ function skill(name, flowGraphRef, uses = []) {
   return {
     id: `skill:test/${name}`,
     name,
+    description: `Execute the governed ${name} skill capability.`,
     signature: {
       inputs: [],
       output_type: "builtin:Text",

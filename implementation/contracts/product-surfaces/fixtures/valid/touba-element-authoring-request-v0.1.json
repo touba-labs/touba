@@ -1,0 +1,29 @@
+{
+  "schema_version": "touba-element-authoring-request-v0.1",
+  "proposal_id": "element_01J2EXAMPLE",
+  "module_ref": "example.support",
+  "element": {
+    "kind": "tool",
+    "name": "LookupTicket",
+    "description": "Reads one support ticket from the declared service.",
+    "takes": [
+      {
+        "name": "ticket_id",
+        "type_ref": "Text"
+      }
+    ],
+    "gives": "Text",
+    "requirements": ["network", "secret_read"],
+    "secrets": ["SUPPORT_API_TOKEN"],
+    "handler": {
+      "timeout_ms": 5000,
+      "max_payload_bytes": 1048576,
+      "sandbox_required": true
+    }
+  },
+  "requested_by": {
+    "kind": "studio",
+    "id": "touba-studio"
+  },
+  "reason": "Add the governed support lookup capability."
+}

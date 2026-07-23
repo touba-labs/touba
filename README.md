@@ -81,10 +81,9 @@ agents act from unreviewed prompts any more than it would let production
 infrastructure be changed by hand. Touba makes tool access, invocation
 authority, budgets, payload boundaries and execution evidence explicit.
 
-The distribution roadmap continues through signed installers, package managers,
-hosted operation layers and registry services. The V1 core focuses on the
-language, runtime, CLI, traces, packages and release archives that make governed
-agent execution concrete.
+The V1 core combines the language, runtime, CLI, traces, packages, project
+server, immutable deployment revisions and release archives required to build
+and operate governed agent systems.
 
 ## Quick Start
 
@@ -217,6 +216,10 @@ anything outside these declarations before any external effect.
  limits are checked before any external effect;
 - every run can emit structured trace events that reference AIR nodes and
  source locations.
+- the authenticated project server exposes versioned contracts, transactional
+ changes and sandbox execution to client and Mobile;
+- deployment bundles are content-addressed, secret-free and promoted through
+ explicit publish, activate and rollback operations.
 
 Nothing executes outside this pipeline: no hidden prompt orchestration and no
 implicit tool discovery.

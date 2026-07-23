@@ -1,0 +1,33 @@
+{
+  "schema_version": "touba-deployment-status-v0.1",
+  "status": "ok",
+  "action": "active",
+  "current_revision_id": "abcdef",
+  "previous_revision_id": null,
+  "revision": {
+    "revision_id": "abcdef",
+    "bundle_id": "sha256:abcdef",
+    "bundle_sha256": "abcdef",
+    "profile": "prod",
+    "source_revision": "f2e5f08",
+    "source_dirty": false,
+    "artifact_count": 8,
+    "published_at": "2026-07-23T00:00:00.000Z",
+    "published_by": "user:khadim",
+    "status": "active"
+  },
+  "revisions": [
+    {
+      "revision_id": "abcdef",
+      "bundle_id": "sha256:abcdef",
+      "bundle_sha256": "abcdef",
+      "profile": "prod",
+      "source_revision": "f2e5f08",
+      "source_dirty": false,
+      "artifact_count": 8,
+      "published_at": "2026-07-23T00:00:00.000Z",
+      "published_by": "user:khadim",
+      "status": "active"
+    }
+  ]
+}

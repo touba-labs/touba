@@ -31,6 +31,12 @@ import {
   renderRestScaffoldReport,
   scaffoldRestTool,
 } from "./rest-scaffold.mjs";
+import {
+  buildDeploymentBundle,
+  deploymentReadinessChecks,
+  deploymentTargetRequest,
+  verifyDeploymentBundle,
+} from "@touba/deployment";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -60,6 +66,7 @@ const FEATURE_VERSIONS = Object.freeze({
   rest_scaffold: "touba-rest-scaffold-v0.1",
   trigger_ingress: "touba-trigger-ingress-v0.1",
   project_server: "touba-project-server-v0.1",
+  deployment: "touba-deployment-bundle-v0.1",
   project_refresh: "touba-project-refresh-v0.1",
   trace_output: "trace-minimal-v0.1",
 });
@@ -77,6 +84,7 @@ const PUBLIC_COMMANDS = Object.freeze({
   mcp_import: true,
   rest_scaffold: true,
   serve: true,
+  deploy: true,
   refresh: true,
   manifest_generate: true,
   handler_stub: true,
@@ -209,6 +217,9 @@ async function dispatch(rawArgs) {
   }
   if (command === "serve") {
     return serveCommand(rest);
+  }
+  if (command === "deploy") {
+    return deployCommand(rest);
   }
   if (command === "refresh") {
     return refreshCommand(rest);
@@ -474,7 +485,7 @@ function serveCommand(rawArgs) {
 
 function serveUsage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--deployment-target-url <url>] [--deployment-target-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the Touba project server for client, Mobile and contract clients.",
     "",
@@ -490,8 +501,177 @@ function serveUsage() {
     "  trigger_status: .touba/trigger-status.json",
     "  human_requests: .touba/human-requests.json",
     "",
-    "The server exposes project state, replayable live events, versioned contracts and human decision intake.",
-    "It does not execute agents or grant authority.",
+    "The server exposes versioned project contracts, governed change proposals, deployment revisions and replayable live events.",
+    "Sandbox entrypoints are invoked only through the Touba runtime and the authority declared by the project.",
+  ].join("\n");
+}
+
+async function deployCommand(rawArgs) {
+  const [subcommand, ...tail] = rawArgs;
+  if (subcommand === undefined || subcommand === "--help" || subcommand === "-h") {
+    return { text: deployUsage(), exitCode: 0 };
+  }
+  if (subcommand === "target") {
+    const [action, ...targetArgs] = tail;
+    if (action !== "serve") {
+      throw new Error("usage: touba deploy target serve [target options]");
+    }
+    return runNodeScript(["cli", "touba-deployment", "src", "serve.mjs"], targetArgs);
+  }
+  const options = parseDeployOptions(tail);
+  if (subcommand === "plan") {
+    const bundle = buildDeploymentBundle({
+      projectRoot: options.root,
+      profile: options.profile,
+    });
+    verifyDeploymentBundle(bundle);
+    return {
+      json: true,
+      report: deploymentPlanReport(bundle, options.target !== undefined),
+      exitCode: 0,
+    };
+  }
+  if (subcommand === "publish") {
+    const token = deploymentToken(options);
+    const bundle = buildDeploymentBundle({
+      projectRoot: options.root,
+      profile: options.profile,
+    });
+    verifyDeploymentBundle(bundle);
+    const plan = deploymentPlanReport(bundle, options.target !== undefined);
+    if (plan.status !== "ready") {
+      const blocked = plan.checks
+        .filter((check) => check.status === "blocked")
+        .map((check) => check.message)
+        .join(" ");
+      throw new Error(`deployment blocked: ${blocked}`);
+    }
+    const published = await deploymentTargetRequest({
+      targetUrl: requiredDeployOption(options.target, "--target"),
+      token,
+      method: "POST",
+      path: "/revisions",
+      body: {
+        bundle,
+        published_by: options.actor,
+      },
+    });
+    if (!options.activate) {
+      return { json: true, report: published, exitCode: 0 };
+    }
+    const activated = await deploymentTargetRequest({
+      targetUrl: options.target,
+      token,
+      method: "POST",
+      path: `/revisions/${bundle.bundle_sha256}/activate`,
+      body: { activated_by: options.actor },
+    });
+    return { json: true, report: activated, exitCode: 0 };
+  }
+  if (subcommand === "activate") {
+    const token = deploymentToken(options);
+    const revision = requiredDeployOption(options.revision, "--revision");
+    const result = await deploymentTargetRequest({
+      targetUrl: requiredDeployOption(options.target, "--target"),
+      token,
+      method: "POST",
+      path: `/revisions/${encodeURIComponent(revision)}/activate`,
+      body: { activated_by: options.actor },
+    });
+    return { json: true, report: result, exitCode: 0 };
+  }
+  if (subcommand === "rollback") {
+    const token = deploymentToken(options);
+    const result = await deploymentTargetRequest({
+      targetUrl: requiredDeployOption(options.target, "--target"),
+      token,
+      method: "POST",
+      path: "/rollback",
+      body: { rolled_back_by: options.actor },
+    });
+    return { json: true, report: result, exitCode: 0 };
+  }
+  if (subcommand === "list") {
+    const token = deploymentToken(options);
+    const result = await deploymentTargetRequest({
+      targetUrl: requiredDeployOption(options.target, "--target"),
+      token,
+      path: "/revisions",
+    });
+    return { json: true, report: result, exitCode: 0 };
+  }
+  throw new Error(`unknown deploy command ${subcommand}`);
+}
+
+function parseDeployOptions(rawArgs) {
+  const options = {
+    root: process.cwd(),
+    profile: "prod",
+    actor: "cli:touba",
+    activate: false,
+  };
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === "--root") options.root = resolve(requiredValue(arg, rawArgs, ++index));
+    else if (arg === "--profile") options.profile = requiredValue(arg, rawArgs, ++index);
+    else if (arg === "--target") options.target = requiredValue(arg, rawArgs, ++index);
+    else if (arg === "--auth-token-env") options.authTokenEnv = requiredValue(arg, rawArgs, ++index);
+    else if (arg === "--revision") options.revision = requiredValue(arg, rawArgs, ++index);
+    else if (arg === "--actor") options.actor = requiredValue(arg, rawArgs, ++index);
+    else if (arg === "--activate") options.activate = true;
+    else if (arg === "--json") {
+      // Deployment commands always emit their versioned JSON contracts.
+    } else {
+      throw new Error(`unknown deploy option ${arg}`);
+    }
+  }
+  if (!["dev", "prod"].includes(options.profile)) {
+    throw new Error("--profile must be dev or prod");
+  }
+  return options;
+}
+
+function deploymentPlanReport(bundle, targetConfigured) {
+  const checks = deploymentReadinessChecks(bundle, { targetConfigured });
+  return {
+    schema_version: "touba-deployment-plan-v0.1",
+    status: checks.some((item) => item.status === "blocked") ? "blocked" : "ready",
+    profile: bundle.profile,
+    bundle_id: bundle.bundle_id,
+    bundle_sha256: bundle.bundle_sha256,
+    artifact_count: bundle.artifacts.length,
+    source_revision: bundle.source_revision,
+    source_dirty: bundle.source_dirty,
+    target_configured: targetConfigured,
+    checks,
+  };
+}
+
+function deploymentToken(options) {
+  const envName = requiredDeployOption(options.authTokenEnv, "--auth-token-env");
+  const token = process.env[envName];
+  if (typeof token !== "string" || token.length < 32) {
+    throw new Error(`environment variable ${envName} must contain at least 32 characters`);
+  }
+  return token;
+}
+
+function requiredDeployOption(value, option) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${option} is required`);
+  }
+  return value.trim();
+}
+
+function deployUsage() {
+  return [
+    "Usage:",
+    "  touba deploy plan [--root <path>] [--profile dev|prod] [--target <url>] [--json]",
+    "  touba deploy publish --target <url> --auth-token-env NAME [--root <path>] [--profile dev|prod] [--actor <id>] [--activate] [--json]",
+    "  touba deploy list --target <url> --auth-token-env NAME [--json]",
+    "  touba deploy activate --target <url> --auth-token-env NAME --revision <sha256> [--actor <id>] [--json]",
+    "  touba deploy rollback --target <url> --auth-token-env NAME [--actor <id>] [--json]",
+    "  touba deploy target serve --storage <path> --auth-token-env NAME [--host 127.0.0.1] [--port 8792] [--tls-cert <path> --tls-key <path>]",
   ].join("\n");
 }
 
@@ -1462,6 +1642,7 @@ function printUsage() {
   touba compile <source.tb> --stdout
   touba run <program.air.json> [--profile dev|prod] [runtime options]
   touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
+  touba deploy plan|publish|list|activate|rollback|target ...
   touba refresh --url <touba-serve-url> [--auth-token-env NAME] [--reason <text>]
   touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>
   touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]

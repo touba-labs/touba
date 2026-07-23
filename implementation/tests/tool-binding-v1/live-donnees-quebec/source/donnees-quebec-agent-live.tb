@@ -23,17 +23,20 @@ type DonneesQuebecAgentBrief
     summary is Text
 
 tool SearchDatasets
+    description "Searches the Données Québec catalog with the declared request."
     takes request as DonneesQuebecAgentRequest
     gives DonneesQuebecSearchResult
     requires network
 
 tool SummarizeDatasets
+    description "Summarizes a declared Données Québec search result."
     takes search as DonneesQuebecSearchResult
     gives DonneesQuebecAgentBrief
     requires network, secret_read
     secrets OPENAI_API_KEY
 
 skill SearchDatasetOnly
+    description "Searches datasets and returns the governed catalog result without summarization."
     takes request as DonneesQuebecAgentRequest
     gives DonneesQuebecSearchResult
     uses SearchDatasets
@@ -46,6 +49,7 @@ skill SearchDatasetOnly
         give search
 
 skill BuildDatasetBrief
+    description "Searches datasets and builds a concise brief from the governed result."
     takes request as DonneesQuebecAgentRequest
     gives DonneesQuebecAgentBrief
     uses SearchDatasets
@@ -64,11 +68,13 @@ skill BuildDatasetBrief
         give brief
 
 agent Researcher
+    description "Selects the declared dataset search or brief capability for one request."
     uses SearchDatasetOnly
     uses BuildDatasetBrief
     callable_by strategy RunDatasetResearch
 
 strategy RunDatasetResearch
+    description "Runs one governed Données Québec research request."
     uses Researcher
     do
         Researcher

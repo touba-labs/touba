@@ -93,6 +93,8 @@
             "kind": "skill",
             "name": "BuildNote",
             "description": "skill BuildNote: build note; inputs: request; output: type:examples.linear_skill/SourceNote; nested uses: 1",
+            "description_source": "generated",
+            "source_description_present": false,
             "selection_keywords": [
               "build",
               "note",

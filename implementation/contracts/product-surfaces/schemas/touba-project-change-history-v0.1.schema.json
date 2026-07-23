@@ -49,6 +49,20 @@
               "path": { "type": "string" }
             }
           },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "role", "content_sha256"],
+              "properties": {
+                "path": { "type": "string" },
+                "role": { "type": "string" },
+                "content_sha256": { "type": "string" }
+              }
+            }
+          },
+          "target_count": { "type": "integer" },
           "requested_by": {
             "type": "object",
             "additionalProperties": false,

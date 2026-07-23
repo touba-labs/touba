@@ -141,6 +141,34 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `SkillPackActivationUntraced` | Pack actif sans événement d'activation observable | Corriger l'hôte ou la trace de run |
 | `SkillPackExecutableConfusion` | Un `skill_pack:*` est choisi comme capacité exécutable | Choisir une `skill` ou un `tool` Touba déclaré dans `uses` |
 
+## Authoring client et changements
+
+| Code | Cause probable | Action |
+| --- | --- | --- |
+| `ToubaServeElementAuthoringInvalid` | Intention de création incomplète ou hors contrat | Corriger les champs du formulaire selon la primitive |
+| `ToubaServeElementAlreadyExists` | Une déclaration porte déjà ce nom dans le module | Choisir un nom distinct ou modifier l’élément existant |
+| `ToubaServeElementDescriptionRequired` | Capacité créée sans description explicite | Ajouter une description utile au routage agentique |
+| `ToubaServeElementReferenceUnknown` | Référence `uses`, `callable_by`, scope ou cible absente | Sélectionner une référence déclarée dans le module |
+| `ToubaServeElementCrossModuleReferenceRejected` | L’intention tente de créer une référence implicite entre modules | Déclarer l’import dans la source avant de proposer la relation |
+| `ToubaServeChangeSourceDrift` | Le fichier a changé depuis la création de la proposition | Actualiser le projet et soumettre une nouvelle proposition |
+| `ToubaServeChangeProjectLocked` | Une transaction multifichier est déjà en cours | Attendre sa fin ou récupérer la transaction signalée |
+| `ToubaServeChangeRecoveryConflict` | La récupération ne peut pas déterminer un état unique | Examiner le journal de transaction avant toute nouvelle écriture |
+
+## Déploiement
+
+| Code | Cause probable | Action |
+| --- | --- | --- |
+| `ToubaDeploymentSupplyChainLockMissing` | Bundle `prod` sans lock supply chain | Produire et valider `touba.lock.json` |
+| `ToubaDeploymentRawSecretRejected` | Valeur secrète détectée dans un artefact | Remplacer la valeur par un handle |
+| `ToubaDeploymentHandlerImplementation` | Stub de handler encore présent en profil `prod` | Implémenter et tester le handler |
+| `ToubaDeploymentSourceRevision` | Révision source sale en profil `prod` | Revoir et committer les changements attendus |
+| `ToubaDeploymentInsecureTargetRejected` | Cible distante en HTTP | Utiliser HTTPS |
+| `ToubaDeploymentUnauthorized` | Token absent ou invalide | Fournir le token de la cible via la variable déclarée |
+| `ToubaDeploymentRevisionNotFound` | Révision demandée absente | Consulter `touba deploy list` |
+| `ToubaDeploymentRevisionCorrupt` | Artefact matérialisé différent de son digest | Retirer la cible du trafic et restaurer une révision vérifiée |
+| `ToubaDeploymentRollbackUnavailable` | Aucune activation précédente disponible | Activer explicitement une révision connue |
+| `ToubaServeDeploymentTargetNotConfigured` | Serveur projet sans cible de déploiement | Fournir les deux options `--deployment-target-*` |
+
 ## Agents, mémoires et interactions
 
 | Code | Cause probable | Action |

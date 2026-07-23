@@ -29,16 +29,29 @@ importers:
 
   cli/touba-audit: {}
 
+  cli/touba-deployment:
+    dependencies:
+      '@touba/runtime':
+        specifier: workspace:*
+        version: link:../../runtime/touba-runtime
+
   cli/touba-distribution: {}
 
   cli/touba-inspect: {}
 
   cli/touba-manifest: {}
 
-  cli/touba-project: {}
+  cli/touba-project:
+    dependencies:
+      '@touba/deployment':
+        specifier: workspace:*
+        version: link:../touba-deployment
 
   cli/touba-project-server:
     dependencies:
+      '@touba/deployment':
+        specifier: workspace:*
+        version: link:../touba-deployment
       '@touba/runtime':
         specifier: workspace:*
         version: link:../../runtime/touba-runtime

@@ -20,6 +20,7 @@ import {
   buildContractIndex,
   buildLiveState,
   buildProjectEvent,
+  buildProjectDeploymentPlan,
   buildTriggerQueueHealth,
   createToubaProjectServer,
   getProjectChangeDetail,
@@ -30,7 +31,9 @@ import {
   listProjectChanges,
   preflightServeOptions,
   proposeProjectChange,
+  proposeProjectChangeSet,
   proposeGovernanceRelationChange,
+  recoverProjectChangeTransactions,
   readProjectEventJournal,
   readPendingHumanRequest,
   readProjectRunSummary,
@@ -41,6 +44,7 @@ import {
   revokeMobilePairing,
   refreshProject,
 } from "../src/serve.mjs";
+import { createDeploymentTargetService } from "../../touba-deployment/src/serve.mjs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
@@ -827,6 +831,211 @@ test("change proposals are stored, applied atomically and cannot be replayed", (
       }),
       /no longer pending/,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("multi-file change sets apply through a recoverable transaction", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-change-set-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "main.tb"), "module demo.main\n", "utf8");
+    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const proposed = proposeProjectChangeSet({
+      projectRoot: root,
+      changeProposalsPath,
+      proposedAt: "2026-07-23T00:00:00Z",
+      changeSet: {
+        proposal_id: "change_set_001",
+        requested_by: { kind: "studio", id: "touba-studio" },
+        reason: "Add a governed tool source and handler stub.",
+        changes: [
+          {
+            path: "src/main.tb",
+            role: "source",
+            content: [
+              "module demo.main",
+              "",
+              "tool LookupRecord",
+              '    description "Reads one governed record from the project."',
+              "    takes request as Text",
+              "    gives Text",
+              "",
+            ].join("\n"),
+          },
+          {
+            path: "handlers/demo/main/lookup_record.handler.mjs",
+            role: "handler_stub",
+            content: [
+              "#!/usr/bin/env node",
+              "// Touba Studio generated handler stub v0.1",
+              'const code = "HandlerStubNotImplemented";',
+              "process.stderr.write(`${code}\\n`);",
+              "process.exitCode = 1;",
+              "",
+            ].join("\n"),
+          },
+        ],
+      },
+    });
+    assert.equal(proposed.target_count, 2);
+    assert.equal(proposed.targets.some((target) => target.role === "handler_stub"), true);
+
+    const applied = applyProjectChange({
+      projectRoot: root,
+      changeProposalsPath,
+      decidedAt: "2026-07-23T00:00:01Z",
+      applyRequest: {
+        schema_version: "touba-project-change-apply-v0.1",
+        proposal_id: "change_set_001",
+        decision: "apply",
+        decided_by: { kind: "user", id: "reviewer" },
+        reason: "Validated.",
+      },
+    });
+    assert.equal(applied.status, "applied");
+    assert.equal(applied.evidence.write_mode, "recoverable_transaction");
+    assert.deepEqual(applied.evidence.relative_paths, [
+      "src/main.tb",
+      "handlers/demo/main/lookup_record.handler.mjs",
+    ]);
+    assert.match(readFileSync(join(root, "src", "main.tb"), "utf8"), /tool LookupRecord/u);
+    assert.equal(existsSync(join(root, ".touba", "change-transactions", applied.evidence.transaction_id, "journal.json")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("multi-file change sets restore already written targets when commit fails", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-change-rollback-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    const original = "module demo.main\n";
+    writeFileSync(join(root, "src", "main.tb"), original, "utf8");
+    writeFileSync(join(root, "blocked"), "not a directory\n", "utf8");
+    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    proposeProjectChangeSet({
+      projectRoot: root,
+      changeProposalsPath,
+      changeSet: {
+        proposal_id: "change_set_rollback",
+        requested_by: { kind: "studio", id: "touba-studio" },
+        reason: "Exercise transaction rollback.",
+        changes: [
+          {
+            path: "src/main.tb",
+            role: "source",
+            content: "module demo.main\n\nmemory Evidence\n",
+          },
+          {
+            path: "blocked/new.tb",
+            role: "source",
+            content: "module demo.secondary\n",
+          },
+        ],
+      },
+    });
+    assert.throws(
+      () => applyProjectChange({
+        projectRoot: root,
+        changeProposalsPath,
+        applyRequest: {
+          schema_version: "touba-project-change-apply-v0.1",
+          proposal_id: "change_set_rollback",
+          decision: "apply",
+          decided_by: { kind: "user", id: "reviewer" },
+          reason: "Exercise rollback.",
+        },
+      }),
+      /rolled back/u,
+    );
+    assert.equal(readFileSync(join(root, "src", "main.tb"), "utf8"), original);
+    assert.equal(existsSync(join(root, ".touba", "project-change.lock")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("interrupted multi-file changes recover from their journal before the next project operation", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-change-recovery-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, ".touba", "project-change.lock"), { recursive: true });
+    const transactionRoot = join(root, ".touba", "change-transactions", "interrupted-001");
+    mkdirSync(join(transactionRoot, "backup"), { recursive: true });
+    const original = "module demo.recovery\n";
+    const interrupted = "module demo.recovery\n\nmemory Interrupted\n";
+    writeFileSync(join(root, "src", "main.tb"), interrupted, "utf8");
+    writeFileSync(join(transactionRoot, "backup", "0.previous"), original, "utf8");
+    writeFileSync(join(transactionRoot, "journal.json"), `${JSON.stringify({
+      schema_version: "touba-project-change-transaction-v0.1",
+      transaction_id: "interrupted-001",
+      proposal_id: "proposal-interrupted",
+      status: "committing",
+      prepared_at: "2026-07-23T00:00:00.000Z",
+      targets: [{
+        path: "src/main.tb",
+        content_sha256: createHash("sha256").update(interrupted).digest("hex"),
+        base_content_exists: true,
+        base_content_sha256: createHash("sha256").update(original).digest("hex"),
+      }],
+    }, null, 2)}\n`, "utf8");
+
+    const recovered = recoverProjectChangeTransactions({
+      projectRoot: root,
+      recoveredAt: "2026-07-23T00:00:01.000Z",
+    });
+    assert.deepEqual(recovered, {
+      status: "recovered",
+      recovered: ["interrupted-001"],
+    });
+    assert.equal(readFileSync(join(root, "src", "main.tb"), "utf8"), original);
+    assert.equal(existsSync(join(root, ".touba", "project-change.lock")), false);
+    const journal = JSON.parse(readFileSync(join(transactionRoot, "journal.json"), "utf8"));
+    assert.equal(journal.status, "recovered");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deployment plans verify immutable project bundles and block dirty prod sources", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-deployment-plan-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "main.tb"), "module demo.deployment\n", "utf8");
+    writeFileSync(join(root, "touba.project.json"), `${JSON.stringify({
+      project_version: "touba-project-v1",
+      language: "javascript",
+    })}\n`, "utf8");
+    writeFileSync(join(root, "touba.manifest.json"), `${JSON.stringify({
+      manifest_version: "touba-manifest-v1",
+      bindings: {},
+      triggers: {},
+    })}\n`, "utf8");
+    writeFileSync(join(root, "touba.lock.json"), `${JSON.stringify({
+      lock_version: "touba-lock-v0.1",
+      artifacts: [],
+    })}\n`, "utf8");
+    const ready = buildProjectDeploymentPlan({
+      projectRoot: root,
+      profile: "prod",
+      targetConfigured: true,
+      createdAt: "2026-07-23T00:00:00.000Z",
+      sourceRevision: { commit: "clean-revision", dirty: false },
+    });
+    assert.equal(ready.status, "ready");
+    assertMatchesSchema("touba-deployment-plan-v0.1", ready);
+
+    const blocked = buildProjectDeploymentPlan({
+      projectRoot: root,
+      profile: "prod",
+      targetConfigured: true,
+      createdAt: "2026-07-23T00:00:00.000Z",
+      sourceRevision: { commit: "dirty-revision", dirty: true },
+    });
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.checks.some((item) => item.code === "ToubaDeploymentSourceRevision" && item.status === "blocked"), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -2523,6 +2732,207 @@ test("HTTP project server requires bearer auth when configured", async () => {
       process.env.TOUBA_TEST_PROJECT_SERVER_TOKEN = previous;
     }
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("client authoring and deployment routes complete a governed project lifecycle", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-lifecycle-"));
+  const targetStorage = mkdtempSync(join(tmpdir(), "touba-deployment-target-lifecycle-"));
+  const token = "project-lifecycle-deployment-token-32-characters";
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src", "main.tb"), [
+    "module demo.lifecycle",
+    "",
+    "strategy RunLifecycle",
+    '    description "Runs the governed lifecycle operation."',
+    "    takes request as Text",
+    "    gives Text",
+    "    do",
+    "        give request",
+    "",
+  ].join("\n"), "utf8");
+  writeFileSync(join(root, "touba.project.json"), `${JSON.stringify({
+    project_version: "touba-project-v1",
+    language: "javascript",
+    run_profiles: {
+      dev: { require_supply_chain_lock: false },
+      prod: { require_supply_chain_lock: true, supply_chain_lock: "touba.lock.json" },
+    },
+  }, null, 2)}\n`, "utf8");
+  writeFileSync(join(root, "touba.manifest.json"), `${JSON.stringify({
+    manifest_version: "touba-manifest-v1",
+    bindings: {},
+    triggers: {},
+  }, null, 2)}\n`, "utf8");
+  writeFileSync(join(root, "touba.lock.json"), `${JSON.stringify({
+    lock_version: "touba-lock-v0.1",
+    artifacts: [],
+  }, null, 2)}\n`, "utf8");
+
+  const target = createDeploymentTargetService({
+    host: "127.0.0.1",
+    port: 0,
+    storageRoot: targetStorage,
+    token,
+  });
+  let projectServer;
+  try {
+    const targetAddress = await target.start();
+    projectServer = createToubaProjectServer({
+      contractsRoot,
+      projectRoot: root,
+      changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+      deploymentTargetUrl: `${targetAddress.protocol}://${targetAddress.host}:${targetAddress.port}`,
+      deploymentTargetToken: token,
+      port: 0,
+      quiet: true,
+    });
+    await projectServer.start();
+    const baseUrl = `http://127.0.0.1:${projectServer.server.address().port}`;
+
+    const memoryProposal = await postJson(`${baseUrl}/elements/propose`, {
+      schema_version: "touba-element-authoring-request-v0.1",
+      proposal_id: "author_memory_lifecycle",
+      module_ref: "demo.lifecycle",
+      element: {
+        kind: "memory",
+        name: "LifecycleEvidence",
+        description: "Stores governed lifecycle evidence.",
+      },
+      requested_by: { kind: "studio", id: "touba-studio" },
+      reason: "Add lifecycle evidence memory.",
+    });
+    assert.equal(memoryProposal.status, 202);
+    assert.equal((await memoryProposal.json()).target_count, undefined);
+    const memoryApply = await postJson(`${baseUrl}/changes/apply`, {
+      schema_version: "touba-project-change-apply-v0.1",
+      proposal_id: "author_memory_lifecycle",
+      decision: "apply",
+      decided_by: { kind: "user", id: "reviewer" },
+      reason: "Validated.",
+    });
+    assert.equal(memoryApply.status, 202);
+    assert.match(readFileSync(join(root, "src", "main.tb"), "utf8"), /memory LifecycleEvidence/u);
+
+    const toolProposal = await postJson(`${baseUrl}/elements/propose`, {
+      schema_version: "touba-element-authoring-request-v0.1",
+      proposal_id: "author_tool_lifecycle",
+      module_ref: "demo.lifecycle",
+      element: {
+        kind: "tool",
+        name: "FetchLifecycleRecord",
+        description: "Reads one governed lifecycle record from the declared service.",
+        takes: [{ name: "request", type_ref: "Text" }],
+        gives: "Text",
+        requirements: ["network", "secret_read"],
+        secrets: ["LIFECYCLE_API_TOKEN"],
+        handler: {
+          timeout_ms: 5000,
+          max_payload_bytes: 65536,
+          sandbox_required: true,
+        },
+      },
+      requested_by: { kind: "studio", id: "touba-studio" },
+      reason: "Add the governed lifecycle integration.",
+    });
+    assert.equal(toolProposal.status, 202);
+    const toolDraft = await toolProposal.json();
+    assert.equal(toolDraft.target_count, 3);
+    assert.equal(JSON.stringify(toolDraft).includes("LIFECYCLE_API_TOKEN"), false);
+    const toolApply = await postJson(`${baseUrl}/changes/apply`, {
+      schema_version: "touba-project-change-apply-v0.1",
+      proposal_id: "author_tool_lifecycle",
+      decision: "apply",
+      decided_by: { kind: "user", id: "reviewer" },
+      reason: "Validated.",
+    });
+    assert.equal(toolApply.status, 202);
+    assert.equal(existsSync(join(root, "handlers", "demo", "lifecycle", "fetch_lifecycle_record.handler.mjs")), true);
+    const graph = await getJson(`${baseUrl}/authority/graph`);
+    assert.equal(graph.nodes.some((node) => node.ref === "tool:demo.lifecycle/FetchLifecycleRecord"), true);
+
+    const planResponse = await postJson(`${baseUrl}/deployments/plan`, {
+      schema_version: "touba-deployment-action-v0.1",
+      action: "plan",
+      profile: "dev",
+      actor: "user:reviewer",
+    });
+    assert.equal(planResponse.status, 200);
+    const plan = await planResponse.json();
+    assert.equal(plan.status, "ready");
+    assertMatchesSchema("touba-deployment-plan-v0.1", plan);
+
+    const firstPublish = await postJson(`${baseUrl}/deployments/publish`, {
+      schema_version: "touba-deployment-action-v0.1",
+      action: "publish",
+      profile: "dev",
+      actor: "user:reviewer",
+    });
+    assert.equal(firstPublish.status, 202);
+    const firstStatus = await firstPublish.json();
+    const firstRevision = firstStatus.revision.revision_id;
+    assert.equal(JSON.stringify(firstStatus).includes(token), false);
+    const firstActivation = await postJson(`${baseUrl}/deployments/activate`, {
+      schema_version: "touba-deployment-action-v0.1",
+      action: "activate",
+      revision_id: firstRevision,
+      actor: "user:reviewer",
+    });
+    assert.equal(firstActivation.status, 202);
+
+    const secondProposal = await postJson(`${baseUrl}/elements/propose`, {
+      schema_version: "touba-element-authoring-request-v0.1",
+      proposal_id: "author_memory_second_revision",
+      module_ref: "demo.lifecycle",
+      element: {
+        kind: "memory",
+        name: "SecondRevisionEvidence",
+        description: "Stores evidence for the second revision.",
+      },
+      requested_by: { kind: "studio", id: "touba-studio" },
+      reason: "Create a second immutable revision.",
+    });
+    assert.equal(secondProposal.status, 202);
+    const secondApply = await postJson(`${baseUrl}/changes/apply`, {
+      schema_version: "touba-project-change-apply-v0.1",
+      proposal_id: "author_memory_second_revision",
+      decision: "apply",
+      decided_by: { kind: "user", id: "reviewer" },
+      reason: "Validated.",
+    });
+    assert.equal(secondApply.status, 202);
+    const secondPublish = await postJson(`${baseUrl}/deployments/publish`, {
+      schema_version: "touba-deployment-action-v0.1",
+      action: "publish",
+      profile: "dev",
+      actor: "user:reviewer",
+    });
+    assert.equal(secondPublish.status, 202);
+    const secondRevision = (await secondPublish.json()).revision.revision_id;
+    assert.notEqual(secondRevision, firstRevision);
+    const secondActivation = await postJson(`${baseUrl}/deployments/activate`, {
+      schema_version: "touba-deployment-action-v0.1",
+      action: "activate",
+      revision_id: secondRevision,
+      actor: "user:reviewer",
+    });
+    assert.equal(secondActivation.status, 202);
+
+    const rollback = await postJson(`${baseUrl}/deployments/rollback`, {
+      schema_version: "touba-deployment-action-v0.1",
+      action: "rollback",
+      actor: "user:reviewer",
+    });
+    assert.equal(rollback.status, 202);
+    assert.equal((await rollback.json()).current_revision_id, firstRevision);
+    const finalStatus = await getJson(`${baseUrl}/deployments`);
+    assert.equal(finalStatus.current_revision_id, firstRevision);
+    assert.equal(finalStatus.revisions.length, 2);
+  } finally {
+    await projectServer?.stop();
+    await target.stop();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(targetStorage, { recursive: true, force: true });
   }
 });
 

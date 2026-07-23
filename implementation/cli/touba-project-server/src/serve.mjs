@@ -26,12 +26,22 @@ import {
   unavailableAirInputContract,
 } from "../../../contracts/product-surfaces/input-contracts.mjs";
 import {
+  buildElementAuthoringChangeSet,
+  ELEMENT_AUTHORING_SCHEMA_VERSION,
+} from "./element-authoring.mjs";
+import {
   executeAirDocument,
   executeTriggerEvent,
   loadAirFromJson,
   loadToolBindingManifestFromJson,
   ToubaRuntimeError,
 } from "@touba/runtime";
+import {
+  buildDeploymentBundle,
+  deploymentReadinessChecks,
+  deploymentTargetRequest,
+  verifyDeploymentBundle,
+} from "@touba/deployment";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8791;
@@ -53,6 +63,8 @@ const DEFAULT_MOBILE_ESCALATION_PATH = ".touba/mobile-escalation.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CHANGE_CONTENT_BYTES = 64 * 1024;
+const MAX_CHANGE_SET_BYTES = 512 * 1024;
+const MAX_CHANGE_SET_TARGETS = 16;
 const MAX_PROJECT_ARTIFACTS = 200;
 const MAX_PROJECT_SCAN_DEPTH = 6;
 const CONTRACT_INDEX_SCHEMA_VERSION = "touba-project-server-contract-index-v0.1";
@@ -85,6 +97,8 @@ const CHANGE_APPLY_SCHEMA_VERSION = "touba-project-change-apply-v0.1";
 const CHANGE_RESULT_SCHEMA_VERSION = "touba-project-change-result-v0.1";
 const CHANGE_HISTORY_SCHEMA_VERSION = "touba-project-change-history-v0.1";
 const CHANGE_DETAIL_SCHEMA_VERSION = "touba-project-change-detail-v0.1";
+const DEPLOYMENT_ACTION_SCHEMA_VERSION = "touba-deployment-action-v0.1";
+const DEPLOYMENT_PLAN_SCHEMA_VERSION = "touba-deployment-plan-v0.1";
 const GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION = "touba-governance-relation-change-v0.1";
 const PROJECT_EVENT_SCHEMA_VERSION = "touba-project-event-v0.1";
 const CHANGE_STORE_SCHEMA_VERSION = "touba-studio-change-proposals-v0.1";
@@ -176,6 +190,11 @@ export function createToubaProjectServer(options = {}) {
     options.contractsRoot ?? new URL("../../../contracts/product-surfaces/", import.meta.url).pathname,
   );
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
+  const deploymentTargetUrl = options.deploymentTargetUrl;
+  const deploymentTargetToken = options.deploymentTargetToken
+    ?? (options.deploymentTargetTokenEnv === undefined
+      ? undefined
+      : process.env[options.deploymentTargetTokenEnv]);
   const humanDecisionsPath = resolve(
     options.humanDecisionsPath ?? join(projectRoot, DEFAULT_HUMAN_DECISIONS_PATH),
   );
@@ -239,6 +258,26 @@ export function createToubaProjectServer(options = {}) {
   if (options.authTokenEnv !== undefined && (!authToken || authToken.trim() === "")) {
     throw serviceError("ToubaServeAuthTokenMissing", `environment variable ${options.authTokenEnv} is required`);
   }
+  if (
+    options.deploymentTargetTokenEnv !== undefined
+    && (deploymentTargetToken === undefined || deploymentTargetToken.length < 32)
+  ) {
+    throw serviceError(
+      "ToubaServeDeploymentTargetNotConfigured",
+      `environment variable ${options.deploymentTargetTokenEnv} must contain at least 32 characters`,
+    );
+  }
+  if (
+    (deploymentTargetUrl === undefined) !== (deploymentTargetToken === undefined)
+  ) {
+    throw serviceError(
+      "ToubaServeDeploymentTargetNotConfigured",
+      "deployment target URL and token must be configured together",
+    );
+  }
+  if (deploymentTargetUrl !== undefined) {
+    assertDeploymentTargetConfigured({ deploymentTargetToken, deploymentTargetUrl });
+  }
   if (!isLoopbackHost(host) && authToken === undefined) {
     throw serviceError("ToubaServeAuthRequired", "non-loopback Touba project server hosts require --auth-token-env");
   }
@@ -258,6 +297,7 @@ export function createToubaProjectServer(options = {}) {
     eventJournalLimit,
     strict: options.strict === true,
   });
+  recoverProjectChangeTransactions({ projectRoot });
   eventSequence = latestProjectEventSequence(readProjectEventJournal(eventJournalPath));
   projectSnapshot = buildProjectSnapshot({
     projectRoot,
@@ -323,6 +363,12 @@ export function createToubaProjectServer(options = {}) {
             change_propose: "/changes/propose",
             change_apply: "/changes/apply",
             governance_relation_propose: "/governance/relations/propose",
+            element_authoring_propose: "/elements/propose",
+            deployments: "/deployments",
+            deployment_plan: "/deployments/plan",
+            deployment_publish: "/deployments/publish",
+            deployment_activate: "/deployments/activate",
+            deployment_rollback: "/deployments/rollback",
             event_replay: "Last-Event-ID",
             event_journal_limit: eventJournalLimit,
             run_summary: "/runs/current",
@@ -448,6 +494,119 @@ export function createToubaProjectServer(options = {}) {
           productIdentityPath,
           changeProposalsPath,
         }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/deployments") {
+        assertDeploymentTargetConfigured({ deploymentTargetToken, deploymentTargetUrl });
+        const result = await deploymentTargetRequest({
+          targetUrl: deploymentTargetUrl,
+          token: deploymentTargetToken,
+          path: "/revisions",
+        });
+        writeJson(response, 200, result);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/deployments/plan") {
+        const body = await readJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: DEPLOYMENT_ACTION_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeDeploymentInvalid",
+          message: "deployment action does not match its contract",
+        });
+        assertDeploymentAction(body, "plan");
+        writeJson(response, 200, buildProjectDeploymentPlan({
+          projectRoot,
+          profile: body.profile,
+          targetConfigured: deploymentTargetUrl !== undefined && deploymentTargetToken !== undefined,
+        }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/deployments/publish") {
+        const body = await readJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: DEPLOYMENT_ACTION_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeDeploymentInvalid",
+          message: "deployment action does not match its contract",
+        });
+        assertDeploymentAction(body, "publish");
+        assertDeploymentTargetConfigured({ deploymentTargetToken, deploymentTargetUrl });
+        const plan = buildProjectDeploymentPlan({
+          projectRoot,
+          profile: body.profile,
+          targetConfigured: true,
+        });
+        if (plan.status !== "ready") {
+          const error = serviceError("ToubaServeDeploymentBlocked", "deployment plan is blocked");
+          error.diagnostics = plan.checks
+            .filter((check) => check.status === "blocked")
+            .map((check) => serviceDiagnostic(check.code, check.message));
+          throw error;
+        }
+        const bundle = buildDeploymentBundle({
+          projectRoot,
+          profile: body.profile,
+        });
+        const result = await deploymentTargetRequest({
+          targetUrl: deploymentTargetUrl,
+          token: deploymentTargetToken,
+          method: "POST",
+          path: "/revisions",
+          body: {
+            bundle,
+            published_by: body.actor,
+          },
+        });
+        publishEvent(eventClients, "deployment.published", result, nextEvent);
+        writeJson(response, 202, result);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/deployments/activate") {
+        const body = await readJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: DEPLOYMENT_ACTION_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeDeploymentInvalid",
+          message: "deployment action does not match its contract",
+        });
+        assertDeploymentAction(body, "activate");
+        assertDeploymentTargetConfigured({ deploymentTargetToken, deploymentTargetUrl });
+        const revisionId = requiredNonEmptyString(body.revision_id, "revision_id");
+        const result = await deploymentTargetRequest({
+          targetUrl: deploymentTargetUrl,
+          token: deploymentTargetToken,
+          method: "POST",
+          path: `/revisions/${encodeURIComponent(revisionId)}/activate`,
+          body: { activated_by: body.actor },
+        });
+        publishEvent(eventClients, "deployment.activated", result, nextEvent);
+        writeJson(response, 202, result);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/deployments/rollback") {
+        const body = await readJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: DEPLOYMENT_ACTION_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeDeploymentInvalid",
+          message: "deployment action does not match its contract",
+        });
+        assertDeploymentAction(body, "rollback");
+        assertDeploymentTargetConfigured({ deploymentTargetToken, deploymentTargetUrl });
+        const result = await deploymentTargetRequest({
+          targetUrl: deploymentTargetUrl,
+          token: deploymentTargetToken,
+          method: "POST",
+          path: "/rollback",
+          body: { rolled_back_by: body.actor },
+        });
+        publishEvent(eventClients, "deployment.rolled_back", result, nextEvent);
+        writeJson(response, 202, result);
         return;
       }
       if (request.method === "GET" && url.pathname === "/approvals/pending/current") {
@@ -665,6 +824,45 @@ export function createToubaProjectServer(options = {}) {
           request: body,
         });
         publishEvent(eventClients, "change.proposed", proposed, nextEvent);
+        writeJson(response, 202, proposed);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/elements/propose") {
+        const body = await readJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: ELEMENT_AUTHORING_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeElementAuthoringInvalid",
+          message: "element authoring request does not match its contract",
+        });
+        const draft = buildElementAuthoringChangeSet({
+          projectRoot,
+          request: body,
+        });
+        const proposed = draft.changes.length === 1
+          ? proposeProjectChange({
+              projectRoot,
+              changeProposalsPath,
+              proposal: {
+                schema_version: CHANGE_PROPOSAL_SCHEMA_VERSION,
+                proposal_id: draft.proposal_id,
+                action: "write_text_file",
+                target: { path: draft.changes[0].path },
+                requested_by: draft.requested_by,
+                reason: draft.reason,
+                content: draft.changes[0].content,
+              },
+            })
+          : proposeProjectChangeSet({
+              projectRoot,
+              changeProposalsPath,
+              changeSet: draft,
+            });
+        publishEvent(eventClients, "element.proposed", {
+          ...proposed,
+          element_ref: draft.element_ref,
+        }, nextEvent);
         writeJson(response, 202, proposed);
         return;
       }
@@ -2837,6 +3035,35 @@ export function refreshProject({
   return { snapshot, report: snapshot.report };
 }
 
+export function buildProjectDeploymentPlan({
+  projectRoot,
+  profile = "prod",
+  targetConfigured = false,
+  createdAt = new Date().toISOString(),
+  sourceRevision,
+}) {
+  const bundle = buildDeploymentBundle({
+    projectRoot,
+    profile,
+    createdAt,
+    sourceRevision,
+  });
+  verifyDeploymentBundle(bundle);
+  const checks = deploymentReadinessChecks(bundle, { targetConfigured });
+  return {
+    schema_version: DEPLOYMENT_PLAN_SCHEMA_VERSION,
+    status: checks.some((check) => check.status === "blocked") ? "blocked" : "ready",
+    profile,
+    bundle_id: bundle.bundle_id,
+    bundle_sha256: bundle.bundle_sha256,
+    artifact_count: bundle.artifacts.length,
+    source_revision: bundle.source_revision,
+    source_dirty: bundle.source_dirty,
+    target_configured: targetConfigured,
+    checks,
+  };
+}
+
 export function proposeProjectChange({
   projectRoot,
   changeProposalsPath,
@@ -2870,12 +3097,109 @@ export function proposeProjectChange({
   };
 }
 
+export function proposeProjectChangeSet({
+  projectRoot,
+  changeProposalsPath,
+  changeSet,
+  proposedAt = new Date().toISOString(),
+}) {
+  if (!isPlainObject(changeSet) || !Array.isArray(changeSet.changes)) {
+    throw serviceError("ToubaServeChangeSetInvalid", "change set must contain a changes array");
+  }
+  if (changeSet.changes.length < 2 || changeSet.changes.length > MAX_CHANGE_SET_TARGETS) {
+    throw serviceError(
+      "ToubaServeChangeSetInvalid",
+      `change set must contain between 2 and ${MAX_CHANGE_SET_TARGETS} targets`,
+    );
+  }
+  const proposalId = requiredNonEmptyString(changeSet.proposal_id, "proposal_id");
+  const requestedBy = normalizeActor(changeSet.requested_by);
+  const seenPaths = new Set();
+  const targets = changeSet.changes.map((change, index) => {
+    if (!isPlainObject(change)) {
+      throw serviceError("ToubaServeChangeSetInvalid", `changes[${index}] must be an object`);
+    }
+    const normalized = validateChangeProposal({
+      projectRoot,
+      proposal: {
+        schema_version: CHANGE_PROPOSAL_SCHEMA_VERSION,
+        proposal_id: `${proposalId}:${index}`,
+        action: "write_text_file",
+        target: { path: change.path },
+        requested_by: requestedBy,
+        reason: changeSet.reason ?? "",
+        content: change.content,
+      },
+    });
+    if (seenPaths.has(normalized.target.path)) {
+      throw serviceError("ToubaServeChangeSetInvalid", `duplicate change-set target ${normalized.target.path}`);
+    }
+    seenPaths.add(normalized.target.path);
+    return {
+      ...normalized.target,
+      role: typeof change.role === "string" && change.role.trim() !== "" ? change.role.trim() : "project_file",
+      content: normalized.content,
+      content_sha256: normalized.content_sha256,
+      ...changeTargetBaseEvidence(projectRoot, normalized.target.path),
+    };
+  });
+  const aggregateBytes = targets.reduce(
+    (total, target) => total + Buffer.byteLength(target.content, "utf8"),
+    0,
+  );
+  if (aggregateBytes > MAX_CHANGE_SET_BYTES) {
+    throw serviceError("ToubaServeChangeTooLarge", `change set exceeds ${MAX_CHANGE_SET_BYTES} bytes`);
+  }
+  const store = loadChangeProposalStore(changeProposalsPath);
+  if (store.proposals.some((item) => item.proposal_id === proposalId)) {
+    throw serviceError("ToubaServeChangeProposalDuplicate", "change proposal_id already exists");
+  }
+  const validations = validateChangeTargets(targets, { projectRoot });
+  if (validations.some((item) => item.severity === "error")) {
+    const error = serviceError("ToubaServeChangeValidationFailed", "change set failed validation");
+    error.diagnostics = validations;
+    throw error;
+  }
+  const stored = {
+    schema_version: CHANGE_PROPOSAL_SCHEMA_VERSION,
+    proposal_id: proposalId,
+    action: "write_text_file",
+    target: { path: targets[0].path },
+    targets,
+    requested_by: requestedBy,
+    reason: typeof changeSet.reason === "string" ? changeSet.reason : "",
+    content: targets[0].content,
+    content_sha256: sha256Text(
+      targets.map((target) => `${target.path}\0${target.content_sha256}`).join("\n"),
+    ),
+    status: "proposed",
+    proposed_at: proposedAt,
+    validations,
+  };
+  store.proposals.push(stored);
+  saveChangeProposalStore(changeProposalsPath, store);
+  return {
+    schema_version: CHANGE_PROPOSED_SCHEMA_VERSION,
+    status: "proposed",
+    proposal_id: stored.proposal_id,
+    action: stored.action,
+    target: stored.target,
+    targets: publicChangeTargets(stored),
+    target_count: targets.length,
+    requested_by: stored.requested_by,
+    proposed_at: proposedAt,
+    content_sha256: stored.content_sha256,
+    validations: stored.validations,
+  };
+}
+
 export function applyProjectChange({
   projectRoot,
   changeProposalsPath,
   applyRequest,
   decidedAt = new Date().toISOString(),
 }) {
+  recoverProjectChangeTransactions({ projectRoot });
   const request = validateChangeApplyRequest(applyRequest);
   const store = loadChangeProposalStore(changeProposalsPath);
   const proposal = store.proposals.find((item) => item.proposal_id === request.proposal_id);
@@ -2892,7 +3216,7 @@ export function applyProjectChange({
     proposal.decision_reason = request.reason ?? "refused";
     proposal.refusal_reason = request.reason ?? "refused";
     saveChangeProposalStore(changeProposalsPath, store);
-    return {
+    const result = {
       schema_version: CHANGE_RESULT_SCHEMA_VERSION,
       status: "refused",
       proposal_id: proposal.proposal_id,
@@ -2908,28 +3232,41 @@ export function applyProjectChange({
         relative_path: proposal.target.path,
       },
     };
+    if (Array.isArray(proposal.targets)) {
+      result.targets = publicChangeTargets(proposal);
+      result.target_count = proposal.targets.length;
+      result.evidence.relative_paths = proposal.targets.map((target) => target.path);
+    }
+    return result;
   }
 
-  const validations = validateChangeContent(proposal, { projectRoot });
+  const targets = changeTargets(proposal);
+  const validations = validateChangeTargets(targets, { projectRoot });
   if (validations.some((item) => item.severity === "error")) {
     const error = serviceError("ToubaServeChangeValidationFailed", "change proposal failed validation");
     error.diagnostics = validations;
     throw error;
   }
-  const targetPath = safeProjectPath(projectRoot, proposal.target.path);
-  assertChangeTargetUnchanged(proposal, targetPath);
-  mkdirSync(dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.touba-write-${process.pid}-${Date.now()}`;
-  writeFileSync(tempPath, proposal.content, "utf8");
-  renameSync(tempPath, targetPath);
+  for (const target of targets) {
+    assertChangeTargetUnchanged(target, safeProjectPath(projectRoot, target.path));
+  }
+  const writeEvidence = targets.length === 1
+    ? applySingleChangeTarget({ projectRoot, target: targets[0] })
+    : applyChangeTargetsTransaction({
+        projectRoot,
+        proposalId: proposal.proposal_id,
+        targets,
+        decidedAt,
+      });
   proposal.status = "applied";
   proposal.decided_at = decidedAt;
   proposal.decided_by = request.decided_by;
   proposal.decision_reason = request.reason;
   proposal.validations = validations;
   proposal.applied_path = proposal.target.path;
+  proposal.write_evidence = writeEvidence;
   saveChangeProposalStore(changeProposalsPath, store);
-  return {
+  const result = {
     schema_version: CHANGE_RESULT_SCHEMA_VERSION,
     status: "applied",
     proposal_id: proposal.proposal_id,
@@ -2939,12 +3276,13 @@ export function applyProjectChange({
     reason: request.reason,
     content_sha256: proposal.content_sha256,
     validations,
-    evidence: {
-      write_mode: "atomic_rename",
-      project_root: projectRoot,
-      relative_path: proposal.target.path,
-    },
+    evidence: writeEvidence,
   };
+  if (Array.isArray(proposal.targets)) {
+    result.targets = publicChangeTargets(proposal);
+    result.target_count = proposal.targets.length;
+  }
+  return result;
 }
 
 export function proposeGovernanceRelationChange({
@@ -4277,6 +4615,22 @@ function validateChangeContent(proposal, { projectRoot } = {}) {
     : diagnostics;
 }
 
+function validateChangeTargets(targets, { projectRoot } = {}) {
+  const diagnostics = [];
+  for (const target of targets) {
+    for (const diagnostic of validateChangeContent({
+      target: { path: target.path },
+      content: target.content,
+    }, { projectRoot })) {
+      diagnostics.push({
+        ...diagnostic,
+        message: `${target.path}: ${diagnostic.message}`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
 function validateProjectMetadataDocument(fileName, document) {
   if (!isPlainObject(document)) {
     return [serviceDiagnostic("ToubaServeChangeJsonShapeInvalid", `${fileName} must be a JSON object`)];
@@ -4300,6 +4654,14 @@ function validateProjectMetadataDocument(fileName, document) {
       if (document[field] !== undefined && !isPlainObject(document[field])) {
         diagnostics.push(serviceDiagnostic("ToubaServeChangeManifestShapeInvalid", `${fileName}.${field} must be an object when present`));
       }
+    }
+    try {
+      loadToolBindingManifestFromJson(JSON.stringify(document));
+    } catch (cause) {
+      diagnostics.push(serviceDiagnostic(
+        "ToubaServeChangeManifestContractInvalid",
+        `${fileName} does not satisfy the runtime manifest contract: ${cause.message}`,
+      ));
     }
     return diagnostics;
   }
@@ -4398,7 +4760,7 @@ function validateVersionedProjectMetadata({ document, expected, field, fileName 
 }
 
 function projectChangeSummary(proposal) {
-  return {
+  const summary = {
     proposal_id: proposal.proposal_id,
     status: publicChangeStatus(proposal.status),
     action: proposal.action,
@@ -4411,6 +4773,11 @@ function projectChangeSummary(proposal) {
     decided_by: proposal.decided_by ?? null,
     decision_reason: publicChangeDecisionReason(proposal),
   };
+  if (Array.isArray(proposal.targets)) {
+    summary.targets = publicChangeTargets(proposal);
+    summary.target_count = proposal.targets.length;
+  }
+  return summary;
 }
 
 function projectChangeDetail(proposal, { projectRoot }) {
@@ -4436,11 +4803,297 @@ function projectChangeEvidence(proposal, { projectRoot }) {
   if (proposal.status === "proposed") {
     return null;
   }
+  if (proposal.status === "applied" && isPlainObject(proposal.write_evidence)) {
+    return proposal.write_evidence;
+  }
   return {
     write_mode: proposal.status === "applied" ? "atomic_rename" : "none",
     project_root: projectRoot,
     relative_path: proposal.applied_path ?? proposal.target.path,
+    ...(Array.isArray(proposal.targets)
+      ? { relative_paths: proposal.targets.map((target) => target.path) }
+      : {}),
   };
+}
+
+function changeTargets(proposal) {
+  if (Array.isArray(proposal.targets)) {
+    return proposal.targets;
+  }
+  return [{
+    path: proposal.target.path,
+    role: "project_file",
+    content: proposal.content,
+    content_sha256: proposal.content_sha256,
+    base_content_exists: proposal.base_content_exists,
+    base_content_sha256: proposal.base_content_sha256,
+  }];
+}
+
+function publicChangeTargets(proposal) {
+  return changeTargets(proposal).map((target) => ({
+    path: target.path,
+    role: target.role ?? "project_file",
+    content_sha256: target.content_sha256,
+  }));
+}
+
+function applySingleChangeTarget({ projectRoot, target }) {
+  const targetPath = safeProjectPath(projectRoot, target.path);
+  mkdirSync(dirname(targetPath), { recursive: true });
+  const tempPath = `${targetPath}.touba-write-${process.pid}-${Date.now()}`;
+  writeFileSync(tempPath, target.content, "utf8");
+  replaceFileFromTemp(tempPath, targetPath);
+  return {
+    write_mode: "atomic_rename",
+    project_root: projectRoot,
+    relative_path: target.path,
+  };
+}
+
+function applyChangeTargetsTransaction({ projectRoot, proposalId, targets, decidedAt }) {
+  const toubaRoot = join(projectRoot, ".touba");
+  const lockPath = join(toubaRoot, "project-change.lock");
+  mkdirSync(toubaRoot, { recursive: true });
+  try {
+    mkdirSync(lockPath);
+  } catch (cause) {
+    if (cause?.code === "EEXIST") {
+      throw serviceError("ToubaServeChangeProjectLocked", "another project change is being applied");
+    }
+    throw cause;
+  }
+
+  const transactionId = `${proposalId.replace(/[^A-Za-z0-9_.-]/gu, "_")}-${Date.now()}`;
+  const transactionRoot = join(toubaRoot, "change-transactions", transactionId);
+  const stageRoot = join(transactionRoot, "stage");
+  const backupRoot = join(transactionRoot, "backup");
+  const journalPath = join(transactionRoot, "journal.json");
+  const journal = {
+    schema_version: "touba-project-change-transaction-v0.1",
+    transaction_id: transactionId,
+    proposal_id: proposalId,
+    status: "preparing",
+    prepared_at: decidedAt,
+    targets: targets.map((target) => ({
+      path: target.path,
+      content_sha256: target.content_sha256,
+      base_content_exists: target.base_content_exists,
+      base_content_sha256: target.base_content_sha256,
+    })),
+  };
+  mkdirSync(stageRoot, { recursive: true });
+  mkdirSync(backupRoot, { recursive: true });
+  writeTransactionJournal(journalPath, journal);
+
+  const entries = targets.map((target, index) => {
+    const targetPath = safeProjectPath(projectRoot, target.path);
+    const stagePath = join(stageRoot, `${index}.next`);
+    const backupPath = join(backupRoot, `${index}.previous`);
+    writeFileSync(stagePath, target.content, "utf8");
+    if (target.base_content_exists) {
+      writeFileSync(backupPath, readFileSync(targetPath));
+    }
+    return {
+      target,
+      targetPath,
+      stagePath,
+      backupPath,
+    };
+  });
+  journal.status = "prepared";
+  writeTransactionJournal(journalPath, journal);
+
+  const committed = [];
+  try {
+    journal.status = "committing";
+    writeTransactionJournal(journalPath, journal);
+    for (const entry of entries) {
+      mkdirSync(dirname(entry.targetPath), { recursive: true });
+      replaceFileFromTemp(entry.stagePath, entry.targetPath);
+      committed.push(entry);
+    }
+    journal.status = "committed";
+    journal.committed_at = new Date().toISOString();
+    writeTransactionJournal(journalPath, journal);
+  } catch (cause) {
+    const rollbackFailures = [];
+    for (const entry of [...committed].reverse()) {
+      try {
+        if (entry.target.base_content_exists) {
+          const restorePath = `${entry.targetPath}.touba-restore-${process.pid}-${Date.now()}`;
+          writeFileSync(restorePath, readFileSync(entry.backupPath));
+          replaceFileFromTemp(restorePath, entry.targetPath);
+        } else {
+          rmSync(entry.targetPath, { force: true });
+        }
+      } catch (rollbackCause) {
+        rollbackFailures.push(`${entry.target.path}: ${rollbackCause.message}`);
+      }
+    }
+    journal.status = rollbackFailures.length === 0 ? "rolled_back" : "rollback_failed";
+    journal.failed_at = new Date().toISOString();
+    journal.error = cause.message;
+    journal.rollback_failures = rollbackFailures;
+    writeTransactionJournal(journalPath, journal);
+    const error = serviceError(
+      rollbackFailures.length === 0
+        ? "ToubaServeChangeTransactionRolledBack"
+        : "ToubaServeChangeTransactionRecoveryRequired",
+      rollbackFailures.length === 0
+        ? "multi-file project change failed and was rolled back"
+        : "multi-file project change requires operator recovery",
+    );
+    error.diagnostics = rollbackFailures.map((message) =>
+      serviceDiagnostic("ToubaServeChangeRollbackFailed", message)
+    );
+    throw error;
+  } finally {
+    rmSync(lockPath, { recursive: true, force: true });
+  }
+
+  return {
+    write_mode: "recoverable_transaction",
+    project_root: projectRoot,
+    relative_path: targets[0].path,
+    relative_paths: targets.map((target) => target.path),
+    transaction_id: transactionId,
+  };
+}
+
+export function recoverProjectChangeTransactions({
+  projectRoot,
+  recoveredAt = new Date().toISOString(),
+}) {
+  const toubaRoot = join(resolve(projectRoot), ".touba");
+  const transactionsRoot = join(toubaRoot, "change-transactions");
+  const lockPath = join(toubaRoot, "project-change.lock");
+  if (!existsSync(transactionsRoot)) {
+    rmSync(lockPath, { recursive: true, force: true });
+    return { status: "clean", recovered: [] };
+  }
+  const recovered = [];
+  const failures = [];
+  for (const entry of readdirSync(transactionsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const transactionRoot = join(transactionsRoot, entry.name);
+    const journalPath = join(transactionRoot, "journal.json");
+    if (!existsSync(journalPath)) continue;
+    let journal;
+    try {
+      journal = JSON.parse(readFileSync(journalPath, "utf8"));
+    } catch (cause) {
+      failures.push(`${entry.name}: ${cause.message}`);
+      continue;
+    }
+    if (
+      journal.schema_version !== "touba-project-change-transaction-v0.1"
+      || !Array.isArray(journal.targets)
+    ) {
+      failures.push(`${entry.name}: invalid transaction journal`);
+      continue;
+    }
+    if (["committed", "rolled_back", "recovered"].includes(journal.status)) {
+      continue;
+    }
+    const transactionFailures = [];
+    if (["committing", "rollback_failed"].includes(journal.status)) {
+      journal.targets.forEach((target, index) => {
+        try {
+          recoverProjectChangeTarget({
+            projectRoot,
+            target,
+            backupPath: join(transactionRoot, "backup", `${index}.previous`),
+          });
+        } catch (cause) {
+          transactionFailures.push(`${target.path}: ${cause.message}`);
+        }
+      });
+    }
+    if (transactionFailures.length === 0) {
+      journal.status = "recovered";
+      journal.recovered_at = recoveredAt;
+      journal.rollback_failures = [];
+      writeTransactionJournal(journalPath, journal);
+      recovered.push(journal.transaction_id ?? entry.name);
+    } else {
+      journal.status = "rollback_failed";
+      journal.rollback_failures = transactionFailures;
+      writeTransactionJournal(journalPath, journal);
+      failures.push(...transactionFailures.map((message) => `${entry.name}: ${message}`));
+    }
+  }
+  if (failures.length > 0) {
+    const error = serviceError(
+      "ToubaServeChangeTransactionRecoveryRequired",
+      "one or more interrupted project changes require operator recovery",
+    );
+    error.diagnostics = failures.map((message) =>
+      serviceDiagnostic("ToubaServeChangeRollbackFailed", message)
+    );
+    throw error;
+  }
+  rmSync(lockPath, { recursive: true, force: true });
+  return {
+    status: recovered.length === 0 ? "clean" : "recovered",
+    recovered,
+  };
+}
+
+function recoverProjectChangeTarget({ projectRoot, target, backupPath }) {
+  const targetPath = safeProjectPath(projectRoot, target.path);
+  const targetExists = existsSync(targetPath);
+  const currentDigest = targetExists ? sha256Buffer(readFileSync(targetPath)) : null;
+  if (target.base_content_exists) {
+    if (!existsSync(backupPath)) {
+      throw serviceError("ToubaServeChangeBackupMissing", "transaction backup is missing");
+    }
+    const backup = readFileSync(backupPath);
+    if (sha256Buffer(backup) !== target.base_content_sha256) {
+      throw serviceError("ToubaServeChangeBackupInvalid", "transaction backup digest is invalid");
+    }
+    if (currentDigest === target.base_content_sha256) {
+      return;
+    }
+    if (currentDigest !== target.content_sha256) {
+      throw serviceError("ToubaServeChangeRecoveryConflict", "target changed after the interrupted transaction");
+    }
+    mkdirSync(dirname(targetPath), { recursive: true });
+    const restorePath = `${targetPath}.touba-recovery-${process.pid}-${Date.now()}`;
+    writeFileSync(restorePath, backup);
+    replaceFileFromTemp(restorePath, targetPath);
+    return;
+  }
+  if (!targetExists) return;
+  if (currentDigest !== target.content_sha256) {
+    throw serviceError("ToubaServeChangeRecoveryConflict", "new target changed after the interrupted transaction");
+  }
+  rmSync(targetPath, { force: true });
+}
+
+function replaceFileFromTemp(tempPath, targetPath) {
+  try {
+    renameSync(tempPath, targetPath);
+  } catch (cause) {
+    if (!["EEXIST", "EPERM"].includes(cause?.code) || !existsSync(targetPath)) {
+      throw cause;
+    }
+    const previousPath = `${targetPath}.touba-previous-${process.pid}-${Date.now()}`;
+    renameSync(targetPath, previousPath);
+    try {
+      renameSync(tempPath, targetPath);
+      rmSync(previousPath, { force: true });
+    } catch (replaceCause) {
+      if (!existsSync(targetPath) && existsSync(previousPath)) {
+        renameSync(previousPath, targetPath);
+      }
+      throw replaceCause;
+    }
+  }
+}
+
+function writeTransactionJournal(path, journal) {
+  writeFileSync(path, `${JSON.stringify(journal, null, 2)}\n`, "utf8");
 }
 
 function validateToubaSourcePatch(content, { projectRoot } = {}) {
@@ -5260,6 +5913,9 @@ function httpStatusForError(code) {
     || code === "ToubaServeSandboxDecisionMismatch"
     || code === "ToubaServeChangeProposalDuplicate"
     || code === "ToubaServeChangeAlreadyDecided"
+    || code === "ToubaServeChangeProjectLocked"
+    || code === "ToubaServeChangeTransactionRecoveryRequired"
+    || code === "ToubaServeChangeRecoveryConflict"
     || code === "ToubaServeMobilePairingDuplicate"
     || code === "ToubaServeMobilePairingReplayRejected"
     || code === "ToubaServeMobilePairingRevoked"
@@ -5274,6 +5930,7 @@ function httpStatusForError(code) {
     || code === "ToubaServeChangeProposalNotFound"
     || code === "ToubaServeMobilePairingUnknown"
     || code === "ToubaServeSandboxCheckpointNotFound"
+    || code === "ToubaDeploymentRevisionNotFound"
   ) return 404;
   if (code === "ToubaServeBodyTooLarge" || code === "ToubaServeChangeTooLarge") return 413;
   if (
@@ -5282,7 +5939,20 @@ function httpStatusForError(code) {
     || code === "ToubaServeMobilePairingScopeRejected"
     || code === "ToubaServeSandboxExternalEffectsRejected"
     || code === "ToubaServeDecisionIdentityUnauthorized"
+    || code === "ToubaServeDeploymentTargetInsecure"
+    || code === "ToubaDeploymentInsecureTargetRejected"
   ) return 403;
+  if (
+    code === "ToubaServeDeploymentTargetNotConfigured"
+    || code === "ToubaServeDeploymentBlocked"
+    || code === "ToubaDeploymentRollbackUnavailable"
+  ) return 409;
+  if (
+    code === "ToubaDeploymentUnauthorized"
+    || code === "ToubaDeploymentTargetRequestFailed"
+    || code === "ToubaDeploymentTargetUnavailable"
+    || code === "ToubaDeploymentRevisionCorrupt"
+  ) return 502;
   if (
     code === "ToubaServeSandboxAirUnavailable"
     || code === "ToubaServeSandboxTargetNotFound"
@@ -5310,6 +5980,11 @@ function httpStatusForError(code) {
     || code === "ToubaServeSandboxResultInvalid"
     || code === "ToubaServeSandboxRuntimeRejected"
     || code === "ToubaServeAgentDecisionProviderInvalid"
+    || code === "ToubaServeChangeSetInvalid"
+    || code === "ToubaServeDeploymentInvalid"
+    || code === "ToubaServeDeploymentTargetInvalid"
+    || String(code ?? "").startsWith("ToubaServeElement")
+    || String(code ?? "").startsWith("ToubaDeployment")
   ) return 400;
   return 500;
 }
@@ -5354,6 +6029,10 @@ function parseArgs(rawArgs) {
       options.port = Number.parseInt(requiredValue(arg, rawArgs, ++index), 10);
     } else if (arg === "--auth-token-env") {
       options.authTokenEnv = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--deployment-target-url") {
+      options.deploymentTargetUrl = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--deployment-target-token-env") {
+      options.deploymentTargetTokenEnv = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--agent-decision-provider") {
       options.agentDecisionProviderPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg.startsWith("--agent-decision-provider=")) {
@@ -5475,7 +6154,7 @@ async function loadAgentDecisionProviderFromPath(providerPath) {
 
 function usage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for client, Mobile and contract clients.",
     "",
@@ -5506,6 +6185,11 @@ function usage() {
     "  GET  /triggers/queue-health",
     "  GET  /supply-chain/status",
     "  GET  /governance/readiness",
+    "  GET  /deployments",
+    "  POST /deployments/plan",
+    "  POST /deployments/publish",
+    "  POST /deployments/activate",
+    "  POST /deployments/rollback",
     "  GET  /mobile/notifications",
     "  POST /mobile/pairings/request",
     "  POST /mobile/pairings/accept",
@@ -5518,11 +6202,54 @@ function usage() {
     "  POST /decisions",
     "  POST /changes/propose",
     "  POST /changes/apply",
+    "  POST /governance/relations/propose",
+    "  POST /elements/propose",
   ].join("\n");
 }
 
 function isLoopbackHost(host) {
   return ["127.0.0.1", "localhost", "::1"].includes(host);
+}
+
+function assertDeploymentAction(request, expectedAction) {
+  if (request.action !== expectedAction) {
+    throw serviceError(
+      "ToubaServeDeploymentInvalid",
+      `deployment endpoint requires action ${expectedAction}`,
+    );
+  }
+  if (["plan", "publish"].includes(expectedAction) && !["dev", "prod"].includes(request.profile)) {
+    throw serviceError("ToubaServeDeploymentInvalid", `${expectedAction} requires profile dev or prod`);
+  }
+  if (
+    expectedAction === "activate"
+    && (typeof request.revision_id !== "string" || !/^[a-f0-9]{64}$/u.test(request.revision_id))
+  ) {
+    throw serviceError("ToubaServeDeploymentInvalid", "activate requires a SHA-256 revision_id");
+  }
+}
+
+function assertDeploymentTargetConfigured({ deploymentTargetToken, deploymentTargetUrl }) {
+  if (
+    typeof deploymentTargetUrl !== "string"
+    || deploymentTargetUrl.trim() === ""
+    || typeof deploymentTargetToken !== "string"
+    || deploymentTargetToken.length < 32
+  ) {
+    throw serviceError(
+      "ToubaServeDeploymentTargetNotConfigured",
+      "deployment target URL and strong server-side token are required",
+    );
+  }
+  let target;
+  try {
+    target = new URL(deploymentTargetUrl);
+  } catch {
+    throw serviceError("ToubaServeDeploymentTargetInvalid", "deployment target URL is invalid");
+  }
+  if (target.protocol !== "https:" && !isLoopbackHost(target.hostname)) {
+    throw serviceError("ToubaServeDeploymentTargetInsecure", "remote deployment targets require HTTPS");
+  }
 }
 
 function serviceError(code, message) {

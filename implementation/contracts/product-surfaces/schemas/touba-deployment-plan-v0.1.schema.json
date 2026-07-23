@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-deployment-plan-v0.1.schema.json",
+  "title": "touba-deployment-plan-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "profile",
+    "bundle_id",
+    "bundle_sha256",
+    "artifact_count",
+    "source_revision",
+    "source_dirty",
+    "target_configured",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": { "const": "touba-deployment-plan-v0.1" },
+    "status": { "enum": ["ready", "blocked"] },
+    "profile": { "enum": ["dev", "prod"] },
+    "bundle_id": { "type": "string" },
+    "bundle_sha256": { "type": "string" },
+    "artifact_count": { "type": "integer" },
+    "source_revision": { "type": "string" },
+    "source_dirty": { "type": "boolean" },
+    "target_configured": { "type": "boolean" },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "status", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "status": { "enum": ["passed", "blocked"] },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

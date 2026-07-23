@@ -4,6 +4,7 @@ type ResearchRequest
     query is Text
 
 skill ListDatasets
+    description "Lists datasets available for the governed research request."
     gives Text
     do
         show
@@ -11,6 +12,7 @@ skill ListDatasets
         give "dataset-list"
 
 skill BuildBrief
+    description "Builds a concise brief from the declared research request."
     takes request as ResearchRequest
     gives Text
     do
@@ -19,6 +21,7 @@ skill BuildBrief
         give request.query
 
 skill HiddenAdminPath
+    description "Represents an undeclared administrative path used by refusal tests."
     gives Text
     do
         show
@@ -26,11 +29,13 @@ skill HiddenAdminPath
         give "hidden"
 
 agent DonneesQuebecResearcher
+    description "Selects declared dataset research capabilities for one request."
     uses ListDatasets
     uses BuildBrief
     callable_by strategy RunResearch
 
 strategy RunResearch
+    description "Runs one governed dataset research request."
     uses DonneesQuebecResearcher
     do
         DonneesQuebecResearcher

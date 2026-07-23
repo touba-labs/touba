@@ -93,6 +93,8 @@
             "kind": "skill",
             "name": "BuildSource",
             "description": "skill BuildSource: build source; inputs: request; output: type:examples.fallback/SourceText; nested uses: 2",
+            "description_source": "generated",
+            "source_description_present": false,
             "selection_keywords": [
               "build",
               "source",

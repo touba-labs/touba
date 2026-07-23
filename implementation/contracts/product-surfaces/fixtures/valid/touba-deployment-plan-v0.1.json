@@ -1,0 +1,18 @@
+{
+  "schema_version": "touba-deployment-plan-v0.1",
+  "status": "ready",
+  "profile": "prod",
+  "bundle_id": "sha256:example",
+  "bundle_sha256": "example",
+  "artifact_count": 8,
+  "source_revision": "f2e5f08",
+  "source_dirty": false,
+  "target_configured": true,
+  "checks": [
+    {
+      "code": "ToubaDeploymentBundleVerified",
+      "status": "passed",
+      "message": "The immutable deployment bundle passed validation."
+    }
+  ]
+}

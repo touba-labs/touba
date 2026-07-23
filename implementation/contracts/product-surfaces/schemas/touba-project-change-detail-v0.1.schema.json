@@ -38,6 +38,20 @@
             "path": { "type": "string" }
           }
         },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "role", "content_sha256"],
+            "properties": {
+              "path": { "type": "string" },
+              "role": { "type": "string" },
+              "content_sha256": { "type": "string" }
+            }
+          }
+        },
+        "target_count": { "type": "integer" },
         "requested_by": {
           "type": "object",
           "additionalProperties": false,
@@ -79,9 +93,14 @@
           "additionalProperties": false,
           "required": ["write_mode", "project_root", "relative_path"],
           "properties": {
-            "write_mode": { "enum": ["atomic_rename", "none"] },
+            "write_mode": { "enum": ["atomic_rename", "recoverable_transaction", "none"] },
             "project_root": { "type": "string" },
-            "relative_path": { "type": "string" }
+            "relative_path": { "type": "string" },
+            "relative_paths": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "transaction_id": { "type": "string" }
           }
         }
       }

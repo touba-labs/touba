@@ -93,6 +93,8 @@
             "kind": "skill",
             "name": "MakeChange",
             "description": "skill MakeChange: make change; inputs: request; output: type:examples.strategy_agents/ReviewedChange; nested uses: 1",
+            "description_source": "generated",
+            "source_description_present": false,
             "selection_keywords": [
               "make",
               "change",
@@ -333,6 +335,8 @@
             "kind": "skill",
             "name": "ReviewChange",
             "description": "skill ReviewChange: review change; inputs: change; output: type:examples.strategy_agents/ReviewedChange",
+            "description_source": "generated",
+            "source_description_present": false,
             "selection_keywords": [
               "review",
               "change",

@@ -93,6 +93,8 @@
             "kind": "skill",
             "name": "ReviewDraft",
             "description": "skill ReviewDraft: review draft; inputs: accepted; output: type:examples.branch/AcceptedDraft; nested uses: 1",
+            "description_source": "generated",
+            "source_description_present": false,
             "selection_keywords": [
               "review",
               "draft",

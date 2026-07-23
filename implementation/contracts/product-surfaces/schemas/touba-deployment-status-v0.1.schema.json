@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-deployment-status-v0.1.schema.json",
+  "title": "touba-deployment-status-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "action",
+    "current_revision_id",
+    "previous_revision_id",
+    "revision",
+    "revisions"
+  ],
+  "properties": {
+    "schema_version": { "const": "touba-deployment-status-v0.1" },
+    "status": { "const": "ok" },
+    "action": { "enum": ["ready", "published", "active", "rolled_back"] },
+    "current_revision_id": { "type": ["string", "null"] },
+    "previous_revision_id": { "type": ["string", "null"] },
+    "revision": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "revision_id",
+        "bundle_id",
+        "bundle_sha256",
+        "profile",
+        "source_revision",
+        "source_dirty",
+        "artifact_count",
+        "published_at",
+        "published_by",
+        "status"
+      ],
+      "properties": {
+        "revision_id": { "type": "string" },
+        "bundle_id": { "type": "string" },
+        "bundle_sha256": { "type": "string" },
+        "profile": { "enum": ["dev", "prod"] },
+        "source_revision": { "type": "string" },
+        "source_dirty": { "type": "boolean" },
+        "artifact_count": { "type": "integer" },
+        "published_at": { "type": "string" },
+        "published_by": { "type": "string" },
+        "status": { "enum": ["published", "active", "superseded"] }
+      }
+    },
+    "revisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision_id",
+          "bundle_id",
+          "bundle_sha256",
+          "profile",
+          "source_revision",
+          "source_dirty",
+          "artifact_count",
+          "published_at",
+          "published_by",
+          "status"
+        ],
+        "properties": {
+          "revision_id": { "type": "string" },
+          "bundle_id": { "type": "string" },
+          "bundle_sha256": { "type": "string" },
+          "profile": { "enum": ["dev", "prod"] },
+          "source_revision": { "type": "string" },
+          "source_dirty": { "type": "boolean" },
+          "artifact_count": { "type": "integer" },
+          "published_at": { "type": "string" },
+          "published_by": { "type": "string" },
+          "status": { "enum": ["published", "active", "superseded"] }
+        }
+      }
+    }
+  }
+}

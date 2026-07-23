@@ -314,6 +314,108 @@ test("CLI serve command exposes the Touba project server", () => {
   assert.match(result.stdout, /port: 8791/);
 });
 
+test("CLI deploy exposes revision operations and stable content-bound plans", () => {
+  const root = tempRoot();
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "main.tb"), "module demo.deployment\n", "utf8");
+    writeJson(join(root, "touba.project.json"), {
+      project_version: "touba-project-v1",
+      language: "javascript",
+      run_profiles: {
+        dev: { require_supply_chain_lock: false },
+        prod: { require_supply_chain_lock: true, supply_chain_lock: "touba.lock.json" },
+      },
+    });
+    writeJson(join(root, "touba.manifest.json"), {
+      manifest_version: "touba-manifest-v1",
+      bindings: {},
+      triggers: {},
+    });
+    writeJson(join(root, "touba.lock.json"), {
+      lock_version: "touba-lock-v0.1",
+      artifacts: [],
+    });
+
+    const help = spawnSync(process.execPath, [cliPath, "deploy", "--help"], { encoding: "utf8" });
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /deploy plan/u);
+    assert.match(help.stdout, /deploy publish/u);
+    assert.match(help.stdout, /deploy activate/u);
+    assert.match(help.stdout, /deploy rollback/u);
+    assert.match(help.stdout, /deploy target serve/u);
+
+    const args = [
+      cliPath,
+      "deploy",
+      "plan",
+      "--root",
+      root,
+      "--profile",
+      "dev",
+      "--target",
+      "http://127.0.0.1:8792",
+      "--json",
+    ];
+    const first = spawnSync(process.execPath, args, { encoding: "utf8" });
+    const second = spawnSync(process.execPath, args, { encoding: "utf8" });
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(second.status, 0, second.stderr);
+    const firstPlan = JSON.parse(first.stdout);
+    const secondPlan = JSON.parse(second.stdout);
+    assert.equal(firstPlan.status, "ready");
+    assert.equal(firstPlan.bundle_id, secondPlan.bundle_id);
+    assert.equal(firstPlan.bundle_sha256, secondPlan.bundle_sha256);
+    const deploymentPlanSchema = JSON.parse(readFileSync(projectInspectionSchema.replace(
+      "touba-project-inspection-v1.schema.json",
+      "touba-deployment-plan-v0.1.schema.json",
+    ), "utf8"));
+    assert.deepEqual(validateObject(deploymentPlanSchema, firstPlan), []);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CLI deployment refuses a dirty production source before contacting its target", () => {
+  const root = tempRoot();
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "main.tb"), "module demo.deployment\n", "utf8");
+    writeJson(join(root, "touba.project.json"), {
+      project_version: "touba-project-v1",
+      language: "javascript",
+    });
+    writeJson(join(root, "touba.lock.json"), {
+      lock_version: "touba-lock-v0.1",
+      artifacts: [],
+    });
+    const result = spawnSync(process.execPath, [
+      cliPath,
+      "deploy",
+      "publish",
+      "--root",
+      root,
+      "--profile",
+      "prod",
+      "--target",
+      "http://127.0.0.1:1",
+      "--auth-token-env",
+      "TOUBA_TEST_DEPLOY_TOKEN",
+    ], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TOUBA_TEST_DEPLOY_TOKEN: "deployment-test-token-with-at-least-32-characters",
+      },
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /deployment blocked.*clean source revision/iu);
+    assert.doesNotMatch(result.stderr, /unavailable|ECONNREFUSED/iu);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("CLI refresh signals an existing Touba project server", async () => {
   const root = tempRoot();
   const contractsRoot = join(implementationRoot, "contracts", "product-surfaces");

@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-element-authoring-request-v0.1.schema.json",
+  "title": "touba-element-authoring-request-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "proposal_id", "module_ref", "element", "requested_by", "reason"],
+  "properties": {
+    "schema_version": { "const": "touba-element-authoring-request-v0.1" },
+    "proposal_id": { "type": "string" },
+    "module_ref": { "type": "string" },
+    "element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "description"],
+      "properties": {
+        "kind": {
+          "enum": ["memory", "function", "tool", "skill", "agent", "strategy", "trigger"]
+        },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "takes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type_ref"],
+            "properties": {
+              "name": { "type": "string" },
+              "type_ref": { "type": "string" }
+            }
+          }
+        },
+        "gives": { "type": ["string", "null"] },
+        "uses": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "callable_by": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "memories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ref", "access"],
+            "properties": {
+              "ref": { "type": "string" },
+              "access": { "enum": ["read", "write"] }
+            }
+          }
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "network",
+              "filesystem_read",
+              "filesystem_write",
+              "secret_read",
+              "memory_read",
+              "memory_write"
+            ]
+          }
+        },
+        "secrets": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "handler": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "timeout_ms": { "type": "integer" },
+            "max_payload_bytes": { "type": "integer" },
+            "sandbox_required": { "type": "boolean" }
+          }
+        },
+        "trigger": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event_kind", "target_ref", "max_runs_per_day", "timeout_ms"],
+          "properties": {
+            "event_kind": { "enum": ["request", "schedule"] },
+            "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+            "path": { "type": "string" },
+            "schedule": { "type": "string" },
+            "target_ref": { "type": "string" },
+            "payload_map": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "max_runs_per_day": { "type": "integer" },
+            "timeout_ms": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "requested_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["studio", "user", "service"] },
+        "id": { "type": "string" }
+      }
+    },
+    "reason": { "type": "string" }
+  }
+}
