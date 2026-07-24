@@ -30,6 +30,12 @@ lossless mapping to the source contract and its `schema_version`.
 | `touba-authority-graph-v0.1` | client | Project authority graph derived from Touba source, AIR and metadata artifacts. |
 | `touba-product-identity-v0.1` | client, Mobile | Product identity surface for users, teams, devices, assignments and escalation policies. |
 | `touba-run-summary-v1` | client, Mobile | Compact run status, trace reference, budget usage, pending approvals. |
+| `touba-interaction-session-create-v0.1` | client | Creates a bounded interaction session for one executable project target and one effect policy. |
+| `touba-interaction-message-request-v0.1` | client | Submits typed inputs and a display message to an interaction session. |
+| `touba-interaction-resume-request-v0.1` | client | Resumes the durable human checkpoint associated with an interaction session. |
+| `touba-interaction-session-v0.1` | client | Durable message and run history for one agent, function, skill, strategy, tool or trigger. |
+| `touba-interaction-session-list-v0.1` | client | Bounded index used to restore project interaction sessions. |
+| `touba-interaction-asset-v0.1` | client, project server | Opaque, digest-verified content handle without a client-visible storage path. |
 | `touba-trace-timeline-v1` | client | Ordered trace timeline for review and investigation. |
 | `touba-trigger-status-v1` | client, Mobile | Trigger state, queue state, replay/rate-limit surface. |
 | `touba-approval-request-v1` | client, Mobile | Human approval request before an effect proceeds. |
@@ -117,6 +123,15 @@ POST /project/refresh
 GET  /authority/graph
 GET  /identity
 GET  /runs/current
+POST /runs/sandbox
+POST /runs/sandbox/resume
+GET  /interactions/sessions
+POST /interactions/sessions
+GET  /interactions/sessions/<session_id>
+POST /interactions/sessions/<session_id>/messages
+POST /interactions/sessions/<session_id>/resume
+POST /interaction-assets
+GET  /interaction-assets/<handle>
 GET  /trace/current
 GET  /triggers
 GET  /approvals/pending/current
@@ -174,6 +189,26 @@ view of accepted human decisions for client and Mobile.
 `/project/refresh` accepts `touba-project-refresh-request-v0.1` and returns
 `touba-project-refresh-v0.1`. The refresh result includes a bounded artifact
 snapshot, changed artifacts and diagnostics such as stale AIR.
+
+`/project` includes an interaction profile for each executable target. The
+profile derives a presentation mode, primary text path, structured context and
+accepted content kinds from the compiled input contract. Ambiguous signatures
+remain structured; the server does not invent a text field or media capability.
+
+`/interactions/sessions` creates and restores bounded project interaction
+sessions. A message executes through the same sandbox request, manifest,
+authority and trace path as a direct run. `message_id` replay is idempotent
+after completion and rejected while inconsistent with the stored session.
+When a run stops at a durable human checkpoint,
+`/interactions/sessions/<session_id>/resume` verifies that the decision and
+resumed `run_id` belong to the latest stopped run in that session before
+recording the continuation.
+
+`/interaction-assets` accepts only bounded media types declared by the target's
+canonical handle type. The server verifies the SHA-256 digest, stores the bytes
+outside messages and traces, and returns an opaque handle. Resolving that handle
+remains the responsibility of a declared target capability; the interaction
+profile does not imply model-level image, audio or document support.
 
 `/changes/propose` accepts `touba-project-change-proposal-v0.1` and returns
 `touba-project-change-proposed-v0.1`. The server refuses unsafe paths, internal

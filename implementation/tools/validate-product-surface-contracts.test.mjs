@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { buildAirInputContract } from "../contracts/product-surfaces/input-contracts.mjs";
+import { buildInteractionContract } from "../contracts/product-surfaces/interaction-contracts.mjs";
 import {
   PRODUCT_SURFACE_CONTRACTS,
   PRODUCT_SURFACE_CONTRACTS_SCHEMA_VERSION,
@@ -115,6 +116,56 @@ test("keeps an agent input contract open when capability signatures differ", () 
 
   assert.equal(contract.mode, "open");
   assert.deepEqual(contract.fields, []);
+});
+
+test("derives adaptive interaction profiles without inventing media support", () => {
+  const contract = {
+    mode: "declared",
+    fields: [{ name: "request", type_ref: "type:demo/Request", required: true }],
+    types: [{
+      ref: "type:demo/Request",
+      name: "Request",
+      fields: [
+        { name: "workflow_goal", type_ref: "builtin:Text", required: true },
+        { name: "priority", type_ref: "builtin:Int", required: true },
+      ],
+    }],
+  };
+
+  assert.deepEqual(buildInteractionContract({ inputContract: contract, kind: "agent" }), {
+    presentation: "conversation",
+    primary_input_path: ["request", "workflow_goal"],
+    context_paths: [["request"], ["request", "priority"]],
+    accepted_content_kinds: ["text"],
+    media_fields: [],
+  });
+});
+
+test("accepts media only through canonical typed handles", () => {
+  const contract = {
+    mode: "declared",
+    fields: [{ name: "image", type_ref: "type:demo/ImageHandle", required: true }],
+    types: [{
+      ref: "type:demo/ImageHandle",
+      name: "ImageHandle",
+      fields: [
+        { name: "handle", type_ref: "builtin:Text", required: true },
+        { name: "name", type_ref: "builtin:Text", required: true },
+        { name: "media_type", type_ref: "builtin:Text", required: true },
+        { name: "size_bytes", type_ref: "builtin:Int", required: true },
+        { name: "digest", type_ref: "builtin:Text", required: true },
+      ],
+    }],
+  };
+  const profile = buildInteractionContract({ inputContract: contract, kind: "tool" });
+
+  assert.deepEqual(profile.accepted_content_kinds, ["image"]);
+  assert.deepEqual(profile.media_fields, [{
+    path: ["image"],
+    content_kind: "image",
+    type_ref: "type:demo/ImageHandle",
+    multiple: false,
+  }]);
 });
 
 function readJson(relativePath) {

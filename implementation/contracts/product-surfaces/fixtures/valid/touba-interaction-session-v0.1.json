@@ -1,0 +1,22 @@
+{
+  "schema_version": "touba-interaction-session-v0.1",
+  "session_id": "interaction_01",
+  "target_ref": "agent:billing/InvoiceAgent",
+  "target_kind": "agent",
+  "presentation": "conversation",
+  "effect_policy": "runtime_only",
+  "status": "active",
+  "created_at": "2026-07-24T12:00:00Z",
+  "updated_at": "2026-07-24T12:00:01Z",
+  "created_by": { "kind": "studio", "id": "touba-studio" },
+  "messages": [
+    {
+      "message_id": "message_01",
+      "role": "user",
+      "created_at": "2026-07-24T12:00:01Z",
+      "display_text": "Review invoice INV-001.",
+      "run_id": null,
+      "run_status": "pending"
+    }
+  ]
+}

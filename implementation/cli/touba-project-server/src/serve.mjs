@@ -25,6 +25,7 @@ import {
   buildAirInputContract,
   unavailableAirInputContract,
 } from "../../../contracts/product-surfaces/input-contracts.mjs";
+import { buildInteractionContract } from "../../../contracts/product-surfaces/interaction-contracts.mjs";
 import {
   buildElementAuthoringChangeSet,
   ELEMENT_AUTHORING_SCHEMA_VERSION,
@@ -43,6 +44,24 @@ import {
   deploymentTargetRequest,
   verifyDeploymentBundle,
 } from "@touba/deployment";
+import {
+  appendInteractionResume,
+  appendInteractionRun,
+  createInteractionSession,
+  findInteractionMessageResult,
+  getInteractionSession,
+  INTERACTION_ASSET_SCHEMA_VERSION,
+  INTERACTION_MESSAGE_REQUEST_SCHEMA_VERSION,
+  INTERACTION_RESUME_REQUEST_SCHEMA_VERSION,
+  INTERACTION_SESSION_CREATE_SCHEMA_VERSION,
+  INTERACTION_SESSION_LIST_SCHEMA_VERSION,
+  INTERACTION_SESSION_SCHEMA_VERSION,
+  listInteractionSessions,
+  MAX_INTERACTION_ASSET_BYTES,
+  readInteractionAsset,
+  storeInteractionAsset,
+  validateInteractionResume,
+} from "./interactions.mjs";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8791;
@@ -61,6 +80,9 @@ const DEFAULT_MOBILE_NOTIFICATIONS_PATH = ".touba/mobile-notifications.json";
 const DEFAULT_MOBILE_PAIRINGS_PATH = ".touba/mobile-pairings.json";
 const DEFAULT_MOBILE_QUICK_APPROVAL_POLICY_PATH = ".touba/mobile-quick-approval-policy.json";
 const DEFAULT_MOBILE_ESCALATION_PATH = ".touba/mobile-escalation.json";
+const DEFAULT_INTERACTION_SESSIONS_PATH = ".touba/interaction-sessions.json";
+const DEFAULT_INTERACTION_ASSETS_PATH = ".touba/interaction-assets.json";
+const DEFAULT_INTERACTION_ASSETS_DIRECTORY = ".touba/interaction-assets";
 const DEFAULT_DEV_SECRETS_PROFILE_PATH = "touba.secrets.dev.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -242,6 +264,15 @@ export function createToubaProjectServer(options = {}) {
   const mobileEscalationPath = resolve(
     options.mobileEscalationPath ?? join(projectRoot, DEFAULT_MOBILE_ESCALATION_PATH),
   );
+  const interactionSessionsPath = resolve(
+    options.interactionSessionsPath ?? join(projectRoot, DEFAULT_INTERACTION_SESSIONS_PATH),
+  );
+  const interactionAssetsPath = resolve(
+    options.interactionAssetsPath ?? join(projectRoot, DEFAULT_INTERACTION_ASSETS_PATH),
+  );
+  const interactionAssetsDirectory = resolve(
+    options.interactionAssetsDirectory ?? join(projectRoot, DEFAULT_INTERACTION_ASSETS_DIRECTORY),
+  );
   const eventJournalLimit = options.eventJournalLimit ?? DEFAULT_EVENT_JOURNAL_LIMIT;
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
@@ -323,6 +354,9 @@ export function createToubaProjectServer(options = {}) {
     sandboxCheckpointsPath,
     productIdentityPath,
     mobilePairingsPath,
+    interactionSessionsPath,
+    interactionAssetsPath,
+    interactionAssetsDirectory,
     eventJournalLimit,
     strict: options.strict === true,
   });
@@ -418,6 +452,8 @@ export function createToubaProjectServer(options = {}) {
             pending_review: "/reviews/pending/current",
             human_decisions: "/decisions",
             sandbox_resume: "/runs/sandbox/resume",
+            interaction_sessions: "/interactions/sessions",
+            interaction_assets: "/interaction-assets",
             human_decision_detail: "/decisions/<schema_version>/<request_id>",
             change_history: "/changes",
             change_detail: "/changes/<proposal_id>",
@@ -497,6 +533,258 @@ export function createToubaProjectServer(options = {}) {
         });
         publishEvent(eventClients, "sandbox_run.completed", sandboxRunEventPayload(result), nextEvent);
         writeJson(response, 200, result);
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/interactions/sessions") {
+        const result = listInteractionSessions(interactionSessionsPath);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_SESSION_LIST_SCHEMA_VERSION,
+          value: result,
+          errorCode: "ToubaServeInteractionSessionInvalid",
+          message: "interaction session list does not match its contract",
+        });
+        writeJson(response, 200, result);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/interactions/sessions") {
+        const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_SESSION_CREATE_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeInteractionSessionInvalid",
+          message: "interaction session request does not match its contract",
+        });
+        const entrypoint = buildProjectInspection({ projectRoot, projectSnapshot }).entrypoints
+          .find((candidate) => candidate.ref === body.target_ref);
+        if (
+          entrypoint === undefined
+          || entrypoint.kind !== body.target_kind
+          || entrypoint.interaction_contract.presentation !== body.presentation
+        ) {
+          throw serviceError(
+            "ToubaServeInteractionTargetInvalid",
+            "interaction target does not match the current project inspection",
+          );
+        }
+        const session = createInteractionSession({
+          request: body,
+          sessionsPath: interactionSessionsPath,
+        });
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_SESSION_SCHEMA_VERSION,
+          value: session,
+          errorCode: "ToubaServeInteractionSessionInvalid",
+          message: "interaction session does not match its contract",
+        });
+        publishEvent(eventClients, "interaction.session.created", {
+          schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
+          session_id: session.session_id,
+          target_ref: session.target_ref,
+          status: session.status,
+        }, nextEvent);
+        writeJson(response, 201, session);
+        return;
+      }
+      const interactionSessionMatch = /^\/interactions\/sessions\/([^/]+)$/u.exec(url.pathname);
+      if (request.method === "GET" && interactionSessionMatch !== null) {
+        const session = getInteractionSession({
+          sessionId: decodeURIComponent(interactionSessionMatch[1]),
+          sessionsPath: interactionSessionsPath,
+        });
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_SESSION_SCHEMA_VERSION,
+          value: session,
+          errorCode: "ToubaServeInteractionSessionInvalid",
+          message: "interaction session does not match its contract",
+        });
+        writeJson(response, 200, session);
+        return;
+      }
+      const interactionMessageMatch = /^\/interactions\/sessions\/([^/]+)\/messages$/u.exec(url.pathname);
+      if (request.method === "POST" && interactionMessageMatch !== null) {
+        const sessionId = decodeURIComponent(interactionMessageMatch[1]);
+        const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_MESSAGE_REQUEST_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeInteractionMessageInvalid",
+          message: "interaction message does not match its contract",
+        });
+        const priorResult = findInteractionMessageResult({
+          messageId: body.message_id,
+          sessionId,
+          sessionsPath: interactionSessionsPath,
+        });
+        if (priorResult !== undefined) {
+          writeJson(response, 200, getInteractionSession({ sessionId, sessionsPath: interactionSessionsPath }));
+          return;
+        }
+        const session = getInteractionSession({ sessionId, sessionsPath: interactionSessionsPath });
+        const executionKind = session.target_kind === "trigger" ? "trigger" : "entrypoint";
+        const result = await executeProjectSandboxRun({
+          agentDecisionProvider,
+          agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
+          agentDecisionProviderInitialMode: options.agentDecisionProviderInitialMode,
+          agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
+          agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
+          agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+          contractsRoot,
+          executionKind,
+          humanRequestsPath,
+          projectRoot,
+          request: {
+            schema_version: SANDBOX_RUN_REQUEST_SCHEMA_VERSION,
+            execution_kind: executionKind,
+            target_ref: session.target_ref,
+            effect_policy: session.effect_policy,
+            inputs: body.inputs,
+            ...(executionKind === "trigger" ? {
+              event_id: body.event_id ?? `studio-${body.message_id}`,
+              source_kind: body.source_kind ?? "request",
+            } : {}),
+            requested_by: body.requested_by,
+            reason: `client interaction ${session.session_id}`,
+          },
+          runSummaryPath,
+          sandboxCheckpointsPath,
+          secretsPath,
+          secretsRequired,
+          traceTimelinePath,
+        });
+        const updated = appendInteractionRun({
+          message: body,
+          result,
+          sessionId,
+          sessionsPath: interactionSessionsPath,
+        });
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_SESSION_SCHEMA_VERSION,
+          value: updated,
+          errorCode: "ToubaServeInteractionSessionInvalid",
+          message: "interaction session does not match its contract",
+        });
+        publishEvent(eventClients, "interaction.message.completed", {
+          schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
+          session_id: updated.session_id,
+          target_ref: updated.target_ref,
+          run_id: result.run_id,
+          status: result.status,
+        }, nextEvent);
+        writeJson(response, 200, updated);
+        return;
+      }
+      const interactionResumeMatch = /^\/interactions\/sessions\/([^/]+)\/resume$/u.exec(url.pathname);
+      if (request.method === "POST" && interactionResumeMatch !== null) {
+        const sessionId = decodeURIComponent(interactionResumeMatch[1]);
+        const body = await readJsonBody(request);
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_RESUME_REQUEST_SCHEMA_VERSION,
+          value: body,
+          errorCode: "ToubaServeInteractionResumeInvalid",
+          message: "interaction resume request does not match its contract",
+        });
+        const checkpoint = loadSandboxCheckpointStore(sandboxCheckpointsPath).records
+          .find((candidate) => candidate.request_id === body.request_id);
+        if (checkpoint === undefined) {
+          throw serviceError(
+            "ToubaServeSandboxCheckpointNotFound",
+            "sandbox checkpoint request_id is unknown",
+          );
+        }
+        const resumeValidation = validateInteractionResume({
+          requestId: body.request_id,
+          runId: checkpoint.run_id,
+          sessionId,
+          sessionsPath: interactionSessionsPath,
+        });
+        if (resumeValidation.alreadyRecorded) {
+          writeJson(response, 200, resumeValidation.session);
+          return;
+        }
+        const result = await resumeProjectSandboxRun({
+          agentDecisionProvider,
+          agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
+          agentDecisionProviderInitialMode: options.agentDecisionProviderInitialMode,
+          agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
+          agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
+          agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+          contractsRoot,
+          humanDecisionsPath,
+          humanRequestsPath,
+          projectRoot,
+          request: body,
+          runSummaryPath,
+          sandboxCheckpointsPath,
+          secretsPath,
+          secretsRequired,
+          traceTimelinePath,
+        });
+        const updated = appendInteractionResume({
+          requestId: body.request_id,
+          result,
+          sessionId,
+          sessionsPath: interactionSessionsPath,
+        });
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_SESSION_SCHEMA_VERSION,
+          value: updated,
+          errorCode: "ToubaServeInteractionSessionInvalid",
+          message: "interaction session does not match its contract",
+        });
+        publishEvent(eventClients, "interaction.session.resumed", {
+          schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
+          session_id: updated.session_id,
+          target_ref: updated.target_ref,
+          run_id: result.run_id,
+          status: result.status,
+        }, nextEvent);
+        writeJson(response, 200, updated);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/interaction-assets") {
+        const buffer = await readBinaryBody(request, MAX_INTERACTION_ASSET_BYTES);
+        const asset = storeInteractionAsset({
+          assetsDirectory: interactionAssetsDirectory,
+          assetsPath: interactionAssetsPath,
+          buffer,
+          contentKind: url.searchParams.get("content_kind"),
+          digest: url.searchParams.get("digest") ?? undefined,
+          mediaType: String(request.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase(),
+          name: url.searchParams.get("name"),
+        });
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_ASSET_SCHEMA_VERSION,
+          value: asset,
+          errorCode: "ToubaServeInteractionAssetInvalid",
+          message: "interaction asset does not match its contract",
+        });
+        writeJson(response, 201, asset);
+        return;
+      }
+      const interactionAssetMatch = /^\/interaction-assets\/([^/]+)$/u.exec(url.pathname);
+      if (request.method === "GET" && interactionAssetMatch !== null) {
+        const { asset, buffer } = readInteractionAsset({
+          assetsDirectory: interactionAssetsDirectory,
+          assetsPath: interactionAssetsPath,
+          handle: decodeURIComponent(interactionAssetMatch[1]),
+        });
+        response.writeHead(200, {
+          "content-type": asset.media_type,
+          "content-length": buffer.length,
+          "content-disposition": `inline; filename="${safeHeaderFileName(asset.name)}"`,
+          "x-content-type-options": "nosniff",
+          etag: `"${asset.digest}"`,
+        });
+        response.end(buffer);
         return;
       }
       if (request.method === "GET" && url.pathname === "/trace/current") {
@@ -1173,6 +1461,9 @@ export function preflightServeOptions({
   sandboxCheckpointsPath = join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
   productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
   mobilePairingsPath = join(projectRoot, DEFAULT_MOBILE_PAIRINGS_PATH),
+  interactionSessionsPath = join(projectRoot, DEFAULT_INTERACTION_SESSIONS_PATH),
+  interactionAssetsPath = join(projectRoot, DEFAULT_INTERACTION_ASSETS_PATH),
+  interactionAssetsDirectory = join(projectRoot, DEFAULT_INTERACTION_ASSETS_DIRECTORY),
   eventJournalLimit = DEFAULT_EVENT_JOURNAL_LIMIT,
   strict = false,
 }) {
@@ -1211,12 +1502,25 @@ export function preflightServeOptions({
     ["ToubaServeSandboxCheckpointPathInvalid", "sandbox checkpoint store", sandboxCheckpointsPath],
     ["ToubaServeProductIdentityPathInvalid", "product identity", productIdentityPath],
     ["ToubaServeMobilePairingsPathInvalid", "mobile pairing store", mobilePairingsPath],
+    ["ToubaServeInteractionSessionStoreInvalid", "interaction session store", interactionSessionsPath],
+    ["ToubaServeInteractionAssetStoreInvalid", "interaction asset store", interactionAssetsPath],
   ]) {
     if (!isPathInside(projectRoot, filePath)) {
       diagnostics.push(serviceDiagnostic(code, `${label} path must stay inside the project root`));
     } else if (existsSync(filePath) && statSync(filePath).isDirectory()) {
       diagnostics.push(serviceDiagnostic(code, `${filePath} is a directory`));
     }
+  }
+  if (!isPathInside(projectRoot, interactionAssetsDirectory)) {
+    diagnostics.push(serviceDiagnostic(
+      "ToubaServeInteractionAssetPathInvalid",
+      "interaction asset directory must stay inside the project root",
+    ));
+  } else if (existsSync(interactionAssetsDirectory) && !statSync(interactionAssetsDirectory).isDirectory()) {
+    diagnostics.push(serviceDiagnostic(
+      "ToubaServeInteractionAssetPathInvalid",
+      `${interactionAssetsDirectory} is not a directory`,
+    ));
   }
   for (const schemaVersion of PRODUCT_SURFACE_CONTRACTS) {
     if (!contractFilesExist({ contractsRoot, schemaVersion })) {
@@ -3673,12 +3977,14 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
         if (ref === undefined) {
           continue;
         }
+        const inputContract = buildAirInputContract({ air, definition, kind });
         entrypoints.set(ref, {
           kind,
           ref,
           description: nonEmptyString(definition.description) ?? nonEmptyString(definition.name) ?? ref,
           effect_policy_requirement: sandboxEffectPolicyRequirement(air, ref),
-          input_contract: buildAirInputContract({ air, definition, kind }),
+          input_contract: inputContract,
+          interaction_contract: buildInteractionContract({ inputContract, kind }),
         });
       }
     }
@@ -3687,6 +3993,7 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
       if (ref === undefined) {
         continue;
       }
+      const inputContract = buildAirInputContract({ air, definition: trigger, kind: "trigger" });
       entrypoints.set(ref, {
         kind: "trigger",
         ref,
@@ -3695,7 +4002,8 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
           air,
           sandboxTriggerTargetRef(air, ref),
         ),
-        input_contract: buildAirInputContract({ air, definition: trigger, kind: "trigger" }),
+        input_contract: inputContract,
+        interaction_contract: buildInteractionContract({ inputContract, kind: "trigger" }),
       });
     }
   }
@@ -3711,12 +4019,14 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
       if (entrypoints.has(ref)) {
         continue;
       }
+      const inputContract = unavailableAirInputContract();
       entrypoints.set(ref, {
         kind: "trigger",
         ref,
         description: `Trigger ${name}`,
         effect_policy_requirement: "unknown",
-        input_contract: unavailableAirInputContract(),
+        input_contract: inputContract,
+        interaction_contract: buildInteractionContract({ inputContract, kind: "trigger" }),
       });
     }
   }
@@ -5902,6 +6212,12 @@ export function requiredIdentityPermission(method, pathname) {
   if (method === "POST" && pathname === "/runs/sandbox") return "executions.run";
   if (method === "POST" && pathname === "/runs/sandbox/resume") return "executions.run";
   if (method === "POST" && pathname === "/triggers/fire") return "executions.run";
+  if (pathname.startsWith("/interactions/sessions")) {
+    return method === "GET" ? "executions.read" : "executions.run";
+  }
+  if (pathname.startsWith("/interaction-assets")) {
+    return method === "GET" ? "executions.read" : "executions.run";
+  }
   if (pathname.startsWith("/decisions")) {
     return method === "POST" ? "decisions.act" : "decisions.read";
   }
@@ -6044,9 +6360,28 @@ async function readOptionalJsonBody(request) {
   }
 }
 
+async function readBinaryBody(request, limit) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > limit) {
+      throw serviceError("ToubaServeInteractionAssetTooLarge", `request body exceeds ${limit} bytes`);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 function writeJson(response, statusCode, body) {
   response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
   response.end(`${JSON.stringify(body, null, 2)}\n`);
+}
+
+function safeHeaderFileName(value) {
+  return String(value ?? "asset")
+    .replaceAll(/[\r\n"\\]/gu, "_")
+    .slice(0, 160);
 }
 
 function applyCorsHeaders(request, response) {
@@ -6193,6 +6528,8 @@ function httpStatusForError(code) {
     || code === "ToubaServeMobilePairingDuplicate"
     || code === "ToubaServeMobilePairingReplayRejected"
     || code === "ToubaServeMobilePairingRevoked"
+    || code === "ToubaServeInteractionMessageReplayRejected"
+    || code === "ToubaServeInteractionResumeMismatch"
   ) return 409;
   if (code === "ToubaServeMobilePairingExpired" || code === "ToubaServeDecisionRequestExpired") return 410;
   if (
@@ -6205,8 +6542,15 @@ function httpStatusForError(code) {
     || code === "ToubaServeMobilePairingUnknown"
     || code === "ToubaServeSandboxCheckpointNotFound"
     || code === "ToubaDeploymentRevisionNotFound"
+    || code === "ToubaServeInteractionSessionNotFound"
+    || code === "ToubaServeInteractionAssetNotFound"
   ) return 404;
-  if (code === "ToubaServeBodyTooLarge" || code === "ToubaServeChangeTooLarge") return 413;
+  if (
+    code === "ToubaServeBodyTooLarge"
+    || code === "ToubaServeChangeTooLarge"
+    || code === "ToubaServeInteractionAssetTooLarge"
+    || code === "ToubaServeInteractionMessageTooLarge"
+  ) return 413;
   if (
     code === "ToubaServeChangeTargetRejected"
     || code === "ToubaServeChangePathRejected"
@@ -6215,6 +6559,7 @@ function httpStatusForError(code) {
     || code === "ToubaServeDecisionIdentityUnauthorized"
     || code === "ToubaServeDeploymentTargetInsecure"
     || code === "ToubaDeploymentInsecureTargetRejected"
+    || code === "ToubaServeInteractionAssetMediaTypeRejected"
   ) return 403;
   if (
     code === "ToubaServeDeploymentTargetNotConfigured"
@@ -6257,9 +6602,19 @@ function httpStatusForError(code) {
     || code === "ToubaServeChangeSetInvalid"
     || code === "ToubaServeDeploymentInvalid"
     || code === "ToubaServeDeploymentTargetInvalid"
+    || code === "ToubaServeInteractionSessionInvalid"
+    || code === "ToubaServeInteractionSessionStoreInvalid"
+    || code === "ToubaServeInteractionMessageInvalid"
+    || code === "ToubaServeInteractionResumeInvalid"
+    || code === "ToubaServeInteractionTargetInvalid"
+    || code === "ToubaServeInteractionAssetInvalid"
+    || code === "ToubaServeInteractionAssetDigestMismatch"
+    || code === "ToubaServeInteractionAssetStoreInvalid"
+    || code === "ToubaServeInteractionAssetPathInvalid"
     || String(code ?? "").startsWith("ToubaServeElement")
     || String(code ?? "").startsWith("ToubaDeployment")
   ) return 400;
+  if (code === "ToubaServeInteractionAssetCorrupt") return 500;
   return 500;
 }
 
@@ -6461,6 +6816,13 @@ function usage() {
     "  GET  /identity",
     "  GET  /runs/current",
     "  POST /runs/sandbox",
+    "  GET  /interactions/sessions",
+    "  POST /interactions/sessions",
+    "  GET  /interactions/sessions/<session_id>",
+    "  POST /interactions/sessions/<session_id>/messages",
+    "  POST /interactions/sessions/<session_id>/resume",
+    "  POST /interaction-assets",
+    "  GET  /interaction-assets/<handle>",
     "  GET  /triggers",
     "  POST /triggers/fire",
     "  GET  /triggers/queue-health",

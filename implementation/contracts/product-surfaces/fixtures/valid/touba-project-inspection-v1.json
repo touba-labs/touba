@@ -38,6 +38,13 @@
         "mode": "open",
         "fields": [],
         "types": []
+      },
+      "interaction_contract": {
+        "presentation": "conversation",
+        "primary_input_path": [],
+        "context_paths": [],
+        "accepted_content_kinds": [],
+        "media_fields": []
       }
     },
     {
@@ -55,6 +62,13 @@
           }
         ],
         "types": []
+      },
+      "interaction_contract": {
+        "presentation": "invocation",
+        "primary_input_path": ["invoice_id"],
+        "context_paths": [],
+        "accepted_content_kinds": ["text"],
+        "media_fields": []
       }
     },
     {
@@ -72,6 +86,13 @@
           }
         ],
         "types": []
+      },
+      "interaction_contract": {
+        "presentation": "invocation",
+        "primary_input_path": ["invoice_id"],
+        "context_paths": [],
+        "accepted_content_kinds": ["text"],
+        "media_fields": []
       }
     },
     {
@@ -111,6 +132,17 @@
             ]
           }
         ]
+      },
+      "interaction_contract": {
+        "presentation": "event",
+        "primary_input_path": ["invoice", "invoice_id"],
+        "context_paths": [
+          ["invoice"],
+          ["invoice", "amount"],
+          ["invoice", "urgent"]
+        ],
+        "accepted_content_kinds": ["text"],
+        "media_fields": []
       }
     }
   ],

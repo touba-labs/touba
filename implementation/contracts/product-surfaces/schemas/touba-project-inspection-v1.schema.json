@@ -36,7 +36,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["kind", "ref", "description", "effect_policy_requirement", "input_contract"],
+        "required": ["kind", "ref", "description", "effect_policy_requirement", "input_contract", "interaction_contract"],
         "properties": {
           "kind": { "enum": ["agent", "function", "skill", "strategy", "tool", "trigger"] },
           "ref": { "type": "string" },
@@ -44,7 +44,8 @@
           "effect_policy_requirement": {
             "enum": ["runtime_only_compatible", "declared_external_effects_required", "unknown"]
           },
-          "input_contract": { "$ref": "#/$defs/inputContract" }
+          "input_contract": { "$ref": "#/$defs/inputContract" },
+          "interaction_contract": { "$ref": "#/$defs/interactionContract" }
         }
       }
     },
@@ -106,6 +107,46 @@
         "fields": {
           "type": "array",
           "items": { "$ref": "#/$defs/inputField" }
+        }
+      }
+    },
+    "interactionContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["presentation", "primary_input_path", "context_paths", "accepted_content_kinds", "media_fields"],
+      "properties": {
+        "presentation": { "enum": ["conversation", "workflow", "invocation", "event"] },
+        "primary_input_path": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "context_paths": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "accepted_content_kinds": {
+          "type": "array",
+          "items": { "enum": ["text", "image", "audio", "document", "file"] }
+        },
+        "media_fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "content_kind", "type_ref", "multiple"],
+            "properties": {
+              "path": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "content_kind": { "enum": ["image", "audio", "document", "file"] },
+              "type_ref": { "type": "string", "minLength": 1 },
+              "multiple": { "type": "boolean" }
+            }
+          }
         }
       }
     },

@@ -2615,6 +2615,110 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
   }
 });
 
+test("HTTP project server persists adaptive interaction sessions and governed assets", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-interactions-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+  writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
+  writeFileSync(
+    join(root, ".touba", "air", "demo", "main.air.json"),
+    JSON.stringify(sandboxAirDocument(), null, 2),
+    "utf8",
+  );
+  writeFileSync(
+    join(root, "touba.manifest.json"),
+    JSON.stringify(sandboxManifestDocument(), null, 2),
+    "utf8",
+  );
+  const service = createToubaProjectServer({
+    contractsRoot,
+    projectRoot: root,
+    port: 0,
+    quiet: true,
+  });
+  try {
+    await service.start();
+    const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const inspection = await getJson(`${baseUrl}/project`);
+    const strategy = inspection.entrypoints.find((entrypoint) => (
+      entrypoint.ref === "strategy:demo.sandbox/RunReady"
+    ));
+    assert.equal(strategy.interaction_contract.presentation, "workflow");
+    assert.deepEqual(strategy.interaction_contract.accepted_content_kinds, []);
+
+    const createdResponse = await postJson(`${baseUrl}/interactions/sessions`, {
+      schema_version: "touba-interaction-session-create-v0.1",
+      target_ref: strategy.ref,
+      target_kind: "strategy",
+      presentation: "workflow",
+      effect_policy: "runtime_only",
+      requested_by: { kind: "studio", id: "test-suite" },
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = await createdResponse.json();
+    assertMatchesSchema("touba-interaction-session-v0.1", created);
+
+    const message = {
+      schema_version: "touba-interaction-message-request-v0.1",
+      message_id: "message_001",
+      display_text: "Run the ready workflow.",
+      inputs: {},
+      requested_by: { kind: "studio", id: "test-suite" },
+    };
+    const messageResponse = await postJson(
+      `${baseUrl}/interactions/sessions/${created.session_id}/messages`,
+      message,
+    );
+    assert.equal(messageResponse.status, 200);
+    const completed = await messageResponse.json();
+    assert.equal(completed.messages.length, 2);
+    assert.equal(completed.messages[1].run_result.status, "success");
+
+    const idempotentResponse = await postJson(
+      `${baseUrl}/interactions/sessions/${created.session_id}/messages`,
+      message,
+    );
+    assert.equal(idempotentResponse.status, 200);
+    assert.equal((await idempotentResponse.json()).messages.length, 2);
+    const sessions = await getJson(`${baseUrl}/interactions/sessions`);
+    assertMatchesSchema("touba-interaction-session-list-v0.1", sessions);
+    assert.equal(sessions.sessions[0].message_count, 2);
+
+    const content = Buffer.from("incident evidence", "utf8");
+    const digest = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    const assetResponse = await fetch(
+      `${baseUrl}/interaction-assets?name=incident.txt&content_kind=document&digest=${encodeURIComponent(digest)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: content,
+      },
+    );
+    assert.equal(assetResponse.status, 201);
+    const asset = await assetResponse.json();
+    assertMatchesSchema("touba-interaction-asset-v0.1", asset);
+    assert.equal(asset.digest, digest);
+    assert.equal(JSON.stringify(asset).includes(root), false);
+
+    const assetRead = await fetch(`${baseUrl}/interaction-assets/${asset.handle}`);
+    assert.equal(assetRead.status, 200);
+    assert.equal(Buffer.from(await assetRead.arrayBuffer()).toString("utf8"), "incident evidence");
+    const badDigest = await fetch(
+      `${baseUrl}/interaction-assets?name=incident.txt&content_kind=document&digest=sha256:${"0".repeat(64)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: content,
+      },
+    );
+    assert.equal(badDigest.status, 400);
+    assert.equal((await badDigest.json()).code, "ToubaServeInteractionAssetDigestMismatch");
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("HTTP project server refuses sandbox runtime-only runs that may dispatch tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-effects-"));
   mkdirSync(join(root, "src"), { recursive: true });
@@ -2717,7 +2821,7 @@ test("HTTP project server runs sandbox agents through a configured decision prov
   }
 });
 
-test("HTTP project server persists and resumes a human approval checkpoint without replay", async () => {
+test("HTTP project server persists and resumes an interaction approval checkpoint without replay", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-approval-"));
   mkdirSync(join(root, "src", "demo"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
@@ -2741,17 +2845,27 @@ test("HTTP project server persists and resumes a human approval checkpoint witho
   try {
     await service.start();
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
-    const pausedResponse = await postJson(`${baseUrl}/runs/sandbox`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
-      execution_kind: "entrypoint",
+    const sessionResponse = await postJson(`${baseUrl}/interactions/sessions`, {
+      schema_version: "touba-interaction-session-create-v0.1",
       target_ref: "strategy:demo.approval/RunApproval",
+      target_kind: "strategy",
+      presentation: "workflow",
       effect_policy: "runtime_only",
+      requested_by: { kind: "studio", id: "test-suite" }
+    });
+    assert.equal(sessionResponse.status, 201);
+    const session = await sessionResponse.json();
+    const pausedResponse = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/messages`, {
+      schema_version: "touba-interaction-message-request-v0.1",
+      message_id: "message_approval_001",
+      display_text: "Run the approval workflow.",
       inputs: {},
       requested_by: { kind: "studio", id: "test-suite" },
-      reason: "test durable approval",
     });
     assert.equal(pausedResponse.status, 200);
-    const paused = await pausedResponse.json();
+    const pausedSession = await pausedResponse.json();
+    const paused = pausedSession.messages.at(-1).run_result;
+    assert.equal(pausedSession.status, "awaiting_human");
     assert.equal(paused.status, "stopped", JSON.stringify(paused, null, 2));
     assert.equal(paused.diagnostics[0].code, "ToubaSandboxRunAwaitingHumanDecision");
 
@@ -2790,11 +2904,35 @@ test("HTTP project server persists and resumes a human approval checkpoint witho
     });
     assert.equal(decisionResponse.status, 202);
 
-    const resumedResponse = await postJson(`${baseUrl}/runs/sandbox/resume`, {
+    const unrelatedSessionResponse = await postJson(`${baseUrl}/interactions/sessions`, {
+      schema_version: "touba-interaction-session-create-v0.1",
+      target_ref: "strategy:demo.approval/RunApproval",
+      target_kind: "strategy",
+      presentation: "workflow",
+      effect_policy: "runtime_only",
+      requested_by: { kind: "studio", id: "test-suite" }
+    });
+    assert.equal(unrelatedSessionResponse.status, 201);
+    const unrelatedSession = await unrelatedSessionResponse.json();
+    const mismatchedResume = await postJson(
+      `${baseUrl}/interactions/sessions/${unrelatedSession.session_id}/resume`,
+      {
+        schema_version: "touba-interaction-resume-request-v0.1",
+        request_id: pending.request_id,
+      },
+    );
+    assert.equal(mismatchedResume.status, 409);
+    assert.equal((await mismatchedResume.json()).code, "ToubaServeInteractionResumeMismatch");
+
+    const resumedResponse = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/resume`, {
+      schema_version: "touba-interaction-resume-request-v0.1",
       request_id: pending.request_id,
     });
     assert.equal(resumedResponse.status, 200);
-    const resumed = await resumedResponse.json();
+    const resumedSession = await resumedResponse.json();
+    const resumed = resumedSession.messages.at(-1).run_result;
+    assert.equal(resumedSession.status, "active");
+    assert.equal(resumedSession.messages.length, 3);
     assert.equal(resumed.status, "success");
     assert.equal(resumed.result, "approved");
     assert.equal(resumed.run_id, paused.run_id);
@@ -2808,11 +2946,12 @@ test("HTTP project server persists and resumes a human approval checkpoint witho
       1,
     );
 
-    const idempotentResponse = await postJson(`${baseUrl}/runs/sandbox/resume`, {
+    const idempotentResponse = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/resume`, {
+      schema_version: "touba-interaction-resume-request-v0.1",
       request_id: pending.request_id,
     });
     assert.equal(idempotentResponse.status, 200);
-    assert.deepEqual(await idempotentResponse.json(), resumed);
+    assert.deepEqual(await idempotentResponse.json(), resumedSession);
   } finally {
     await service.stop();
     rmSync(root, { recursive: true, force: true });

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-interaction-session-create-v0.1.schema.json",
+  "title": "touba-interaction-session-create-v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "target_ref", "target_kind", "presentation", "effect_policy", "requested_by"],
+  "properties": {
+    "schema_version": { "const": "touba-interaction-session-create-v0.1" },
+    "target_ref": { "type": "string", "minLength": 1 },
+    "target_kind": { "enum": ["agent", "function", "skill", "strategy", "tool", "trigger"] },
+    "presentation": { "enum": ["conversation", "workflow", "invocation", "event"] },
+    "effect_policy": { "enum": ["runtime_only", "allow_declared_external_effects"] },
+    "requested_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["studio", "ide", "cli", "user", "service"] },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

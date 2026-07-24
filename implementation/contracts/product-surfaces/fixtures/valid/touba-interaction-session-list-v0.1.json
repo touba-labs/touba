@@ -1,0 +1,14 @@
+{
+  "schema_version": "touba-interaction-session-list-v0.1",
+  "sessions": [
+    {
+      "session_id": "interaction_01",
+      "target_ref": "agent:billing/InvoiceAgent",
+      "target_kind": "agent",
+      "presentation": "conversation",
+      "status": "active",
+      "updated_at": "2026-07-24T12:00:01Z",
+      "message_count": 1
+    }
+  ]
+}
