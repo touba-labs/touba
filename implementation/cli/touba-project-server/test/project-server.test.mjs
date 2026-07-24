@@ -31,6 +31,7 @@ import {
   appendProjectEventJournal,
   listHumanDecisions,
   listProjectChanges,
+  loadOptionalProjectSecretStore,
   preflightServeOptions,
   proposeProjectChange,
   proposeProjectChangeSet,
@@ -76,6 +77,47 @@ test("preflight rejects invalid contracts root and decision store path", () => {
     }),
     /directory as decision store/,
   );
+});
+
+test("project sandbox secret profiles resolve handles from the server environment", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-secrets-"));
+  const path = join(root, "touba.secrets.dev.json");
+  const previous = process.env.TOUBA_PROJECT_SERVER_TEST_SECRET;
+  process.env.TOUBA_PROJECT_SERVER_TEST_SECRET = "server-secret-value";
+  writeFileSync(path, JSON.stringify({
+    secrets_version: "touba-secrets-v1",
+    secrets: {
+      TEST_HANDLE: {
+        source: "env",
+        name: "TOUBA_PROJECT_SERVER_TEST_SECRET",
+      },
+    },
+  }), "utf8");
+
+  try {
+    const store = loadOptionalProjectSecretStore({
+      projectRoot: root,
+      required: true,
+      secretsPath: path,
+    });
+    assert.equal(store.has("TEST_HANDLE"), true);
+    assert.equal(store.valueFor("TEST_HANDLE"), "server-secret-value");
+    assert.throws(
+      () => loadOptionalProjectSecretStore({
+        projectRoot: root,
+        required: true,
+        secretsPath: join(root, "missing.json"),
+      }),
+      (error) => error.code === "ToubaServeSandboxSecretsMissing",
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TOUBA_PROJECT_SERVER_TEST_SECRET;
+    } else {
+      process.env.TOUBA_PROJECT_SERVER_TEST_SECRET = previous;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("human identity permissions map project reads and governed actions", () => {
@@ -2731,6 +2773,15 @@ test("HTTP project server persists and resumes a human approval checkpoint witho
     assert.equal(resumed.status, "success");
     assert.equal(resumed.result, "approved");
     assert.equal(resumed.run_id, paused.run_id);
+    assert.ok(resumed.trace.event_count > paused.trace.event_count);
+    assert.equal(
+      resumed.trace.events.filter((event) => event.type === "run_started").length,
+      2,
+    );
+    assert.equal(
+      resumed.trace.events.filter((event) => event.type === "human_approval_checkpoint_loaded").length,
+      1,
+    );
 
     const idempotentResponse = await postJson(`${baseUrl}/runs/sandbox/resume`, {
       request_id: pending.request_id,

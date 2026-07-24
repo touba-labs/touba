@@ -485,13 +485,14 @@ function serveCommand(rawArgs) {
 
 function serveUsage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--deployment-target-url <url>] [--deployment-target-token-env NAME] [--identity-control-plane-url URL] [--identity-service-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--deployment-target-url <url>] [--deployment-target-token-env NAME] [--identity-control-plane-url URL] [--identity-service-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the Touba project server for client, Mobile and contract clients.",
     "",
     "Defaults:",
     "  host: 127.0.0.1",
     "  port: 8791",
+    "  secrets: touba.secrets.dev.json when present",
     "  human_decisions: .touba/human-decisions.json",
     "  change_proposals: .touba/client-change-proposals.json",
     "  event_journal: .touba/project-events.jsonl",

@@ -550,6 +550,30 @@ test("prepare write creates one project manifest and module-scoped handler stubs
   }
 });
 
+test("prepare accepts request-trigger inputs supplied by payload mappings", async () => {
+  const root = tempRoot();
+  try {
+    writeFileSync(
+      join(root, "input.air.json"),
+      JSON.stringify(airDocumentWithPayloadTrigger(), null, 2),
+      "utf8",
+    );
+    const report = await prepareProject({
+      root,
+      mode: "write",
+      airPaths: ["input.air.json"],
+    });
+
+    assert.equal(report.status, "success");
+    assert.equal(
+      report.diagnostics.some((diagnostic) => diagnostic.code === "MissingTriggerArgument"),
+      false,
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("prepare write preserves existing secret profile entries and adds missing handles", async () => {
   const root = tempRoot();
   try {
@@ -3565,6 +3589,38 @@ function airDocumentWithPureStrategy() {
     ],
     trace_points: [],
   };
+}
+
+function airDocumentWithPayloadTrigger() {
+  const document = airDocumentWithPureStrategy();
+  document.definitions.strategies[0].signature.inputs = [
+    { name: "query", type_ref: "builtin:Text" },
+  ];
+  document.execution_graphs[0].nodes[0].arguments = ["value:query"];
+  document.definitions.triggers = [
+    {
+      id: "trigger:local.run/WebhookRun",
+      name: "WebhookRun",
+      event: {
+        kind: "request",
+        value: "POST /webhook/run",
+      },
+      target_ref: "strategy:local.run/Run",
+      target_kind: "strategy",
+      arguments: [],
+      payload: {
+        format: "json",
+        content_types: ["application/json"],
+        max_bytes: 65536,
+        map: { query: "$.query" },
+      },
+      limits: {
+        max_runs_per_day: 5,
+        timeout_ms: 30000,
+      },
+    },
+  ];
+  return document;
 }
 
 function airDocumentWithToolStrategy() {

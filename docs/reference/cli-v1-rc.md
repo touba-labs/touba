@@ -952,6 +952,18 @@ live, les décisions humaines, les propositions de changement, les exécutions
 sandbox et les révisions de déploiement. Les entrypoints de test passent par le
 runtime et l’autorité déclarée du projet.
 
+Par défaut, `touba serve` charge `touba.secrets.dev.json` lorsqu’il est présent
+à la racine du projet. `--secrets <fichier>` sélectionne un autre profil
+explicitement. Les handles restent soumis au manifest, aux scopes des agents et
+aux grants des bindings ; client ne reçoit jamais les valeurs résolues.
+
+```sh title="Terminal"
+touba serve \
+  --project-root . \
+  --auth-token-env TOUBA_STUDIO_TOKEN \
+  --secrets touba.secrets.prod.json
+```
+
 Pour relier une cible de déploiement :
 
 ```sh title="Terminal"

@@ -33,6 +33,7 @@ import {
   executeAirDocument,
   executeTriggerEvent,
   loadAirFromJson,
+  loadSecretsFromJson,
   loadToolBindingManifestFromJson,
   ToubaRuntimeError,
 } from "@touba/runtime";
@@ -60,6 +61,7 @@ const DEFAULT_MOBILE_NOTIFICATIONS_PATH = ".touba/mobile-notifications.json";
 const DEFAULT_MOBILE_PAIRINGS_PATH = ".touba/mobile-pairings.json";
 const DEFAULT_MOBILE_QUICK_APPROVAL_POLICY_PATH = ".touba/mobile-quick-approval-policy.json";
 const DEFAULT_MOBILE_ESCALATION_PATH = ".touba/mobile-escalation.json";
+const DEFAULT_DEV_SECRETS_PROFILE_PATH = "touba.secrets.dev.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CHANGE_CONTENT_BYTES = 64 * 1024;
@@ -250,6 +252,10 @@ export function createToubaProjectServer(options = {}) {
       ? undefined
       : process.env[options.identityServiceTokenEnv]);
   const agentDecisionProvider = options.agentDecisionProvider;
+  const secretsPath = resolve(
+    options.secretsPath ?? join(projectRoot, DEFAULT_DEV_SECRETS_PROFILE_PATH),
+  );
+  const secretsRequired = options.secretsPath !== undefined;
   const eventClients = new Set();
   let projectSnapshot;
   let eventSequence = 0;
@@ -485,6 +491,8 @@ export function createToubaProjectServer(options = {}) {
           request: body,
           runSummaryPath,
           sandboxCheckpointsPath,
+          secretsPath,
+          secretsRequired,
           traceTimelinePath,
         });
         publishEvent(eventClients, "sandbox_run.completed", sandboxRunEventPayload(result), nextEvent);
@@ -523,6 +531,8 @@ export function createToubaProjectServer(options = {}) {
           request: body,
           runSummaryPath,
           sandboxCheckpointsPath,
+          secretsPath,
+          secretsRequired,
           traceTimelinePath,
         });
         publishEvent(eventClients, "trigger.fire.completed", sandboxRunEventPayload(result), nextEvent);
@@ -807,6 +817,8 @@ export function createToubaProjectServer(options = {}) {
           request: body,
           runSummaryPath,
           sandboxCheckpointsPath,
+          secretsPath,
+          secretsRequired,
           traceTimelinePath,
         });
         publishEvent(eventClients, "sandbox_run.resumed", sandboxRunEventPayload(result), nextEvent);
@@ -1471,6 +1483,8 @@ export async function executeProjectSandboxRun({
   request,
   runSummaryPath,
   sandboxCheckpointsPath = join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
+  secretsPath = join(projectRoot, DEFAULT_DEV_SECRETS_PROFILE_PATH),
+  secretsRequired = false,
   traceTimelinePath,
   generatedAt = new Date().toISOString(),
 }) {
@@ -1501,6 +1515,11 @@ export async function executeProjectSandboxRun({
   const startedMs = Date.now();
   const runId = `sandbox_${compactTimestamp(startedAt)}_${randomBytes(3).toString("hex")}`;
   const toolBindingManifest = loadOptionalProjectManifest({ projectRoot });
+  const secretStore = loadOptionalProjectSecretStore({
+    projectRoot,
+    required: secretsRequired,
+    secretsPath,
+  });
   let runtimeResult;
   try {
     runtimeResult = executionKind === "trigger"
@@ -1518,6 +1537,7 @@ export async function executeProjectSandboxRun({
         agentDecisionProviderTimeoutMs,
         durableHumanApprovals: true,
         runId,
+        secretStore,
         toolBindingManifest,
       })
       : await executeAirDocument(resolved.document, {
@@ -1531,6 +1551,7 @@ export async function executeProjectSandboxRun({
         entryRef: targetRef,
         inputs: isPlainObject(request.inputs) ? request.inputs : {},
         runId,
+        secretStore,
         toolBindingManifest,
       });
   } catch (cause) {
@@ -1651,6 +1672,8 @@ export async function resumeProjectSandboxRun({
   request,
   runSummaryPath,
   sandboxCheckpointsPath = join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
+  secretsPath = join(projectRoot, DEFAULT_DEV_SECRETS_PROFILE_PATH),
+  secretsRequired = false,
   traceTimelinePath,
   generatedAt = new Date().toISOString(),
 }) {
@@ -1674,6 +1697,11 @@ export async function resumeProjectSandboxRun({
   }
   const resolved = resolveSandboxAirDocument({ projectRoot, targetRef: record.target_ref });
   const toolBindingManifest = loadOptionalProjectManifest({ projectRoot });
+  const secretStore = loadOptionalProjectSecretStore({
+    projectRoot,
+    required: secretsRequired,
+    secretsPath,
+  });
   const startedMs = Date.now();
   let runtimeResult;
   try {
@@ -1691,6 +1719,7 @@ export async function resumeProjectSandboxRun({
       },
       humanApprovalResumeCheckpoint: record.checkpoint,
       runId: record.run_id,
+      secretStore,
       toolBindingManifest,
     };
     runtimeResult = record.execution_kind === "trigger"
@@ -1719,10 +1748,11 @@ export async function resumeProjectSandboxRun({
     executionKind: record.execution_kind,
     runId: record.run_id,
     runtimeResult,
-    startedAt: generatedAt,
+    startedAt: record.paused_result?.started_at ?? generatedAt,
     startedMs,
     targetRef: record.target_ref,
   });
+  result.trace = mergeSandboxTraceSummaries(record.paused_result?.trace, result.trace);
   validateContractPayload({
     contractsRoot,
     schemaVersion: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
@@ -1805,6 +1835,29 @@ function loadOptionalProjectManifest({ projectRoot }) {
   }
 }
 
+export function loadOptionalProjectSecretStore({ projectRoot, required, secretsPath }) {
+  if (!existsSync(secretsPath)) {
+    if (required) {
+      throw serviceError(
+        "ToubaServeSandboxSecretsMissing",
+        `secrets profile does not exist: ${relative(projectRoot, secretsPath) || basename(secretsPath)}`,
+      );
+    }
+    return undefined;
+  }
+  try {
+    return loadSecretsFromJson(readFileSync(secretsPath, "utf8"), {
+      baseDir: projectRoot,
+      env: process.env,
+    });
+  } catch (cause) {
+    throw serviceError(
+      "ToubaServeSandboxSecretsInvalid",
+      `secrets profile cannot be loaded by the runtime: ${cause.message}`,
+    );
+  }
+}
+
 function airDocumentContainsRef(document, ref) {
   return ["agents", "skills", "strategies", "functions", "tools", "triggers"].some((collection) =>
     (document.definitions?.[collection] ?? []).some((definition) => definition.id === ref)
@@ -1870,6 +1923,24 @@ function sandboxTraceSummary(trace) {
         redaction: type.includes("secret") ? "secrets_redacted" : "payload_minimized",
       };
     }),
+  };
+}
+
+function mergeSandboxTraceSummaries(...summaries) {
+  const available = summaries.filter((summary) => isPlainObject(summary));
+  const latest = available.at(-1) ?? {
+    run_id: "unknown",
+    entry_ref: "unknown",
+    events: [],
+  };
+  const events = available
+    .flatMap((summary) => Array.isArray(summary.events) ? summary.events : [])
+    .map((event, index) => ({ ...event, index }));
+  return {
+    run_id: nonEmptyString(latest.run_id) ?? "unknown",
+    entry_ref: nonEmptyString(latest.entry_ref) ?? "unknown",
+    event_count: events.length,
+    events,
   };
 }
 
@@ -6184,6 +6255,8 @@ function parseArgs(rawArgs) {
       options.contractsRoot = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--project-root") {
       options.projectRoot = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--secrets") {
+      options.secretsPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--human-decisions") {
       options.humanDecisionsPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--change-proposals") {
@@ -6337,13 +6410,14 @@ async function loadAgentDecisionProviderFromPath(providerPath) {
 
 function usage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for client, Mobile and contract clients.",
     "",
     "Defaults:",
     `  host: ${DEFAULT_HOST}`,
     `  port: ${DEFAULT_PORT}`,
+    `  secrets: ${DEFAULT_DEV_SECRETS_PROFILE_PATH} when present`,
     `  human_decisions: ${DEFAULT_HUMAN_DECISIONS_PATH}`,
     `  change_proposals: ${DEFAULT_CHANGE_PROPOSALS_PATH}`,
     `  event_journal: ${DEFAULT_EVENT_JOURNAL_PATH}`,

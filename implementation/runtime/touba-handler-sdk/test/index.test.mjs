@@ -705,6 +705,8 @@ test("createAiSdkDecisionProvider requests a catalog and selects a capability wi
     "select_capability",
     "request_human_review",
   ]);
+  assert.match(calls[1].system, /frontière de responsabilité déclarée/u);
+  assert.match(calls[1].system, /transmis à un autre agent/u);
   assert.equal(jsonSchemaOf(calls[1]).properties.arguments.properties.request.type, "object");
   assert.equal(jsonSchemaOf(calls[1]).properties.arguments.properties.request.properties.rows.type, "integer");
 });
@@ -738,6 +740,140 @@ test("createAiSdkDecisionProvider can request governed human review from the cat
     reason: "jugement humain nécessaire",
     review_prompt: "Merci de relire la synthèse avant réponse finale.",
   });
+});
+
+test("createAiSdkDecisionProvider can disable dynamic human review by policy", async () => {
+  const calls = [];
+  const provider = createAiSdkDecisionProvider({
+    allowHumanReview: false,
+    model: "test-provider/test-model",
+    source: "test_ai_sdk",
+    generateObject: async (request) => {
+      calls.push(request);
+      return {
+        object: {
+          action: "select_capability",
+          target_ref: "skill:test/Answer",
+          source: "test_ai_sdk",
+          reason: "la responsabilité reste attribuée à l'agent",
+          arguments: {
+            request: {
+              query: "postgres",
+              rows: 1,
+            },
+          },
+          review_prompt: "",
+        },
+      };
+    },
+  });
+
+  const decision = await provider(agentDecisionCatalogRequest());
+
+  assert.equal(decision.target_ref, "skill:test/Answer");
+  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["select_capability"]);
+  assert.equal(
+    jsonSchemaOf(calls[0]).properties.target_ref.enum.includes("human_review"),
+    false,
+  );
+  assert.match(calls[0].system, /review humain dynamique n'est pas autorisé/u);
+});
+
+test("createAiSdkDecisionProvider excludes capabilities already consumed by the agent", async () => {
+  const calls = [];
+  const provider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    source: "test_ai_sdk",
+    generateObject: async (request) => {
+      calls.push(request);
+      return {
+        object: {
+          action: "select_capability",
+          target_ref: "skill:test/Answer",
+          source: "test_ai_sdk",
+          reason: "la capacité restante finalise le travail",
+          arguments: {
+            request: {
+              query: "postgres",
+              rows: 1,
+            },
+          },
+          review_prompt: "",
+        },
+      };
+    },
+  });
+  const request = agentDecisionCatalogRequest();
+  request.model_input.agent_state = {
+    completed_capability_refs: ["skill:test/Search"],
+    remaining_capability_refs: ["skill:test/Answer"],
+  };
+
+  const decision = await provider(request);
+
+  assert.equal(decision.target_ref, "skill:test/Answer");
+  assert.deepEqual(jsonSchemaOf(calls[0]).properties.target_ref.enum, [
+    "skill:test/Answer",
+    "human_review",
+  ]);
+});
+
+test("createAiSdkDecisionProvider requires a direct answer after every capability is consumed", async () => {
+  const calls = [];
+  const provider = createAiSdkDecisionProvider({
+    allowHumanReview: false,
+    model: "test-provider/test-model",
+    source: "test_ai_sdk",
+    generateObject: async (request) => {
+      calls.push(request);
+      return {
+        object: {
+          action: "answer_directly",
+          source: "test_ai_sdk",
+          reason: "all declared work is complete",
+          result: "final governed result",
+        },
+      };
+    },
+  });
+  const request = agentDecisionSummaryRequest();
+  request.model_input.agent_state = {
+    completed_capability_refs: [...request.capability_refs],
+    remaining_capability_refs: [],
+  };
+
+  const decision = await provider(request);
+
+  assert.equal(decision.action, "answer_directly");
+  assert.equal(decision.result, "final governed result");
+  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly"]);
+  assert.match(calls[0].system, /toutes les capacités déclarées ont déjà été consommées/iu);
+});
+
+test("createAiSdkDecisionProvider rejects a catalog request after every capability is consumed", async () => {
+  const provider = createAiSdkDecisionProvider({
+    allowHumanReview: false,
+    model: "test-provider/test-model",
+    source: "test_ai_sdk",
+    generateObject: async () => ({
+      object: {
+        action: "request_capabilities",
+        source: "test_ai_sdk",
+        reason: "invalid continuation",
+        result: "",
+      },
+    }),
+  });
+  const request = agentDecisionSummaryRequest();
+  request.model_input.agent_state = {
+    completed_capability_refs: [...request.capability_refs],
+    remaining_capability_refs: [],
+  };
+
+  await assert.rejects(
+    () => provider(request),
+    /request_capabilities is unavailable after all declared capabilities have been consumed/u,
+  );
 });
 
 test("ToubaEngine requires a single AIR source for run", async () => {

@@ -296,7 +296,7 @@ export async function executeTriggerEvent(document, event, options = {}) {
   try {
     initializeRunControls(context);
     result = context.humanApprovalResumeCheckpoint
-      ? await executeHumanApprovalResumeCheckpoint(document, entryRef, context)
+      ? await executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, context)
       : await executeNormalizedTriggerEvent(triggerEvent, context);
   } catch (error) {
     if (error instanceof RuntimeStop) {
@@ -327,6 +327,20 @@ export async function executeTriggerEvent(document, event, options = {}) {
     response.checkpoint = context.pendingHumanApprovalCheckpoint;
   }
   return response;
+}
+
+async function executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, context) {
+  const result = await executeHumanApprovalResumeCheckpoint(document, entryRef, context);
+  const trigger = context.indexes.triggers.get(entryRef);
+  context.trace.push("trigger_execution_completed", {
+    payload: compactPayload({
+      trigger_ref: entryRef,
+      target_ref: trigger?.target_ref,
+      status: "success",
+      resumed_from_checkpoint: true,
+    }),
+  });
+  return result;
 }
 
 function createExecutionContext(document, entryRef, options = {}) {
@@ -951,7 +965,15 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
 }
 
 function canCreateHumanApprovalCheckpoint(context, graph) {
-  return context.durableHumanApprovals === true && graph.owner_ref === context.entryRef;
+  if (context.durableHumanApprovals !== true) {
+    return false;
+  }
+  if (graph.owner_ref === context.entryRef) {
+    return true;
+  }
+  const entryTrigger = context.indexes.triggers.get(context.entryRef);
+  return entryTrigger?.target_kind === "strategy"
+    && entryTrigger.target_ref === graph.owner_ref;
 }
 
 function agentHumanReviewCheckpointSupport(context, agentRef) {
@@ -1196,7 +1218,9 @@ async function executeNormalizedTriggerEvent(triggerEvent, context) {
 
   try {
     const result = await withTriggerTimeout(
-      executeTarget(trigger.target_ref, context, callArguments),
+      executeTarget(trigger.target_ref, context, callArguments, {
+        inputValueArguments: true,
+      }),
       effectiveLimits.timeout_ms,
       triggerRef,
     );
@@ -1576,14 +1600,22 @@ async function executeTarget(targetRef, context, callArguments = null, options =
   }
   if (targetRef.startsWith("function:")) {
     const fn = requireDefinition(context.indexes.functions, targetRef);
-    return withBoundArguments(fn.signature, callArguments, context, () =>
-      executeGraph(fn.body_graph_ref, context),
+    return withBoundArguments(
+      fn.signature,
+      callArguments,
+      context,
+      () => executeGraph(fn.body_graph_ref, context),
+      { markInputValues: options.inputValueArguments === true },
     );
   }
   if (targetRef.startsWith("skill:")) {
     const skill = requireDefinition(context.indexes.skills, targetRef);
-    return withBoundArguments(skill.signature, callArguments, context, () =>
-      executeGraph(skill.flow_graph_ref, context),
+    return withBoundArguments(
+      skill.signature,
+      callArguments,
+      context,
+      () => executeGraph(skill.flow_graph_ref, context),
+      { markInputValues: options.inputValueArguments === true },
     );
   }
   if (targetRef.startsWith("agent:")) {
@@ -1692,14 +1724,22 @@ async function executeTarget(targetRef, context, callArguments = null, options =
   }
   if (targetRef.startsWith("strategy:")) {
     const strategy = requireDefinition(context.indexes.strategies, targetRef);
-    return withBoundArguments(strategy.signature, callArguments, context, () =>
-      executeGraph(strategy.flow_graph_ref, context),
+    return withBoundArguments(
+      strategy.signature,
+      callArguments,
+      context,
+      () => executeGraph(strategy.flow_graph_ref, context),
+      { markInputValues: options.inputValueArguments === true },
     );
   }
   if (targetRef.startsWith("tool:")) {
     const tool = requireDefinition(context.indexes.tools, targetRef);
-    return withBoundArguments(tool.signature, callArguments, context, () =>
-      executeTool(tool, context),
+    return withBoundArguments(
+      tool.signature,
+      callArguments,
+      context,
+      () => executeTool(tool, context),
+      { markInputValues: options.inputValueArguments === true },
     );
   }
   throw new RuntimeFailure(`unsupported AIR target ${targetRef}`, { targetRef });
@@ -6573,7 +6613,13 @@ function validateFloatResult(value, expression) {
   return value;
 }
 
-async function withBoundArguments(signature, argumentValues, context, execute) {
+async function withBoundArguments(
+  signature,
+  argumentValues,
+  context,
+  execute,
+  { markInputValues = false } = {},
+) {
   const inputs = signature?.inputs ?? [];
   if (argumentValues !== null && inputs.length !== argumentValues.length) {
     throw new RuntimeFailure("AIR call argument count does not match target signature", {
@@ -6584,6 +6630,7 @@ async function withBoundArguments(signature, argumentValues, context, execute) {
 
   const previousValues = [];
   const previousTypes = [];
+  const previousInputValueMembership = [];
   for (let index = 0; index < inputs.length; index += 1) {
     const handle = valueHandle(inputs[index].name);
     previousTypes.push({
@@ -6601,6 +6648,13 @@ async function withBoundArguments(signature, argumentValues, context, execute) {
         value: context.values.get(handle),
       });
       context.values.set(handle, argumentValues[index]);
+      if (markInputValues) {
+        previousInputValueMembership.push({
+          handle,
+          existed: context.inputValueKeys.has(handle),
+        });
+        context.inputValueKeys.add(handle);
+      }
     }
   }
 
@@ -6619,6 +6673,11 @@ async function withBoundArguments(signature, argumentValues, context, execute) {
         context.valueTypes.set(previous.handle, previous.typeRef);
       } else {
         context.valueTypes.delete(previous.handle);
+      }
+    }
+    for (const previous of previousInputValueMembership.reverse()) {
+      if (!previous.existed) {
+        context.inputValueKeys.delete(previous.handle);
       }
     }
   }

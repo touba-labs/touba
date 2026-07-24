@@ -4819,6 +4819,203 @@ test("executes an enabled schedule trigger by launching its target strategy", as
   assert.equal(JSON.stringify(result.trace).includes("raw-secret-payload"), false);
 });
 
+test("exposes typed request trigger arguments to agents as bounded runtime inputs", async () => {
+  const document = baseDocument({
+    types: [{
+      id: "type:test/Incident",
+      name: "Incident",
+      fields: [{
+        name: "case_id",
+        type_ref: "builtin:Text",
+        source_ref: sourceRef(),
+      }],
+      source_ref: sourceRef(),
+    }],
+    agents: [{
+      id: "agent:test/Investigator",
+      name: "Investigator",
+      description: "Investigates the declared incident request.",
+      responsibility: "Investigate the incident identified by the runtime input.",
+      uses: [],
+      callable_by: [{
+        caller_ref: "strategy:test/RunIncident",
+        caller_kind: "strategy",
+        source_ref: sourceRef(),
+      }],
+      source_ref: sourceRef(),
+    }],
+    strategies: [{
+      id: "strategy:test/RunIncident",
+      name: "RunIncident",
+      signature: {
+        inputs: [{
+          name: "case_input",
+          type_ref: "type:test/Incident",
+          source_ref: sourceRef(),
+        }],
+        output_type: "builtin:Text",
+      },
+      uses: ["agent:test/Investigator"],
+      flow_graph_ref: "graph:strategy:test/RunIncident",
+      source_ref: sourceRef(),
+    }],
+    triggers: [{
+      id: "trigger:test/IncidentWebhook",
+      name: "IncidentWebhook",
+      event: {
+        kind: "request",
+        value: "POST /incident",
+        source_ref: sourceRef(),
+      },
+      target_ref: "strategy:test/RunIncident",
+      target_kind: "strategy",
+      arguments: [],
+      limits: {
+        max_runs_per_day: 10,
+        timeout_ms: 30000,
+        source_ref: sourceRef(),
+      },
+      source_ref: sourceRef(),
+    }],
+    graphs: [
+      graph("graph:strategy:test/RunIncident", "strategy:test/RunIncident", [
+        node("n1", "call_agent", {
+          target_ref: "agent:test/Investigator",
+          result_binding: "investigation",
+        }),
+        node("n2", "give", { arguments: ["value:investigation"] }),
+      ], [
+        edge("n1", "n2", "next"),
+      ]),
+    ],
+  });
+  const requests = [];
+  const result = await executeTriggerEvent(document, {
+    trigger_ref: "trigger:test/IncidentWebhook",
+    event_id: "incident-001",
+    source_kind: "request",
+    arguments: {
+      case_input: { case_id: "INC-001" },
+    },
+  }, {
+    agentDecisionProvider: async (request) => {
+      requests.push(request);
+      return {
+        action: "answer_directly",
+        source: "test",
+        reason: "incident input received",
+        result: request.inputs.case_input.case_id,
+      };
+    },
+    toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(
+      triggerManifestDocument({
+        sourceKind: "request",
+        limits: {
+          max_runs_per_day: 10,
+          timeout_ms: 30000,
+        },
+        triggers: {
+          "trigger:test/IncidentWebhook": {
+            enabled: true,
+            source: { kind: "request" },
+            limits: {
+              max_runs_per_day: 10,
+              timeout_ms: 30000,
+            },
+          },
+        },
+      }),
+    )),
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(result.result, "INC-001");
+  assert.deepEqual(requests[0].inputs, {
+    case_input: { case_id: "INC-001" },
+  });
+});
+
+test("resumes a trigger target approval checkpoint without replaying prior effects", async () => {
+  const document = toolThenHumanApprovalDocument();
+  document.definitions.triggers = [{
+    id: "trigger:test/ReviewWebhook",
+    name: "ReviewWebhook",
+    event: {
+      kind: "request",
+      value: "POST /review",
+      source_ref: sourceRef(),
+    },
+    target_ref: "strategy:test/RunReview",
+    target_kind: "strategy",
+    arguments: [],
+    limits: {
+      max_runs_per_day: 10,
+      timeout_ms: 30000,
+      source_ref: sourceRef(),
+    },
+    source_ref: sourceRef(),
+  }];
+  let toolCalls = 0;
+  const options = {
+    durableHumanApprovals: true,
+    toolHandlers: {
+      "tool:test/Fetch": async () => {
+        toolCalls += 1;
+        return "fetched";
+      },
+    },
+    toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(
+      bindingManifestDocument({
+        bindings: {
+          "tool:test/Fetch": toolBindingEntry({
+            grants: [],
+            secrets: [],
+          }),
+        },
+        triggers: {
+          "trigger:test/ReviewWebhook": {
+            enabled: true,
+            source: { kind: "request" },
+            limits: {
+              max_runs_per_day: 10,
+              timeout_ms: 30000,
+            },
+          },
+        },
+      }),
+    )),
+  };
+  const event = {
+    trigger_ref: "trigger:test/ReviewWebhook",
+    event_id: "review-001",
+    source_kind: "request",
+    arguments: {},
+  };
+
+  const paused = await executeTriggerEvent(document, event, options);
+
+  assert.equal(paused.status, "stopped");
+  assert.equal(toolCalls, 1);
+  assert.equal(paused.checkpoint.entry_ref, "trigger:test/ReviewWebhook");
+  assert.equal(paused.checkpoint.graph_ref, "graph:strategy:test/RunReview");
+
+  const resumed = await executeTriggerEvent(document, event, {
+    ...options,
+    humanApprovalResumeCheckpoint: paused.checkpoint,
+    humanApprovalDecisions: {
+      "approval:test/review-after-fetch": "approved",
+    },
+  });
+
+  assert.equal(resumed.status, "success");
+  assert.equal(resumed.result, "approved");
+  assert.equal(toolCalls, 1);
+  assert.equal(
+    eventOf(resumed.trace, "trigger_execution_completed").payload.resumed_from_checkpoint,
+    true,
+  );
+});
+
 test("refuses a trigger before target execution when local kill switch is enabled", async () => {
   const result = await executeTriggerEvent(triggerDocument(), triggerEvent(), {
     toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(triggerManifestDocument())),

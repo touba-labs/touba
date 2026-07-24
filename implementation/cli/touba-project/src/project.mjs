@@ -2121,6 +2121,13 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
     }
     const inputs = located.definition.signature?.inputs ?? [];
     const byName = new Set();
+    const payloadMap = trigger.payload?.map;
+    if (trigger.payload !== undefined && trigger.event?.kind !== "request") {
+      diagnostics.push(errorDiagnostic("InvalidTriggerArgument", "trigger payload mappings are only valid for request triggers", {
+        trigger_ref: trigger.id,
+        source_ref: trigger.payload?.source_ref ?? trigger.source_ref,
+      }));
+    }
     for (const argument of trigger.arguments ?? []) {
       if (byName.has(argument.input)) {
         diagnostics.push(errorDiagnostic("DuplicateTriggerArgument", `trigger argument ${argument.input} is provided more than once`, {
@@ -2139,7 +2146,30 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
         }));
       }
     }
+    if (payloadMap && typeof payloadMap === "object" && !Array.isArray(payloadMap)) {
+      for (const inputName of Object.keys(payloadMap)) {
+        if (byName.has(inputName)) {
+          diagnostics.push(errorDiagnostic("DuplicateTriggerArgument", `trigger argument ${inputName} is provided more than once`, {
+            trigger_ref: trigger.id,
+            input: inputName,
+            source_ref: trigger.payload?.source_ref ?? trigger.source_ref,
+          }));
+        }
+        byName.add(inputName);
+        if (!inputs.some((input) => input.name === inputName)) {
+          diagnostics.push(errorDiagnostic("UnknownTriggerArgument", `trigger argument ${inputName} does not match target strategy ${trigger.target_ref}`, {
+            trigger_ref: trigger.id,
+            target_ref: trigger.target_ref,
+            input: inputName,
+            source_ref: trigger.payload?.source_ref ?? trigger.source_ref,
+          }));
+        }
+      }
+    }
     for (const input of inputs) {
+      if (payloadMap && Object.hasOwn(payloadMap, input.name)) {
+        continue;
+      }
       const argument = (trigger.arguments ?? []).find((candidate) => candidate.input === input.name);
       if (!argument) {
         diagnostics.push(errorDiagnostic("MissingTriggerArgument", `trigger ${trigger.name} must provide strategy argument ${input.name}`, {
