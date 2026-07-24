@@ -1879,6 +1879,17 @@ function targetMayDispatchExternalTool(document, targetRef, seen = new Set()) {
   if (targetRef.startsWith("tool:")) return true;
   if (seen.has(targetRef)) return false;
   seen.add(targetRef);
+  const definition = ["agents", "skills", "strategies", "functions"]
+    .flatMap((collection) => document.definitions?.[collection] ?? [])
+    .find((candidate) => candidate.id === targetRef);
+  for (const nestedRef of definition?.uses ?? []) {
+    if (typeof nestedRef !== "string") continue;
+    if (nestedRef.startsWith("tool:")) return true;
+    if (/^(agent|skill|strategy|function):/u.test(nestedRef)
+      && targetMayDispatchExternalTool(document, nestedRef, seen)) {
+      return true;
+    }
+  }
   const graph = executionGraphForTarget(document, targetRef);
   if (!graph) return false;
   for (const node of graph.nodes ?? []) {
@@ -1889,6 +1900,13 @@ function targetMayDispatchExternalTool(document, targetRef, seen = new Set()) {
     }
   }
   return false;
+}
+
+function sandboxEffectPolicyRequirement(document, targetRef) {
+  if (!airDocumentContainsRef(document, targetRef)) return "unknown";
+  return targetMayDispatchExternalTool(document, targetRef)
+    ? "declared_external_effects_required"
+    : "runtime_only_compatible";
 }
 
 function executionGraphForTarget(document, targetRef) {
@@ -3659,6 +3677,7 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
           kind,
           ref,
           description: nonEmptyString(definition.description) ?? nonEmptyString(definition.name) ?? ref,
+          effect_policy_requirement: sandboxEffectPolicyRequirement(air, ref),
           input_contract: buildAirInputContract({ air, definition, kind }),
         });
       }
@@ -3672,6 +3691,10 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
         kind: "trigger",
         ref,
         description: nonEmptyString(trigger.description) ?? nonEmptyString(trigger.name) ?? ref,
+        effect_policy_requirement: sandboxEffectPolicyRequirement(
+          air,
+          sandboxTriggerTargetRef(air, ref),
+        ),
         input_contract: buildAirInputContract({ air, definition: trigger, kind: "trigger" }),
       });
     }
@@ -3692,6 +3715,7 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
         kind: "trigger",
         ref,
         description: `Trigger ${name}`,
+        effect_policy_requirement: "unknown",
         input_contract: unavailableAirInputContract(),
       });
     }

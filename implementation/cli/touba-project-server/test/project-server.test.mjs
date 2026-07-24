@@ -2133,6 +2133,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
           id: "agent:demo.main/ReviewAgent",
           name: "ReviewAgent",
           description: "Selects review capabilities for the served project.",
+          uses: ["skill:demo.main/ReviewDraft"],
         },
       ],
       functions: [
@@ -2162,6 +2163,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
           id: "skill:demo.main/ReviewDraft",
           name: "ReviewDraft",
           description: "Reviews a draft artifact.",
+          uses: ["tool:demo.main/StoreReview"],
           signature: {
             inputs: [{ name: "request", type_ref: "type:demo.main/ReviewRequest" }],
             output_type: "builtin:Text",
@@ -2173,6 +2175,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
           id: "strategy:demo.main/RunReview",
           name: "RunReview",
           description: "Runs the review strategy.",
+          flow_graph_ref: "graph:strategy:demo.main/RunReview",
           signature: {
             inputs: [
               { name: "request", type_ref: "type:demo.main/ReviewRequest" },
@@ -2192,6 +2195,20 @@ test("HTTP project server exposes live state, events and decisions", async () =>
         },
       ],
     },
+    execution_graphs: [
+      {
+        id: "graph:strategy:demo.main/RunReview",
+        owner_ref: "strategy:demo.main/RunReview",
+        nodes: [
+          {
+            id: "node:graph:strategy:demo.main/RunReview:0",
+            kind: "call_tool",
+            target_ref: "tool:demo.main/StoreReview",
+          },
+        ],
+        edges: [],
+      },
+    ],
   }, null, 2), "utf8");
   mkdirSync(join(root, "packages", "review"), { recursive: true });
   writeFileSync(join(root, "packages", "review", "touba.package.json"), JSON.stringify({
@@ -2256,18 +2273,23 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.match(project.packages[0].digest, /^sha256:[0-9a-f]{64}$/u);
     const agentEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "agent");
     assert.equal(agentEntrypoint.input_contract.mode, "open");
+    assert.equal(agentEntrypoint.effect_policy_requirement, "declared_external_effects_required");
     const functionEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "function");
     assert.equal(functionEntrypoint.input_contract.mode, "declared");
+    assert.equal(functionEntrypoint.effect_policy_requirement, "runtime_only_compatible");
     const toolEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "tool");
     assert.equal(toolEntrypoint.input_contract.mode, "declared");
+    assert.equal(toolEntrypoint.effect_policy_requirement, "declared_external_effects_required");
     const skillEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "skill");
     assert.equal(skillEntrypoint.input_contract.mode, "declared");
+    assert.equal(skillEntrypoint.effect_policy_requirement, "declared_external_effects_required");
     assert.deepEqual(skillEntrypoint.input_contract.fields, [
       { name: "request", type_ref: "type:demo.main/ReviewRequest", required: true },
     ]);
     assert.equal(skillEntrypoint.input_contract.types[0].fields[2].type_ref, "list:builtin:Text");
     const triggerEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "trigger");
     assert.equal(triggerEntrypoint.input_contract.mode, "declared");
+    assert.equal(triggerEntrypoint.effect_policy_requirement, "declared_external_effects_required");
     assert.deepEqual(triggerEntrypoint.input_contract.fields.map((field) => field.name), ["request"]);
     assert.equal(JSON.stringify(project).includes("billing-agent"), false);
     assertMatchesSchema("touba-project-inspection-v1", project);

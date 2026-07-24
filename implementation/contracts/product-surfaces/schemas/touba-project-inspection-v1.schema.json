@@ -36,11 +36,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["kind", "ref", "description", "input_contract"],
+        "required": ["kind", "ref", "description", "effect_policy_requirement", "input_contract"],
         "properties": {
           "kind": { "enum": ["agent", "function", "skill", "strategy", "tool", "trigger"] },
           "ref": { "type": "string" },
           "description": { "type": "string" },
+          "effect_policy_requirement": {
+            "enum": ["runtime_only_compatible", "declared_external_effects_required", "unknown"]
+          },
           "input_contract": { "$ref": "#/$defs/inputContract" }
         }
       }

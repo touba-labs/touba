@@ -33,6 +33,7 @@
       "kind": "agent",
       "ref": "agent:billing/InvoiceAgent",
       "description": "Reviews invoice summaries and requests approval before payment effects.",
+      "effect_policy_requirement": "declared_external_effects_required",
       "input_contract": {
         "mode": "open",
         "fields": [],
@@ -43,6 +44,7 @@
       "kind": "function",
       "ref": "function:billing/FormatInvoiceReference",
       "description": "Formats an invoice reference without external effects.",
+      "effect_policy_requirement": "runtime_only_compatible",
       "input_contract": {
         "mode": "declared",
         "fields": [
@@ -59,6 +61,7 @@
       "kind": "tool",
       "ref": "tool:billing/StoreInvoiceReview",
       "description": "Stores an approved invoice review through a declared handler.",
+      "effect_policy_requirement": "declared_external_effects_required",
       "input_contract": {
         "mode": "declared",
         "fields": [
@@ -75,6 +78,7 @@
       "kind": "trigger",
       "ref": "trigger:billing/invoice-webhook",
       "description": "Accepts signed invoice events through the trigger service.",
+      "effect_policy_requirement": "declared_external_effects_required",
       "input_contract": {
         "mode": "declared",
         "fields": [
