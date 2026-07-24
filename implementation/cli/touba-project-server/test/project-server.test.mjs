@@ -2272,7 +2272,10 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     });
     assert.match(project.packages[0].digest, /^sha256:[0-9a-f]{64}$/u);
     const agentEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "agent");
-    assert.equal(agentEntrypoint.input_contract.mode, "open");
+    assert.equal(agentEntrypoint.input_contract.mode, "declared");
+    assert.deepEqual(agentEntrypoint.input_contract.fields, [
+      { name: "request", type_ref: "type:demo.main/ReviewRequest", required: true },
+    ]);
     assert.equal(agentEntrypoint.effect_policy_requirement, "declared_external_effects_required");
     const functionEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "function");
     assert.equal(functionEntrypoint.input_contract.mode, "declared");

@@ -16,7 +16,7 @@ lossless mapping to the source contract and its `schema_version`.
 | `touba-identity-directory-v0.1` | client | Organization members and role definitions without devices, sessions or credentials. |
 | `touba-device-pairing-v0.1` | client, Mobile | One-time, expiring identity pairing issued for a specific user. |
 | `touba-identity-audit-v0.1` | client | Bounded audit trail for identity and access-management actions. |
-| `touba-project-inspection-v1` | client | Project structure, generated artifacts, executable input contracts, entrypoint effect-policy requirements, installed packages, diagnostics. |
+| `touba-project-inspection-v1` | client | Project structure, generated artifacts, executable input contracts including common agent-capability signatures, entrypoint effect-policy requirements, installed packages, diagnostics. |
 | `touba-project-refresh-request-v0.1` | client, CLI | Request a project refresh from the project server. |
 | `touba-project-refresh-v0.1` | client | Project refresh result, artifact snapshot, changed files, diagnostics. |
 | `touba-project-change-proposal-v0.1` | client | Reviewable project change proposal. |

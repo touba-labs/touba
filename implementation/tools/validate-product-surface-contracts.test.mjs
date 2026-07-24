@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
+import { buildAirInputContract } from "../contracts/product-surfaces/input-contracts.mjs";
 import {
   PRODUCT_SURFACE_CONTRACTS,
   PRODUCT_SURFACE_CONTRACTS_SCHEMA_VERSION,
@@ -40,6 +41,80 @@ test("rejects extra fields on product contracts", () => {
   const diagnostics = validateObject(schema, sample);
 
   assert.equal(diagnostics.some((item) => item.code === "AdditionalPropertyRejected"), true);
+});
+
+test("infers a declared agent input contract from identical capability signatures", () => {
+  const requestType = {
+    id: "type:demo/Request",
+    name: "Request",
+    fields: [{ name: "goal", type_ref: "builtin:Text" }],
+  };
+  const signature = {
+    inputs: [{ name: "request", type_ref: requestType.id }],
+    output_type: "builtin:Text",
+  };
+  const agent = {
+    id: "agent:demo/Coordinator",
+    uses: ["skill:demo/Plan", "tool:demo/Inspect"],
+  };
+  const contract = buildAirInputContract({
+    air: {
+      definitions: {
+        agents: [agent],
+        functions: [],
+        skills: [{ id: "skill:demo/Plan", signature }],
+        strategies: [],
+        tools: [{ id: "tool:demo/Inspect", signature }],
+        types: [requestType],
+      },
+    },
+    definition: agent,
+    kind: "agent",
+  });
+
+  assert.equal(contract.mode, "declared");
+  assert.deepEqual(contract.fields, [
+    { name: "request", type_ref: requestType.id, required: true },
+  ]);
+  assert.deepEqual(contract.types[0].fields, [
+    { name: "goal", type_ref: "builtin:Text", required: true },
+  ]);
+});
+
+test("keeps an agent input contract open when capability signatures differ", () => {
+  const agent = {
+    id: "agent:demo/Coordinator",
+    uses: ["skill:demo/Plan", "tool:demo/Inspect"],
+  };
+  const contract = buildAirInputContract({
+    air: {
+      definitions: {
+        agents: [agent],
+        functions: [],
+        skills: [{
+          id: "skill:demo/Plan",
+          signature: {
+            inputs: [{ name: "request", type_ref: "builtin:Text" }],
+            output_type: "builtin:Text",
+          },
+        }],
+        strategies: [],
+        tools: [{
+          id: "tool:demo/Inspect",
+          signature: {
+            inputs: [{ name: "artifact", type_ref: "builtin:Text" }],
+            output_type: "builtin:Text",
+          },
+        }],
+        types: [],
+      },
+    },
+    definition: agent,
+    kind: "agent",
+  });
+
+  assert.equal(contract.mode, "open");
+  assert.deepEqual(contract.fields, []);
 });
 
 function readJson(relativePath) {

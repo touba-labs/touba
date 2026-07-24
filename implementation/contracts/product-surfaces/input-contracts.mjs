@@ -1,12 +1,39 @@
 export function buildAirInputContract({ air, definition, kind }) {
   const typeDefinitions = Array.isArray(air?.definitions?.types) ? air.definitions.types : [];
   if (kind === "agent") {
-    return emptyInputContract("open");
+    return buildAgentInputContract({ air, agent: definition, typeDefinitions });
   }
   if (kind === "trigger") {
     return buildTriggerInputContract({ air, trigger: definition, typeDefinitions });
   }
   return declaredInputContract(definition.signature?.inputs, typeDefinitions);
+}
+
+function buildAgentInputContract({ air, agent, typeDefinitions }) {
+  const capabilityRefs = Array.isArray(agent?.uses) ? agent.uses : [];
+  if (capabilityRefs.length === 0) {
+    return emptyInputContract("open");
+  }
+  const definitionsByRef = new Map(
+    ["agents", "functions", "skills", "strategies", "tools"]
+      .flatMap((collection) => air?.definitions?.[collection] ?? [])
+      .filter((definition) => nonEmptyString(definition.id) !== undefined)
+      .map((definition) => [definition.id, definition]),
+  );
+  const capabilityInputs = capabilityRefs.map((ref) => {
+    const inputs = definitionsByRef.get(ref)?.signature?.inputs;
+    return Array.isArray(inputs)
+      ? inputs.map((input) => ({ name: input.name, type_ref: input.type_ref }))
+      : undefined;
+  });
+  if (capabilityInputs.some((inputs) => !Array.isArray(inputs))) {
+    return emptyInputContract("open");
+  }
+  const canonicalInputs = JSON.stringify(capabilityInputs[0]);
+  if (!capabilityInputs.every((inputs) => JSON.stringify(inputs) === canonicalInputs)) {
+    return emptyInputContract("open");
+  }
+  return declaredInputContract(capabilityInputs[0], typeDefinitions);
 }
 
 export function unavailableAirInputContract() {
