@@ -345,7 +345,12 @@ async function executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, c
 
 function createExecutionContext(document, entryRef, options = {}) {
   const indexes = indexAirDocument(document);
-  const trace = new TraceBuilder(document, entryRef, options.runId ?? "run-1");
+  const trace = new TraceBuilder(
+    document,
+    entryRef,
+    options.runId ?? "run-1",
+    normalizeTraceEventObserver(options.traceEventObserver ?? options.trace_event_observer),
+  );
   const initialValues = normalizeInputs(options.inputs ?? {});
   const skillPacks = normalizeSkillPacks(options.skillPacks ?? options.skill_packs ?? []);
   const activeSkillPackRefs = normalizeStringSet(
@@ -6916,6 +6921,9 @@ function createRunState(options) {
     runTimeoutMs,
     startedAtMs,
     now,
+    cancelRequestedProvider: normalizeCancelRequestedProvider(
+      options.cancelRequestedProvider ?? options.cancel_requested_provider,
+    ),
     initialCancelRequested: options.cancelRequested === true || options.cancel_requested === true,
     initialCancelAuthoritySource: normalizeCancelAuthoritySource(
       options.cancelAuthoritySource ?? options.cancel_authority_source ?? "host",
@@ -6927,6 +6935,22 @@ function createRunState(options) {
       options.killSwitchScope ?? options.kill_switch_scope ?? "runtime",
     ),
   };
+}
+
+function normalizeTraceEventObserver(observer) {
+  if (observer === undefined || observer === null) return null;
+  if (typeof observer !== "function") {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", "traceEventObserver must be a function");
+  }
+  return observer;
+}
+
+function normalizeCancelRequestedProvider(provider) {
+  if (provider === undefined || provider === null) return null;
+  if (typeof provider !== "function") {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", "cancelRequestedProvider must be a function");
+  }
+  return provider;
 }
 
 function normalizeNowProvider(now) {

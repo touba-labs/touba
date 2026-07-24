@@ -2210,6 +2210,20 @@ test("HTTP project server exposes live state, events and decisions", async () =>
       },
     ],
   }, null, 2), "utf8");
+  writeFileSync(join(root, "touba.inputs.json"), JSON.stringify({
+    schema_version: "touba-input-presentation-v0.1",
+    targets: [
+      {
+        target_ref: "strategy:demo.main/RunReview",
+        generated_fields: [
+          {
+            path: ["request", "body"],
+            generator: "uuid",
+          },
+        ],
+      },
+    ],
+  }, null, 2), "utf8");
   mkdirSync(join(root, "packages", "review"), { recursive: true });
   writeFileSync(join(root, "packages", "review", "touba.package.json"), JSON.stringify({
     package_schema_version: "touba-package-v0.1",
@@ -2294,6 +2308,13 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.equal(triggerEntrypoint.input_contract.mode, "declared");
     assert.equal(triggerEntrypoint.effect_policy_requirement, "declared_external_effects_required");
     assert.deepEqual(triggerEntrypoint.input_contract.fields.map((field) => field.name), ["request"]);
+    const strategyEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "strategy");
+    assert.deepEqual(strategyEntrypoint.interaction_contract.generated_fields, [
+      {
+        path: ["request", "body"],
+        generator: "uuid",
+      },
+    ]);
     assert.equal(JSON.stringify(project).includes("billing-agent"), false);
     assertMatchesSchema("touba-project-inspection-v1", project);
 
@@ -2656,7 +2677,7 @@ test("HTTP project server persists adaptive interaction sessions and governed as
     });
     assert.equal(createdResponse.status, 201);
     const created = await createdResponse.json();
-    assertMatchesSchema("touba-interaction-session-v0.1", created);
+    assertMatchesSchema("touba-interaction-session-v0.2", created);
 
     const message = {
       schema_version: "touba-interaction-message-request-v0.1",
@@ -2669,8 +2690,13 @@ test("HTTP project server persists adaptive interaction sessions and governed as
       `${baseUrl}/interactions/sessions/${created.session_id}/messages`,
       message,
     );
-    assert.equal(messageResponse.status, 200);
-    const completed = await messageResponse.json();
+    assert.equal(messageResponse.status, 202);
+    const accepted = await messageResponse.json();
+    assertMatchesSchema("touba-interaction-operation-v0.1", accepted);
+    const terminal = await waitForInteractionOperation(baseUrl, created.session_id, accepted.operation_id);
+    assert.equal(terminal.status, "succeeded");
+    assert.ok(terminal.event_count > 0);
+    const completed = await getJson(`${baseUrl}/interactions/sessions/${created.session_id}`);
     assert.equal(completed.messages.length, 2);
     assert.equal(completed.messages[1].run_result.status, "success");
 
@@ -2679,9 +2705,9 @@ test("HTTP project server persists adaptive interaction sessions and governed as
       message,
     );
     assert.equal(idempotentResponse.status, 200);
-    assert.equal((await idempotentResponse.json()).messages.length, 2);
+    assert.equal((await idempotentResponse.json()).operation_id, accepted.operation_id);
     const sessions = await getJson(`${baseUrl}/interactions/sessions`);
-    assertMatchesSchema("touba-interaction-session-list-v0.1", sessions);
+    assertMatchesSchema("touba-interaction-session-list-v0.2", sessions);
     assert.equal(sessions.sessions[0].message_count, 2);
 
     const content = Buffer.from("incident evidence", "utf8");
@@ -2821,6 +2847,102 @@ test("HTTP project server runs sandbox agents through a configured decision prov
   }
 });
 
+test("HTTP interaction cancellation stops an active agent before capability dispatch", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-interaction-cancel-"));
+  mkdirSync(join(root, "src", "demo"), { recursive: true });
+  mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+  writeFileSync(join(root, "src", "demo", "agent.tb"), "module demo.agent\n", "utf8");
+  writeFileSync(
+    join(root, ".touba", "air", "demo", "agent.air.json"),
+    JSON.stringify(sandboxAgentAirDocument(), null, 2),
+    "utf8",
+  );
+  let releaseProvider;
+  let reportProviderStarted;
+  const providerStarted = new Promise((resolveStarted) => {
+    reportProviderStarted = resolveStarted;
+  });
+  const providerRelease = new Promise((resolveRelease) => {
+    releaseProvider = resolveRelease;
+  });
+  const service = createToubaProjectServer({
+    agentDecisionProvider: async () => {
+      reportProviderStarted();
+      await providerRelease;
+      return {
+        target_ref: "skill:demo.agent/BuildOverview",
+        reason: "provider released after cancellation request",
+      };
+    },
+    agentDecisionProviderInitialMode: "capabilities",
+    contractsRoot,
+    projectRoot: root,
+    humanDecisionsPath: join(root, "human-decisions.json"),
+    port: 0,
+    quiet: true,
+  });
+  try {
+    await service.start();
+    const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const sessionResponse = await postJson(`${baseUrl}/interactions/sessions`, {
+      schema_version: "touba-interaction-session-create-v0.1",
+      target_ref: "agent:demo.agent/StudioAgent",
+      target_kind: "agent",
+      presentation: "conversation",
+      effect_policy: "runtime_only",
+      requested_by: { kind: "studio", id: "test-suite" },
+    });
+    assert.equal(sessionResponse.status, 201);
+    const session = await sessionResponse.json();
+    const messageResponse = await postJson(
+      `${baseUrl}/interactions/sessions/${session.session_id}/messages`,
+      {
+        schema_version: "touba-interaction-message-request-v0.1",
+        message_id: "message_cancel_001",
+        display_text: "Start and then cancel the governed agent.",
+        inputs: {},
+        requested_by: { kind: "studio", id: "test-suite" },
+      },
+    );
+    assert.equal(messageResponse.status, 202);
+    const operation = await messageResponse.json();
+    await providerStarted;
+    const cancelResponse = await postJson(
+      `${baseUrl}/interactions/sessions/${session.session_id}/operations/${operation.operation_id}/cancel`,
+    );
+    assert.equal(cancelResponse.status, 202);
+    assert.equal((await cancelResponse.json()).status, "cancel_requested");
+    releaseProvider();
+    const terminal = await waitForInteractionOperation(
+      baseUrl,
+      session.session_id,
+      operation.operation_id,
+    );
+    assert.equal(terminal.status, "cancelled");
+    const cancelledSession = await getJson(
+      `${baseUrl}/interactions/sessions/${session.session_id}`,
+    );
+    const result = cancelledSession.messages.at(-1).run_result;
+    assert.equal(result.status, "cancelled");
+    assert.equal(
+      result.trace.events.some((event) => event.type === "run_cancel_requested"),
+      true,
+      JSON.stringify(result.trace.events.map((event) => event.type)),
+    );
+    assert.equal(
+      result.trace.events.some((event) => (
+        event.type === "scope_entered"
+        && event.references?.owner_ref === "skill:demo.agent/BuildOverview"
+      )),
+      false,
+    );
+  } finally {
+    releaseProvider?.();
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("HTTP project server persists and resumes an interaction approval checkpoint without replay", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-approval-"));
   mkdirSync(join(root, "src", "demo"), { recursive: true });
@@ -2862,8 +2984,15 @@ test("HTTP project server persists and resumes an interaction approval checkpoin
       inputs: {},
       requested_by: { kind: "studio", id: "test-suite" },
     });
-    assert.equal(pausedResponse.status, 200);
-    const pausedSession = await pausedResponse.json();
+    assert.equal(pausedResponse.status, 202);
+    const pausedOperation = await pausedResponse.json();
+    const pausedTerminal = await waitForInteractionOperation(
+      baseUrl,
+      session.session_id,
+      pausedOperation.operation_id,
+    );
+    assert.equal(pausedTerminal.status, "awaiting_human");
+    const pausedSession = await getJson(`${baseUrl}/interactions/sessions/${session.session_id}`);
     const paused = pausedSession.messages.at(-1).run_result;
     assert.equal(pausedSession.status, "awaiting_human");
     assert.equal(paused.status, "stopped", JSON.stringify(paused, null, 2));
@@ -2928,10 +3057,12 @@ test("HTTP project server persists and resumes an interaction approval checkpoin
       schema_version: "touba-interaction-resume-request-v0.1",
       request_id: pending.request_id,
     });
-    assert.equal(resumedResponse.status, 200);
-    const resumedSession = await resumedResponse.json();
+    assert.equal(resumedResponse.status, 202);
+    const resumedOperation = await resumedResponse.json();
+    await waitForInteractionOperation(baseUrl, session.session_id, resumedOperation.operation_id);
+    const resumedSession = await getJson(`${baseUrl}/interactions/sessions/${session.session_id}`);
     const resumed = resumedSession.messages.at(-1).run_result;
-    assert.equal(resumedSession.status, "active");
+    assert.equal(resumedSession.status, "open");
     assert.equal(resumedSession.messages.length, 3);
     assert.equal(resumed.status, "success");
     assert.equal(resumed.result, "approved");
@@ -2951,7 +3082,7 @@ test("HTTP project server persists and resumes an interaction approval checkpoin
       request_id: pending.request_id,
     });
     assert.equal(idempotentResponse.status, 200);
-    assert.deepEqual(await idempotentResponse.json(), resumedSession);
+    assert.equal((await idempotentResponse.json()).status, "succeeded");
   } finally {
     await service.stop();
     rmSync(root, { recursive: true, force: true });
@@ -3316,6 +3447,24 @@ async function postJson(url, body) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+async function waitForInteractionOperation(baseUrl, sessionId, operationId) {
+  const terminalStatuses = new Set([
+    "awaiting_human",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "interrupted",
+  ]);
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const operation = await getJson(
+      `${baseUrl}/interactions/sessions/${sessionId}/operations/${operationId}`,
+    );
+    if (terminalStatuses.has(operation.status)) return operation;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.fail(`interaction operation ${operationId} did not reach a terminal status`);
 }
 
 async function listenHttpServer(server) {

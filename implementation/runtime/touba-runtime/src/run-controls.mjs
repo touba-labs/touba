@@ -21,6 +21,7 @@ export function initializeRunControls(context, hooks = {}) {
   state.initialized = true;
   state.status = "running";
   hooks.initializeBudgetControls?.();
+  observeHostCancellation(context);
 
   if (state.killSwitchInitiallyEnabled) {
     context.trace.push("kill_switch_enabled", {
@@ -51,6 +52,7 @@ export function initializeRunControls(context, hooks = {}) {
  * @param {{ observeRunTimeBudget?: RuntimeControlHook }} [hooks]
  */
 export function assertRunCanContinue(context, hooks = {}) {
+  observeHostCancellation(context);
   observeRunTimeout(context);
   if (context.runState.cancelRequested) {
     throw new RuntimeCancelled("run cancellation requested", {
@@ -67,6 +69,7 @@ export function assertRunCanContinue(context, hooks = {}) {
  * @param {{ observeRunTimeBudget?: () => void, consumeDispatchBudget?: () => void }} [hooks]
  */
 export function assertRunCanDispatch(context, details, hooks = {}) {
+  observeHostCancellation(context, details);
   observeRunTimeout(context);
   if (!context.runState.cancelRequested) {
     hooks.observeRunTimeBudget?.();
@@ -88,6 +91,30 @@ export function assertRunCanDispatch(context, details, hooks = {}) {
     targetRef: details.targetRef,
     authoritySource: context.runState.cancelAuthoritySource,
     reason: context.runState.cancelReason,
+  });
+}
+
+/**
+ * @param {RuntimeControlContext} context
+ * @param {RuntimeControlDetails} [details]
+ */
+function observeHostCancellation(context, details = {}) {
+  const state = context.runState;
+  if (
+    state.cancelRequested
+    || typeof state.cancelRequestedProvider !== "function"
+    || state.cancelRequestedProvider() !== true
+  ) {
+    return;
+  }
+  requestRunCancel(context, {
+    authoritySource: "host",
+    reason: "cancel_requested",
+    scope: state.killSwitchScope,
+    targetRef: details.targetRef,
+    triggerRef: details.triggerRef,
+    callerRef: context.activeCallerRef,
+    agentRef: context.activeAgentRef,
   });
 }
 

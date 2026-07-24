@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": { "const": "touba-interaction-session-create-v0.1" },
     "target_ref": { "type": "string", "minLength": 1 },
-    "target_kind": { "enum": ["agent", "function", "skill", "strategy", "tool", "trigger"] },
+    "target_kind": { "enum": ["agent", "skill", "strategy", "tool", "trigger"] },
     "presentation": { "enum": ["conversation", "workflow", "invocation", "event"] },
     "effect_policy": { "enum": ["runtime_only", "allow_declared_external_effects"] },
     "requested_by": {

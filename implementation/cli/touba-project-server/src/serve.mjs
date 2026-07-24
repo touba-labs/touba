@@ -45,13 +45,17 @@ import {
   verifyDeploymentBundle,
 } from "@touba/deployment";
 import {
-  appendInteractionResume,
-  appendInteractionRun,
+  archiveInteractionSession,
+  completeInteractionOperation,
   createInteractionSession,
-  findInteractionMessageResult,
+  enqueueInteractionOperation,
+  failInteractionOperation,
+  findInteractionOperationByMessage,
+  getInteractionOperation,
   getInteractionSession,
   INTERACTION_ASSET_SCHEMA_VERSION,
   INTERACTION_MESSAGE_REQUEST_SCHEMA_VERSION,
+  INTERACTION_OPERATION_SCHEMA_VERSION,
   INTERACTION_RESUME_REQUEST_SCHEMA_VERSION,
   INTERACTION_SESSION_CREATE_SCHEMA_VERSION,
   INTERACTION_SESSION_LIST_SCHEMA_VERSION,
@@ -59,6 +63,10 @@ import {
   listInteractionSessions,
   MAX_INTERACTION_ASSET_BYTES,
   readInteractionAsset,
+  recordInteractionOperationProgress,
+  recoverInterruptedInteractionOperations,
+  requestInteractionOperationCancel,
+  startInteractionOperation,
   storeInteractionAsset,
   validateInteractionResume,
 } from "./interactions.mjs";
@@ -83,6 +91,7 @@ const DEFAULT_MOBILE_ESCALATION_PATH = ".touba/mobile-escalation.json";
 const DEFAULT_INTERACTION_SESSIONS_PATH = ".touba/interaction-sessions.json";
 const DEFAULT_INTERACTION_ASSETS_PATH = ".touba/interaction-assets.json";
 const DEFAULT_INTERACTION_ASSETS_DIRECTORY = ".touba/interaction-assets";
+const DEFAULT_INPUT_PRESENTATION_PATH = "touba.inputs.json";
 const DEFAULT_DEV_SECRETS_PROFILE_PATH = "touba.secrets.dev.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -91,6 +100,7 @@ const MAX_CHANGE_SET_BYTES = 512 * 1024;
 const MAX_CHANGE_SET_TARGETS = 16;
 const MAX_PROJECT_ARTIFACTS = 200;
 const MAX_PROJECT_SCAN_DEPTH = 6;
+const STUDIO_INTERACTION_TARGET_KINDS = new Set(["agent", "skill", "strategy", "tool", "trigger"]);
 const CONTRACT_INDEX_SCHEMA_VERSION = "touba-project-server-contract-index-v0.1";
 const LIVE_STATE_SCHEMA_VERSION = "touba-project-live-state-v0.1";
 const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v0.1";
@@ -288,6 +298,8 @@ export function createToubaProjectServer(options = {}) {
   );
   const secretsRequired = options.secretsPath !== undefined;
   const eventClients = new Set();
+  const interactionOperationControllers = new Map();
+  const interactionOperationTasks = new Set();
   let projectSnapshot;
   let eventSequence = 0;
   const nextEvent = (type, payload) => {
@@ -362,11 +374,135 @@ export function createToubaProjectServer(options = {}) {
   });
   recoverProjectChangeTransactions({ projectRoot });
   eventSequence = latestProjectEventSequence(readProjectEventJournal(eventJournalPath));
+  for (const operation of recoverInterruptedInteractionOperations({
+    sessionsPath: interactionSessionsPath,
+  })) {
+    nextEvent("interaction.run.interrupted", interactionOperationEventPayload(operation));
+  }
   projectSnapshot = buildProjectSnapshot({
     projectRoot,
     previousSnapshot: undefined,
     refreshedAt: new Date().toISOString(),
   });
+
+  const scheduleInteractionOperation = ({
+    operation,
+    request,
+    resume = false,
+    session,
+  }) => {
+    const controller = { cancelRequested: operation.status === "cancel_requested" };
+    interactionOperationControllers.set(operation.operation_id, controller);
+    const task = new Promise((resolveTask) => setImmediate(resolveTask))
+      .then(async () => {
+        const started = startInteractionOperation({
+          operationId: operation.operation_id,
+          sessionId: session.session_id,
+          sessionsPath: interactionSessionsPath,
+        });
+        publishEvent(
+          eventClients,
+          started.status === "cancel_requested"
+            ? "interaction.run.cancel_requested"
+            : "interaction.run.started",
+          interactionOperationEventPayload(started),
+          nextEvent,
+        );
+        const traceEventObserver = (event) => {
+          const progressed = recordInteractionOperationProgress({
+            event,
+            operationId: operation.operation_id,
+            sessionId: session.session_id,
+            sessionsPath: interactionSessionsPath,
+          });
+          publishEvent(
+            eventClients,
+            "interaction.run.progress",
+            interactionOperationEventPayload(progressed),
+            nextEvent,
+          );
+        };
+        const common = {
+          agentDecisionProvider,
+          agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
+          agentDecisionProviderInitialMode: options.agentDecisionProviderInitialMode,
+          agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
+          agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
+          agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+          cancelRequestedProvider: () => controller.cancelRequested,
+          contractsRoot,
+          humanRequestsPath,
+          projectRoot,
+          runSummaryPath,
+          sandboxCheckpointsPath,
+          secretsPath,
+          secretsRequired,
+          traceEventObserver,
+          traceTimelinePath,
+        };
+        const result = resume
+          ? await resumeProjectSandboxRun({
+            ...common,
+            humanDecisionsPath,
+            request,
+          })
+          : await executeProjectSandboxRun({
+            ...common,
+            executionKind: session.target_kind === "trigger" ? "trigger" : "entrypoint",
+            request,
+            runId: operation.run_id,
+          });
+        const completed = completeInteractionOperation({
+          operationId: operation.operation_id,
+          result,
+          sessionId: session.session_id,
+          sessionsPath: interactionSessionsPath,
+        });
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_OPERATION_SCHEMA_VERSION,
+          value: completed,
+          errorCode: "ToubaServeInteractionOperationInvalid",
+          message: "interaction operation does not match its contract",
+        });
+        publishEvent(
+          eventClients,
+          interactionCompletionEventType(completed.status),
+          interactionOperationEventPayload(completed),
+          nextEvent,
+        );
+      })
+      .catch((cause) => {
+        let failed;
+        try {
+          failed = failInteractionOperation({
+            code: cause.code ?? "ToubaServeInteractionRunFailed",
+            message: cause.message,
+            operationId: operation.operation_id,
+            sessionId: session.session_id,
+            sessionsPath: interactionSessionsPath,
+          });
+        } catch {
+          failed = operation;
+        }
+        publishEvent(
+          eventClients,
+          "interaction.run.failed",
+          interactionOperationEventPayload(failed, {
+            error: {
+              code: String(cause.code ?? "ToubaServeInteractionRunFailed"),
+              message: String(cause.message ?? "interaction run failed"),
+            },
+          }),
+          nextEvent,
+        );
+      })
+      .finally(() => {
+        interactionOperationControllers.delete(operation.operation_id);
+      });
+    interactionOperationTasks.add(task);
+    task.finally(() => interactionOperationTasks.delete(task));
+  };
 
   const server = createServer(async (request, response) => {
     try {
@@ -560,6 +696,7 @@ export function createToubaProjectServer(options = {}) {
           .find((candidate) => candidate.ref === body.target_ref);
         if (
           entrypoint === undefined
+          || !STUDIO_INTERACTION_TARGET_KINDS.has(body.target_kind)
           || entrypoint.kind !== body.target_kind
           || entrypoint.interaction_contract.presentation !== body.presentation
         ) {
@@ -604,6 +741,72 @@ export function createToubaProjectServer(options = {}) {
         writeJson(response, 200, session);
         return;
       }
+      const interactionArchiveMatch = /^\/interactions\/sessions\/([^/]+)\/archive$/u.exec(url.pathname);
+      if (request.method === "POST" && interactionArchiveMatch !== null) {
+        const session = archiveInteractionSession({
+          sessionId: decodeURIComponent(interactionArchiveMatch[1]),
+          sessionsPath: interactionSessionsPath,
+        });
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_SESSION_SCHEMA_VERSION,
+          value: session,
+          errorCode: "ToubaServeInteractionSessionInvalid",
+          message: "interaction session does not match its contract",
+        });
+        publishEvent(eventClients, "interaction.session.archived", {
+          schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
+          session_id: session.session_id,
+          target_ref: session.target_ref,
+          status: session.status,
+        }, nextEvent);
+        writeJson(response, 200, session);
+        return;
+      }
+      const interactionOperationMatch = /^\/interactions\/sessions\/([^/]+)\/operations\/([^/]+)$/u.exec(url.pathname);
+      if (request.method === "GET" && interactionOperationMatch !== null) {
+        const operation = getInteractionOperation({
+          operationId: decodeURIComponent(interactionOperationMatch[2]),
+          sessionId: decodeURIComponent(interactionOperationMatch[1]),
+          sessionsPath: interactionSessionsPath,
+        });
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_OPERATION_SCHEMA_VERSION,
+          value: operation,
+          errorCode: "ToubaServeInteractionOperationInvalid",
+          message: "interaction operation does not match its contract",
+        });
+        writeJson(response, 200, operation);
+        return;
+      }
+      const interactionCancelMatch = /^\/interactions\/sessions\/([^/]+)\/operations\/([^/]+)\/cancel$/u.exec(url.pathname);
+      if (request.method === "POST" && interactionCancelMatch !== null) {
+        const sessionId = decodeURIComponent(interactionCancelMatch[1]);
+        const operationId = decodeURIComponent(interactionCancelMatch[2]);
+        const operation = requestInteractionOperationCancel({
+          operationId,
+          sessionId,
+          sessionsPath: interactionSessionsPath,
+        });
+        const controller = interactionOperationControllers.get(operationId);
+        if (controller !== undefined) controller.cancelRequested = true;
+        validateContractPayload({
+          contractsRoot,
+          schemaVersion: INTERACTION_OPERATION_SCHEMA_VERSION,
+          value: operation,
+          errorCode: "ToubaServeInteractionOperationInvalid",
+          message: "interaction operation does not match its contract",
+        });
+        publishEvent(
+          eventClients,
+          "interaction.run.cancel_requested",
+          interactionOperationEventPayload(operation),
+          nextEvent,
+        );
+        writeJson(response, 202, operation);
+        return;
+      }
       const interactionMessageMatch = /^\/interactions\/sessions\/([^/]+)\/messages$/u.exec(url.pathname);
       if (request.method === "POST" && interactionMessageMatch !== null) {
         const sessionId = decodeURIComponent(interactionMessageMatch[1]);
@@ -615,68 +818,60 @@ export function createToubaProjectServer(options = {}) {
           errorCode: "ToubaServeInteractionMessageInvalid",
           message: "interaction message does not match its contract",
         });
-        const priorResult = findInteractionMessageResult({
+        const priorOperation = findInteractionOperationByMessage({
           messageId: body.message_id,
           sessionId,
           sessionsPath: interactionSessionsPath,
         });
-        if (priorResult !== undefined) {
-          writeJson(response, 200, getInteractionSession({ sessionId, sessionsPath: interactionSessionsPath }));
+        if (priorOperation !== undefined) {
+          writeJson(
+            response,
+            ["queued", "running", "cancel_requested"].includes(priorOperation.status) ? 202 : 200,
+            priorOperation,
+          );
           return;
         }
         const session = getInteractionSession({ sessionId, sessionsPath: interactionSessionsPath });
         const executionKind = session.target_kind === "trigger" ? "trigger" : "entrypoint";
-        const result = await executeProjectSandboxRun({
-          agentDecisionProvider,
-          agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
-          agentDecisionProviderInitialMode: options.agentDecisionProviderInitialMode,
-          agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
-          agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
-          agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
-          contractsRoot,
-          executionKind,
-          humanRequestsPath,
-          projectRoot,
-          request: {
-            schema_version: SANDBOX_RUN_REQUEST_SCHEMA_VERSION,
-            execution_kind: executionKind,
-            target_ref: session.target_ref,
-            effect_policy: session.effect_policy,
-            inputs: body.inputs,
-            ...(executionKind === "trigger" ? {
-              event_id: body.event_id ?? `studio-${body.message_id}`,
-              source_kind: body.source_kind ?? "request",
-            } : {}),
-            requested_by: body.requested_by,
-            reason: `client interaction ${session.session_id}`,
-          },
-          runSummaryPath,
-          sandboxCheckpointsPath,
-          secretsPath,
-          secretsRequired,
-          traceTimelinePath,
-        });
-        const updated = appendInteractionRun({
+        const runId = `sandbox_${compactTimestamp(new Date().toISOString())}_${randomBytes(3).toString("hex")}`;
+        const runRequest = {
+          schema_version: SANDBOX_RUN_REQUEST_SCHEMA_VERSION,
+          execution_kind: executionKind,
+          target_ref: session.target_ref,
+          effect_policy: session.effect_policy,
+          inputs: body.inputs,
+          ...(executionKind === "trigger" ? {
+            event_id: body.event_id ?? `studio-${body.message_id}`,
+            source_kind: body.source_kind ?? "request",
+          } : {}),
+          requested_by: body.requested_by,
+          reason: `client interaction ${session.session_id}`,
+        };
+        const operation = enqueueInteractionOperation({
           message: body,
-          result,
+          runId,
           sessionId,
           sessionsPath: interactionSessionsPath,
         });
         validateContractPayload({
           contractsRoot,
-          schemaVersion: INTERACTION_SESSION_SCHEMA_VERSION,
-          value: updated,
-          errorCode: "ToubaServeInteractionSessionInvalid",
-          message: "interaction session does not match its contract",
+          schemaVersion: INTERACTION_OPERATION_SCHEMA_VERSION,
+          value: operation,
+          errorCode: "ToubaServeInteractionOperationInvalid",
+          message: "interaction operation does not match its contract",
         });
-        publishEvent(eventClients, "interaction.message.completed", {
-          schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
-          session_id: updated.session_id,
-          target_ref: updated.target_ref,
-          run_id: result.run_id,
-          status: result.status,
-        }, nextEvent);
-        writeJson(response, 200, updated);
+        publishEvent(
+          eventClients,
+          "interaction.run.queued",
+          interactionOperationEventPayload(operation),
+          nextEvent,
+        );
+        scheduleInteractionOperation({
+          operation,
+          request: runRequest,
+          session,
+        });
+        writeJson(response, 202, operation);
         return;
       }
       const interactionResumeMatch = /^\/interactions\/sessions\/([^/]+)\/resume$/u.exec(url.pathname);
@@ -705,48 +900,20 @@ export function createToubaProjectServer(options = {}) {
           sessionsPath: interactionSessionsPath,
         });
         if (resumeValidation.alreadyRecorded) {
-          writeJson(response, 200, resumeValidation.session);
+          writeJson(response, 200, resumeValidation.operation);
           return;
         }
-        const result = await resumeProjectSandboxRun({
-          agentDecisionProvider,
-          agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
-          agentDecisionProviderInitialMode: options.agentDecisionProviderInitialMode,
-          agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
-          agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
-          agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
-          contractsRoot,
-          humanDecisionsPath,
-          humanRequestsPath,
-          projectRoot,
+        if (interactionOperationControllers.has(resumeValidation.operation.operation_id)) {
+          writeJson(response, 202, resumeValidation.operation);
+          return;
+        }
+        scheduleInteractionOperation({
+          operation: resumeValidation.operation,
           request: body,
-          runSummaryPath,
-          sandboxCheckpointsPath,
-          secretsPath,
-          secretsRequired,
-          traceTimelinePath,
+          resume: true,
+          session: resumeValidation.session,
         });
-        const updated = appendInteractionResume({
-          requestId: body.request_id,
-          result,
-          sessionId,
-          sessionsPath: interactionSessionsPath,
-        });
-        validateContractPayload({
-          contractsRoot,
-          schemaVersion: INTERACTION_SESSION_SCHEMA_VERSION,
-          value: updated,
-          errorCode: "ToubaServeInteractionSessionInvalid",
-          message: "interaction session does not match its contract",
-        });
-        publishEvent(eventClients, "interaction.session.resumed", {
-          schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
-          session_id: updated.session_id,
-          target_ref: updated.target_ref,
-          run_id: result.run_id,
-          status: result.status,
-        }, nextEvent);
-        writeJson(response, 200, updated);
+        writeJson(response, 202, resumeValidation.operation);
         return;
       }
       if (request.method === "POST" && url.pathname === "/interaction-assets") {
@@ -1304,6 +1471,10 @@ export function createToubaProjectServer(options = {}) {
       }
     },
     async stop() {
+      for (const controller of interactionOperationControllers.values()) {
+        controller.cancelRequested = true;
+      }
+      await Promise.allSettled([...interactionOperationTasks]);
       for (const client of eventClients) {
         client.end();
       }
@@ -1781,15 +1952,18 @@ export async function executeProjectSandboxRun({
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
   contractsRoot,
+  cancelRequestedProvider,
   executionKind,
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   projectRoot,
   request,
+  runId: requestedRunId,
   runSummaryPath,
   sandboxCheckpointsPath = join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
   secretsPath = join(projectRoot, DEFAULT_DEV_SECRETS_PROFILE_PATH),
   secretsRequired = false,
   traceTimelinePath,
+  traceEventObserver,
   generatedAt = new Date().toISOString(),
 }) {
   validateContractPayload({
@@ -1817,7 +1991,8 @@ export async function executeProjectSandboxRun({
 
   const startedAt = generatedAt;
   const startedMs = Date.now();
-  const runId = `sandbox_${compactTimestamp(startedAt)}_${randomBytes(3).toString("hex")}`;
+  const runId = requestedRunId
+    ?? `sandbox_${compactTimestamp(startedAt)}_${randomBytes(3).toString("hex")}`;
   const toolBindingManifest = loadOptionalProjectManifest({ projectRoot });
   const secretStore = loadOptionalProjectSecretStore({
     projectRoot,
@@ -1839,10 +2014,12 @@ export async function executeProjectSandboxRun({
         agentDecisionProviderMaxRetries,
         agentDecisionProviderMetadata,
         agentDecisionProviderTimeoutMs,
+        cancelRequestedProvider,
         durableHumanApprovals: true,
         runId,
         secretStore,
         toolBindingManifest,
+        traceEventObserver,
       })
       : await executeAirDocument(resolved.document, {
         agentDecisionProvider,
@@ -1851,12 +2028,14 @@ export async function executeProjectSandboxRun({
         agentDecisionProviderMaxRetries,
         agentDecisionProviderMetadata,
         agentDecisionProviderTimeoutMs,
+        cancelRequestedProvider,
         durableHumanApprovals: true,
         entryRef: targetRef,
         inputs: isPlainObject(request.inputs) ? request.inputs : {},
         runId,
         secretStore,
         toolBindingManifest,
+        traceEventObserver,
       });
   } catch (cause) {
     if (cause instanceof ToubaRuntimeError) {
@@ -1970,6 +2149,7 @@ export async function resumeProjectSandboxRun({
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
   contractsRoot,
+  cancelRequestedProvider,
   humanDecisionsPath,
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   projectRoot,
@@ -1979,6 +2159,7 @@ export async function resumeProjectSandboxRun({
   secretsPath = join(projectRoot, DEFAULT_DEV_SECRETS_PROFILE_PATH),
   secretsRequired = false,
   traceTimelinePath,
+  traceEventObserver,
   generatedAt = new Date().toISOString(),
 }) {
   const requestId = requiredNonEmptyString(request?.request_id, "request_id");
@@ -2016,6 +2197,7 @@ export async function resumeProjectSandboxRun({
       agentDecisionProviderMaxRetries,
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
+      cancelRequestedProvider,
       durableHumanApprovals: true,
       entryRef: record.target_ref,
       humanApprovalDecisions: {
@@ -2025,6 +2207,7 @@ export async function resumeProjectSandboxRun({
       runId: record.run_id,
       secretStore,
       toolBindingManifest,
+      traceEventObserver,
     };
     runtimeResult = record.execution_kind === "trigger"
       ? await executeTriggerEvent(resolved.document, {
@@ -3844,6 +4027,7 @@ function buildProjectInspection({
 }) {
   const diagnostics = [...inspectionDiagnostics(projectSnapshot.report?.diagnostics ?? [])];
   const projectConfig = readProjectConfig(projectRoot, diagnostics);
+  const inputPresentation = readInputPresentationConfig(projectRoot, diagnostics);
   const artifacts = projectSnapshot.artifacts
     .filter((artifact) => ["source", "air", "manifest", "lock", "trace"].includes(artifact.kind))
     .map((artifact) => ({
@@ -3862,7 +4046,12 @@ function buildProjectInspection({
       host_language: nonEmptyString(projectConfig?.language) ?? "unknown",
     },
     artifacts,
-    entrypoints: buildProjectEntrypoints({ projectRoot, artifacts: projectSnapshot.artifacts, diagnostics }),
+    entrypoints: buildProjectEntrypoints({
+      projectRoot,
+      artifacts: projectSnapshot.artifacts,
+      diagnostics,
+      inputPresentation,
+    }),
     packages,
     diagnostics,
   };
@@ -3949,13 +4138,127 @@ function readProjectConfig(projectRoot, diagnostics) {
   }
 }
 
+function readInputPresentationConfig(projectRoot, diagnostics) {
+  const path = join(projectRoot, DEFAULT_INPUT_PRESENTATION_PATH);
+  if (!existsSync(path)) return null;
+  let document;
+  try {
+    document = JSON.parse(readFileSync(path, "utf8"));
+  } catch (cause) {
+    diagnostics.push(serviceDiagnostic(
+      "ToubaInputPresentationUnreadable",
+      `cannot read ${DEFAULT_INPUT_PRESENTATION_PATH}: ${cause.message}`,
+      "warning",
+      DEFAULT_INPUT_PRESENTATION_PATH,
+    ));
+    return null;
+  }
+  if (
+    document?.schema_version !== "touba-input-presentation-v0.1"
+    || !Array.isArray(document.targets)
+  ) {
+    diagnostics.push(serviceDiagnostic(
+      "ToubaInputPresentationInvalid",
+      `${DEFAULT_INPUT_PRESENTATION_PATH} must use touba-input-presentation-v0.1`,
+      "warning",
+      DEFAULT_INPUT_PRESENTATION_PATH,
+    ));
+    return null;
+  }
+  const seenTargets = new Set();
+  for (const target of document.targets) {
+    if (
+      !isPlainObject(target)
+      || nonEmptyString(target.target_ref) === undefined
+      || !Array.isArray(target.generated_fields)
+      || seenTargets.has(target.target_ref)
+    ) {
+      diagnostics.push(serviceDiagnostic(
+        "ToubaInputPresentationInvalid",
+        `${DEFAULT_INPUT_PRESENTATION_PATH} contains an invalid or duplicate target`,
+        "warning",
+        DEFAULT_INPUT_PRESENTATION_PATH,
+      ));
+      return null;
+    }
+    seenTargets.add(target.target_ref);
+    for (const field of target.generated_fields) {
+      if (!validGeneratedFieldDeclaration(field)) {
+        diagnostics.push(serviceDiagnostic(
+          "ToubaInputPresentationInvalid",
+          `${DEFAULT_INPUT_PRESENTATION_PATH} contains an invalid generated field for ${target.target_ref}`,
+          "warning",
+          DEFAULT_INPUT_PRESENTATION_PATH,
+        ));
+        return null;
+      }
+    }
+  }
+  return document;
+}
+
+function validGeneratedFieldDeclaration(field) {
+  if (
+    !isPlainObject(field)
+    || !Array.isArray(field.path)
+    || field.path.length === 0
+    || field.path.some((segment) => nonEmptyString(segment) === undefined)
+    || !["uuid", "timestamp", "prefixed_timestamp"].includes(field.generator)
+  ) {
+    return false;
+  }
+  if (field.generator === "prefixed_timestamp") {
+    return typeof field.prefix === "string"
+      && /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/u.test(field.prefix);
+  }
+  return field.prefix === undefined;
+}
+
+function generatedFieldsForTarget({
+  diagnostics,
+  inputContract,
+  inputPresentation,
+  targetRef,
+}) {
+  const target = inputPresentation?.targets?.find((candidate) => candidate.target_ref === targetRef);
+  if (target === undefined) return [];
+  const generatedFields = [];
+  for (const field of target.generated_fields) {
+    const inputField = inputFieldAtPath(inputContract, field.path);
+    if (inputField?.type_ref !== "builtin:Text") {
+      diagnostics.push(serviceDiagnostic(
+        "ToubaInputPresentationPathInvalid",
+        `generated field ${field.path.join(".")} for ${targetRef} must resolve to a declared Text input`,
+        "warning",
+        DEFAULT_INPUT_PRESENTATION_PATH,
+      ));
+      continue;
+    }
+    generatedFields.push(field);
+  }
+  return generatedFields;
+}
+
+function inputFieldAtPath(contract, path) {
+  if (contract?.mode !== "declared") return undefined;
+  const typesByRef = new Map((contract.types ?? []).map((type) => [type.ref, type]));
+  let fields = contract.fields ?? [];
+  let current;
+  for (const segment of path) {
+    current = fields.find((field) => field.name === segment);
+    if (current === undefined) return undefined;
+    fields = typesByRef.get(current.type_ref)?.fields ?? [];
+  }
+  return current;
+}
+
 function inspectionArtifactStatus(artifact, diagnostics) {
   return diagnostics.some((item) => item.code === "ToubaServeProjectAirStale" && artifact.kind === "air")
     ? "stale"
     : "present";
 }
 
-function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
+function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics, inputPresentation }) {
   const entrypoints = new Map();
   for (const artifact of artifacts.filter((item) => item.kind === "air")) {
     const path = join(projectRoot, artifact.relative_path);
@@ -3978,13 +4281,19 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
           continue;
         }
         const inputContract = buildAirInputContract({ air, definition, kind });
+        const generatedFields = generatedFieldsForTarget({
+          diagnostics,
+          inputContract,
+          inputPresentation,
+          targetRef: ref,
+        });
         entrypoints.set(ref, {
           kind,
           ref,
           description: nonEmptyString(definition.description) ?? nonEmptyString(definition.name) ?? ref,
           effect_policy_requirement: sandboxEffectPolicyRequirement(air, ref),
           input_contract: inputContract,
-          interaction_contract: buildInteractionContract({ inputContract, kind }),
+          interaction_contract: buildInteractionContract({ generatedFields, inputContract, kind }),
         });
       }
     }
@@ -3994,6 +4303,12 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
         continue;
       }
       const inputContract = buildAirInputContract({ air, definition: trigger, kind: "trigger" });
+      const generatedFields = generatedFieldsForTarget({
+        diagnostics,
+        inputContract,
+        inputPresentation,
+        targetRef: ref,
+      });
       entrypoints.set(ref, {
         kind: "trigger",
         ref,
@@ -4003,7 +4318,11 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
           sandboxTriggerTargetRef(air, ref),
         ),
         input_contract: inputContract,
-        interaction_contract: buildInteractionContract({ inputContract, kind: "trigger" }),
+        interaction_contract: buildInteractionContract({
+          generatedFields,
+          inputContract,
+          kind: "trigger",
+        }),
       });
     }
   }
@@ -6482,6 +6801,28 @@ function publishEvent(eventClients, type, payload, nextEvent) {
   }
 }
 
+function interactionOperationEventPayload(operation, overrides = {}) {
+  return {
+    schema_version: INTERACTION_OPERATION_SCHEMA_VERSION,
+    operation_id: operation.operation_id,
+    session_id: operation.session_id,
+    target_ref: operation.target_ref,
+    run_id: operation.run_id,
+    status: operation.status,
+    event_count: operation.event_count,
+    current_event: operation.current_event,
+    error: operation.error,
+    ...overrides,
+  };
+}
+
+function interactionCompletionEventType(status) {
+  if (status === "awaiting_human") return "interaction.run.awaiting_human";
+  if (status === "cancelled") return "interaction.run.cancelled";
+  if (status === "failed") return "interaction.run.failed";
+  return "interaction.run.completed";
+}
+
 function publishRefreshEvents(eventClients, report, nextEvent) {
   publishEvent(eventClients, "project.changed", report, nextEvent);
   if (report.changes.changed_artifacts.length > 0) {
@@ -6530,6 +6871,10 @@ function httpStatusForError(code) {
     || code === "ToubaServeMobilePairingRevoked"
     || code === "ToubaServeInteractionMessageReplayRejected"
     || code === "ToubaServeInteractionResumeMismatch"
+    || code === "ToubaServeInteractionSessionBusy"
+    || code === "ToubaServeInteractionSessionArchived"
+    || code === "ToubaServeInteractionOperationNotCancellable"
+    || code === "ToubaServeInteractionOperationStateInvalid"
   ) return 409;
   if (code === "ToubaServeMobilePairingExpired" || code === "ToubaServeDecisionRequestExpired") return 410;
   if (
@@ -6543,6 +6888,7 @@ function httpStatusForError(code) {
     || code === "ToubaServeSandboxCheckpointNotFound"
     || code === "ToubaDeploymentRevisionNotFound"
     || code === "ToubaServeInteractionSessionNotFound"
+    || code === "ToubaServeInteractionOperationNotFound"
     || code === "ToubaServeInteractionAssetNotFound"
   ) return 404;
   if (
@@ -6603,6 +6949,7 @@ function httpStatusForError(code) {
     || code === "ToubaServeDeploymentInvalid"
     || code === "ToubaServeDeploymentTargetInvalid"
     || code === "ToubaServeInteractionSessionInvalid"
+    || code === "ToubaServeInteractionOperationInvalid"
     || code === "ToubaServeInteractionSessionStoreInvalid"
     || code === "ToubaServeInteractionMessageInvalid"
     || code === "ToubaServeInteractionResumeInvalid"
@@ -6819,8 +7166,11 @@ function usage() {
     "  GET  /interactions/sessions",
     "  POST /interactions/sessions",
     "  GET  /interactions/sessions/<session_id>",
+    "  POST /interactions/sessions/<session_id>/archive",
     "  POST /interactions/sessions/<session_id>/messages",
     "  POST /interactions/sessions/<session_id>/resume",
+    "  GET  /interactions/sessions/<session_id>/operations/<operation_id>",
+    "  POST /interactions/sessions/<session_id>/operations/<operation_id>/cancel",
     "  POST /interaction-assets",
     "  GET  /interaction-assets/<handle>",
     "  GET  /triggers",

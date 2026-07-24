@@ -1725,6 +1725,59 @@ test("cancels a run before the first dispatch when host requested cancellation",
   assert.equal(eventOf(result.trace, "run_completed").payload.status, "cancelled");
 });
 
+test("streams immutable trace events without changing the canonical trace", async () => {
+  const observed = [];
+  const document = baseDocument({
+    skills: [skill("Build", "graph:skill:test/Build")],
+    graphs: [
+      graph("graph:skill:test/Build", "skill:test/Build", [
+        node("n1", "give", { arguments: ["literal:string:observed"] }),
+      ]),
+    ],
+  });
+  const result = await executeAirDocument(document, {
+    entryRef: "skill:test/Build",
+    traceEventObserver(event) {
+      observed.push(event);
+      event.kind = "observer_mutation";
+    },
+  });
+
+  assert.equal(result.status, "success");
+  assert.deepEqual(
+    observed.map((event) => event.kind),
+    result.trace.events.map((event) => event.kind).map(() => "observer_mutation"),
+  );
+  assert.equal(result.trace.events[0].kind, "run_started");
+  assert.equal(result.trace.events.at(-1).kind, "run_completed");
+});
+
+test("observes a host cancellation request before a later dispatch", async () => {
+  let cancelRequested = false;
+  let secondToolCalled = false;
+  const result = await executeAirDocument(twoToolDispatchDocument(), {
+    entryRef: "skill:test/TwoTools",
+    cancelRequestedProvider: () => cancelRequested,
+    traceEventObserver(event) {
+      if (event.kind === "call_completed" && event.payload?.target_ref === "tool:test/First") {
+        cancelRequested = true;
+      }
+    },
+    toolHandlers: {
+      "tool:test/First": () => "first",
+      "tool:test/Second": () => {
+        secondToolCalled = true;
+        return "second";
+      },
+    },
+  });
+
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.trace.events.some((event) => event.kind === "run_cancel_requested"), true);
+  assert.equal(result.trace.events.some((event) => event.kind === "dispatch_refused_cancelled"), true);
+  assert.equal(secondToolCalled, false);
+});
+
 test("cancels a paused human approval when host requests cancellation on pause", async () => {
   const result = await executeAirDocument(humanApprovalDocument(), {
     entryRef: "skill:test/NeedsApproval",

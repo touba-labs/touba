@@ -16,7 +16,7 @@ const MEDIA_HANDLE_TYPES = Object.freeze({
   ImageHandle: "image",
 });
 
-export function buildInteractionContract({ inputContract, kind }) {
+export function buildInteractionContract({ generatedFields = [], inputContract, kind }) {
   const fields = flattenInputFields(inputContract);
   const textFields = fields.filter((field) => field.type_ref === "builtin:Text");
   const namedPrimaryFields = textFields.filter((field) => (
@@ -50,6 +50,11 @@ export function buildInteractionContract({ inputContract, kind }) {
       ...new Set(mediaFields.map((field) => field.content_kind)),
     ],
     media_fields: mediaFields,
+    generated_fields: generatedFields.map((field) => ({
+      path: [...field.path],
+      generator: field.generator,
+      ...(field.prefix === undefined ? {} : { prefix: field.prefix }),
+    })),
   };
 }
 

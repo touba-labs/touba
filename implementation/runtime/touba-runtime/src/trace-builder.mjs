@@ -29,8 +29,9 @@ export class TraceBuilder {
    * @param {TraceAirDocument} airDocument
    * @param {string} entryRef
    * @param {string} runId
+   * @param {((event: TraceEvent) => void) | null} [eventObserver]
    */
-  constructor(airDocument, entryRef, runId) {
+  constructor(airDocument, entryRef, runId, eventObserver = null) {
     /** @type {TraceAirDocument} */
     this.airDocument = airDocument;
     /** @type {string} */
@@ -39,6 +40,8 @@ export class TraceBuilder {
     this.entryRef = entryRef;
     /** @type {TraceEvent[]} */
     this.events = [];
+    /** @type {((event: TraceEvent) => void) | null} */
+    this.eventObserver = eventObserver;
   }
 
   /**
@@ -57,6 +60,13 @@ export class TraceBuilder {
       message: options.message,
     }));
     this.events.push(event);
+    if (this.eventObserver !== null) {
+      try {
+        this.eventObserver(structuredClone(event));
+      } catch {
+        // Observability must not change runtime semantics.
+      }
+    }
     return event;
   }
 

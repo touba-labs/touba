@@ -1,0 +1,15 @@
+{
+  "schema_version": "touba-input-presentation-v0.1",
+  "targets": [
+    {
+      "target_ref": "strategy:incident/RunResponse",
+      "generated_fields": [
+        {
+          "path": ["case_input", "case_id"],
+          "generator": "prefixed_timestamp",
+          "prefix": "INC"
+        }
+      ]
+    }
+  ]
+}
