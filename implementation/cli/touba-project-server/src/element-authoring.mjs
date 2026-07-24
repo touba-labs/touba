@@ -345,7 +345,7 @@ function renderTriggerManifest({ projectRoot, moduleRef, element }) {
 function renderHandlerStub({ moduleRef, name }) {
   return [
     "#!/usr/bin/env node",
-    "// Touba Studio generated handler stub v0.1",
+    "// Touba generated handler stub v0.1",
     `"use strict";`,
     "",
     `const handlerRef = ${JSON.stringify(`tool:${moduleRef}/${name}`)};`,

@@ -147,22 +147,6 @@
               "multiple": { "type": "boolean" }
             }
           }
-        },
-        "generated_fields": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["path", "generator"],
-            "properties": {
-              "path": {
-                "type": "array",
-                "items": { "type": "string", "minLength": 1 }
-              },
-              "generator": { "enum": ["uuid", "timestamp", "prefixed_timestamp"] },
-              "prefix": { "type": "string" }
-            }
-          }
         }
       }
     },

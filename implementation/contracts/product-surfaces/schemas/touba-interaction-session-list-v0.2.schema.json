@@ -28,7 +28,7 @@
         "properties": {
           "session_id": { "type": "string", "minLength": 1 },
           "target_ref": { "type": "string", "minLength": 1 },
-          "target_kind": { "enum": ["agent", "skill", "strategy", "tool", "trigger"] },
+          "target_kind": { "enum": ["agent", "function", "skill", "strategy", "tool", "trigger"] },
           "presentation": { "enum": ["conversation", "workflow", "invocation", "event"] },
           "title": { "type": "string", "minLength": 1 },
           "status": { "enum": ["open", "running", "awaiting_human", "failed", "archived"] },

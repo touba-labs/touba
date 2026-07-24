@@ -165,7 +165,7 @@ export function deploymentReadinessChecks(bundle, { targetConfigured = false } =
   verifyDeploymentBundle(bundle);
   const hasHandlerStub = bundle.artifacts.some((artifact) => (
     artifact.kind === "handler"
-    && decodeArtifact(artifact).toString("utf8").includes("// Touba Studio generated handler stub v0.1")
+    && isGeneratedHandlerStub(decodeArtifact(artifact).toString("utf8"))
   ));
   return [
     {
@@ -195,6 +195,11 @@ export function deploymentReadinessChecks(bundle, { targetConfigured = false } =
         : "Configure a deployment target before publication.",
     },
   ];
+}
+
+function isGeneratedHandlerStub(content) {
+  return content.includes("// Touba generated handler stub v0.1")
+    || content.includes("// Touba Studio generated handler stub v0.1");
 }
 
 export function createRevisionStore({ storageRoot }) {

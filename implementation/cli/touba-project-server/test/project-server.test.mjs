@@ -62,6 +62,24 @@ test("contract index lists product-surface contracts without filesystem paths", 
   assert.equal(JSON.stringify(index).includes(contractsRoot), false);
 });
 
+test("project server contracts keep product presentation outside the Touba project", () => {
+  const inputPresentationSchema = new URL(
+    "../../../contracts/product-surfaces/schemas/touba-input-presentation-v0.1.schema.json",
+    import.meta.url,
+  );
+  const interactionContracts = readFileSync(
+    new URL("../../../contracts/product-surfaces/interaction-contracts.mjs", import.meta.url),
+    "utf8",
+  );
+  const serverSource = readFileSync(new URL("../src/serve.mjs", import.meta.url), "utf8")
+    .split("\n")
+    .filter((line) => !line.includes("LEGACY_CHANGE_"))
+    .join("\n");
+
+  assert.equal(existsSync(inputPresentationSchema), false);
+  assert.doesNotMatch(interactionContracts, /generated_fields|touba\.inputs/u);
+});
+
 test("preflight rejects invalid contracts root and decision store path", () => {
   assert.throws(
     () => preflightServeOptions({
@@ -77,6 +95,41 @@ test("preflight rejects invalid contracts root and decision store path", () => {
     }),
     /directory as decision store/,
   );
+});
+
+test("project server migrates the legacy client change store without replay", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-change-migration-"));
+  const dataRoot = join(root, ".touba");
+  mkdirSync(dataRoot, { recursive: true });
+  const legacyPath = join(dataRoot, "studio-change-proposals.json");
+  const currentPath = join(dataRoot, "project-change-proposals.json");
+  writeFileSync(legacyPath, JSON.stringify({
+    schema_version: "touba-studio-change-proposals-v0.1",
+    proposals: [{
+      proposal_id: "legacy-proposal",
+      status: "applied",
+    }],
+  }), "utf8");
+  const service = createToubaProjectServer({
+    contractsRoot,
+    projectRoot: root,
+    port: 0,
+    quiet: true,
+  });
+  try {
+    await service.start();
+    const migrated = JSON.parse(readFileSync(currentPath, "utf8"));
+    assert.equal(migrated.schema_version, "touba-project-change-proposals-v0.1");
+    assert.deepEqual(migrated.proposals, [{
+      proposal_id: "legacy-proposal",
+      status: "applied",
+    }]);
+    assert.equal(existsSync(`${legacyPath}.migrated`), true);
+    assert.equal(existsSync(legacyPath), false);
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("project sandbox secret profiles resolve handles from the server environment", () => {
@@ -516,7 +569,7 @@ test("authority graph ignores legacy client governance overlays", () => {
     ), true);
 
     writeFileSync(join(root, "touba.governance-actions.json"), JSON.stringify({
-      governance_action_schema_version: "touba-studio-governance-action-v0.1",
+      governance_action_schema_version: "touba-governance-action-v0.1",
       action_id: "studio-governance-revoke-read",
       operation: "revoke_authority",
       relation: {
@@ -543,7 +596,7 @@ test("authority graph ignores legacy client governance overlays", () => {
     ), true);
 
     writeFileSync(join(root, "touba.governance-actions.json"), JSON.stringify({
-      governance_action_schema_version: "touba-studio-governance-action-v0.1",
+      governance_action_schema_version: "touba-governance-action-v0.1",
       action_id: "studio-governance-grant-payment",
       operation: "grant_authority",
       relation: {
@@ -660,8 +713,8 @@ test("operational project surfaces report supply chain, governance readiness and
       JSON.stringify(readJson("fixtures/valid/touba-product-identity-v0.1.json")),
       "utf8",
     );
-    writeFileSync(join(root, ".touba", "studio-change-proposals.json"), JSON.stringify({
-      schema_version: "touba-studio-change-proposals-v0.1",
+    writeFileSync(join(root, ".touba", "project-change-proposals.json"), JSON.stringify({
+      schema_version: "touba-project-change-proposals-v0.1",
       proposals: [
         {
           schema_version: "touba-project-change-proposal-v0.1",
@@ -717,7 +770,7 @@ test("operational project surfaces report supply chain, governance readiness and
       contractsRoot,
       projectRoot: root,
       productIdentityPath: join(root, ".touba", "product-identity.json"),
-      changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+      changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
       generatedAt: "2026-06-23T00:00:02.000Z",
     });
     assertMatchesSchema("touba-governance-readiness-v0.1", readiness);
@@ -984,7 +1037,7 @@ test("refresh project reports artifacts, stale state and changed files", () => {
 test("change proposals are stored, applied atomically and cannot be replayed", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-change-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
     const proposed = proposeProjectChange({
       projectRoot: root,
       changeProposalsPath,
@@ -1036,7 +1089,7 @@ test("multi-file change sets apply through a recoverable transaction", () => {
   try {
     mkdirSync(join(root, "src"), { recursive: true });
     writeFileSync(join(root, "src", "main.tb"), "module demo.main\n", "utf8");
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
     const proposed = proposeProjectChangeSet({
       projectRoot: root,
       changeProposalsPath,
@@ -1064,7 +1117,7 @@ test("multi-file change sets apply through a recoverable transaction", () => {
             role: "handler_stub",
             content: [
               "#!/usr/bin/env node",
-              "// Touba Studio generated handler stub v0.1",
+              "// Touba generated handler stub v0.1",
               'const code = "HandlerStubNotImplemented";',
               "process.stderr.write(`${code}\\n`);",
               "process.exitCode = 1;",
@@ -1109,7 +1162,7 @@ test("multi-file change sets restore already written targets when commit fails",
     const original = "module demo.main\n";
     writeFileSync(join(root, "src", "main.tb"), original, "utf8");
     writeFileSync(join(root, "blocked"), "not a directory\n", "utf8");
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
     proposeProjectChangeSet({
       projectRoot: root,
       changeProposalsPath,
@@ -1271,7 +1324,7 @@ test("governance relation changes edit compiled Touba source through review", ()
       "",
     ].join("\n");
     writeFileSync(sourcePath, original, "utf8");
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
 
     const proposed = proposeGovernanceRelationChange({
       projectRoot: root,
@@ -1361,7 +1414,7 @@ test("multi-agent governance edits uses and callable_by as one reviewed change",
       "    description \"Coordinates delegated work.\"",
       "",
     ].join("\n"), "utf8");
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
 
     proposeGovernanceRelationChange({
       projectRoot: root,
@@ -1449,7 +1502,7 @@ test("governance relation changes edit memory access and replace trigger targets
       "        timeout_ms as 30000",
       "",
     ].join("\n"), "utf8");
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
 
     proposeGovernanceRelationChange({
       projectRoot: root,
@@ -1548,7 +1601,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
       "        give request",
       "",
     ].join("\n"), "utf8");
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
     const request = {
       schema_version: "touba-governance-relation-change-v0.1",
       proposal_id: "guard_relation",
@@ -1619,7 +1672,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
 test("change history reports pending, applied and refused proposals without raw content", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-history-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
     proposeProjectChange({
       projectRoot: root,
       changeProposalsPath,
@@ -1719,7 +1772,7 @@ test("change detail rejects unknown proposal ids", () => {
     assert.throws(
       () => getProjectChangeDetail({
         projectRoot: root,
-        changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+        changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
         proposalId: "missing",
       }),
       /unknown/,
@@ -1732,7 +1785,7 @@ test("change detail rejects unknown proposal ids", () => {
 test("change proposals reject unsafe paths and invalid Touba JSON metadata", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-reject-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
     assert.throws(
       () => proposeProjectChange({
         projectRoot: root,
@@ -1769,7 +1822,7 @@ test("change proposals reject unsafe paths and invalid Touba JSON metadata", () 
 test("change proposals validate Touba project metadata schemas before review", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-metadata-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
     assert.throws(
       () => proposeProjectChange({
         projectRoot: root,
@@ -1868,7 +1921,7 @@ test("change proposals validate Touba project metadata schemas before review", (
 test("change proposals allow guarded handler stubs but reject arbitrary handler code", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-handler-stub-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "studio-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
     const accepted = proposeProjectChange({
       projectRoot: root,
       changeProposalsPath,
@@ -1880,7 +1933,7 @@ test("change proposals allow guarded handler stubs but reject arbitrary handler 
         requested_by: { kind: "studio", id: "touba-studio" },
         content: [
           "#!/usr/bin/env node",
-          "// Touba Studio generated handler stub v0.1",
+          "// Touba generated handler stub v0.1",
           "const chunks = [];",
           "for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));",
           "const response = {",
@@ -1909,7 +1962,7 @@ test("change proposals allow guarded handler stubs but reject arbitrary handler 
           target: { path: "handlers/studio/arbitrary.handler.mjs" },
           requested_by: { kind: "studio", id: "touba-studio" },
           content: [
-            "// Touba Studio generated handler stub v0.1",
+            "// Touba generated handler stub v0.1",
             "import { readFileSync } from 'node:fs';",
             "process.stdout.write(process.env.SECRET);",
             "",
@@ -2026,7 +2079,7 @@ test("HTTP project server rejects invalid client and Mobile contract payloads", 
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.json"),
-    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
     port: 0,
     quiet: true,
   });
@@ -2210,20 +2263,6 @@ test("HTTP project server exposes live state, events and decisions", async () =>
       },
     ],
   }, null, 2), "utf8");
-  writeFileSync(join(root, "touba.inputs.json"), JSON.stringify({
-    schema_version: "touba-input-presentation-v0.1",
-    targets: [
-      {
-        target_ref: "strategy:demo.main/RunReview",
-        generated_fields: [
-          {
-            path: ["request", "body"],
-            generator: "uuid",
-          },
-        ],
-      },
-    ],
-  }, null, 2), "utf8");
   mkdirSync(join(root, "packages", "review"), { recursive: true });
   writeFileSync(join(root, "packages", "review", "touba.package.json"), JSON.stringify({
     package_schema_version: "touba-package-v0.1",
@@ -2242,7 +2281,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.json"),
-    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
     port: 0,
     quiet: true,
   });
@@ -2309,12 +2348,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.equal(triggerEntrypoint.effect_policy_requirement, "declared_external_effects_required");
     assert.deepEqual(triggerEntrypoint.input_contract.fields.map((field) => field.name), ["request"]);
     const strategyEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "strategy");
-    assert.deepEqual(strategyEntrypoint.interaction_contract.generated_fields, [
-      {
-        path: ["request", "body"],
-        generator: "uuid",
-      },
-    ]);
+    assert.equal(Object.hasOwn(strategyEntrypoint.interaction_contract, "generated_fields"), false);
     assert.equal(JSON.stringify(project).includes("billing-agent"), false);
     assertMatchesSchema("touba-project-inspection-v1", project);
 
@@ -2400,6 +2434,17 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assertMatchesSchema("touba-human-decision-detail-v0.1", decisionDetail);
     assert.equal(decisionDetail.decision.request_id, decision.request_id);
     assert.equal(decisionDetail.decision.decision_kind, "human_review");
+
+    const functionSessionResponse = await postJson(`${baseUrl}/interactions/sessions`, {
+      schema_version: "touba-interaction-session-create-v0.1",
+      target_ref: functionEntrypoint.ref,
+      target_kind: "function",
+      presentation: functionEntrypoint.interaction_contract.presentation,
+      effect_policy: "runtime_only",
+      requested_by: { kind: "cli", id: "generic-client-test" },
+    });
+    assert.equal(functionSessionResponse.status, 201);
+    assert.equal((await functionSessionResponse.json()).target_kind, "function");
 
     writeFileSync(join(root, "src", "main.tb"), "module demo.main\n// refresh\n", "utf8");
     const refreshResponse = await fetch(`${baseUrl}/project/refresh`, {
@@ -2508,7 +2553,7 @@ test("HTTP project server validates, reviews and applies semantic governance edi
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, ".touba", "human-decisions.json"),
-    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
     port: 0,
     quiet: true,
   });
@@ -2561,7 +2606,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.json"),
-    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
     port: 0,
     quiet: true,
   });
@@ -2755,7 +2800,7 @@ test("HTTP project server refuses sandbox runtime-only runs that may dispatch to
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.json"),
-    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
     port: 0,
     quiet: true,
   });
@@ -2817,7 +2862,7 @@ test("HTTP project server runs sandbox agents through a configured decision prov
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.json"),
-    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
     port: 0,
     quiet: true,
   });
@@ -3098,7 +3143,7 @@ test("HTTP project server requires bearer auth when configured", async () => {
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.json"),
-    changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
     port: 0,
     quiet: true,
   });
@@ -3280,7 +3325,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     projectServer = createToubaProjectServer({
       contractsRoot,
       projectRoot: root,
-      changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
+      changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
       deploymentTargetUrl: `${targetAddress.protocol}://${targetAddress.host}:${targetAddress.port}`,
       deploymentTargetToken: token,
       port: 0,

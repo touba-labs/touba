@@ -74,7 +74,8 @@ import {
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8791;
 const DEFAULT_HUMAN_DECISIONS_PATH = ".touba/human-decisions.json";
-const DEFAULT_CHANGE_PROPOSALS_PATH = ".touba/studio-change-proposals.json";
+const DEFAULT_CHANGE_PROPOSALS_PATH = ".touba/project-change-proposals.json";
+const LEGACY_CHANGE_PROPOSALS_PATH = ".touba/studio-change-proposals.json";
 const DEFAULT_EVENT_JOURNAL_PATH = ".touba/project-events.jsonl";
 const DEFAULT_RUN_SUMMARY_PATH = ".touba/current-run-summary.json";
 const DEFAULT_TRACE_TIMELINE_PATH = ".touba/current-trace-timeline.json";
@@ -91,7 +92,6 @@ const DEFAULT_MOBILE_ESCALATION_PATH = ".touba/mobile-escalation.json";
 const DEFAULT_INTERACTION_SESSIONS_PATH = ".touba/interaction-sessions.json";
 const DEFAULT_INTERACTION_ASSETS_PATH = ".touba/interaction-assets.json";
 const DEFAULT_INTERACTION_ASSETS_DIRECTORY = ".touba/interaction-assets";
-const DEFAULT_INPUT_PRESENTATION_PATH = "touba.inputs.json";
 const DEFAULT_DEV_SECRETS_PROFILE_PATH = "touba.secrets.dev.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -100,7 +100,6 @@ const MAX_CHANGE_SET_BYTES = 512 * 1024;
 const MAX_CHANGE_SET_TARGETS = 16;
 const MAX_PROJECT_ARTIFACTS = 200;
 const MAX_PROJECT_SCAN_DEPTH = 6;
-const STUDIO_INTERACTION_TARGET_KINDS = new Set(["agent", "skill", "strategy", "tool", "trigger"]);
 const CONTRACT_INDEX_SCHEMA_VERSION = "touba-project-server-contract-index-v0.1";
 const LIVE_STATE_SCHEMA_VERSION = "touba-project-live-state-v0.1";
 const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v0.1";
@@ -135,7 +134,8 @@ const DEPLOYMENT_ACTION_SCHEMA_VERSION = "touba-deployment-action-v0.1";
 const DEPLOYMENT_PLAN_SCHEMA_VERSION = "touba-deployment-plan-v0.1";
 const GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION = "touba-governance-relation-change-v0.1";
 const PROJECT_EVENT_SCHEMA_VERSION = "touba-project-event-v0.1";
-const CHANGE_STORE_SCHEMA_VERSION = "touba-studio-change-proposals-v0.1";
+const CHANGE_STORE_SCHEMA_VERSION = "touba-project-change-proposals-v0.1";
+const LEGACY_CHANGE_STORE_SCHEMA_VERSION = "touba-studio-change-proposals-v0.1";
 const CHANGE_ACTIONS = Object.freeze(["write_text_file"]);
 const CHANGE_DECISIONS = Object.freeze(["apply", "refuse"]);
 const MOBILE_PAIRING_ALLOWED_SCOPES = Object.freeze([
@@ -372,6 +372,12 @@ export function createToubaProjectServer(options = {}) {
     eventJournalLimit,
     strict: options.strict === true,
   });
+  if (options.changeProposalsPath === undefined) {
+    migrateLegacyChangeProposalStore({
+      changeProposalsPath,
+      legacyPath: join(projectRoot, LEGACY_CHANGE_PROPOSALS_PATH),
+    });
+  }
   recoverProjectChangeTransactions({ projectRoot });
   eventSequence = latestProjectEventSequence(readProjectEventJournal(eventJournalPath));
   for (const operation of recoverInterruptedInteractionOperations({
@@ -696,7 +702,6 @@ export function createToubaProjectServer(options = {}) {
           .find((candidate) => candidate.ref === body.target_ref);
         if (
           entrypoint === undefined
-          || !STUDIO_INTERACTION_TARGET_KINDS.has(body.target_kind)
           || entrypoint.kind !== body.target_kind
           || entrypoint.interaction_contract.presentation !== body.presentation
         ) {
@@ -841,11 +846,11 @@ export function createToubaProjectServer(options = {}) {
           effect_policy: session.effect_policy,
           inputs: body.inputs,
           ...(executionKind === "trigger" ? {
-            event_id: body.event_id ?? `studio-${body.message_id}`,
+            event_id: body.event_id ?? `interaction-${body.message_id}`,
             source_kind: body.source_kind ?? "request",
           } : {}),
           requested_by: body.requested_by,
-          reason: `client interaction ${session.session_id}`,
+          reason: `Project interaction ${session.session_id}`,
         };
         const operation = enqueueInteractionOperation({
           message: body,
@@ -1719,7 +1724,7 @@ export function preflightServeOptions({
     throw error;
   }
   if (diagnostics.some((diagnostic) => diagnostic.code === "ToubaServeChangeStoreOutsideProject" || diagnostic.code === "ToubaServeChangeStoreInvalid")) {
-    const error = serviceError("ToubaServePreflightFailed", "touba serve cannot use the configured client change proposal store");
+    const error = serviceError("ToubaServePreflightFailed", "touba serve cannot use the configured project change proposal store");
     error.diagnostics = diagnostics;
     throw error;
   }
@@ -4027,7 +4032,6 @@ function buildProjectInspection({
 }) {
   const diagnostics = [...inspectionDiagnostics(projectSnapshot.report?.diagnostics ?? [])];
   const projectConfig = readProjectConfig(projectRoot, diagnostics);
-  const inputPresentation = readInputPresentationConfig(projectRoot, diagnostics);
   const artifacts = projectSnapshot.artifacts
     .filter((artifact) => ["source", "air", "manifest", "lock", "trace"].includes(artifact.kind))
     .map((artifact) => ({
@@ -4050,7 +4054,6 @@ function buildProjectInspection({
       projectRoot,
       artifacts: projectSnapshot.artifacts,
       diagnostics,
-      inputPresentation,
     }),
     packages,
     diagnostics,
@@ -4138,127 +4141,13 @@ function readProjectConfig(projectRoot, diagnostics) {
   }
 }
 
-function readInputPresentationConfig(projectRoot, diagnostics) {
-  const path = join(projectRoot, DEFAULT_INPUT_PRESENTATION_PATH);
-  if (!existsSync(path)) return null;
-  let document;
-  try {
-    document = JSON.parse(readFileSync(path, "utf8"));
-  } catch (cause) {
-    diagnostics.push(serviceDiagnostic(
-      "ToubaInputPresentationUnreadable",
-      `cannot read ${DEFAULT_INPUT_PRESENTATION_PATH}: ${cause.message}`,
-      "warning",
-      DEFAULT_INPUT_PRESENTATION_PATH,
-    ));
-    return null;
-  }
-  if (
-    document?.schema_version !== "touba-input-presentation-v0.1"
-    || !Array.isArray(document.targets)
-  ) {
-    diagnostics.push(serviceDiagnostic(
-      "ToubaInputPresentationInvalid",
-      `${DEFAULT_INPUT_PRESENTATION_PATH} must use touba-input-presentation-v0.1`,
-      "warning",
-      DEFAULT_INPUT_PRESENTATION_PATH,
-    ));
-    return null;
-  }
-  const seenTargets = new Set();
-  for (const target of document.targets) {
-    if (
-      !isPlainObject(target)
-      || nonEmptyString(target.target_ref) === undefined
-      || !Array.isArray(target.generated_fields)
-      || seenTargets.has(target.target_ref)
-    ) {
-      diagnostics.push(serviceDiagnostic(
-        "ToubaInputPresentationInvalid",
-        `${DEFAULT_INPUT_PRESENTATION_PATH} contains an invalid or duplicate target`,
-        "warning",
-        DEFAULT_INPUT_PRESENTATION_PATH,
-      ));
-      return null;
-    }
-    seenTargets.add(target.target_ref);
-    for (const field of target.generated_fields) {
-      if (!validGeneratedFieldDeclaration(field)) {
-        diagnostics.push(serviceDiagnostic(
-          "ToubaInputPresentationInvalid",
-          `${DEFAULT_INPUT_PRESENTATION_PATH} contains an invalid generated field for ${target.target_ref}`,
-          "warning",
-          DEFAULT_INPUT_PRESENTATION_PATH,
-        ));
-        return null;
-      }
-    }
-  }
-  return document;
-}
-
-function validGeneratedFieldDeclaration(field) {
-  if (
-    !isPlainObject(field)
-    || !Array.isArray(field.path)
-    || field.path.length === 0
-    || field.path.some((segment) => nonEmptyString(segment) === undefined)
-    || !["uuid", "timestamp", "prefixed_timestamp"].includes(field.generator)
-  ) {
-    return false;
-  }
-  if (field.generator === "prefixed_timestamp") {
-    return typeof field.prefix === "string"
-      && /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/u.test(field.prefix);
-  }
-  return field.prefix === undefined;
-}
-
-function generatedFieldsForTarget({
-  diagnostics,
-  inputContract,
-  inputPresentation,
-  targetRef,
-}) {
-  const target = inputPresentation?.targets?.find((candidate) => candidate.target_ref === targetRef);
-  if (target === undefined) return [];
-  const generatedFields = [];
-  for (const field of target.generated_fields) {
-    const inputField = inputFieldAtPath(inputContract, field.path);
-    if (inputField?.type_ref !== "builtin:Text") {
-      diagnostics.push(serviceDiagnostic(
-        "ToubaInputPresentationPathInvalid",
-        `generated field ${field.path.join(".")} for ${targetRef} must resolve to a declared Text input`,
-        "warning",
-        DEFAULT_INPUT_PRESENTATION_PATH,
-      ));
-      continue;
-    }
-    generatedFields.push(field);
-  }
-  return generatedFields;
-}
-
-function inputFieldAtPath(contract, path) {
-  if (contract?.mode !== "declared") return undefined;
-  const typesByRef = new Map((contract.types ?? []).map((type) => [type.ref, type]));
-  let fields = contract.fields ?? [];
-  let current;
-  for (const segment of path) {
-    current = fields.find((field) => field.name === segment);
-    if (current === undefined) return undefined;
-    fields = typesByRef.get(current.type_ref)?.fields ?? [];
-  }
-  return current;
-}
-
 function inspectionArtifactStatus(artifact, diagnostics) {
   return diagnostics.some((item) => item.code === "ToubaServeProjectAirStale" && artifact.kind === "air")
     ? "stale"
     : "present";
 }
 
-function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics, inputPresentation }) {
+function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
   const entrypoints = new Map();
   for (const artifact of artifacts.filter((item) => item.kind === "air")) {
     const path = join(projectRoot, artifact.relative_path);
@@ -4281,19 +4170,13 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics, inputPre
           continue;
         }
         const inputContract = buildAirInputContract({ air, definition, kind });
-        const generatedFields = generatedFieldsForTarget({
-          diagnostics,
-          inputContract,
-          inputPresentation,
-          targetRef: ref,
-        });
         entrypoints.set(ref, {
           kind,
           ref,
           description: nonEmptyString(definition.description) ?? nonEmptyString(definition.name) ?? ref,
           effect_policy_requirement: sandboxEffectPolicyRequirement(air, ref),
           input_contract: inputContract,
-          interaction_contract: buildInteractionContract({ generatedFields, inputContract, kind }),
+          interaction_contract: buildInteractionContract({ inputContract, kind }),
         });
       }
     }
@@ -4303,12 +4186,6 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics, inputPre
         continue;
       }
       const inputContract = buildAirInputContract({ air, definition: trigger, kind: "trigger" });
-      const generatedFields = generatedFieldsForTarget({
-        diagnostics,
-        inputContract,
-        inputPresentation,
-        targetRef: ref,
-      });
       entrypoints.set(ref, {
         kind: "trigger",
         ref,
@@ -4319,7 +4196,6 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics, inputPre
         ),
         input_contract: inputContract,
         interaction_contract: buildInteractionContract({
-          generatedFields,
           inputContract,
           kind: "trigger",
         }),
@@ -5329,7 +5205,7 @@ function validateChangeProposal({ projectRoot, proposal }) {
   const targetPath = requiredNonEmptyString(proposal.target.path, "target.path");
   safeProjectPath(projectRoot, targetPath);
   if (!isAllowedChangeTarget(targetPath)) {
-    throw serviceError("ToubaServeChangeTargetRejected", "client changes may target .tb source or approved Touba project metadata only");
+    throw serviceError("ToubaServeChangeTargetRejected", "project changes may target .tb source or approved Touba project metadata only");
   }
   const content = requiredString(proposal.content, "content");
   if (Buffer.byteLength(content, "utf8") > MAX_CHANGE_CONTENT_BYTES) {
@@ -5506,7 +5382,7 @@ function validateGovernanceActionMetadata({ document, fileName }) {
     document,
     fileName,
     field: "governance_action_schema_version",
-    expected: "touba-studio-governance-action-v0.1",
+    expected: "touba-governance-action-v0.1",
   });
   const allowedOperations = new Set(["grant_authority", "revoke_authority", "require_review", "set_quota"]);
   const allowedIntents = new Set(["grant", "revoke", "review", "quota"]);
@@ -5880,7 +5756,7 @@ function writeTransactionJournal(path, journal) {
 }
 
 function validateToubaSourcePatch(content, { projectRoot } = {}) {
-  const validationRoot = mkdtempSync(join(tmpdir(), "touba-studio-change-"));
+  const validationRoot = mkdtempSync(join(tmpdir(), "touba-project-change-"));
   const sourcePath = join(validationRoot, "proposal.tb");
   try {
     writeFileSync(sourcePath, content, "utf8");
@@ -5931,8 +5807,8 @@ function isAllowedHandlerStubTarget(relativePath) {
 
 function validateHandlerStubPatch(targetPath, content) {
   const diagnostics = [];
-  if (!content.includes("project client generated handler stub v0.1")) {
-    diagnostics.push(serviceDiagnostic("ToubaServeChangeHandlerStubMarkerMissing", `${targetPath} must be a client-generated handler stub`));
+  if (!content.includes("Touba generated handler stub v0.1")) {
+    diagnostics.push(serviceDiagnostic("ToubaServeChangeHandlerStubMarkerMissing", `${targetPath} must be a Touba-generated handler stub`));
   }
   if (!content.includes("HandlerStubNotImplemented")) {
     diagnostics.push(serviceDiagnostic("ToubaServeChangeHandlerStubNotImplementedMissing", `${targetPath} must remain explicitly not implemented`));
@@ -5996,6 +5872,28 @@ function assertChangeTargetUnchanged(proposal, targetPath) {
       "change target changed after validation; propose the governance change again",
     );
   }
+}
+
+function migrateLegacyChangeProposalStore({ changeProposalsPath, legacyPath }) {
+  if (existsSync(changeProposalsPath) || !existsSync(legacyPath)) return;
+  if (statSync(legacyPath).isDirectory()) {
+    throw serviceError("ToubaServeChangeStoreInvalid", `${legacyPath} is a directory`);
+  }
+  const legacy = JSON.parse(readFileSync(legacyPath, "utf8"));
+  if (
+    legacy.schema_version !== LEGACY_CHANGE_STORE_SCHEMA_VERSION
+    || !Array.isArray(legacy.proposals)
+  ) {
+    throw serviceError(
+      "ToubaServeChangeStoreInvalid",
+      `legacy change proposal store must use ${LEGACY_CHANGE_STORE_SCHEMA_VERSION}`,
+    );
+  }
+  saveChangeProposalStore(changeProposalsPath, {
+    schema_version: CHANGE_STORE_SCHEMA_VERSION,
+    proposals: legacy.proposals,
+  });
+  renameSync(legacyPath, `${legacyPath}.migrated`);
 }
 
 function loadChangeProposalStore(changeProposalsPath) {
@@ -6708,7 +6606,7 @@ function applyCorsHeaders(request, response) {
   if (origin === undefined) {
     return false;
   }
-  if (!isAllowedStudioOrigin(origin)) {
+  if (!isAllowedProjectClientOrigin(origin)) {
     return false;
   }
   response.setHeader("access-control-allow-origin", origin);
@@ -6729,7 +6627,7 @@ function singleHeaderValue(value) {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-function isAllowedStudioOrigin(origin) {
+function isAllowedProjectClientOrigin(origin) {
   try {
     const url = new URL(origin);
     if (url.protocol === "tauri:" && url.hostname === "localhost") {
@@ -6738,13 +6636,13 @@ function isAllowedStudioOrigin(origin) {
     if (!["http:", "https:"].includes(url.protocol)) {
       return false;
     }
-    return isLoopbackStudioHost(url.hostname);
+    return isLoopbackClientHost(url.hostname);
   } catch {
     return false;
   }
 }
 
-function isLoopbackStudioHost(hostname) {
+function isLoopbackClientHost(hostname) {
   return hostname === "localhost"
     || hostname === "127.0.0.1"
     || hostname === "::1"
@@ -7138,7 +7036,7 @@ function usage() {
   return [
     "Usage: touba serve [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
     "",
-    "Starts the live Touba project server for client, Mobile and contract clients.",
+    "Starts the live Touba project server for authenticated project clients.",
     "",
     "Defaults:",
     `  host: ${DEFAULT_HOST}`,

@@ -74,7 +74,7 @@ test("production readiness blocks generated handler stubs", () => {
   try {
     writeFileSync(join(project.root, "handlers", "pending.handler.mjs"), [
       "#!/usr/bin/env node",
-      "// Touba Studio generated handler stub v0.1",
+      "// Touba generated handler stub v0.1",
       "process.stderr.write(`${code}\\n`);",
       "",
     ].join("\n"), "utf8");

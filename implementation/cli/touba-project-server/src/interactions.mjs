@@ -26,7 +26,14 @@ const MAX_MESSAGES_PER_SESSION = 100;
 const MAX_OPERATIONS_PER_SESSION = 50;
 const MAX_PROGRESS_EVENTS_PER_OPERATION = 80;
 const ACTIVE_OPERATION_STATUSES = new Set(["queued", "running", "cancel_requested"]);
-const INTERACTION_SURFACE_TARGET_KINDS = new Set(["agent", "skill", "strategy", "tool", "trigger"]);
+const EXECUTABLE_INTERACTION_TARGET_KINDS = new Set([
+  "agent",
+  "function",
+  "skill",
+  "strategy",
+  "tool",
+  "trigger",
+]);
 const ALLOWED_MEDIA_TYPES = Object.freeze({
   audio: new Set(["audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/x-wav"]),
   document: new Set(["application/json", "application/pdf", "text/csv", "text/markdown", "text/plain"]),
@@ -69,7 +76,7 @@ export function listInteractionSessions(sessionsPath) {
   return {
     schema_version: INTERACTION_SESSION_LIST_SCHEMA_VERSION,
     sessions: [...store.sessions]
-      .filter((session) => INTERACTION_SURFACE_TARGET_KINDS.has(session.target_kind))
+      .filter((session) => EXECUTABLE_INTERACTION_TARGET_KINDS.has(session.target_kind))
       .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
       .map((session) => ({
         session_id: session.session_id,

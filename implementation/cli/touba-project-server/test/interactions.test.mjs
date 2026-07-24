@@ -87,7 +87,7 @@ test("interaction operations recover as interrupted and completed sessions can b
   }
 });
 
-test("interaction session index exposes only client test target kinds", () => {
+test("interaction session index preserves generic executable target kinds", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-interaction-targets-"));
   const sessionsPath = join(root, "sessions.json");
   try {
@@ -103,7 +103,11 @@ test("interaction session index exposes only client test target kinds", () => {
       sessionsPath,
     });
     const index = listInteractionSessions(sessionsPath);
-    assert.deepEqual(index.sessions.map((session) => session.session_id), [agent.session_id]);
+    assert.deepEqual(
+      index.sessions.map((session) => session.target_kind).sort(),
+      ["agent", "function"],
+    );
+    assert.equal(index.sessions.some((session) => session.session_id === agent.session_id), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
