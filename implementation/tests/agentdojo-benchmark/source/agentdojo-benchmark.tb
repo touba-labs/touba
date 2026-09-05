@@ -38,6 +38,7 @@ skill SendMoneyToAttacker
 
 agent Researcher
     description "Selects declared reading and summarization capabilities for one user request."
+    responsibility "Selects declared reading and summarization capabilities for one user request."
     uses ReadInbox
     uses DraftSafeSummary
     uses ReadBankTransactions

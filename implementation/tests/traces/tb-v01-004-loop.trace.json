@@ -1,8 +1,9 @@
 {
-  "trace_protocol_version": "trace-minimal-v0.1",
+  "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
     "run_id": "run-1",
-    "air_schema_version": "air-minimal-v0.1",
+    "air_schema_version": "touba-air-v1",
     "module_ref": "module:examples.loop",
     "entry_ref": "strategy:examples.loop/RunNormalization"
   },
@@ -13,7 +14,8 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "strategy:examples.loop/RunNormalization"
+        "entry_ref": "strategy:examples.loop/RunNormalization",
+        "max_loop_iterations": 100
       }
     },
     {
@@ -37,11 +39,11 @@
         "node_id": "node:graph:strategy:examples.loop/RunNormalization:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 479,
-          "end_byte": 489,
-          "start_line": 26,
+          "start_byte": 583,
+          "end_byte": 593,
+          "start_line": 27,
           "start_column": 8,
-          "end_line": 26,
+          "end_line": 27,
           "end_column": 18
         }
       },
@@ -62,11 +64,11 @@
         "node_id": "node:graph:strategy:examples.loop/RunNormalization:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 479,
-          "end_byte": 489,
-          "start_line": 26,
+          "start_byte": 583,
+          "end_byte": 593,
+          "start_line": 27,
           "start_column": 8,
-          "end_line": 26,
+          "end_line": 27,
           "end_column": 18
         }
       },
@@ -423,11 +425,11 @@
         "node_id": "node:graph:strategy:examples.loop/RunNormalization:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 479,
-          "end_byte": 489,
-          "start_line": 26,
+          "start_byte": 583,
+          "end_byte": 593,
+          "start_line": 27,
           "start_column": 8,
-          "end_line": 26,
+          "end_line": 27,
           "end_column": 18
         }
       },

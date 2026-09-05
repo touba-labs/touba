@@ -1094,7 +1094,7 @@ if (process.env.TOUBA_FAKE_LOG) {
 
 if (command === "compile") {
   process.stdout.write(JSON.stringify({
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: { id: "module:examples.sdk_engine", name: "examples.sdk_engine" },
     definitions: { types: [], functions: [], tools: [], skills: [], agents: [], strategies: [] },
     execution_graphs: [],
@@ -1113,7 +1113,7 @@ if (command === "compile") {
   const inputs = JSON.parse(option("--inputs-json") ?? "{}");
   const entryRef = option("--entry") ?? null;
   const trace = {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: { id: "run-sdk-engine", entry_ref: entryRef },
     events: [{ kind: "run_completed", payload: { status: "success" } }]
   };

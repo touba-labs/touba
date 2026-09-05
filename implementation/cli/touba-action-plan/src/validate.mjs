@@ -10,9 +10,9 @@ import { fileURLToPath } from "node:url";
 export const EXPECTED_PLAN_SCHEMA_VERSION = "touba-action-plan-v0.1";
 export const VALIDATION_SCHEMA_VERSION = "touba-action-plan-validation-v0.1";
 
-const EXPECTED_AIR_SCHEMA_VERSION = "air-minimal-v0.1";
+const EXPECTED_AIR_SCHEMA_VERSION = "touba-air-v1";
 const EXPECTED_MANIFEST_VERSION = "touba-manifest-v1";
-const EXPECTED_TRACE_PROTOCOL_VERSION = "trace-minimal-v0.1";
+const EXPECTED_TRACE_PROTOCOL_VERSION = "touba-trace-v1";
 
 const ALLOWED_ACTIONS = new Set([
   "AddMemory",

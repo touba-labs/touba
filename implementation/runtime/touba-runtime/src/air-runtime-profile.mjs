@@ -2,9 +2,15 @@
 
 import { normalizeAirRunLimits } from "./runtime-budgets.mjs";
 import { ToubaRuntimeError } from "./runtime-errors.mjs";
+import {
+  AIR_CAPABILITY_PROFILE,
+  AIR_JSON_PROFILE,
+  AIR_SCHEMA_VERSION,
+  MachineContractError,
+  validateAirMachineContract,
+} from "../../../contracts/machine/contracts.mjs";
 
-export const AIR_SCHEMA_VERSION = "air-minimal-v0.1";
-export const AIR_JSON_PROFILE = "air-json-v0.1";
+export { AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, AIR_SCHEMA_VERSION };
 
 export const AIR_DEFINITION_COLLECTIONS = Object.freeze([
   "types",
@@ -40,6 +46,20 @@ export const AIR_DEFINITION_COLLECTIONS = Object.freeze([
  * @returns {asserts document is AirRecord}
  */
 export function validateAirDocument(document) {
+  try {
+    validateAirMachineContract(document);
+  } catch (error) {
+    if (error instanceof MachineContractError) {
+      const code = error.code === "MachineVersionUnsupported"
+        ? "UnsupportedAirSchemaVersion"
+        : "InvalidAirDocument";
+      throw new ToubaRuntimeError(code, `${error.message} at ${error.path}`, {
+        contractCode: error.code,
+        contractPath: error.path,
+      });
+    }
+    throw error;
+  }
   if (!document || typeof document !== "object" || Array.isArray(document)) {
     throw new ToubaRuntimeError("InvalidAirDocument", "AIR JSON must decode to an object");
   }
@@ -81,6 +101,64 @@ export function validateAirDefinitionCollections(definitions) {
         "InvalidAirDocument",
         `AIR definitions.${collection} must be an array`,
         { collection },
+      );
+    }
+  }
+  for (const agent of record.agents ?? []) {
+    if (typeof agent?.responsibility !== "string" || agent.responsibility.trim() === "") {
+      throw new ToubaRuntimeError(
+        "InvalidAirDocument",
+        "AIR agent responsibility must be a non-empty source contract",
+        { agentRef: agent?.id },
+      );
+    }
+    if (agent.signature !== undefined) {
+      validateAgentInterfaceSignature(agent);
+    }
+  }
+}
+
+/**
+ * @param {AirRecord} agent
+ */
+function validateAgentInterfaceSignature(agent) {
+  const signature = agent.signature;
+  if (!signature || typeof signature !== "object" || Array.isArray(signature)) {
+    throw new ToubaRuntimeError(
+      "InvalidAirDocument",
+      "AIR agent signature must be an object when present",
+      { agentRef: agent.id },
+    );
+  }
+  const record = /** @type {AirRecord} */ (signature);
+  if (!Array.isArray(record.inputs)) {
+    throw new ToubaRuntimeError(
+      "InvalidAirDocument",
+      "AIR agent signature.inputs must be an array",
+      { agentRef: agent.id },
+    );
+  }
+  if (typeof record.output_type !== "string" || record.output_type.trim() === "") {
+    throw new ToubaRuntimeError(
+      "InvalidAirDocument",
+      "AIR agent signature.output_type must be a non-empty type ref",
+      { agentRef: agent.id },
+    );
+  }
+  for (const input of record.inputs) {
+    if (
+      !input
+      || typeof input !== "object"
+      || Array.isArray(input)
+      || typeof input.name !== "string"
+      || input.name.trim() === ""
+      || typeof input.type_ref !== "string"
+      || input.type_ref.trim() === ""
+    ) {
+      throw new ToubaRuntimeError(
+        "InvalidAirDocument",
+        "AIR agent signature input must have non-empty name and type_ref",
+        { agentRef: agent.id },
       );
     }
   }

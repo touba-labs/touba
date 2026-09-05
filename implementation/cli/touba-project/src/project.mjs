@@ -16,14 +16,22 @@ import {
   generateHandlerStubFromAirTool,
 } from "../../touba-manifest/src/stub.mjs";
 import { toolNameToHandlerFile } from "../../touba-manifest/src/generate.mjs";
+import {
+  assertEffectiveProjectSafe,
+  buildEffectiveProjectDocument,
+} from "./effective-project.mjs";
 
 export const PROJECT_MANIFEST_VERSION = "touba-project-workflow-v1";
 export const TOUBA_MANIFEST_VERSION = "touba-manifest-v1";
 export const DEFAULT_SOURCE_ROOT = "src";
 export const DEFAULT_HANDLER_ROOT = "handlers";
 export const DEFAULT_AIR_ROOT = ".touba/air";
+export const DEFAULT_BUILD_ROOT = ".touba/build";
+export const DEFAULT_STATE_ROOT = ".touba/state";
+export const DEFAULT_EVIDENCE_ROOT = ".touba/evidence";
 export const DEFAULT_PROJECT_CONFIG_PATH = "touba.project.json";
-export const DEFAULT_SECRET_STORE_PATH = ".touba/secrets.local.json";
+export const DEFAULT_SECRET_STORE_PATH = ".touba/state/secrets.local.json";
+export const LEGACY_SECRET_STORE_PATH = ".touba/secrets.local.json";
 export const DEFAULT_DOTENV_PATH = ".env";
 export const DEFAULT_DEV_SECRETS_PROFILE = "touba.secrets.dev.json";
 export const DEFAULT_PROD_SECRETS_PROFILE = "touba.secrets.prod.json";
@@ -36,12 +44,13 @@ export const TOUBA_LOCAL_SECRET_STORE_VERSION = "touba-secret-store-local-v1";
 export const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
 export const DEFAULT_SUPPLY_CHAIN_LOCK_PATH = "touba.lock.json";
 export const TOUBA_PACKAGE_SCHEMA_VERSION = "touba-package-v0.1";
-export const TOUBA_AIR_JSON_PROFILE = "air-json-v0.1";
+export const TOUBA_AIR_JSON_PROFILE = "touba-air-json-canonical-v1";
 export const TOUBA_RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v0.1";
 export const TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v0.1";
 export const TOUBA_RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
 export const TOUBA_OWNERSHIP_SCHEMA_VERSION = "touba-ownership-v0.1";
 export const DEFAULT_RUN_PLAN_PATH = "touba.run-plan.json";
+export const PROJECT_ARTIFACT_LAYOUT_VERSION = "touba-artifacts-v1";
 
 const MODULE_NAME_PATTERN = /^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$/;
 const SECRET_HANDLE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
@@ -218,6 +227,9 @@ const PROJECT_LANGUAGE_PROFILES = Object.freeze({
 });
 const RESERVED_PROJECT_LANGUAGES = new Set(["python", "typescript"]);
 const DEFAULT_RUN_PROFILES = Object.freeze({
+  pure: Object.freeze({
+    require_supply_chain_lock: false,
+  }),
   dev: Object.freeze({
     require_supply_chain_lock: false,
   }),
@@ -233,7 +245,13 @@ export function initProject(options = {}) {
   const preserved = [];
   const projectConfig = resolveProjectConfigForInit(root, options.language);
 
-  for (const dir of [DEFAULT_SOURCE_ROOT, DEFAULT_HANDLER_ROOT, ".touba"]) {
+  for (const dir of [
+    DEFAULT_SOURCE_ROOT,
+    DEFAULT_HANDLER_ROOT,
+    DEFAULT_BUILD_ROOT,
+    DEFAULT_STATE_ROOT,
+    DEFAULT_EVIDENCE_ROOT,
+  ]) {
     const path = join(root, dir);
     if (existsSync(path)) {
       preserved.push(path);
@@ -343,6 +361,156 @@ export function removeProjectSecret(handle, options = {}) {
   });
 }
 
+export function migrateProjectArtifacts(options = {}) {
+  const root = resolve(options.root ?? process.cwd());
+  const mode = options.mode ?? "plan";
+  if (!["plan", "check", "write"].includes(mode)) {
+    throw new Error(`unsupported project migration mode: ${mode}`);
+  }
+  const projectConfigPath = resolve(root, DEFAULT_PROJECT_CONFIG_PATH);
+  if (!existsSync(projectConfigPath)) {
+    throw new Error(`project migration requires ${DEFAULT_PROJECT_CONFIG_PATH} in ${root}`);
+  }
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(projectConfigPath, "utf8"));
+  } catch (error) {
+    throw new Error(`cannot read project config ${projectConfigPath}: ${error.message}`);
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`project config must be an object: ${projectConfigPath}`);
+  }
+  if (raw.artifact_layout !== undefined && raw.artifact_layout !== PROJECT_ARTIFACT_LAYOUT_VERSION) {
+    throw new Error(`project config artifact_layout must be ${PROJECT_ARTIFACT_LAYOUT_VERSION}`);
+  }
+
+  const legacyArtifacts = [
+    DEFAULT_AIR_ROOT,
+    "touba.manifest.json",
+    DEFAULT_RUN_PLAN_PATH,
+    LEGACY_SECRET_STORE_PATH,
+  ].filter((path) => existsSync(resolve(root, path)));
+  const targetProfiles = Object.keys(normalizeRunProfiles(raw.run_profiles));
+  const occupiedTargets = targetProfiles
+    .map((profile) => join(DEFAULT_BUILD_ROOT, profile))
+    .filter((path) => directoryHasEntries(resolve(root, path)));
+  const diagnostics = [];
+  const actions = [];
+  if (raw.artifact_layout === PROJECT_ARTIFACT_LAYOUT_VERSION) {
+    return {
+      workflow_version: PROJECT_MANIFEST_VERSION,
+      command: "project migrate",
+      mode,
+      status: "success",
+      root,
+      project_config_path: projectConfigPath,
+      artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
+      legacy_artifacts: legacyArtifacts,
+      preserved: legacyArtifacts,
+      actions,
+      diagnostics,
+    };
+  }
+  if (occupiedTargets.length > 0) {
+    diagnostics.push(errorDiagnostic(
+      "ProjectArtifactMigrationTargetOccupied",
+      "converged build targets already contain files; refusing to adopt them without a clean regeneration",
+      { targets: occupiedTargets },
+    ));
+  } else {
+    actions.push(action(mode === "write" ? "adopt_artifact_layout" : "would_adopt_artifact_layout", projectConfigPath, {
+      artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
+    }));
+    if (mode === "check") {
+      diagnostics.push(errorDiagnostic(
+        "ProjectArtifactMigrationRequired",
+        `project config does not declare ${PROJECT_ARTIFACT_LAYOUT_VERSION}`,
+        { project_config_path: projectConfigPath },
+      ));
+    }
+  }
+  if (mode === "write" && diagnostics.length === 0) {
+    const next = cloneJson(raw);
+    next.artifact_layout = PROJECT_ARTIFACT_LAYOUT_VERSION;
+    next.run_profiles = {
+      pure: { require_supply_chain_lock: false },
+      ...(next.run_profiles ?? {}),
+    };
+    writeProjectConfig(projectConfigPath, next);
+  }
+  return {
+    workflow_version: PROJECT_MANIFEST_VERSION,
+    command: "project migrate",
+    mode,
+    status: diagnostics.length > 0 ? "error" : mode === "plan" ? "changes_required" : "success",
+    root,
+    project_config_path: projectConfigPath,
+    artifact_layout: raw.artifact_layout ?? "legacy-v1",
+    target_artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
+    legacy_artifacts: legacyArtifacts,
+    preserved: legacyArtifacts,
+    actions,
+    diagnostics,
+  };
+}
+
+export function resolveProjectRunArgs(rawArgs, options = {}) {
+  const positionalAirPath = rawArgs[0] !== undefined && !rawArgs[0].startsWith("--");
+  const args = [];
+  let projectRoot;
+  let profile;
+  let entryRef;
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === "--project") {
+      index += 1;
+      if (index >= rawArgs.length || rawArgs[index].startsWith("--")) {
+        throw new Error("--project requires a path");
+      }
+      projectRoot = resolve(options.root ?? process.cwd(), rawArgs[index]);
+    } else if (arg.startsWith("--project=")) {
+      projectRoot = resolve(options.root ?? process.cwd(), arg.slice("--project=".length));
+    } else {
+      if (arg === "--profile") profile = rawArgs[index + 1];
+      else if (arg.startsWith("--profile=")) profile = arg.slice("--profile=".length);
+      else if (arg === "--entry") entryRef = rawArgs[index + 1];
+      else if (arg.startsWith("--entry=")) entryRef = arg.slice("--entry=".length);
+      args.push(arg);
+    }
+  }
+  if (projectRoot === undefined) {
+    return applyRunProfileToArgs(args, options);
+  }
+  if (positionalAirPath) {
+    throw new Error("--project cannot be combined with a positional AIR path");
+  }
+  const configPath = resolve(projectRoot, DEFAULT_PROJECT_CONFIG_PATH);
+  const projectConfig = readProjectConfig(configPath);
+  if (projectConfig === null) {
+    throw new Error(`--project requires ${DEFAULT_PROJECT_CONFIG_PATH} in ${projectRoot}`);
+  }
+  if (projectConfig.artifact_layout !== PROJECT_ARTIFACT_LAYOUT_VERSION) {
+    throw new Error("project must be migrated with `touba project migrate --mode write` before project-based run");
+  }
+  const profileName = profile ?? "dev";
+  if (projectConfig.run_profiles[profileName] === undefined) {
+    throw new Error(`unknown run profile ${profileName}`);
+  }
+  const runPlanPath = resolve(projectRoot, DEFAULT_BUILD_ROOT, profileName, "touba.run-plan.json");
+  if (!existsSync(runPlanPath)) {
+    throw new Error(`prepared run plan is missing: ${runPlanPath}; run touba prepare --mode write --profile ${profileName}`);
+  }
+  const runPlan = JSON.parse(readFileSync(runPlanPath, "utf8"));
+  const expectedEntry = entryRef ?? projectConfig.entry;
+  if (expectedEntry !== undefined && runPlan.entry_ref !== expectedEntry) {
+    throw new Error(`prepared run plan entry ${runPlan.entry_ref} conflicts with requested entry ${expectedEntry}`);
+  }
+  const withProfile = profile === undefined
+    ? [...args, "--profile", profileName]
+    : args;
+  return applyRunProfileToArgs(["--run-plan", runPlanPath, ...withProfile], { root: projectRoot });
+}
+
 export async function prepareProject(options = {}) {
   const root = resolve(options.root ?? process.cwd());
   const mode = options.mode ?? "plan";
@@ -351,7 +519,6 @@ export async function prepareProject(options = {}) {
   }
 
   const projectConfigPath = resolve(root, DEFAULT_PROJECT_CONFIG_PATH);
-  const manifestPath = resolve(root, options.manifestPath ?? "touba.manifest.json");
   const airPaths = normalizeAirPaths(root, options.airPaths);
   const sourcePaths = normalizeSourcePaths(root, options.sourcePaths, airPaths);
 
@@ -361,6 +528,39 @@ export async function prepareProject(options = {}) {
   const sources = [];
   const projectConfigResolution = resolveProjectConfigForPrepare(root, diagnostics);
   const languageProfile = projectConfigResolution.profile;
+  const runProfile = options.runProfile ?? "dev";
+  if (
+    projectConfigResolution.document !== null
+    && projectConfigResolution.document.run_profiles[runProfile] === undefined
+  ) {
+    diagnostics.push(errorDiagnostic("ProjectRunProfileUnknown", `run profile ${runProfile} is not declared`, {
+      profile: runProfile,
+      project_config_path: projectConfigPath,
+    }));
+  }
+  const convergedLayout = projectConfigResolution.document?.artifact_layout === PROJECT_ARTIFACT_LAYOUT_VERSION;
+  const buildRoot = convergedLayout
+    ? resolve(root, DEFAULT_BUILD_ROOT, runProfile)
+    : root;
+  const airRoot = convergedLayout
+    ? join(buildRoot, "air")
+    : resolve(root, DEFAULT_AIR_ROOT);
+  const manifestPath = resolve(
+    root,
+    options.manifestPath ?? (convergedLayout
+      ? relative(root, join(buildRoot, "touba.manifest.json"))
+      : "touba.manifest.json"),
+  );
+  const configured = projectConfigResolution.document?.configuration;
+  const configuredBindingFragments = options.bindingFragmentPaths?.length > 0
+    ? options.bindingFragmentPaths
+    : configured?.binding_fragments ?? [];
+  const configuredResourceBindings = options.resourceBindingsPaths?.length > 0
+    ? options.resourceBindingsPaths
+    : configured?.resource_bindings ?? [];
+  const configuredOwnershipPath = options.ownershipPath
+    ?? configured?.ownership;
+  const entryRef = options.entryRef ?? projectConfigResolution.document?.entry;
 
   for (const sourcePath of sourcePaths) {
     const expectedModuleName = expectedModuleNameForSource(root, sourcePath);
@@ -398,7 +598,7 @@ export async function prepareProject(options = {}) {
     }
 
     airDocuments.push({ document: airDocument, sourcePath });
-    const airPath = airOutputPath(root, actualModuleName);
+    const airPath = airOutputPath(root, actualModuleName, airRoot);
     actions.push(action(mode === "write" ? "write_air" : "would_write_air", airPath, {
       module_name: actualModuleName,
       source_path: sourcePath,
@@ -455,8 +655,9 @@ export async function prepareProject(options = {}) {
     handlerExtension: options.handlerExtension ?? languageProfile.handlerExtension,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     maxPayloadBytes: options.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES,
+    handlerCwd: toPosixPath(relative(dirname(manifestPath), root) || "."),
   });
-  const bindingFragmentPaths = normalizeBindingFragmentPaths(root, options.bindingFragmentPaths);
+  const bindingFragmentPaths = normalizeBindingFragmentPaths(root, configuredBindingFragments);
   const bindingFragmentComposition = composeBindingFragments({
     fragmentPaths: bindingFragmentPaths,
     expectedManifest,
@@ -465,7 +666,7 @@ export async function prepareProject(options = {}) {
     mode,
   });
   expectedManifest = bindingFragmentComposition.manifest;
-  const resourceBindingsPaths = normalizeResourceBindingsPaths(root, options.resourceBindingsPaths);
+  const resourceBindingsPaths = normalizeResourceBindingsPaths(root, configuredResourceBindings);
   const resourceBindingsValidation = validateResourceBindingsForAir({
     resourceBindingsPaths,
     airDocuments: preparedAirDocuments.map((entry) => entry.document),
@@ -483,32 +684,35 @@ export async function prepareProject(options = {}) {
     sdkImport: languageProfile.sdk,
   });
   const secretProfiles = expectedSecretProfiles(root, expectedSecretHandles, {
-    secretStorePath: DEFAULT_SECRET_STORE_PATH,
+    secretStorePath: convergedLayout ? DEFAULT_SECRET_STORE_PATH : LEGACY_SECRET_STORE_PATH,
   });
   const runPlanPath = options.runPlanPath !== undefined
     ? resolve(root, options.runPlanPath)
-    : null;
+    : convergedLayout && entryRef !== undefined
+      ? join(buildRoot, "touba.run-plan.json")
+      : null;
   const expectedRunPlan = runPlanPath === null
     ? null
     : buildExpectedRunPlan({
       root,
       runPlanPath,
       preparedAirDocuments,
-      entryRef: options.entryRef,
+      entryRef,
       manifestPath,
       expectedToolRefs,
       secretProfiles,
       projectConfig: projectConfigResolution.document ?? expectedProjectConfigDocument(languageProfile),
-      profile: options.runProfile ?? "dev",
+      profile: runProfile,
+      airRoot,
       diagnostics,
     });
-  const ownershipPath = options.ownershipPath !== undefined
-    ? resolve(root, options.ownershipPath)
+  const ownershipPath = configuredOwnershipPath !== undefined
+    ? resolve(root, configuredOwnershipPath)
     : null;
   const ownershipValidation = validateOwnershipForPrepare({
     ownershipPath,
     requireOwnership: options.requireOwnership === true,
-    profile: options.runProfile ?? "dev",
+    profile: runProfile,
     preparedAirDocuments,
     packages: packageResolution.packages,
     bindingFragments: bindingFragmentComposition.fragments,
@@ -519,6 +723,29 @@ export async function prepareProject(options = {}) {
     actions,
     mode,
   });
+  const effectiveProjectPath = convergedLayout
+    ? join(buildRoot, "touba.effective-project.json")
+    : null;
+  const expectedEffectiveProject = convergedLayout
+    ? assertEffectiveProjectSafe(buildEffectiveProjectDocument({
+      root,
+      profile: runProfile,
+      projectConfigPath,
+      projectConfig: projectConfigResolution.document,
+      preparedAirDocuments,
+      sources,
+      airRoot,
+      manifestPath,
+      expectedManifest,
+      bindingFragmentPaths,
+      resourceBindingsPaths,
+      ownershipPath,
+      runPlanPath,
+      expectedRunPlan,
+      expectedSecretHandles,
+      evidenceRoot: resolve(root, DEFAULT_EVIDENCE_ROOT),
+    }))
+    : null;
 
   let currentManifest = null;
   if (existsSync(manifestPath)) {
@@ -546,6 +773,18 @@ export async function prepareProject(options = {}) {
     actions,
     mode,
   });
+  if (
+    convergedLayout
+    && mode === "check"
+    && currentManifest !== null
+    && JSON.stringify(currentManifest) !== JSON.stringify(expectedManifest)
+  ) {
+    diagnostics.push(errorDiagnostic(
+      "ManifestDerivedDrift",
+      "derived manifest differs from the explicit project inputs",
+      { manifest_path: manifestPath },
+    ));
+  }
   inspectStubs({ stubs, diagnostics, actions, mode });
   inspectSecretProfiles({ secretProfiles, diagnostics, actions, mode });
   if (expectedRunPlan !== null) {
@@ -553,6 +792,15 @@ export async function prepareProject(options = {}) {
       currentRunPlan: readRunPlan(runPlanPath, diagnostics),
       expectedRunPlan,
       runPlanPath,
+      diagnostics,
+      actions,
+      mode,
+    });
+  }
+  if (expectedEffectiveProject !== null) {
+    inspectEffectiveProject({
+      path: effectiveProjectPath,
+      expected: expectedEffectiveProject,
       diagnostics,
       actions,
       mode,
@@ -567,12 +815,14 @@ export async function prepareProject(options = {}) {
       if (sourcePath === undefined) {
         continue;
       }
-      const outputPath = airOutputPath(root, document.module.name);
+      const outputPath = airOutputPath(root, document.module.name, airRoot);
       mkdirSync(dirname(outputPath), { recursive: true });
       writeFileSync(outputPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
     }
     if (expectedToolRefs.length > 0) {
-      const mergedManifest = mergeManifest(currentManifest, expectedManifest, diagnostics, manifestPath);
+      const mergedManifest = convergedLayout
+        ? expectedManifest
+        : mergeManifest(currentManifest, expectedManifest, diagnostics, manifestPath);
       if (!hasErrorDiagnostics(diagnostics)) {
         mkdirSync(dirname(manifestPath), { recursive: true });
         writeFileSync(manifestPath, `${JSON.stringify(mergedManifest, null, 2)}\n`, "utf8");
@@ -598,6 +848,10 @@ export async function prepareProject(options = {}) {
       mkdirSync(dirname(runPlanPath), { recursive: true });
       writeFileSync(runPlanPath, `${JSON.stringify(expectedRunPlan, null, 2)}\n`, "utf8");
     }
+    if (expectedEffectiveProject !== null) {
+      mkdirSync(dirname(effectiveProjectPath), { recursive: true });
+      writeFileSync(effectiveProjectPath, `${JSON.stringify(expectedEffectiveProject, null, 2)}\n`, "utf8");
+    }
   }
 
   const status = computeStatus(mode, diagnostics, actions);
@@ -608,12 +862,18 @@ export async function prepareProject(options = {}) {
     status,
     root,
     project_config_path: projectConfigPath,
+    artifact_layout: convergedLayout ? PROJECT_ARTIFACT_LAYOUT_VERSION : "legacy-v1",
+    build_root: buildRoot,
+    air_root: airRoot,
+    profile: runProfile,
+    entry_ref: entryRef ?? null,
     language: languageProfile.language,
     sdk: languageProfile.sdk,
     manifest_path: manifestPath,
     binding_fragments: bindingFragmentComposition.fragments,
     resource_bindings: resourceBindingsValidation.documents,
     run_plan_path: runPlanPath,
+    effective_project_path: effectiveProjectPath,
     ownership: ownershipValidation.summary,
     secret_profiles: secretProfiles.map((profile) => profile.path),
     sources,
@@ -640,6 +900,9 @@ export function renderReport(report) {
   }
   if (report.run_plan_path) {
     lines.push(`Run plan: ${report.run_plan_path}`);
+  }
+  if (report.effective_project_path) {
+    lines.push(`Effective project: ${report.effective_project_path}`);
   }
   if (report.skill_pack_path) {
     lines.push(`Skill pack: ${report.skill_pack_path}`);
@@ -1273,8 +1536,16 @@ function assertSecretHandle(handle) {
   }
 }
 
-function secretStorePath(root, storePath = DEFAULT_SECRET_STORE_PATH) {
-  return resolve(root, storePath);
+function secretStorePath(root, storePath) {
+  if (storePath !== undefined) {
+    return resolve(root, storePath);
+  }
+  const current = resolve(root, DEFAULT_SECRET_STORE_PATH);
+  const legacy = resolve(root, LEGACY_SECRET_STORE_PATH);
+  if (existsSync(current) || usesConvergedArtifactLayoutAtRoot(root)) {
+    return current;
+  }
+  return legacy;
 }
 
 function ensureProjectGitignore(root, created, preserved) {
@@ -1395,16 +1666,13 @@ function resolveProjectConfigForInit(root, requestedLanguage) {
         );
       }
     }
-    return {
-      path,
-      document: expectedProjectConfigDocument(profile),
-    };
+    return { path, document: existing };
   }
 
   const profile = projectLanguageProfile(requestedLanguage ?? DEFAULT_PROJECT_LANGUAGE);
   return {
     path,
-    document: expectedProjectConfigDocument(profile),
+    document: expectedProjectConfigDocument(profile, { converged: true }),
   };
 }
 
@@ -1450,13 +1718,17 @@ function projectLanguageProfile(language) {
   throw new Error(`unsupported project language ${normalized}; supported language: javascript`);
 }
 
-function expectedProjectConfigDocument(profile) {
-  return {
+function expectedProjectConfigDocument(profile, options = {}) {
+  const document = {
     project_version: TOUBA_PROJECT_CONFIG_VERSION,
     language: profile.language,
     sdk: profile.sdk,
     run_profiles: cloneJson(DEFAULT_RUN_PROFILES),
   };
+  if (options.converged === true) {
+    document.artifact_layout = PROJECT_ARTIFACT_LAYOUT_VERSION;
+  }
+  return document;
 }
 
 function readProjectConfig(path) {
@@ -1488,7 +1760,66 @@ function readProjectConfig(path) {
     sdk: profile.sdk,
     run_profiles: normalizeRunProfiles(document.run_profiles),
     packages: normalizeProjectPackages(document.packages),
+    artifact_layout: normalizeArtifactLayout(document.artifact_layout),
+    entry: normalizeOptionalProjectRef(document.entry, "entry"),
+    configuration: normalizeProjectConfiguration(document.configuration),
   };
+}
+
+function normalizeArtifactLayout(value) {
+  if (value === undefined) return undefined;
+  if (value !== PROJECT_ARTIFACT_LAYOUT_VERSION) {
+    throw new Error(`project config artifact_layout must be ${PROJECT_ARTIFACT_LAYOUT_VERSION}`);
+  }
+  return value;
+}
+
+function normalizeOptionalProjectRef(value, field) {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`project config ${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function normalizeProjectConfiguration(value) {
+  if (value === undefined) {
+    return {
+      binding_fragments: [],
+      resource_bindings: [],
+    };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("project config configuration must be an object");
+  }
+  return {
+    binding_fragments: normalizeProjectPathList(value.binding_fragments, "configuration.binding_fragments"),
+    resource_bindings: normalizeProjectPathList(value.resource_bindings, "configuration.resource_bindings"),
+    ownership: normalizeOptionalProjectRef(value.ownership, "configuration.ownership"),
+  };
+}
+
+function normalizeProjectPathList(value, field) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
+    throw new Error(`project config ${field} must be an array of non-empty paths`);
+  }
+  return value.map((item) => item.trim());
+}
+
+function usesConvergedArtifactLayoutAtRoot(root) {
+  const path = resolve(root, DEFAULT_PROJECT_CONFIG_PATH);
+  if (!existsSync(path)) return false;
+  try {
+    const document = JSON.parse(readFileSync(path, "utf8"));
+    return document?.artifact_layout === PROJECT_ARTIFACT_LAYOUT_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+function directoryHasEntries(path) {
+  return existsSync(path) && statSync(path).isDirectory() && readdirSync(path).length > 0;
 }
 
 function normalizeProjectPackages(packages) {
@@ -1530,6 +1861,9 @@ export function applyRunProfileToArgs(rawArgs, options = {}) {
     if (!hasLongOption(nextArgs, "--require-supply-chain-lock")) {
       nextArgs.push("--require-supply-chain-lock");
     }
+  }
+  if (typeof profile.hardened_profile === "string" && !hasLongOption(nextArgs, "--hardened-profile")) {
+    nextArgs.push("--hardened-profile", resolve(root, profile.hardened_profile));
   }
   if (
     profileName === "prod"
@@ -1605,6 +1939,12 @@ function normalizeRunProfiles(runProfiles) {
     }
     if (requireLock && normalizedProfile.supply_chain_lock === undefined) {
       throw new Error(`run profile ${name} requires supply_chain_lock when require_supply_chain_lock is true`);
+    }
+    if (profile.hardened_profile !== undefined) {
+      if (typeof profile.hardened_profile !== "string" || profile.hardened_profile.trim() === "") {
+        throw new Error(`run profile ${name} hardened_profile must be a non-empty string`);
+      }
+      normalizedProfile.hardened_profile = profile.hardened_profile;
     }
     normalized[name] = normalizedProfile;
   }
@@ -1719,10 +2059,10 @@ function compileSourceWithCommand(command, args, options = {}) {
   return JSON.parse(result.stdout);
 }
 
-function airOutputPath(root, moduleName) {
+function airOutputPath(root, moduleName, airRoot = resolve(root, DEFAULT_AIR_ROOT)) {
   const segments = String(moduleName).split(".");
   const fileName = `${segments.pop()}.air.json`;
-  return join(root, DEFAULT_AIR_ROOT, ...segments, fileName);
+  return join(airRoot, ...segments, fileName);
 }
 
 function assemblePrepareAirDocuments(entries, options = {}) {
@@ -3857,6 +4197,7 @@ function buildExpectedRunPlan({
   secretProfiles,
   projectConfig,
   profile,
+  airRoot,
   diagnostics,
 }) {
   if (!RUN_PROFILE_PATTERN.test(profile)) {
@@ -3885,7 +4226,7 @@ function buildExpectedRunPlan({
   const document = {
     run_plan_schema_version: TOUBA_RUN_PLAN_SCHEMA_VERSION,
     entry_ref: entry.ref,
-    air: relativeRunPlanPath(runPlanPath, runPlanAirPathForEntry(root, entry.entry)),
+    air: relativeRunPlanPath(runPlanPath, runPlanAirPathForEntry(root, entry.entry, airRoot)),
     profile,
     outputs: {
       mode: "show",
@@ -3917,6 +4258,10 @@ function buildExpectedRunPlan({
     } else {
       document.supply_chain_lock = relativeRunPlanPath(runPlanPath, resolve(root, runProfile.supply_chain_lock));
     }
+  }
+
+  if (typeof runProfile.hardened_profile === "string") {
+    document.hardened_profile = relativeRunPlanPath(runPlanPath, resolve(root, runProfile.hardened_profile));
   }
 
   return document;
@@ -3976,14 +4321,14 @@ function entryRefsForDocument(document) {
   return refs;
 }
 
-function runPlanAirPathForEntry(root, entry) {
+function runPlanAirPathForEntry(root, entry, airRoot) {
   if (entry.sourcePath !== undefined) {
-    return airOutputPath(root, entry.document.module.name);
+    return airOutputPath(root, entry.document.module.name, airRoot);
   }
   if (entry.airPath !== undefined) {
     return entry.airPath;
   }
-  return airOutputPath(root, entry.document.module.name);
+  return airOutputPath(root, entry.document.module.name, airRoot);
 }
 
 function relativeRunPlanPath(runPlanPath, targetPath) {
@@ -3998,7 +4343,7 @@ function expectedBindingForTool(tool, options) {
       kind: "process",
       command: options.handlerCommand,
       args: [handlerPath],
-      cwd: ".",
+      cwd: options.handlerCwd ?? ".",
     },
     grants: normalizeStringArray(tool.required_capabilities),
     timeout_ms: options.timeoutMs,
@@ -4071,6 +4416,34 @@ function parseToolRef(toolRef) {
     throw new Error(`invalid tool ref: ${toolRef}`);
   }
   return { moduleName: match[1], toolName: match[2] };
+}
+
+function inspectEffectiveProject({ path, expected, diagnostics, actions, mode }) {
+  let current = null;
+  if (existsSync(path)) {
+    try {
+      current = JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+      if (mode === "check") {
+        diagnostics.push(errorDiagnostic("EffectiveProjectReadFailed", error.message, {
+          effective_project_path: path,
+        }));
+      }
+    }
+  }
+  const matches = current !== null && JSON.stringify(current) === JSON.stringify(expected);
+  if (!matches) {
+    actions.push(action(mode === "write" ? "write_effective_project" : "would_write_effective_project", path));
+    if (mode === "check") {
+      diagnostics.push(errorDiagnostic(
+        current === null ? "EffectiveProjectMissing" : "EffectiveProjectDrift",
+        current === null
+          ? "effective project projection is missing"
+          : "effective project projection differs from declared project inputs",
+        { effective_project_path: path },
+      ));
+    }
+  }
 }
 
 function inspectManifest({ currentManifest, expectedManifest, manifestPath, diagnostics, actions, mode }) {
@@ -4503,6 +4876,7 @@ function validateRunPlanResolvedFiles(document, runPlanPath, diagnostics) {
     ["manifest", "RunPlanManifestMissing"],
     ["secrets_profile", "RunPlanSecretsProfileMissing"],
     ["trigger_manifest", "RunPlanTriggerManifestMissing"],
+    ["hardened_profile", "RunPlanHardenedProfileMissing"],
   ];
   for (const [field, code] of files) {
     if (typeof document[field] === "string" && !existsSync(resolve(baseDir, document[field]))) {
@@ -4535,6 +4909,7 @@ function canonicalRunPlan(document) {
     ...(document.secrets_profile !== undefined ? { secrets_profile: document.secrets_profile } : {}),
     profile: document.profile,
     ...(document.supply_chain_lock !== undefined ? { supply_chain_lock: document.supply_chain_lock } : {}),
+    ...(document.hardened_profile !== undefined ? { hardened_profile: document.hardened_profile } : {}),
     ...(document.trigger_manifest !== undefined ? { trigger_manifest: document.trigger_manifest } : {}),
     ...(document.run_limits !== undefined ? { run_limits: document.run_limits } : {}),
     ...(document.outputs !== undefined ? { outputs: document.outputs } : {}),

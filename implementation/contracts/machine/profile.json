@@ -1,0 +1,16 @@
+{
+  "schema_version": "touba-machine-contracts-v1",
+  "air": {
+    "schema_version": "touba-air-v1",
+    "capability_profile": "touba-air-capabilities-v1",
+    "json_profile": "touba-air-json-canonical-v1"
+  },
+  "trace": {
+    "protocol_version": "touba-trace-v1",
+    "capability_profile": "touba-trace-capabilities-v1"
+  },
+  "legacy_migration_inputs": ["air-minimal-v0.1", "trace-minimal-v0.1"],
+  "unknown_versions": "refuse",
+  "unknown_root_extensions": "refuse",
+  "canonicalization": "recursive_object_key_sort_array_order_preserved_finite_json"
+}

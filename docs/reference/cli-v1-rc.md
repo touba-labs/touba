@@ -12,6 +12,7 @@ L’extension VS Code Touba aide à travailler dans l’éditeur, mais elle ne r
 | `touba new module` | Crée un fichier source `.tb` selon la convention projet |
 | `touba skill` | Crée et valide des skill packs locaux |
 | `touba prepare` | Prépare ou vérifie les artefacts dérivés du projet |
+| `touba project migrate` | Adopte explicitement le layout d’artefacts convergent sans supprimer l’historique |
 | `touba secret` | Gère le store de secrets de développement |
 | `touba compile` | Compile une source `.tb` vers AIR JSON |
 | `touba run` | Exécute un AIR JSON |
@@ -40,7 +41,9 @@ La commande crée les supports locaux nécessaires sans valeur secrète :
 
 ```text title="Structure"
 .touba/
-.touba/secrets.local.json
+.touba/build/
+.touba/state/secrets.local.json
+.touba/evidence/
 touba.project.json
 .env
 .gitignore
@@ -56,7 +59,11 @@ du projet et les profils de run :
   "project_version": "touba-project-v1",
   "language": "javascript",
   "sdk": "@touba/sdk",
+  "artifact_layout": "touba-artifacts-v1",
   "run_profiles": {
+    "pure": {
+      "require_supply_chain_lock": false
+    },
     "dev": {
       "require_supply_chain_lock": false
     },
@@ -100,6 +107,7 @@ src/examples/search.tb
 
 avec :
 
+<!-- touba-example: compile -->
 ```touba title="source.tb"
 module examples.search
 ```
@@ -188,8 +196,10 @@ références restent canoniques, `callable_by` inter-module et les scopes mémoi
 sont vérifiés, et les tools produisent les artefacts d’exécution explicites :
 
 ```text title="Structure"
-.touba/air/...
-touba.manifest.json
+.touba/build/<profil>/air/...
+.touba/build/<profil>/touba.manifest.json
+.touba/build/<profil>/touba.run-plan.json
+.touba/build/<profil>/touba.effective-project.json
 handlers/...
 touba.secrets.dev.json
 touba.secrets.prod.json
@@ -214,7 +224,17 @@ touba prepare --ownership touba.ownership.json --profile prod --mode check
 touba prepare --handler-root handlers --handler-command node --mode write
 ```
 
+Pour un projet `touba-artifacts-v1`, `entry` et les chemins de fragments,
+resource bindings et ownership peuvent être référencés dans
+`touba.project.json`. Un flag explicite reste prioritaire et visible dans le
+rapport.
+
 `prepare` ne lance pas le runtime et n’exécute pas les handlers.
+
+La projection `touba-effective-project-v1` explique source, AIR, entry,
+handlers, grants, handles de secrets, scopes, callers, budgets, sandbox, lock,
+triggers et preuves avec leur provenance. Elle est dérivée et ne devient jamais
+une autorité runtime.
 
 `--package` ne fait pas de recherche par nom global et ne télécharge rien. Le
 chemin pointe vers un manifeste local `touba-package-v0.1`.
@@ -267,6 +287,19 @@ touba prepare \
 `--require-ownership` refuse si aucun artefact d’ownership n’est fourni.
 `touba.ownership.json` ne modifie jamais le manifest, les resource bindings, le
 run plan, les locks, les secrets, les handlers ou les scopes mémoire.
+
+## `touba project migrate`
+
+```sh title="Terminal"
+touba project migrate --mode plan
+touba project migrate --mode check
+touba project migrate --mode write
+```
+
+La migration ajoute le layout `touba-artifacts-v1` et le profil `pure`, mais
+ne déplace ni ne supprime AIR, manifest, run plan ou store historique. Elle
+refuse un build cible déjà occupé. Après `write`, utilisez `touba prepare
+--mode write --profile <profil>` pour régénérer les dérivés.
 
 ## `touba secret`
 
@@ -334,6 +367,16 @@ Avec run plan explicite :
 touba run --run-plan touba.run-plan.json
 ```
 
+Depuis une entrée projet explicite :
+
+```sh title="Terminal"
+touba run --project . --entry strategy:examples.search/Run --profile dev
+```
+
+La facade résout `.touba/build/dev/touba.run-plan.json`, vérifie que l’entrée
+demandée correspond, puis transmet ce plan au runner bas niveau. Le runtime ne
+découvre pas les artefacts par convention.
+
 Le run plan remplace les options répétitives d’artefacts, pas les inputs métier.
 Il peut pointer vers :
 
@@ -341,7 +384,7 @@ Il peut pointer vers :
 {
   "run_plan_schema_version": "touba-run-plan-v0.1",
   "entry_ref": "strategy:examples.search/Run",
-  "air": ".touba/air/examples/search.air.json",
+  "air": "air/examples/search.air.json",
   "manifest": "touba.manifest.json",
   "secrets_profile": "touba.secrets.dev.json",
   "profile": "dev",
@@ -632,6 +675,7 @@ Options principales :
 
 Exemple source et manifest pour un webhook typé :
 
+<!-- touba-example: compile -->
 ```touba title="webhook.tb"
 module examples.webhook
 
@@ -849,6 +893,10 @@ sont invalides.
 dépassement, le run échoue avec un refus observable au lieu de continuer
 indéfiniment.
 
+`--max-loop-iterations <entier-positif>` borne chaque boucle `for` ou `while`
+(100 par défaut). La valeur effective apparaît dans l'événement `run_started`.
+Une valeur nulle, négative ou non entière est refusée avant l'exécution.
+
 Un provider peut appeler un modèle externe. En JavaScript, `@touba/sdk` fournit
 `createAiSdkDecisionProvider` comme adaptateur générique, puis des helpers de
 convenance comme `createOpenAiDecisionProvider` et `createOllamaDecisionProvider`.
@@ -1031,6 +1079,8 @@ touba inspect touba.manifest.json
 touba inspect touba.package.json
 touba inspect touba.resources.json
 touba inspect touba.run-plan.json
+touba inspect .touba/build/dev/touba.effective-project.json
+touba inspect .touba/build/dev/touba.effective-project.json --json
 touba inspect touba.ownership.json
 touba inspect touba.trigger-state.json
 touba inspect trace-audit.export.json
@@ -1059,6 +1109,10 @@ Selon le fichier fourni, la commande peut afficher :
 - données absentes utiles à connaître.
 
 `touba inspect` ne relit pas les handlers, backends mémoire, fichiers `.env`, fichiers de secrets ou stores locaux.
+Pour `touba-effective-project-v1`, le rendu texte et `--json` reposent sur le
+même document déterministe. Les états `absent`, `non_applicable`, `derived`,
+`declared` et `effective` sont conservés. La projection ne contient ni valeur
+secrète, payload, prompt, résultat métier ou contenu mémoire.
 Il ne scanne pas le workspace pour découvrir un package ou un manifest voisin.
 Avec `--report-out <rapport.inspect.txt>`, la commande écrit le même rapport
 texte dans un fichier à suffixe explicite `.inspect.txt` et conserve l’affichage
@@ -1350,8 +1404,8 @@ Affiche les versions de la CLI, du runtime, des schémas AIR/trace/manifest/secr
 `--json` est utile pour identifier précisément un binaire dans un rapport ou une session de support.
 
 La source courante affiche les packages Touba en `0.1.0`. Les champs de schémas
-restent versionnés séparément, par exemple `air-minimal-v0.1` ou
-`trace-minimal-v0.1`.
+restent versionnés séparément, par exemple `touba-air-v1` ou
+`touba-trace-v1`.
 
 Le champ `distribution.channel` identifie le mode d'installation :
 

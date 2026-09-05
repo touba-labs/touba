@@ -1,6 +1,7 @@
 module examples.a2_trigger_runs_agent_rejected
 
 agent ResearchAgent
+    responsibility "Fulfill the declared ResearchAgent responsibility using only authorized capabilities."
     uses PrepareResearch
 
 skill PrepareResearch

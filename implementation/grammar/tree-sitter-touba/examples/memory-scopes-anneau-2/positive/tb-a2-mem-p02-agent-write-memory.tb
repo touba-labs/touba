@@ -26,6 +26,7 @@ skill StoreProjectKnowledge
         give result
 
 agent Curator
+    responsibility "Fulfill the declared Curator responsibility using only authorized capabilities."
     uses StoreProjectKnowledge
     memory ProjectKnowledge write
     callable_by strategy RunCuration

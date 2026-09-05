@@ -9,10 +9,12 @@ import {
   checkProjectSecret,
   initProject,
   listProjectSecrets,
+  migrateProjectArtifacts,
   newModule,
   prepareProject,
   removeProjectSecret,
   renderReport,
+  resolveProjectRunArgs,
   setProjectSecret,
 } from "./project.mjs";
 import {
@@ -47,8 +49,8 @@ const args = process.argv.slice(2);
 const TOUBA_VERSION = "0.1.0";
 const DOCTOR_SCHEMA_VERSION = "touba-doctor-v0.1";
 const SCHEMA_VERSIONS = Object.freeze({
-  air: "air-minimal-v0.1",
-  trace: "trace-minimal-v0.1",
+  air: "touba-air-v1",
+  trace: "touba-trace-v1",
   manifest: "touba-manifest-v1",
   secrets: "touba-secrets-v1",
   ownership: "touba-ownership-v0.1",
@@ -57,6 +59,7 @@ const SCHEMA_VERSIONS = Object.freeze({
   trace_audit_export: "trace-audit-export-v0.1-local",
   supply_chain_lock: "touba-lock-v0.1",
   supply_chain_validation: "touba-supply-chain-validation-v0.1",
+  effective_project: "touba-effective-project-v1",
 });
 const FEATURE_VERSIONS = Object.freeze({
   run_profiles: "touba-run-profile-v0.1",
@@ -66,9 +69,11 @@ const FEATURE_VERSIONS = Object.freeze({
   rest_scaffold: "touba-rest-scaffold-v0.1",
   trigger_ingress: "touba-trigger-ingress-v0.1",
   project_server: "touba-project-server-v0.1",
+  artifact_lifecycle: "touba-artifacts-v1",
+  effective_project: "touba-effective-project-v1",
   deployment: "touba-deployment-bundle-v0.1",
   project_refresh: "touba-project-refresh-v0.1",
-  trace_output: "trace-minimal-v0.1",
+  trace_output: "touba-trace-v1",
 });
 const PUBLIC_COMMANDS = Object.freeze({
   compile: true,
@@ -86,6 +91,7 @@ const PUBLIC_COMMANDS = Object.freeze({
   serve: true,
   deploy: true,
   refresh: true,
+  project_migrate: true,
   manifest_generate: true,
   handler_stub: true,
   version: true,
@@ -160,6 +166,16 @@ async function dispatch(rawArgs) {
     const report = await prepareProject(options);
     const exitCode = report.status === "error" && options.mode !== "plan" ? 1 : 0;
     return { report, json: options.json, exitCode };
+  }
+  if (command === "project") {
+    const [action, ...tail] = rest;
+    if (action === "migrate") {
+      const options = parseProjectMigrationOptions(tail);
+      const report = migrateProjectArtifacts(options);
+      const exitCode = report.status === "error" || (options.mode === "check" && report.status !== "success") ? 1 : 0;
+      return { report, json: options.json, exitCode };
+    }
+    throw new Error("usage: touba project migrate [--root <path>] [--mode plan|check|write] [--json]");
   }
   if (command === "secret") {
     const [action, handle, ...tail] = rest;
@@ -424,13 +440,14 @@ function runCommand(rawArgs) {
   if (rawArgs.length === 0 || rawArgs.includes("--help") || rawArgs.includes("-h")) {
     return { text: runUsage(), exitCode: 0 };
   }
-  const profiledArgs = applyRunProfileToArgs(rawArgs);
+  const profiledArgs = resolveProjectRunArgs(rawArgs);
   return runNodeScript(["cli", "touba-run", "src", "run.mjs"], profiledArgs);
 }
 
 function runUsage() {
   return [
-    "Usage: touba run <program.air.json> [--profile dev|prod] [runtime options]",
+    "Usage: touba run <program.air.json> [--profile pure|dev|prod] [runtime options]",
+    "       touba run --project <path> [--entry <air-ref>] [--profile pure|dev|prod] [runtime options]",
     "",
     "Project profiles are read from touba.project.json in the current directory.",
     "The default prod profile requires touba.lock.json, enables strict supply-chain validation,",
@@ -1408,6 +1425,27 @@ function parsePrepareOptions(rawArgs) {
   return options;
 }
 
+function parseProjectMigrationOptions(rawArgs) {
+  const options = { json: false, mode: "plan" };
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === "--root") {
+      options.root = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--root=")) {
+      options.root = arg.slice("--root=".length);
+    } else if (arg === "--mode") {
+      options.mode = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--mode=")) {
+      options.mode = arg.slice("--mode=".length);
+    } else if (arg === "--json") {
+      options.json = true;
+    } else {
+      throw new Error(`unknown option ${arg}`);
+    }
+  }
+  return options;
+}
+
 function parseSecretOptions(rawArgs) {
   const options = { json: false };
   for (let index = 0; index < rawArgs.length; index += 1) {
@@ -1634,14 +1672,15 @@ function printUsage() {
   touba new module <domain.module> [--root <path>] [--force]
   touba skill new <skill-id> [--root <path>] [--force]
   touba skill validate [<skill-id|path>] [--root <path>]
-  touba prepare [--root <path>] [--mode plan|check|write] [--source <file.tb>] [--air <file.air.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--resource-bindings <resources.json>] [--require-resource-bindings] [--run-plan <path>] [--ownership <touba.ownership.json>] [--require-ownership] [--entry <air-ref>] [--profile dev|prod] [--manifest <path>] [--handler-root <path>] [--handler-command <path>] [--json]
+  touba prepare [--root <path>] [--mode plan|check|write] [--source <file.tb>] [--air <file.air.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--resource-bindings <resources.json>] [--require-resource-bindings] [--run-plan <path>] [--ownership <touba.ownership.json>] [--require-ownership] [--entry <air-ref>] [--profile pure|dev|prod] [--manifest <path>] [--handler-root <path>] [--handler-command <path>] [--json]
+  touba project migrate [--root <path>] [--mode plan|check|write] [--json]
   touba secret set <HANDLE> [--root <path>] [--store <path>] --value-stdin
   touba secret list [--root <path>] [--store <path>]
   touba secret check <HANDLE> [--root <path>] [--store <path>]
   touba secret remove <HANDLE> [--root <path>] [--store <path>]
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
-  touba run <program.air.json> [--profile dev|prod] [runtime options]
+  touba run (<program.air.json> | --project <path>) [--profile pure|dev|prod] [runtime options]
   touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--identity-control-plane-url URL] [--identity-service-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
   touba deploy plan|publish|list|activate|rollback|target ...
   touba refresh --url <touba-serve-url> [--auth-token-env NAME] [--reason <text>]

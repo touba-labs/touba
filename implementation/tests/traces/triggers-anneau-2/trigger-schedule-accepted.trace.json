@@ -1,8 +1,8 @@
 {
-  "trace_protocol_version": "trace-minimal-v0.1",
+  "trace_protocol_version": "touba-trace-v1",
   "run": {
     "run_id": "run-1",
-    "air_schema_version": "air-minimal-v0.1",
+    "air_schema_version": "touba-air-v1",
     "module_ref": "module:test.triggers",
     "entry_ref": "trigger:test/DailyRun"
   },

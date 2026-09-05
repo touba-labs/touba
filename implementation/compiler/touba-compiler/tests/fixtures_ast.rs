@@ -6,6 +6,74 @@ use touba_compiler::diagnostics::AstDiagnosticCode;
 use touba_compiler::parse_source;
 
 #[test]
+fn lowers_nominal_record_constructor_to_ast() {
+    let source = include_str!(
+        "../../../grammar/tree-sitter-touba/examples/record-construction-v1/positive/tb-record-v1-p01-nominal.tb"
+    );
+    let result = parse_source("tb-record-v1-p01", source);
+
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.expect("record fixture should lower to AST");
+    let expression = document
+        .declarations
+        .iter()
+        .find_map(|declaration| match declaration {
+            AstDeclaration::Function(function) => function.body.as_ref(),
+            _ => None,
+        })
+        .and_then(|body| body.statements.first())
+        .and_then(|statement| match statement {
+            AstStatement::Give(give) => give.expression.as_ref(),
+            _ => None,
+        })
+        .expect("function should give a record");
+    let AstExpression::Record {
+        type_name, fields, ..
+    } = expression
+    else {
+        panic!("expected record expression");
+    };
+    assert_eq!(type_name, "ReviewDecision");
+    assert_eq!(
+        fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>(),
+        ["risk", "label", "approved"]
+    );
+}
+
+#[test]
+fn lowers_explicit_agent_interface_to_ast() {
+    let source = include_str!(
+        "../../../grammar/tree-sitter-touba/examples/agent-interface-v1/positive/tb-agent-interface-p01-strategy-call.tb"
+    );
+    let result = parse_source("tb-agent-interface-p01", source);
+
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.expect("fixture should lower to AST");
+    let agent = document
+        .declarations
+        .iter()
+        .find_map(|declaration| match declaration {
+            AstDeclaration::Agent(agent) => Some(agent),
+            _ => None,
+        })
+        .expect("Reviewer agent should exist");
+    assert_eq!(agent.signature.inputs.len(), 1);
+    assert_eq!(agent.signature.inputs[0].name, "request");
+    assert_eq!(agent.signature.inputs[0].type_ref.raw, "ReviewRequest");
+    assert_eq!(
+        agent
+            .signature
+            .output
+            .as_ref()
+            .map(|output| output.raw.as_str()),
+        Some("ReviewResult")
+    );
+}
+
+#[test]
 fn lowers_linear_skill_fixture() {
     let source =
         include_str!("../../../grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb");
@@ -61,6 +129,7 @@ skill ReadInbox
 
 agent Researcher
     description \"Selects declared reading or summarization capabilities for user goals.\"
+    responsibility \"Select only declared reading or summarization capabilities for user goals.\"
     uses ReadInbox
     callable_by strategy RunResearch
 
@@ -111,6 +180,10 @@ strategy RunResearch
         agent.description.as_deref(),
         Some("Selects declared reading or summarization capabilities for user goals.")
     );
+    assert_eq!(
+        agent.responsibility,
+        "Select only declared reading or summarization capabilities for user goals."
+    );
     let strategy = document
         .declarations
         .iter()
@@ -123,6 +196,49 @@ strategy RunResearch
         strategy.description.as_deref(),
         Some("Runs one governed research request through Researcher.")
     );
+}
+
+#[test]
+fn refuses_missing_duplicate_and_empty_agent_responsibility() {
+    let cases = [
+        (
+            "missing-agent-responsibility",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/agent-responsibility-v1/negative/semantic/tb-agent-responsibility-n01-missing.tb"
+            ),
+            AstDiagnosticCode::MissingAgentResponsibility,
+        ),
+        (
+            "duplicate-agent-responsibility",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/agent-responsibility-v1/negative/semantic/tb-agent-responsibility-n02-duplicate.tb"
+            ),
+            AstDiagnosticCode::DuplicateAgentResponsibility,
+        ),
+        (
+            "empty-agent-responsibility",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/agent-responsibility-v1/negative/semantic/tb-agent-responsibility-n03-empty.tb"
+            ),
+            AstDiagnosticCode::InvalidAgentResponsibility,
+        ),
+    ];
+
+    for (source_id, source, expected_code) in cases {
+        let result = parse_source(source_id, source);
+        assert!(
+            result.document.is_none(),
+            "{source_id} must not produce an AST"
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == expected_code),
+            "{source_id} must report {expected_code:?}: {:?}",
+            result.diagnostics
+        );
+    }
 }
 
 #[test]
@@ -366,6 +482,31 @@ fn lowers_anneau1_call_arguments_and_result_binding() {
         call.result_binding
             .as_ref()
             .is_some_and(|binding| binding.source_ref.end_byte > binding.source_ref.start_byte)
+    );
+}
+
+#[test]
+fn lowers_explicit_failure_family() {
+    let source = include_str!(
+        "../../../grammar/tree-sitter-touba/examples/failure-flow-v1/positive/tb-failure-v1-p01-handler.tb"
+    );
+    let result = parse_source("tb-failure-v1-p01", source);
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.expect("fixture should lower to AST");
+    let skill = document
+        .declarations
+        .iter()
+        .find_map(|declaration| match declaration {
+            AstDeclaration::Skill(skill) if skill.name == "Run" => Some(skill),
+            _ => None,
+        })
+        .expect("Run skill should exist");
+    assert_eq!(
+        skill
+            .failure_handler
+            .as_ref()
+            .map(|handler| handler.family.as_str()),
+        Some("handler")
     );
 }
 

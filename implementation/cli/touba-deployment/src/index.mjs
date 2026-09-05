@@ -39,6 +39,7 @@ const ROOT_FILES = new Set([
   "resources.json",
   "touba.lock.json",
   "touba.run-plan.json",
+  "touba.hardened-profile.json",
 ]);
 const SECRET_PATH_PATTERN = /(^|\/)(\.env(?:\.|$)|[^/]*(?:secret|credential)[^/]*)(\/|$)/iu;
 const RAW_SECRET_KEYS = new Set([
@@ -103,11 +104,11 @@ export function buildDeploymentBundle({
     source_revision: revision.commit,
     source_dirty: revision.dirty,
     protocols: {
-      air: "air-minimal-v0.1",
+      air: "touba-air-v1",
       manifest: "touba-manifest-v1",
       ownership: "touba-ownership-v0.1",
       supply_chain_lock: "touba-lock-v0.1",
-      trace: "trace-minimal-v0.1",
+      trace: "touba-trace-v1",
     },
     artifacts,
   };
@@ -531,6 +532,7 @@ function artifactKind(path) {
   if (basename(path) === "touba.lock.json") return "supply_chain_lock";
   if (basename(path) === "touba.ownership.json") return "ownership";
   if (basename(path) === "touba.run-plan.json") return "run_plan";
+  if (basename(path) === "touba.hardened-profile.json") return "hardened_profile";
   return "metadata";
 }
 

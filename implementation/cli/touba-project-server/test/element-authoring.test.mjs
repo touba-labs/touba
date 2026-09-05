@@ -32,6 +32,7 @@ const BASE_SOURCE = [
   "",
   "agent ExistingAgent",
   '    description "Selects the existing governed project capability."',
+  '    responsibility "Select only the existing capability authorized by the enclosing strategy."',
   "    uses ExistingSkill",
   "    callable_by strategy ExistingStrategy",
   "",
@@ -115,6 +116,7 @@ test("element authoring produces compilable source drafts for every Touba primit
       kind: "agent",
       name: "ReviewAgent",
       description: "Selects a governed review capability for the request.",
+      responsibility: "Review the request using only the explicitly declared capability.",
       uses: [`skill:${MODULE_REF}/ExistingSkill`],
       callable_by: [`strategy:${MODULE_REF}/ExistingStrategy`],
       memories: [{ ref: `memory:${MODULE_REF}/ProjectNotes`, access: "read" }],
@@ -193,6 +195,16 @@ test("element authoring rejects duplicates, cross-module references and missing 
   const project = createProject();
   try {
     assert.throws(
+      () => normalizeElementAuthoringRequest(requestFor({
+        kind: "agent",
+        name: "MissingResponsibility",
+        description: "Selects one declared capability for a governed request.",
+        uses: [`skill:${MODULE_REF}/ExistingSkill`],
+        callable_by: [`strategy:${MODULE_REF}/ExistingStrategy`],
+      })),
+      /responsibility/u,
+    );
+    assert.throws(
       () => buildElementAuthoringChangeSet({
         projectRoot: project.root,
         request: requestFor({
@@ -212,6 +224,7 @@ test("element authoring rejects duplicates, cross-module references and missing 
           kind: "agent",
           name: "CrossModuleAgent",
           description: "Selects a capability declared in another module.",
+          responsibility: "Select only capabilities declared and authorized for this module.",
           uses: ["skill:other.module/ForeignSkill"],
           callable_by: [`strategy:${MODULE_REF}/ExistingStrategy`],
         }),
@@ -223,6 +236,7 @@ test("element authoring rejects duplicates, cross-module references and missing 
         kind: "agent",
         name: "UncallableAgent",
         description: "Has no declared strategy authority in the project.",
+        responsibility: "Use only the declared project capability when called by an authorized strategy.",
         uses: [`skill:${MODULE_REF}/ExistingSkill`],
       })),
       /callable_by/u,
@@ -281,5 +295,5 @@ function assertCompiles(projectRoot, content) {
     encoding: "utf8",
   });
   assert.equal(result.status, 0, String(result.stderr || result.stdout));
-  assert.equal(JSON.parse(result.stdout).air_schema_version, "air-minimal-v0.1");
+  assert.equal(JSON.parse(result.stdout).air_schema_version, "touba-air-v1");
 }

@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  AIR_CAPABILITY_PROFILE,
+  AIR_JSON_PROFILE,
   AIR_SCHEMA_VERSION,
   ToubaRuntimeError,
   executeAirDocument,
@@ -99,6 +101,19 @@ test("validates and indexes the AIR runtime profile at a typed boundary", () => 
       error instanceof ToubaRuntimeError
       && error.code === "InvalidAirDocument"
       && error.details.collection === "skills",
+  );
+  assert.throws(
+    () => validateAirDefinitionCollections({ agents: [{ id: "agent:test/Missing" }] }),
+    (error) =>
+      error instanceof ToubaRuntimeError
+      && error.code === "InvalidAirDocument"
+      && error.details.agentRef === "agent:test/Missing",
+  );
+  assert.throws(
+    () => validateAirDefinitionCollections({
+      agents: [{ id: "agent:test/Empty", responsibility: "  " }],
+    }),
+    (error) => error instanceof ToubaRuntimeError && error.code === "InvalidAirDocument",
   );
   assert.throws(
     () => validateAirBudgets({ network: {} }),
@@ -596,7 +611,7 @@ test("does not over-redact ordinary errors when a resolved secret is empty", asy
 
   const failure = eventOf(result.trace, "failure_detected");
   assert.equal(result.status, "failure");
-  assert.equal(failure.payload.runtime_error_code, "RuntimeFailure");
+  assert.equal(failure.payload.runtime_error_code, "ToolHandlerFailed");
   assert.match(failure.message, /ordinary handler failure/);
   assert.equal(failure.message.includes("[redacted-secret]"), false);
 });
@@ -889,6 +904,8 @@ function secretsDocument() {
 function baseDocument(overrides = {}) {
   return {
     air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: {
       id: "module:test",
       name: "test",

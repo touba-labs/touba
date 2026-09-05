@@ -1,0 +1,298 @@
+{
+  "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
+  "run": {
+    "run_id": "run-1",
+    "air_schema_version": "touba-air-v1",
+    "module_ref": "module:examples.agent_interface",
+    "entry_ref": "strategy:examples.agent_interface/RunReview"
+  },
+  "events": [
+    {
+      "event_id": "event:run-1:1",
+      "run_id": "run-1",
+      "sequence_index": 0,
+      "kind": "run_started",
+      "payload": {
+        "entry_ref": "strategy:examples.agent_interface/RunReview",
+        "max_loop_iterations": 100
+      }
+    },
+    {
+      "event_id": "event:run-1:2",
+      "run_id": "run-1",
+      "sequence_index": 1,
+      "kind": "scope_entered",
+      "air_ref": {
+        "flow_graph_ref": "graph:strategy:examples.agent_interface/RunReview",
+        "owner_ref": "strategy:examples.agent_interface/RunReview"
+      }
+    },
+    {
+      "event_id": "event:run-1:3",
+      "run_id": "run-1",
+      "sequence_index": 2,
+      "kind": "call_started",
+      "air_ref": {
+        "flow_graph_ref": "graph:strategy:examples.agent_interface/RunReview",
+        "owner_ref": "strategy:examples.agent_interface/RunReview",
+        "node_id": "node:graph:strategy:examples.agent_interface/RunReview:1"
+      },
+      "payload": {
+        "target_ref": "agent:examples.agent_interface/Reviewer",
+        "caller_ref": "strategy:examples.agent_interface/RunReview",
+        "agent_ref": null,
+        "argument_count": 1
+      }
+    },
+    {
+      "event_id": "event:run-1:4",
+      "run_id": "run-1",
+      "sequence_index": 3,
+      "kind": "agent_invocation_authorized",
+      "air_ref": {
+        "flow_graph_ref": "graph:strategy:examples.agent_interface/RunReview",
+        "owner_ref": "strategy:examples.agent_interface/RunReview",
+        "node_id": "node:graph:strategy:examples.agent_interface/RunReview:1"
+      },
+      "payload": {
+        "caller_ref": "strategy:examples.agent_interface/RunReview",
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "authority_source": "callable_by"
+      }
+    },
+    {
+      "event_id": "event:run-1:5",
+      "run_id": "run-1",
+      "sequence_index": 4,
+      "kind": "agent_interface_entered",
+      "payload": {
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "caller_ref": "strategy:examples.agent_interface/RunReview",
+        "input_count": 1,
+        "output_type": "type:examples.agent_interface/ReviewResult"
+      }
+    },
+    {
+      "event_id": "event:run-1:6",
+      "run_id": "run-1",
+      "sequence_index": 5,
+      "kind": "agent_capabilities_listed",
+      "payload": {
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "authority_source": "uses",
+        "capability_refs": [
+          "tool:examples.agent_interface/InspectRequest"
+        ],
+        "capabilities": [
+          {
+            "target_ref": "tool:examples.agent_interface/InspectRequest",
+            "kind": "tool",
+            "name": "InspectRequest",
+            "description": "Inspect one review request and return a typed review result.",
+            "description_source": "source",
+            "source_description_present": true,
+            "selection_keywords": [
+              "inspect",
+              "request",
+              "one",
+              "review",
+              "and",
+              "return",
+              "typed",
+              "result"
+            ],
+            "input_count": 1,
+            "output_type": "type:examples.agent_interface/ReviewResult",
+            "signature": {
+              "inputs": [
+                {
+                  "name": "request",
+                  "type_ref": "type:examples.agent_interface/ReviewRequest",
+                  "fields": [
+                    {
+                      "name": "summary",
+                      "type_ref": "builtin:Text"
+                    }
+                  ]
+                }
+              ],
+              "output_type": "type:examples.agent_interface/ReviewResult",
+              "output_fields": [
+                {
+                  "name": "verdict",
+                  "type_ref": "builtin:Text"
+                }
+              ]
+            },
+            "uses": [],
+            "memory_accesses": []
+          }
+        ]
+      }
+    },
+    {
+      "event_id": "event:run-1:7",
+      "run_id": "run-1",
+      "sequence_index": 6,
+      "kind": "agent_capability_descriptions_diagnosed",
+      "payload": {
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "provider_mode": "summary",
+        "capability_count": 1,
+        "source_description_count": 1,
+        "generated_description_count": 0,
+        "responsibility_description_count": 0,
+        "absent_description_count": 0,
+        "missing_source_description_count": 0,
+        "production_recommendation": "source_descriptions_complete"
+      }
+    },
+    {
+      "event_id": "event:run-1:8",
+      "run_id": "run-1",
+      "sequence_index": 7,
+      "kind": "agent_decision_requested",
+      "payload": {
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "protocol": "touba-agent-decision-v1",
+        "mode": "summary",
+        "step_index": 0,
+        "provider_metadata": {
+          "provider_kind": "test_provider",
+          "provider_name": "agent-interface-v1-fixture",
+          "provider_version": "1.0.0",
+          "decision_schema_version": "touba-agent-decision-v1"
+        },
+        "request_digest": "7c557fb299cbf6f68ab2e2f6b5d09364daf04c451ff0c8876269e8e974ce6617",
+        "content_mode": "inline",
+        "external_content_access": {
+          "raw_content_in_provider_request": true,
+          "content_ref_count": 0,
+          "full_content_request_policy": "inline_provider_request"
+        },
+        "model_input_protocol": "touba-agent-model-input-v1",
+        "model_input_mode": "orientation",
+        "capability_count": 1,
+        "observation_count": 0,
+        "capability_refs": [
+          "tool:examples.agent_interface/InspectRequest"
+        ],
+        "input_keys": [
+          "request"
+        ]
+      }
+    },
+    {
+      "event_id": "event:run-1:9",
+      "run_id": "run-1",
+      "sequence_index": 8,
+      "kind": "agent_decision_provider_call_attempted",
+      "payload": {
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "mode": "summary",
+        "provider_attempt": 0,
+        "provider_metadata": {
+          "provider_kind": "test_provider",
+          "provider_name": "agent-interface-v1-fixture",
+          "provider_version": "1.0.0",
+          "decision_schema_version": "touba-agent-decision-v1"
+        },
+        "request_digest": "7c557fb299cbf6f68ab2e2f6b5d09364daf04c451ff0c8876269e8e974ce6617"
+      }
+    },
+    {
+      "event_id": "event:run-1:10",
+      "run_id": "run-1",
+      "sequence_index": 9,
+      "kind": "agent_decision_provider_returned",
+      "payload": {
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "mode": "summary",
+        "provider_attempt": 0,
+        "action": "answer_directly",
+        "decision_source": "fixture_provider",
+        "provider_metadata": {
+          "provider_kind": "test_provider",
+          "provider_name": "agent-interface-v1-fixture",
+          "provider_version": "1.0.0",
+          "decision_schema_version": "touba-agent-decision-v1"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-1:11",
+      "run_id": "run-1",
+      "sequence_index": 10,
+      "kind": "agent_decision_recorded",
+      "payload": {
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "step_index": 0,
+        "action": "answer_directly",
+        "decision_source": "fixture_provider"
+      }
+    },
+    {
+      "event_id": "event:run-1:12",
+      "run_id": "run-1",
+      "sequence_index": 11,
+      "kind": "agent_direct_answer_returned",
+      "payload": {
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "step_index": 0,
+        "decision_source": "fixture_provider"
+      }
+    },
+    {
+      "event_id": "event:run-1:13",
+      "run_id": "run-1",
+      "sequence_index": 12,
+      "kind": "agent_interface_result_returned",
+      "payload": {
+        "agent_ref": "agent:examples.agent_interface/Reviewer",
+        "caller_ref": "strategy:examples.agent_interface/RunReview",
+        "output_type": "type:examples.agent_interface/ReviewResult",
+        "result_type": "object"
+      }
+    },
+    {
+      "event_id": "event:run-1:14",
+      "run_id": "run-1",
+      "sequence_index": 13,
+      "kind": "call_completed",
+      "air_ref": {
+        "flow_graph_ref": "graph:strategy:examples.agent_interface/RunReview",
+        "owner_ref": "strategy:examples.agent_interface/RunReview",
+        "node_id": "node:graph:strategy:examples.agent_interface/RunReview:1"
+      },
+      "payload": {
+        "target_ref": "agent:examples.agent_interface/Reviewer",
+        "caller_ref": "strategy:examples.agent_interface/RunReview",
+        "result_binding": "review"
+      }
+    },
+    {
+      "event_id": "event:run-1:15",
+      "run_id": "run-1",
+      "sequence_index": 14,
+      "kind": "scope_exited",
+      "air_ref": {
+        "flow_graph_ref": "graph:strategy:examples.agent_interface/RunReview",
+        "owner_ref": "strategy:examples.agent_interface/RunReview",
+        "node_id": "node:graph:strategy:examples.agent_interface/RunReview:2"
+      },
+      "payload": {
+        "status": "success"
+      }
+    },
+    {
+      "event_id": "event:run-1:16",
+      "run_id": "run-1",
+      "sequence_index": 15,
+      "kind": "run_completed",
+      "payload": {
+        "status": "success"
+      }
+    }
+  ]
+}

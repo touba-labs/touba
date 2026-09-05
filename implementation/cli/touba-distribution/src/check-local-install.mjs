@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
 import { installLocalToolchain } from "./install-local-toolchain.mjs";
 import { packageLocalToolchain } from "./package-local-toolchain.mjs";
+
+const cleanRoomSource = `module cleanroom.hello
+
+strategy RunHello
+    gives Text
+    do
+        give "clean-room-ok"
+`;
 
 try {
   const { toolchainRoot } = packageLocalToolchain();
@@ -41,7 +49,37 @@ function checkInstall(toolchainRoot) {
 
     const projectRoot = join(workspace, "project");
     runTouba(["init", "--root", projectRoot], env, 0);
-    assertFile(join(projectRoot, ".touba", "secrets.local.json"));
+    assertFile(join(projectRoot, ".touba", "state", "secrets.local.json"));
+
+    const sourceRoot = join(projectRoot, "src", "cleanroom");
+    mkdirSync(sourceRoot, { recursive: true });
+    const sourcePath = join(sourceRoot, "hello.tb");
+    writeFileSync(sourcePath, cleanRoomSource, "utf8");
+    const projectConfigPath = join(projectRoot, "touba.project.json");
+    const projectConfig = JSON.parse(readFileSync(projectConfigPath, "utf8"));
+    projectConfig.entry = "strategy:cleanroom.hello/RunHello";
+    writeFileSync(projectConfigPath, `${JSON.stringify(projectConfig, null, 2)}\n`, "utf8");
+
+    const prepare = runTouba([
+      "prepare", "--root", projectRoot, "--mode", "write", "--profile", "pure", "--json",
+    ], env, 0);
+    assertEqual(JSON.parse(prepare.stdout).status, "success", "clean-room prepare status");
+    const effectiveProjectPath = join(projectRoot, ".touba", "build", "pure", "touba.effective-project.json");
+    assertFile(effectiveProjectPath);
+
+    const inspect = runTouba(["inspect", effectiveProjectPath, "--json"], env, 0);
+    assertEqual(JSON.parse(inspect.stdout).schema_version, "touba-effective-project-v1", "clean-room inspect schema");
+
+    const run = runTouba([
+      "run", "--project", projectRoot, "--entry", projectConfig.entry,
+      "--profile", "pure", "--output", "trace",
+    ], env, 0);
+    const trace = JSON.parse(run.stdout);
+    assertEqual(trace.events.at(-1).payload.status, "success", "clean-room run status");
+    const tracePath = join(projectRoot, ".touba", "evidence", "clean-room.trace.json");
+    writeFileSync(tracePath, `${JSON.stringify(trace, null, 2)}\n`, "utf8");
+    const audit = runTouba(["audit", "--trace", tracePath, "--output", "json"], env, 0);
+    assertEqual(JSON.parse(audit.stdout).validationReport.status, "ok", "clean-room audit status");
 
     const update = runTouba(["update"], env, 1);
     if (!update.stdout.includes("Status: manual_reinstall_required")) {

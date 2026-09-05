@@ -44,7 +44,7 @@ test("rejects extra fields on product contracts", () => {
   assert.equal(diagnostics.some((item) => item.code === "AdditionalPropertyRejected"), true);
 });
 
-test("infers a declared agent input contract from identical capability signatures", () => {
+test("uses the explicit agent signature as its declared input contract", () => {
   const requestType = {
     id: "type:demo/Request",
     name: "Request",
@@ -56,6 +56,7 @@ test("infers a declared agent input contract from identical capability signature
   };
   const agent = {
     id: "agent:demo/Coordinator",
+    signature,
     uses: ["skill:demo/Plan", "tool:demo/Inspect"],
   };
   const contract = buildAirInputContract({
@@ -82,7 +83,7 @@ test("infers a declared agent input contract from identical capability signature
   ]);
 });
 
-test("keeps an agent input contract open when capability signatures differ", () => {
+test("keeps a historical agent input contract open without inferring from uses", () => {
   const agent = {
     id: "agent:demo/Coordinator",
     uses: ["skill:demo/Plan", "tool:demo/Inspect"],

@@ -104,7 +104,8 @@ touba doctor --json
 
 Create `hello.tb`:
 
-```text
+<!-- touba-example: compile -->
+```touba
 module examples.hello
 
 strategy Hello

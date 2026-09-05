@@ -35,6 +35,7 @@ skill ApproveAndWriteCustomerMemory
         give stored
 
 agent MemoryAgent
+    responsibility "Fulfill the declared MemoryAgent responsibility using only authorized capabilities."
     uses ApproveAndWriteCustomerMemory
     memory CustomerMemory write
     callable_by strategy RunApprovedMemoryWrite

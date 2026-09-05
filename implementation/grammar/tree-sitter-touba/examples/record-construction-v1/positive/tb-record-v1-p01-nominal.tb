@@ -1,0 +1,12 @@
+module examples.record_construction
+
+type ReviewDecision
+    approved is Boolean
+    label is Text
+    risk is Float
+
+function BuildDecision
+    takes score as Float
+    gives ReviewDecision
+    do
+        give record ReviewDecision { risk as score, label as "accepted", approved as true }

@@ -8,6 +8,7 @@ Cette page est une aide de consultation pour la syntaxe visible.
 
 ## Module
 
+<!-- touba-example: compile -->
 ```touba title="source.tb"
 module examples.name
 ```
@@ -25,6 +26,7 @@ Les imports documentés couvrent deux familles :
 - imports purs (IM-1) : `type`, `define` non sensible et `function` pure ;
 - imports effectifs (IM-2) : `tool`, `skill`, `strategy`, `agent` et `memory` locaux du même projet.
 
+<!-- touba-example: compile -->
 ```touba title="source.tb"
 module examples.search
 
@@ -52,6 +54,7 @@ Les imports sont résolus par l’assemblage AIR du projet, pas par le runtime.
 
 ## Types
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 type Request
     query is Text
@@ -64,10 +67,12 @@ Builtins principaux : `Text`, `Boolean`, `Int`, `Float`, `List of <Type>`.
 
 `define` nomme une valeur de module immuable et non sensible.
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 define Name as Type = literal
 ```
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 define DefaultTopic as Text = "transport"
 define ScoreLimit as Float = 0.75
@@ -87,6 +92,7 @@ Une constante peut être utilisée par les fonctions, skills ou stratégies du m
 
 Une `function` calcule une valeur pure.
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 function AverageScore
     takes score as Float
@@ -98,6 +104,7 @@ function AverageScore
 
 Valeur locale immuable dans un bloc :
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 define ScoreLimit as Float = 0.75
 
@@ -124,11 +131,18 @@ Expressions :
 - Concaténation texte : `++`
 - Rendu texte explicite : `text(expr)` pour `Text`, `Int`, `Float` et `Boolean`
 - Accès champ : `value.field`
+- Construction nominale : `record TypeName { field as expression, ... }`
+
+Le constructeur `record` accepte uniquement un type local explicite. Tous les
+champs déclarés sont obligatoires et doivent être fournis exactement une fois.
+Les objets anonymes, champs optionnels, valeurs par défaut, spreads et mises à
+jour partielles ne font pas partie de cette version.
 
 ## Tool
 
 Un `tool` déclare un effet externe. Le code réel vit dans un handler hôte.
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 tool SearchDatasets
     description "Search approved dataset sources for records matching the request."
@@ -143,6 +157,7 @@ Clauses supportées : `requires <capability>`, `secrets HANDLE`, `uses memory <N
 
 Une `skill` orchestre des fonctions, tools, skills, interactions et validations humaines supportées.
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 skill Search
     description "Run the governed dataset search workflow and return normalized results."
@@ -156,13 +171,46 @@ skill Search
         give result
 ```
 
+Un fallback déclare la seule famille qu'il accepte :
+
+<!-- touba-example: fragment -->
+```touba title="source.tb"
+tool Primary
+    gives Text
+
+skill Backup
+    gives Text
+    do
+        give "backup"
+
+skill Run
+    gives Text
+    uses Primary
+    uses Backup
+    do
+        Primary
+        give "primary"
+    on failure handler
+        fallback Backup
+```
+
+Les familles capturables sont `business`, `authority`, `provider` et
+`handler`. Une famille différente remonte jusqu'au résultat terminal. Une
+annulation ou un arrêt humain n'est jamais capturé. Les blocs `if`, `for` et
+`while` ne peuvent pas contenir une autre structure de contrôle dans cette
+version.
+
 ## Agent
 
-Un `agent` expose une capacité bornée. `callable_by` déclare les callers autorisés.
+Un `agent` expose une responsabilité bornée. `takes` et `gives` déclarent son
+interface directe optionnelle ; `callable_by` déclare les callers autorisés.
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 agent Researcher
     description "Research agent that selects an authorized dataset-search capability."
+    takes request as DatasetSearchRequest
+    gives DatasetSearchResult
     responsibility "Select the declared research capability that matches the request."
     uses Search
     callable_by strategy RunSearch
@@ -172,10 +220,27 @@ Toute capacité exposée à un decision provider par `agent.uses` doit déclarer
 `description` source explicite. Le runtime refuse avant l’appel provider si ce
 signal manque.
 
+Un appel typé utilise exactement les liaisons communes :
+
+<!-- touba-example: fragment -->
+```touba title="source.tb"
+Researcher
+    with request as request
+    into result
+```
+
+`with` est obligatoire pour chaque entrée déclarée et `into` nomme la sortie
+validée contre `gives`. Aucune entrée ou sortie n’est déduite de `uses`. Un
+agent sans signature garde uniquement l’appel simple historique. L’appel
+enrichi d’un agent importé reste refusé dans cette tranche, faute de résolution
+de signature intermodule au moment du typecheck.
+
 La forme inter-module explicite est acceptée pour les agents importés :
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 agent Reviewer
+    responsibility "Fulfill the declared Reviewer responsibility using only authorized capabilities."
     callable_by strategy examples.agent_app.RunReview
 ```
 
@@ -183,6 +248,7 @@ agent Reviewer
 
 Une `strategy` est un point d'orchestration exécutable par le runtime.
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 strategy RunSearch
     uses Researcher
@@ -194,6 +260,7 @@ strategy RunSearch
 
 Un `trigger` déclare une entrée événementielle gouvernée.
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 trigger DailyResearchSchedule
     on schedule "every 1s"
@@ -220,6 +287,7 @@ d’événements et le déclenchement direct d’agent relèvent des couches fut
 
 `show` et `ask` sont des nœuds d'interaction, pas des fonctions.
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 show
     with message as "age is: " ++ text(age)
@@ -231,6 +299,7 @@ ask
 
 ## Validation humaine
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 human.approve
     with context as change
@@ -241,6 +310,7 @@ human.approve
 
 Une `memory` est une ressource logique. L'accès réel passe par un tool, un manifest et un handler.
 
+<!-- touba-example: fragment -->
 ```touba title="source.tb"
 memory ProjectKnowledge
 

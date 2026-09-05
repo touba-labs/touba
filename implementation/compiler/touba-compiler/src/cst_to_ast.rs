@@ -342,6 +342,9 @@ impl<'a> AstLowerer<'a> {
     fn lower_agent_declaration(&mut self, node: Node<'_>) -> Option<AstAgentDeclaration> {
         let name = self.required_field_text(node, "name")?;
         let mut description = None;
+        let mut signature = AstSignature::default();
+        let mut responsibility = None;
+        let mut responsibility_clause_seen = false;
         let mut uses = Vec::new();
         let mut callable_by = Vec::new();
         let mut memory_scopes = Vec::new();
@@ -349,6 +352,20 @@ impl<'a> AstLowerer<'a> {
         for child in named_children(node) {
             match child.kind() {
                 "description_clause" => description = self.lower_description_clause(child),
+                "takes_clause" => signature.inputs.extend(self.lower_takes_clause(child)),
+                "gives_clause" => signature.output = self.lower_gives_clause(child),
+                "responsibility_clause" => {
+                    if responsibility_clause_seen {
+                        self.push_error(
+                            AstDiagnosticCode::DuplicateAgentResponsibility,
+                            child,
+                            format!("agent `{name}` must declare responsibility exactly once"),
+                        );
+                    } else {
+                        responsibility_clause_seen = true;
+                        responsibility = self.lower_agent_responsibility_clause(child, &name);
+                    }
+                }
                 "uses_clause" => {
                     if let Some(usage) = self.lower_use(child) {
                         uses.push(usage);
@@ -373,9 +390,19 @@ impl<'a> AstLowerer<'a> {
             }
         }
 
+        if !responsibility_clause_seen {
+            self.push_error(
+                AstDiagnosticCode::MissingAgentResponsibility,
+                node,
+                format!("agent `{name}` must declare a non-empty responsibility"),
+            );
+        }
+
         Some(AstAgentDeclaration {
             name,
             description,
+            signature,
+            responsibility: responsibility.unwrap_or_default(),
             uses,
             callable_by,
             memory_scopes,
@@ -556,6 +583,25 @@ impl<'a> AstLowerer<'a> {
         if value.is_empty() { None } else { Some(value) }
     }
 
+    fn lower_agent_responsibility_clause(
+        &mut self,
+        node: Node<'_>,
+        agent_name: &str,
+    ) -> Option<String> {
+        let value_node = self.required_field(node, "value")?;
+        let value = self.text(value_node).trim_matches('"').trim().to_string();
+        if value.is_empty() {
+            self.push_error(
+                AstDiagnosticCode::InvalidAgentResponsibility,
+                node,
+                format!("agent `{agent_name}` responsibility must not be empty"),
+            );
+            None
+        } else {
+            Some(value)
+        }
+    }
+
     fn lower_requires_clause(&mut self, node: Node<'_>) -> Vec<AstCapabilityRequirement> {
         named_children(node)
             .into_iter()
@@ -629,9 +675,11 @@ impl<'a> AstLowerer<'a> {
     }
 
     fn lower_failure_handler(&mut self, node: Node<'_>) -> Option<AstFailureHandler> {
+        let family = self.required_field_text(node, "family")?;
         let steps = named_children(node)
             .into_iter()
             .filter_map(|child| match child.kind() {
+                "failure_family" => None,
                 "fallback_statement" => Some(AstFailureStep::Fallback {
                     target: self.required_field_text(child, "target")?,
                     source_ref: self.source_ref(child),
@@ -651,6 +699,7 @@ impl<'a> AstLowerer<'a> {
             .collect();
 
         Some(AstFailureHandler {
+            family,
             steps,
             source_ref: self.source_ref(node),
         })
@@ -988,6 +1037,27 @@ impl<'a> AstLowerer<'a> {
         let source_ref = self.source_ref(node);
         let value = self.text(node);
         match node.kind() {
+            "record_expression" => {
+                let type_node = self.required_field(node, "type")?;
+                let fields = named_children(node)
+                    .into_iter()
+                    .filter(|child| child.kind() == "record_field")
+                    .filter_map(|field_node| {
+                        let name_node = self.required_field(field_node, "name")?;
+                        let value_node = self.required_field(field_node, "value")?;
+                        Some(AstRecordField {
+                            name: self.text(name_node),
+                            value: self.lower_expression(value_node)?,
+                            source_ref: self.source_ref(field_node),
+                        })
+                    })
+                    .collect();
+                Some(AstExpression::Record {
+                    type_name: self.text(type_node),
+                    fields,
+                    source_ref,
+                })
+            }
             "symbol_identifier" => Some(AstExpression::Symbol { value, source_ref }),
             "value_identifier" => Some(AstExpression::Value { value, source_ref }),
             "string" => Some(AstExpression::StringLiteral {

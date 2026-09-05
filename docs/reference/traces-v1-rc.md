@@ -4,6 +4,10 @@ sidebar_position: 4
 
 # Référence traces
 
+Le contrat machine courant est `touba-trace-v1` avec le profil
+`touba-trace-capabilities-v1`. Les traces d'une autre version doivent être
+migrées explicitement avant consommation.
+
 Les traces rendent l'exécution observable. Elles ne sont pas une preuve de sandbox, de permission forte ou de vérification scientifique.
 
 ## Enveloppe
@@ -77,7 +81,15 @@ Chaque événement porte un `kind` et un `payload`.
 | `user_interaction_paused` | Exécution suspendue faute d'entrée |
 | `user_interaction_answered` | Entrée fournie par l'hôte |
 | `failure_detected` | Échec runtime observable |
+| `fallback_selected` | Fallback sélectionné après égalité entre famille déclarée et famille observée |
 | `run_completed` | Fin de run |
+
+`run_started.payload.max_loop_iterations` expose le plafond effectif de chaque
+boucle. Un `failure_detected` contient une famille stable (`business`,
+`authority`, `provider` ou `handler`) et un `runtime_error_code`. Quand un
+fallback existe, `declared_failure_family` permet de vérifier pourquoi il a été
+sélectionné ou ignoré. Les valeurs métier brutes ne sont pas ajoutées pour
+autant.
 
 ## Lire une trace
 
@@ -89,7 +101,7 @@ L'inspecteur affiche les événements existants. Il ne relit pas les handlers, s
 
 ## Export OpenTelemetry
 
-Touba garde `trace-minimal-v0.1` comme trace native lisible par les commandes
+Touba garde `touba-trace-v1` comme trace native lisible par les commandes
 Touba. Pour l’observabilité externe, `touba inspect` peut produire une projection
 JSON compatible avec les modèles de spans OpenTelemetry :
 

@@ -22,6 +22,7 @@ skill HiddenSearch
         give "hidden"
 
 agent Researcher
+    responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
     uses UseDatasetSearch
     uses UseMemorySearch
     callable_by strategy RunResearch

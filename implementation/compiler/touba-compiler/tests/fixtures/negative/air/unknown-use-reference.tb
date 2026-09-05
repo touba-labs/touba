@@ -4,6 +4,7 @@ type Draft
     body is Text
 
 agent Reviewer
+    responsibility "Fulfill the declared Reviewer responsibility using only authorized capabilities."
     uses MissingSkill
 
 strategy RunReview

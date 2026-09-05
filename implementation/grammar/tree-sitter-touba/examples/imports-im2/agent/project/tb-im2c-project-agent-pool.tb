@@ -1,4 +1,5 @@
 module examples.agent_pool
 
 agent Reviewer
+    responsibility "Fulfill the declared Reviewer responsibility using only authorized capabilities."
     callable_by strategy examples.agent_app.RunReview

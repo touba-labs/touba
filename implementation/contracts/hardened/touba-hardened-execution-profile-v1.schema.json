@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-hardened-execution-profile-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "controls"],
+  "properties": {
+    "schema_version": { "const": "touba-hardened-execution-profile-v1" },
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sandbox", "provider_content_mode", "require_supply_chain_lock", "require_budgets", "require_redaction", "require_durable_checkpoints", "secrets_policy"],
+      "properties": {
+        "sandbox": { "type": "object", "required": ["required", "minimum_versions"], "properties": { "required": { "const": true }, "minimum_versions": { "type": "object" } } },
+        "provider_content_mode": { "const": "opaque_refs" },
+        "require_supply_chain_lock": { "const": true },
+        "require_budgets": { "type": "array", "items": { "type": "string" } },
+        "require_redaction": { "const": true },
+        "require_durable_checkpoints": { "const": true },
+        "secrets_policy": { "const": "handles_only" }
+      }
+    }
+  }
+}

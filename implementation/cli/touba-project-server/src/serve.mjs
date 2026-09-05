@@ -5776,7 +5776,7 @@ function validateToubaSourcePatch(content, { projectRoot } = {}) {
     }
     try {
       const air = JSON.parse(result.stdout);
-      if (air?.air_schema_version !== "air-minimal-v0.1") {
+      if (air?.air_schema_version !== "touba-air-v1") {
         return [serviceDiagnostic("ToubaServeChangeToubaCompileFailed", "compiler output is not an AIR document")];
       }
     } catch {

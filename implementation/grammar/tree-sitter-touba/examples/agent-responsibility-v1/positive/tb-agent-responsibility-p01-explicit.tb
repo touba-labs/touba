@@ -1,0 +1,18 @@
+module examples.agent_responsibility
+
+skill ReviewChange
+    description "Reviews one proposed change."
+    gives Bool
+    do
+        give true
+
+agent Reviewer
+    description "Governed reviewer for proposed changes."
+    responsibility "Decide whether the proposed change satisfies the declared review criteria."
+    uses ReviewChange
+    callable_by strategy RunReview
+
+strategy RunReview
+    uses Reviewer
+    do
+        Reviewer

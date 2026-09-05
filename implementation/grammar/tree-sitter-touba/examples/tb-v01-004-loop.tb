@@ -18,6 +18,7 @@ skill NormalizeItems
         give NormalizedItems
 
 agent Normalizer
+    responsibility "Fulfill the declared Normalizer responsibility using only authorized capabilities."
     uses NormalizeItems
     callable_by strategy RunNormalization
 

@@ -1,0 +1,29 @@
+module examples.agent_interface
+
+type ReviewRequest
+    summary is Text
+
+type ReviewResult
+    verdict is Text
+
+tool InspectRequest
+    description "Inspect one review request and return a typed review result."
+    takes request as ReviewRequest
+    gives ReviewResult
+
+agent Reviewer
+    takes request as ReviewRequest
+    gives ReviewResult
+    responsibility "Review the explicit request and return one typed final result."
+    uses InspectRequest
+    callable_by strategy RunReview
+
+strategy RunReview
+    takes request as ReviewRequest
+    gives ReviewResult
+    uses Reviewer
+    do
+        Reviewer
+            with request as request
+            into review
+        give review

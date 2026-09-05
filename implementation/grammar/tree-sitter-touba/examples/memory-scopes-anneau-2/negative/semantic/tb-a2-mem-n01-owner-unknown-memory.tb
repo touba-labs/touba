@@ -7,4 +7,5 @@ type KnowledgeResult
     summary is Text
 
 agent Researcher
+    responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
     memory MissingKnowledge read

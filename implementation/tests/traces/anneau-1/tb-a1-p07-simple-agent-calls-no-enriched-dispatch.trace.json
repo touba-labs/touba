@@ -1,8 +1,9 @@
 {
-  "trace_protocol_version": "trace-minimal-v0.1",
+  "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
     "run_id": "run-1",
-    "air_schema_version": "air-minimal-v0.1",
+    "air_schema_version": "touba-air-v1",
     "module_ref": "module:examples.a1_simple_agents",
     "entry_ref": "strategy:examples.a1_simple_agents/RunChange"
   },
@@ -13,7 +14,8 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "strategy:examples.a1_simple_agents/RunChange"
+        "entry_ref": "strategy:examples.a1_simple_agents/RunChange",
+        "max_loop_iterations": 100
       }
     },
     {
@@ -37,11 +39,11 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 676,
-          "end_byte": 684,
-          "start_line": 38,
+          "start_byte": 880,
+          "end_byte": 888,
+          "start_line": 40,
           "start_column": 8,
-          "end_line": 38,
+          "end_line": 40,
           "end_column": 16
         }
       },
@@ -62,11 +64,11 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 676,
-          "end_byte": 684,
-          "start_line": 38,
+          "start_byte": 880,
+          "end_byte": 888,
+          "start_line": 40,
           "start_column": 8,
-          "end_line": 38,
+          "end_line": 40,
           "end_column": 16
         }
       },
@@ -256,11 +258,11 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 676,
-          "end_byte": 684,
-          "start_line": 38,
+          "start_byte": 880,
+          "end_byte": 888,
+          "start_line": 40,
           "start_column": 8,
-          "end_line": 38,
+          "end_line": 40,
           "end_column": 16
         }
       },
@@ -280,11 +282,11 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 693,
-          "end_byte": 701,
-          "start_line": 39,
+          "start_byte": 897,
+          "end_byte": 905,
+          "start_line": 41,
           "start_column": 8,
-          "end_line": 39,
+          "end_line": 41,
           "end_column": 16
         }
       },
@@ -305,11 +307,11 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 693,
-          "end_byte": 701,
-          "start_line": 39,
+          "start_byte": 897,
+          "end_byte": 905,
+          "start_line": 41,
           "start_column": 8,
-          "end_line": 39,
+          "end_line": 41,
           "end_column": 16
         }
       },
@@ -440,11 +442,11 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 693,
-          "end_byte": 701,
-          "start_line": 39,
+          "start_byte": 897,
+          "end_byte": 905,
+          "start_line": 41,
           "start_column": 8,
-          "end_line": 39,
+          "end_line": 41,
           "end_column": 16
         }
       },

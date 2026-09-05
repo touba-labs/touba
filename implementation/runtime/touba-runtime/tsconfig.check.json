@@ -12,14 +12,20 @@
     "types": ["node"]
   },
   "include": [
+    "src/agent-loop.mjs",
     "src/agent-provider-content.mjs",
     "src/air-runtime-profile.mjs",
+    "src/authority.mjs",
+    "src/graph-execution.mjs",
+    "src/hardened-execution-profile.mjs",
     "src/handler-protocol.mjs",
     "src/human-approval-checkpoints.mjs",
+    "src/interactions.mjs",
     "src/payload-validation.mjs",
     "src/runtime-budgets.mjs",
     "src/runtime-errors.mjs",
     "src/runtime-options.mjs",
+    "src/result-construction.mjs",
     "src/run-controls.mjs",
     "src/secret-redaction.mjs",
     "src/trace-builder.mjs"

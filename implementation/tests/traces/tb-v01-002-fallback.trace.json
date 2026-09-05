@@ -1,8 +1,9 @@
 {
-  "trace_protocol_version": "trace-minimal-v0.1",
+  "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
     "run_id": "run-1",
-    "air_schema_version": "air-minimal-v0.1",
+    "air_schema_version": "touba-air-v1",
     "module_ref": "module:examples.fallback",
     "entry_ref": "strategy:examples.fallback/RunSourceLookup"
   },
@@ -13,7 +14,8 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "strategy:examples.fallback/RunSourceLookup"
+        "entry_ref": "strategy:examples.fallback/RunSourceLookup",
+        "max_loop_iterations": 100
       }
     },
     {
@@ -37,11 +39,11 @@
         "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-          "start_byte": 667,
-          "end_byte": 677,
-          "start_line": 36,
+          "start_byte": 779,
+          "end_byte": 789,
+          "start_line": 37,
           "start_column": 8,
-          "end_line": 36,
+          "end_line": 37,
           "end_column": 18
         }
       },
@@ -62,11 +64,11 @@
         "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-          "start_byte": 667,
-          "end_byte": 677,
-          "start_line": 36,
+          "start_byte": 779,
+          "end_byte": 789,
+          "start_line": 37,
           "start_column": 8,
-          "end_line": 36,
+          "end_line": 37,
           "end_column": 18
         }
       },
@@ -228,7 +230,9 @@
       "payload": {
         "failure_path_ref": "failure:graph:skill:examples.fallback/BuildSource:1",
         "failure_mode": "fallback",
-        "runtime_error_code": "RuntimeFailure",
+        "failure_family": "handler",
+        "declared_failure_family": "handler",
+        "runtime_error_code": "ToolBindingMissing",
         "target_ref": "tool:examples.fallback/FetchPrimarySource",
         "tool_ref": "tool:examples.fallback/FetchPrimarySource",
         "caller_ref": "skill:examples.fallback/BuildSource",

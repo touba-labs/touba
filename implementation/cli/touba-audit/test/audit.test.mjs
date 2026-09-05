@@ -389,7 +389,7 @@ function airFixture(sourcePath) {
   const graphId = "graph:strategy:examples.ta1/RunAudit";
   const nodeId = "node:graph:strategy:examples.ta1/RunAudit:1";
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.ta1",
       name: "examples.ta1",
@@ -431,10 +431,10 @@ function traceFixture(sourcePath) {
   const graphId = "graph:strategy:examples.ta1/RunAudit";
   const nodeId = "node:graph:strategy:examples.ta1/RunAudit:1";
   return {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: {
       run_id: "run-ta1",
-      air_schema_version: "air-minimal-v0.1",
+      air_schema_version: "touba-air-v1",
       module_ref: "module:examples.ta1",
       entry_ref: "strategy:examples.ta1/RunAudit",
     },

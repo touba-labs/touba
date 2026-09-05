@@ -23,7 +23,8 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `UnsupportedModuleConstantExpression` | `define` contient autre chose qu'un littéral | Utiliser un littéral ou déplacer le calcul dans une fonction |
 | `UnreachableStatement` | Instruction placée après un retour terminal (`give`, `stop`, ou `if` dont toutes les branches terminent) | Déplacer l’instruction avant le retour, ou garder un seul `give` par chemin |
 | `InvalidBranchCondition` | Condition `if` non booléenne | Produire un `Boolean` |
-| `EnrichedAgentCallBlocked` | Appel agent enrichi non supporté | Utiliser un appel simple d'agent |
+| `MissingAgentInterfaceOutput` | Agent avec `takes` mais sans sortie finale | Ajouter `gives <Type>` |
+| `EnrichedAgentCallBlocked` | Appel `with`/`into` vers un agent historique ou dont la signature n’est pas résolue localement | Déclarer l’interface locale, ou conserver l’appel simple |
 | `AgentCallerNotAllowed` | Appel agent non autorisé | Corriger `callable_by` |
 | `UnsupportedTriggerEventKind` | Trigger d'une famille non livrée | Utiliser `on schedule "..."` |
 | `UnsupportedTriggerTargetKind` | Trigger vers une cible non livrée | Utiliser `runs strategy <Name>` |
@@ -40,6 +41,12 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `InvalidExpressionOperandType` | Opérateur appliqué au mauvais type | Vérifier `Text`, `Boolean`, `Int`, `Float` |
 | `UnknownExpressionField` | Champ absent | Vérifier le type local |
 | `StaticExpressionDivisionByZero` | Division par zéro détectable | Corriger le dénominateur |
+| `InvariantLoopCondition` | `while` utilise directement `true` ou `false` | Fournir une condition qui dépend d'une valeur runtime, ou retirer la boucle |
+| `UnknownRecordType` | Type cible du constructeur inconnu | Déclarer un type local existant |
+| `MissingRecordField` | Champ obligatoire non fourni | Ajouter le champ au constructeur |
+| `UnknownRecordField` | Champ absent du type nominal | Corriger ou retirer le champ |
+| `DuplicateRecordField` | Même champ fourni plusieurs fois | Conserver une occurrence |
+| `RecordFieldTypeMismatch` | Valeur incompatible avec le type du champ | Corriger l'expression ou le type |
 | `AstError` | Syntaxe hors périmètre | Utiliser les expressions natives |
 
 ## Runtime, tools, manifest et secrets
@@ -66,6 +73,13 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `AgentDecisionProviderRetryLimitExceeded` | Retries provider épuisés | Corriger la cause provider ou ajuster `--agent-decision-provider-max-retries` |
 | `AgentProviderObservationsBudgetExceeded` | Observations trop volumineuses pour le contexte provider | Réduire les observations ou utiliser des références opaques côté provider |
 | `AgentCapabilityDescriptionRequired` | Capacité exposée à un decision provider sans `description` source | Ajouter une description explicite à chaque capacité déclarée dans `agent.uses` |
+| `AgentInterfaceRequired` | AIR tente un appel agent enrichi sans interface | Recompiler avec une signature agent explicite |
+| `AgentInterfaceInputRequired` | Entrée agent déclarée absente au runtime | Fournir tous les arguments `with` |
+| `AgentInterfaceInputTypeMismatch` | Valeur d’entrée incompatible avec `takes` | Corriger l’appel ou le type source |
+| `AgentInterfaceResultTypeMismatch` | Réponse directe ou sortie finale incompatible avec `gives` | Corriger le provider ou la capacité avant publication du résultat |
+| `MissingAgentResponsibility` | Agent sans contrat de responsabilité source | Ajouter exactement une clause `responsibility "..."` non vide |
+| `DuplicateAgentResponsibility` | Plusieurs responsabilités sur le même agent | Conserver une seule clause `responsibility` canonique |
+| `InvalidAgentResponsibility` | Responsabilité vide | Décrire explicitement ce dont l’agent répond, sans utiliser son nom comme fallback |
 
 ## Workflow projet
 
@@ -73,6 +87,13 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | --- | --- | --- |
 | `ModulePathNotCanonical` | Fichier source hors convention projet | Utiliser `src/<domaine>/<module>.tb` avec `module domaine.module` |
 | `ModulePathMismatch` | Nom de module différent du chemin source | Aligner le chemin et la ligne `module` |
+| `ProjectRunProfileUnknown` | Profil demandé absent de `touba.project.json` | Déclarer le profil ou utiliser `pure`, `dev` ou `prod` disponible |
+| `ProjectArtifactMigrationRequired` | Projet encore sur le layout historique | Exécuter `touba project migrate --mode plan`, puis `--mode write` après revue |
+| `ProjectArtifactMigrationTargetOccupied` | Cible `.touba/build/<profil>` déjà occupée avant migration | Archiver ou nettoyer explicitement la cible ; Touba refuse de l’écraser |
+| `EffectiveProjectMissing` | Projection effective absente en mode `check` | Relancer `touba prepare --mode write --profile <profil>` |
+| `EffectiveProjectDrift` | Projection effective différente de ses entrées déclarées | Examiner les changements puis régénérer avec `prepare --mode write` |
+| `EffectiveProjectReadFailed` | Projection effective illisible ou non JSON | Retirer l’artefact dérivé invalide puis le régénérer |
+| `ManifestDerivedDrift` | Manifest dérivé élargi ou modifié hors des entrées projet | Déclarer l’autorité dans un fragment explicite puis régénérer ; ne pas éditer le dérivé |
 | `ManifestMissing` | Projet avec tool sans manifest en mode `check` | Lancer `touba prepare --mode write` ou créer le manifest |
 | `ManifestBindingMissing` | Tool déclaré sans binding | Mettre à jour le manifest depuis l'AIR |
 | `ManifestGrantMissing` | Grant attendu absent | Relire et accorder explicitement le grant si légitime |
@@ -83,7 +104,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `PackageExportMissing` | Import depuis un package vers une déclaration non exportée | Ajouter l’export au package ou corriger l’import |
 | `PackageExportUnknownRef` | Export de package vers une déclaration absente | Corriger `exports` ou la source du package |
 | `PackageVersionIncompatible` | Version demandée différente de la version du package | Aligner `touba.project.json` et le package |
-| `PackageAirProfileIncompatible` | Profil AIR du package incompatible | Utiliser un package ciblant `air-json-v0.1` |
+| `PackageAirProfileIncompatible` | Profil AIR du package incompatible | Utiliser un package ciblant `touba-air-json-canonical-v1` |
 | `PackageNameConflict` | Module ou package local en conflit | Renommer le package ou le module concerné |
 | `PackageAuthorityFieldForbidden` | Package tente de déclarer handler, binding, grant, secret ou permission | Retirer l’autorité du package ; l’autorité reste dans AIR, manifest et runtime |
 | `PackageRegistryForbidden` | Package local ou entrée projet tente d’utiliser une registry | Fournir un manifeste local explicite |
@@ -148,6 +169,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `ToubaServeElementAuthoringInvalid` | Intention de création incomplète ou hors contrat | Corriger les champs du formulaire selon la primitive |
 | `ToubaServeElementAlreadyExists` | Une déclaration porte déjà ce nom dans le module | Choisir un nom distinct ou modifier l’élément existant |
 | `ToubaServeElementDescriptionRequired` | Capacité créée sans description explicite | Ajouter une description utile au routage agentique |
+| `ToubaServeElementResponsibilityRequired` | Agent créé sans responsabilité explicite | Décrire ce dont l’agent répond dans le champ `responsibility` |
 | `ToubaServeElementReferenceUnknown` | Référence `uses`, `callable_by`, scope ou cible absente | Sélectionner une référence déclarée dans le module |
 | `ToubaServeElementCrossModuleReferenceRejected` | L’intention tente de créer une référence implicite entre modules | Déclarer l’import dans la source avant de proposer la relation |
 | `ToubaServeChangeSourceDrift` | Le fichier a changé depuis la création de la proposition | Actualiser le projet et soumettre une nouvelle proposition |

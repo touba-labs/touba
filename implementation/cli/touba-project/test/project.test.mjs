@@ -12,9 +12,11 @@ import {
   checkProjectSecret,
   initProject,
   listProjectSecrets,
+  migrateProjectArtifacts,
   newModule,
   prepareProject,
   removeProjectSecret,
+  resolveProjectRunArgs,
   setProjectSecret,
 } from "../src/project.mjs";
 import {
@@ -32,6 +34,10 @@ const projectInspectionSchema = join(
   implementationRoot,
   "contracts/product-surfaces/schemas/touba-project-inspection-v1.schema.json",
 );
+const effectiveProjectSchema = join(
+  implementationRoot,
+  "contracts/product-surfaces/schemas/touba-effective-project-v1.schema.json",
+);
 const triggerRunnerFixture = join(
   implementationRoot,
   "grammar/tree-sitter-touba/examples/triggers-anneau-2/positive/tb-a2-trigger-p04-runner-revue-matinale.tb",
@@ -46,12 +52,15 @@ test("init creates project folders without creating a manifest", () => {
     assert.equal(existsSync(join(root, "handlers")), true);
     assert.equal(existsSync(join(root, ".touba")), true);
     assert.equal(existsSync(join(root, "touba.project.json")), true);
-    assert.equal(existsSync(join(root, ".touba/secrets.local.json")), true);
+    assert.equal(existsSync(join(root, ".touba/build")), true);
+    assert.equal(existsSync(join(root, ".touba/state")), true);
+    assert.equal(existsSync(join(root, ".touba/evidence")), true);
+    assert.equal(existsSync(join(root, ".touba/state/secrets.local.json")), true);
     assert.equal(existsSync(join(root, ".env")), true);
     assert.equal(existsSync(join(root, "touba.manifest.json")), false);
     assert.equal(existsSync(join(root, "touba.secrets.dev.json")), false);
     assert.equal(existsSync(join(root, "touba.secrets.prod.json")), false);
-    const store = JSON.parse(readFileSync(join(root, ".touba/secrets.local.json"), "utf8"));
+    const store = JSON.parse(readFileSync(join(root, ".touba/state/secrets.local.json"), "utf8"));
     assert.equal(store.store_version, "touba-secret-store-local-v1");
     assert.deepEqual(store.secrets, {});
     const projectConfig = JSON.parse(readFileSync(join(root, "touba.project.json"), "utf8"));
@@ -59,7 +68,11 @@ test("init creates project folders without creating a manifest", () => {
       project_version: "touba-project-v1",
       language: "javascript",
       sdk: "@touba/sdk",
+      artifact_layout: "touba-artifacts-v1",
       run_profiles: {
+        pure: {
+          require_supply_chain_lock: false,
+        },
         dev: {
           require_supply_chain_lock: false,
         },
@@ -925,6 +938,325 @@ test("prepare write creates an explicit RP-1 run plan for a pure Touba entry", a
     });
     assert.equal(existsSync(join(root, ".touba/air/local/run.air.json")), true);
     assert.equal(existsSync(join(root, "touba.manifest.json")), false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("converged project preparation writes only profile-derived artifacts under .touba/build", async () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    const configPath = join(root, "touba.project.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.entry = "strategy:local.run/Run";
+    writeJson(configPath, config);
+    mkdirSync(join(root, "src/local"), { recursive: true });
+    writeFileSync(join(root, "src/local/run.tb"), "module local.run\n", "utf8");
+
+    const report = await prepareProject({
+      root,
+      mode: "write",
+      runProfile: "pure",
+      compileSource: () => airDocumentWithPureStrategy(),
+    });
+
+    assert.equal(report.status, "success");
+    assert.equal(report.artifact_layout, "touba-artifacts-v1");
+    assert.equal(report.profile, "pure");
+    assert.equal(existsSync(join(root, ".touba/build/pure/air/local/run.air.json")), true);
+    assert.equal(existsSync(join(root, ".touba/build/pure/touba.run-plan.json")), true);
+    assert.equal(existsSync(join(root, ".touba/build/pure/touba.effective-project.json")), true);
+    assert.equal(existsSync(join(root, ".touba/build/pure/touba.manifest.json")), false);
+    assert.equal(existsSync(join(root, ".touba/air/local/run.air.json")), false);
+    assert.equal(existsSync(join(root, "touba.run-plan.json")), false);
+    const plan = JSON.parse(readFileSync(join(root, ".touba/build/pure/touba.run-plan.json"), "utf8"));
+    assert.equal(plan.air, "air/local/run.air.json");
+    assert.equal(plan.profile, "pure");
+    const effective = JSON.parse(readFileSync(
+      join(root, ".touba/build/pure/touba.effective-project.json"),
+      "utf8",
+    ));
+    assert.equal(effective.schema_version, "touba-effective-project-v1");
+    assert.equal(effective.artifact_role, "derived_non_authoritative");
+    assert.equal(effective.contract.sources.provenance.status, "declared");
+    assert.equal(effective.contract.air.provenance.status, "derived");
+    assert.equal(effective.contract.entry.provenance.status, "effective");
+    assert.equal(effective.contract.handlers.provenance.status, "non_applicable");
+    assert.equal(effective.contract.budgets.provenance.status, "absent");
+    assert.equal(JSON.stringify(effective).includes(root), false);
+    const schema = JSON.parse(readFileSync(effectiveProjectSchema, "utf8"));
+    assert.deepEqual(validateObject(schema, effective), []);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("effective project projection is deterministic, detects drift and never exposes secret values", async () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    const configPath = join(root, "touba.project.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.entry = "strategy:examples.data_app/RunSearch";
+    writeJson(configPath, config);
+    mkdirSync(join(root, "src/examples"), { recursive: true });
+    writeFileSync(join(root, "src/examples/data_app.tb"), "module examples.data_app\n# do-not-project-this-secret\n", "utf8");
+    setProjectSecret("DATA_API_TOKEN", "do-not-project-this-secret", { root });
+
+    await prepareProject({
+      root,
+      mode: "write",
+      runProfile: "dev",
+      compileSource: () => airDocumentWithToolStrategy(),
+    });
+    const effectivePath = join(root, ".touba/build/dev/touba.effective-project.json");
+    const first = readFileSync(effectivePath, "utf8");
+    assert.equal(first.includes("do-not-project-this-secret"), false);
+    const document = JSON.parse(first);
+    assert.deepEqual(document.contract.secrets.handles, ["DATA_API_TOKEN"]);
+    assert.equal(document.contract.secrets.provenance.status, "declared");
+    assert.equal(document.contract.handlers.provenance.status, "effective");
+    assert.deepEqual(document.contract.grants.bindings[0].capabilities, ["network", "secret_read"]);
+
+    await prepareProject({
+      root,
+      mode: "write",
+      runProfile: "dev",
+      compileSource: () => airDocumentWithToolStrategy(),
+    });
+    assert.equal(readFileSync(effectivePath, "utf8"), first);
+
+    document.project.profile = "prod";
+    writeJson(effectivePath, document);
+    const drift = await prepareProject({
+      root,
+      mode: "check",
+      runProfile: "dev",
+      compileSource: () => airDocumentWithToolStrategy(),
+    });
+    assert.equal(drift.status, "error");
+    assert.equal(drift.diagnostics.some((item) => item.code === "EffectiveProjectDrift"), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("converged dev preparation keeps tool authority explicit and detects derived manifest drift", async () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    const configPath = join(root, "touba.project.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.entry = "strategy:examples.data_app/RunSearch";
+    writeJson(configPath, config);
+    mkdirSync(join(root, "src/examples"), { recursive: true });
+    writeFileSync(join(root, "src/examples/data_app.tb"), "module examples.data_app\n", "utf8");
+
+    const report = await prepareProject({
+      root,
+      mode: "write",
+      runProfile: "dev",
+      compileSource: () => airDocumentWithToolStrategy(),
+    });
+    assert.equal(report.status, "success");
+    const manifestPath = join(root, ".touba/build/dev/touba.manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const binding = manifest.bindings["tool:examples.data_app/Search"];
+    assert.equal(binding.handler.cwd, "../../..");
+    assert.deepEqual(binding.grants, ["network", "secret_read"]);
+    assert.deepEqual(binding.secrets, ["DATA_API_TOKEN"]);
+    assert.equal(existsSync(join(root, "touba.manifest.json")), false);
+    assert.equal(existsSync(join(root, ".touba/state/secrets.local.json")), true);
+    const devSecrets = JSON.parse(readFileSync(join(root, "touba.secrets.dev.json"), "utf8"));
+    assert.equal(devSecrets.secrets.DATA_API_TOKEN.path, ".touba/state/secrets.local.json");
+
+    manifest.bindings["tool:examples.data_app/Search"].grants = [];
+    writeJson(manifestPath, manifest);
+    const drift = await prepareProject({
+      root,
+      mode: "check",
+      runProfile: "dev",
+      compileSource: () => airDocumentWithToolStrategy(),
+    });
+    assert.equal(drift.status, "error");
+    assert.equal(drift.diagnostics.some((item) => item.code === "ManifestGrantMissing"), true);
+
+    manifest.bindings["tool:examples.data_app/Search"].grants = [
+      "network",
+      "secret_read",
+      "filesystem_write",
+    ];
+    writeJson(manifestPath, manifest);
+    const widened = await prepareProject({
+      root,
+      mode: "check",
+      runProfile: "dev",
+      compileSource: () => airDocumentWithToolStrategy(),
+    });
+    assert.equal(widened.status, "error");
+    assert.equal(widened.diagnostics.some((item) => item.code === "ManifestDerivedDrift"), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("converged preparation reads only configuration paths explicitly referenced by the project", async () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    const configPath = join(root, "touba.project.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.configuration = { binding_fragments: ["bindings.search.json"] };
+    writeJson(configPath, config);
+    writeJson(join(root, "input.air.json"), airDocumentWithTool());
+    writeJson(join(root, "bindings.search.json"), bindingFragmentDocument({
+      bindings: {
+        "tool:donnees_quebec.live_search/SearchDatasets": {
+          handler: {
+            kind: "process",
+            command: "node",
+            args: ["custom/search.handler.mjs"],
+            cwd: ".",
+          },
+          grants: ["network"],
+          secrets: ["API_TOKEN"],
+          timeout_ms: 12000,
+          max_payload_bytes: 2048,
+        },
+      },
+    }));
+    writeJson(join(root, "undeclared-authority.json"), { grants: ["filesystem_write"] });
+
+    const report = await prepareProject({ root, mode: "write", airPaths: ["input.air.json"] });
+    assert.equal(report.status, "success");
+    assert.deepEqual(report.binding_fragments.map((item) => item.path), [join(root, "bindings.search.json")]);
+    const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
+    const binding = manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
+    assert.deepEqual(binding.grants, ["network"]);
+    assert.equal(binding.handler.args[0], "custom/search.handler.mjs");
+    assert.equal(JSON.stringify(manifest).includes("filesystem_write"), false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("project artifact migration is explicit, non-destructive and refuses occupied targets", () => {
+  const root = tempRoot();
+  try {
+    writeJson(join(root, "touba.project.json"), {
+      project_version: "touba-project-v1",
+      language: "javascript",
+      sdk: "@touba/sdk",
+      run_profiles: {
+        dev: { require_supply_chain_lock: false },
+        prod: { require_supply_chain_lock: true, supply_chain_lock: "touba.lock.json" },
+      },
+    });
+    mkdirSync(join(root, ".touba/air"), { recursive: true });
+    writeJson(join(root, ".touba/air/legacy.air.json"), { legacy: true });
+
+    const plan = migrateProjectArtifacts({ root, mode: "plan" });
+    assert.equal(plan.status, "changes_required");
+    assert.deepEqual(plan.preserved, [".touba/air"]);
+    assert.equal(JSON.parse(readFileSync(join(root, "touba.project.json"), "utf8")).artifact_layout, undefined);
+
+    const check = migrateProjectArtifacts({ root, mode: "check" });
+    assert.equal(check.status, "error");
+    assert.equal(check.diagnostics[0].code, "ProjectArtifactMigrationRequired");
+
+    const written = migrateProjectArtifacts({ root, mode: "write" });
+    assert.equal(written.status, "success");
+    const migrated = JSON.parse(readFileSync(join(root, "touba.project.json"), "utf8"));
+    assert.equal(migrated.artifact_layout, "touba-artifacts-v1");
+    assert.equal(migrated.run_profiles.pure.require_supply_chain_lock, false);
+    assert.equal(existsSync(join(root, ".touba/air/legacy.air.json")), true);
+
+    delete migrated.artifact_layout;
+    writeJson(join(root, "touba.project.json"), migrated);
+    mkdirSync(join(root, ".touba/build/dev"), { recursive: true });
+    writeJson(join(root, ".touba/build/dev/touba.manifest.json"), { occupied: true });
+    const conflict = migrateProjectArtifacts({ root, mode: "write" });
+    assert.equal(conflict.status, "error");
+    assert.equal(conflict.diagnostics[0].code, "ProjectArtifactMigrationTargetOccupied");
+    assert.equal(JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8")).occupied, true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CLI project migrate exposes the non-destructive migration report", () => {
+  const root = tempRoot();
+  try {
+    writeJson(join(root, "touba.project.json"), {
+      project_version: "touba-project-v1",
+      language: "javascript",
+      sdk: "@touba/sdk",
+      run_profiles: { dev: { require_supply_chain_lock: false } },
+    });
+    const result = spawnSync(process.execPath, [
+      cliPath,
+      "project",
+      "migrate",
+      "--root",
+      root,
+      "--mode",
+      "plan",
+      "--json",
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.status, "changes_required");
+    assert.equal(report.target_artifact_layout, "touba-artifacts-v1");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("project run resolution passes an explicit prepared run plan to the low-level runtime", async () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    const configPath = join(root, "touba.project.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.entry = "strategy:local.run/Run";
+    writeJson(configPath, config);
+    mkdirSync(join(root, "src/local"), { recursive: true });
+    writeFileSync(join(root, "src/local/run.tb"), "module local.run\n", "utf8");
+    await prepareProject({
+      root,
+      mode: "write",
+      runProfile: "dev",
+      compileSource: () => airDocumentWithPureStrategy(),
+    });
+
+    const args = resolveProjectRunArgs([
+      "--project",
+      root,
+      "--entry",
+      "strategy:local.run/Run",
+      "--output",
+      "trace",
+    ]);
+    assert.deepEqual(args.slice(0, 2), [
+      "--run-plan",
+      join(root, ".touba/build/dev/touba.run-plan.json"),
+    ]);
+    assert.equal(args.includes("--project"), false);
+    assert.doesNotThrow(() => resolveProjectRunArgs([
+      "--project",
+      root,
+      "--trace-out",
+      "run.json",
+    ]));
+    assert.throws(
+      () => resolveProjectRunArgs(["legacy.air.json", "--project", root]),
+      /positional AIR path/,
+    );
+    assert.throws(
+      () => resolveProjectRunArgs(["--project", root, "--entry", "strategy:local.run/Other"]),
+      /conflicts with requested entry/,
+    );
   } finally {
     cleanup(root);
   }
@@ -2037,7 +2369,8 @@ test("CLI trigger, manifest and handler help match current public options", () =
 test("CLI run help exposes project profiles before runtime options", () => {
   const result = spawnSync(process.execPath, [cliPath, "run", "--help"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Usage: touba run <program\.air\.json> \[--profile dev\|prod\]/);
+  assert.match(result.stdout, /Usage: touba run <program\.air\.json> \[--profile pure\|dev\|prod\]/);
+  assert.match(result.stdout, /touba run --project <path>/);
   assert.match(result.stdout, /Project profiles are read from touba\.project\.json/);
   assert.match(result.stdout, /prod profile requires touba\.lock\.json/);
   assert.match(result.stdout, /--human-checkpoint-out <path> \| --human-resume-checkpoint <path>/);
@@ -2047,7 +2380,7 @@ test("CLI run help exposes project profiles before runtime options", () => {
 
   const profiledResult = spawnSync(process.execPath, [cliPath, "run", "--profile", "prod", "--help"], { encoding: "utf8" });
   assert.equal(profiledResult.status, 0, profiledResult.stderr);
-  assert.match(profiledResult.stdout, /Usage: touba run <program\.air\.json> \[--profile dev\|prod\]/);
+  assert.match(profiledResult.stdout, /Usage: touba run <program\.air\.json> \[--profile pure\|dev\|prod\]/);
   assert.equal(profiledResult.stderr, "");
 });
 
@@ -2061,8 +2394,8 @@ test("CLI version reports public command and schema versions", () => {
   assert.equal(report.audit, "0.1.0");
   assert.equal(report.supply_chain, "0.1.0");
   assert.equal(report.manifest, "0.1.0");
-  assert.equal(report.schemas.air, "air-minimal-v0.1");
-  assert.equal(report.schemas.trace, "trace-minimal-v0.1");
+  assert.equal(report.schemas.air, "touba-air-v1");
+  assert.equal(report.schemas.trace, "touba-trace-v1");
   assert.equal(report.schemas.manifest, "touba-manifest-v1");
   assert.equal(report.schemas.ownership, "touba-ownership-v0.1");
   assert.equal(report.schemas.trace_audit, "trace-audit-v0.1");
@@ -2156,7 +2489,7 @@ test("CLI compile refuses implicit stdout output", () => {
     cliPath,
     "compile",
     "-e",
-    "process.stdout.write(JSON.stringify({ air_schema_version: 'air-minimal-v0.1' }))",
+    "process.stdout.write(JSON.stringify({ air_schema_version: 'touba-air-v1' }))",
   ], {
     encoding: "utf8",
     env: {
@@ -2178,7 +2511,7 @@ test("CLI compile --out writes AIR JSON only to a .air.json path", () => {
       cliPath,
       "compile",
       "-e",
-      "process.stdout.write(JSON.stringify({ air_schema_version: 'air-minimal-v0.1', module: { name: 'examples.hello' } }))",
+      "process.stdout.write(JSON.stringify({ air_schema_version: 'touba-air-v1', module: { name: 'examples.hello' } }))",
       "--out",
       outPath,
     ], {
@@ -2192,7 +2525,7 @@ test("CLI compile --out writes AIR JSON only to a .air.json path", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /wrote AIR JSON/);
     const air = JSON.parse(readFileSync(outPath, "utf8"));
-    assert.equal(air.air_schema_version, "air-minimal-v0.1");
+    assert.equal(air.air_schema_version, "touba-air-v1");
     assert.equal(air.module.name, "examples.hello");
   } finally {
     cleanup(root);
@@ -2207,7 +2540,7 @@ test("CLI compile --out refuses non .air.json output paths", () => {
       cliPath,
       "compile",
       "-e",
-      "process.stdout.write(JSON.stringify({ air_schema_version: 'air-minimal-v0.1' }))",
+      "process.stdout.write(JSON.stringify({ air_schema_version: 'touba-air-v1' }))",
       "--out",
       outPath,
     ], {
@@ -2280,7 +2613,7 @@ test("CLI inspect delegates to Touba Inspect for AIR artifacts", () => {
     const result = spawnSync(process.execPath, [cliPath, "inspect", airPath], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Touba Inspect touba-inspect-v0\.1/);
-    assert.match(result.stdout, /AIR air-minimal-v0\.1/);
+    assert.match(result.stdout, /AIR touba-air-v1/);
   } finally {
     cleanup(root);
   }
@@ -2314,7 +2647,7 @@ test("CLI audit delegates to Touba Audit for trace artifacts", () => {
   try {
     const tracePath = join(root, "run.trace.json");
     writeFileSync(tracePath, JSON.stringify({
-      trace_protocol_version: "trace-minimal-v0.1",
+      trace_protocol_version: "touba-trace-v1",
       run: {
         run_id: "run-project-audit",
         module_ref: "module:examples.audit",
@@ -2511,7 +2844,7 @@ test("CLI run delegates to the runtime", () => {
   ], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const trace = JSON.parse(result.stdout);
-  assert.equal(trace.trace_protocol_version, "trace-minimal-v0.1");
+  assert.equal(trace.trace_protocol_version, "touba-trace-v1");
   assert.equal(trace.events.at(-1).payload.status, "success");
 });
 
@@ -2678,8 +3011,8 @@ test("CLI run profile requires an explicit project config", () => {
 
 function airDocumentWithTool() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:donnees_quebec.live_search",
       name: "donnees_quebec.live_search",
@@ -2712,7 +3045,7 @@ function airDocumentWithTool() {
 
 function airDocumentImportCommon() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.common",
       name: "examples.common",
@@ -2774,7 +3107,7 @@ function airDocumentImportCommon() {
 
 function airDocumentImportSearch() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.search",
       name: "examples.search",
@@ -2869,7 +3202,7 @@ function airDocumentImportKindMismatch() {
 
 function airDocumentImportToolDataTools() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.data_tools",
       name: "examples.data_tools",
@@ -2923,7 +3256,7 @@ function airDocumentImportToolDataTools() {
 
 function airDocumentImportToolResearchApp() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.research_app",
       name: "examples.research_app",
@@ -2997,7 +3330,7 @@ function airDocumentImportToolResearchApp() {
 
 function airDocumentImportFlowShared() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.shared_flow",
       name: "examples.shared_flow",
@@ -3069,7 +3402,7 @@ function airDocumentImportFlowShared() {
 
 function airDocumentImportFlowApp() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.flow_app",
       name: "examples.flow_app",
@@ -3136,7 +3469,7 @@ function airDocumentImportFlowApp() {
 
 function airDocumentImportAgentPool() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.agent_pool",
       name: "examples.agent_pool",
@@ -3181,7 +3514,7 @@ function airDocumentImportAgentAppUnauthorized() {
 
 function airDocumentImportAgentAppWithModule(moduleName) {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: `module:${moduleName}`,
       name: moduleName,
@@ -3237,7 +3570,7 @@ function airDocumentImportAgentAppWithModule(moduleName) {
 
 function airDocumentImportSharedMemory() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.shared_memory",
       name: "examples.shared_memory",
@@ -3265,7 +3598,7 @@ function airDocumentImportSharedMemory() {
 
 function airDocumentImportMemoryTools() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.memory_tools",
       name: "examples.memory_tools",
@@ -3332,7 +3665,7 @@ function airDocumentImportMemoryAppMissingScope() {
 function airDocumentImportMemoryAppWithScope(withScope) {
   const moduleName = withScope ? "examples.memory_app" : "examples.memory_app_missing_scope";
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: `module:${moduleName}`,
       name: moduleName,
@@ -3419,8 +3752,8 @@ function airDocumentImportMemoryAppWithScope(withScope) {
 
 function airDocumentPackageResearchTools() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:org.example.research",
       name: "org.example.research",
@@ -3470,8 +3803,8 @@ function airDocumentPackageResearchTools() {
 
 function airDocumentPackageResearchApp() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.package_app",
       name: "examples.package_app",
@@ -3544,8 +3877,8 @@ function airDocumentPackageResearchApp() {
 
 function airDocumentWithPureStrategy() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:local.run",
       name: "local.run",
@@ -3625,8 +3958,8 @@ function airDocumentWithPayloadTrigger() {
 
 function airDocumentWithToolStrategy() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.data_app",
       name: "examples.data_app",
@@ -3804,8 +4137,8 @@ function ownershipDocument(options = {}) {
 
 function airDocumentWithMemoryResource({ withScope = true } = {}) {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.memory",
       name: "examples.memory",
@@ -3940,7 +4273,7 @@ function packageManifestDocument(options = {}) {
     version: "0.1.0",
     root: ".",
     touba: {
-      air_profile: "air-json-v0.1",
+      air_profile: "touba-air-json-canonical-v1",
       runtime_compatibility: ">=0.1 <0.2",
     },
     exports: {

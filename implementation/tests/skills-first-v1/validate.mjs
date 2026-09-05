@@ -14,6 +14,8 @@ import {
   validateSkillPacks,
 } from "../../cli/touba-project/src/skill-packs.mjs";
 import {
+  AIR_CAPABILITY_PROFILE,
+  AIR_JSON_PROFILE,
   AIR_SCHEMA_VERSION,
   executeAirDocument,
   loadToolBindingManifestFromJson,
@@ -375,6 +377,8 @@ function runtimePackFromDefinition(definition) {
 function scenarioDocument() {
   return {
     air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: {
       id: "module:test",
       name: "test",
@@ -388,6 +392,7 @@ function scenarioDocument() {
         {
           id: "tool:test/RenderDatasetBrief",
           name: "RenderDatasetBrief",
+          description: "Render a governed dataset brief from the approved topic.",
           signature: {
             inputs: [
               {
@@ -407,6 +412,7 @@ function scenarioDocument() {
         {
           id: "skill:test/BuildDatasetBrief",
           name: "BuildDatasetBrief",
+          description: "Build a governed dataset brief with the authorized renderer.",
           signature: {
             inputs: [
               {

@@ -5,6 +5,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  AIR_CAPABILITY_PROFILE,
+  AIR_JSON_PROFILE,
   AIR_SCHEMA_VERSION,
   TRACE_PROTOCOL_VERSION,
   executeAirDocument,
@@ -102,6 +104,8 @@ function fixtureSecrets(env) {
 function fixtureAirDocument() {
   return {
     air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: {
       id: "module:examples.v1_process_binding",
       name: "examples.v1_process_binding",

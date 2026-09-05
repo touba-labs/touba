@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-effective-project-v1.schema.json",
+  "title": "touba-effective-project-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_role",
+    "project",
+    "inputs",
+    "contract"
+  ],
+  "properties": {
+    "schema_version": { "const": "touba-effective-project-v1" },
+    "artifact_role": { "const": "derived_non_authoritative" },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_layout", "profile"],
+      "properties": {
+        "artifact_layout": { "const": "touba-artifacts-v1" },
+        "profile": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" }
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "path", "digest_sha256", "provenance"],
+        "properties": {
+          "kind": { "type": "string", "minLength": 1 },
+          "path": { "$ref": "#/$defs/relativePath" },
+          "digest_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+          "provenance": { "enum": ["declared", "derived"] }
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "air",
+        "entry",
+        "handlers",
+        "grants",
+        "secrets",
+        "memory_scopes",
+        "callers",
+        "budgets",
+        "sandbox",
+        "lock",
+        "triggers",
+        "evidence"
+      ],
+      "properties": {
+        "sources": { "$ref": "#/$defs/section" },
+        "air": { "$ref": "#/$defs/section" },
+        "entry": { "$ref": "#/$defs/section" },
+        "handlers": { "$ref": "#/$defs/section" },
+        "grants": { "$ref": "#/$defs/section" },
+        "secrets": { "$ref": "#/$defs/section" },
+        "memory_scopes": { "$ref": "#/$defs/section" },
+        "callers": { "$ref": "#/$defs/section" },
+        "budgets": { "$ref": "#/$defs/section" },
+        "sandbox": { "$ref": "#/$defs/section" },
+        "lock": { "$ref": "#/$defs/section" },
+        "triggers": { "$ref": "#/$defs/section" },
+        "evidence": { "$ref": "#/$defs/section" }
+      }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "sources"],
+      "properties": {
+        "status": { "enum": ["absent", "non_applicable", "derived", "declared", "effective"] },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relativePath" }
+        }
+      }
+    },
+    "section": {
+      "type": "object",
+      "required": ["provenance"],
+      "properties": {
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    }
+  }
+}

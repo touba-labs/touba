@@ -24,10 +24,11 @@ skill BuildSource
     do
         FetchPrimarySource
         give SourceText
-    on failure
+    on failure handler
         fallback BuildFallbackSource
 
 agent Researcher
+    responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
     uses BuildSource
     callable_by strategy RunSourceLookup
 

@@ -10,30 +10,10 @@ export function buildAirInputContract({ air, definition, kind }) {
 }
 
 function buildAgentInputContract({ air, agent, typeDefinitions }) {
-  const capabilityRefs = Array.isArray(agent?.uses) ? agent.uses : [];
-  if (capabilityRefs.length === 0) {
+  if (!agent?.signature || typeof agent.signature !== "object") {
     return emptyInputContract("open");
   }
-  const definitionsByRef = new Map(
-    ["agents", "functions", "skills", "strategies", "tools"]
-      .flatMap((collection) => air?.definitions?.[collection] ?? [])
-      .filter((definition) => nonEmptyString(definition.id) !== undefined)
-      .map((definition) => [definition.id, definition]),
-  );
-  const capabilityInputs = capabilityRefs.map((ref) => {
-    const inputs = definitionsByRef.get(ref)?.signature?.inputs;
-    return Array.isArray(inputs)
-      ? inputs.map((input) => ({ name: input.name, type_ref: input.type_ref }))
-      : undefined;
-  });
-  if (capabilityInputs.some((inputs) => !Array.isArray(inputs))) {
-    return emptyInputContract("open");
-  }
-  const canonicalInputs = JSON.stringify(capabilityInputs[0]);
-  if (!capabilityInputs.every((inputs) => JSON.stringify(inputs) === canonicalInputs)) {
-    return emptyInputContract("open");
-  }
-  return declaredInputContract(capabilityInputs[0], typeDefinitions);
+  return declaredInputContract(agent.signature.inputs, typeDefinitions);
 }
 
 export function unavailableAirInputContract() {

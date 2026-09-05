@@ -1,0 +1,15 @@
+module examples.agent_interface_missing_gives
+
+type ReviewRequest
+    summary is Text
+
+agent Reviewer
+    takes request as ReviewRequest
+    responsibility "Review the explicit request but declare no output contract."
+    callable_by strategy RunReview
+
+strategy RunReview
+    uses Reviewer
+    do
+        Reviewer
+        stop

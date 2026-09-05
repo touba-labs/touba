@@ -1,0 +1,10 @@
+module examples.agent_responsibility_missing
+
+agent Reviewer
+    description "Governed reviewer without its required responsibility."
+    callable_by strategy RunReview
+
+strategy RunReview
+    uses Reviewer
+    do
+        Reviewer

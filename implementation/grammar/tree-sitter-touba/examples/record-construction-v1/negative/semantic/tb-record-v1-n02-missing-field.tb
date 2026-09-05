@@ -1,0 +1,10 @@
+module examples.record_missing_field
+
+type Pair
+    left is Text
+    right is Text
+
+function Build
+    gives Pair
+    do
+        give record Pair { left as "x" }

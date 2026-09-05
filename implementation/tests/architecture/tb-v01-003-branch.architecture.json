@@ -1,6 +1,6 @@
 {
   "projection_schema_version": "architecture-projection-v0.1",
-  "source_air_schema_version": "air-minimal-v0.1",
+  "source_air_schema_version": "touba-air-v1",
   "test_only": true,
   "module": {
     "id": "module:examples.branch",
@@ -84,13 +84,13 @@
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
         "start_byte": 331,
-        "end_byte": 403,
+        "end_byte": 505,
         "start_line": 21,
         "start_column": 0,
-        "end_line": 25,
+        "end_line": 26,
         "end_column": 0
       },
-      "responsibility": "Reviewer",
+      "responsibility": "Fulfill the declared Reviewer responsibility using only authorized capabilities.",
       "callable_by": [
         "strategy:examples.branch/RunReview"
       ],
@@ -103,11 +103,11 @@
       "origin": "local",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 403,
-        "end_byte": 521,
-        "start_line": 25,
+        "start_byte": 505,
+        "end_byte": 623,
+        "start_line": 26,
         "start_column": 0,
-        "end_line": 31,
+        "end_line": 32,
         "end_column": 0
       },
       "memory_scopes": []
@@ -235,11 +235,11 @@
       "entry_node_id": "node:graph:strategy:examples.branch/RunReview:1",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 474,
-        "end_byte": 521,
-        "start_line": 28,
+        "start_byte": 576,
+        "end_byte": 623,
+        "start_line": 29,
         "start_column": 4,
-        "end_line": 31,
+        "end_line": 32,
         "end_column": 0
       }
     },
@@ -252,11 +252,11 @@
       "arguments": [],
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 485,
-        "end_byte": 493,
-        "start_line": 29,
+        "start_byte": 587,
+        "end_byte": 595,
+        "start_line": 30,
         "start_column": 8,
-        "end_line": 29,
+        "end_line": 30,
         "end_column": 16
       }
     },
@@ -270,11 +270,11 @@
       ],
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 502,
-        "end_byte": 520,
-        "start_line": 30,
+        "start_byte": 604,
+        "end_byte": 622,
+        "start_line": 31,
         "start_column": 8,
-        "end_line": 30,
+        "end_line": 31,
         "end_column": 26
       }
     },
@@ -402,11 +402,11 @@
       "node_id": "node:graph:strategy:examples.branch/RunReview:1",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 485,
-        "end_byte": 493,
-        "start_line": 29,
+        "start_byte": 587,
+        "end_byte": 595,
+        "start_line": 30,
         "start_column": 8,
-        "end_line": 29,
+        "end_line": 30,
         "end_column": 16
       }
     },
@@ -418,11 +418,11 @@
       "node_id": "node:graph:strategy:examples.branch/RunReview:2",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 502,
-        "end_byte": 520,
-        "start_line": 30,
+        "start_byte": 604,
+        "end_byte": 622,
+        "start_line": 31,
         "start_column": 8,
-        "end_line": 30,
+        "end_line": 31,
         "end_column": 26
       }
     }
@@ -475,11 +475,11 @@
       "caller_kind": "strategy",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 371,
-        "end_byte": 401,
-        "start_line": 23,
+        "start_byte": 473,
+        "end_byte": 503,
+        "start_line": 24,
         "start_column": 4,
-        "end_line": 23,
+        "end_line": 24,
         "end_column": 34
       }
     },
@@ -649,11 +649,11 @@
       "role": "next",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 502,
-        "end_byte": 520,
-        "start_line": 30,
+        "start_byte": 604,
+        "end_byte": 622,
+        "start_line": 31,
         "start_column": 8,
-        "end_line": 30,
+        "end_line": 31,
         "end_column": 26
       }
     }

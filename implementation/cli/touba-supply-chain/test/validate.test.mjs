@@ -462,7 +462,7 @@ function withFixtureProject(callback) {
     writeFileSync(paths.reviewEvidence, reviewEvidenceText, "utf8");
 
     const air = {
-      air_schema_version: "air-minimal-v0.1",
+      air_schema_version: "touba-air-v1",
       module: {
         id: "module:examples.sc1",
         name: "examples.sc1",

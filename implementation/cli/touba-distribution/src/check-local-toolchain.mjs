@@ -35,6 +35,7 @@ skill BuildNote
         give SourceNote
 
 agent Researcher
+    responsibility "Build sourced notes only through the explicitly authorized skill."
     uses BuildNote
     callable_by strategy RunSourcedNote
 
@@ -69,7 +70,7 @@ function checkToolchain(toolchainRoot) {
 
     const version = runTouba(["version", "--json"], { env });
     const versionReport = JSON.parse(version.stdout);
-    assertEqual(versionReport.schemas.air, "air-minimal-v0.1", "AIR schema");
+    assertEqual(versionReport.schemas.air, "touba-air-v1", "AIR schema");
     assertEqual(versionReport.distribution.channel, "local-archive-check", "distribution channel");
     assertEqual(versionReport.commands.doctor, true, "doctor command manifest");
 
@@ -80,7 +81,7 @@ function checkToolchain(toolchainRoot) {
 
     const projectRoot = join(workspace, "project");
     runTouba(["init", "--root", projectRoot], { env });
-    assertFile(join(projectRoot, ".touba", "secrets.local.json"));
+    assertFile(join(projectRoot, ".touba", "state", "secrets.local.json"));
 
     const sourceDir = join(projectRoot, "src", "examples");
     mkdirSync(sourceDir, { recursive: true });
@@ -90,7 +91,7 @@ function checkToolchain(toolchainRoot) {
 
     runTouba(["compile", sourcePath, "--out", airPath], { env });
     const air = JSON.parse(readFileSync(airPath, "utf8"));
-    assertEqual(air.air_schema_version, "air-minimal-v0.1", "compiled AIR schema");
+    assertEqual(air.air_schema_version, "touba-air-v1", "compiled AIR schema");
 
     const inspect = runTouba(["inspect", airPath], { env });
     if (!inspect.stdout.includes("Touba Inspect touba-inspect-v0.1")) {
@@ -108,7 +109,7 @@ function checkToolchain(toolchainRoot) {
       "trace",
     ], { env });
     const trace = JSON.parse(run.stdout);
-    assertEqual(trace.trace_protocol_version, "trace-minimal-v0.1", "trace protocol");
+    assertEqual(trace.trace_protocol_version, "touba-trace-v1", "trace protocol");
     assertEqual(trace.events.at(-1).payload.status, "success", "runtime status");
 
     process.stdout.write(`CHECKED ${toolchainRoot}\n`);

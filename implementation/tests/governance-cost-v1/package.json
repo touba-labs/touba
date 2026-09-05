@@ -1,0 +1,7 @@
+{
+  "name": "@touba/governance-cost-v1-fixture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test benchmark.test.mjs" }
+}

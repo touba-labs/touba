@@ -717,6 +717,7 @@ const TOUBA_V01_KEYWORDS = Object.freeze([
   "gives",
   "requires",
   "secrets",
+  "responsibility",
   "human.approve",
   "human.review",
   "show",

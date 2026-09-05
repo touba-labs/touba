@@ -183,6 +183,7 @@ if (parsedArgs.manifestPath !== undefined) {
   }
 }
 
+let supplyChainValidated = false;
 if (parsedArgs.supplyChainLockPath !== undefined) {
   const supplyChainGate = validateSupplyChainGate({
     lockPath: parsedArgs.supplyChainLockPath,
@@ -195,6 +196,20 @@ if (parsedArgs.supplyChainLockPath !== undefined) {
       supplyChainGate.code = "RunPlanSupplyChainDrift";
     }
     process.stderr.write(formatSupplyChainGateError(supplyChainGate));
+    process.exit(1);
+  }
+  supplyChainValidated = true;
+}
+
+let hardenedExecutionProfile;
+if (parsedArgs.hardenedProfilePath !== undefined) {
+  try {
+    hardenedExecutionProfile = parseJsonObject(
+      readFileSync(parsedArgs.hardenedProfilePath, "utf8"),
+      `hardened execution profile ${parsedArgs.hardenedProfilePath}`,
+    );
+  } catch (e) {
+    process.stderr.write(`error: invalid hardened execution profile ${parsedArgs.hardenedProfilePath}: ${e.message}\n`);
     process.exit(1);
   }
 }
@@ -368,6 +383,7 @@ try {
     agentDecisionProviderTimeoutMs: parsedArgs.agentDecisionProviderTimeoutMs,
     agentDecisionProviderMaxRetries: parsedArgs.agentDecisionProviderMaxRetries,
     maxAgentSteps: parsedArgs.maxAgentSteps,
+    maxLoopIterations: parsedArgs.maxLoopIterations,
     runTimeoutMs: parsedArgs.runTimeoutMs,
     runLimits: parsedArgs.runLimits,
     cancelRequested: parsedArgs.cancelBeforeDispatch,
@@ -376,6 +392,9 @@ try {
     killSwitchEnabled: parsedArgs.killSwitchEnabled,
     durableHumanApprovals: parsedArgs.humanCheckpointOutPath !== undefined,
     humanApprovalResumeCheckpoint,
+    hardenedExecutionProfile,
+    supplyChainValidated,
+    redactionEnabled: true,
   };
   result = parsedArgs.triggerRef
     ? await runTriggerScheduleRunner(document, parsedArgs, executionOptions, triggerState)
@@ -474,6 +493,7 @@ function loadRunPlanFromPath(runPlanPath) {
   validateRunPlanOptionalPath(document, "manifest");
   validateRunPlanOptionalPath(document, "secrets_profile");
   validateRunPlanOptionalPath(document, "supply_chain_lock");
+  validateRunPlanOptionalPath(document, "hardened_profile");
   validateRunPlanOptionalPath(document, "trigger_manifest");
   validateRunPlanLimits(document.run_limits);
   validateRunPlanOutputs(document.outputs);
@@ -509,6 +529,9 @@ function applyRunPlan(parsed, runPlan) {
   }
   if (parsed.supplyChainLockPath === undefined && plan.supply_chain_lock !== undefined) {
     parsed.supplyChainLockPath = resolveRunPlanPath(runPlan, plan.supply_chain_lock);
+  }
+  if (parsed.hardenedProfilePath === undefined && plan.hardened_profile !== undefined) {
+    parsed.hardenedProfilePath = resolveRunPlanPath(runPlan, plan.hardened_profile);
   }
   if (plan.profile === "prod") {
     parsed.requireSupplyChainLock = true;
@@ -999,8 +1022,10 @@ function parseArgs(rawArgs) {
     triggerRunnerMaxRuns: undefined,
     supplyChainLockPath: undefined,
     requireSupplyChainLock: false,
+    hardenedProfilePath: undefined,
     entryRef: undefined,
     maxAgentSteps: undefined,
+    maxLoopIterations: undefined,
     runTimeoutMs: undefined,
     runLimitsJson: undefined,
     runLimitFlags: {},
@@ -1250,6 +1275,14 @@ function parseArgs(rawArgs) {
       parsed.supplyChainLockPath = arg.slice("--supply-chain-lock=".length);
     } else if (arg === "--require-supply-chain-lock") {
       parsed.requireSupplyChainLock = true;
+    } else if (arg === "--hardened-profile") {
+      index += 1;
+      if (index >= rawArgs.length) {
+        return { error: "--hardened-profile requires a path" };
+      }
+      parsed.hardenedProfilePath = rawArgs[index];
+    } else if (arg.startsWith("--hardened-profile=")) {
+      parsed.hardenedProfilePath = arg.slice("--hardened-profile=".length);
     } else if (arg === "--trigger") {
       index += 1;
       if (index >= rawArgs.length) {
@@ -1290,6 +1323,22 @@ function parseArgs(rawArgs) {
         return { error: "--max-agent-steps requires a positive integer" };
       }
       parsed.maxAgentSteps = maxAgentSteps;
+    } else if (arg === "--max-loop-iterations") {
+      index += 1;
+      if (index >= rawArgs.length) {
+        return { error: "--max-loop-iterations requires a positive integer" };
+      }
+      const maxLoopIterations = parsePositiveInteger(rawArgs[index]);
+      if (!maxLoopIterations) {
+        return { error: "--max-loop-iterations requires a positive integer" };
+      }
+      parsed.maxLoopIterations = maxLoopIterations;
+    } else if (arg.startsWith("--max-loop-iterations=")) {
+      const maxLoopIterations = parsePositiveInteger(arg.slice("--max-loop-iterations=".length));
+      if (!maxLoopIterations) {
+        return { error: "--max-loop-iterations requires a positive integer" };
+      }
+      parsed.maxLoopIterations = maxLoopIterations;
     } else if (arg === "--run-timeout-ms") {
       index += 1;
       if (index >= rawArgs.length) {
@@ -1608,7 +1657,7 @@ function parseArgs(rawArgs) {
 
 function printUsage() {
   process.stderr.write(
-    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
+    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
 }
 
@@ -2606,7 +2655,7 @@ function lastTriggerRefusal(trace, triggerRef, eventId) {
 function replayRejectedResult(document, event, runId = undefined) {
   const effectiveRunId = runId ?? "trigger-replay-rejected";
   const trace = {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: {
       module_ref: document.module?.id,
       entry_ref: event.triggerRef,
@@ -2699,7 +2748,7 @@ function aggregateTriggerRunnerResults(document, triggerRef, runResults) {
       result: result.result ?? null,
     })),
     trace: {
-      trace_protocol_version: "trace-minimal-v0.1",
+      trace_protocol_version: "touba-trace-v1",
       run: {
         module_ref: document.module?.id,
         entry_ref: triggerRef,

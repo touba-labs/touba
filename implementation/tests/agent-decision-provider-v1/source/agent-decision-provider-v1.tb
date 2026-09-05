@@ -30,6 +30,7 @@ skill HiddenAdminPath
 
 agent DonneesQuebecResearcher
     description "Selects declared dataset research capabilities for one request."
+    responsibility "Selects declared dataset research capabilities for one request."
     uses ListDatasets
     uses BuildBrief
     callable_by strategy RunResearch

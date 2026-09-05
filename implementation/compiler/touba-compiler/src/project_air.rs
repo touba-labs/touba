@@ -408,6 +408,9 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
 
         self.include_use_refs(&declaration.use_refs);
         self.include_memory_scopes(&declaration.memory_scopes);
+        if let Some(signature) = declaration.signature.as_ref() {
+            self.include_signature(signature, Some(&declaration.source_ref));
+        }
         self.validate_callable_by_refs(&declaration);
 
         if self.seen_definitions.insert(declaration.id.clone()) {

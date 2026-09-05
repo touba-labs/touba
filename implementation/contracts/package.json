@@ -1,0 +1,17 @@
+{
+  "name": "@touba/machine-conformance",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Standalone Touba AIR/trace contracts, conformance corpus and migrations.",
+  "files": ["machine", "conformance", "reference-runtime"],
+  "bin": {
+    "touba-conformance": "./conformance/runner.mjs",
+    "touba-migrate-machine": "./conformance/migrate.mjs"
+  },
+  "scripts": {
+    "test": "node --test machine/contracts.test.mjs conformance/conformance.test.mjs reference-runtime/reference-runtime.test.mjs",
+    "conformance": "node conformance/runner.mjs"
+  },
+  "engines": { "node": ">=24 <25" },
+  "license": "Apache-2.0"
+}

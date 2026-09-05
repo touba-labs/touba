@@ -1,0 +1,8 @@
+module examples.failure_missing_family
+
+skill Run
+    gives Text
+    do
+        give "ok"
+    on failure
+        stop

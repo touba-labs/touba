@@ -1,0 +1,10 @@
+module examples.agent_responsibility_empty
+
+agent Reviewer
+    responsibility ""
+    callable_by strategy RunReview
+
+strategy RunReview
+    uses Reviewer
+    do
+        Reviewer

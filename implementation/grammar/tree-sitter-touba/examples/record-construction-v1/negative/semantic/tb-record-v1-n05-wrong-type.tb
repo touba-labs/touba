@@ -1,0 +1,9 @@
+module examples.record_wrong_type
+
+type Decision
+    approved is Boolean
+
+function Build
+    gives Decision
+    do
+        give record Decision { approved as "yes" }

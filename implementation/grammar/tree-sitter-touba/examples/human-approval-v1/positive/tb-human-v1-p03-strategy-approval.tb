@@ -10,6 +10,7 @@ skill ReviewChange
         give change
 
 agent Reviewer
+    responsibility "Fulfill the declared Reviewer responsibility using only authorized capabilities."
     uses ReviewChange
     callable_by strategy RunApproval
 

@@ -5,11 +5,11 @@
   "source_revision": "f2e5f08",
   "source_dirty": false,
   "protocols": {
-    "air": "air-minimal-v0.1",
+    "air": "touba-air-v1",
     "manifest": "touba-manifest-v1",
     "ownership": "touba-ownership-v0.1",
     "supply_chain_lock": "touba-lock-v0.1",
-    "trace": "trace-minimal-v0.1"
+    "trace": "touba-trace-v1"
   },
   "artifacts": [
     {

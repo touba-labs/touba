@@ -1,15 +1,28 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import { failureFamilyForRuntimeCode } from "../../../contracts/machine/contracts.mjs";
 import {
   agentDecisionProviderContent,
   agentProviderObservationBudgetReport,
 } from "./agent-provider-content.mjs";
+import { runAgentDecisionLoop } from "./agent-loop.mjs";
 import {
+  AIR_CAPABILITY_PROFILE,
   AIR_JSON_PROFILE,
   AIR_SCHEMA_VERSION,
   indexAirDocument,
   validateAirDocument,
 } from "./air-runtime-profile.mjs";
+import {
+  callerKindFromRef,
+  evaluateAgentInvocationAuthority,
+} from "./authority.mjs";
+import { executeGraphTraversal } from "./graph-execution.mjs";
+import {
+  HARDENED_EXECUTION_PROFILE_VERSION,
+  enforceHardenedExecutionProfile,
+  probeHostSandbox,
+} from "./hardened-execution-profile.mjs";
 import {
   runProcessToolHandler,
   TOOL_HANDLER_PROTOCOL_VERSION,
@@ -30,6 +43,10 @@ import {
   validateHumanApprovalCheckpointCompatibility,
 } from "./human-approval-checkpoints.mjs";
 import {
+  agentHumanReviewApprovalRef,
+  classifyHumanApprovalDecision,
+} from "./interactions.mjs";
+import {
   isPortablePayloadConstraintScalar,
   payloadValueKind,
   validateToolInputPayload,
@@ -48,6 +65,7 @@ import {
   RuntimeStop,
   ToubaRuntimeError,
 } from "./runtime-errors.mjs";
+import { executeRunLifecycle } from "./result-construction.mjs";
 import {
   assertRunCanContinue as assertRuntimeRunCanContinue,
   assertRunCanDispatch as assertRuntimeRunCanDispatch,
@@ -83,7 +101,8 @@ import {
 
 export { ToubaRuntimeError };
 export { TRACE_PROTOCOL_VERSION };
-export { AIR_JSON_PROFILE, AIR_SCHEMA_VERSION };
+export { AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, AIR_SCHEMA_VERSION };
+export { HARDENED_EXECUTION_PROFILE_VERSION, enforceHardenedExecutionProfile, probeHostSandbox };
 
 const TOUBA_MAX_SAFE_INT = 9007199254740991n;
 const BUILTIN_TEXT = "builtin:Text";
@@ -184,6 +203,7 @@ const MEMORY_METADATA_LEAK_FIELDS = new Set([
 export const RUNTIME_CAPABILITIES = Object.freeze([
   AIR_SCHEMA_VERSION,
   AIR_JSON_PROFILE,
+  AIR_CAPABILITY_PROFILE,
   "sequential-flow-v0.1",
   "simple-failure-paths-v0.1",
   TRACE_PROTOCOL_VERSION,
@@ -230,51 +250,19 @@ export async function executeAirDocument(document, options = {}) {
   validateAirDocument(document);
 
   const entryRef = options.entryRef ?? defaultEntryRef(document);
-  const context = createExecutionContext(document, entryRef, options);
-  const { trace } = context;
-
-  trace.push("run_started", {
-    payload: {
-      entry_ref: entryRef,
-    },
-  });
-
-  let status = "success";
-  let result;
-  try {
-    initializeRunControls(context);
-    result = context.humanApprovalResumeCheckpoint
+  const hardenedOptions = enforceHardenedExecutionProfile(document, options);
+  const context = createExecutionContext(document, entryRef, { ...options, ...hardenedOptions });
+  return executeRunLifecycle(
+    context,
+    async () => context.humanApprovalResumeCheckpoint
       ? await executeHumanApprovalResumeCheckpoint(document, entryRef, context)
-      : await executeTarget(entryRef, context);
-  } catch (error) {
-    if (error instanceof RuntimeStop) {
-      status = "stopped";
-    } else if (error instanceof RuntimeCancelled) {
-      status = "cancelled";
-      traceRunCancelled(context, error.details);
-    } else if (error instanceof RuntimeFailure) {
-      status = "failure";
-      traceUnhandledRuntimeFailure(context, error);
-    } else {
-      throw error;
-    }
-  }
-
-  trace.push("run_completed", {
-    payload: {
-      status,
+      : executeTarget(entryRef, context),
+    {
+      initializeRunControls,
+      traceRunCancelled,
+      traceUnhandledRuntimeFailure,
     },
-  });
-
-  const response = {
-    status,
-    result,
-    trace: trace.document(),
-  };
-  if (context.pendingHumanApprovalCheckpoint) {
-    response.checkpoint = context.pendingHumanApprovalCheckpoint;
-  }
-  return response;
+  );
 }
 
 export async function executeTriggerEvent(document, event, options = {}) {
@@ -282,51 +270,19 @@ export async function executeTriggerEvent(document, event, options = {}) {
 
   const triggerEvent = normalizeTriggerEvent(event);
   const entryRef = triggerEvent.triggerRef ?? "trigger:unknown";
-  const context = createExecutionContext(document, entryRef, options);
-  const { trace } = context;
-
-  trace.push("run_started", {
-    payload: {
-      entry_ref: entryRef,
-    },
-  });
-
-  let status = "success";
-  let result;
-  try {
-    initializeRunControls(context);
-    result = context.humanApprovalResumeCheckpoint
+  const hardenedOptions = enforceHardenedExecutionProfile(document, options);
+  const context = createExecutionContext(document, entryRef, { ...options, ...hardenedOptions });
+  return executeRunLifecycle(
+    context,
+    async () => context.humanApprovalResumeCheckpoint
       ? await executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, context)
-      : await executeNormalizedTriggerEvent(triggerEvent, context);
-  } catch (error) {
-    if (error instanceof RuntimeStop) {
-      status = "stopped";
-    } else if (error instanceof RuntimeCancelled) {
-      status = "cancelled";
-      traceRunCancelled(context, error.details);
-    } else if (error instanceof RuntimeFailure) {
-      status = "failure";
-      traceUnhandledRuntimeFailure(context, error);
-    } else {
-      throw error;
-    }
-  }
-
-  trace.push("run_completed", {
-    payload: {
-      status,
+      : executeNormalizedTriggerEvent(triggerEvent, context),
+    {
+      initializeRunControls,
+      traceRunCancelled,
+      traceUnhandledRuntimeFailure,
     },
-  });
-
-  const response = {
-    status,
-    result,
-    trace: trace.document(),
-  };
-  if (context.pendingHumanApprovalCheckpoint) {
-    response.checkpoint = context.pendingHumanApprovalCheckpoint;
-  }
-  return response;
+  );
 }
 
 async function executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, context) {
@@ -431,7 +387,10 @@ function createExecutionContext(document, entryRef, options = {}) {
     pendingHumanApprovalCheckpoint: null,
     callStack: [],
     loopState: new Map(),
-    maxLoopIterations: options.maxLoopIterations ?? 100,
+    maxLoopIterations: normalizePositiveRuntimeInteger(
+      options.maxLoopIterations ?? options.max_loop_iterations ?? 100,
+      "maxLoopIterations",
+    ),
     activeAgentRef: null,
     activeCallerRef: null,
     nextCallIndex: 1,
@@ -714,7 +673,8 @@ function validateAgentHumanReviewCallFrame(context, checkpoint, agentRef) {
 function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
   const approvalRef = checkpoint.approval_ref;
   const humanDecision = context.humanApprovalDecisions.get(approvalRef);
-  if (!["approved", "rejected", "expired", "cancelled"].includes(humanDecision)) {
+  const transition = classifyHumanApprovalDecision(humanDecision);
+  if (!transition.valid) {
     const error = new RuntimeFailure(
       `invalid human approval decision ${humanDecision} for ${approvalRef}`,
       { approvalRef, decision: humanDecision, agentRef: agent.id },
@@ -741,7 +701,7 @@ function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
     },
   });
 
-  if (humanDecision === "approved") {
+  if (transition.approved) {
     context.trace.push("human_approval_resumed", {
       payload: {
         approval_ref: approvalRef,
@@ -756,12 +716,7 @@ function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
     };
   }
 
-  const terminalKind = {
-    rejected: "human_approval_rejected",
-    expired: "human_approval_expired",
-    cancelled: "human_approval_cancelled",
-  }[humanDecision];
-  context.trace.push(terminalKind, {
+  context.trace.push(transition.terminalEvent, {
     payload: {
       approval_ref: approvalRef,
       decision: humanDecision,
@@ -1624,108 +1579,108 @@ async function executeTarget(targetRef, context, callArguments = null, options =
     );
   }
   if (targetRef.startsWith("agent:")) {
-    if (callArguments) {
-      throw new RuntimeFailure("call_agent does not accept arguments in anneau 1", { targetRef });
-    }
     const agent = requireDefinition(context.indexes.agents, targetRef);
-    const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
-    const capabilities = capabilityRefs.map((capabilityRef) =>
-      agentCapabilityDescriptor(capabilityRef, context)
-    );
-    assertNoSecretValueInAgentCapabilityDescriptors(capabilities, context, agent.id);
-    context.trace.push("agent_capabilities_listed", {
-      payload: {
-        agent_ref: agent.id,
-        authority_source: "uses",
-        capability_refs: capabilityRefs,
-        capabilities,
-      },
-    });
-
-    if (context.agentDecisionProvider && !context.agentDecisions.has(agent.id)) {
-      return executeAgentDecisionLoop(agent, capabilityRefs, context);
-    }
-
-    const decision = await resolveAgentDecision(agent, capabilityRefs, context);
-    if (decision) {
-      context.trace.push("agent_decision_recorded", {
-        payload: compactPayload({
+    return executeAgentInterface(agent, callArguments, context, async () => {
+      const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
+      const capabilities = capabilityRefs.map((capabilityRef) =>
+        agentCapabilityDescriptor(capabilityRef, context)
+      );
+      assertNoSecretValueInAgentCapabilityDescriptors(capabilities, context, agent.id);
+      context.trace.push("agent_capabilities_listed", {
+        payload: {
           agent_ref: agent.id,
-          action: decision.action,
-          selected_ref: decision.targetRef,
-          decision_source: decision.source,
-          reason: decision.reason,
-          arguments_present: decision.arguments !== undefined ? true : undefined,
-        }),
+          authority_source: "uses",
+          capability_refs: capabilityRefs,
+          capabilities,
+        },
       });
 
-      if (decision.action === "answer_directly") {
-        context.trace.push("agent_direct_answer_returned", {
+      if (context.agentDecisionProvider && !context.agentDecisions.has(agent.id)) {
+        return executeAgentDecisionLoop(agent, capabilityRefs, context);
+      }
+
+      const decision = await resolveAgentDecision(agent, capabilityRefs, context);
+      if (decision) {
+        context.trace.push("agent_decision_recorded", {
           payload: compactPayload({
             agent_ref: agent.id,
+            action: decision.action,
+            selected_ref: decision.targetRef,
+            decision_source: decision.source,
+            reason: decision.reason,
+            arguments_present: decision.arguments !== undefined ? true : undefined,
+          }),
+        });
+
+        if (decision.action === "answer_directly") {
+          validateAgentFinalResult(agent, decision.result, context);
+          context.trace.push("agent_direct_answer_returned", {
+            payload: compactPayload({
+              agent_ref: agent.id,
+              decision_source: decision.source,
+              reason: decision.reason,
+            }),
+          });
+          return decision.result;
+        }
+
+        assertAgentDecisionDoesNotExecuteSkillPack(decision, agent, capabilityRefs, context);
+        if (!capabilityRefs.includes(decision.targetRef)) {
+          context.trace.push("agent_capability_refused", {
+            payload: {
+              agent_ref: agent.id,
+              selected_ref: decision.targetRef,
+              allowed_refs: capabilityRefs,
+              reason: "capability_not_declared_in_uses",
+            },
+          });
+          throw new RuntimeFailure(
+            `agent capability refused: ${decision.targetRef} is not declared in ${agent.id} uses`,
+            {
+              targetRef: decision.targetRef,
+              agentRef: agent.id,
+              allowedRefs: capabilityRefs,
+              reason: "capability_not_declared_in_uses",
+            },
+            "AgentCapabilityNotAllowed",
+          );
+        }
+
+        context.trace.push("agent_capability_selected", {
+          payload: compactPayload({
+            agent_ref: agent.id,
+            selected_ref: decision.targetRef,
+            authority_source: "uses",
             decision_source: decision.source,
             reason: decision.reason,
           }),
         });
-        return decision.result;
+
+        const previousAgentRef = context.activeAgentRef;
+        const previousCallerRef = context.activeCallerRef;
+        const selectedCallArguments = callArgumentsForAgentDecision(decision, context);
+        if (decision.targetRef.startsWith("agent:")) {
+          authorizeAgentInvocationByCaller(agent.id, decision.targetRef, context);
+        }
+        context.activeAgentRef = agent.id;
+        context.activeCallerRef = agent.id;
+        try {
+          return await executeTarget(decision.targetRef, context, selectedCallArguments);
+        } finally {
+          context.activeAgentRef = previousAgentRef;
+          context.activeCallerRef = previousCallerRef;
+        }
       }
 
-      assertAgentDecisionDoesNotExecuteSkillPack(decision, agent, capabilityRefs, context);
-      if (!capabilityRefs.includes(decision.targetRef)) {
-        context.trace.push("agent_capability_refused", {
-          payload: {
-            agent_ref: agent.id,
-            selected_ref: decision.targetRef,
-            allowed_refs: capabilityRefs,
-            reason: "capability_not_declared_in_uses",
-          },
-        });
-        throw new RuntimeFailure(
-          `agent capability refused: ${decision.targetRef} is not declared in ${agent.id} uses`,
-          {
-            targetRef: decision.targetRef,
-            agentRef: agent.id,
-            allowedRefs: capabilityRefs,
-            reason: "capability_not_declared_in_uses",
-          },
-          "AgentCapabilityNotAllowed",
-        );
-      }
-
-      context.trace.push("agent_capability_selected", {
-        payload: compactPayload({
-          agent_ref: agent.id,
-          selected_ref: decision.targetRef,
-          authority_source: "uses",
-          decision_source: decision.source,
-          reason: decision.reason,
-        }),
-      });
-
-      const previousAgentRef = context.activeAgentRef;
-      const previousCallerRef = context.activeCallerRef;
-      const selectedCallArguments = callArgumentsForAgentDecision(decision, context);
-      if (decision.targetRef.startsWith("agent:")) {
-        authorizeAgentInvocationByCaller(agent.id, decision.targetRef, context);
-      }
-      context.activeAgentRef = agent.id;
-      context.activeCallerRef = agent.id;
-      try {
-        return await executeTarget(decision.targetRef, context, selectedCallArguments);
-      } finally {
-        context.activeAgentRef = previousAgentRef;
-        context.activeCallerRef = previousCallerRef;
-      }
-    }
-
-    throw new RuntimeFailure(
-      `agent decision required for ${agent.id}`,
-      {
-        agentRef: agent.id,
-        allowedRefs: capabilityRefs,
-      },
-      "AgentDecisionRequired",
-    );
+      throw new RuntimeFailure(
+        `agent decision required for ${agent.id}`,
+        {
+          agentRef: agent.id,
+          allowedRefs: capabilityRefs,
+        },
+        "AgentDecisionRequired",
+      );
+    }, { markInputValues: options.inputValueArguments === true });
   }
   if (targetRef.startsWith("strategy:")) {
     const strategy = requireDefinition(context.indexes.strategies, targetRef);
@@ -1750,148 +1705,158 @@ async function executeTarget(targetRef, context, callArguments = null, options =
   throw new RuntimeFailure(`unsupported AIR target ${targetRef}`, { targetRef });
 }
 
-async function executeAgentDecisionLoop(agent, capabilityRefs, context, options = {}) {
-  const observations = Array.isArray(options.observations) ? options.observations : [];
-  const startStepIndex = Number.isSafeInteger(options.startStepIndex) && options.startStepIndex >= 0
-    ? options.startStepIndex
-    : 0;
-
-  for (let stepIndex = startStepIndex; stepIndex < context.maxAgentSteps; stepIndex += 1) {
-    const loopState = {
-      stepIndex,
-      observations,
-    };
-    const decision = await resolveAgentDecision(agent, capabilityRefs, context, loopState);
-    if (!decision) {
-      throw new RuntimeFailure(
-        `agent decision required for ${agent.id}`,
-        {
-          agentRef: agent.id,
-          allowedRefs: capabilityRefs,
-        },
-        "AgentDecisionRequired",
+async function executeAgentInterface(agent, callArguments, context, execute) {
+  const signature = agent.signature;
+  if (!signature) {
+    if (callArguments !== null) {
+      refuseAgentInterface(
+        context,
+        agent,
+        "interface_missing",
+        "AgentInterfaceRequired",
+        `agent ${agent.id} has no declared takes/gives interface`,
       );
     }
+    return execute();
+  }
 
-    context.trace.push("agent_decision_recorded", {
-      payload: compactPayload({
-        agent_ref: agent.id,
-        step_index: stepIndex,
-        action: decision.action,
-        selected_ref: decision.targetRef,
-        decision_source: decision.source,
-        reason: decision.reason,
-        arguments_present: decision.arguments !== undefined ? true : undefined,
-      }),
-    });
-
-    if (decision.action === "answer_directly") {
-      context.trace.push("agent_direct_answer_returned", {
-        payload: compactPayload({
-          agent_ref: agent.id,
-          step_index: stepIndex,
-          decision_source: decision.source,
-          reason: decision.reason,
-        }),
-      });
-      return decision.result;
-    }
-
-    if (decision.action === "request_human_review") {
-      const reviewResult = executeAgentHumanReview(agent, decision, context, stepIndex, observations);
-      observations.push({
-        step_index: stepIndex,
-        action: "request_human_review",
-        result_type: "human_review_decision",
-        value: reviewResult,
-      });
-      continue;
-    }
-
-    assertAgentDecisionDoesNotExecuteSkillPack(decision, agent, capabilityRefs, context, stepIndex);
-    if (!capabilityRefs.includes(decision.targetRef)) {
-      context.trace.push("agent_capability_refused", {
-        payload: {
-          agent_ref: agent.id,
-          step_index: stepIndex,
-          selected_ref: decision.targetRef,
-          allowed_refs: capabilityRefs,
-          reason: "capability_not_declared_in_uses",
-        },
-      });
-      throw new RuntimeFailure(
-        `agent capability refused: ${decision.targetRef} is not declared in ${agent.id} uses`,
-        {
-          targetRef: decision.targetRef,
-          agentRef: agent.id,
-          allowedRefs: capabilityRefs,
-          reason: "capability_not_declared_in_uses",
-        },
-        "AgentCapabilityNotAllowed",
+  const inputs = Array.isArray(signature.inputs) ? signature.inputs : [];
+  let boundArguments = callArguments;
+  if (boundArguments === null) {
+    if (context.callStack.length > 0 && inputs.length > 0) {
+      refuseAgentInterface(
+        context,
+        agent,
+        "explicit_arguments_required",
+        "AgentInterfaceInputRequired",
+        `agent ${agent.id} requires explicit call arguments`,
       );
     }
-
-    context.trace.push("agent_capability_selected", {
-      payload: compactPayload({
-        agent_ref: agent.id,
-        step_index: stepIndex,
-        selected_ref: decision.targetRef,
-        authority_source: "uses",
-        decision_source: decision.source,
-        reason: decision.reason,
-      }),
-    });
-
-    const selectedCallArguments = callArgumentsForAgentDecision(decision, context);
-    if (decision.targetRef.startsWith("agent:")) {
-      authorizeAgentInvocationByCaller(agent.id, decision.targetRef, context);
-    }
-
-    const previousAgentRef = context.activeAgentRef;
-    const previousCallerRef = context.activeCallerRef;
-    context.activeAgentRef = agent.id;
-    context.activeCallerRef = agent.id;
-    let result;
-    try {
-      result = await executeTarget(decision.targetRef, context, selectedCallArguments);
-    } finally {
-      context.activeAgentRef = previousAgentRef;
-      context.activeCallerRef = previousCallerRef;
-    }
-
-    const observation = {
-      step_index: stepIndex,
-      action: "select_capability",
-      target_ref: decision.targetRef,
-      kind: callerKindFromRef(decision.targetRef),
-      result_type: payloadValueKind(result),
-      value: result,
-    };
-    observations.push(observation);
-    context.trace.push("agent_capability_result_returned", {
-      payload: compactPayload({
-        agent_ref: agent.id,
-        step_index: stepIndex,
-        selected_ref: decision.targetRef,
-        result_available: true,
-        result_type: observation.result_type,
-      }),
+    boundArguments = inputs.map((input) => {
+      const handle = valueHandle(input.name);
+      if (!context.values.has(handle)) {
+        refuseAgentInterface(
+          context,
+          agent,
+          "input_missing",
+          "AgentInterfaceInputRequired",
+          `agent ${agent.id} is missing interface input ${input.name}`,
+          { input: input.name, expectedTypeRef: input.type_ref },
+        );
+      }
+      return context.values.get(handle);
     });
   }
 
-  context.trace.push("agent_step_limit_exceeded", {
-    payload: {
+  if (boundArguments.length !== inputs.length) {
+    refuseAgentInterface(
+      context,
+      agent,
+      "input_count_mismatch",
+      "AgentInterfaceInputRequired",
+      `agent ${agent.id} interface argument count does not match takes`,
+      { expected: inputs.length, actual: boundArguments.length },
+    );
+  }
+  for (let index = 0; index < inputs.length; index += 1) {
+    if (!isValueCompatibleWithType(boundArguments[index], inputs[index].type_ref, context)) {
+      refuseAgentInterface(
+        context,
+        agent,
+        "input_type_mismatch",
+        "AgentInterfaceInputTypeMismatch",
+        `agent ${agent.id} interface input ${inputs[index].name} does not match ${inputs[index].type_ref}`,
+        {
+          input: inputs[index].name,
+          expectedTypeRef: inputs[index].type_ref,
+          valueKind: payloadValueKind(boundArguments[index]),
+        },
+      );
+    }
+  }
+
+  context.trace.push("agent_interface_entered", {
+    payload: compactPayload({
       agent_ref: agent.id,
-      max_agent_steps: context.maxAgentSteps,
-    },
+      caller_ref: context.activeCallerRef,
+      input_count: inputs.length,
+      output_type: signature.output_type,
+    }),
   });
-  throw new RuntimeFailure(
-    `agent step limit exceeded for ${agent.id}`,
+  const result = await withBoundArguments(
+    signature,
+    boundArguments,
+    context,
+    execute,
+    { markInputValues: true },
+  );
+  validateAgentFinalResult(agent, result, context);
+  context.trace.push("agent_interface_result_returned", {
+    payload: compactPayload({
+      agent_ref: agent.id,
+      caller_ref: context.activeCallerRef,
+      output_type: signature.output_type,
+      result_type: payloadValueKind(result),
+    }),
+  });
+  return result;
+}
+
+function validateAgentFinalResult(agent, result, context) {
+  const expectedTypeRef = agent.signature?.output_type;
+  if (!expectedTypeRef || isValueCompatibleWithType(result, expectedTypeRef, context)) {
+    return result;
+  }
+  refuseAgentInterface(
+    context,
+    agent,
+    "result_type_mismatch",
+    "AgentInterfaceResultTypeMismatch",
+    `agent ${agent.id} final result does not match ${expectedTypeRef}`,
     {
-      agentRef: agent.id,
-      maxAgentSteps: context.maxAgentSteps,
+      expectedTypeRef,
+      valueKind: payloadValueKind(result),
     },
-    "AgentStepLimitExceeded",
+  );
+}
+
+function refuseAgentInterface(context, agent, reason, code, message, details = {}) {
+  context.trace.push("agent_interface_refused", {
+    payload: compactPayload({
+      agent_ref: agent.id,
+      caller_ref: context.activeCallerRef,
+      reason,
+      runtime_error_code: code,
+      input: details.input,
+      expected_type_ref: details.expectedTypeRef,
+      value_kind: details.valueKind,
+      expected_count: details.expected,
+      actual_count: details.actual,
+    }),
+  });
+  throw new RuntimeFailure(message, {
+    agentRef: agent.id,
+    callerRef: context.activeCallerRef,
+    reason,
+    ...details,
+  }, code);
+}
+
+async function executeAgentDecisionLoop(agent, capabilityRefs, context, options = {}) {
+  return runAgentDecisionLoop(
+    agent,
+    capabilityRefs,
+    context,
+    {
+      resolveAgentDecision,
+      executeAgentHumanReview,
+      assertAgentDecisionDoesNotExecuteSkillPack,
+      callArgumentsForAgentDecision,
+      authorizeAgentInvocationByCaller,
+      executeTarget,
+      validateAgentFinalResult,
+    },
+    options,
   );
 }
 
@@ -1960,7 +1925,8 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
   context.trace.push("human_approval_paused", {
     payload: basePayload,
   });
-  if (!["approved", "rejected", "expired", "cancelled"].includes(humanDecision)) {
+  const transition = classifyHumanApprovalDecision(humanDecision);
+  if (!transition.valid) {
     throw new RuntimeFailure(
       `invalid human approval decision ${humanDecision} for ${approvalRef}`,
       { approvalRef, decision: humanDecision, agentRef: agent.id },
@@ -1975,7 +1941,7 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
     },
   });
 
-  if (humanDecision === "approved") {
+  if (transition.approved) {
     context.trace.push("human_approval_resumed", {
       payload: {
         approval_ref: approvalRef,
@@ -1988,12 +1954,7 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
     };
   }
 
-  const terminalKind = {
-    rejected: "human_approval_rejected",
-    expired: "human_approval_expired",
-    cancelled: "human_approval_cancelled",
-  }[humanDecision];
-  context.trace.push(terminalKind, {
+  context.trace.push(transition.terminalEvent, {
     payload: {
       approval_ref: approvalRef,
       decision: humanDecision,
@@ -2006,10 +1967,6 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
   });
 }
 
-function agentHumanReviewApprovalRef(agentRef, stepIndex) {
-  return `approval:${agentRef}:step-${stepIndex}:human-review`;
-}
-
 function requireDefinition(index, id) {
   const item = index.get(id);
   if (!item) {
@@ -2019,6 +1976,9 @@ function requireDefinition(index, id) {
 }
 
 function targetOutputType(targetRef, context) {
+  if (targetRef.startsWith("agent:")) {
+    return context.indexes.agents.get(targetRef)?.signature?.output_type ?? null;
+  }
   if (targetRef.startsWith("function:")) {
     return context.indexes.functions.get(targetRef)?.signature?.output_type ?? null;
   }
@@ -3354,7 +3314,7 @@ async function executeTool(tool, context) {
       validateToolPayloadConstraints("output", tool, value, binding.payloadConstraints.output);
       return value;
     }
-    throw new RuntimeFailure(`missing tool binding ${toolRef}`, { toolRef });
+    throw new RuntimeFailure(`missing tool binding ${toolRef}`, { toolRef }, "ToolBindingMissing");
   }
   try {
     recordExternalToolDispatch(context);
@@ -3379,7 +3339,7 @@ async function executeTool(tool, context) {
     throw new RuntimeFailure(`tool handler failed ${toolRef}: ${message}`, {
       toolRef,
       cause: message,
-    });
+    }, "ToolHandlerFailed");
   }
 }
 
@@ -5347,64 +5307,20 @@ function assertSecretHandle(value, fieldName, ref, code) {
 }
 
 async function executeGraph(graphRef, context, options = {}) {
-  const graph = requireDefinition(context.indexes.graphs, graphRef);
-  context.trace.push("scope_entered", {
-    airRef: {
-      flow_graph_ref: graph.id,
-      owner_ref: graph.owner_ref,
+  return executeGraphTraversal(
+    graphRef,
+    context,
+    {
+      requireGraph: (ref) => requireDefinition(context.indexes.graphs, ref),
+      isDispatchNode,
+      assertRunCanContinue,
+      consumeStepBudget,
+      airRefForNode,
+      executeNode,
+      nextNodeId,
     },
-  });
-
-  let currentNodeId = options.startNodeId ?? graph.entry_node_id;
-  let result;
-  while (currentNodeId) {
-    const node = graph.nodes.find((candidate) => candidate.id === currentNodeId);
-    if (!node) {
-      throw new RuntimeFailure(`unknown AIR node ${currentNodeId}`, {
-        graphRef: graph.id,
-        nodeId: currentNodeId,
-      });
-    }
-    if (!isDispatchNode(node)) {
-      assertRunCanContinue(context);
-      consumeStepBudget(context, {
-        airRef: airRefForNode(graph, node),
-        targetRef: node.target_ref,
-      });
-    }
-
-    const step = await executeNode(graph, node, context);
-    if (step.done) {
-      context.trace.push("scope_exited", {
-        airRef: {
-          flow_graph_ref: graph.id,
-          owner_ref: graph.owner_ref,
-          node_id: node.id,
-        },
-        payload: {
-          status: step.status,
-        },
-      });
-      if (step.status === "stopped") {
-        throw new RuntimeStop("AIR stop node reached", { graphRef: graph.id, nodeId: node.id });
-      }
-      return step.result;
-    }
-
-    result = step.result ?? result;
-    currentNodeId = nextNodeId(graph, node.id, step.edgeRole);
-  }
-
-  context.trace.push("scope_exited", {
-    airRef: {
-      flow_graph_ref: graph.id,
-      owner_ref: graph.owner_ref,
-    },
-    payload: {
-      status: "success",
-    },
-  });
-  return result;
+    options,
+  );
 }
 
 async function executeNode(graph, node, context) {
@@ -5539,7 +5455,8 @@ function executeHumanApprovalNode(graph, node, context) {
       resume_target_ref: resumeTargetRef,
     }),
   });
-  if (!["approved", "rejected", "expired", "cancelled"].includes(decision)) {
+  const transition = classifyHumanApprovalDecision(decision);
+  if (!transition.valid) {
     const error = new RuntimeFailure(
       `invalid human approval decision ${decision} for ${approvalRef}`,
       { approvalRef, decision },
@@ -5567,7 +5484,7 @@ function executeHumanApprovalNode(graph, node, context) {
     },
   });
 
-  if (decision === "approved") {
+  if (transition.approved) {
     context.values.set(valueHandle(node.result_binding), decision);
     context.trace.push("human_approval_resumed", {
       airRef: airRefForNode(graph, node),
@@ -5583,12 +5500,7 @@ function executeHumanApprovalNode(graph, node, context) {
     };
   }
 
-  const terminalKind = {
-    rejected: "human_approval_rejected",
-    expired: "human_approval_expired",
-    cancelled: "human_approval_cancelled",
-  }[decision];
-  context.trace.push(terminalKind, {
+  context.trace.push(transition.terminalEvent, {
     airRef: airRefForNode(graph, node),
     payload: {
       approval_ref: approvalRef,
@@ -5880,12 +5792,18 @@ async function executeCallNode(graph, node, context) {
     if (!(error instanceof RuntimeFailure)) {
       throw error;
     }
-    const failurePath = failurePathForNode(graph, node.id);
+    const declaredFailurePath = failurePathForNode(graph, node.id);
+    const failureFamily = runtimeFailureFamily(error);
+    const failurePath = declaredFailurePath?.failure_family === failureFamily
+      ? declaredFailurePath
+      : undefined;
     context.trace.push("failure_detected", {
       airRef: airRefForNode(graph, node),
       payload: compactPayload({
-        failure_path_ref: failurePath?.id,
-        failure_mode: failurePath?.mode ?? "unhandled",
+        failure_path_ref: declaredFailurePath?.id,
+        failure_mode: failurePath?.mode ?? "unhandled_family",
+        failure_family: failureFamily,
+        declared_failure_family: declaredFailurePath?.failure_family,
         ...runtimeFailureTracePayload(error, {
           fallbackTargetRef: targetRef,
           callerRef: graph.owner_ref,
@@ -6126,14 +6044,9 @@ function authorizeAgentInvocation(graph, node, targetRef, context) {
 
 function authorizeAgentInvocationByCaller(callerRef, targetRef, context, airRef = undefined) {
   const agent = requireDefinition(context.indexes.agents, targetRef);
-  const callerKind = callerKindFromRef(callerRef);
-  const authorized = ["strategy", "agent"].includes(callerKind)
-    && Array.isArray(agent.callable_by)
-    && agent.callable_by.some((rule) =>
-      rule?.caller_ref === callerRef && rule?.caller_kind === callerKind
-    );
+  const authority = evaluateAgentInvocationAuthority(callerRef, agent);
 
-  if (authorized) {
+  if (authority.authorized) {
     context.trace.push("agent_invocation_authorized", {
       airRef,
       payload: {
@@ -6145,9 +6058,7 @@ function authorizeAgentInvocationByCaller(callerRef, targetRef, context, airRef 
     return;
   }
 
-  const reason = ["strategy", "agent"].includes(callerKind)
-    ? "caller_not_allowed"
-    : "invalid_caller_kind";
+  const reason = authority.reason;
   context.trace.push("agent_invocation_refused", {
     airRef,
     payload: {
@@ -6166,10 +6077,6 @@ function authorizeAgentInvocationByCaller(callerRef, targetRef, context, airRef 
     },
     "UnauthorizedAgentInvocation",
   );
-}
-
-function callerKindFromRef(ref) {
-  return typeof ref === "string" && ref.includes(":") ? ref.slice(0, ref.indexOf(":")) : null;
 }
 
 function executeBranchNode(graph, node, context) {
@@ -6218,7 +6125,7 @@ function executeLoopNode(graph, node, context) {
       graphRef: graph.id,
       nodeId: node.id,
       maxLoopIterations: context.maxLoopIterations,
-    });
+    }, "LoopIterationLimitExceeded");
   }
 
   const edgeRole = conditionResult ? "loop_next" : "loop_exit";
@@ -6353,6 +6260,8 @@ function evaluateExpression(expression, context, graph) {
       return evaluateTextConversion(expression, context, graph);
     case "field_access":
       return evaluateFieldAccess(expression, context, graph);
+    case "construct_record":
+      return evaluateRecordExpression(expression, context, graph);
     case "unary_op":
       return evaluateUnaryExpression(expression, context, graph);
     case "binary_op":
@@ -6363,6 +6272,38 @@ function evaluateExpression(expression, context, graph) {
         kind: expression.kind,
       });
   }
+}
+
+function evaluateRecordExpression(expression, context, graph) {
+  if (typeof expression.type_ref !== "string" || !Array.isArray(expression.record_fields)) {
+    throw new RuntimeFailure("construct_record requires type_ref and record_fields", {
+      expressionId: expression.id,
+    });
+  }
+  const result = {};
+  let previousName = null;
+  for (const field of expression.record_fields) {
+    if (
+      !field
+      || typeof field.name !== "string"
+      || field.name.length === 0
+      || typeof field.value_ref !== "string"
+      || field.value_ref.length === 0
+      || (previousName !== null && field.name <= previousName)
+    ) {
+      throw new RuntimeFailure("construct_record fields must be unique and canonically ordered", {
+        expressionId: expression.id,
+      });
+    }
+    Object.defineProperty(result, field.name, {
+      configurable: true,
+      enumerable: true,
+      value: resolveHandle(field.value_ref, context, graph),
+      writable: true,
+    });
+    previousName = field.name;
+  }
+  return result;
 }
 
 function evaluateFieldAccess(expression, context, graph) {
@@ -7119,6 +7060,10 @@ function runtimeFailureTracePayload(error, context) {
   });
 }
 
+function runtimeFailureFamily(error) {
+  return failureFamilyForRuntimeCode(error?.code ?? error?.details?.runtime_error_code);
+}
+
 function traceUnhandledRuntimeFailure(context, error) {
   const events = context.trace.document().events ?? [];
   const alreadyTraced = events.some((event) =>
@@ -7129,6 +7074,7 @@ function traceUnhandledRuntimeFailure(context, error) {
   context.trace.push("failure_detected", {
     payload: compactPayload({
       failure_mode: "run",
+      failure_family: runtimeFailureFamily(error),
       ...runtimeFailureTracePayload(error, {
         fallbackTargetRef: context.entryRef,
         callerRef: context.activeCallerRef,

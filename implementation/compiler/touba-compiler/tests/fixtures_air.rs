@@ -1,6 +1,6 @@
 use touba_compiler::air::{
     AIR_SCHEMA_VERSION, AirDiagnosticCode, AirDocument, AirExpressionKind, AirExpressionOperator,
-    AirFlowEdgeRole, AirFlowNodeKind, AirHumanApprovalMode, AirTraceAnchorKind,
+    AirFailureFamily, AirFlowEdgeRole, AirFlowNodeKind, AirHumanApprovalMode, AirTraceAnchorKind,
     AirUserInteractionMode,
 };
 use touba_compiler::ast::{
@@ -34,6 +34,177 @@ const REFERENCE_FIXTURES: &[(&str, &str)] = &[
         include_str!("../../../grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb"),
     ),
 ];
+
+#[test]
+fn lowers_nominal_record_constructor_to_canonical_air() {
+    let source = include_str!(
+        "../../../grammar/tree-sitter-touba/examples/record-construction-v1/positive/tb-record-v1-p01-nominal.tb"
+    );
+    let result = compile_source_to_air("tb-record-v1-p01", source);
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.expect("record fixture should compile");
+    let expression = document
+        .execution_graphs
+        .iter()
+        .flat_map(|graph| &graph.expressions)
+        .find(|expression| expression.kind == AirExpressionKind::ConstructRecord)
+        .expect("construct_record expression should exist");
+    assert_eq!(
+        expression.type_ref.as_deref(),
+        Some("type:examples.record_construction/ReviewDecision")
+    );
+    assert_eq!(
+        expression
+            .record_fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>(),
+        ["approved", "label", "risk"]
+    );
+}
+
+#[test]
+fn reports_nominal_record_constructor_diagnostics() {
+    for (source_id, source, expected) in [
+        (
+            "record-n01",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/record-construction-v1/negative/semantic/tb-record-v1-n01-unknown-type.tb"
+            ),
+            AirDiagnosticCode::UnknownRecordType,
+        ),
+        (
+            "record-n02",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/record-construction-v1/negative/semantic/tb-record-v1-n02-missing-field.tb"
+            ),
+            AirDiagnosticCode::MissingRecordField,
+        ),
+        (
+            "record-n03",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/record-construction-v1/negative/semantic/tb-record-v1-n03-unknown-field.tb"
+            ),
+            AirDiagnosticCode::UnknownRecordField,
+        ),
+        (
+            "record-n04",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/record-construction-v1/negative/semantic/tb-record-v1-n04-duplicate-field.tb"
+            ),
+            AirDiagnosticCode::DuplicateRecordField,
+        ),
+        (
+            "record-n05",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/record-construction-v1/negative/semantic/tb-record-v1-n05-wrong-type.tb"
+            ),
+            AirDiagnosticCode::RecordFieldTypeMismatch,
+        ),
+    ] {
+        let result = compile_source_to_air(source_id, source);
+        assert!(
+            result.document.is_none(),
+            "{source_id} must not produce AIR"
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == expected),
+            "{source_id} should report {expected:?}: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn lowers_explicit_agent_interface_and_enriched_call_to_air() {
+    let source = include_str!(
+        "../../../grammar/tree-sitter-touba/examples/agent-interface-v1/positive/tb-agent-interface-p01-strategy-call.tb"
+    );
+    let result = compile_source_to_air("tb-agent-interface-p01", source);
+
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.expect("fixture should compile to AIR");
+    let agent = document
+        .definitions
+        .agents
+        .iter()
+        .find(|agent| agent.name == "Reviewer")
+        .expect("Reviewer agent should exist");
+    let signature = agent
+        .signature
+        .as_ref()
+        .expect("agent interface should be explicit");
+    assert_eq!(signature.inputs.len(), 1);
+    assert_eq!(signature.inputs[0].name, "request");
+    assert_eq!(
+        signature.inputs[0].type_ref,
+        "type:examples.agent_interface/ReviewRequest"
+    );
+    assert_eq!(
+        signature.output_type.as_deref(),
+        Some("type:examples.agent_interface/ReviewResult")
+    );
+
+    let call = document
+        .execution_graphs
+        .iter()
+        .flat_map(|graph| &graph.nodes)
+        .find(|node| node.kind == AirFlowNodeKind::CallAgent)
+        .expect("typed call_agent node should exist");
+    assert_eq!(call.arguments.len(), 1);
+    assert_eq!(call.result_binding.as_deref(), Some("review"));
+}
+
+#[test]
+fn reports_agent_interface_and_call_diagnostics() {
+    for (source_id, source, expected_code) in [
+        (
+            "tb-agent-interface-n01",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/agent-interface-v1/negative/semantic/tb-agent-interface-n01-missing-gives.tb"
+            ),
+            AirDiagnosticCode::MissingAgentInterfaceOutput,
+        ),
+        (
+            "tb-agent-interface-n02",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/agent-interface-v1/negative/semantic/tb-agent-interface-n02-missing-argument.tb"
+            ),
+            AirDiagnosticCode::MissingExplicitCallArgument,
+        ),
+        (
+            "tb-agent-interface-n03",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/agent-interface-v1/negative/semantic/tb-agent-interface-n03-unknown-argument.tb"
+            ),
+            AirDiagnosticCode::UnknownCallArgument,
+        ),
+        (
+            "tb-agent-interface-n04",
+            include_str!(
+                "../../../grammar/tree-sitter-touba/examples/agent-interface-v1/negative/semantic/tb-agent-interface-n04-wrong-type.tb"
+            ),
+            AirDiagnosticCode::IncompatibleExpressionType,
+        ),
+    ] {
+        let result = compile_source_to_air(source_id, source);
+        assert!(
+            result.document.is_none(),
+            "{source_id} must not produce AIR"
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == expected_code),
+            "{source_id} should report {expected_code:?}: {:?}",
+            result.diagnostics
+        );
+    }
+}
 
 struct NegativeAirFixture {
     source_id: &'static str,
@@ -881,6 +1052,7 @@ skill ReadInbox
 
 agent Researcher
     description \"Selects declared reading or summarization capabilities for user goals.\"
+    responsibility \"Select only declared reading or summarization capabilities for user goals.\"
     uses ReadInbox
     callable_by strategy RunResearch
 
@@ -925,6 +1097,11 @@ strategy RunResearch
         agent.description.as_deref(),
         Some("Selects declared reading or summarization capabilities for user goals.")
     );
+    assert_eq!(
+        agent.responsibility,
+        "Select only declared reading or summarization capabilities for user goals."
+    );
+    assert_ne!(agent.responsibility, agent.name);
     let strategy = document
         .definitions
         .strategies
@@ -1073,6 +1250,10 @@ fn lowers_fallback_fixture_with_failure_path() {
 
     assert_eq!(skill.failure_path_refs.len(), 1);
     assert_eq!(graph.failure_paths.len(), 1);
+    assert_eq!(
+        graph.failure_paths[0].failure_family,
+        AirFailureFamily::Handler
+    );
     assert!(
         graph
             .nodes
@@ -1080,6 +1261,21 @@ fn lowers_fallback_fixture_with_failure_path() {
             .any(|node| node.kind == AirFlowNodeKind::Fallback
                 && node.target_ref.as_deref()
                     == Some("skill:examples.fallback/BuildFallbackSource"))
+    );
+}
+
+#[test]
+fn reports_manifestly_invariant_while_condition() {
+    let source = include_str!(
+        "../../../grammar/tree-sitter-touba/examples/failure-flow-v1/negative/semantic/tb-failure-v1-n04-invariant-while.tb"
+    );
+    let result = compile_source_to_air("tb-failure-v1-n04", source);
+    assert!(result.document.is_none());
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == AirDiagnosticCode::InvariantLoopCondition)
     );
 }
 
@@ -2732,8 +2928,9 @@ fn serializes_air_document_to_bootstrap_json_profile() {
 
     let json = serialize_air_to_json(&document).expect("AIR should serialize to JSON");
 
-    assert_eq!(AIR_JSON_PROFILE, "air-json-v0.1");
-    assert!(json.starts_with("{\n  \"air_schema_version\": \"air-minimal-v0.1\""));
+    assert_eq!(AIR_JSON_PROFILE, "touba-air-json-canonical-v1");
+    assert!(json.starts_with("{\n  \"air_schema_version\": \"touba-air-v1\""));
+    assert!(json.contains("\"air_capability_profile\": \"touba-air-capabilities-v1\""));
     assert!(json.contains("\"kind\": \"call_tool\""));
     assert!(json.contains("\"anchor_kind\": \"scope_entry\""));
     assert!(!json.contains("\"binding_ref\": null"));

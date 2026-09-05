@@ -50,6 +50,11 @@ import {
 } from "../src/serve.mjs";
 import { createDeploymentTargetService } from "../../touba-deployment/src/serve.mjs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
+import {
+  AIR_CAPABILITY_PROFILE,
+  AIR_JSON_PROFILE,
+  AIR_SCHEMA_VERSION,
+} from "../../../contracts/machine/contracts.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
 
@@ -475,6 +480,7 @@ test("authority graph extracts source, AIR and manifest authority", () => {
       "        give request",
       "",
       "agent Reviewer",
+      "    responsibility \"Review the requested change through the declared validation capability.\"",
       "    uses ValidateChange",
       "    callable_by strategy RunReview",
       "",
@@ -554,6 +560,7 @@ test("authority graph ignores legacy client governance overlays", () => {
       "tool SendPayment",
       "",
       "agent InvoiceAgent",
+      "    responsibility \"Read only the account data required by the invoice workflow.\"",
       "    uses ReadAccount",
       "",
       "strategy RunInvoice",
@@ -654,6 +661,7 @@ test("operational project surfaces report supply chain, governance readiness and
       "        give input",
       "",
       "agent InvoiceAgent",
+      "    responsibility \"Summarize invoices only through the declared capability and caller.\"",
       "    uses SummarizeInvoice",
       "    callable_by strategy RunInvoice",
       "",
@@ -1314,6 +1322,7 @@ test("governance relation changes edit compiled Touba source through review", ()
       "        give result",
       "",
       "agent Reviewer",
+      "    responsibility \"Review records with the declared memory scope and caller.\"",
       "    memory ReviewNotes write",
       "    callable_by strategy RunReview",
       "",
@@ -1358,7 +1367,7 @@ test("governance relation changes edit compiled Touba source through review", ()
       },
     });
     assert.equal(applied.status, "applied");
-    assert.match(readFileSync(sourcePath, "utf8"), /agent Reviewer\n    uses SummarizeRecord\n    memory ReviewNotes write\n    callable_by strategy RunReview/u);
+    assert.match(readFileSync(sourcePath, "utf8"), /agent Reviewer\n    responsibility[^\n]+\n    uses SummarizeRecord\n    memory ReviewNotes write\n    callable_by strategy RunReview/u);
     const graph = buildAuthorityGraph({ projectRoot: root });
     assert.equal(graph.edges.some((edge) => (
       edge.kind === "uses"
@@ -1409,9 +1418,11 @@ test("multi-agent governance edits uses and callable_by as one reviewed change",
       "",
       "agent Worker",
       "    description \"Performs a bounded delegated task.\"",
+      "    responsibility \"Perform only the bounded task delegated by an authorized caller.\"",
       "",
       "agent Supervisor",
       "    description \"Coordinates delegated work.\"",
+      "    responsibility \"Coordinate work using only explicitly declared agents.\"",
       "",
     ].join("\n"), "utf8");
     const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
@@ -1445,8 +1456,8 @@ test("multi-agent governance edits uses and callable_by as one reviewed change",
     });
 
     const source = readFileSync(sourcePath, "utf8");
-    assert.match(source, /agent Worker\n    description[^\n]+\n    callable_by agent Supervisor\n\nagent Supervisor/u);
-    assert.match(source, /agent Supervisor\n    description[^\n]+\n    uses Worker\n$/u);
+    assert.match(source, /agent Worker\n    description[^\n]+\n    responsibility[^\n]+\n    callable_by agent Supervisor\n\nagent Supervisor/u);
+    assert.match(source, /agent Supervisor\n    description[^\n]+\n    responsibility[^\n]+\n    uses Worker\n$/u);
     const graph = buildAuthorityGraph({ projectRoot: root });
     assert.equal(graph.edges.some((edge) => (
       edge.kind === "uses"
@@ -1589,6 +1600,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
       "",
       "agent Reviewer",
       "    description \"Reviews governed records.\"",
+      "    responsibility \"Review only records supplied through declared capabilities.\"",
       "",
     ].join("\n"), "utf8");
     writeFileSync(join(root, "src", "other.tb"), [
@@ -2167,7 +2179,9 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     deviceRef: "device:review-phone-01",
   });
   writeFileSync(join(root, ".touba", "air", "demo", "main.air.json"), JSON.stringify({
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: { id: "module:demo.main", name: "demo.main" },
     definitions: {
       types: [
@@ -2186,6 +2200,10 @@ test("HTTP project server exposes live state, events and decisions", async () =>
           id: "agent:demo.main/ReviewAgent",
           name: "ReviewAgent",
           description: "Selects review capabilities for the served project.",
+          signature: {
+            inputs: [{ name: "request", type_ref: "type:demo.main/ReviewRequest" }],
+            output_type: "builtin:Text",
+          },
           uses: ["skill:demo.main/ReviewDraft"],
         },
       ],
@@ -2547,6 +2565,7 @@ test("HTTP project server validates, reviews and applies semantic governance edi
     "",
     "agent Reviewer",
     "    description \"Reviews governed records.\"",
+    "    responsibility \"Review only records supplied through declared capabilities.\"",
     "",
   ].join("\n"), "utf8");
   const service = createToubaProjectServer({
@@ -3630,7 +3649,9 @@ function sandboxAirDocument({ withTool = false } = {}) {
     ],
   };
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: { id: "module:demo.sandbox", name: "demo.sandbox", source_ref: sourceRef() },
     definitions,
     execution_graphs: [
@@ -3725,7 +3746,9 @@ function sandboxAgentAirDocument() {
     triggers: [],
   };
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: { id: "module:demo.agent", name: "demo.agent", source_ref: sourceRef() },
     definitions,
     execution_graphs: [
@@ -3748,7 +3771,9 @@ function sandboxAgentAirDocument() {
 
 function sandboxApprovalAirDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: { id: "module:demo.approval", name: "demo.approval", source_ref: sourceRef() },
     definitions: {
       types: [],

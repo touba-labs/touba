@@ -39,8 +39,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 export const implementationDir = path.resolve(__dirname, "../../..");
 const cargoManifest = path.join(implementationDir, "Cargo.toml");
-const EXPECTED_AIR_SCHEMA_VERSION = "air-minimal-v0.1";
-const EXPECTED_TRACE_PROTOCOL_VERSION = "trace-minimal-v0.1";
+const EXPECTED_AIR_SCHEMA_VERSION = "touba-air-v1";
+const EXPECTED_TRACE_PROTOCOL_VERSION = "touba-trace-v1";
 const EXPECTED_ARCHITECTURE_SCHEMA_VERSION = "architecture-projection-v0.1";
 const EXPECTED_MANIFEST_VERSION = "touba-manifest-v1";
 const EXPECTED_PACKAGE_SCHEMA_VERSION = "touba-package-v0.1";
@@ -55,6 +55,7 @@ const EXPECTED_TRACE_TIMELINE_SCHEMA_VERSION = "touba-trace-timeline-v1";
 const EXPECTED_SUPPLY_CHAIN_LOCK_SCHEMA_VERSION = "touba-lock-v0.1";
 const EXPECTED_SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-validation-v0.1";
 const EXPECTED_TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
+const EXPECTED_EFFECTIVE_PROJECT_SCHEMA_VERSION = "touba-effective-project-v1";
 const INSPECT_REPORT_SUFFIX = ".inspect.txt";
 const OTEL_EXPORT_SUFFIX = ".otel.json";
 const OTEL_SEMCONV_SCHEMA_URL = "https://opentelemetry.io/schemas/1.41.1";
@@ -226,6 +227,19 @@ export function inspectPath(inputPath, options = {}) {
     });
   }
 
+  if (artifact.schema_version === EXPECTED_EFFECTIVE_PROJECT_SCHEMA_VERSION) {
+    const effectiveProject = summarizeEffectiveProject(artifact);
+    return inspectionDocument(absolutePath, "effective_project", {
+      source: absent("source artifact is referenced by the effective projection"),
+      air: absent("AIR artifacts are referenced by the effective projection"),
+      trace: absent("trace artifact not provided"),
+      architecture: absent("architecture projection not provided"),
+      manifest: absent("manifest is referenced by the effective projection"),
+      effective_project: effectiveProject,
+      compatibility: compatibilityOk(),
+    });
+  }
+
   if (artifact.ownership_schema_version === EXPECTED_OWNERSHIP_SCHEMA_VERSION) {
     return inspectionDocument(absolutePath, "ownership", {
       source: absent("source artifact not provided"),
@@ -296,7 +310,7 @@ export function inspectPath(inputPath, options = {}) {
   }
 
   throw new Error(
-    "unsupported Touba artifact: expected .tb, AIR JSON, trace JSON, architecture projection JSON, tool binding manifest JSON, package JSON, binding fragment JSON, resource bindings JSON, run plan JSON, ownership JSON, trace audit JSON, trace timeline JSON, supply chain JSON or trigger state JSON",
+    "unsupported Touba artifact: expected .tb, AIR JSON, trace JSON, architecture projection JSON, tool binding manifest JSON, package JSON, binding fragment JSON, resource bindings JSON, run plan JSON, effective project JSON, ownership JSON, trace audit JSON, trace timeline JSON, supply chain JSON or trigger state JSON",
   );
 }
 
@@ -485,12 +499,16 @@ export function renderInspection(inspection) {
   renderTraceTimeline(lines, inspection.trace_timeline);
   renderSupplyChain(lines, inspection.supply_chain);
   renderTriggerState(lines, inspection.trigger_state);
+  renderEffectiveProject(lines, inspection.effective_project);
   renderCompatibility(lines, inspection.compatibility);
 
   return `${lines.join("\n")}\n`;
 }
 
 export function projectInspectionContract(inspection, options = {}) {
+  if (inspection.artifact_kind === "effective_project" && inspection.effective_project?.present) {
+    return inspection.effective_project.document;
+  }
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const root = projectRootFromInspection(inspection, options);
   return {
@@ -655,6 +673,7 @@ function inspectionDocument(inputPath, artifactKind, summaries) {
     trace_timeline: summaries.trace_timeline ?? absent("trace timeline artifact not provided"),
     supply_chain: summaries.supply_chain ?? absent("supply chain artifact not provided"),
     trigger_state: summaries.trigger_state ?? absent("trigger state artifact not provided"),
+    effective_project: summaries.effective_project ?? absent("effective project artifact not provided"),
     absent_data: INSPECT_ABSENT_DATA,
   };
   document.workspace_package_surface = summarizeWorkspacePackageSurface(document);
@@ -1561,6 +1580,93 @@ function summarizeTriggerStateArtifact(artifact) {
   };
 }
 
+function summarizeEffectiveProject(artifact) {
+  if (artifact.artifact_role !== "derived_non_authoritative") {
+    throw new Error("effective project artifact_role must be derived_non_authoritative");
+  }
+  const expectedSections = [
+    "sources",
+    "air",
+    "entry",
+    "handlers",
+    "grants",
+    "secrets",
+    "memory_scopes",
+    "callers",
+    "budgets",
+    "sandbox",
+    "lock",
+    "triggers",
+    "evidence",
+  ];
+  const allowedStatuses = new Set(["absent", "non_applicable", "derived", "declared", "effective"]);
+  const sections = expectedSections.map((name) => {
+    const section = artifact.contract?.[name];
+    if (!section || !allowedStatuses.has(section.provenance?.status)) {
+      throw new Error(`effective project section ${name} has invalid provenance`);
+    }
+    if (!Array.isArray(section.provenance.sources)
+      || section.provenance.sources.some((item) => typeof item !== "string" || path.isAbsolute(item))) {
+      throw new Error(`effective project section ${name} must use relative provenance sources`);
+    }
+    return {
+      name,
+      status: section.provenance.status,
+      sources: [...section.provenance.sources],
+    };
+  });
+  for (const input of artifact.inputs ?? []) {
+    if (typeof input.path !== "string" || path.isAbsolute(input.path)) {
+      throw new Error("effective project inputs must use relative paths");
+    }
+    if (!/^sha256:[0-9a-f]{64}$/u.test(input.digest_sha256 ?? "")) {
+      throw new Error(`effective project input ${input.path} has an invalid digest`);
+    }
+    if (!["declared", "derived"].includes(input.provenance)) {
+      throw new Error(`effective project input ${input.path} has invalid provenance`);
+    }
+  }
+  assertNoEffectiveProjectSensitiveFields(artifact);
+  return {
+    present: true,
+    schema_version: artifact.schema_version,
+    artifact_role: artifact.artifact_role,
+    profile: artifact.project?.profile,
+    artifact_layout: artifact.project?.artifact_layout,
+    input_count: (artifact.inputs ?? []).length,
+    sections,
+    document: artifact,
+  };
+}
+
+function assertNoEffectiveProjectSensitiveFields(artifact) {
+  const forbidden = new Set([
+    "content",
+    "memory_content",
+    "payload",
+    "prompt",
+    "result",
+    "secret_value",
+    "secret_values",
+    "token",
+    "value",
+  ]);
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (forbidden.has(key)) {
+        throw new Error(`effective project contains forbidden sensitive field ${key}`);
+      }
+      visit(child);
+    }
+  };
+  visit(artifact);
+}
+
 function numberOrZero(value, fallback = 0) {
   return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
 }
@@ -2109,6 +2215,22 @@ function renderTriggerState(lines, triggerState) {
   }
 }
 
+function renderEffectiveProject(lines, effectiveProject) {
+  if (!effectiveProject.present) {
+    lines.push(`Effective project absent: ${effectiveProject.reason}`);
+    return;
+  }
+  lines.push(`Effective project ${effectiveProject.schema_version}`);
+  lines.push(
+    `- role=${effectiveProject.artifact_role} layout=${valueOrAbsent(effectiveProject.artifact_layout)} profile=${valueOrAbsent(effectiveProject.profile)} inputs=${effectiveProject.input_count}`,
+  );
+  for (const section of effectiveProject.sections) {
+    lines.push(
+      `- ${section.name} provenance=${section.status} sources=[${section.sources.join(",")}]`,
+    );
+  }
+}
+
 function renderCompatibility(lines, compatibility) {
   if (!compatibility || compatibility.diagnostics.length === 0) {
     lines.push("Compatibility ok");
@@ -2589,6 +2711,9 @@ function entrypointsFromDefinitions(air, definitions, kind) {
       kind,
       ref: declaration.id,
       description: entrypointDescription(declaration, kind),
+      ...(kind === "agent" && typeof declaration.responsibility === "string"
+        ? { responsibility: declaration.responsibility }
+        : {}),
       input_contract: buildAirInputContract({ air, definition: declaration, kind }),
     }));
 }
@@ -2925,7 +3050,7 @@ function finalRunStatus(events) {
 
 function usage() {
   return [
-    "usage: touba-inspect <file.tb|file.air.json|file.trace.json|file.architecture.json|touba.manifest.json|touba.package.json|touba.resources.json|touba.run-plan.json|touba.ownership.json|trace-audit.json|touba.lock.json|touba.trigger-state.json>",
+    "usage: touba-inspect <file.tb|file.air.json|file.trace.json|file.architecture.json|touba.manifest.json|touba.package.json|touba.resources.json|touba.run-plan.json|touba.effective-project.json|touba.ownership.json|trace-audit.json|touba.lock.json|touba.trigger-state.json>",
     "   or: touba-inspect [--source <file.tb>] [--air <file.air.json>] [--trace <file.trace.json>] [--architecture <file.architecture.json>] [--manifest <touba.manifest.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--resource-bindings <touba.resources.json>] [--run-plan <touba.run-plan.json>] [--ownership <touba.ownership.json>] [--trace-audit <trace-audit.json>] [--supply-chain <touba.lock.json|supply-chain-report.json>] [--json] [--report-out <report.inspect.txt>] [--otel-out <trace.otel.json>]",
     "",
   ].join("\n");

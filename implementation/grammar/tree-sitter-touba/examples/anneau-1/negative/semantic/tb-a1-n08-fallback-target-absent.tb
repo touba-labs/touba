@@ -19,5 +19,5 @@ skill BrokenFlow
             with request as request
             into source
         give source
-    on failure
+    on failure handler
         fallback MissingSource

@@ -43,6 +43,25 @@ const donneesQuebecLiveValidatePath = join(
   "live-donnees-quebec/validate.mjs",
 );
 const CARGO = process.env.CARGO ?? "cargo";
+const hardenedProfileFixture = join(
+  implementationDir,
+  "contracts/hardened/profile.json",
+);
+
+test("refuses an explicit hardened profile without supply-chain evidence before execution", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-hardened-"));
+  try {
+    const airPath = writeAirDocument(workspace, linearSourceDocument());
+    const result = spawnSync(process.execPath, [
+      runPath, airPath, "--hardened-profile", hardenedProfileFixture,
+      "--human-checkpoint-out", join(workspace, "checkpoint.json"),
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /HardenedSupplyChainEvidenceRequired/);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
 test("runs an AIR document with the bounded local FetchSource handler", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-"));
@@ -301,6 +320,13 @@ test("rejects invalid run timeout values before execution", () => {
 
   assert.equal(failure.status, 2);
   assert.match(failure.stderr, /--run-timeout-ms requires a positive integer/);
+});
+
+test("rejects invalid loop iteration bounds before execution", () => {
+  const failure = runCliExpectFailure([runPath, "fixture.air.json", "--max-loop-iterations", "0"]);
+
+  assert.equal(failure.status, 2);
+  assert.match(failure.stderr, /--max-loop-iterations requires a positive integer/);
 });
 
 test("rejects invalid BQ-1 CLI budget values before execution", () => {
@@ -3006,8 +3032,10 @@ function writeAirOnlySupplyChainLock(workspace, airPath) {
 
 function projectToolDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:project.echo",
       name: "project.echo",
@@ -3068,8 +3096,10 @@ function projectToolDocument() {
 
 function listConstraintToolDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:project.batch",
       name: "project.batch",
@@ -3139,8 +3169,10 @@ function listConstraintToolDocument() {
 
 function memoryResourceDocument({ withScope = true } = {}) {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:project.memory",
       name: "project.memory",
@@ -3217,8 +3249,10 @@ function memoryResourceDocument({ withScope = true } = {}) {
 
 function runPlanPureDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.run_plan",
       name: "examples.run_plan",
@@ -3256,8 +3290,10 @@ function runPlanPureDocument() {
 
 function importedToolDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.research_app",
       name: "examples.research_app",
@@ -3403,8 +3439,10 @@ function importedToolDocument() {
 
 function twoToolBudgetDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.budget_cli",
       name: "examples.budget_cli",
@@ -3479,8 +3517,10 @@ function twoToolBudgetDocument() {
 
 function agentDecisionProviderDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.linear_skill",
       name: "examples.linear_skill",
@@ -3887,8 +3927,10 @@ function withoutEnv(name) {
 
 function timeoutToolDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.cli_timeout",
       name: "examples.cli_timeout",
@@ -3970,7 +4012,9 @@ function linearSourceDocument({ withFallback = false } = {}) {
   const fallbackSkill = skill("FallbackNote", "graph:skill:examples.linear_skill/FallbackNote");
 
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.linear_skill",
       name: "examples.linear_skill",
@@ -4001,7 +4045,9 @@ function linearSourceDocument({ withFallback = false } = {}) {
 
 function humanApprovalDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.cli_human",
       name: "examples.cli_human",
@@ -4049,7 +4095,9 @@ function humanApprovalDocument() {
 
 function toolThenHumanApprovalDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.cli_human_checkpoint",
       name: "examples.cli_human_checkpoint",
@@ -4114,7 +4162,9 @@ function toolThenHumanApprovalDocument() {
 
 function agentToolThenHumanReviewDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.cli_agent_human_checkpoint",
       name: "examples.cli_agent_human_checkpoint",
@@ -4212,7 +4262,9 @@ function agentToolThenHumanReviewDocument() {
 
 function userInteractionDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.cli_user",
       name: "examples.cli_user",
@@ -4265,8 +4317,10 @@ function userInteractionDocument() {
 
 function triggerDocument({ scheduleValue = "0 8 * * *" } = {}) {
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_capability_profile: "touba-air-capabilities-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.cli_trigger",
       name: "examples.cli_trigger",
@@ -4354,6 +4408,7 @@ function mainGraphWithFallback() {
     scope_ref: "graph:skill:examples.linear_skill/BuildNote",
     trigger_node_id: "n1",
     mode: "fallback",
+    failure_family: "handler",
     target_node_id: "n3",
     source_ref: sourceRef(),
   };

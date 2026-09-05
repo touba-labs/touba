@@ -26,6 +26,7 @@ skill UseProjectKnowledge
         give result
 
 agent Researcher
+    responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
     uses UseProjectKnowledge
     memory ProjectKnowledge read
     callable_by strategy RunResearch

@@ -290,6 +290,40 @@ test("toLspDiagnostic relays callable_by diagnostics without local reinterpretat
   assert.equal(diagnostic.source, "touba");
 });
 
+test("toLspDiagnostic relays agent interface diagnostics without local reinterpretation", () => {
+  const diagnostic = toLspDiagnostic({
+    code: "MissingAgentInterfaceOutput",
+    message: "agent `Reviewer` declares `takes` and must also declare `gives`",
+    source_ref: sourceRef(18),
+  });
+
+  assert.equal(diagnostic.code, "MissingAgentInterfaceOutput");
+  assert.match(diagnostic.message, /must also declare `gives`/);
+  assert.equal(diagnostic.source, "touba");
+});
+
+test("toLspDiagnostic relays record construction diagnostics without local reinterpretation", () => {
+  const diagnostic = toLspDiagnostic({
+    code: "MissingRecordField",
+    message: "record type `ReviewDecision` requires field `risk`",
+    source_ref: sourceRef(5),
+  });
+
+  assert.equal(diagnostic.code, "MissingRecordField");
+  assert.match(diagnostic.message, /requires field `risk`/);
+  assert.deepEqual(diagnostic.range.start, { line: 5, character: 0 });
+});
+
+test("toLspDiagnostic relays invariant loop diagnostics without local reinterpretation", () => {
+  const diagnostic = toLspDiagnostic({
+    code: "InvariantLoopCondition",
+    message: "while condition is invariant",
+    source_ref: { start_line: 4, start_column: 8, end_line: 4, end_column: 18 },
+  });
+  assert.equal(diagnostic.code, "InvariantLoopCondition");
+  assert.equal(diagnostic.message, "while condition is invariant");
+});
+
 test("toLspDiagnostic relays memory scope diagnostics without local reinterpretation", () => {
   const diagnostic = toLspDiagnostic({
     code: "OwnerMemoryScopeMissing",
@@ -332,6 +366,14 @@ test("hoverForPosition renders declaration data from AIR only", () => {
     /memory_scopes:\n- memory:examples\.hover\/ProjectKnowledge read/,
   );
   assert.match(hoverForPosition(air, { line: 18, character: 1 }), /agent Writer/);
+  assert.match(
+    hoverForPosition(air, { line: 18, character: 1 }),
+    /takes:\n- request: type:examples\.hover\/Draft\ngives: type:examples\.hover\/Draft/,
+  );
+  assert.match(
+    hoverForPosition(air, { line: 18, character: 1 }),
+    /responsibility: Produce governed drafts using only declared capabilities/,
+  );
   assert.match(
     hoverForPosition(air, { line: 18, character: 1 }),
     /callable_by:\n- strategy:examples\.hover\/RunDraft/,
@@ -495,6 +537,7 @@ test("completionForPosition returns deterministic keywords and local declaration
   assert.ok(labels.includes("into"));
   assert.ok(labels.includes("requires"));
   assert.ok(labels.includes("secrets"));
+  assert.ok(labels.includes("responsibility"));
   assert.ok(labels.includes("memory"));
   assert.ok(labels.includes("callable_by"));
   assert.ok(labels.includes("human.approve"));
@@ -638,7 +681,8 @@ function hoverFixtureAir() {
         {
           id: "agent:examples.hover/Writer",
           name: "Writer",
-          responsibility: "Writer",
+          signature: signature("request", "type:examples.hover/Draft", "type:examples.hover/Draft"),
+          responsibility: "Produce governed drafts using only declared capabilities.",
           uses: ["skill:examples.hover/BuildDraft"],
           use_refs: [
             {

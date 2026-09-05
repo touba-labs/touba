@@ -38,6 +38,7 @@ skill BuildNote
         give SourceNote
 
 agent Researcher
+    responsibility "Produce a sourced note from the request."
     uses BuildNote
     callable_by strategy RunSourcedNote
 
@@ -90,7 +91,7 @@ function checkRelease(release) {
 
     const projectRoot = join(workspace, "project");
     runTouba(["init", "--root", projectRoot], env, 0);
-    assertFile(join(projectRoot, ".touba", "secrets.local.json"));
+    assertFile(join(projectRoot, ".touba", "state", "secrets.local.json"));
 
     const setSecret = runTouba([
       "secret",
@@ -120,7 +121,7 @@ function checkRelease(release) {
 
     runTouba(["compile", sourcePath, "--out", airPath], env, 0);
     const air = JSON.parse(readFileSync(airPath, "utf8"));
-    assertEqual(air.air_schema_version, "air-minimal-v0.1", "compiled AIR schema");
+    assertEqual(air.air_schema_version, "touba-air-v1", "compiled AIR schema");
 
     const inspect = runTouba(["inspect", airPath], env, 0);
     if (!inspect.stdout.includes("Touba Inspect touba-inspect-v0.1")) {
@@ -156,8 +157,8 @@ function checkRelease(release) {
     ], env, 0);
     const prepareReport = JSON.parse(prepare.stdout);
     assertEqual(prepareReport.status, "success", "prepare status");
-    assertFile(join(projectRoot, ".touba", "air", "examples", "linear_skill.air.json"));
-    assertFile(join(projectRoot, "touba.manifest.json"));
+    assertFile(join(projectRoot, ".touba", "build", "dev", "air", "examples", "linear_skill.air.json"));
+    assertFile(join(projectRoot, ".touba", "build", "dev", "touba.manifest.json"));
 
     const run = runTouba([
       "run",
@@ -170,7 +171,7 @@ function checkRelease(release) {
       "trace",
     ], env, 0);
     const trace = JSON.parse(run.stdout);
-    assertEqual(trace.trace_protocol_version, "trace-minimal-v0.1", "trace protocol");
+    assertEqual(trace.trace_protocol_version, "touba-trace-v1", "trace protocol");
     assertEqual(trace.events.at(-1).payload.status, "success", "runtime status");
 
     const update = runTouba(["update"], env, 1);

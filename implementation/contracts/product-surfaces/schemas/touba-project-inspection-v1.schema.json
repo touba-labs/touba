@@ -41,6 +41,7 @@
           "kind": { "enum": ["agent", "function", "skill", "strategy", "tool", "trigger"] },
           "ref": { "type": "string" },
           "description": { "type": "string" },
+          "responsibility": { "type": "string", "minLength": 1 },
           "effect_policy_requirement": {
             "enum": ["runtime_only_compatible", "declared_external_effects_required", "unknown"]
           },

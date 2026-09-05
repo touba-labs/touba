@@ -231,7 +231,7 @@ function assertDiagnostic(report, code) {
 
 function memoryAirFixture({ agentScope = true } = {}) {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.a2_memory_agent_read",
       name: "examples.a2_memory_agent_read",
@@ -378,7 +378,7 @@ function memoryTraceFixture({ refused = false, provenance = false, integrity = f
     });
   }
   return {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: {
       run_id: "run-memory",
       module_ref: "module:examples.a2_memory_agent_read",

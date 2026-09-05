@@ -26,5 +26,5 @@ skill BuildSource
             with request as request
             into source
         give source
-    on failure
+    on failure handler
         fallback FallbackSource

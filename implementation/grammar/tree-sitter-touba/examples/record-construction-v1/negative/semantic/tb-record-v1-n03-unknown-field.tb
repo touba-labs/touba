@@ -1,0 +1,9 @@
+module examples.record_unknown_field
+
+type Pair
+    left is Text
+
+function Build
+    gives Pair
+    do
+        give record Pair { left as "x", right as "y" }

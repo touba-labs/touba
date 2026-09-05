@@ -3,5 +3,6 @@ module examples.a2_memory_duplicate_owner_scope
 memory ProjectKnowledge
 
 agent Researcher
+    responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
     memory ProjectKnowledge read
     memory ProjectKnowledge read

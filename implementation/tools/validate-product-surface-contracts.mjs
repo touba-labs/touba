@@ -12,6 +12,7 @@ export const PRODUCT_SURFACE_CONTRACTS = Object.freeze([
   "touba-device-pairing-v0.1",
   "touba-identity-audit-v0.1",
   "touba-project-inspection-v1",
+  "touba-effective-project-v1",
   "touba-project-refresh-request-v0.1",
   "touba-project-refresh-v0.1",
   "touba-project-change-proposal-v0.1",

@@ -1,8 +1,9 @@
 {
-  "trace_protocol_version": "trace-minimal-v0.1",
+  "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
     "run_id": "run-1",
-    "air_schema_version": "air-minimal-v0.1",
+    "air_schema_version": "touba-air-v1",
     "module_ref": "module:examples.a1_tool_binding",
     "entry_ref": "skill:examples.a1_tool_binding/BuildSource"
   },
@@ -13,7 +14,8 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "skill:examples.a1_tool_binding/BuildSource"
+        "entry_ref": "skill:examples.a1_tool_binding/BuildSource",
+        "max_loop_iterations": 100
       }
     },
     {

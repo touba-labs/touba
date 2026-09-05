@@ -1,0 +1,6 @@
+module examples.record_unknown_type
+
+function Build
+    gives Text
+    do
+        give record MissingType { value as "x" }

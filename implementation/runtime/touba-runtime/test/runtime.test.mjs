@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 
 import {
+  AIR_CAPABILITY_PROFILE,
   AIR_JSON_PROFILE,
   AIR_SCHEMA_VERSION,
   RUNTIME_CAPABILITIES,
@@ -15,13 +16,13 @@ import {
   loadToolBindingManifestFromJson,
 } from "../src/index.mjs";
 
-test("loads AIR JSON v0.1 and rejects unsupported schema versions", () => {
+test("loads AIR V1 machine contract and rejects unsupported schema versions", () => {
   const document = baseDocument();
   const loaded = loadAirFromJson(JSON.stringify(document));
 
   assert.equal(loaded.air_schema_version, AIR_SCHEMA_VERSION);
-  assert.equal(AIR_JSON_PROFILE, "air-json-v0.1");
-  assert.ok(RUNTIME_CAPABILITIES.includes("trace-minimal-v0.1"));
+  assert.equal(AIR_JSON_PROFILE, "touba-air-json-canonical-v1");
+  assert.ok(RUNTIME_CAPABILITIES.includes("touba-trace-v1"));
 
   assert.throws(
     () => loadAirFromJson(JSON.stringify({ ...document, air_schema_version: "unknown" })),
@@ -2230,6 +2231,57 @@ test("evaluates structured arithmetic expressions in give nodes", async () => {
   assert.equal(result.result, 7);
 });
 
+test("constructs nominal records in canonical field order without host evaluation", async () => {
+  const document = baseDocument({
+    types: [{
+      id: "type:test/Decision",
+      name: "Decision",
+      fields: [parameter("approved", "builtin:Boolean"), parameter("risk", "builtin:Float")],
+      source_ref: sourceRef(),
+    }],
+    functions: [fnDef("Build", "graph:function:test/Build", [parameter("risk", "builtin:Float")], "type:test/Decision")],
+    graphs: [graph("graph:function:test/Build", "function:test/Build", [
+      node("n1", "give", { arguments: ["expr:e1"] }),
+    ], [], [], [expression("e1", "construct_record", {
+      type_ref: "type:test/Decision",
+      record_fields: [
+        { name: "approved", value_ref: "literal:bool:true" },
+        { name: "risk", value_ref: "value:risk" },
+      ],
+    })])],
+  });
+
+  const result = await executeAirDocument(document, {
+    entryRef: "function:test/Build",
+    inputs: { risk: 0.25 },
+  });
+  assert.equal(result.status, "success");
+  assert.deepEqual(result.result, { approved: true, risk: 0.25 });
+  assert.deepEqual(Object.keys(result.result), ["approved", "risk"]);
+});
+
+test("refuses malformed AIR record fields that are not unique and canonical", async () => {
+  const document = baseDocument({
+    functions: [fnDef("Build", "graph:function:test/Build", [], "builtin:Text")],
+    graphs: [graph("graph:function:test/Build", "function:test/Build", [
+      node("n1", "give", { arguments: ["expr:e1"] }),
+    ], [], [], [expression("e1", "construct_record", {
+      type_ref: "type:test/Decision",
+      record_fields: [
+        { name: "risk", value_ref: "literal:float:0.25" },
+        { name: "approved", value_ref: "literal:bool:true" },
+      ],
+    })])],
+  });
+
+  await assert.rejects(
+    executeAirDocument(document, { entryRef: "function:test/Build" }),
+    (error) => error instanceof ToubaRuntimeError
+      && error.code === "InvalidAirDocument"
+      && error.details.contractCode === "AirRecordFieldsNonCanonical",
+  );
+});
+
 test("executes immutable bind nodes and resolves module constants", async () => {
   const document = baseDocument({
     constants: [
@@ -2523,6 +2575,7 @@ test("selects a fallback path after a tool failure", async () => {
           scope_ref: "graph:skill:test/PrimaryFlow",
           trigger_node_id: "n1",
           mode: "fallback",
+          failure_family: "handler",
           target_node_id: "n3",
           source_ref: sourceRef(),
         },
@@ -2568,6 +2621,7 @@ test("selects a fallback path after a tool handler error", async () => {
           scope_ref: "graph:skill:test/PrimaryFlow",
           trigger_node_id: "n1",
           mode: "fallback",
+          failure_family: "handler",
           target_node_id: "n3",
           source_ref: sourceRef(),
         },
@@ -2590,6 +2644,65 @@ test("selects a fallback path after a tool handler error", async () => {
   assert.equal(result.status, "success");
   assert.equal(result.result, "fallback");
   assert.match(eventOf(result.trace, "failure_detected").message, /tool handler failed/);
+  assert.equal(eventOf(result.trace, "failure_detected").payload.failure_family, "handler");
+});
+
+test("does not let a fallback capture an undeclared failure family", async () => {
+  const document = baseDocument({
+    tools: [tool("Primary")],
+    skills: [
+      skill("PrimaryFlow", "graph:skill:test/PrimaryFlow", [
+        "tool:test/Primary",
+        "skill:test/FallbackFlow",
+      ]),
+      skill("FallbackFlow", "graph:skill:test/FallbackFlow"),
+    ],
+    graphs: [
+      graph("graph:skill:test/PrimaryFlow", "skill:test/PrimaryFlow", [
+        node("n1", "call_tool", { target_ref: "tool:test/Primary" }),
+        node("n2", "fallback", { target_ref: "skill:test/FallbackFlow" }),
+      ], [
+        edge("n1", "n2", "failure"),
+        edge("n1", "n2", "fallback"),
+      ], [{
+        id: "failure:graph:skill:test/PrimaryFlow:1",
+        scope_ref: "graph:skill:test/PrimaryFlow",
+        trigger_node_id: "n1",
+        mode: "fallback",
+        failure_family: "authority",
+        target_node_id: "n2",
+        source_ref: sourceRef(),
+      }]),
+      graph("graph:skill:test/FallbackFlow", "skill:test/FallbackFlow", [
+        node("f1", "give", { arguments: ["literal:string:fallback"] }),
+      ]),
+    ],
+  });
+
+  const result = await executeAirDocument(document, { entryRef: "skill:test/PrimaryFlow" });
+  assert.equal(result.status, "failure");
+  assert.equal(eventsOf(result.trace, "fallback_selected").length, 0);
+  const failure = eventOf(result.trace, "failure_detected");
+  assert.equal(failure.payload.failure_family, "handler");
+  assert.equal(failure.payload.declared_failure_family, "authority");
+});
+
+test("exposes and enforces the positive loop iteration bound", async () => {
+  const document = baseDocument({
+    skills: [skill("Loop", "graph:skill:test/Loop")],
+    graphs: [graph("graph:skill:test/Loop", "skill:test/Loop", [
+      node("n1", "loop", { condition_ref: "literal:bool:true" }),
+    ], [edge("n1", "n1", "loop_next")])],
+  });
+  const result = await executeAirDocument(document, {
+    entryRef: "skill:test/Loop",
+    maxLoopIterations: 2,
+  });
+  assert.equal(result.status, "failure");
+  assert.equal(eventOf(result.trace, "run_started").payload.max_loop_iterations, 2);
+  const failure = eventOf(result.trace, "failure_detected");
+  assert.equal(failure.payload.runtime_error_code, "LoopIterationLimitExceeded");
+  assert.equal(failure.payload.failure_family, "authority");
 });
 
 test("executes a strategy through an agent responsibility", async () => {
@@ -2647,6 +2760,87 @@ test("executes a strategy through an agent responsibility", async () => {
   assert.deepEqual(eventOf(result.trace, "agent_capabilities_listed").payload.capability_refs, [
     "skill:test/Build",
   ]);
+});
+
+test("executes a typed agent call with explicit input and result binding", async () => {
+  const document = typedAgentCallDocument();
+  const result = await executeAirDocument(document, {
+    inputs: { request: { summary: "review this" } },
+    agentDecisionProvider: async (request) => {
+      assert.equal(request.agent_ref, "agent:test/Reviewer");
+      assert.deepEqual(request.inputs.request, { summary: "review this" });
+      return {
+        action: "answer_directly",
+        source: "test_provider",
+        result: { verdict: "approved" },
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  assert.deepEqual(result.result, { verdict: "approved" });
+  assert.deepEqual(eventOf(result.trace, "agent_interface_entered").payload, {
+    agent_ref: "agent:test/Reviewer",
+    caller_ref: "strategy:test/RunReview",
+    input_count: 1,
+    output_type: "type:test/ReviewResult",
+  });
+  assert.deepEqual(eventOf(result.trace, "agent_interface_result_returned").payload, {
+    agent_ref: "agent:test/Reviewer",
+    caller_ref: "strategy:test/RunReview",
+    output_type: "type:test/ReviewResult",
+    result_type: "object",
+  });
+});
+
+test("refuses a typed agent final answer incompatible with gives", async () => {
+  const result = await executeAirDocument(typedAgentCallDocument(), {
+    inputs: { request: { summary: "review this" } },
+    agentDecisionProvider: async () => ({
+      action: "answer_directly",
+      source: "test_provider",
+      result: "not a ReviewResult",
+    }),
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "AgentInterfaceResultTypeMismatch");
+  assert.deepEqual(eventOf(result.trace, "agent_interface_refused").payload, {
+    agent_ref: "agent:test/Reviewer",
+    caller_ref: "strategy:test/RunReview",
+    reason: "result_type_mismatch",
+    runtime_error_code: "AgentInterfaceResultTypeMismatch",
+    expected_type_ref: "type:test/ReviewResult",
+    value_kind: "string",
+  });
+  assert.equal(eventsOf(result.trace, "agent_direct_answer_returned").length, 0);
+});
+
+test("refuses malformed AIR arguments before entering a typed agent", async () => {
+  const document = typedAgentCallDocument();
+  const call = document.execution_graphs[0].nodes[0];
+  call.arguments = ["literal:string:not-a-record"];
+  const result = await executeAirDocument(document, {
+    inputs: { request: { summary: "review this" } },
+    agentDecisionProvider: async () => assert.fail("provider must not be called"),
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "AgentInterfaceInputTypeMismatch");
+  assert.equal(eventsOf(result.trace, "agent_interface_entered").length, 0);
+});
+
+test("keeps historical agents valid but refuses enriched calls without interface", async () => {
+  const document = typedAgentCallDocument();
+  delete document.definitions.agents[0].signature;
+  const result = await executeAirDocument(document, {
+    inputs: { request: { summary: "review this" } },
+    agentDecisionProvider: async () => assert.fail("provider must not be called"),
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "AgentInterfaceRequired");
+  assert.equal(eventOf(result.trace, "agent_interface_refused").payload.reason, "interface_missing");
 });
 
 test("lets an agent select one declared capability through a governed decision", async () => {
@@ -6318,6 +6512,8 @@ function strategyResourceDocument() {
 function baseDocument(overrides = {}) {
   return {
     air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: {
       id: "module:test",
       name: "test",
@@ -6338,6 +6534,71 @@ function baseDocument(overrides = {}) {
     execution_graphs: overrides.graphs ?? [],
     trace_points: overrides.tracePoints ?? [],
   };
+}
+
+function typedAgentCallDocument() {
+  return baseDocument({
+    types: [
+      {
+        id: "type:test/ReviewRequest",
+        name: "ReviewRequest",
+        fields: [parameter("summary", "builtin:Text")],
+        source_ref: sourceRef(),
+      },
+      {
+        id: "type:test/ReviewResult",
+        name: "ReviewResult",
+        fields: [parameter("verdict", "builtin:Text")],
+        source_ref: sourceRef(),
+      },
+    ],
+    agents: [
+      {
+        id: "agent:test/Reviewer",
+        name: "Reviewer",
+        responsibility: "Review the explicit request and return one typed final result.",
+        signature: {
+          inputs: [parameter("request", "type:test/ReviewRequest")],
+          output_type: "type:test/ReviewResult",
+        },
+        uses: [],
+        callable_by: [{
+          caller_ref: "strategy:test/RunReview",
+          caller_kind: "strategy",
+          source_ref: sourceRef(),
+        }],
+        source_ref: sourceRef(),
+      },
+    ],
+    strategies: [
+      {
+        id: "strategy:test/RunReview",
+        name: "RunReview",
+        signature: {
+          inputs: [parameter("request", "type:test/ReviewRequest")],
+          output_type: "type:test/ReviewResult",
+        },
+        uses: ["agent:test/Reviewer"],
+        flow_graph_ref: "graph:strategy:test/RunReview",
+        source_ref: sourceRef(),
+      },
+    ],
+    graphs: [
+      graph(
+        "graph:strategy:test/RunReview",
+        "strategy:test/RunReview",
+        [
+          node("call", "call_agent", {
+            target_ref: "agent:test/Reviewer",
+            arguments: ["value:request"],
+            result_binding: "review",
+          }),
+          node("give", "give", { arguments: ["value:review"] }),
+        ],
+        [edge("call", "give", "next")],
+      ),
+    ],
+  });
 }
 
 function triggerDocument({

@@ -3,11 +3,15 @@ use std::collections::BTreeMap;
 use crate::ast::SourceRef;
 use serde::{Deserialize, Serialize};
 
-pub const AIR_SCHEMA_VERSION: &str = "air-minimal-v0.1";
+pub const AIR_SCHEMA_VERSION: &str = "touba-air-v1";
+pub const AIR_CAPABILITY_PROFILE: &str = "touba-air-capabilities-v1";
+pub const AIR_JSON_PROFILE: &str = "touba-air-json-canonical-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AirDocument {
     pub air_schema_version: String,
+    pub air_capability_profile: String,
+    pub air_json_profile: String,
     pub module: AirModule,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imports: Vec<AirImport>,
@@ -173,6 +177,8 @@ pub struct AirAgent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub responsibility: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<AirSignature>,
     pub uses: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub use_refs: Vec<AirUseRef>,
@@ -355,9 +361,17 @@ pub struct AirExpression {
     pub operands: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub record_fields: Vec<AirRecordField>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_ref: Option<String>,
     pub source_ref: SourceRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AirRecordField {
+    pub name: String,
+    pub value_ref: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +384,7 @@ pub enum AirExpressionKind {
     LiteralFloat,
     TextConversion,
     FieldAccess,
+    ConstructRecord,
     UnaryOp,
     BinaryOp,
 }
@@ -412,8 +427,18 @@ pub struct AirFailurePath {
     pub scope_ref: String,
     pub trigger_node_id: String,
     pub mode: AirFailureMode,
+    pub failure_family: AirFailureFamily,
     pub target_node_id: String,
     pub source_ref: SourceRef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AirFailureFamily {
+    Business,
+    Authority,
+    Provider,
+    Handler,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -481,6 +506,7 @@ pub enum AirDiagnosticCode {
     UnknownReference,
     InvalidBranchCondition,
     InvalidLoopCollection,
+    InvariantLoopCondition,
     UnknownTypeReference,
     MissingGiveValue,
     InvalidGiveValue,
@@ -491,6 +517,7 @@ pub enum AirDiagnosticCode {
     UnresolvedCallArgumentValue,
     DuplicateResultBinding,
     EnrichedAgentCallBlocked,
+    MissingAgentInterfaceOutput,
     MissingHumanApprovalContextArgument,
     MissingHumanApprovalDecisionBinding,
     UnknownHumanApprovalArgument,
@@ -520,6 +547,11 @@ pub enum AirDiagnosticCode {
     UnsupportedExpression,
     InvalidExpressionOperandType,
     UnknownExpressionField,
+    UnknownRecordType,
+    MissingRecordField,
+    UnknownRecordField,
+    DuplicateRecordField,
+    RecordFieldTypeMismatch,
     IncompatibleExpressionType,
     InvalidNumericLiteral,
     StaticExpressionDivisionByZero,

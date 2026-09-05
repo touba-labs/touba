@@ -18,6 +18,7 @@ skill ReviewDraft
             stop
 
 agent Reviewer
+    responsibility "Fulfill the declared Reviewer responsibility using only authorized capabilities."
     uses ReviewDraft
 
 strategy RunReview

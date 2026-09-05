@@ -15,8 +15,8 @@ export const TRACE_AUDIT_VALIDATION_SCHEMA_VERSION = "trace-audit-validation-v0.
 export const TRACE_AUDIT_EXPORT_SCHEMA_VERSION = "trace-audit-export-v0.1-local";
 export const TRACE_TIMELINE_SCHEMA_VERSION = "touba-trace-timeline-v1";
 
-const TRACE_PROTOCOL_VERSION = "trace-minimal-v0.1";
-const AIR_SCHEMA_VERSION = "air-minimal-v0.1";
+const TRACE_PROTOCOL_VERSION = "touba-trace-v1";
+const AIR_SCHEMA_VERSION = "touba-air-v1";
 const MANIFEST_VERSION = "touba-manifest-v1";
 const DIGEST_KIND = "sha256";
 const RUNTIME_NAME = "touba-audit";

@@ -25,10 +25,12 @@ skill ReviewChange
         give ReviewedChange
 
 agent Engineer
+    responsibility "Fulfill the declared Engineer responsibility using only authorized capabilities."
     uses MakeChange
     callable_by strategy RunChange
 
 agent Reviewer
+    responsibility "Fulfill the declared Reviewer responsibility using only authorized capabilities."
     uses ReviewChange
     callable_by strategy RunChange
 

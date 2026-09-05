@@ -1,0 +1,24 @@
+{
+  "schema_version": "touba-hardened-execution-profile-v1",
+  "controls": {
+    "sandbox": {
+      "required": true,
+      "minimum_versions": {
+        "bubblewrap": "0.8.0",
+        "sandbox-exec": "1",
+        "sandboxie-plus": "1.0"
+      }
+    },
+    "provider_content_mode": "opaque_refs",
+    "require_supply_chain_lock": true,
+    "require_budgets": [
+      "max_run_ms",
+      "max_steps",
+      "max_tool_calls",
+      "max_agent_invocations"
+    ],
+    "require_redaction": true,
+    "require_durable_checkpoints": true,
+    "secrets_policy": "handles_only"
+  }
+}

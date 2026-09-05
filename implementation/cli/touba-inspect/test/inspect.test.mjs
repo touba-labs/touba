@@ -30,7 +30,7 @@ test("inspects a Touba source by compiling it to AIR without attaching unprovide
   assert.equal(inspection.trace.present, false);
   assert.match(rendered, /Touba Inspect touba-inspect-v0\.1/);
   assert.match(rendered, /Source .*tb-v01-001-linear-skill\.tb/);
-  assert.match(rendered, /AIR air-minimal-v0\.1/);
+  assert.match(rendered, /AIR touba-air-v1/);
   assert.match(rendered, /Trace absent: trace artifact not provided/);
   assert.match(rendered, /Architecture absent:/);
   assert.doesNotMatch(rendered, /Artifact scope excludes|Absent data/);
@@ -71,7 +71,13 @@ test("projects AIR inspection to touba-project-inspection-v1", () => {
     true,
   );
   const agentEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.ref === "agent:examples.strategy_agents/Engineer");
+  assert.equal(
+    agentEntrypoint.responsibility,
+    "Fulfill the declared Engineer responsibility using only authorized capabilities.",
+  );
   assert.equal(agentEntrypoint.input_contract.mode, "open");
+  assert.deepEqual(agentEntrypoint.input_contract.fields, []);
+  assert.deepEqual(agentEntrypoint.input_contract.types, []);
   const skillEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.ref === "skill:examples.strategy_agents/MakeChange");
   assert.equal(skillEntrypoint.input_contract.mode, "declared");
   assert.equal(skillEntrypoint.input_contract.fields[0].type_ref, "type:examples.strategy_agents/ChangeRequest");
@@ -80,6 +86,59 @@ test("projects AIR inspection to touba-project-inspection-v1", () => {
   assert.equal(toolEntrypoint.kind, "tool");
   assert.equal(toolEntrypoint.input_contract.mode, "declared");
   assert.deepEqual(project.diagnostics, []);
+});
+
+test("projects an explicit agent signature without inferring it from uses", () => {
+  const sourcePath = path.join(
+    implementationDir,
+    "grammar/tree-sitter-touba/examples/agent-interface-v1/positive/tb-agent-interface-p01-strategy-call.tb",
+  );
+  const inspection = inspectPath(sourcePath);
+  const project = projectInspectionContract(inspection);
+  const agentEntrypoint = project.entrypoints.find(
+    (entrypoint) => entrypoint.ref === "agent:examples.agent_interface/Reviewer",
+  );
+
+  assert.equal(agentEntrypoint.input_contract.mode, "declared");
+  assert.deepEqual(agentEntrypoint.input_contract.fields, [
+    {
+      name: "request",
+      type_ref: "type:examples.agent_interface/ReviewRequest",
+      required: true,
+    },
+  ]);
+  assert.equal(agentEntrypoint.input_contract.types[0].name, "ReviewRequest");
+});
+
+test("inspects the effective project from one model in text and JSON without sensitive fields", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "touba-inspect-effective-"));
+  const artifactPath = path.join(root, "touba.effective-project.json");
+  try {
+    const artifact = effectiveProjectFixture();
+    writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+    const inspection = inspectPath(artifactPath);
+    const rendered = renderInspection(inspection);
+    assert.equal(inspection.artifact_kind, "effective_project");
+    assert.equal(inspection.effective_project.input_count, 2);
+    assert.match(rendered, /Effective project touba-effective-project-v1/);
+    assert.match(rendered, /entry provenance=effective/);
+    assert.match(rendered, /sandbox provenance=absent/);
+    assert.deepEqual(projectInspectionContract(inspection), artifact);
+
+    const cli = spawnSync(process.execPath, [
+      new URL("../src/inspect.mjs", import.meta.url).pathname,
+      artifactPath,
+      "--json",
+    ], { encoding: "utf8" });
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.deepEqual(JSON.parse(cli.stdout), artifact);
+
+    artifact.contract.secrets.secret_value = "must-not-leak";
+    writeFileSync(artifactPath, `${JSON.stringify(artifact)}\n`, "utf8");
+    assert.throws(() => inspectPath(artifactPath), /forbidden sensitive field secret_value/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("inspects AIR callable_by authority without deriving policy", () => {
@@ -303,7 +362,7 @@ test("inspects a trace fixture without inventing AIR context", () => {
 
   assert.match(rendered, /Artifact trace/);
   assert.match(rendered, /AIR absent: AIR artifact not provided/);
-  assert.match(rendered, /Trace trace-minimal-v0\.1/);
+  assert.match(rendered, /Trace touba-trace-v1/);
   assert.match(rendered, /status=stopped/);
 });
 
@@ -366,7 +425,7 @@ test("writes an OpenTelemetry JSON projection from the inspect CLI", () => {
 
 test("maps Touba agent and tool events to GenAI span operations", () => {
   const trace = {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: {
       run_id: "run-otel-agent",
       module_ref: "module:examples.otel",
@@ -410,7 +469,7 @@ test("maps Touba agent and tool events to GenAI span operations", () => {
 
 test("keeps OpenTelemetry export free of raw prompts, secrets and payload content", () => {
   const trace = {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: {
       run_id: "run-otel-redaction",
       module_ref: "module:examples.otel",
@@ -1462,7 +1521,7 @@ function ownershipFixture(options = {}) {
 
 function toolBindingAirFixture() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.v1_process_binding",
       name: "examples.v1_process_binding",
@@ -1492,7 +1551,7 @@ function toolBindingAirFixture() {
 
 function agentAuthorityAirFixture() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.authority",
       name: "examples.authority",
@@ -1536,7 +1595,7 @@ function agentAuthorityAirFixture() {
 
 function triggerAirFixture() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.trigger",
       name: "examples.trigger",
@@ -1602,7 +1661,7 @@ function triggerAirFixture() {
 
 function importsAirFixture() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.search",
       name: "examples.search",
@@ -1641,7 +1700,7 @@ function importsAirFixture() {
 
 function importedToolAirFixture() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.research_app",
       name: "examples.research_app",
@@ -1721,7 +1780,7 @@ function triggerManifestFixture() {
 
 function budgetAirFixture() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.budget",
       name: "examples.budget",
@@ -1768,7 +1827,7 @@ function budgetManifestFixture() {
 
 function memoryAirFixture() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     module: {
       id: "module:examples.memory",
       name: "examples.memory",
@@ -1871,7 +1930,7 @@ function memoryPackageFixture() {
     version: "0.1.0",
     root: "../packages/memory",
     touba: {
-      air_profile: "air-json-v0.1",
+      air_profile: "touba-air-json-canonical-v1",
       runtime_compatibility: ">=0.1 <0.2",
     },
     exports: {
@@ -1948,7 +2007,7 @@ function memoryRunPlanFixture() {
 
 function memoryTraceFixture() {
   return {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: {
       run_id: "run-memory",
       module_ref: "module:examples.memory",
@@ -2113,7 +2172,7 @@ function traceAuditExportFixture() {
     },
     artifacts: {
       trace: {
-        trace_protocol_version: "trace-minimal-v0.1",
+        trace_protocol_version: "touba-trace-v1",
         run: {
           run_id: "run-ta1",
           module_ref: "module:examples.ta1",
@@ -2122,7 +2181,7 @@ function traceAuditExportFixture() {
         events: [],
       },
       air: {
-        air_schema_version: "air-minimal-v0.1",
+        air_schema_version: "touba-air-v1",
         module: {
           id: "module:examples.ta1",
           name: "examples.ta1",
@@ -2176,7 +2235,7 @@ function traceTimelineFixture() {
 
 function humanApprovalTraceFixture() {
   return {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: {
       run_id: "run-human",
       module_ref: "module:examples.human",
@@ -2245,7 +2304,7 @@ function humanApprovalTraceFixture() {
 
 function userInteractionTraceFixture() {
   return {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: {
       run_id: "run-user",
       module_ref: "module:examples.user",
@@ -2505,5 +2564,49 @@ function sourceRef(line) {
     start_column: 0,
     end_line: line + 1,
     end_column: 0,
+  };
+}
+
+function effectiveProjectFixture() {
+  const section = (status, sources = [], details = {}) => ({
+    provenance: { status, sources },
+    ...details,
+  });
+  return {
+    schema_version: "touba-effective-project-v1",
+    artifact_role: "derived_non_authoritative",
+    project: {
+      artifact_layout: "touba-artifacts-v1",
+      profile: "dev",
+    },
+    inputs: [
+      {
+        kind: "project",
+        path: "touba.project.json",
+        digest_sha256: `sha256:${"a".repeat(64)}`,
+        provenance: "declared",
+      },
+      {
+        kind: "air",
+        path: ".touba/build/dev/air/examples/app.air.json",
+        digest_sha256: `sha256:${"b".repeat(64)}`,
+        provenance: "derived",
+      },
+    ],
+    contract: {
+      sources: section("declared", ["src/examples/app.tb"], { modules: ["examples.app"], paths: ["src/examples/app.tb"] }),
+      air: section("derived", ["src/examples/app.tb"], { modules: ["examples.app"], paths: [".touba/build/dev/air/examples/app.air.json"] }),
+      entry: section("effective", [".touba/build/dev/touba.run-plan.json"], { ref: "strategy:examples.app/Run" }),
+      handlers: section("non_applicable", [], { reason: "the prepared AIR declares no tool" }),
+      grants: section("non_applicable", [], { reason: "the prepared AIR declares no tool" }),
+      secrets: section("non_applicable", [], { reason: "no secret handle is required" }),
+      memory_scopes: section("non_applicable", [], { reason: "no memory scope is declared" }),
+      callers: section("non_applicable", [], { reason: "no agent is declared" }),
+      budgets: section("absent", [], { reason: "no run budget is declared" }),
+      sandbox: section("absent", [], { reason: "no project sandbox contract is declared in V1" }),
+      lock: section("non_applicable", [], { reason: "profile does not require a supply-chain lock" }),
+      triggers: section("non_applicable", [], { reason: "no trigger is declared" }),
+      evidence: section("absent", [], { reason: "no local evidence artifact is available" }),
+    },
   };
 }

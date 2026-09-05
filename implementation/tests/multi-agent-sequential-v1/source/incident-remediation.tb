@@ -1,0 +1,66 @@
+module examples.incident_remediation
+
+memory RemediationLedger
+
+type IncidentRequest
+    service is Text
+
+type Assessment
+    severity is Text
+
+type RemediationPlan
+    action is Text
+
+type ExecutionReceipt
+    status is Text
+
+tool ApplyRemediation
+    description "Apply one approved remediation plan and record its receipt."
+    takes plan as RemediationPlan
+    gives ExecutionReceipt
+    uses memory RemediationLedger write
+    requires network
+    requires memory_write
+    requires secret_read
+    secrets REMEDIATION_TOKEN
+
+agent TriageAgent
+    takes request as IncidentRequest
+    gives Assessment
+    responsibility "Classify the incident request without producing an external effect."
+    callable_by strategy RunIncidentRemediation
+
+agent PlanningAgent
+    takes assessment as Assessment
+    gives RemediationPlan
+    responsibility "Turn one assessment into a bounded remediation plan."
+    callable_by strategy RunIncidentRemediation
+
+agent ExecutionAgent
+    takes plan as RemediationPlan
+    gives ExecutionReceipt
+    responsibility "Execute only the approved plan through the declared effect capability."
+    uses ApplyRemediation
+    memory RemediationLedger write
+    callable_by strategy RunIncidentRemediation
+
+strategy RunIncidentRemediation
+    takes request as IncidentRequest
+    gives ExecutionReceipt
+    uses TriageAgent
+    uses PlanningAgent
+    uses ExecutionAgent
+    do
+        TriageAgent
+            with request as request
+            into assessment
+        PlanningAgent
+            with assessment as assessment
+            into plan
+        human.approve
+            with context as plan
+            into approved
+        ExecutionAgent
+            with plan as plan
+            into receipt
+        give receipt

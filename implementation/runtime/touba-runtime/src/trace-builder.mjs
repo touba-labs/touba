@@ -1,8 +1,13 @@
 // @ts-check
 
 import { createHash } from "node:crypto";
+import {
+  TRACE_CAPABILITY_PROFILE,
+  TRACE_PROTOCOL_VERSION,
+  failureFamilyForRuntimeCode,
+} from "../../../contracts/machine/contracts.mjs";
 
-export const TRACE_PROTOCOL_VERSION = "trace-minimal-v0.1";
+export { TRACE_CAPABILITY_PROFILE, TRACE_PROTOCOL_VERSION };
 
 /**
  * @typedef {object} TraceAirDocument
@@ -11,7 +16,7 @@ export const TRACE_PROTOCOL_VERSION = "trace-minimal-v0.1";
  *
  * @typedef {object} TraceEventOptions
  * @property {unknown=} airRef
- * @property {unknown=} payload
+ * @property {Record<string, any>=} payload
  * @property {string=} message
  *
  * @typedef {object} TraceEvent
@@ -50,13 +55,23 @@ export class TraceBuilder {
    * @returns {TraceEvent}
    */
   push(kind, options = {}) {
+    const payload = kind === "failure_detected" && options.payload
+      ? {
+        ...options.payload,
+        failure_family: options.payload.failure_family
+          ?? failureFamilyForRuntimeCode(
+            options.payload.runtime_error_code,
+            options.payload.failure_mode,
+          ),
+      }
+      : options.payload;
     const event = /** @type {TraceEvent} */ (compactPayload({
       event_id: `event:${this.runId}:${this.events.length + 1}`,
       run_id: this.runId,
       sequence_index: this.events.length,
       kind,
       air_ref: options.airRef,
-      payload: options.payload,
+      payload,
       message: options.message,
     }));
     this.events.push(event);
@@ -71,11 +86,12 @@ export class TraceBuilder {
   }
 
   /**
-   * @returns {{ trace_protocol_version: string, run: { run_id: string, air_schema_version: string, module_ref: string, entry_ref: string }, events: TraceEvent[] }}
+   * @returns {{ trace_protocol_version: string, trace_capability_profile: string, run: { run_id: string, air_schema_version: string, module_ref: string, entry_ref: string }, events: TraceEvent[] }}
    */
   document() {
     return {
       trace_protocol_version: TRACE_PROTOCOL_VERSION,
+      trace_capability_profile: TRACE_CAPABILITY_PROFILE,
       run: {
         run_id: this.runId,
         air_schema_version: this.airDocument.air_schema_version,

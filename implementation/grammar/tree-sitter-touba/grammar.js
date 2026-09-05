@@ -148,6 +148,9 @@ export default grammar({
       field("name", $.symbol_identifier),
       indentedBlock($, choice(
         $.description_clause,
+        $.takes_clause,
+        $.gives_clause,
+        $.responsibility_clause,
         $.uses_clause,
         $.callable_by_clause,
         $.memory_scope_clause,
@@ -234,6 +237,8 @@ export default grammar({
 
     description_clause: $ => seq("description", $._sp, field("value", $.string)),
 
+    responsibility_clause: $ => seq("responsibility", $._sp, field("value", $.string)),
+
     requires_clause: $ => seq("requires", $._sp, commaSep1($.value_identifier, $)),
 
     secrets_clause: $ => seq("secrets", $._sp, commaSep1($.secret_identifier, $)),
@@ -275,12 +280,16 @@ export default grammar({
       "on",
       $._sp,
       "failure",
+      $._sp,
+      field("family", $.failure_family),
       indentedBlock($, choice(
         $.fallback_statement,
         $.stop_statement,
         $.indent_error,
       )),
     ),
+
+    failure_family: _ => token(choice("business", "authority", "provider", "handler")),
 
     _statement: $ => choice(
       $.bind_statement,
@@ -479,6 +488,7 @@ export default grammar({
     )),
 
     _primary_expression: $ => choice(
+      $.record_expression,
       $.text_conversion_expression,
       $.parenthesized_expression,
       $.symbol_identifier,
@@ -501,6 +511,26 @@ export default grammar({
       "(",
       field("value", $.expression),
       ")",
+    ),
+
+    record_expression: $ => seq(
+      "record",
+      $._sp,
+      field("type", $.symbol_identifier),
+      optional($._sp),
+      "{",
+      optional($._sp),
+      commaSep1($.record_field, $),
+      optional($._sp),
+      "}",
+    ),
+
+    record_field: $ => seq(
+      field("name", $.value_identifier),
+      $._sp,
+      "as",
+      $._sp,
+      field("value", $.expression),
     ),
 
     type_ref: $ => choice(

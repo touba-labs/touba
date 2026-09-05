@@ -717,7 +717,7 @@ function lastTriggerRefusal(trace, triggerRef, eventId) {
 function replayRejectedResult(document, event, runId) {
   const effectiveRunId = runId ?? "trigger-service-replay-rejected";
   const trace = {
-    trace_protocol_version: "trace-minimal-v0.1",
+    trace_protocol_version: "touba-trace-v1",
     run: {
       module_ref: document.module?.id,
       entry_ref: event.triggerRef,

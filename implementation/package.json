@@ -34,6 +34,8 @@
     "test:release-versioning": "node tools/check-node-version.mjs && node --test tools/validate-release-versioning.test.mjs tools/assemble-release-assets.test.mjs",
     "validate:product-surface-contracts": "node tools/check-node-version.mjs && node tools/validate-product-surface-contracts.mjs",
     "test:product-surface-contracts": "node tools/check-node-version.mjs && node --test tools/validate-product-surface-contracts.test.mjs",
+    "test:machine-contracts": "node tools/check-node-version.mjs && node --test contracts/machine/contracts.test.mjs contracts/conformance/conformance.test.mjs contracts/reference-runtime/reference-runtime.test.mjs",
+    "test:machine-conformance": "node tools/check-node-version.mjs && node --test contracts/conformance/conformance.test.mjs",
     "test:project-server": "node tools/check-node-version.mjs && pnpm --filter @touba/project-server test",
     "validate:design-tokens": "node tools/check-node-version.mjs && node tools/validate-design-tokens.mjs",
     "test:design-tokens": "node tools/check-node-version.mjs && node --test tools/validate-design-tokens.test.mjs",
@@ -45,6 +47,12 @@
     "validate:js-sdk-engine-project": "node tools/check-node-version.mjs && pnpm --filter @touba/js-sdk-engine-project-fixture test",
     "validate:agent-autonomy-v1": "node tools/check-node-version.mjs && pnpm --filter @touba/agent-autonomy-v1-fixture test",
     "validate:agent-decision-provider-v1": "node tools/check-node-version.mjs && pnpm --filter @touba/agent-decision-provider-v1-fixture test",
+    "validate:agent-interface-v1": "node tools/check-node-version.mjs && pnpm --filter @touba/agent-interface-v1-fixture test",
+    "validate:multi-agent-sequential-v1": "node tools/check-node-version.mjs && pnpm --filter @touba/multi-agent-sequential-v1-fixture test",
+    "validate:record-construction-v1": "node tools/check-node-version.mjs && pnpm --filter @touba/record-construction-v1-fixture test",
+    "validate:failure-flow-v1": "node tools/check-node-version.mjs && pnpm --filter @touba/failure-flow-v1-fixture test",
+    "validate:governance-cost-v1": "node tools/check-node-version.mjs && pnpm --filter @touba/governance-cost-v1-fixture test",
+    "validate:pap-semantics": "node tools/check-node-version.mjs && node ../../pap/validation/validate-operational-semantics.mjs",
     "test:action-plan": "node tools/check-node-version.mjs && pnpm --filter @touba/action-plan test",
     "test:lsp": "node tools/check-node-version.mjs && pnpm --filter @touba/lsp-server test",
     "test:trace-renderer": "node tools/check-node-version.mjs && pnpm --filter touba-vscode test:renderer",
@@ -74,7 +82,8 @@
     "validate:test-structure": "node tools/check-node-version.mjs && node tools/validate-test-structure.mjs",
     "validate:docs-public-boundary": "node tools/check-node-version.mjs && node tools/validate-doc-public-boundary.mjs",
     "validate:docs-examples": "node tools/check-node-version.mjs && node tools/validate-doc-examples.mjs",
-    "validate:docs-user": "node tools/check-node-version.mjs && pnpm validate:docs-public-boundary && pnpm validate:docs-examples",
+    "test:docs-examples": "node tools/check-node-version.mjs && node --test tools/validate-doc-examples.test.mjs",
+    "validate:docs-user": "node tools/check-node-version.mjs && pnpm validate:docs-public-boundary && pnpm test:docs-examples && pnpm validate:docs-examples",
     "validate:scenarios-v1": "node tools/check-node-version.mjs && node tools/validate-scenarios-v1.mjs",
     "validate:agent-authority": "node tools/check-node-version.mjs && pnpm --dir grammar/tree-sitter-touba test && cargo test -p touba-compiler && pnpm test:runtime && pnpm test:lsp && pnpm test:inspect && pnpm test:trace-renderer",
     "validate:memory-scopes": "node tools/check-node-version.mjs && pnpm --dir grammar/tree-sitter-touba test && cargo test -p touba-compiler && pnpm test:runtime && pnpm test:lsp && pnpm test:inspect && pnpm test:trace-renderer && pnpm check:architecture-fixtures",
@@ -126,7 +135,7 @@
     "validate:memory-postgres-rb2": "node tools/check-node-version.mjs && node tests/memory-postgres-rb2/validate.mjs",
     "validate:memory-postgres-rb2:openai-live": "node tools/check-node-version.mjs && node tests/memory-postgres-rb2/validate.mjs --openai-live",
     "validate:separation-di1": "node tools/check-node-version.mjs && pnpm --dir grammar/tree-sitter-touba test && cargo test -p touba-compiler && pnpm test:lsp",
-    "validate:v1-local": "node tools/check-node-version.mjs && pnpm validate:test-structure && pnpm test:runtime && pnpm test:cli && pnpm test:project && pnpm test:deployment && pnpm validate:skills-v1 && pnpm validate:js-sdk-project && pnpm validate:js-sdk-engine-project && pnpm validate:agent-autonomy-v1 && pnpm validate:agent-decision-provider-v1 && pnpm validate:agentdojo-benchmark && pnpm validate:team-multi-equipe && pnpm validate:memory-backend-host && pnpm test:audit && pnpm test:supply-chain && pnpm test:inspect && pnpm test:lsp && pnpm test:trace-renderer && pnpm validate:corpus && pnpm validate:corpus:anneau1 && pnpm validate:corpus:expressions-v1 && pnpm validate:corpus:bind-define-v1 && pnpm validate:donnees-quebec-agent-provider && pnpm validate:donnees-quebec-agent:dry-run && pnpm check:air-fixtures && pnpm check:trace-fixtures && pnpm check:anneau1-trace-fixtures && pnpm check:architecture-fixtures"
+    "validate:v1-local": "node tools/check-node-version.mjs && pnpm test:machine-contracts && pnpm validate:test-structure && pnpm test:runtime && pnpm test:cli && pnpm test:project && pnpm test:deployment && pnpm validate:skills-v1 && pnpm validate:js-sdk-project && pnpm validate:js-sdk-engine-project && pnpm validate:agent-autonomy-v1 && pnpm validate:agent-decision-provider-v1 && pnpm validate:agent-interface-v1 && pnpm validate:multi-agent-sequential-v1 && pnpm validate:record-construction-v1 && pnpm validate:failure-flow-v1 && pnpm validate:governance-cost-v1 && pnpm validate:pap-semantics && pnpm validate:agentdojo-benchmark && pnpm validate:team-multi-equipe && pnpm validate:memory-backend-host && pnpm test:audit && pnpm test:supply-chain && pnpm test:inspect && pnpm test:lsp && pnpm test:trace-renderer && pnpm validate:corpus && pnpm validate:corpus:anneau1 && pnpm validate:corpus:expressions-v1 && pnpm validate:corpus:bind-define-v1 && pnpm validate:donnees-quebec-agent-provider && pnpm validate:donnees-quebec-agent:dry-run && pnpm check:air-fixtures && pnpm check:trace-fixtures && pnpm check:anneau1-trace-fixtures && pnpm check:architecture-fixtures"
   },
   "dependencies": {
     "@touba/project": "workspace:*"

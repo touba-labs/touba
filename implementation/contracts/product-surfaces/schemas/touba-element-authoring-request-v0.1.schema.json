@@ -19,6 +19,7 @@
         },
         "name": { "type": "string" },
         "description": { "type": "string" },
+        "responsibility": { "type": "string", "minLength": 12 },
         "takes": {
           "type": "array",
           "items": {

@@ -1,0 +1,126 @@
+{
+  "air_schema_version": "touba-air-v1",
+  "module": {
+    "id": "module:examples.agent_interface",
+    "name": "examples.agent_interface"
+  },
+  "definitions": {
+    "types": [
+      {
+        "id": "type:examples.agent_interface/ReviewRequest",
+        "name": "ReviewRequest",
+        "fields": [
+          {
+            "name": "summary",
+            "type_ref": "builtin:Text"
+          }
+        ]
+      },
+      {
+        "id": "type:examples.agent_interface/ReviewResult",
+        "name": "ReviewResult",
+        "fields": [
+          {
+            "name": "verdict",
+            "type_ref": "builtin:Text"
+          }
+        ]
+      }
+    ],
+    "functions": [],
+    "tools": [
+      {
+        "id": "tool:examples.agent_interface/InspectRequest",
+        "name": "InspectRequest",
+        "description": "Inspect one review request and return a typed review result.",
+        "signature": {
+          "inputs": [
+            {
+              "name": "request",
+              "type_ref": "type:examples.agent_interface/ReviewRequest"
+            }
+          ],
+          "output_type": "type:examples.agent_interface/ReviewResult"
+        }
+      }
+    ],
+    "skills": [],
+    "agents": [
+      {
+        "id": "agent:examples.agent_interface/Reviewer",
+        "name": "Reviewer",
+        "responsibility": "Review the explicit request and return one typed final result.",
+        "signature": {
+          "inputs": [
+            {
+              "name": "request",
+              "type_ref": "type:examples.agent_interface/ReviewRequest"
+            }
+          ],
+          "output_type": "type:examples.agent_interface/ReviewResult"
+        },
+        "uses": [
+          "tool:examples.agent_interface/InspectRequest"
+        ],
+        "callable_by": [
+          {
+            "caller_ref": "strategy:examples.agent_interface/RunReview",
+            "caller_kind": "strategy"
+          }
+        ]
+      }
+    ],
+    "strategies": [
+      {
+        "id": "strategy:examples.agent_interface/RunReview",
+        "name": "RunReview",
+        "uses": [
+          "agent:examples.agent_interface/Reviewer"
+        ],
+        "flow_graph_ref": "graph:strategy:examples.agent_interface/RunReview",
+        "signature": {
+          "inputs": [
+            {
+              "name": "request",
+              "type_ref": "type:examples.agent_interface/ReviewRequest"
+            }
+          ],
+          "output_type": "type:examples.agent_interface/ReviewResult"
+        }
+      }
+    ]
+  },
+  "execution_graphs": [
+    {
+      "id": "graph:strategy:examples.agent_interface/RunReview",
+      "owner_ref": "strategy:examples.agent_interface/RunReview",
+      "entry_node_id": "node:graph:strategy:examples.agent_interface/RunReview:1",
+      "nodes": [
+        {
+          "id": "node:graph:strategy:examples.agent_interface/RunReview:1",
+          "kind": "call_agent",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "arguments": [
+            "value:request"
+          ],
+          "result_binding": "review"
+        },
+        {
+          "id": "node:graph:strategy:examples.agent_interface/RunReview:2",
+          "kind": "give",
+          "arguments": [
+            "value:review"
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from_node_id": "node:graph:strategy:examples.agent_interface/RunReview:1",
+          "to_node_id": "node:graph:strategy:examples.agent_interface/RunReview:2",
+          "role": "next"
+        }
+      ]
+    }
+  ],
+  "trace_points": []
+}

@@ -1,0 +1,24 @@
+module examples.failure_flow
+
+tool Primary
+    takes topic as Text
+    gives Text
+
+skill Backup
+    takes topic as Text
+    gives Text
+    do
+        give topic
+
+skill Run
+    takes topic as Text
+    gives Text
+    uses Primary
+    uses Backup
+    do
+        Primary
+            with topic as topic
+            into result
+        give result
+    on failure handler
+        fallback Backup

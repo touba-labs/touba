@@ -1,0 +1,10 @@
+module examples.failure_nested_control
+
+skill Run
+    takes ready as Boolean
+    gives Text
+    do
+        if ready
+            if ready
+                give "nested"
+        give "done"

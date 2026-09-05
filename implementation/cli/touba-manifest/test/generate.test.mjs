@@ -78,7 +78,7 @@ test("generates request trigger payload contracts from AIR", () => {
 
 test("does not infer agent or strategy authority from AIR owners", () => {
   const manifest = generateManifestFromAirDocument({
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     definitions: {
       agents: [
         {
@@ -289,7 +289,7 @@ test("generates handler stubs from the CLI and refuses overwrite", () => {
 
 function airDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     definitions: {
       tools: [
         {
@@ -311,7 +311,7 @@ function airDocument() {
 
 function triggerAirDocument() {
   return {
-    air_schema_version: "air-minimal-v0.1",
+    air_schema_version: "touba-air-v1",
     definitions: {
       tools: [],
       triggers: [

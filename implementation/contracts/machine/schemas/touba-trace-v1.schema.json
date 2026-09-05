@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/machine/touba-trace-v1.schema.json",
+  "title": "touba-trace-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trace_protocol_version", "trace_capability_profile", "run", "events"],
+  "properties": {
+    "trace_protocol_version": { "const": "touba-trace-v1" },
+    "trace_capability_profile": { "const": "touba-trace-capabilities-v1" },
+    "run": { "type": "object", "additionalProperties": false, "required": ["run_id", "air_schema_version", "module_ref", "entry_ref"], "properties": { "run_id": { "type": "string", "minLength": 1 }, "air_schema_version": { "const": "touba-air-v1" }, "module_ref": { "type": "string", "minLength": 1 }, "entry_ref": { "type": "string", "minLength": 1 } } },
+    "events": { "type": "array", "minItems": 2, "items": { "type": "object", "additionalProperties": false, "required": ["event_id", "run_id", "sequence_index", "kind"], "properties": { "event_id": { "type": "string" }, "run_id": { "type": "string" }, "sequence_index": { "type": "integer", "minimum": 0 }, "kind": { "type": "string" }, "air_ref": { "type": "object" }, "payload": { "type": "object" }, "message": { "type": "string" } } } }
+  }
+}

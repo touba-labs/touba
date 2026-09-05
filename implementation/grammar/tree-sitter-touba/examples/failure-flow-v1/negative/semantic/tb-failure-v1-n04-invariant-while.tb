@@ -1,0 +1,8 @@
+module examples.failure_invariant_while
+
+skill Run
+    gives Text
+    do
+        while true
+            stop
+        give "done"

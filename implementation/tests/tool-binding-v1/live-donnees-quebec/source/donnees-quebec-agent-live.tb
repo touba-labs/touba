@@ -69,6 +69,7 @@ skill BuildDatasetBrief
 
 agent Researcher
     description "Selects the declared dataset search or brief capability for one request."
+    responsibility "Selects the declared dataset search or brief capability for one request."
     uses SearchDatasetOnly
     uses BuildDatasetBrief
     callable_by strategy RunDatasetResearch

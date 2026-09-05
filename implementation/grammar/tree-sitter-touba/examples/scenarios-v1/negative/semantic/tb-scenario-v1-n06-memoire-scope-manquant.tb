@@ -25,6 +25,7 @@ skill SummarizeKnowledge
         give result
 
 agent Researcher
+    responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
     uses SummarizeKnowledge
     callable_by strategy RunKnowledgeReview
 

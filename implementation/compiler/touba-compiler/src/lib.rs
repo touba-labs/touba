@@ -5,8 +5,12 @@ pub mod diagnostics;
 mod air_json;
 mod ast_to_air;
 mod cst_to_ast;
+mod declaration_lowering;
+mod graph_lowering;
 mod parser;
 mod project_air;
+mod resolution;
+mod typecheck;
 
 pub use air::{AirDiagnostic, AirDiagnosticCode};
 pub use air_json::{AIR_JSON_PROFILE, deserialize_air_from_json, serialize_air_to_json};

@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 export const SUPPLY_CHAIN_LOCK_SCHEMA_VERSION = "touba-lock-v0.1";
 export const SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-validation-v0.1";
 
-const AIR_SCHEMA_VERSION = "air-minimal-v0.1";
+const AIR_SCHEMA_VERSION = "touba-air-v1";
 const MANIFEST_VERSION = "touba-manifest-v1";
 const DIGEST_KIND = "sha256";
 const EXPECTED_HANDLER_SDK_NAME = "@touba/sdk";

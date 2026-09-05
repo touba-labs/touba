@@ -22,6 +22,7 @@ skill BuildNote
         give SourceNote
 
 agent Researcher
+    responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
     uses BuildNote
     callable_by strategy RunSourcedNote
 

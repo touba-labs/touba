@@ -1,0 +1,11 @@
+module examples.agent_responsibility_duplicate
+
+agent Reviewer
+    responsibility "Review the proposed change."
+    responsibility "Approve the proposed change."
+    callable_by strategy RunReview
+
+strategy RunReview
+    uses Reviewer
+    do
+        Reviewer

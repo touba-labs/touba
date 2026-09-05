@@ -31,6 +31,7 @@ skill ReadCustomerMemoryOnly
         give loaded
 
 agent MemoryAgent
+    responsibility "Fulfill the declared MemoryAgent responsibility using only authorized capabilities."
     uses ReadCustomerMemoryOnly
     memory CustomerMemory read
     callable_by strategy RunReadOnlyMemory

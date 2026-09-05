@@ -19,6 +19,7 @@ skill MakeChange
         give ReviewedChange
 
 agent Engineer
+    responsibility "Fulfill the declared Engineer responsibility using only authorized capabilities."
     uses MakeChange
 
 strategy RunChange

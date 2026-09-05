@@ -1,0 +1,22 @@
+module examples.agent_interface_wrong_type
+
+type ReviewRequest
+    summary is Text
+
+type ReviewResult
+    verdict is Text
+
+agent Reviewer
+    takes request as ReviewRequest
+    gives ReviewResult
+    responsibility "Review the explicit request and return one typed final result."
+    callable_by strategy RunReview
+
+strategy RunReview
+    gives ReviewResult
+    uses Reviewer
+    do
+        Reviewer
+            with request as "not a ReviewRequest"
+            into review
+        give review

@@ -122,6 +122,7 @@ export function normalizeElementAuthoringRequest(request) {
       "kind",
       "name",
       "description",
+      "responsibility",
       "takes",
       "gives",
       "uses",
@@ -147,6 +148,21 @@ export function normalizeElementAuthoringRequest(request) {
   }
   if (/[\r\n"]/u.test(description)) {
     throw authoringError("ToubaServeElementAuthoringInvalid", "element.description must be a single line without quotes");
+  }
+  const responsibility = typeof request.element.responsibility === "string"
+    ? request.element.responsibility.trim()
+    : "";
+  if (kind === "agent" && responsibility.length < 12) {
+    throw authoringError(
+      "ToubaServeElementResponsibilityRequired",
+      "agent responsibility must contain at least 12 characters",
+    );
+  }
+  if (/[\r\n"]/u.test(responsibility)) {
+    throw authoringError("ToubaServeElementAuthoringInvalid", "element.responsibility must be a single line without quotes");
+  }
+  if (kind !== "agent" && responsibility !== "") {
+    throw authoringError("ToubaServeElementAuthoringInvalid", "responsibility is valid only for agents");
   }
   const takes = normalizeTakes(request.element.takes);
   const gives = request.element.gives === undefined || request.element.gives === null
@@ -208,6 +224,7 @@ export function normalizeElementAuthoringRequest(request) {
       kind,
       name,
       description,
+      responsibility,
       takes,
       gives,
       uses,
@@ -227,6 +244,9 @@ function renderElementSource(element, moduleRef) {
   const lines = [`${element.kind} ${element.name}`];
   if (element.description !== "" && element.kind !== "memory" && element.kind !== "trigger") {
     lines.push(`    description "${element.description}"`);
+  }
+  if (element.kind === "agent") {
+    lines.push(`    responsibility "${element.responsibility}"`);
   }
   for (const input of element.takes) {
     lines.push(`    takes ${input.name} as ${input.type_ref}`);

@@ -174,6 +174,8 @@ pub struct AstSkillDeclaration {
 pub struct AstAgentDeclaration {
     pub name: String,
     pub description: Option<String>,
+    pub signature: AstSignature,
+    pub responsibility: String,
     pub uses: Vec<AstUse>,
     pub callable_by: Vec<AstCallableBy>,
     pub memory_scopes: Vec<AstMemoryScope>,
@@ -356,6 +358,11 @@ pub struct AstWhileStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstExpression {
+    Record {
+        type_name: String,
+        fields: Vec<AstRecordField>,
+        source_ref: SourceRef,
+    },
     Symbol {
         value: String,
         source_ref: SourceRef,
@@ -407,6 +414,13 @@ pub enum AstExpression {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstRecordField {
+    pub name: String,
+    pub value: AstExpression,
+    pub source_ref: SourceRef,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AstUnaryOperator {
     Not,
@@ -432,6 +446,7 @@ pub enum AstBinaryOperator {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstFailureHandler {
+    pub family: String,
     pub steps: Vec<AstFailureStep>,
     pub source_ref: SourceRef,
 }

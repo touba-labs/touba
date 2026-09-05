@@ -497,8 +497,8 @@ function writeFixture(workspace, options = {}) {
 function webhookAir(options = {}) {
   const payloadMapped = options.payloadMapped === true;
   return {
-    air_schema_version: "air-minimal-v0.1",
-    air_json_profile: "air-json-v0.1",
+    air_schema_version: "touba-air-v1",
+    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.webhook",
       name: "examples.webhook",

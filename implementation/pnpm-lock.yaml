@@ -112,9 +112,23 @@ importers:
 
   tests/agent-decision-provider-v1: {}
 
+  tests/agent-interface-v1: {}
+
+  tests/failure-flow-v1: {}
+
+  tests/governance-cost-v1:
+    dependencies:
+      '@touba/runtime':
+        specifier: workspace:*
+        version: link:../../runtime/touba-runtime
+
   tests/js-sdk-engine-project: {}
 
   tests/js-sdk-project: {}
+
+  tests/multi-agent-sequential-v1: {}
+
+  tests/record-construction-v1: {}
 
 packages:
 

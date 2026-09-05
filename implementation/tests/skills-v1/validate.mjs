@@ -14,6 +14,8 @@ import {
   validateSkillPacks,
 } from "../../cli/touba-project/src/skill-packs.mjs";
 import {
+  AIR_CAPABILITY_PROFILE,
+  AIR_JSON_PROFILE,
   AIR_SCHEMA_VERSION,
   executeAirDocument,
   loadSecretsFromJson,
@@ -831,6 +833,8 @@ function simpleSkillDocument() {
 function baseDocument(overrides = {}) {
   return {
     air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: {
       id: "module:test",
       name: "test",

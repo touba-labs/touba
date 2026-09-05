@@ -1,0 +1,23 @@
+module examples.agent_interface_unknown_argument
+
+type ReviewRequest
+    summary is Text
+
+type ReviewResult
+    verdict is Text
+
+agent Reviewer
+    takes request as ReviewRequest
+    gives ReviewResult
+    responsibility "Review the explicit request and return one typed final result."
+    callable_by strategy RunReview
+
+strategy RunReview
+    takes request as ReviewRequest
+    gives ReviewResult
+    uses Reviewer
+    do
+        Reviewer
+            with evidence as request
+            into review
+        give review

@@ -32,6 +32,7 @@ const copiedPackages = [
   "cli/touba-manifest",
   "cli/touba-action-plan",
   "cli/touba-trigger-service",
+  "cli/touba-deployment",
   "runtime/touba-runtime",
   "runtime/touba-handler-sdk",
 ];
@@ -40,6 +41,7 @@ const nodeModuleAliases = [
   ["runtime/touba-runtime", "@touba/runtime"],
   ["runtime/touba-handler-sdk", "@touba/sdk"],
   ["cli/touba-supply-chain", "@touba/supply-chain"],
+  ["cli/touba-deployment", "@touba/deployment"],
 ];
 
 export function packageLocalToolchain(options = {}) {
@@ -54,6 +56,7 @@ export function packageLocalToolchain(options = {}) {
   copyNodeRuntime();
   copyCompiler();
   copyToubaPackages();
+  copyRuntimeContracts();
   writeLaunchers();
   writeMetadata();
 
@@ -131,6 +134,19 @@ function copyPackage(relativePackage, destination) {
   const sourceDirectory = join(source, "src");
   if (existsSync(sourceDirectory)) {
     cpSync(sourceDirectory, join(destination, "src"), { recursive: true });
+  }
+}
+
+function copyRuntimeContracts() {
+  for (const family of ["machine", "product-surfaces", "hardened"]) {
+    const source = join(implementationRoot, "contracts", family);
+    for (const destination of [
+      join(toolchainRoot, "lib", "contracts", family),
+      join(toolchainRoot, "lib", "node_modules", "contracts", family),
+    ]) {
+      mkdirSync(destination, { recursive: true });
+      cpSync(source, destination, { recursive: true });
+    }
   }
 }
 

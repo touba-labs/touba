@@ -1,0 +1,78 @@
+{
+  "schema_version": "touba-effective-project-v1",
+  "artifact_role": "derived_non_authoritative",
+  "project": {
+    "artifact_layout": "touba-artifacts-v1",
+    "profile": "dev"
+  },
+  "inputs": [
+    {
+      "kind": "project",
+      "path": "touba.project.json",
+      "digest_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "provenance": "declared"
+    },
+    {
+      "kind": "air",
+      "path": ".touba/build/dev/air/examples/app.air.json",
+      "digest_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "provenance": "derived"
+    }
+  ],
+  "contract": {
+    "sources": {
+      "provenance": { "status": "declared", "sources": ["src/examples/app.tb"] },
+      "modules": ["examples.app"],
+      "paths": ["src/examples/app.tb"]
+    },
+    "air": {
+      "provenance": { "status": "derived", "sources": ["src/examples/app.tb"] },
+      "modules": ["examples.app"],
+      "paths": [".touba/build/dev/air/examples/app.air.json"]
+    },
+    "entry": {
+      "provenance": { "status": "effective", "sources": [".touba/build/dev/touba.run-plan.json"] },
+      "ref": "strategy:examples.app/Run"
+    },
+    "handlers": {
+      "provenance": { "status": "non_applicable", "sources": [] },
+      "reason": "the prepared AIR declares no tool"
+    },
+    "grants": {
+      "provenance": { "status": "non_applicable", "sources": [] },
+      "reason": "the prepared AIR declares no tool"
+    },
+    "secrets": {
+      "provenance": { "status": "non_applicable", "sources": [] },
+      "reason": "no secret handle is required"
+    },
+    "memory_scopes": {
+      "provenance": { "status": "non_applicable", "sources": [] },
+      "reason": "no memory scope is declared"
+    },
+    "callers": {
+      "provenance": { "status": "non_applicable", "sources": [] },
+      "reason": "no agent is declared"
+    },
+    "budgets": {
+      "provenance": { "status": "absent", "sources": [] },
+      "reason": "no run budget is declared"
+    },
+    "sandbox": {
+      "provenance": { "status": "absent", "sources": [] },
+      "reason": "no project sandbox contract is declared in V1"
+    },
+    "lock": {
+      "provenance": { "status": "non_applicable", "sources": [] },
+      "reason": "profile does not require a supply-chain lock"
+    },
+    "triggers": {
+      "provenance": { "status": "non_applicable", "sources": [] },
+      "reason": "no trigger is declared"
+    },
+    "evidence": {
+      "provenance": { "status": "absent", "sources": [] },
+      "reason": "no local evidence artifact is available"
+    }
+  }
+}
