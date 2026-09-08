@@ -1140,6 +1140,7 @@ export function createToubaProjectServer(options = {}) {
           humanRequestsPath,
           humanDecisionsPath,
           kind: "approval",
+          runId: url.searchParams.get("run_id"),
         }));
         return;
       }
@@ -1149,6 +1150,7 @@ export function createToubaProjectServer(options = {}) {
           humanRequestsPath,
           humanDecisionsPath,
           kind: "human_review",
+          runId: url.searchParams.get("run_id"),
         }));
         return;
       }
@@ -3607,10 +3609,11 @@ export function readPendingHumanRequest({
   humanRequestsPath,
   humanDecisionsPath,
   kind,
+  runId = null,
   allowFixtureWhenStoreMissing = false,
 }) {
   if (!existsSync(humanRequestsPath)) {
-    if (allowFixtureWhenStoreMissing) {
+    if (allowFixtureWhenStoreMissing && runId === null) {
       return readContractFixture({
         contractsRoot,
         schemaVersion: kind === "approval"
@@ -3630,7 +3633,8 @@ export function readPendingHumanRequest({
     : "touba-human-review-request-v1";
   const requests = kind === "approval" ? store.approvals : store.reviews;
   const pending = requests.find((request) =>
-    !decided.has(`${schemaVersionToDecisionSchema(schemaVersion)}:${request.request_id}`)
+    (runId === null || request.run_id === runId)
+    && !decided.has(`${schemaVersionToDecisionSchema(schemaVersion)}:${request.request_id}`)
   );
   if (pending === undefined) {
     throw serviceError("ToubaServePendingHumanRequestNotFound", "no pending human request is available");

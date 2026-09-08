@@ -1014,6 +1014,31 @@ test("pending human request store filters decisions already accepted", () => {
   }
 });
 
+test("pending requests select the requested run without consuming another queue entry", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-pending-run-"));
+  try {
+    const humanRequestsPath = join(root, "requests.json");
+    const humanDecisionsPath = join(root, "decisions.json");
+    for (const [kind, schema, key] of [
+      ["approval", "touba-approval-request-v1", "approvals"],
+      ["human_review", "touba-human-review-request-v1", "reviews"],
+    ]) {
+      const first = readJson(`fixtures/valid/${schema}.json`);
+      const second = { ...first, request_id: `${first.request_id}-second`, run_id: `${first.run_id}-second` };
+      writeFileSync(humanRequestsPath, JSON.stringify({ schema_version: "touba-human-requests-v0.1", approvals: [], reviews: [], [key]: [first, second] }));
+      const options = { contractsRoot, humanRequestsPath, humanDecisionsPath, kind };
+      assert.equal(readPendingHumanRequest(options).request_id, first.request_id);
+      assert.equal(readPendingHumanRequest({ ...options, runId: second.run_id }).request_id, second.request_id);
+      for (const runId of ["absent-run", ""]) {
+        assert.throws(() => readPendingHumanRequest({ ...options, runId }), { code: "ToubaServePendingHumanRequestNotFound" });
+      }
+      assert.equal(readPendingHumanRequest(options).request_id, first.request_id);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("refresh project reports artifacts, stale state and changed files", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-refresh-"));
   try {
@@ -3065,6 +3090,9 @@ test("HTTP project server persists and resumes an interaction approval checkpoin
     const pending = await getJson(`${baseUrl}/approvals/pending/current`);
     assertMatchesSchema("touba-approval-request-v1", pending);
     assert.equal(pending.run_id, paused.run_id);
+    assert.deepEqual(await getJson(`${baseUrl}/approvals/pending/current?run_id=${encodeURIComponent(paused.run_id)}`), pending);
+    assert.equal((await fetch(`${baseUrl}/approvals/pending/current?run_id=absent-run`)).status, 404);
+    assert.equal((await fetch(`${baseUrl}/reviews/pending/current?run_id=absent-run`)).status, 404);
 
     const unauthorizedDecision = await postJson(`${baseUrl}/decisions`, {
       schema_version: "touba-approval-decision-v1",

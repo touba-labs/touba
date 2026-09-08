@@ -150,6 +150,12 @@ POST /changes/propose
 POST /changes/apply
 ```
 
+The two `pending/current` routes accept an optional `run_id` query parameter.
+With it, the server returns only an undecided request for that exact run, or
+`ToubaServePendingHumanRequestNotFound` (404). Without it, the first pending
+request is preserved for existing clients. Reading a targeted request does not
+consume or approve any queue entry; client uses it for the active interaction.
+
 `/state` returns the current project server state. `/authority/graph` returns
 `touba-authority-graph-v0.1`, a graph of declared modules, packages, triggers,
 strategies, agents, skills, functions, tools, human gates, memory scopes and
