@@ -68,6 +68,7 @@ const TRACE_EVENT_FIELDS = new Set([
   "event_id", "run_id", "sequence_index", "kind", "air_ref", "payload", "message",
 ]);
 const TERMINAL_STATUSES = new Set(["success", "failure", "stopped", "cancelled"]);
+const PURE_FUNCTION_NODE_KINDS = new Set(["call_function", "bind", "branch", "loop", "give", "stop"]);
 
 export class MachineContractError extends Error {
   /** @param {string} code @param {string} message @param {string} [path] */
@@ -104,7 +105,40 @@ export function validateAirMachineContract(value) {
   for (let index = 0; index < graphs.length; index += 1) {
     validateGraph(graphs[index], allIds, `$.execution_graphs[${index}]`);
   }
+  validateFunctionPurity(definitions, graphs);
   return document;
+}
+
+// Check the entire function graph, not just the path chosen in this execution.
+// Closure follows because every call_function resolves to another checked function.
+/** @param {Record<string, Array<Record<string, any>>>} definitions
+ *  @param {Array<Record<string, any>>} graphs */
+function validateFunctionPurity(definitions, graphs) {
+  const functions = new Map((definitions.functions ?? []).map(item => [item.id, item]));
+  const graphById = new Map(graphs.map(item => [item.id, item]));
+  for (const [index, declaration] of (definitions.functions ?? []).entries()) {
+    const path = `$.definitions.functions[${index}]`;
+    const graph = graphById.get(declaration.body_graph_ref);
+    if (!declaration.id.startsWith("function:") || !graph || graph.owner_ref !== declaration.id) {
+      fail("AirFunctionGraphInvalid", "function must reference its own executable graph", path);
+    }
+  }
+  for (const [index, graph] of graphs.entries()) {
+    const path = `$.execution_graphs[${index}]`;
+    const isFunction = functions.has(graph.owner_ref);
+    if (graph.owner_ref.startsWith("function:") && !isFunction) {
+      fail("AirFunctionGraphInvalid", "function graph owner is unresolved", `${path}.owner_ref`);
+    }
+    for (const [nodeIndex, node] of graph.nodes.entries()) {
+      const nodePath = `${path}.nodes[${nodeIndex}]`;
+      if (isFunction && !PURE_FUNCTION_NODE_KINDS.has(node.kind)) {
+        fail("AirFunctionNotPure", `function graph cannot contain ${node.kind}`, nodePath);
+      }
+      if (node.kind === "call_function" && !functions.has(node.target_ref)) {
+        fail("AirFunctionTargetInvalid", "call_function must resolve to a declared function", `${nodePath}.target_ref`);
+      }
+    }
+  }
 }
 
 /** @param {unknown} value @param {Set<string>} allIds @param {string} path */
@@ -174,6 +208,14 @@ export function validateTraceMachineContract(value) {
   const events = requireArray(trace.events, "$.events");
   if (events.length < 2) fail("TraceTerminalInvalid", "trace requires start and terminal events", "$.events");
   const eventIds = new Set();
+  const initialSequenceIndex = events[0]?.sequence_index;
+  if (!Number.isSafeInteger(initialSequenceIndex) || initialSequenceIndex < 0) {
+    fail(
+      "TraceSequenceInvalid",
+      "first sequence index must be a non-negative safe integer",
+      "$.events[0].sequence_index",
+    );
+  }
   for (let index = 0; index < events.length; index += 1) {
     const event = requireObject(events[index], `$.events[${index}]`, "trace event");
     rejectUnknownFields(event, TRACE_EVENT_FIELDS, `$.events[${index}]`);
@@ -181,10 +223,11 @@ export function validateTraceMachineContract(value) {
     if (eventIds.has(eventId)) fail("DuplicateTraceEventId", `duplicate trace event ${eventId}`, `$.events[${index}].event_id`);
     eventIds.add(eventId);
     requireExact(event.run_id, runId, `$.events[${index}].run_id`);
-    if (event.sequence_index !== index) {
+    const expectedSequenceIndex = initialSequenceIndex + index;
+    if (event.sequence_index !== expectedSequenceIndex) {
       fail(
         "TraceSequenceInvalid",
-        `expected contiguous sequence index ${index}`,
+        `expected contiguous sequence index ${expectedSequenceIndex}`,
         `$.events[${index}].sequence_index`,
       );
     }

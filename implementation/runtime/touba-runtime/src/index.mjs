@@ -17,7 +17,32 @@ import {
   callerKindFromRef,
   evaluateAgentInvocationAuthority,
 } from "./authority.mjs";
+import { normalizeInternalCompensationContext } from "./compensation-context.mjs";
 import { executeGraphTraversal } from "./graph-execution.mjs";
+import {
+  COMPENSATION_HANDLER_PROTOCOL_VERSION,
+  EFFECT_HANDLER_PROTOCOL_VERSION,
+  EFFECT_JOURNAL_SCHEMA_VERSION,
+  assertJsonPortable,
+  deriveEffectId,
+  deriveEffectRequestDigest,
+  readEffectJournalEntry,
+  requireEffectJournalAdapter,
+  validateEffectJournalEntry,
+  validateEffectReceipt,
+  writeEffectJournalEntry,
+} from "./effect-contract.mjs";
+import {
+  EXECUTION_CHECKPOINT_VERSION,
+  assertExecutionCheckpointHasNoResolvedSecret,
+  canonicalDigest,
+  containsResolvedSecretValue,
+  normalizeExecutionCheckpointObserver,
+  normalizeOptionalExecutionCheckpoint,
+  sealExecutionCheckpoint,
+  tracePrefixDigest,
+  validateExecutionCheckpoint,
+} from "./execution-checkpoints.mjs";
 import {
   HARDENED_EXECUTION_PROFILE_VERSION,
   enforceHardenedExecutionProfile,
@@ -103,13 +128,34 @@ export { ToubaRuntimeError };
 export { TRACE_PROTOCOL_VERSION };
 export { AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, AIR_SCHEMA_VERSION };
 export { HARDENED_EXECUTION_PROFILE_VERSION, enforceHardenedExecutionProfile, probeHostSandbox };
+export {
+  COMPENSATION_HANDLER_PROTOCOL_VERSION,
+  EFFECT_HANDLER_PROTOCOL_VERSION,
+  EFFECT_JOURNAL_SCHEMA_VERSION,
+  validateEffectJournalEntry,
+};
+export {
+  EXECUTION_CHECKPOINT_VERSION,
+  canonicalDigest,
+  tracePrefixDigest,
+  validateExecutionCheckpoint,
+};
 
 const TOUBA_MAX_SAFE_INT = 9007199254740991n;
 const BUILTIN_TEXT = "builtin:Text";
 const BUILTIN_BOOLEAN = "builtin:Boolean";
 const BUILTIN_INT = "builtin:Int";
 const BUILTIN_FLOAT = "builtin:Float";
-const TOOL_BINDING_MANIFEST_VERSION = "touba-manifest-v1";
+const TOOL_BINDING_MANIFEST_V1 = "touba-manifest-v1";
+const TOOL_BINDING_MANIFEST_V2 = "touba-manifest-v2";
+const TOOL_BINDING_MANIFEST_V3 = "touba-manifest-v3";
+const TOOL_BINDING_MANIFEST_VERSIONS = new Set([
+  TOOL_BINDING_MANIFEST_V1,
+  TOOL_BINDING_MANIFEST_V2,
+  TOOL_BINDING_MANIFEST_V3,
+]);
+const COMPENSATION_ENTRY_REF_PATTERN = /^strategy:[A-Za-z0-9_.-]+\/[A-Za-z][A-Za-z0-9_]*$/u;
+const NORMALIZED_TOOL_BINDING_MANIFESTS = new WeakSet();
 const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
 const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
 const AGENT_DECISION_PROTOCOL_VERSION = "touba-agent-decision-v1";
@@ -254,9 +300,14 @@ export async function executeAirDocument(document, options = {}) {
   const context = createExecutionContext(document, entryRef, { ...options, ...hardenedOptions });
   return executeRunLifecycle(
     context,
-    async () => context.humanApprovalResumeCheckpoint
-      ? await executeHumanApprovalResumeCheckpoint(document, entryRef, context)
-      : executeTarget(entryRef, context),
+    async () => {
+      if (context.executionDurability.enabled) {
+        return executeDurableEntry(document, entryRef, context);
+      }
+      return context.humanApprovalResumeCheckpoint
+        ? await executeHumanApprovalResumeCheckpoint(document, entryRef, context)
+        : executeTarget(entryRef, context);
+    },
     {
       initializeRunControls,
       traceRunCancelled,
@@ -300,27 +351,54 @@ async function executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, c
 }
 
 function createExecutionContext(document, entryRef, options = {}) {
+  const internalCompensation = normalizeInternalCompensationContext(
+    options.__compensationExecutionContext,
+  );
   const indexes = indexAirDocument(document);
+  const executionResumeCheckpoint = normalizeOptionalExecutionCheckpoint(
+    options.executionResumeCheckpoint ?? options.execution_resume_checkpoint,
+  );
+  const executionCheckpointObserver = normalizeExecutionCheckpointObserver(
+    options.executionCheckpointObserver ?? options.execution_checkpoint_observer,
+  );
+  const executionDurabilityEnabled = executionResumeCheckpoint !== null
+    || executionCheckpointObserver !== null;
+  const humanApprovalResumeCheckpoint = normalizeOptionalHumanApprovalCheckpoint(
+    options.humanApprovalResumeCheckpoint ?? options.human_approval_resume_checkpoint,
+  );
+  if (executionDurabilityEnabled && humanApprovalResumeCheckpoint !== null) {
+    throw new RuntimeFailure(
+      "RESUME-1 cannot be combined with a human approval v0.1 checkpoint",
+      {},
+      "DurableResumeUnsupportedState",
+    );
+  }
+  const runId = options.runId ?? options.run_id ?? executionResumeCheckpoint?.run_id ?? "run-1";
   const trace = new TraceBuilder(
     document,
     entryRef,
-    options.runId ?? "run-1",
+    runId,
     normalizeTraceEventObserver(options.traceEventObserver ?? options.trace_event_observer),
+    executionResumeCheckpoint?.trace_state.next_sequence_index
+      ?? internalCompensation?.trace_state?.next_sequence_index
+      ?? 0,
   );
   const initialValues = normalizeInputs(options.inputs ?? {});
+  const toolBindingManifest = normalizeOptionalToolBindingManifest(options.toolBindingManifest);
+  const resourceBindings = normalizeOptionalResourceBindings(options.resourceBindings);
   const skillPacks = normalizeSkillPacks(options.skillPacks ?? options.skill_packs ?? []);
   const activeSkillPackRefs = normalizeStringSet(
     options.activeSkillPackRefs ?? options.active_skill_pack_refs ?? [],
     "activeSkillPackRefs",
   );
   validateActiveSkillPackRefs(skillPacks, activeSkillPackRefs);
-  return {
+  const context = {
     indexes,
     entryRef,
     trace,
     toolHandlers: options.toolHandlers ?? {},
-    toolBindingManifest: normalizeOptionalToolBindingManifest(options.toolBindingManifest),
-    resourceBindings: normalizeOptionalResourceBindings(options.resourceBindings),
+    toolBindingManifest,
+    resourceBindings,
     secretStore: normalizeOptionalSecretStore(options.secretStore),
     values: new Map(initialValues),
     inputValueKeys: new Set(initialValues.keys()),
@@ -330,6 +408,15 @@ function createExecutionContext(document, entryRef, options = {}) {
     ),
     userInputs: normalizeUserInputs(options.userInputs ?? options.interactionInputs ?? {}),
     userInputProvider: normalizeUserInputProvider(options.userInputProvider),
+    dispatchAuthorityProvider: normalizeDispatchAuthorityProvider(
+      options.dispatchAuthorityProvider ?? options.dispatch_authority_provider,
+    ),
+    dispatchAuthorityProviderTimeoutMs: normalizeOptionalPositiveRuntimeInteger(
+      options.dispatchAuthorityProviderTimeoutMs
+        ?? options.dispatch_authority_provider_timeout_ms
+        ?? null,
+      "dispatchAuthorityProviderTimeoutMs",
+    ),
     agentDecisions: normalizeAgentDecisions(options.agentDecisions ?? {}),
     agentDecisionProvider: normalizeAgentDecisionProvider(options.agentDecisionProvider, {
       metadata: options.agentDecisionProviderMetadata ?? options.agent_decision_provider_metadata,
@@ -372,18 +459,29 @@ function createExecutionContext(document, entryRef, options = {}) {
     ),
     skillPackBudgets: normalizeSkillPackBudgets(options),
     runState: createRunState(options),
-    budgetState: createBudgetState(document, normalizeOptionalToolBindingManifest(options.toolBindingManifest), options),
+    budgetState: createBudgetState(document, toolBindingManifest, options),
     maxAgentSteps: normalizePositiveRuntimeInteger(
       options.maxAgentSteps ?? options.maxAgentDecisionSteps ?? 8,
       "maxAgentSteps",
     ),
     triggerRunCounts: normalizeTriggerRunCounts(options.triggerRunCounts ?? {}),
     effectState: createEffectState(),
+    effectScopeId: options.effectScopeId
+      ?? options.effect_scope_id
+      ?? executionResumeCheckpoint?.effect_scope_id
+      ?? null,
+    effectJournal: options.effectJournal ?? options.effect_journal ?? null,
+    compensation: internalCompensation === null
+      ? null
+      : {
+        config: internalCompensation,
+        lastAttempt: null,
+        outcome: null,
+        blockerCode: null,
+      },
     durableHumanApprovals: options.durableHumanApprovals === true
       || options.durable_human_approvals === true,
-    humanApprovalResumeCheckpoint: normalizeOptionalHumanApprovalCheckpoint(
-      options.humanApprovalResumeCheckpoint ?? options.human_approval_resume_checkpoint,
-    ),
+    humanApprovalResumeCheckpoint,
     pendingHumanApprovalCheckpoint: null,
     callStack: [],
     loopState: new Map(),
@@ -394,13 +492,1157 @@ function createExecutionContext(document, entryRef, options = {}) {
     activeAgentRef: null,
     activeCallerRef: null,
     nextCallIndex: 1,
+    executionDurability: createExecutionDurabilityState({
+      document,
+      entryRef,
+      runId,
+      options,
+      enabled: executionDurabilityEnabled,
+      observer: executionCheckpointObserver,
+      resumeCheckpoint: executionResumeCheckpoint,
+    }),
   };
+  if (executionResumeCheckpoint) {
+    assertExecutionCheckpointHasNoResolvedSecret(
+      executionResumeCheckpoint,
+      secretValuesForRedaction(context.secretStore),
+    );
+    restoreDurableRuntimeState(context, executionResumeCheckpoint);
+  }
+  return context;
 }
 
 function createEffectState() {
   return {
     externalToolDispatches: 0,
+    nextEffectIndex: 1,
   };
+}
+
+function createExecutionDurabilityState({
+  document,
+  entryRef,
+  runId,
+  options,
+  enabled,
+  observer,
+  resumeCheckpoint,
+}) {
+  if (!enabled) {
+    return {
+      enabled: false,
+      observer: null,
+      resumeCheckpoint: null,
+      pendingDispatch: null,
+      decisionsConsumed: [],
+    };
+  }
+  if (observer === null) {
+    throw new ToubaRuntimeError(
+      "InvalidRuntimeOption",
+      "executionCheckpointObserver is required for durable execution",
+    );
+  }
+  const operationId = options.operationId ?? options.operation_id ?? resumeCheckpoint?.operation_id;
+  const effectScopeId = options.effectScopeId
+    ?? options.effect_scope_id
+    ?? resumeCheckpoint?.effect_scope_id;
+  for (const [field, value] of [
+    ["operationId", operationId],
+    ["runId", runId],
+    ["effectScopeId", effectScopeId],
+  ]) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new ToubaRuntimeError(
+        "InvalidRuntimeOption",
+        `${field} is required for durable execution`,
+      );
+    }
+  }
+  if (operationId !== effectScopeId) {
+    throw new ToubaRuntimeError(
+      "InvalidRuntimeOption",
+      "effectScopeId must equal operationId for durable execution",
+    );
+  }
+  const explicitEvidence = options.executionCompatibility ?? options.execution_compatibility ?? {};
+  if (!explicitEvidence || typeof explicitEvidence !== "object" || Array.isArray(explicitEvidence)) {
+    throw new ToubaRuntimeError(
+      "InvalidRuntimeOption",
+      "executionCompatibility must be an object",
+    );
+  }
+  const evidence = {
+    ...explicitEvidence,
+    run_plan: explicitEvidence.run_plan
+      ?? explicitEvidence.runPlan
+      ?? options.runPlan
+      ?? options.run_plan
+      ?? null,
+    supply_chain_lock: explicitEvidence.supply_chain_lock
+      ?? explicitEvidence.supplyChainLock
+      ?? options.supplyChainLock
+      ?? options.supply_chain_lock
+      ?? null,
+    hardened_profile: explicitEvidence.hardened_profile
+      ?? explicitEvidence.hardenedProfile
+      ?? options.hardenedExecutionProfile
+      ?? options.hardened_execution_profile
+      ?? null,
+  };
+  return {
+    enabled: true,
+    observer,
+    resumeCheckpoint,
+    operationId,
+    runId,
+    effectScopeId,
+    entryRef,
+    moduleRef: document.module.id,
+    graphRef: null,
+    cursor: resumeCheckpoint
+      ? structuredClone(resumeCheckpoint.cursor)
+      : null,
+    pendingDispatch: resumeCheckpoint
+      ? structuredClone(resumeCheckpoint.pending_dispatch)
+      : null,
+    decisionsConsumed: resumeCheckpoint
+      ? structuredClone(resumeCheckpoint.decisions_consumed)
+      : [],
+    revision: resumeCheckpoint?.revision ?? 0,
+    previousCheckpointDigest: resumeCheckpoint?.checkpoint_digest ?? null,
+    tracePrefixDigest: resumeCheckpoint?.trace_state.prefix_digest
+      ?? options.__compensationExecutionContext?.trace_state?.prefix_digest
+      ?? null,
+    traceEventOffset: 0,
+    lastCheckpoint: resumeCheckpoint,
+    compatibility: null,
+    compatibilityEvidence: structuredClone(evidence),
+    prepared: false,
+    pendingReservedElapsedMs: null,
+    pendingReservationRetained: false,
+  };
+}
+
+function restoreDurableRuntimeState(context, checkpoint) {
+  context.values = mapFromCheckpointObject(checkpoint.runtime_state.values, "runtime_state.values");
+  context.valueTypes = mapFromCheckpointObject(
+    checkpoint.runtime_state.value_types,
+    "runtime_state.value_types",
+  );
+  context.inputValueKeys = new Set(checkpoint.runtime_state.input_keys);
+  context.budgetState.counters = {
+    steps: checkpoint.runtime_state.budget_counters.steps,
+    toolCalls: checkpoint.runtime_state.budget_counters.tool_calls,
+    agentInvocations: checkpoint.runtime_state.budget_counters.agent_invocations,
+    providerCalls: checkpoint.runtime_state.budget_counters.provider_calls,
+  };
+  for (const [budgetKind, priorValue] of Object.entries(
+    checkpoint.runtime_state.effective_limits,
+  )) {
+    const current = context.budgetState.effectiveLimits.get(budgetKind);
+    if (!current || current.value > priorValue) {
+      context.budgetState.effectiveLimits.set(budgetKind, Object.freeze({
+        budgetKind,
+        value: priorValue,
+        authoritySource: current?.authoritySource ?? "checkpoint",
+        candidates: [
+          ...(current?.candidates ?? []),
+          { authority_source: "checkpoint", value: priorValue },
+        ],
+      }));
+    }
+  }
+  context.runState.activeElapsedBaseMs = checkpoint.runtime_state.active_elapsed_ms;
+  context.effectState.externalToolDispatches = checkpoint.runtime_state.external_tool_dispatches;
+  context.effectState.nextEffectIndex = checkpoint.runtime_state.next_effect_index;
+  context.nextCallIndex = checkpoint.runtime_state.next_call_index;
+}
+
+async function executeDurableEntry(document, entryRef, context) {
+  const graph = await prepareDurableExecution(document, entryRef, context);
+  if (context.executionDurability.cursor.phase === "completed") {
+    throw new RuntimeFailure(
+      "durable execution is already terminal",
+      { operationId: context.executionDurability.operationId },
+      "DurableResumeNotAvailable",
+    );
+  }
+  return executeGraph(graph.id, context, {
+    startNodeId: context.executionDurability.cursor.node_id,
+  });
+}
+
+async function prepareDurableExecution(document, entryRef, context) {
+  const durable = context.executionDurability;
+  if (durable.prepared) {
+    return requireDefinition(context.indexes.graphs, durable.graphRef);
+  }
+  if (context.inputValueKeys.size !== 0) {
+    throw new RuntimeFailure(
+      "RESUME-1 does not persist runtime inputs without an opaque input contract",
+      { inputCount: context.inputValueKeys.size },
+      "DurableResumeUnsupportedState",
+    );
+  }
+  const { definition, graphRef } = directEntryGraph(entryRef, context);
+  const graph = requireDefinition(context.indexes.graphs, graphRef);
+  if (context.compensation) {
+    validateCompensationRuntimeClosure(graph, entryRef, context);
+  }
+  validateDurableGraphClosure(graph, entryRef, context);
+  const linearNodes = durableLinearNodes(graph);
+  durable.graphRef = graph.id;
+  durable.compatibility = durableCompatibility(document, graph, context);
+
+  for (const input of definition.signature?.inputs ?? []) {
+    const handle = valueHandle(input.name);
+    if (input.type_ref) context.valueTypes.set(handle, input.type_ref);
+  }
+
+  if (durable.resumeCheckpoint) {
+    validateDurableResumeCompatibility(document, graph, linearNodes, context);
+    assertDurableBudgetCountersWithinLimits(context);
+  }
+  const repairedEffectOrdinals = await repairDurableEffectOrdinalsFromScope(
+    graph,
+    linearNodes,
+    context,
+  );
+  if (!durable.resumeCheckpoint) {
+    durable.cursor = { node_id: graph.entry_node_id, phase: "ready" };
+    await persistDurableExecutionCheckpoint(context);
+  } else if (repairedEffectOrdinals) {
+    await persistDurableExecutionCheckpoint(context);
+  }
+  durable.prepared = true;
+  return graph;
+}
+
+function validateCompensationRuntimeClosure(graph, entryRef, context) {
+  const config = context.compensation.config;
+  if (entryRef !== config.inverse_entry_ref) {
+    throw new RuntimeFailure(
+      "compensation entry does not match its sealed plan",
+      {},
+      "CompensationCheckpointIncompatible",
+    );
+  }
+  const ordered = durableLinearNodes(graph);
+  const effectNodes = ordered.filter((node) => node.kind === "call_tool");
+  const approvalNodes = ordered.filter((node) => node.kind === "human_approval");
+  const effectIndex = ordered.findIndex((node) => node.kind === "call_tool");
+  const terminalIndex = ordered.findIndex((node) => node.kind === "give" || node.kind === "stop");
+  const validKinds = ordered.every((node, index) => {
+    if (node.kind === "bind") return index < effectIndex;
+    if (node.kind === "human_approval") return index < effectIndex;
+    return node.kind === "call_tool" || node.kind === "give" || node.kind === "stop";
+  });
+  if (
+    effectNodes.length !== 1
+    || approvalNodes.length > 1
+    || !validKinds
+    || effectIndex < 0
+    || terminalIndex !== effectIndex + 1
+    || requiredTarget(effectNodes[0]) !== config.inverse_tool_ref
+  ) {
+    throw new RuntimeFailure(
+      "compensation graph is outside the closed COMP-1 subset",
+      {},
+      "CompensationUnsupportedGraph",
+    );
+  }
+  const binding = context.toolBindingManifest?.bindings.get(config.inverse_tool_ref);
+  if (
+    context.toolBindingManifest?.version !== TOOL_BINDING_MANIFEST_V3
+    || binding?.effectContract?.kind !== "external_write"
+    || binding.effectContract.compensation
+  ) {
+    throw new RuntimeFailure(
+      "compensation inverse binding is invalid",
+      {},
+      "CompensationUnsupportedGraph",
+    );
+  }
+}
+
+async function repairDurableEffectOrdinalsFromScope(graph, linearNodes, context) {
+  const adapter = requireEffectJournalAdapter(context.effectJournal);
+  if (typeof adapter.entriesForScope !== "function") {
+    throw new RuntimeFailure(
+      "RESUME-1 requires effect journal scope enumeration",
+      {},
+      "DurableResumeUnsupportedState",
+    );
+  }
+  let rawEntries;
+  try {
+    rawEntries = await adapter.entriesForScope(context.executionDurability.effectScopeId);
+  } catch {
+    throw new RuntimeFailure(
+      "durable effect journal scope enumeration failed",
+      {},
+      "EffectJournalReadFailed",
+    );
+  }
+  if (!Array.isArray(rawEntries)) {
+    throw new RuntimeFailure(
+      "durable effect journal scope enumeration is invalid",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  if (!context.executionDurability.resumeCheckpoint && rawEntries.length > 0) {
+    throw new RuntimeFailure(
+      "a fresh durable execution cannot reuse a non-empty effect scope",
+      {},
+      "DurableResumeConflict",
+    );
+  }
+
+  const effectScopeId = context.executionDurability.effectScopeId;
+  const airDigest = airDocumentDigest(context.trace.airDocument);
+  const callPrefix = `call:${context.trace.runId}:`;
+  const effectIds = new Set();
+  const effectIndexes = new Set();
+  const entriesByEffectIndex = new Map();
+  const callIndexes = new Set();
+  const lastCallIndexByEffect = new Map();
+  const externalWriteNodes = linearNodes.filter(
+    (node) => durableNodeEffectKind(node, context) === "external_write",
+  );
+  let greatestEffectIndex = 0;
+  let greatestCallIndex = 0;
+  let totalJournalAttempts = 0;
+  for (const rawEntry of rawEntries) {
+    let entry;
+    try {
+      const effectId = rawEntry && typeof rawEntry === "object"
+        ? rawEntry.effect_id
+        : null;
+      if (typeof effectId !== "string") throw new TypeError("missing effect identity");
+      entry = validateEffectJournalEntry(rawEntry, effectId);
+    } catch {
+      throw new RuntimeFailure(
+        "durable effect journal scope contains an invalid entry",
+        {},
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+    const expectedEffectId = deriveEffectId({
+      effectScopeId,
+      airDigest,
+      entryRef: context.entryRef,
+      effectIndex: entry.effect_index,
+    });
+    if (
+      entry.effect_scope_id !== effectScopeId
+      || entry.air_digest !== airDigest
+      || entry.entry_ref !== context.entryRef
+      || entry.effect_id !== expectedEffectId
+      || effectIds.has(entry.effect_id)
+      || effectIndexes.has(entry.effect_index)
+    ) {
+      throw new RuntimeFailure(
+        "durable effect journal scope conflicts with the current operation",
+        {},
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+    const expectedNode = externalWriteNodes[entry.effect_index - 1];
+    const expectedToolRef = expectedNode?.kind === "call_tool"
+      ? requiredTarget(expectedNode)
+      : null;
+    const expectedBinding = expectedToolRef === null
+      ? null
+      : context.toolBindingManifest?.bindings.get(expectedToolRef);
+    const expectedTool = expectedToolRef === null
+      ? null
+      : context.indexes.tools.get(expectedToolRef);
+    const expectedRequestDigest = expectedNode
+      ? durableStaticRequestDigest(graph, expectedNode, context)
+      : null;
+    assertNoResolvedSecretInEffectArtifact(
+      entry,
+      expectedToolRef ?? "tool:durable/unknown",
+      "journal_entry",
+      context.secretStore,
+    );
+    if (
+      expectedToolRef === null
+      || entry.tool_ref !== expectedToolRef
+      || entry.retry_mode !== expectedBinding?.effectContract?.retryMode
+      || (expectedRequestDigest !== null && entry.request_digest !== expectedRequestDigest)
+    ) {
+      throw new RuntimeFailure(
+        "durable effect journal ordinal does not match its linear tool call",
+        {},
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+    if (entry.state === "applied" && Object.hasOwn(entry, "result")) {
+      try {
+        if (context.compensation) {
+          restoreCompensationEffectResult(
+            expectedTool,
+            expectedBinding,
+            entry,
+            context,
+          );
+        } else {
+          if (entry.result?.schema_version === "touba-compensation-effect-result-v1") {
+            throw new TypeError("reserved compensation result outside COMP-1");
+          }
+          validateToolOutputPayload(expectedTool, entry.result, context);
+          validateToolPayloadConstraints(
+            "output",
+            expectedTool,
+            entry.result,
+            expectedBinding.payloadConstraints.output,
+          );
+        }
+      } catch {
+        throw new RuntimeFailure(
+          "durable effect journal contains a non-restorable historical result",
+          {},
+          "DurableResumeCheckpointIncompatible",
+        );
+      }
+    }
+    effectIds.add(entry.effect_id);
+    effectIndexes.add(entry.effect_index);
+    entriesByEffectIndex.set(entry.effect_index, entry);
+    greatestEffectIndex = Math.max(greatestEffectIndex, entry.effect_index);
+    totalJournalAttempts += entry.attempt_count;
+    if (!Number.isSafeInteger(totalJournalAttempts)) {
+      throw new RuntimeFailure(
+        "durable effect journal attempt total is invalid",
+        {},
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+
+    if (entry.last_call_id !== undefined) {
+      if (!entry.last_call_id.startsWith(callPrefix)) {
+        throw new RuntimeFailure(
+          "durable effect journal call identity conflicts with the current run",
+          {},
+          "DurableResumeCheckpointIncompatible",
+        );
+      }
+      const callIndex = Number(entry.last_call_id.slice(callPrefix.length));
+      if (
+        !Number.isSafeInteger(callIndex)
+        || callIndex <= 0
+        || entry.last_call_id !== `${callPrefix}${callIndex}`
+        || callIndexes.has(callIndex)
+      ) {
+        throw new RuntimeFailure(
+          "durable effect journal call ordinal is invalid",
+          {},
+          "DurableResumeCheckpointIncompatible",
+        );
+      }
+      if (entry.attempt_count > callIndex) {
+        throw new RuntimeFailure(
+          "durable effect journal attempt count exceeds its call ordinal",
+          {},
+          "DurableResumeCheckpointIncompatible",
+        );
+      }
+      callIndexes.add(callIndex);
+      lastCallIndexByEffect.set(entry.effect_index, callIndex);
+      greatestCallIndex = Math.max(greatestCallIndex, callIndex);
+    } else if (entry.attempt_count > 0) {
+      throw new RuntimeFailure(
+        "durable effect journal attempts require a call identity",
+        {},
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+  }
+
+  if (greatestCallIndex === Number.MAX_SAFE_INTEGER) {
+    throw new RuntimeFailure(
+      "durable effect journal call ordinal cannot advance",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  const repairedCallIndex = Math.max(context.nextCallIndex, greatestCallIndex + 1);
+  const orderedEffectIndexes = [...effectIndexes].sort((left, right) => left - right);
+  if (orderedEffectIndexes.some((effectIndex, index) => effectIndex !== index + 1)) {
+    throw new RuntimeFailure(
+      "durable effect journal scope contains an ordinal gap",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  let priorEffectLastCallIndex = 0;
+  for (const effectIndex of orderedEffectIndexes) {
+    const lastCallIndex = lastCallIndexByEffect.get(effectIndex);
+    if (lastCallIndex === undefined) continue;
+    if (lastCallIndex <= priorEffectLastCallIndex) {
+      throw new RuntimeFailure(
+        "durable effect journal call ordinals do not follow effect order",
+        {},
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+    priorEffectLastCallIndex = lastCallIndex;
+  }
+  if (
+    greatestEffectIndex >= context.effectState.nextEffectIndex
+  ) {
+    throw new RuntimeFailure(
+      "durable effect journal is ahead of the checkpoint without a correlated pending dispatch",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  const pending = context.executionDurability.pendingDispatch;
+  let pendingJournalRelation = null;
+  let repaired = false;
+  let requiredHistoricalEffectIndex = context.effectState.nextEffectIndex - 1;
+  if (pending?.effect_contract_kind === "external_write") {
+    const journalEntry = entriesByEffectIndex.get(pending.effect_index);
+    if (
+      journalEntry
+      && (
+        journalEntry.effect_id !== pending.effect_id
+        || journalEntry.request_digest !== pending.request_digest
+        || journalEntry.tool_ref !== pending.tool_ref
+        || journalEntry.retry_mode !== pending.retry_mode
+      )
+    ) {
+      throw new RuntimeFailure(
+        "durable effect journal does not match the pending checkpoint dispatch",
+        {},
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+    pendingJournalRelation = validateDurablePendingJournalState(pending, journalEntry);
+    if (
+      pending.phase === "reserved"
+      && pendingJournalRelation !== "current"
+      && context.budgetState.counters.toolCalls
+        - context.effectState.externalToolDispatches !== 1
+    ) {
+      throw new RuntimeFailure(
+        "durable retry reservation is not reflected in dispatch counters",
+        {},
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+    if (pending.phase === "reserved" && pendingJournalRelation === "current") {
+      pending.phase = "dispatched";
+      if (
+        context.effectState.externalToolDispatches
+        < context.budgetState.counters.toolCalls
+      ) {
+        recordExternalToolDispatch(context);
+      }
+      repaired = true;
+    }
+    if (!journalEntry && pending.phase === "reserved") {
+      requiredHistoricalEffectIndex -= 1;
+    }
+  }
+  for (const entry of entriesByEffectIndex.values()) {
+    const isPendingEffect = pending?.effect_contract_kind === "external_write"
+      && entry.effect_index === pending.effect_index;
+    if (
+      (!isPendingEffect && (entry.state !== "applied" || !Object.hasOwn(entry, "result")))
+      || (entry.state === "applied" && !Object.hasOwn(entry, "result"))
+      || (
+        pending
+        && !isPendingEffect
+        && entry.last_call_id === pending.call_id
+      )
+    ) {
+      throw new RuntimeFailure(
+        "durable effect journal does not prove a restorable linear history",
+        {},
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+  }
+  if (greatestEffectIndex < requiredHistoricalEffectIndex) {
+    throw new RuntimeFailure(
+      "durable effect journal does not prove the complete checkpoint history",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  if (totalJournalAttempts > context.effectState.externalToolDispatches) {
+    throw new RuntimeFailure(
+      "durable effect journal attempts exceed checkpoint dispatch consumption",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  if (repairedCallIndex !== context.nextCallIndex) {
+    throw new RuntimeFailure(
+      "durable effect journal call high-water conflicts with checkpoint budgets",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  return repaired;
+}
+
+function durableStaticRequestDigest(graph, node, context) {
+  const argumentRefs = node.arguments ?? [];
+  const stable = argumentRefs.every((argumentRef) => (
+    typeof argumentRef === "string"
+    && (
+      argumentRef.startsWith("literal:")
+      || argumentRef.startsWith("constant:")
+    )
+  ));
+  if (!stable) return null;
+  const toolRef = requiredTarget(node);
+  const tool = context.indexes.tools.get(toolRef);
+  if (!tool) return null;
+  const argumentValues = resolveCallArguments(graph, node, context) ?? [];
+  const inputs = tool.signature?.inputs ?? [];
+  if (argumentValues.length !== inputs.length) return null;
+  const argumentsByName = Object.fromEntries(
+    inputs.map((input, index) => [input.name, argumentValues[index]]),
+  );
+  return deriveEffectRequestDigest({
+    airDigest: airDocumentDigest(context.trace.airDocument),
+    toolRef,
+    arguments: argumentsByName,
+    resourceBindings: resourceBindingsForTool(tool, context),
+    ...(context.compensation
+      ? { controlContext: context.compensation.config.envelope }
+      : {}),
+  });
+}
+
+function validateDurablePendingJournalState(pending, journalEntry) {
+  if (!journalEntry) {
+    if (pending.phase === "reserved" && pending.attempt_index === 1) return "absent";
+    throw new RuntimeFailure(
+      "durable pending dispatch is missing its required journal evidence",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  const currentAttemptStates = new Set([
+    "dispatched",
+    "applied",
+    "not_applied",
+    "unknown",
+  ]);
+  const currentAttemptMatches = currentAttemptStates.has(journalEntry.state)
+    && journalEntry.attempt_count === pending.attempt_index
+    && journalEntry.last_call_id === pending.call_id;
+  if (pending.phase === "dispatched") {
+    if (currentAttemptMatches) return "current";
+    throw new RuntimeFailure(
+      "durable dispatched checkpoint conflicts with its effect journal attempt",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+
+  const previousAttemptIndex = pending.attempt_index - 1;
+  const preparedAttemptMatches = journalEntry.state === "prepared"
+    && journalEntry.attempt_count === previousAttemptIndex
+    && (
+      previousAttemptIndex === 0
+        ? journalEntry.last_call_id === undefined
+        : journalEntry.last_call_id !== undefined
+          && journalEntry.last_call_id !== pending.call_id
+    );
+  const retryReservationMatches = ["unknown", "not_applied"].includes(journalEntry.state)
+    && journalEntry.attempt_count === previousAttemptIndex
+    && journalEntry.last_call_id !== undefined
+    && journalEntry.last_call_id !== pending.call_id;
+  if (currentAttemptMatches) return "current";
+  if (preparedAttemptMatches || retryReservationMatches) return "previous";
+  throw new RuntimeFailure(
+    "durable reserved checkpoint conflicts with its effect journal attempt",
+    {},
+    "DurableResumeCheckpointIncompatible",
+  );
+}
+
+function directEntryGraph(entryRef, context) {
+  let definition;
+  let graphRef;
+  if (entryRef.startsWith("function:")) {
+    definition = context.indexes.functions.get(entryRef);
+    graphRef = definition?.body_graph_ref;
+  } else if (entryRef.startsWith("skill:")) {
+    definition = context.indexes.skills.get(entryRef);
+    graphRef = definition?.flow_graph_ref;
+  } else if (entryRef.startsWith("strategy:")) {
+    definition = context.indexes.strategies.get(entryRef);
+    graphRef = definition?.flow_graph_ref;
+  }
+  if (!definition || typeof graphRef !== "string") {
+    throw durableUnsupported(null, null, "entry_does_not_own_a_graph");
+  }
+  const graph = context.indexes.graphs.get(graphRef);
+  if (!graph || graph.owner_ref !== entryRef) {
+    throw durableUnsupported(graphRef, null, "entry_does_not_directly_own_graph");
+  }
+  return { definition, graphRef };
+}
+
+function validateDurableGraphClosure(graph, entryRef, context) {
+  if (Array.isArray(graph.failure_paths) && graph.failure_paths.length > 0) {
+    throw durableUnsupported(graph.id, graph.failure_paths[0]?.trigger_node_id, "failure_path");
+  }
+  const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
+  const outgoing = new Map();
+  const predecessors = new Map();
+  for (const edge of graph.edges) {
+    if (edge.role !== "next") continue;
+    const targets = outgoing.get(edge.from_node_id) ?? [];
+    targets.push(edge.to_node_id);
+    outgoing.set(edge.from_node_id, targets);
+    predecessors.set(edge.to_node_id, (predecessors.get(edge.to_node_id) ?? 0) + 1);
+  }
+
+  const visited = new Set();
+  let nodeId = graph.entry_node_id;
+  let terminalCount = 0;
+  while (nodeId) {
+    if (visited.has(nodeId)) {
+      throw durableUnsupported(graph.id, nodeId, "cycle");
+    }
+    visited.add(nodeId);
+    const node = nodes.get(nodeId);
+    if (!node) throw durableUnsupported(graph.id, nodeId, "missing_node");
+    if ((predecessors.get(nodeId) ?? 0) > 1) {
+      throw durableUnsupported(graph.id, nodeId, "multiple_predecessors");
+    }
+    if (!["bind", "call_tool", "human_approval", "give", "stop"].includes(node.kind)) {
+      throw durableUnsupported(graph.id, nodeId, `unsupported_node_${node.kind}`);
+    }
+    const allOutgoing = graph.edges.filter((edge) => edge.from_node_id === nodeId);
+    if (allOutgoing.some((edge) => edge.role !== "next")) {
+      throw durableUnsupported(graph.id, nodeId, "non_linear_edge");
+    }
+    const next = outgoing.get(nodeId) ?? [];
+    if (next.length > 1) {
+      throw durableUnsupported(graph.id, nodeId, "multiple_successors");
+    }
+    if (node.kind === "give" || node.kind === "stop") {
+      terminalCount += 1;
+      if (next.length !== 0) {
+        throw durableUnsupported(graph.id, nodeId, "terminal_has_successor");
+      }
+      nodeId = null;
+      continue;
+    }
+    if (next.length !== 1) {
+      throw durableUnsupported(graph.id, nodeId, "non_terminal_without_successor");
+    }
+    if (node.kind === "call_tool") {
+      validateDurableToolNode(graph, node, context);
+    } else if (node.kind === "human_approval") {
+      validateDurableHumanDecision(graph, node, context);
+    }
+    nodeId = next[0];
+  }
+  if (terminalCount !== 1) {
+    throw durableUnsupported(graph.id, null, "terminal_count");
+  }
+  const reachableEdges = graph.edges.filter(
+    (edge) => visited.has(edge.from_node_id) || visited.has(edge.to_node_id),
+  );
+  if (reachableEdges.some((edge) => !visited.has(edge.from_node_id) || !visited.has(edge.to_node_id))) {
+    throw durableUnsupported(graph.id, null, "edge_leaves_reachable_closure");
+  }
+  if (graph.owner_ref !== entryRef) {
+    throw durableUnsupported(graph.id, null, "graph_owner_mismatch");
+  }
+}
+
+function durableLinearNodes(graph) {
+  const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
+  const ordered = [];
+  let nodeId = graph.entry_node_id;
+  while (nodeId) {
+    const node = nodes.get(nodeId);
+    if (!node) break;
+    ordered.push(node);
+    nodeId = graph.edges.find(
+      (edge) => edge.from_node_id === node.id && edge.role === "next",
+    )?.to_node_id ?? null;
+  }
+  return ordered;
+}
+
+function validateDurableToolNode(graph, node, context) {
+  const toolRef = requiredTarget(node);
+  const tool = context.indexes.tools.get(toolRef);
+  const manifest = context.toolBindingManifest;
+  const binding = manifest?.bindings.get(toolRef);
+  if (
+    !tool
+    || ![TOOL_BINDING_MANIFEST_V2, TOOL_BINDING_MANIFEST_V3].includes(manifest?.version)
+    || !binding?.effectContract
+  ) {
+    throw durableUnsupported(graph.id, node.id, "manifest_v2_effect_contract_required");
+  }
+  if (context.toolHandlers[toolRef]) {
+    throw durableUnsupported(graph.id, node.id, "in_process_handler_not_resumable");
+  }
+  const missingCapabilities = (tool.required_capabilities ?? [])
+    .filter((capability) => !binding.grantSet.has(capability));
+  const missingSecrets = (tool.required_secrets ?? [])
+    .filter((secret) => !binding.secretSet.has(secret));
+  const refusedSecrets = (tool.required_secrets ?? [])
+    .filter((secret) => !context.secretStore || context.secretStore.refusalFor(
+      secret,
+      context.runState.now(),
+    ) !== null);
+  if (missingCapabilities.length || missingSecrets.length || refusedSecrets.length) {
+    throw new RuntimeFailure(
+      "durable execution authority is not currently available",
+      {
+        toolRef,
+        missingCapabilities,
+        missingSecrets,
+        secretHandlesRefused: refusedSecrets,
+      },
+      "DurableResumeAuthorityRefused",
+    );
+  }
+}
+
+function validateDurableHumanDecision(graph, node, context) {
+  const decisionRef = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
+  const decision = context.humanApprovalDecisions.get(decisionRef);
+  const transition = classifyHumanApprovalDecision(decision);
+  if (!transition.valid) {
+    if (context.executionDurability.resumeCheckpoint) {
+      throw new RuntimeFailure(
+        "a consumed human decision is no longer available",
+        { decisionRef },
+        "DurableResumeAuthorityRefused",
+      );
+    }
+    throw durableUnsupported(graph.id, node.id, "preavailable_human_decision_required");
+  }
+}
+
+function durableCompatibility(document, graph, context) {
+  const evidence = context.executionDurability.compatibilityEvidence;
+  const manifestProjection = durableManifestProjection(context.toolBindingManifest);
+  const resourceProjection = durableResourceBindingsProjection(context.resourceBindings);
+  const manifestDigest = manifestProjection === null ? null : canonicalDigest(manifestProjection);
+  const resourceBindingsDigest = resourceProjection === null
+    ? null
+    : canonicalDigest(resourceProjection);
+  const runPlanDigest = optionalArtifactDigest(
+    evidence.run_plan_digest ?? evidence.runPlanDigest ?? evidence.run_plan ?? null,
+  );
+  const supplyChainLockDigest = optionalArtifactDigest(
+    evidence.supply_chain_lock_digest
+      ?? evidence.supplyChainLockDigest
+      ?? evidence.supply_chain_lock
+      ?? null,
+  );
+  const hardenedProfileDigest = optionalArtifactDigest(
+    evidence.hardened_profile_digest
+      ?? evidence.hardenedProfileDigest
+      ?? evidence.hardened_profile
+      ?? null,
+  );
+  const compatibility = {
+    air_schema_version: document.air_schema_version,
+    air_digest: airDocumentDigest(document),
+    manifest_schema_version: context.toolBindingManifest?.version ?? null,
+    manifest_digest: manifestDigest,
+    run_plan_digest: runPlanDigest,
+    resource_bindings_digest: resourceBindingsDigest,
+    supply_chain_lock_digest: supplyChainLockDigest,
+    hardened_profile_digest: hardenedProfileDigest,
+    authority_artifacts_digest: "",
+  };
+  compatibility.authority_artifacts_digest = canonicalDigest({
+    entry_ref: context.entryRef,
+    graph_ref: graph.id,
+    ...(context.compensation
+      ? { compensation_plan_digest: context.compensation.config.envelope.plan_digest }
+      : {}),
+    manifest_digest: manifestDigest,
+    resource_bindings_digest: resourceBindingsDigest,
+    run_plan_digest: runPlanDigest,
+    supply_chain_lock_digest: supplyChainLockDigest,
+    hardened_profile_digest: hardenedProfileDigest,
+    decisions: durableDecisionProjection(graph, context),
+  });
+  return compatibility;
+}
+
+function optionalArtifactDigest(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value)) return value;
+  return canonicalDigest(value);
+}
+
+function durableManifestProjection(manifest) {
+  if (!manifest) return null;
+  return jsonPortableProjection({
+    manifest_schema_version: manifest.version,
+    bindings: Object.fromEntries([...manifest.bindings.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([toolRef, binding]) => [toolRef, {
+        handler: { ...binding.handler },
+        sandbox: { ...binding.sandbox },
+        grants: [...binding.grants],
+        secrets: [...binding.secrets],
+        memories: binding.memories.map((memory) => ({ ...memory })),
+        limits: { ...binding.limits },
+        payload_constraints: {
+          input: binding.payloadConstraints.input.map((rule) => ({ ...rule })),
+          output: binding.payloadConstraints.output.map((rule) => ({ ...rule })),
+        },
+        effect_contract: binding.effectContract
+          ? {
+            ...binding.effectContract,
+            ...(binding.effectContract.compensation
+              ? { compensation: { ...binding.effectContract.compensation } }
+              : {}),
+          }
+          : null,
+      }])),
+    triggers: Object.fromEntries([...manifest.triggers.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([triggerRef, trigger]) => [triggerRef, trigger])),
+    run_limits: Object.fromEntries([...manifest.runLimits.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([kind, limit]) => [kind, limit.value])),
+    agent_secret_scopes: Object.fromEntries([...manifest.agentSecretScopes.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([agentRef, secrets]) => [agentRef, [...secrets].sort()])),
+  });
+}
+
+function durableResourceBindingsProjection(resourceBindings) {
+  if (!resourceBindings) return null;
+  return jsonPortableProjection(Object.fromEntries([...resourceBindings.bindings.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([resourceRef, binding]) => [resourceRef, publicResourceBindingView(binding)])));
+}
+
+function jsonPortableProjection(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function durableDecisionProjection(graph, context) {
+  return graph.nodes
+    .filter((node) => node.kind === "human_approval")
+    .map((node) => {
+      const decisionRef = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
+      return { decision_ref: decisionRef, result: context.humanApprovalDecisions.get(decisionRef) };
+    })
+    .sort((left, right) => left.decision_ref.localeCompare(right.decision_ref));
+}
+
+function validateDurableResumeCompatibility(document, graph, linearNodes, context) {
+  const durable = context.executionDurability;
+  const checkpoint = durable.resumeCheckpoint;
+  const identityMatches = checkpoint.operation_id === durable.operationId
+    && checkpoint.run_id === durable.runId
+    && checkpoint.effect_scope_id === durable.effectScopeId
+    && checkpoint.entry_ref === context.entryRef
+    && checkpoint.module_ref === document.module.id
+    && checkpoint.graph_ref === graph.id;
+  if (!identityMatches) {
+    throw new RuntimeFailure(
+      "durable execution checkpoint identity does not match the requested run",
+      { revision: checkpoint.revision },
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  const cursorIndex = checkpoint.cursor.phase === "completed"
+    ? linearNodes.length
+    : linearNodes.findIndex((candidate) => candidate.id === checkpoint.cursor.node_id);
+  const node = cursorIndex >= 0 && cursorIndex < linearNodes.length
+    ? linearNodes[cursorIndex]
+    : null;
+  if (checkpoint.cursor.phase !== "completed" && !node) {
+    throw new RuntimeFailure(
+      "durable execution checkpoint cursor is absent from the graph",
+      { nodeId: checkpoint.cursor.node_id },
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  validateDurableCheckpointProgress(graph, linearNodes, cursorIndex, checkpoint, context);
+  for (const consumed of checkpoint.decisions_consumed) {
+    const current = context.humanApprovalDecisions.get(consumed.decision_ref);
+    if (
+      !classifyHumanApprovalDecision(current).valid
+      || current !== consumed.result
+      || canonicalDigest({ decision_ref: consumed.decision_ref, result: current })
+        !== consumed.decision_digest
+    ) {
+      throw new RuntimeFailure(
+        "a consumed human decision is no longer valid",
+        { decisionRef: consumed.decision_ref },
+        "DurableResumeAuthorityRefused",
+      );
+    }
+  }
+  if (canonicalDigest(checkpoint.compatibility) !== canonicalDigest(durable.compatibility)) {
+    throw new RuntimeFailure(
+      "durable execution artifacts changed since the checkpoint",
+      { revision: checkpoint.revision },
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  if (
+    checkpoint.pending_dispatch
+    && (
+      checkpoint.cursor.phase !== "started"
+      || checkpoint.pending_dispatch.node_id !== checkpoint.cursor.node_id
+    )
+  ) {
+    throw new RuntimeFailure(
+      "durable execution pending dispatch does not match the active cursor",
+      { nodeId: checkpoint.cursor.node_id },
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  if (checkpoint.pending_dispatch) {
+    const toolRef = node?.kind === "call_tool" ? requiredTarget(node) : null;
+    const binding = toolRef === null
+      ? null
+      : context.toolBindingManifest?.bindings.get(toolRef);
+    const expectedKind = binding?.effectContract?.kind ?? null;
+    const expectedRetryMode = expectedKind === "external_write"
+      ? binding.effectContract.retryMode
+      : null;
+    const pendingMatchesCurrentTool = toolRef !== null
+      && checkpoint.pending_dispatch.tool_ref === toolRef
+      && checkpoint.pending_dispatch.effect_contract_kind === expectedKind
+      && checkpoint.pending_dispatch.retry_mode === expectedRetryMode
+      && checkpoint.pending_dispatch.timeout_ms === binding?.limits?.timeout_ms;
+    if (!pendingMatchesCurrentTool) {
+      throw new RuntimeFailure(
+        "durable pending dispatch does not match the current tool contract",
+        { nodeId: checkpoint.cursor.node_id, toolRef },
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+  }
+}
+
+function validateDurableCheckpointProgress(graph, linearNodes, cursorIndex, checkpoint, context) {
+  const completedNodeCount = checkpoint.cursor.phase === "completed"
+    ? linearNodes.length
+    : cursorIndex;
+  const expectedSteps = completedNodeCount
+    + (checkpoint.cursor.phase === "started" ? 1 : 0);
+  const counters = checkpoint.runtime_state.budget_counters;
+  if (counters.steps !== expectedSteps) {
+    throw new RuntimeFailure(
+      "durable checkpoint step counter does not match its linear cursor",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+
+  const expectedDecisionRefs = linearNodes
+    .slice(0, completedNodeCount)
+    .filter((node) => node.kind === "human_approval")
+    .map((node) => node.approval_ref ?? `approval:${graph.id}:${node.id}`);
+  const actualDecisionRefs = checkpoint.decisions_consumed
+    .map((decision) => decision.decision_ref);
+  if (
+    actualDecisionRefs.length !== expectedDecisionRefs.length
+    || actualDecisionRefs.some((decisionRef, index) => decisionRef !== expectedDecisionRefs[index])
+  ) {
+    throw new RuntimeFailure(
+      "durable decision ledger does not match the linear cursor",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+
+  const toolCalls = counters.tool_calls;
+  const externalDispatches = checkpoint.runtime_state.external_tool_dispatches;
+  const pending = checkpoint.pending_dispatch;
+  const dispatchGap = toolCalls - externalDispatches;
+  const completedToolCalls = linearNodes
+    .slice(0, completedNodeCount)
+    .filter((node) => node.kind === "call_tool")
+    .length;
+  const currentToolReservation = checkpoint.cursor.phase === "started" && pending !== null
+    ? 1
+    : 0;
+  const currentToolDispatch = checkpoint.cursor.phase === "started"
+    && pending?.phase === "dispatched"
+    ? 1
+    : 0;
+  const callCountersMatch = checkpoint.runtime_state.next_call_index === toolCalls + 1
+    && counters.agent_invocations === 0
+    && counters.provider_calls === 0
+    && toolCalls >= completedToolCalls + currentToolReservation
+    && externalDispatches >= completedToolCalls + currentToolDispatch
+    && externalDispatches <= toolCalls
+    && (
+      pending === null
+        ? dispatchGap === 0
+        : pending.phase === "dispatched"
+          ? dispatchGap === 0
+          : [0, 1].includes(dispatchGap)
+    )
+    && (!pending || pending.call_index === toolCalls)
+    && !(
+      pending?.phase === "reserved"
+      && pending.effect_contract_kind === "none"
+      && dispatchGap !== 1
+    );
+  if (!callCountersMatch) {
+    throw new RuntimeFailure(
+      "durable checkpoint call counters do not match its dispatch state",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+
+  const completedExternalWrites = linearNodes
+    .slice(0, completedNodeCount)
+    .filter((node) => durableNodeEffectKind(node, context) === "external_write")
+    .length;
+  const currentExternalWriteReserved = checkpoint.cursor.phase === "started"
+    && pending?.effect_contract_kind === "external_write"
+    ? 1
+    : 0;
+  if (
+    checkpoint.runtime_state.next_effect_index
+    !== completedExternalWrites + currentExternalWriteReserved + 1
+  ) {
+    throw new RuntimeFailure(
+      "durable checkpoint effect counter does not match its linear cursor",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+}
+
+function durableNodeEffectKind(node, context) {
+  if (node?.kind !== "call_tool") return null;
+  const toolRef = requiredTarget(node);
+  return context.toolBindingManifest?.bindings.get(toolRef)?.effectContract?.kind ?? null;
+}
+
+function durableUnsupported(graphRef, nodeId, reason) {
+  return new RuntimeFailure(
+    "entry graph is outside the RESUME-1 closure",
+    compactPayload({ graphRef, nodeId, reason }),
+    "DurableResumeUnsupportedGraph",
+  );
 }
 
 async function executeHumanApprovalResumeCheckpoint(document, entryRef, context) {
@@ -430,7 +1672,9 @@ async function executeHumanApprovalResumeCheckpoint(document, entryRef, context)
       external_tool_dispatches: checkpoint.effect_state?.external_tool_dispatches,
     }),
   });
-  return executeGraph(checkpoint.graph_ref, context, { startNodeId: checkpoint.node_id });
+  return executeGraph(checkpoint.graph_ref, context, {
+    startNodeId: checkpoint.node_id, loopState: context.loopState,
+  });
 }
 
 function validateHumanApprovalResumeCheckpoint(document, entryRef, context, checkpoint) {
@@ -460,7 +1704,7 @@ function validateHumanApprovalResumeCheckpoint(document, entryRef, context, chec
     );
   }
   const approvalRef = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
-  const resumeTargetRef = nextNodeId(graph, node.id, "next");
+  const resumeTargetRef = nextNodeId(graph, node.id, successEdgeRole(graph, node.id));
   if (
     checkpoint.approval_ref !== approvalRef
     || checkpoint.resume_target_ref !== resumeTargetRef
@@ -487,6 +1731,7 @@ function validateHumanApprovalResumeCheckpoint(document, entryRef, context, chec
 }
 
 function applyHumanApprovalResumeCheckpoint(context, checkpoint) {
+  context.loopState = graphLoopStateFromHumanCheckpoint(context, checkpoint);
   context.values = mapFromCheckpointObject(checkpoint.values, "values");
   context.inputValueKeys = new Set(checkpointStringArray(checkpoint.input_value_keys, "input_value_keys"));
   context.valueTypes = mapFromCheckpointObject(checkpoint.value_types ?? {}, "value_types");
@@ -497,9 +1742,34 @@ function applyHumanApprovalResumeCheckpoint(context, checkpoint) {
     providerCalls: checkpoint.budget_counters?.provider_calls ?? 0,
   };
   context.effectState.externalToolDispatches = checkpoint.effect_state?.external_tool_dispatches ?? 0;
+  context.effectState.nextEffectIndex = checkpoint.effect_state?.next_effect_index ?? 1;
   context.nextCallIndex = checkpoint.next_call_index ?? 1;
   context.activeAgentRef = checkpoint.active_agent_ref ?? null;
   context.activeCallerRef = checkpoint.active_caller_ref ?? null;
+}
+
+function graphLoopStateFromHumanCheckpoint(context, checkpoint) {
+  const graphRef = checkpoint.kind === "human_approval"
+    ? checkpoint.graph_ref : checkpoint.call_frame?.graph_ref;
+  const graph = graphRef ? context.indexes.graphs.get(graphRef) : null;
+  const loopKeys = new Set((graph?.nodes ?? [])
+    .filter(node => node.kind === "loop").map(node => `${graph.id}:${node.id}`));
+  // Legacy checkpoints are still usable for loop-free graphs. A cursor cannot
+  // be reconstructed safely for an older checkpoint of a graph containing loops.
+  if (checkpoint.loop_state === undefined && loopKeys.size > 0) {
+    throw new RuntimeFailure("human approval checkpoint is missing graph loop cursors",
+      { graphRef }, "HumanApprovalCheckpointIncompatible");
+  }
+  const states = mapFromCheckpointObject(checkpoint.loop_state ?? {}, "loop_state");
+  for (const [key, state] of states) {
+    if (!loopKeys.has(key) || !state || typeof state !== "object" || Array.isArray(state)
+      || Object.keys(state).length !== 1 || !Object.hasOwn(state, "index")) {
+      throw new RuntimeFailure("human approval checkpoint loop cursor does not match AIR",
+        { graphRef, loopKey: key }, "InvalidHumanApprovalCheckpoint");
+    }
+    checkpointNonNegativeSafeInteger(state.index, `loop_state.${key}.index`);
+  }
+  return states;
 }
 
 async function executeAgentHumanReviewResumeCheckpoint(document, entryRef, context, checkpoint) {
@@ -692,6 +1962,7 @@ function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
     });
     throw error;
   }
+
   context.trace.push("human_approval_decided", {
     payload: {
       approval_ref: approvalRef,
@@ -769,7 +2040,9 @@ async function resumeAgentHumanReviewCaller(context, checkpoint, agent, agentRes
   });
   const resumeTargetRef = checkpoint.call_frame.resume_target_ref;
   if (resumeTargetRef) {
-    return executeGraph(graph.id, context, { startNodeId: resumeTargetRef });
+    return executeGraph(graph.id, context, {
+      startNodeId: resumeTargetRef, loopState: context.loopState,
+    });
   }
   context.trace.push("scope_exited", {
     airRef: {
@@ -805,6 +2078,7 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
     resume_target_ref: payload.resume_target_ref,
     decision_binding: node.result_binding,
     context_refs: payload.context_refs ?? [],
+    loop_state: checkpointObjectFromMap(context.loopState, "loop_state"),
     caller_ref: payload.caller_ref,
     agent_ref: payload.agent_ref,
     requester_ref: payload.requester_ref,
@@ -820,6 +2094,7 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
     },
     effect_state: {
       external_tool_dispatches: context.effectState.externalToolDispatches,
+      next_effect_index: context.effectState.nextEffectIndex,
     },
     next_call_index: context.nextCallIndex,
     active_agent_ref: context.activeAgentRef,
@@ -889,6 +2164,7 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
       ],
     },
     call_frame: callFrame,
+    loop_state: checkpointObjectFromMap(context.loopState, "loop_state"),
     values,
     input_value_keys: [...context.inputValueKeys],
     value_types: valueTypes,
@@ -900,6 +2176,7 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
     },
     effect_state: {
       external_tool_dispatches: context.effectState.externalToolDispatches,
+      next_effect_index: context.effectState.nextEffectIndex,
     },
     next_call_index: context.nextCallIndex,
     active_agent_ref: context.activeAgentRef,
@@ -1417,8 +2694,9 @@ function isValueCompatibleWithType(value, typeRef, context) {
   if (typeRef === BUILTIN_FLOAT) {
     return typeof value === "number" && Number.isFinite(value);
   }
-  if (typeof typeRef === "string" && typeRef.startsWith("builtin:List<")) {
-    return Array.isArray(value);
+  if (typeof typeRef === "string" && typeRef.startsWith("list:")) {
+    return Array.isArray(value)
+      && value.every((item) => isValueCompatibleWithType(item, typeRef.slice("list:".length), context));
   }
   const type = context.indexes.types.get(typeRef);
   if (!type || !Array.isArray(type.fields)) {
@@ -1852,6 +3130,7 @@ async function executeAgentDecisionLoop(agent, capabilityRefs, context, options 
       executeAgentHumanReview,
       assertAgentDecisionDoesNotExecuteSkillPack,
       callArgumentsForAgentDecision,
+      argumentsForAgentObservation,
       authorizeAgentInvocationByCaller,
       executeTarget,
       validateAgentFinalResult,
@@ -2186,17 +3465,25 @@ function parameterDescriptor(parameter, context) {
   });
 }
 
-function typeFieldsDescriptor(typeRef, context) {
+function typeFieldsDescriptor(typeRef, context, ancestors = new Set()) {
   if (typeof typeRef !== "string" || typeRef.trim() === "") {
+    return undefined;
+  }
+  if (typeRef.startsWith("list:")) {
+    return typeFieldsDescriptor(typeRef.slice("list:".length), context, ancestors);
+  }
+  if (ancestors.has(typeRef)) {
     return undefined;
   }
   const type = context.indexes.types.get(typeRef);
   if (!type || !Array.isArray(type.fields) || type.fields.length === 0) {
     return undefined;
   }
-  return type.fields.map((field) => ({
+  const nestedAncestors = new Set([...ancestors, typeRef]);
+  return type.fields.map((field) => compactPayload({
     name: field.name,
     type_ref: field.type_ref,
+    fields: typeFieldsDescriptor(field.type_ref, context, nestedAncestors),
   }));
 }
 
@@ -2255,6 +3542,20 @@ async function resolveAgentDecision(agent, capabilityRefs, context, loopState = 
 }
 
 async function requestAgentDecisionFromProvider(agent, capabilityRefs, context, loopState = null) {
+  if (loopState?.phase === "finalization") {
+    const finalizationRequest = agentDecisionProviderRequest(
+      agent,
+      capabilityRefs,
+      context,
+      "finalization",
+      loopState,
+    );
+    context.trace.push("agent_decision_requested", {
+      payload: agentDecisionRequestTracePayload(finalizationRequest),
+    });
+    return callAgentDecisionProvider(finalizationRequest, context);
+  }
+
   if (
     context.agentDecisionProviderInitialMode === "capabilities"
     && (loopState?.observations?.length ?? 0) === 0
@@ -2321,6 +3622,7 @@ function agentDecisionProviderRequest(agent, capabilityRefs, context, mode, loop
     run_id: context.trace.runId,
     agent_ref: agent.id,
     agent_name: agent.name,
+    agent_signature: signatureDescriptor(agent.signature, context),
     responsibility: agent.responsibility,
     input_keys: Object.keys(rawInputs),
     inputs: providerContent.inputs,
@@ -2353,6 +3655,8 @@ function agentModelInput(
   providerContent = null,
 ) {
   const orientationMode = mode === "summary";
+  const finalizationMode = mode === "finalization";
+  const catalogMode = mode === "capabilities";
   const observations = loopState?.observations ?? [];
   const skillPackContext = prepareSkillPackModelContext(context, agent, mode, capabilityRefs);
   const content = providerContent ?? agentDecisionProviderContent(inputs, observations, context);
@@ -2360,10 +3664,9 @@ function agentModelInput(
   const observationEntries = content.observations;
   const resourceKinds = uniqueKinds(capabilityRefs);
   const descriptionQuality = capabilityDescriptionQuality(capabilities);
-  const completedCapabilityRefs = observations
+  const usedCapabilityRefs = [...new Set(observations
     .filter((observation) => observation?.action === "select_capability" && typeof observation.target_ref === "string")
-    .map((observation) => observation.target_ref);
-  const remainingCapabilityRefs = capabilityRefs.filter((capabilityRef) => !completedCapabilityRefs.includes(capabilityRef));
+    .map((observation) => observation.target_ref))];
   const developerInstruction = {
     source: "air_agent_responsibility",
     authority: "developer",
@@ -2371,18 +3674,25 @@ function agentModelInput(
   };
   const modelInput = compactPayload({
     protocol: AGENT_MODEL_INPUT_PROTOCOL_VERSION,
-    mode: orientationMode ? "orientation" : "capability_catalog",
+    mode: finalizationMode
+      ? "finalization"
+      : orientationMode
+        ? "orientation"
+        : "capability_catalog",
     agent: {
       agent_ref: agent.id,
       name: agent.name,
       responsibility: agent.responsibility,
+      signature: signatureDescriptor(agent.signature, context),
     },
     agent_state: {
       step_index: loopState?.stepIndex ?? 0,
+      phase: finalizationMode ? "finalization" : "execution",
+      execution_budget_exhausted: finalizationMode,
       observation_count: observations.length,
       observations: observationEntries,
-      completed_capability_refs: completedCapabilityRefs,
-      remaining_capability_refs: remainingCapabilityRefs,
+      used_capability_refs: usedCapabilityRefs,
+      available_capability_refs: finalizationMode ? [] : capabilityRefs,
       observation_budget: agentProviderObservationBudgetReport(context, content),
     },
     instructions: [
@@ -2420,13 +3730,13 @@ function agentModelInput(
     },
     external_content_access: content.externalContentAccess,
     resources_hint: {
-      capabilities_available: capabilityRefs.length > 0,
+      capabilities_available: !finalizationMode && capabilityRefs.length > 0,
       capability_count: capabilityRefs.length,
       capability_refs: orientationMode ? capabilityRefs : undefined,
       capability_summaries: orientationMode ? capabilities.map(capabilitySummaryDescriptor) : undefined,
       capability_kinds: resourceKinds,
       catalog_available_on_request: orientationMode,
-      catalog_presented: !orientationMode,
+      catalog_presented: catalogMode,
       description_quality: descriptionQuality,
       skill_pack_hints_available: skillPackContext.hints.length > 0,
       skill_pack_hint_count: skillPackContext.hints.length,
@@ -2436,13 +3746,25 @@ function agentModelInput(
     active_skill_packs: skillPackContext.active.length > 0 ? skillPackContext.active : undefined,
     skill_pack_budgets: skillPackContext.budgets,
     resource_interface: {
-      catalog_policy: orientationMode ? "available_on_request" : "presented",
+      catalog_policy: finalizationMode
+        ? "unavailable_during_finalization"
+        : orientationMode
+          ? "available_on_request"
+          : "presented",
       resource_kinds: skillPackContext.hints.length > 0 ? [...resourceKinds, "skill_pack"] : resourceKinds,
-      includes: orientationMode
+      includes: finalizationMode
+        ? ["used_capability_refs", "runtime_observations"]
+        : orientationMode
         ? ["capability_refs", "capability_count", "capability_kinds", "skill_pack_hints"]
         : ["capability_descriptors", "signatures", "requirements", "nested_uses", "skill_pack_hints", "active_skill_packs"],
     },
-	    decision_policy: orientationMode
+	    decision_policy: finalizationMode
+	      ? {
+	        no_additional_capability_execution: true,
+	        answer_directly_only_if_goal_satisfied: true,
+	        declare_incomplete_if_goal_not_satisfied: true,
+	      }
+	      : orientationMode
 	      ? {
 	        answer_directly_requires_no_capability_call: true,
 	        request_capabilities_when_execution_is_needed: true,
@@ -2450,38 +3772,60 @@ function agentModelInput(
 	        planned_capability_use_is_not_completion: true,
 	        answer_directly_must_not_replace_required_human_review: true,
 	        after_observation_answer_directly_only_if_goal_satisfied: true,
-	        after_observation_request_capabilities_if_remaining_capability_can_complete_goal: true,
+	        request_capabilities_if_authorized_work_is_needed: true,
+	        prior_use_does_not_exhaust_capability: true,
 	      }
 	      : {
 	        select_exactly_one_catalog_capability_when_execution_is_needed: true,
 	        request_human_review_only_when_no_catalog_capability_suffices: true,
 	        request_human_review_when_goal_requires_human_judgment: true,
-	        prefer_unselected_capability_when_previous_observation_only_provides_intermediate_data: true,
+	        select_by_task_need_not_usage_history: true,
+	        prior_use_does_not_exhaust_capability: true,
 	      },
 	    human_interaction: {
 	      request_present: false,
-	      review_available: true,
-	      review_access: orientationMode ? "request_capabilities_first" : "direct_catalog_action",
-	      available_actions: orientationMode
+	      review_available: !finalizationMode,
+	      review_access: finalizationMode
+	        ? "unavailable_during_finalization"
+	        : orientationMode ? "request_capabilities_first" : "direct_catalog_action",
+	      available_actions: finalizationMode
+	        ? []
+	        : orientationMode
 	        ? ["request_capabilities_for_human_review"]
 	        : ["request_human_review"],
 	    },
-    allowed_actions: orientationMode
+    allowed_actions: finalizationMode
+      ? ["answer_directly", "cannot_complete"]
+      : orientationMode
       ? ["answer_directly", "request_capabilities"]
       : ["select_capability", "request_human_review"],
-    capabilities: orientationMode ? undefined : capabilities,
-    output_contract: orientationMode
+    capabilities: catalogMode ? capabilities : undefined,
+    output_contract: finalizationMode
+      ? {
+        action: {
+          enum: ["answer_directly", "cannot_complete"],
+        },
+        direct_answer: {
+          type: "JSON",
+          description: "Final answer grounded in observations, only when the goal is satisfied.",
+        },
+        reason: {
+          type: "Text",
+          description: "Brief reason for completion or inability to complete.",
+        },
+      }
+      : orientationMode
       ? {
         action: {
           enum: ["answer_directly", "request_capabilities"],
         },
 	        direct_answer: {
 	          type: "JSON",
-	          description: "Réponse directe si aucune capacité et aucune revue humaine ne sont nécessaires.",
+	          description: "Direct answer when no capability or human review is needed.",
 	        },
         reason: {
           type: "Text",
-          description: "Courte raison de la réponse directe ou de la demande de catalogue.",
+          description: "Brief reason for the direct answer or catalogue request.",
         },
       }
       : {
@@ -2493,15 +3837,15 @@ function agentModelInput(
         },
         reason: {
           type: "Text",
-          description: "Courte raison du choix de capacité.",
+          description: "Brief reason for the capability selection.",
         },
         arguments: {
           type: "Object",
-          description: "Objet indexé par les noms d'entrées de la signature choisie.",
+          description: "Object keyed by the input names of the selected signature.",
         },
         human_review: {
           type: "Object",
-          description: "Demande de review humain initiée par agent si aucune capacité ne suffit.",
+          description: "Agent-initiated human-review request when no capability is sufficient.",
         },
       },
   });
@@ -2934,6 +4278,18 @@ async function callAgentDecisionProviderAttempt(request, context, attemptIndex) 
       request,
     );
     const decision = normalizeAgentDecisionProviderResponse(request.agent_ref, response);
+    if (decision.action === "cannot_complete" && request.mode !== "finalization") {
+      throw new RuntimeFailure(
+        `agent decision provider cannot_complete is only valid during finalization for ${request.agent_ref}`,
+        {
+          agentRef: request.agent_ref,
+          providerMode: request.mode,
+          providerAttempt: attemptIndex,
+          provider_metadata: request.provider_metadata,
+        },
+        "AgentDecisionProviderSchemaViolation",
+      );
+    }
     if (decision.action === "request_human_review" && request.mode !== "capabilities") {
       throw new RuntimeFailure(
         `agent decision provider human review is only valid after catalog for ${request.agent_ref}`,
@@ -3001,6 +4357,29 @@ function normalizeAgentDecisionProviderResponse(agentRef, response) {
     }
     return {
       action: "request_capabilities",
+      reason,
+    };
+  }
+  if (response.action === "cannot_complete") {
+    const reason = response.reason;
+    if (typeof reason !== "string" || reason.trim() === "") {
+      throw new RuntimeFailure(
+        `agent decision provider incomplete result must include a reason for ${agentRef}`,
+        { agentRef },
+        "AgentDecisionProviderSchemaViolation",
+      );
+    }
+    const source = response.source === undefined ? "decision_provider" : response.source;
+    if (typeof source !== "string" || source.trim() === "") {
+      throw new RuntimeFailure(
+        `agent decision provider incomplete result source must be a string for ${agentRef}`,
+        { agentRef },
+        "AgentDecisionProviderSchemaViolation",
+      );
+    }
+    return {
+      action: "cannot_complete",
+      source,
       reason,
     };
   }
@@ -3185,7 +4564,17 @@ function assertNoSecretValueInAgentDecisionRequest(request, context, agentRef) {
 }
 
 function assertNoSecretValueInAgentCapabilityDescriptors(capabilities, context, agentRef) {
-  const serialized = JSON.stringify({ capabilities });
+  // Descriptions are whitespace-normalized and truncated for presentation.
+  // Check their source text too so these transformations cannot hide a known
+  // secret from the descriptor guard before either provider or trace exposure.
+  const sourceDescriptions = capabilities.map((capability) => {
+    const definition = definitionForCapability(capability.target_ref, context);
+    return {
+      description: definition?.description,
+      responsibility: capability.kind === "agent" ? definition?.responsibility : undefined,
+    };
+  });
+  const serialized = JSON.stringify({ capabilities, source_descriptions: sourceDescriptions });
   const leakedSecrets = secretEntriesInSerializedValue(serialized, context);
   if (leakedSecrets.length === 0) {
     return;
@@ -3205,16 +4594,40 @@ function secretEntriesInSerializedValue(serialized, context) {
     return [];
   }
   return resolvedSecretEntries(context.secretStore)
-    .filter((entry) => entry.value.length > 0 && serialized.includes(entry.value));
+    .filter((entry) => {
+      if (entry.value.length === 0) {
+        return false;
+      }
+      // JSON escaping does not declassify a resolved secret. Keep the existing
+      // raw substring guard and also match its representation inside a JSON
+      // string, including quotes, backslashes and control characters. The
+      // serialized container already covers nested objects and arrays.
+      const escapedValue = JSON.stringify(entry.value).slice(1, -1);
+      return serialized.includes(entry.value) || serialized.includes(escapedValue);
+    });
 }
 
 function callArgumentsForAgentDecision(decision, context) {
+  const definition = definitionForCapability(decision.targetRef, context);
+  const inputs = definition?.signature?.inputs ?? [];
   if (decision.arguments === undefined) {
+    // The legacy implicit-binding route may reuse named runtime inputs, but
+    // omission must not bypass the same value checks as explicit arguments.
+    const missingFields = inputs.filter((input) => !context.values.has(valueHandle(input.name)))
+      .map((input) => input.name);
+    if (missingFields.length > 0) {
+      throw new RuntimeFailure(
+        `agent decision is missing arguments for ${decision.targetRef}`,
+        { targetRef: decision.targetRef, missingFields },
+        "AgentCapabilityArgumentsInvalid",
+      );
+    }
+    validateAgentCapabilityArgumentValues(
+      decision.targetRef, inputs, inputs.map((input) => context.values.get(valueHandle(input.name))), context,
+    );
     return null;
   }
 
-  const definition = definitionForCapability(decision.targetRef, context);
-  const inputs = definition?.signature?.inputs ?? [];
   const args = decision.arguments;
   if (Array.isArray(args)) {
     if (args.length !== inputs.length) {
@@ -3228,7 +4641,7 @@ function callArgumentsForAgentDecision(decision, context) {
         "AgentCapabilityArgumentsInvalid",
       );
     }
-    return args;
+    return validateAgentCapabilityArgumentValues(decision.targetRef, inputs, args, context);
   }
 
   if (!args || typeof args !== "object") {
@@ -3269,7 +4682,36 @@ function callArgumentsForAgentDecision(decision, context) {
     );
   }
 
-  return inputs.map((input) => args[input.name]);
+  return validateAgentCapabilityArgumentValues(
+    decision.targetRef, inputs, inputs.map((input) => args[input.name]), context,
+  );
+}
+
+function argumentsForAgentObservation(targetRef, callArguments, context) {
+  const inputs = definitionForCapability(targetRef, context)?.signature?.inputs ?? [];
+  return structuredClone(Object.fromEntries(inputs.map((input, index) => [
+    input.name,
+    callArguments === null ? context.values.get(valueHandle(input.name)) : callArguments[index],
+  ])));
+}
+
+function validateAgentCapabilityArgumentValues(targetRef, inputs, values, context) {
+  for (let index = 0; index < inputs.length; index += 1) {
+    const input = inputs[index];
+    if (!isValueCompatibleWithType(values[index], input.type_ref, context)) {
+      throw new RuntimeFailure(
+        `agent decision argument ${input.name} does not match ${targetRef} signature`,
+        {
+          targetRef,
+          input: input.name,
+          expectedTypeRef: input.type_ref,
+          valueKind: payloadValueKind(values[index]),
+        },
+        "AgentCapabilityArgumentsInvalid",
+      );
+    }
+  }
+  return values;
 }
 
 async function executeTool(tool, context) {
@@ -3285,28 +4727,54 @@ async function executeTool(tool, context) {
   validateToolPayloadConstraints("input", tool, toolArguments, binding?.payloadConstraints?.input ?? []);
   assertNoSecretValueInToolArguments(tool, binding, toolArguments, context);
   const handler = context.toolHandlers[toolRef];
+  const resourceBindings = resourceBindingsForTool(tool, context);
+  if (binding?.effectContract?.kind === "external_write") {
+    if (handler) {
+      throw new RuntimeFailure(
+        `external write binding cannot use an in-process tool handler ${toolRef}`,
+        { toolRef },
+        "EffectContextRequired",
+      );
+    }
+    return executeEffectfulProcessTool(
+      tool,
+      binding,
+      toolArguments,
+      resourceBindings,
+      context,
+    );
+  }
   if (!handler) {
     if (binding) {
-      recordExternalToolDispatch(context);
+      const durableReservation = context.executionDurability.enabled
+        ? await reserveDurableToolDispatch(tool, binding, context)
+        : null;
       const secretHandles = tool.required_secrets ?? [];
       const handlerRequest = {
         protocol: TOOL_HANDLER_PROTOCOL_VERSION,
         tool_ref: tool.id,
-        call_id: `call:${context.trace.runId}:${context.nextCallIndex}`,
+        call_id: durableReservation?.call_id
+          ?? `call:${context.trace.runId}:${context.nextCallIndex}`,
         arguments: toolArguments,
         grants: [...binding.grants],
         memory_accesses: memoryAccessesForTrace(tool.memory_accesses ?? []),
-        resource_bindings: resourceBindingsForTool(tool, context),
+        resource_bindings: resourceBindings,
         secret_handles: [...secretHandles],
         limits: { ...binding.limits },
       };
-      context.nextCallIndex += 1;
+      if (!durableReservation) context.nextCallIndex += 1;
       const handlerResponse = await runProcessToolHandler({
         toolRef: tool.id,
         binding,
         request: handlerRequest,
         secretHandles,
         secretStore: context.secretStore,
+        beforeDispatch: context.executionDurability.enabled
+          ? () => markDurableToolDispatchStarted(context)
+          : () => recordExternalToolDispatch(context),
+        beforeSpawn: context.executionDurability.enabled
+          ? () => assertDurableToolCanSpawn(tool, binding, context)
+          : undefined,
       });
       observeToolMemoryMetadata(tool, handlerResponse.memoryMetadata, context);
       const value = handlerResponse.value;
@@ -3323,7 +4791,7 @@ async function executeTool(tool, context) {
       arguments: toolArguments,
       values: Object.fromEntries(context.values),
       binding: binding ? bindingPublicView(binding) : undefined,
-      resourceBindings: resourceBindingsForTool(tool, context),
+      resourceBindings,
     });
     validateToolOutputPayload(tool, value, context);
     validateToolPayloadConstraints("output", tool, value, binding?.payloadConstraints?.output ?? []);
@@ -3343,8 +4811,764 @@ async function executeTool(tool, context) {
   }
 }
 
+async function executeEffectfulProcessTool(
+  tool,
+  binding,
+  toolArguments,
+  resourceBindings,
+  context,
+) {
+  const toolRef = tool.id;
+  const effectScopeId = context.effectScopeId;
+  if (typeof effectScopeId !== "string" || effectScopeId.trim() === "") {
+    throw new RuntimeFailure(
+      `external write requires effect_scope_id ${toolRef}`,
+      { toolRef },
+      "EffectContextRequired",
+    );
+  }
+  assertNoResolvedSecretInEffectArtifact(
+    effectScopeId,
+    toolRef,
+    "effect_scope_id",
+    context.secretStore,
+  );
+  const effectJournal = requireEffectJournalAdapter(context.effectJournal);
+  const durablePending = context.executionDurability.enabled
+    ? context.executionDurability.pendingDispatch
+    : null;
+  const resumedEffect = durablePending
+    && durablePending.node_id === context.executionDurability.cursor?.node_id
+    && durablePending.tool_ref === toolRef
+    && durablePending.effect_contract_kind === "external_write";
+  const effectIndex = resumedEffect
+    ? durablePending.effect_index
+    : context.effectState.nextEffectIndex;
+  if (!resumedEffect) context.effectState.nextEffectIndex += 1;
+  const airDigest = airDocumentDigest(context.trace.airDocument);
+  const effectId = deriveEffectId({
+    effectScopeId,
+    airDigest,
+    entryRef: context.entryRef,
+    effectIndex,
+  });
+  const requestDigest = deriveEffectRequestDigest({
+    airDigest,
+    toolRef,
+    arguments: toolArguments,
+    resourceBindings,
+    ...(context.compensation
+      ? { controlContext: context.compensation.config.envelope }
+      : {}),
+  });
+  const retryMode = binding.effectContract.retryMode;
+  if (resumedEffect) {
+    const pendingMatches = durablePending.effect_id === effectId
+      && durablePending.request_digest === requestDigest
+      && durablePending.retry_mode === retryMode;
+    if (!pendingMatches) {
+      throw new RuntimeFailure(
+        "durable pending effect identity does not match the current request",
+        { toolRef, effectId },
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+  }
+  let journalEntry = await readEffectJournalEntry(effectJournal, effectId);
+  const journalStateAtRead = journalEntry?.state ?? null;
+  if (journalEntry) {
+    assertNoResolvedSecretInEffectArtifact(
+      journalEntry,
+      toolRef,
+      "journal_entry",
+      context.secretStore,
+    );
+    assertEffectJournalRequestMatches(journalEntry, {
+      effectId,
+      effectScopeId,
+      airDigest,
+      entryRef: context.entryRef,
+      effectIndex,
+      requestDigest,
+      toolRef,
+      retryMode,
+    });
+    if (resumedEffect) validateDurablePendingJournalState(durablePending, journalEntry);
+    await repairDurableNextCallIndexFromJournal(context, journalEntry);
+    await repairDurableDispatchEvidenceFromJournal(context, journalEntry);
+    if (journalEntry.state === "dispatched") {
+      journalEntry = await writeEffectJournalEntry(effectJournal, {
+        ...journalEntry,
+        state: "unknown",
+      });
+    }
+    if (journalEntry.state === "applied") {
+      return restoreAppliedEffectResult(tool, binding, journalEntry, context);
+    }
+    assertEffectCanRetry(journalEntry);
+  } else if (resumedEffect) {
+    validateDurablePendingJournalState(durablePending, undefined);
+  }
+
+  const previousAttemptCount = journalEntry?.attempt_count ?? 0;
+  if (previousAttemptCount >= Number.MAX_SAFE_INTEGER) {
+    throw new RuntimeFailure(
+      `effect attempt counter cannot advance ${effectId}`,
+      { toolRef, effectId, requestDigest, state: journalEntry?.state },
+      "EffectOutcomeUnknown",
+    );
+  }
+  const attemptIndex = previousAttemptCount + 1;
+  const preparedEntry = {
+    effect_id: effectId,
+    effect_scope_id: effectScopeId,
+    air_digest: airDigest,
+    entry_ref: context.entryRef,
+    effect_index: effectIndex,
+    request_digest: requestDigest,
+    tool_ref: toolRef,
+    retry_mode: retryMode,
+    state: "prepared",
+    attempt_count: journalEntry?.attempt_count ?? 0,
+    ...(journalEntry?.last_call_id !== undefined
+      ? { last_call_id: journalEntry.last_call_id }
+      : {}),
+  };
+  if (!context.executionDurability.enabled) {
+    journalEntry = await writeEffectJournalEntry(effectJournal, preparedEntry);
+  }
+
+  if (
+    context.executionDurability.enabled
+    && resumedEffect
+    && durablePending.phase === "reserved"
+    && ![null, "prepared"].includes(journalStateAtRead)
+    && !(
+      durablePending.attempt_index === previousAttemptCount + 1
+      && durablePending.call_id !== journalEntry?.last_call_id
+    )
+  ) {
+    context.executionDurability.pendingDispatch = {
+      ...durablePending,
+      phase: "dispatched",
+    };
+  }
+  if (context.compensation) {
+    const expected = context.compensation.config;
+    if (
+      context.entryRef !== expected.inverse_entry_ref
+      || toolRef !== expected.inverse_tool_ref
+      || effectId !== expected.inverse_effect_id
+    ) {
+      throw new RuntimeFailure(
+        "compensation inverse identity does not match its sealed plan",
+        {},
+        "CompensationCheckpointIncompatible",
+      );
+    }
+    context.compensation.lastAttempt = {
+      inverseEffectId: effectId,
+      attemptIndex,
+      result: null,
+      blockerCode: null,
+    };
+    enrichActiveCompensationCallTrace(context, effectId, attemptIndex);
+  }
+  const durableReservation = context.executionDurability.enabled
+    ? await reserveDurableToolDispatch(tool, binding, context, {
+      effectIndex,
+      effectId,
+      requestDigest,
+      retryMode,
+      attemptIndex,
+    })
+    : null;
+  const callId = durableReservation?.call_id
+    ?? `call:${context.trace.runId}:${context.nextCallIndex}`;
+  if (!durableReservation) context.nextCallIndex += 1;
+  assertNoResolvedSecretInEffectArtifact(callId, toolRef, "call_id", context.secretStore);
+  if (context.executionDurability.enabled) {
+    journalEntry = await writeEffectJournalEntry(effectJournal, preparedEntry);
+    const reservedElapsedMs = durablePendingReservationElapsed(context, { targetRef: toolRef });
+    context.executionDurability.pendingReservedElapsedMs = reservedElapsedMs;
+    await persistDurableExecutionCheckpoint(context, {
+      activeElapsedMs: reservedElapsedMs,
+    });
+  }
+  const secretHandles = tool.required_secrets ?? [];
+  const effect = Object.freeze({
+    effect_id: effectId,
+    attempt_index: attemptIndex,
+    request_digest: requestDigest,
+  });
+  const handlerRequest = {
+    protocol: context.compensation
+      ? COMPENSATION_HANDLER_PROTOCOL_VERSION
+      : EFFECT_HANDLER_PROTOCOL_VERSION,
+    tool_ref: toolRef,
+    call_id: callId,
+    arguments: toolArguments,
+    grants: [...binding.grants],
+    memory_accesses: memoryAccessesForTrace(tool.memory_accesses ?? []),
+    resource_bindings: resourceBindings,
+    secret_handles: [...secretHandles],
+    limits: { ...binding.limits },
+    effect,
+    ...(context.compensation
+      ? { compensation: context.compensation.config.envelope }
+      : {}),
+  };
+  let dispatched = false;
+  let handlerResponse;
+  try {
+    handlerResponse = await runProcessToolHandler({
+      toolRef,
+      binding,
+      request: handlerRequest,
+      secretHandles,
+      secretStore: context.secretStore,
+      beforeDispatch: async () => {
+        const reservedElapsedMs = context.executionDurability.enabled
+          ? durablePendingReservationElapsed(context, { targetRef: toolRef })
+          : null;
+        if (context.compensation) {
+          await assertDurableToolCanSpawn(tool, binding, context);
+          await context.compensation.config.pre_spawn_guard({
+            effect_id: effectId,
+            attempt_index: attemptIndex,
+            request_digest: requestDigest,
+          });
+        }
+        journalEntry = await writeEffectJournalEntry(effectJournal, {
+          ...preparedEntry,
+          state: "dispatched",
+          attempt_count: attemptIndex,
+          last_call_id: callId,
+        });
+        dispatched = true;
+        if (context.executionDurability.enabled) {
+          await markDurableToolDispatchStarted(context, reservedElapsedMs);
+        } else {
+          recordExternalToolDispatch(context);
+        }
+      },
+      beforeSpawn: context.executionDurability.enabled && !context.compensation
+        ? () => assertDurableToolCanSpawn(tool, binding, context)
+        : undefined,
+    });
+  } catch (error) {
+    if (!dispatched) {
+      if (context.compensation && error instanceof RuntimeFailure) {
+        context.compensation.blockerCode = error.code;
+        context.compensation.lastAttempt.blockerCode = error.code;
+      }
+      throw error;
+    }
+    const receipt = effectReceiptFromRuntimeError(error, effect, context);
+    if (receipt) {
+      await writeEffectJournalEntry(effectJournal, {
+        ...preparedEntry,
+        state: receipt.outcome,
+        attempt_count: attemptIndex,
+        last_call_id: callId,
+        receipt,
+      });
+    } else {
+      await writeEffectJournalEntry(effectJournal, {
+        ...preparedEntry,
+        state: "unknown",
+        attempt_count: attemptIndex,
+        last_call_id: callId,
+      });
+    }
+    if (context.compensation) {
+      const result = receipt?.outcome === "not_applied" ? "failed" : "unknown";
+      context.compensation.outcome = result;
+      context.compensation.blockerCode = error instanceof RuntimeFailure
+        ? error.code
+        : "EffectOutcomeUnknown";
+      context.compensation.lastAttempt.result = result;
+      context.compensation.lastAttempt.blockerCode = context.compensation.blockerCode;
+    }
+    throw error;
+  }
+
+  const receipt = validateEffectReceipt(handlerResponse.effectReceipt, {
+    effectId,
+    requestDigest,
+    secretValues: secretValuesForRedaction(context.secretStore),
+  });
+  if (receipt.outcome === "applied") {
+    try {
+      validateToolOutputPayload(tool, handlerResponse.value, context);
+      validateToolPayloadConstraints(
+        "output",
+        tool,
+        handlerResponse.value,
+        binding.payloadConstraints.output,
+      );
+      assertJsonPortable(handlerResponse.value, "EffectResultUnavailable");
+      assertNoResolvedSecretInEffectArtifact(
+        handlerResponse.value,
+        toolRef,
+        "result",
+        context.secretStore,
+      );
+      observeToolMemoryMetadata(tool, handlerResponse.memoryMetadata, context);
+    } catch (error) {
+      await writeEffectJournalEntry(effectJournal, {
+        ...preparedEntry,
+        state: "applied",
+        attempt_count: attemptIndex,
+        last_call_id: callId,
+        receipt,
+      });
+      throw error;
+    }
+    const persistedResult = context.compensation
+      ? compensationEffectResultEnvelope(handlerResponse, context, effectId)
+      : structuredClone(handlerResponse.value);
+    await writeEffectJournalEntry(effectJournal, {
+      ...preparedEntry,
+      state: "applied",
+      attempt_count: attemptIndex,
+      last_call_id: callId,
+      receipt,
+      result: persistedResult,
+    });
+    if (context.compensation) {
+      context.compensation.outcome = handlerResponse.compensationReceipt.result;
+      context.compensation.lastAttempt.result = handlerResponse.compensationReceipt.result;
+    }
+    return handlerResponse.value;
+  }
+
+  await writeEffectJournalEntry(effectJournal, {
+    ...preparedEntry,
+    state: receipt.outcome,
+    attempt_count: attemptIndex,
+    last_call_id: callId,
+    receipt,
+  });
+  if (receipt.outcome === "unknown") {
+    if (context.compensation) {
+      context.compensation.outcome = "unknown";
+      context.compensation.blockerCode = "EffectOutcomeUnknown";
+      context.compensation.lastAttempt.result = "unknown";
+      context.compensation.lastAttempt.blockerCode = "EffectOutcomeUnknown";
+    }
+    throw effectUnknownFailure(retryMode, effectId, requestDigest, toolRef);
+  }
+  if (context.compensation) {
+    context.compensation.outcome = "failed";
+    context.compensation.blockerCode = "EffectNotApplied";
+    context.compensation.lastAttempt.result = "failed";
+    context.compensation.lastAttempt.blockerCode = "EffectNotApplied";
+  }
+  throw new RuntimeFailure(
+    `external effect was not applied ${toolRef}`,
+    { toolRef, effectId, requestDigest },
+    "EffectNotApplied",
+  );
+}
+
+function assertEffectJournalRequestMatches(entry, expected) {
+  const matches =
+    entry.effect_id === expected.effectId
+    && entry.effect_scope_id === expected.effectScopeId
+    && entry.air_digest === expected.airDigest
+    && entry.entry_ref === expected.entryRef
+    && entry.effect_index === expected.effectIndex
+    && entry.request_digest === expected.requestDigest
+    && entry.tool_ref === expected.toolRef
+    && entry.retry_mode === expected.retryMode;
+  if (matches) return;
+  throw new RuntimeFailure(
+    `effect identity is already bound to a different request ${expected.effectId}`,
+    {
+      toolRef: expected.toolRef,
+      effectId: expected.effectId,
+      requestDigest: expected.requestDigest,
+      existingRequestDigest: entry.request_digest,
+    },
+    "EffectRequestConflict",
+  );
+}
+
+function enrichActiveCompensationCallTrace(context, inverseEffectId, attemptIndex) {
+  const events = context.trace.document().events;
+  const event = [...events].reverse().find((candidate) => candidate.kind === "call_started");
+  if (!event) return;
+  event.payload = {
+    ...event.payload,
+    compensation_id: context.compensation.config.envelope.compensation_id,
+    compensates_effect_id: context.compensation.config.envelope.compensates_effect_id,
+    inverse_effect_id: inverseEffectId,
+    attempt_index: attemptIndex,
+  };
+}
+
+function compensationEffectResultEnvelope(handlerResponse, context, inverseEffectId) {
+  const receipt = handlerResponse.compensationReceipt;
+  const envelope = context.compensation.config.envelope;
+  if (
+    !receipt
+    || receipt.compensation_id !== envelope.compensation_id
+    || receipt.compensates_effect_id !== envelope.compensates_effect_id
+    || receipt.inverse_effect_id !== inverseEffectId
+    || !["completed", "partial"].includes(receipt.result)
+  ) {
+    throw new RuntimeFailure(
+      "compensation receipt does not match the sealed execution context",
+      { effectId: inverseEffectId },
+      "CompensationReceiptInvalid",
+    );
+  }
+  return {
+    schema_version: "touba-compensation-effect-result-v1",
+    value: structuredClone(handlerResponse.value),
+    compensation_receipt: structuredClone(receipt),
+  };
+}
+
+function assertEffectCanRetry(entry) {
+  if (entry.state === "prepared" || entry.state === "not_applied") return;
+  if (entry.state === "unknown" && entry.retry_mode === "idempotency_key") return;
+  if (entry.state === "unknown") {
+    throw effectUnknownFailure(
+      entry.retry_mode,
+      entry.effect_id,
+      entry.request_digest,
+      entry.tool_ref,
+    );
+  }
+  throw new RuntimeFailure(
+    `effect journal state cannot be retried ${entry.effect_id}`,
+    { toolRef: entry.tool_ref, effectId: entry.effect_id, state: entry.state },
+    "EffectOutcomeUnknown",
+  );
+}
+
+function effectUnknownFailure(retryMode, effectId, requestDigest, toolRef) {
+  if (retryMode === "reconcile") {
+    return new RuntimeFailure(
+      `external effect requires reconciliation ${toolRef}`,
+      { toolRef, effectId, requestDigest, retryMode },
+      "EffectReconciliationRequired",
+    );
+  }
+  return new RuntimeFailure(
+    `external effect outcome is unknown ${toolRef}`,
+    { toolRef, effectId, requestDigest, retryMode },
+    "EffectOutcomeUnknown",
+  );
+}
+
+function restoreAppliedEffectResult(tool, binding, entry, context) {
+  if (!Object.hasOwn(entry, "result")) {
+    throw new RuntimeFailure(
+      `applied effect result is unavailable ${tool.id}`,
+      { toolRef: tool.id, effectId: entry.effect_id, requestDigest: entry.request_digest },
+      "EffectResultUnavailable",
+    );
+  }
+  if (context.compensation) {
+    return restoreCompensationEffectResult(tool, binding, entry, context);
+  }
+  if (entry.result?.schema_version === "touba-compensation-effect-result-v1") {
+    throw new RuntimeFailure(
+      `reserved compensation result cannot be restored outside COMP-1 ${tool.id}`,
+      { toolRef: tool.id, effectId: entry.effect_id },
+      "EffectResultUnavailable",
+    );
+  }
+  try {
+    assertJsonPortable(entry.result, "EffectResultUnavailable");
+    assertNoResolvedSecretInEffectArtifact(
+      entry.result,
+      tool.id,
+      "result",
+      context.secretStore,
+    );
+    validateToolOutputPayload(tool, entry.result, context);
+    validateToolPayloadConstraints("output", tool, entry.result, binding.payloadConstraints.output);
+  } catch (error) {
+    if (error instanceof RuntimeFailure && error.code === "EffectResultUnavailable") throw error;
+    throw new RuntimeFailure(
+      `applied effect result is not restorable ${tool.id}`,
+      { toolRef: tool.id, effectId: entry.effect_id, cause: error instanceof Error ? error.message : String(error) },
+      "EffectResultUnavailable",
+    );
+  }
+  return structuredClone(entry.result);
+}
+
+function restoreCompensationEffectResult(tool, binding, entry, context) {
+  const value = entry.result;
+  const expected = context.compensation.config.envelope;
+  try {
+    if (
+      !value
+      || typeof value !== "object"
+      || Array.isArray(value)
+      || Object.keys(value).sort().join("|") !== "compensation_receipt|schema_version|value"
+      || value.schema_version !== "touba-compensation-effect-result-v1"
+    ) {
+      throw new TypeError("invalid compensation result envelope");
+    }
+    const receipt = value.compensation_receipt;
+    if (
+      !receipt
+      || typeof receipt !== "object"
+      || Array.isArray(receipt)
+      || Object.keys(receipt).sort().join("|")
+        !== "compensates_effect_id|compensation_id|inverse_effect_id|result"
+      || receipt.compensation_id !== expected.compensation_id
+      || receipt.compensates_effect_id !== expected.compensates_effect_id
+      || receipt.inverse_effect_id !== entry.effect_id
+      || !["completed", "partial"].includes(receipt.result)
+    ) {
+      throw new TypeError("invalid compensation receipt");
+    }
+    assertJsonPortable(value, "CompensationEffectResultInvalid");
+    assertNoResolvedSecretInEffectArtifact(value, tool.id, "result", context.secretStore);
+    validateToolOutputPayload(tool, value.value, context);
+    validateToolPayloadConstraints("output", tool, value.value, binding.payloadConstraints.output);
+    context.compensation.outcome = receipt.result;
+    context.compensation.lastAttempt = {
+      inverseEffectId: entry.effect_id,
+      attemptIndex: entry.attempt_count,
+      result: receipt.result,
+      blockerCode: null,
+    };
+    return structuredClone(value.value);
+  } catch (error) {
+    if (error instanceof RuntimeFailure && error.code === "CompensationEffectResultInvalid") {
+      throw error;
+    }
+    throw new RuntimeFailure(
+      `applied compensation result is not restorable ${tool.id}`,
+      { toolRef: tool.id, effectId: entry.effect_id },
+      "CompensationEffectResultInvalid",
+    );
+  }
+}
+
+function effectReceiptFromRuntimeError(error, effect, context) {
+  const value = error instanceof RuntimeFailure ? error.details?.effectReceipt : undefined;
+  if (value === undefined) return null;
+  return validateEffectReceipt(value, {
+    effectId: effect.effect_id,
+    requestDigest: effect.request_digest,
+    secretValues: secretValuesForRedaction(context.secretStore),
+  });
+}
+
+function assertNoResolvedSecretInEffectArtifact(value, toolRef, field, secretStore) {
+  const secretEntries = resolvedSecretEntries(secretStore);
+  if (!containsResolvedSecretValue(value, secretEntries.map((entry) => entry.value))) return;
+  const refused = secretEntries
+    .filter((entry) => containsResolvedSecretValue(value, [entry.value]))
+    .map((entry) => entry.handle);
+  if (refused.length === 0) return;
+  throw new RuntimeFailure(
+    `effect ${field} contains a resolved secret value ${toolRef}`,
+    { toolRef, secretHandlesRefused: refused },
+    "SecretValueInEffectArtifact",
+  );
+}
+
 function recordExternalToolDispatch(context) {
   context.effectState.externalToolDispatches += 1;
+}
+
+async function reserveDurableToolDispatch(tool, binding, context, effect = null) {
+  const durable = context.executionDurability;
+  const nodeId = durable.cursor?.node_id;
+  const existing = durable.pendingDispatch;
+  const expectedKind = binding.effectContract.kind;
+  const sameReservation = existing
+    && existing.node_id === nodeId
+    && existing.tool_ref === tool.id
+    && existing.phase === "reserved"
+    && existing.effect_contract_kind === expectedKind
+    && (expectedKind === "none"
+      || (
+        existing.effect_index === effect?.effectIndex
+        && existing.effect_id === effect?.effectId
+        && existing.request_digest === effect?.requestDigest
+        && existing.retry_mode === effect?.retryMode
+        && existing.attempt_index === effect?.attemptIndex
+      ));
+  if (sameReservation) {
+    durable.pendingReservationRetained = true;
+    durable.pendingReservedElapsedMs = durablePendingReservationElapsed(context, {
+      targetRef: tool.id,
+    });
+    // A reservation restored from a checkpoint is already consumed active
+    // time. A crash must never turn that conservative timeout back into
+    // available budget when the same prepared call eventually dispatches.
+    return existing;
+  }
+
+  const timeoutMs = binding.limits.timeout_ms;
+  const reservedElapsedMs = reserveDurableActiveTime(context, timeoutMs, {
+    targetRef: tool.id,
+  });
+  assertRunCanDispatch(context, { targetRef: tool.id });
+  const callIndex = context.nextCallIndex;
+  const callId = `call:${context.trace.runId}:${callIndex}`;
+  context.nextCallIndex += 1;
+  assertNoResolvedSecretInEffectArtifact(
+    callId,
+    tool.id,
+    "call_id",
+    context.secretStore,
+  );
+  durable.pendingDispatch = {
+    node_id: nodeId,
+    tool_ref: tool.id,
+    call_id: callId,
+    call_index: callIndex,
+    effect_index: effect?.effectIndex ?? null,
+    effect_id: effect?.effectId ?? null,
+    request_digest: effect?.requestDigest ?? null,
+    effect_contract_kind: expectedKind,
+    retry_mode: effect?.retryMode ?? null,
+    attempt_index: effect?.attemptIndex ?? (existing?.attempt_index ?? 0) + 1,
+    phase: "reserved",
+    timeout_ms: timeoutMs,
+    budget_reserved: {
+      tool_calls: 1,
+      active_ms: timeoutMs,
+    },
+  };
+  durable.pendingReservationRetained = false;
+  durable.pendingReservedElapsedMs = reservedElapsedMs;
+  await persistDurableExecutionCheckpoint(context, { activeElapsedMs: reservedElapsedMs });
+  return durable.pendingDispatch;
+}
+
+async function markDurableToolDispatchStarted(context, reservedElapsedMs = null) {
+  const durable = context.executionDurability;
+  if (!durable.pendingDispatch || durable.pendingDispatch.phase !== "reserved") {
+    throw new RuntimeFailure(
+      "durable handler dispatch has no persisted reservation",
+      {},
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  durable.pendingDispatch = {
+    ...durable.pendingDispatch,
+    phase: "dispatched",
+  };
+  recordExternalToolDispatch(context);
+  const checkpointElapsedMs = reservedElapsedMs
+    ?? durablePendingReservationElapsed(context, {
+      targetRef: durable.pendingDispatch.tool_ref,
+    });
+  durable.pendingReservedElapsedMs = checkpointElapsedMs;
+  await persistDurableExecutionCheckpoint(context, {
+    activeElapsedMs: checkpointElapsedMs,
+  });
+  rebaseActiveElapsedClock(context);
+}
+
+function durablePendingReservationElapsed(context, details = {}) {
+  const durable = context.executionDurability;
+  const pending = durable.pendingDispatch;
+  if (!pending) return activeElapsedMilliseconds(context);
+  if (durable.pendingReservationRetained) {
+    observeRunTimeBudget(context, details);
+    return activeElapsedMilliseconds(context);
+  }
+  return reserveDurableActiveTime(context, pending.budget_reserved.active_ms, details);
+}
+
+function rebaseActiveElapsedClock(context) {
+  const nowMs = context.runState.now();
+  context.runState.activeElapsedBaseMs += Math.max(
+    0,
+    nowMs - context.runState.startedAtMs,
+  );
+  context.runState.startedAtMs = nowMs;
+}
+
+function reserveDurableActiveTime(context, timeoutMs, details = {}) {
+  const current = activeElapsedMilliseconds(context);
+  const reserved = current + timeoutMs;
+  const limit = context.budgetState.effectiveLimits.get("max_run_ms");
+  if (limit && reserved >= limit.value) {
+    traceBudgetExceeded(context, "max_run_ms", limit, reserved, {
+      ...details,
+      dispatch: true,
+    });
+    throw new RuntimeFailure(
+      "max_run_ms exceeded",
+      budgetFailureDetails("max_run_ms", limit, reserved, details),
+      "RunTimeBudgetExceeded",
+    );
+  }
+  return reserved;
+}
+
+async function repairDurableNextCallIndexFromJournal(context, journalEntry) {
+  if (!context.executionDurability.enabled || !journalEntry?.last_call_id) return;
+  const prefix = `call:${context.trace.runId}:`;
+  if (!journalEntry.last_call_id.startsWith(prefix)) {
+    if (context.executionDurability.resumeCheckpoint) {
+      throw new RuntimeFailure(
+        "effect journal call identity is incompatible with the resumed run",
+        { effectId: journalEntry.effect_id },
+        "DurableResumeCheckpointIncompatible",
+      );
+    }
+    return;
+  }
+  const index = Number(journalEntry.last_call_id.slice(prefix.length));
+  if (!Number.isSafeInteger(index) || index <= 0) {
+    throw new RuntimeFailure(
+      "effect journal call identity is invalid",
+      { effectId: journalEntry.effect_id },
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  if (context.nextCallIndex <= index) {
+    throw new RuntimeFailure(
+      "effect journal call high-water exceeds the durable checkpoint reservation",
+      { effectId: journalEntry.effect_id },
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+}
+
+async function repairDurableDispatchEvidenceFromJournal(context, journalEntry) {
+  const durable = context.executionDurability;
+  const pending = durable.pendingDispatch;
+  if (
+    !durable.enabled
+    || !pending
+    || pending.phase !== "reserved"
+    || journalEntry.state === "prepared"
+    || journalEntry.last_call_id !== pending.call_id
+    || journalEntry.attempt_count < pending.attempt_index
+  ) {
+    return;
+  }
+  pending.phase = "dispatched";
+  if (
+    context.effectState.externalToolDispatches
+    < context.budgetState.counters.toolCalls
+  ) {
+    recordExternalToolDispatch(context);
+  }
+  durable.pendingReservationRetained = true;
+  durable.pendingReservedElapsedMs = durablePendingReservationElapsed(context, {
+    targetRef: pending.tool_ref,
+  });
+  await persistDurableExecutionCheckpoint(context, {
+    activeElapsedMs: durable.pendingReservedElapsedMs,
+  });
 }
 
 function assertHumanApprovalCanPause(context, payload, airRef = undefined, options = {}) {
@@ -3395,12 +5619,11 @@ function assertHumanApprovalCanPause(context, payload, airRef = undefined, optio
 }
 
 function assertNoSecretValueInToolArguments(tool, binding, toolArguments, context) {
-  const serialized = JSON.stringify(toolArguments);
-  if (typeof serialized !== "string") {
-    return;
-  }
   const leakedSecrets = resolvedSecretEntries(context.secretStore)
-    .filter((entry) => entry.value.length > 0 && serialized.includes(entry.value));
+    .filter((entry) => (
+      entry.value.length > 0
+      && containsResolvedSecretValue(toolArguments, [entry.value])
+    ));
 
   if (leakedSecrets.length === 0) {
     return;
@@ -3436,6 +5659,8 @@ function toolBindingTracePayload(tool, binding, context) {
     secret_handles_granted: binding.secrets.filter((secret) => requiredSecrets.includes(secret)),
     secret_handles_used: [...requiredSecrets],
     handler_kind: binding.handler.kind,
+    effect_contract_kind: binding.effectContract?.kind,
+    effect_retry_mode: binding.effectContract?.retryMode,
     timeout_ms: binding.limits.timeout_ms,
     max_payload_bytes: binding.limits.max_payload_bytes,
     payload_constraints: payloadConstraintsForTrace(binding.payloadConstraints),
@@ -3511,7 +5736,7 @@ function payloadConstraintRulesForTrace(rules) {
   );
 }
 
-function validateToolBinding(tool, context) {
+function validateToolBinding(tool, context, { traceAuthorizations = true } = {}) {
   const requiredCapabilities = tool.required_capabilities ?? [];
   const requiredSecrets = tool.required_secrets ?? [];
   const requiredMemoryAccesses = normalizeAirMemoryAccesses(tool.memory_accesses ?? [], tool.id);
@@ -3750,11 +5975,13 @@ function validateToolBinding(tool, context) {
     }
   }
 
-  for (const memoryAccess of requiredMemoryAccesses) {
-    traceMemoryAccessAuthorized(tool, memoryAccess, context);
-  }
-  for (const secret of requiredSecrets) {
-    traceSecretHandleAuthorized(tool, secret, context);
+  if (traceAuthorizations) {
+    for (const memoryAccess of requiredMemoryAccesses) {
+      traceMemoryAccessAuthorized(tool, memoryAccess, context);
+    }
+    for (const secret of requiredSecrets) {
+      traceSecretHandleAuthorized(tool, secret, context);
+    }
   }
 
   return binding;
@@ -4103,12 +6330,11 @@ function optionalMemoryMetadataEnum(entry, field, values, tool, context, path) {
 }
 
 function secretHandlesLeakedByMetadata(entry, context) {
-  const serialized = JSON.stringify(entry);
-  if (typeof serialized !== "string") {
-    return [];
-  }
   return resolvedSecretEntries(context.secretStore)
-    .filter((secret) => secret.value.length > 0 && serialized.includes(secret.value))
+    .filter((secret) => (
+      secret.value.length > 0
+      && containsResolvedSecretValue(entry, [secret.value])
+    ))
     .map((secret) => secret.handle);
 }
 
@@ -4281,16 +6507,20 @@ function normalizeOptionalToolBindingManifest(manifest) {
 }
 
 function normalizeToolBindingManifest(manifest) {
-  if (manifest?.__toubaToolBindingManifest === true) {
+  if (
+    manifest !== null
+    && typeof manifest === "object"
+    && NORMALIZED_TOOL_BINDING_MANIFESTS.has(manifest)
+  ) {
     return manifest;
   }
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     throw new ToubaRuntimeError("InvalidToolBindingManifest", "manifest must be an object");
   }
-  if (manifest.manifest_version !== TOOL_BINDING_MANIFEST_VERSION) {
+  if (!TOOL_BINDING_MANIFEST_VERSIONS.has(manifest.manifest_version)) {
     throw new ToubaRuntimeError(
       "InvalidToolBindingManifest",
-      `manifest_version must be ${TOOL_BINDING_MANIFEST_VERSION}`,
+      `manifest_version must be ${TOOL_BINDING_MANIFEST_V1}, ${TOOL_BINDING_MANIFEST_V2} or ${TOOL_BINDING_MANIFEST_V3}`,
       { actual: manifest.manifest_version },
     );
   }
@@ -4317,21 +6547,22 @@ function normalizeToolBindingManifest(manifest) {
 
   const bindings = new Map();
   for (const [toolRef, binding] of Object.entries(manifest.bindings ?? {})) {
-    bindings.set(toolRef, normalizeManifestBinding(toolRef, binding));
+    bindings.set(toolRef, normalizeManifestBinding(toolRef, binding, manifest.manifest_version));
   }
   const triggers = new Map();
   for (const [triggerRef, trigger] of Object.entries(manifest.triggers ?? {})) {
     triggers.set(triggerRef, normalizeManifestTrigger(triggerRef, trigger));
   }
 
-  return Object.freeze({
-    __toubaToolBindingManifest: true,
+  const normalized = Object.freeze({
     version: manifest.manifest_version,
     bindings,
     triggers,
     runLimits: normalizeManifestRunLimits(manifest.run_limits),
     agentSecretScopes: normalizeAgentSecretScopes(manifest.agent_secret_scopes),
   });
+  NORMALIZED_TOOL_BINDING_MANIFESTS.add(normalized);
+  return normalized;
 }
 
 function normalizeManifestRunLimits(limits) {
@@ -4481,7 +6712,7 @@ function normalizeManifestTriggerLimits(limits, triggerRef) {
   return Object.freeze(normalized);
 }
 
-function normalizeManifestBinding(toolRef, binding) {
+function normalizeManifestBinding(toolRef, binding, manifestVersion) {
   if (!toolRef.startsWith("tool:")) {
     throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding key must be an AirTool.id", {
       toolRef,
@@ -4492,6 +6723,7 @@ function normalizeManifestBinding(toolRef, binding) {
       toolRef,
     });
   }
+  const effectContract = normalizeManifestEffectContract(toolRef, binding, manifestVersion);
   if (!binding.handler || typeof binding.handler !== "object" || Array.isArray(binding.handler)) {
     throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding handler must be an object", {
       toolRef,
@@ -4568,7 +6800,125 @@ function normalizeManifestBinding(toolRef, binding) {
       max_payload_bytes: binding.max_payload_bytes,
     }),
     payloadConstraints,
+    effectContract,
   });
+}
+
+function normalizeManifestEffectContract(toolRef, binding, manifestVersion) {
+  const hasContract = Object.hasOwn(binding, "effect_contract");
+  if (manifestVersion === TOOL_BINDING_MANIFEST_V1) {
+    if (hasContract) {
+      throw new ToubaRuntimeError(
+        "InvalidToolBindingManifest",
+        "effect_contract is forbidden in touba-manifest-v1",
+        { toolRef },
+      );
+    }
+    return null;
+  }
+  if (!hasContract) {
+    throw new ToubaRuntimeError(
+      "InvalidToolBindingManifest",
+      "effect_contract is required for every explicit-effect manifest binding",
+      { toolRef },
+    );
+  }
+  const contract = binding.effect_contract;
+  if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
+    throw new ToubaRuntimeError(
+      "InvalidToolBindingManifest",
+      "effect_contract must be an object",
+      { toolRef },
+    );
+  }
+  const allowedFields = new Set(["kind", "retry_mode", "compensation"]);
+  const unknownFields = Object.keys(contract).filter((field) => !allowedFields.has(field));
+  if (unknownFields.length > 0) {
+    throw new ToubaRuntimeError(
+      "InvalidToolBindingManifest",
+      "effect_contract contains unknown fields",
+      { toolRef, unknownFields: unknownFields.sort() },
+    );
+  }
+  if (contract.kind === "none") {
+    if (Object.hasOwn(contract, "retry_mode")) {
+      throw new ToubaRuntimeError(
+        "InvalidToolBindingManifest",
+        "effect_contract.retry_mode is forbidden when kind is none",
+        { toolRef },
+      );
+    }
+    if (Object.hasOwn(contract, "compensation")) {
+      throw new ToubaRuntimeError(
+        "InvalidToolBindingManifest",
+        "effect_contract.compensation is forbidden when kind is none",
+        { toolRef },
+      );
+    }
+    return Object.freeze({ kind: "none" });
+  }
+  if (contract.kind !== "external_write") {
+    throw new ToubaRuntimeError(
+      "InvalidToolBindingManifest",
+      "effect_contract.kind is unsupported",
+      { toolRef, actual: contract.kind },
+    );
+  }
+  const retryModes = new Set(["idempotency_key", "reconcile", "none"]);
+  if (!retryModes.has(contract.retry_mode)) {
+    throw new ToubaRuntimeError(
+      "InvalidToolBindingManifest",
+      "effect_contract.retry_mode is required and must be idempotency_key, reconcile or none",
+      { toolRef, actual: contract.retry_mode },
+    );
+  }
+  const compensation = normalizeManifestCompensation(
+    toolRef,
+    contract.compensation,
+    manifestVersion,
+  );
+  return Object.freeze({
+    kind: "external_write",
+    retryMode: contract.retry_mode,
+    ...(compensation === null ? {} : { compensation }),
+  });
+}
+
+function normalizeManifestCompensation(toolRef, value, manifestVersion) {
+  if (value === undefined) return null;
+  if (manifestVersion !== TOOL_BINDING_MANIFEST_V3) {
+    throw new ToubaRuntimeError(
+      "InvalidToolBindingManifest",
+      "effect_contract.compensation requires touba-manifest-v3",
+      { toolRef },
+    );
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ToubaRuntimeError(
+      "InvalidToolBindingManifest",
+      "effect_contract.compensation must be an object",
+      { toolRef },
+    );
+  }
+  if (Object.keys(value).some((field) => field !== "entry_ref")) {
+    throw new ToubaRuntimeError(
+      "InvalidToolBindingManifest",
+      "effect_contract.compensation contains unknown fields",
+      { toolRef },
+    );
+  }
+  if (
+    typeof value.entry_ref !== "string"
+    || value.entry_ref.length > 256
+    || !COMPENSATION_ENTRY_REF_PATTERN.test(value.entry_ref)
+  ) {
+    throw new ToubaRuntimeError(
+      "InvalidToolBindingManifest",
+      "effect_contract.compensation.entry_ref is invalid",
+      { toolRef },
+    );
+  }
+  return Object.freeze({ entryRef: value.entry_ref });
 }
 
 function normalizeManifestBindingSandbox(toolRef, sandbox) {
@@ -5209,6 +7559,16 @@ function bindingPublicView(binding) {
     limits: { ...binding.limits },
     payloadConstraints: payloadConstraintsForTrace(binding.payloadConstraints),
     handler: { ...binding.handler },
+    ...(binding.effectContract
+      ? {
+        effectContract: {
+          ...binding.effectContract,
+          ...(binding.effectContract.compensation
+            ? { compensation: { ...binding.effectContract.compensation } }
+            : {}),
+        },
+      }
+      : {}),
   };
 }
 
@@ -5307,20 +7667,151 @@ function assertSecretHandle(value, fieldName, ref, code) {
 }
 
 async function executeGraph(graphRef, context, options = {}) {
-  return executeGraphTraversal(
-    graphRef,
-    context,
-    {
-      requireGraph: (ref) => requireDefinition(context.indexes.graphs, ref),
-      isDispatchNode,
-      assertRunCanContinue,
-      consumeStepBudget,
-      airRefForNode,
-      executeNode,
-      nextNodeId,
+  const durable = context.executionDurability.enabled;
+  // A loop cursor belongs to this invocation, not to the declaration. In
+  // particular an early return must not advance a later call to the same graph.
+  const callerLoopState = context.loopState;
+  context.loopState = options.loopState ?? new Map();
+  try {
+    return await executeGraphTraversal(
+      graphRef,
+      context,
+      {
+        requireGraph: (ref) => requireDefinition(context.indexes.graphs, ref),
+        isDispatchNode,
+        assertRunCanContinue,
+        consumeStepBudget,
+        airRefForNode,
+        executeNode,
+        nextNodeId,
+        ...(durable
+          ? {
+            beforeNode: beforeDurableNode,
+            afterNode: afterDurableNode,
+          }
+          : {}),
+      },
+      options,
+    );
+  } finally {
+    context.loopState = callerLoopState;
+  }
+}
+
+async function beforeDurableNode(graph, node, context) {
+  const durable = context.executionDurability;
+  if (durable.graphRef !== graph.id || durable.cursor?.node_id !== node.id) {
+    throw new RuntimeFailure(
+      "durable execution cursor diverged from graph traversal",
+      { graphRef: graph.id, nodeId: node.id, cursorNodeId: durable.cursor?.node_id },
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+  assertRunCanContinue(context);
+  if (durable.cursor.phase === "ready") {
+    consumeStepBudget(context, {
+      airRef: airRefForNode(graph, node),
+      targetRef: node.target_ref,
+    });
+    durable.cursor = { node_id: node.id, phase: "started" };
+    await persistDurableExecutionCheckpoint(context);
+    return;
+  }
+  if (durable.cursor.phase !== "started") {
+    throw new RuntimeFailure(
+      "durable execution cursor phase cannot execute a node",
+      { graphRef: graph.id, nodeId: node.id, phase: durable.cursor.phase },
+      "DurableResumeCheckpointIncompatible",
+    );
+  }
+}
+
+async function afterDurableNode(graph, node, context, step, nextNode) {
+  const durable = context.executionDurability;
+  if (step.done) {
+    // The host commits the terminal result atomically with its operation
+    // record. Keeping the last durable cursor on the already-consumed pure
+    // terminal node lets a crash before that commit reconstruct give/stop
+    // without a handler dispatch or a second step consumption.
+    return;
+  }
+  durable.pendingDispatch = null;
+  durable.pendingReservedElapsedMs = null;
+  durable.pendingReservationRetained = false;
+  durable.cursor = { node_id: nextNode, phase: "ready" };
+  await persistDurableExecutionCheckpoint(context);
+}
+
+async function persistDurableExecutionCheckpoint(context, options = {}) {
+  const durable = context.executionDurability;
+  if (!durable.enabled) return null;
+  const traceDocument = context.trace.document();
+  let prefixDigest = durable.tracePrefixDigest;
+  if (traceDocument.events.length > durable.traceEventOffset || prefixDigest === null) {
+    prefixDigest = tracePrefixDigest(
+      durable.tracePrefixDigest,
+      traceDocument,
+      durable.traceEventOffset,
+    );
+  }
+  const activeElapsedMs = options.activeElapsedMs
+    ?? activeElapsedMilliseconds(context);
+  const checkpoint = sealExecutionCheckpoint({
+    checkpoint_schema_version: EXECUTION_CHECKPOINT_VERSION,
+    revision: durable.revision + 1,
+    previous_checkpoint_digest: durable.previousCheckpointDigest,
+    operation_id: durable.operationId,
+    run_id: durable.runId,
+    effect_scope_id: durable.effectScopeId,
+    entry_ref: context.entryRef,
+    module_ref: context.trace.airDocument.module.id,
+    graph_ref: durable.graphRef,
+    compatibility: durable.compatibility,
+    cursor: durable.cursor,
+    runtime_state: {
+      values: checkpointObjectFromMap(context.values, "runtime_state.values"),
+      value_types: checkpointObjectFromMap(context.valueTypes, "runtime_state.value_types"),
+      input_keys: [...context.inputValueKeys].sort(),
+      budget_counters: {
+        steps: context.budgetState.counters.steps,
+        tool_calls: context.budgetState.counters.toolCalls,
+        agent_invocations: context.budgetState.counters.agentInvocations,
+        provider_calls: context.budgetState.counters.providerCalls,
+      },
+      effective_limits: Object.fromEntries([...context.budgetState.effectiveLimits.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([kind, limit]) => [kind, limit.value])),
+      active_elapsed_ms: Math.ceil(activeElapsedMs),
+      next_call_index: context.nextCallIndex,
+      next_effect_index: context.effectState.nextEffectIndex,
+      external_tool_dispatches: context.effectState.externalToolDispatches,
     },
-    options,
+    pending_dispatch: durable.pendingDispatch,
+    decisions_consumed: durable.decisionsConsumed,
+    trace_state: {
+      prefix_digest: prefixDigest,
+      next_sequence_index: context.trace.nextSequenceIndex(),
+    },
+  });
+  assertExecutionCheckpointHasNoResolvedSecret(
+    checkpoint,
+    secretValuesForRedaction(context.secretStore),
   );
+  await durable.observer({
+    checkpoint: structuredClone(checkpoint),
+    trace: structuredClone(traceDocument),
+  });
+  durable.revision = checkpoint.revision;
+  durable.previousCheckpointDigest = checkpoint.checkpoint_digest;
+  durable.tracePrefixDigest = prefixDigest;
+  durable.traceEventOffset = traceDocument.events.length;
+  durable.lastCheckpoint = checkpoint;
+  return checkpoint;
+}
+
+function activeElapsedMilliseconds(context) {
+  return context.runState.activeElapsedBaseMs
+    + Math.max(0, context.runState.now() - context.runState.startedAtMs);
 }
 
 async function executeNode(graph, node, context) {
@@ -5389,7 +7880,7 @@ function executeBindNode(graph, node, context) {
     }),
   });
   return {
-    edgeRole: "next",
+    edgeRole: successEdgeRole(graph, node.id),
     result: value,
   };
 }
@@ -5398,7 +7889,7 @@ function executeHumanApprovalNode(graph, node, context) {
   const approvalRef = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
   const mode = requiredApprovalMode(node);
   const contextRefs = node.context_refs ?? [];
-  const resumeTargetRef = nextNodeId(graph, node.id, "next");
+  const resumeTargetRef = nextNodeId(graph, node.id, successEdgeRole(graph, node.id));
   const basePayload = compactPayload({
     approval_ref: approvalRef,
     mode,
@@ -5466,6 +7957,26 @@ function executeHumanApprovalNode(graph, node, context) {
     throw error;
   }
 
+  if (context.executionDurability.enabled) {
+    const decisionDigest = canonicalDigest({ decision_ref: approvalRef, result: decision });
+    const previous = context.executionDurability.decisionsConsumed
+      .find((item) => item.decision_ref === approvalRef);
+    if (previous && (previous.result !== decision || previous.decision_digest !== decisionDigest)) {
+      throw new RuntimeFailure(
+        "human decision changed during durable execution",
+        { decisionRef: approvalRef },
+        "DurableResumeAuthorityRefused",
+      );
+    }
+    if (!previous) {
+      context.executionDurability.decisionsConsumed.push({
+        decision_ref: approvalRef,
+        result: decision,
+        decision_digest: decisionDigest,
+      });
+    }
+  }
+
   if (!node.result_binding) {
     const error = new RuntimeFailure(
       `human approval node ${node.id} has no decision binding`,
@@ -5495,7 +8006,7 @@ function executeHumanApprovalNode(graph, node, context) {
       }),
     });
     return {
-      edgeRole: "next",
+      edgeRole: successEdgeRole(graph, node.id),
       result: decision,
     };
   }
@@ -5733,11 +8244,13 @@ function traceUserInteractionFailure(graph, node, context, error) {
 
 async function executeCallNode(graph, node, context) {
   const targetRef = requiredTarget(node);
-  assertRunCanDispatch(context, { targetRef, airRef: airRefForNode(graph, node) });
-  consumeStepBudget(context, {
-    airRef: airRefForNode(graph, node),
-    targetRef,
-  });
+  if (!context.executionDurability.enabled) {
+    assertRunCanDispatch(context, { targetRef, airRef: airRefForNode(graph, node) });
+    consumeStepBudget(context, {
+      airRef: airRefForNode(graph, node),
+      targetRef,
+    });
+  }
   const callArguments = resolveCallArguments(graph, node, context);
   context.trace.push("call_started", {
     airRef: airRefForNode(graph, node),
@@ -5782,6 +8295,16 @@ async function executeCallNode(graph, node, context) {
         caller_ref: graph.owner_ref,
         agent_ref: context.activeAgentRef,
         result_binding: node.result_binding,
+        ...(context.compensation?.lastAttempt
+          ? {
+            compensation_id: context.compensation.config.envelope.compensation_id,
+            compensates_effect_id:
+              context.compensation.config.envelope.compensates_effect_id,
+            inverse_effect_id: context.compensation.lastAttempt.inverseEffectId,
+            attempt_index: context.compensation.lastAttempt.attemptIndex,
+            result: context.compensation.lastAttempt.result,
+          }
+          : {}),
       }),
     });
     return {
@@ -5808,6 +8331,7 @@ async function executeCallNode(graph, node, context) {
           fallbackTargetRef: targetRef,
           callerRef: graph.owner_ref,
           agentRef: context.activeAgentRef,
+          compensation: context.compensation,
         }),
       }),
       message: error.message,
@@ -5856,6 +8380,115 @@ function assertRunCanDispatch(context, details) {
   assertRuntimeRunCanDispatch(context, details, {
     observeRunTimeBudget: () => observeRunTimeBudget(context, details),
     consumeDispatchBudget: () => consumeDispatchBudget(context, details),
+  });
+}
+
+function assertRunCanDispatchFinal(context, details) {
+  assertRuntimeRunCanDispatch(context, details, {
+    observeRunTimeBudget: () => {
+      assertDurableBudgetCountersWithinLimits(context, {
+        ...details,
+        dispatch: true,
+      });
+      context.executionDurability.pendingReservedElapsedMs = durablePendingReservationElapsed(
+        context,
+        details,
+      );
+    },
+    consumeDispatchBudget: () => {},
+  });
+}
+
+function assertDurableBudgetCountersWithinLimits(context, details = {}) {
+  for (const [budgetKind, counterName] of Object.entries(RUN_BUDGET_COUNTERS)) {
+    const limit = context.budgetState.effectiveLimits.get(budgetKind);
+    const consumedValue = context.budgetState.counters[counterName];
+    if (!limit || consumedValue <= limit.value) continue;
+    traceBudgetExceeded(context, budgetKind, limit, consumedValue, details);
+    throw new RuntimeFailure(
+      `${budgetKind} exceeded`,
+      budgetFailureDetails(budgetKind, limit, consumedValue, details),
+      RUN_BUDGET_ERROR_CODES[budgetKind] ?? "BudgetExceeded",
+    );
+  }
+}
+
+async function assertDurableToolCanSpawn(tool, reservedBinding, context) {
+  assertRunCanDispatchFinal(context, { targetRef: tool.id });
+  await assertDurableDispatchAuthority(tool, reservedBinding, context);
+  assertRunCanDispatchFinal(context, { targetRef: tool.id });
+  const currentBinding = validateToolBinding(tool, context, { traceAuthorizations: false });
+  if (currentBinding !== reservedBinding) {
+    throw new RuntimeFailure(
+      "tool binding authority changed before durable handler spawn",
+      { toolRef: tool.id },
+      "DurableResumeAuthorityRefused",
+    );
+  }
+}
+
+async function assertDurableDispatchAuthority(tool, binding, context) {
+  const provider = context.dispatchAuthorityProvider;
+  if (provider === null) return;
+  const durable = context.executionDurability;
+  const pending = durable.pendingDispatch;
+  const request = Object.freeze(compactPayload({
+    operation_id: durable.operationId,
+    run_id: durable.runId,
+    effect_scope_id: durable.effectScopeId,
+    entry_ref: context.entryRef,
+    node_id: durable.cursor?.node_id,
+    tool_ref: tool.id,
+    call_id: pending?.call_id,
+    effect_contract_kind: pending?.effect_contract_kind,
+    effect_id: pending?.effect_id ?? undefined,
+    attempt_index: pending?.attempt_index,
+  }));
+  const timeoutMs = context.dispatchAuthorityProviderTimeoutMs ?? binding.limits.timeout_ms;
+  let authorized;
+  try {
+    authorized = await withDispatchAuthorityTimeout(
+      Promise.resolve().then(() => provider(request)),
+      timeoutMs,
+    );
+  } catch {
+    throw new RuntimeFailure(
+      "current host authority refused durable tool dispatch",
+      { toolRef: tool.id },
+      "DurableResumeAuthorityRefused",
+    );
+  }
+  if (authorized !== true) {
+    throw new RuntimeFailure(
+      "current host authority refused durable tool dispatch",
+      { toolRef: tool.id },
+      "DurableResumeAuthorityRefused",
+    );
+  }
+}
+
+function withDispatchAuthorityTimeout(promise, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("dispatch authority timeout"));
+    }, timeoutMs);
+    Promise.resolve(promise).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
   });
 }
 
@@ -5926,15 +8559,18 @@ function consumeProviderBudget(context, details = {}) {
 
 function consumeRunBudget(context, budgetKind, amount, details = {}) {
   const limit = context.budgetState.effectiveLimits.get(budgetKind);
-  if (!limit) {
-    return;
-  }
   const counterName = RUN_BUDGET_COUNTERS[budgetKind];
   if (!counterName) {
     return;
   }
   const consumedValue = context.budgetState.counters[counterName];
   const nextValue = consumedValue + amount;
+  if (!limit) {
+    if (context.executionDurability.enabled) {
+      context.budgetState.counters[counterName] = nextValue;
+    }
+    return;
+  }
   if (nextValue > limit.value) {
     traceBudgetExceeded(context, budgetKind, limit, consumedValue, details);
     throw new RuntimeFailure(
@@ -5965,7 +8601,7 @@ function observeRunTimeBudget(context, details = {}) {
   if (!limit) {
     return;
   }
-  const elapsedMs = context.runState.now() - context.runState.startedAtMs;
+  const elapsedMs = activeElapsedMilliseconds(context);
   if (elapsedMs < limit.value) {
     return;
   }
@@ -6843,6 +9479,17 @@ function normalizeUserInputProvider(provider) {
   return provider;
 }
 
+function normalizeDispatchAuthorityProvider(provider) {
+  if (provider === undefined || provider === null) return null;
+  if (typeof provider !== "function") {
+    throw new ToubaRuntimeError(
+      "InvalidRuntimeOption",
+      "dispatchAuthorityProvider must be a function",
+    );
+  }
+  return provider;
+}
+
 function createRunState(options) {
   const now = normalizeNowProvider(options.now);
   const startedAtMs = now();
@@ -6861,6 +9508,7 @@ function createRunState(options) {
     timeoutExceeded: false,
     runTimeoutMs,
     startedAtMs,
+    activeElapsedBaseMs: 0,
     now,
     cancelRequestedProvider: normalizeCancelRequestedProvider(
       options.cancelRequestedProvider ?? options.cancel_requested_provider,
@@ -7014,6 +9662,10 @@ function runtimeFailureTracePayload(error, context) {
     selected_ref: error.details?.targetRef,
     allowed_refs: error.details?.allowedRefs,
     tool_ref: error.details?.toolRef,
+    effect_id: error.details?.effectId,
+    request_digest: error.details?.requestDigest,
+    effect_state: error.details?.state,
+    effect_retry_mode: error.details?.retryMode,
     caller_ref: context.callerRef,
     agent_ref: error.details?.agentRef ?? context.agentRef,
     provider_mode: error.details?.providerMode,
@@ -7057,6 +9709,15 @@ function runtimeFailureTracePayload(error, context) {
     secret_handles_granted: error.details?.grantedSecrets,
     secret_handles_refused: error.details?.secretHandlesRefused ?? error.details?.missingSecrets,
     secret_refusal_reasons: error.details?.secretRefusalReasons,
+    compensation_id: context.compensation?.config.envelope.compensation_id,
+    compensates_effect_id:
+      context.compensation?.config.envelope.compensates_effect_id,
+    inverse_effect_id: context.compensation?.lastAttempt?.inverseEffectId
+      ?? context.compensation?.config.inverse_effect_id,
+    attempt_index: context.compensation?.lastAttempt?.attemptIndex,
+    result: context.compensation?.lastAttempt?.result ?? context.compensation?.outcome,
+    blocker_code: context.compensation?.lastAttempt?.blockerCode
+      ?? context.compensation?.blockerCode,
   });
 }
 
@@ -7079,6 +9740,7 @@ function traceUnhandledRuntimeFailure(context, error) {
         fallbackTargetRef: context.entryRef,
         callerRef: context.activeCallerRef,
         agentRef: context.activeAgentRef,
+        compensation: context.compensation,
       }),
     }),
     message: error.message,

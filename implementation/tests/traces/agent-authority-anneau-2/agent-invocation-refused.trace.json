@@ -1,5 +1,6 @@
 {
   "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
@@ -13,7 +14,8 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "strategy:test/RunBuild"
+        "entry_ref": "strategy:test/RunBuild",
+        "max_loop_iterations": 100
       }
     },
     {
@@ -34,11 +36,21 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
         "owner_ref": "strategy:test/RunBuild",
-        "node_id": "s1"
+        "node_id": "s1",
+        "source_ref": {
+          "source_id": "test.tb",
+          "start_byte": 0,
+          "end_byte": 0,
+          "start_line": 1,
+          "start_column": 0,
+          "end_line": 1,
+          "end_column": 0
+        }
       },
       "payload": {
         "target_ref": "agent:test/Builder",
-        "caller_ref": "strategy:test/RunBuild"
+        "caller_ref": "strategy:test/RunBuild",
+        "agent_ref": null
       }
     },
     {
@@ -49,7 +61,16 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
         "owner_ref": "strategy:test/RunBuild",
-        "node_id": "s1"
+        "node_id": "s1",
+        "source_ref": {
+          "source_id": "test.tb",
+          "start_byte": 0,
+          "end_byte": 0,
+          "start_line": 1,
+          "start_column": 0,
+          "end_line": 1,
+          "end_column": 0
+        }
       },
       "payload": {
         "caller_ref": "strategy:test/RunBuild",
@@ -65,12 +86,23 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
         "owner_ref": "strategy:test/RunBuild",
-        "node_id": "s1"
+        "node_id": "s1",
+        "source_ref": {
+          "source_id": "test.tb",
+          "start_byte": 0,
+          "end_byte": 0,
+          "start_line": 1,
+          "start_column": 0,
+          "end_line": 1,
+          "end_column": 0
+        }
       },
       "payload": {
-        "failure_mode": "unhandled",
+        "failure_mode": "unhandled_family",
+        "failure_family": "authority",
         "runtime_error_code": "UnauthorizedAgentInvocation",
         "target_ref": "agent:test/Builder",
+        "selected_ref": "agent:test/Builder",
         "caller_ref": "strategy:test/RunBuild",
         "agent_ref": "agent:test/Builder"
       },

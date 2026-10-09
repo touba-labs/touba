@@ -1,6 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, AIR_SCHEMA_VERSION,
+  validateTraceMachineContract,
+} from "../contracts/machine/contracts.mjs";
 
 import {
   executeTriggerEvent,
@@ -37,6 +41,7 @@ const FIXTURES = [
       "run_started",
       "trigger_event_received",
       "trigger_event_refused",
+      "failure_detected",
       "run_completed",
     ],
   },
@@ -53,6 +58,7 @@ const FIXTURES = [
       "trigger_event_received",
       "trigger_rate_limited",
       "trigger_event_refused",
+      "failure_detected",
       "run_completed",
     ],
   },
@@ -67,6 +73,7 @@ for (const fixture of FIXTURES) {
     toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(fixture.manifest)),
     triggerRunCounts: fixture.triggerRunCounts,
   });
+  validateTraceMachineContract(result.trace);
 
   const errors = validateFixture(fixture, result);
   if (errors.length > 0) {
@@ -159,8 +166,9 @@ function triggerEvent(fields = {}) {
 
 function triggerDocument() {
   return {
-    air_schema_version: "touba-air-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
+    air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: {
       id: "module:test.triggers",
       name: "test.triggers",
@@ -211,6 +219,7 @@ function triggerDocument() {
       {
         id: "graph:strategy:test/RunDaily",
         owner_ref: "strategy:test/RunDaily",
+        entry_node_id: "n1",
         nodes: [
           {
             id: "n1",

@@ -233,12 +233,152 @@ test("restores active agent context after a selected capability", async () => {
   assert.equal(context.activeCallerRef, "strategy:test/Entry");
 });
 
+test("offers one non-executable finalization decision after the last capability step", async () => {
+  const events = [];
+  const context = {
+    maxAgentSteps: 1,
+    activeAgentRef: null,
+    activeCallerRef: null,
+    trace: traceRecorder(events),
+  };
+  const decisions = [
+    { action: "select_capability", targetRef: "tool:test/Measure", source: "development-fixture" },
+    {
+      action: "answer_directly",
+      result: "measurement complete",
+      source: "development-fixture",
+      reason: "the final observation satisfies the goal",
+    },
+  ];
+  const phases = [];
+  const operations = agentOperations();
+  operations.resolveAgentDecision = async (_agent, _refs, _context, loopState) => {
+    phases.push(loopState.phase);
+    return decisions.shift();
+  };
+  operations.executeTarget = async () => ({ measured: true });
+
+  const result = await runAgentDecisionLoop(
+    { id: "agent:test/Measurer" },
+    ["tool:test/Measure"],
+    context,
+    operations,
+  );
+
+  assert.equal(result, "measurement complete");
+  assert.deepEqual(phases, ["execution", "finalization"]);
+  assert.equal(events.filter((event) => event.kind === "agent_capability_selected").length, 1);
+  assert.equal(events.filter((event) => event.kind === "agent_direct_answer_returned").length, 1);
+  assert.equal(events.some((event) => event.kind === "agent_step_limit_exceeded"), false);
+});
+
+test("keeps the step-limit refusal when terminal observations are insufficient", async () => {
+  const events = [];
+  const context = {
+    maxAgentSteps: 1,
+    activeAgentRef: null,
+    activeCallerRef: null,
+    trace: traceRecorder(events),
+  };
+  const decisions = [
+    { action: "select_capability", targetRef: "tool:test/Inspect", source: "development-fixture" },
+    {
+      action: "cannot_complete",
+      source: "development-fixture",
+      reason: "the observation is incomplete",
+    },
+  ];
+  const operations = agentOperations();
+  operations.resolveAgentDecision = async () => decisions.shift();
+
+  await assert.rejects(
+    runAgentDecisionLoop(
+      { id: "agent:test/Inspector" },
+      ["tool:test/Inspect"],
+      context,
+      operations,
+    ),
+    (error) => error instanceof RuntimeFailure && error.code === "AgentStepLimitExceeded",
+  );
+
+  assert.equal(events.filter((event) => event.kind === "agent_capability_selected").length, 1);
+  assert.equal(events.filter((event) => event.kind === "agent_step_limit_exceeded").length, 1);
+});
+
+test("never executes a capability selected during finalization", async () => {
+  const events = [];
+  const executed = [];
+  const context = {
+    maxAgentSteps: 1,
+    activeAgentRef: null,
+    activeCallerRef: null,
+    trace: traceRecorder(events),
+  };
+  const decisions = [
+    { action: "select_capability", targetRef: "tool:test/Read", source: "development-fixture" },
+    { action: "select_capability", targetRef: "tool:test/Write", source: "development-fixture" },
+  ];
+  const operations = agentOperations();
+  operations.resolveAgentDecision = async () => decisions.shift();
+  operations.executeTarget = async (targetRef) => {
+    executed.push(targetRef);
+    return { ok: true };
+  };
+
+  await assert.rejects(
+    runAgentDecisionLoop(
+      { id: "agent:test/Bounded" },
+      ["tool:test/Read", "tool:test/Write"],
+      context,
+      operations,
+    ),
+    (error) => error instanceof RuntimeFailure && error.code === "AgentStepLimitExceeded",
+  );
+
+  assert.deepEqual(executed, ["tool:test/Read"]);
+});
+
+test("allows repeated capability dispatch until the explicit step budget is exhausted", async () => {
+  const events = [];
+  const executed = [];
+  const context = {
+    maxAgentSteps: 2,
+    activeAgentRef: null,
+    activeCallerRef: null,
+    trace: traceRecorder(events),
+  };
+  const operations = agentOperations();
+  operations.resolveAgentDecision = async () => ({
+    action: "select_capability",
+    targetRef: "tool:test/Poll",
+    source: "development-fixture",
+  });
+  operations.executeTarget = async (targetRef) => {
+    executed.push(targetRef);
+    return { ok: true };
+  };
+
+  await assert.rejects(
+    runAgentDecisionLoop(
+      { id: "agent:test/Poller" },
+      ["tool:test/Poll"],
+      context,
+      operations,
+    ),
+    (error) => error instanceof RuntimeFailure && error.code === "AgentStepLimitExceeded",
+  );
+
+  assert.deepEqual(executed, ["tool:test/Poll", "tool:test/Poll"]);
+  assert.equal(events.some((event) => event.kind === "agent_capability_refused"), false);
+});
+
 function agentOperations(decision = undefined) {
   return {
     resolveAgentDecision: async () => decision,
     executeAgentHumanReview: () => ({ decision: "approved" }),
     assertAgentDecisionDoesNotExecuteSkillPack: () => {},
     callArgumentsForAgentDecision: () => [],
+    argumentsForAgentObservation: () => ({}),
     authorizeAgentInvocationByCaller: () => {},
     executeTarget: async () => ({ ok: true }),
     validateAgentFinalResult: (_agent, result) => result,

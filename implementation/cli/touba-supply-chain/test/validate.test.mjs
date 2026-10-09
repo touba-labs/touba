@@ -49,6 +49,7 @@ test("validates coherent AIR, manifest and handler artifacts", () => {
     assert.equal(report.review.reviewers, 1);
     assert.equal(report.checked.handler_package_files, true);
     assert.equal(report.checked.handler_dependency_artifacts, true);
+    assert.equal(report.checked.effect_contracts, undefined);
     assert.equal(report.checked.provenance_metadata, true);
     assert.equal(report.checked.review_metadata, true);
     assert.equal(report.checked.review_evidence, true);
@@ -57,6 +58,90 @@ test("validates coherent AIR, manifest and handler artifacts", () => {
     assert.match(rendered, /Diagnostics ok/);
     assert.doesNotMatch(JSON.stringify(report), /TOUBA_SHOULD_NOT_LEAK/);
   });
+});
+
+test("requires an explicit handler V2 capability for external-write effect contracts", () => {
+  withFixtureProject((fixture) => {
+    fixture.manifest.manifest_version = "touba-manifest-v2";
+    fixture.manifest.bindings["tool:examples.sc1/Search"].effect_contract = {
+      kind: "external_write",
+      retry_mode: "idempotency_key",
+    };
+    refreshManifestLock(fixture);
+
+    let report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
+    assert.equal(report.status, "error");
+    assert.equal(report.checked.effect_contracts, true);
+    assertDiagnostic(report, "HandlerSdkEffectProtocolMismatch");
+
+    fixture.lock.handlers[0].sdk.protocols = [
+      "touba-tool-handler-v1",
+      "touba-tool-handler-v2",
+    ];
+    writeJson(fixture.paths.lock, fixture.lock);
+    report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
+    assert.equal(report.status, "ok");
+    assert.deepEqual(report.handlers[0].sdk_protocols, [
+      "touba-tool-handler-v1",
+      "touba-tool-handler-v2",
+    ]);
+  });
+});
+
+test("keeps V2 kind none compatible with legacy handler protocol V1", () => {
+  withFixtureProject((fixture) => {
+    fixture.manifest.manifest_version = "touba-manifest-v2";
+    fixture.manifest.bindings["tool:examples.sc1/Search"].effect_contract = { kind: "none" };
+    refreshManifestLock(fixture);
+
+    const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
+    assert.equal(report.status, "ok");
+    assert.equal(report.handlers[0].sdk_protocol, "touba-tool-handler-v1");
+  });
+});
+
+test("validates V3 compensation entry references instead of ignoring them", () => {
+  withFixtureProject((fixture) => {
+    fixture.manifest.manifest_version = "touba-manifest-v3";
+    fixture.manifest.bindings["tool:examples.sc1/Search"].effect_contract = {
+      kind: "external_write",
+      retry_mode: "idempotency_key",
+      compensation: { entry_ref: "strategy:examples.sc1/MissingInverse" },
+    };
+    refreshManifestLock(fixture);
+
+    const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
+    assert.equal(report.status, "error");
+    assertDiagnostic(report, "CompensationEntryUnresolved");
+  });
+});
+
+test("rejects unknown effect fields, retry modes and manifest versions fail closed", () => {
+  const cases = [
+    [{ manifest_version: "touba-manifest-v4" }, "SupplyChainLockSchemaMismatch"],
+    [{
+      manifest_version: "touba-manifest-v2",
+      effect_contract: { kind: "none", vendor: "example" },
+    }, "EffectContractFieldUnknown"],
+    [{
+      manifest_version: "touba-manifest-v2",
+      effect_contract: { kind: "external_write", retry_mode: "automatic" },
+    }, "EffectRetryModeUnsupported"],
+  ];
+
+  for (const [change, expectedCode] of cases) {
+    withFixtureProject((fixture) => {
+      fixture.manifest.manifest_version = change.manifest_version;
+      if (change.effect_contract) {
+        fixture.manifest.bindings["tool:examples.sc1/Search"].effect_contract = change.effect_contract;
+      }
+      refreshManifestLock(fixture);
+
+      const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
+      assert.equal(report.status, "error", expectedCode);
+      assertDiagnostic(report, expectedCode);
+    });
+  }
 });
 
 test("keeps review optional unless explicitly required", () => {
@@ -627,6 +712,12 @@ function writeJson(filePath, value) {
   const text = `${JSON.stringify(value, null, 2)}\n`;
   writeFileSync(filePath, text, "utf8");
   return text;
+}
+
+function refreshManifestLock(fixture) {
+  const manifestText = writeJson(fixture.paths.manifest, fixture.manifest);
+  fixture.lock.manifest.digest.value = sha256Text(manifestText);
+  writeJson(fixture.paths.lock, fixture.lock);
 }
 
 function assertDiagnostic(report, code) {

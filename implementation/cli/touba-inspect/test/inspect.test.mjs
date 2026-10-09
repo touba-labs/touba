@@ -141,6 +141,34 @@ test("inspects the effective project from one model in text and JSON without sen
   }
 });
 
+test("inspects effect contracts projected by the effective project without creating authority", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "touba-inspect-effective-effects-"));
+  const artifactPath = path.join(root, "touba.effective-project.json");
+  try {
+    const artifact = effectiveProjectFixture();
+    artifact.contract.handlers = {
+      provenance: { status: "effective", sources: [".touba/build/dev/touba.manifest.json"] },
+      bindings: [{
+        tool_ref: "tool:examples.effects/CreateOrder",
+        kind: "process",
+        effect_contract: { kind: "external_write", retry_mode: "reconcile" },
+      }],
+    };
+    writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+
+    const inspection = inspectPath(artifactPath);
+    const rendered = renderInspection(inspection);
+    assert.deepEqual(inspection.effective_project.effect_contracts, [{
+      tool_ref: "tool:examples.effects/CreateOrder",
+      effect_contract: { kind: "external_write", retry_mode: "reconcile" },
+    }]);
+    assert.match(rendered, /effect_contract tool:examples\.effects\/CreateOrder external_write:reconcile/);
+    assert.equal(inspection.effective_project.document.artifact_role, "derived_non_authoritative");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("inspects AIR callable_by authority without deriving policy", () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "touba-inspect-agent-authority-"));
   try {
@@ -649,6 +677,58 @@ test("inspects a tool binding manifest without reading handlers or secret values
   assert.match(rendered, /grants=\[network,secret_read\]/);
   assert.match(rendered, /secrets=\[SEARCH_API_KEY\]/);
   assert.doesNotMatch(rendered, /process\.env/);
+});
+
+test("inspects V2 effect contracts and rejects incompatible manifest declarations", () => {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "touba-inspect-effect-contract-"));
+  const manifestPath = path.join(tempRoot, "touba.manifest.json");
+  try {
+    const manifest = {
+      manifest_version: "touba-manifest-v2",
+      bindings: {
+        "tool:examples.effects/CreateOrder": {
+          handler: { kind: "process", command: "node", args: ["handlers/create_order.mjs"] },
+          grants: ["network"],
+          timeout_ms: 5000,
+          max_payload_bytes: 1048576,
+          effect_contract: { kind: "external_write", retry_mode: "idempotency_key" },
+        },
+      },
+    };
+    writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+
+    const inspection = inspectPath(manifestPath);
+    const rendered = renderInspection(inspection);
+    assert.deepEqual(inspection.manifest.bindings[0].effect_contract, {
+      kind: "external_write",
+      retry_mode: "idempotency_key",
+    });
+    assert.match(rendered, /effect_contract=external_write:idempotency_key/);
+
+    manifest.manifest_version = "touba-manifest-v3";
+    manifest.bindings["tool:examples.effects/CreateOrder"].effect_contract.compensation = {
+      entry_ref: "strategy:examples.effects/CancelOrder",
+    };
+    writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+    const v3Inspection = inspectPath(manifestPath);
+    const v3Rendered = renderInspection(v3Inspection);
+    assert.deepEqual(v3Inspection.manifest.bindings[0].effect_contract.compensation, {
+      entry_ref: "strategy:examples.effects/CancelOrder",
+    });
+    assert.match(v3Rendered, /compensation=strategy:examples\.effects\/CancelOrder/);
+
+    manifest.bindings["tool:examples.effects/CreateOrder"].effect_contract.vendor = "example";
+    writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+    assert.throws(() => inspectPath(manifestPath), /contains unknown fields/);
+
+    manifest.manifest_version = "touba-manifest-v1";
+    delete manifest.bindings["tool:examples.effects/CreateOrder"].effect_contract.vendor;
+    delete manifest.bindings["tool:examples.effects/CreateOrder"].effect_contract.compensation;
+    writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+    assert.throws(() => inspectPath(manifestPath), /cannot declare effect_contract/);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("inspects manifest memory bindings without reading memory backends", () => {

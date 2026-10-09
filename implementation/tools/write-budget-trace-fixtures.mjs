@@ -2,6 +2,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, validateTraceMachineContract,
+} from "../contracts/machine/contracts.mjs";
+import {
   AIR_SCHEMA_VERSION,
   executeAirDocument,
   loadToolBindingManifestFromJson,
@@ -69,6 +72,7 @@ let allPassed = true;
 
 for (const fixture of fixtures) {
   const result = await fixture.run();
+  validateTraceMachineContract(result.trace);
   validateBudgetTrace(fixture.id, result);
   const outputPath = join(outputDir, `${fixture.id}.trace.json`);
   const serialized = `${JSON.stringify(result.trace, null, 2)}\n`;
@@ -162,6 +166,8 @@ function twoToolDispatchDocument() {
 function baseDocument(overrides = {}) {
   return {
     air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: {
       id: "module:test",
       name: "test",

@@ -15,10 +15,14 @@ Les traces rendent l'exécution observable. Elles ne sont pas une preuve de sand
 Une trace contient :
 
 - `trace_protocol_version`
+- `trace_capability_profile`
 - `run`
 - `events`
 
-Chaque événement porte un `kind` et un `payload`.
+Chaque événement porte un `kind` et un `payload`, un identifiant unique et une
+séquence continue. Les références de run et de module doivent rester cohérentes.
+Une trace terminée contient exactement un événement terminal ; un ordre cassé,
+un profil inconnu ou un payload sensible interdit sont refusés avant rendu.
 
 ## Événements principaux
 

@@ -40,7 +40,7 @@ async function validatesLiveOrientationUsesAiSdkStructuredOutput() {
         object: {
           action: "request_capabilities",
           source: "openai_structured_output",
-          reason: "Besoin du catalogue autorisé.",
+          reason: "The authorized catalogue is required.",
           result: "",
         },
       };
@@ -53,8 +53,8 @@ async function validatesLiveOrientationUsesAiSdkStructuredOutput() {
   assert.equal(calls.length, 1);
 	  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
 	  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
-	  assert.match(calls[0].system, /revue, approbation, validation ou décision humaine/);
-	  assert.match(calls[0].system, /request_human_review n'est disponible qu'après le catalogue/);
+	  assert.match(calls[0].system, /human review, approval, validation, or judgment/);
+	  assert.match(calls[0].system, /request_human_review is available only after the catalogue/);
 	  const modelInput = JSON.parse(calls[0].prompt);
   assert.equal(modelInput.protocol, "touba-agent-model-input-v1");
   assert.equal(modelInput.mode, "orientation");
@@ -69,8 +69,8 @@ async function validatesLiveOrientationCanAnswerDirectly() {
       object: {
         action: "answer_directly",
         source: "openai_structured_output",
-        reason: "Salutation simple.",
-        result: "Bonjour.",
+        reason: "Simple greeting.",
+        result: "Hello.",
       },
     }),
   });
@@ -80,8 +80,8 @@ async function validatesLiveOrientationCanAnswerDirectly() {
   assert.deepEqual(decision, {
     action: "answer_directly",
     source: "openai_structured_output",
-    reason: "Salutation simple.",
-    result: "Bonjour.",
+    reason: "Simple greeting.",
+    result: "Hello.",
   });
 }
 
@@ -96,7 +96,7 @@ async function validatesLiveCatalogSelectionUsesAiSdkStructuredOutput() {
           action: "select_capability",
           target_ref: "skill:examples.donnees_quebec_agent_live/BuildDatasetBrief",
           source: "openai_structured_output",
-          reason: "La demande exige un bref résumé.",
+          reason: "The request requires a short summary.",
           arguments: {
             request: requestPayload({ dryRun: false }),
           },
@@ -123,8 +123,11 @@ async function validatesLiveCatalogSelectionUsesAiSdkStructuredOutput() {
     "select_capability",
     "request_human_review",
   ]);
-  assert.equal(jsonSchemaOf(calls[0]).properties.arguments.properties.request.type, "object");
-  assert.equal(jsonSchemaOf(calls[0]).properties.arguments.properties.request.properties.query.type, "string");
+  const argumentsSchema = jsonSchemaOf(calls[0]).properties.arguments;
+  const requestArgumentsSchema = (argumentsSchema.anyOf ?? [argumentsSchema])
+    .find((schema) => schema.properties?.request);
+  assert.equal(requestArgumentsSchema.properties.request.type, "object");
+  assert.equal(requestArgumentsSchema.properties.request.properties.query.type, "string");
   const modelInput = JSON.parse(calls[0].prompt);
   assert.equal(modelInput.mode, "capability_catalog");
   assert.equal(modelInput.capabilities[1].signature.inputs[0].fields[0].name, "query");
@@ -138,11 +141,11 @@ async function validatesLiveCatalogCanRequestHumanReview() {
         action: "request_human_review",
         target_ref: "human_review",
         source: "openai_structured_output",
-        reason: "Besoin d'un jugement humain.",
+        reason: "Human judgment is required.",
         arguments: {
           request: requestPayload({ dryRun: false }),
         },
-        review_prompt: "Valider le choix du jeu de données.",
+        review_prompt: "Validate the dataset selection.",
       },
     }),
   });
@@ -152,8 +155,8 @@ async function validatesLiveCatalogCanRequestHumanReview() {
   assert.deepEqual(decision, {
     action: "request_human_review",
     source: "openai_structured_output",
-    reason: "Besoin d'un jugement humain.",
-    review_prompt: "Valider le choix du jeu de données.",
+    reason: "Human judgment is required.",
+    review_prompt: "Validate the dataset selection.",
   });
 }
 
@@ -164,7 +167,7 @@ function summaryRequest({ dryRun }) {
     run_id: "test-run",
     agent_ref: "agent:examples.donnees_quebec_agent_live/Researcher",
     agent_name: "Researcher",
-    responsibility: "Chercher et résumer des jeux de données publics.",
+    responsibility: "Search and summarize public datasets.",
     input_keys: ["request"],
     inputs: {
       request: requestPayload({ dryRun }),
@@ -215,7 +218,7 @@ function requestPayload({ dryRun }) {
     rows: 1,
     dry_run: dryRun,
     llm_model: "gpt-4.1-nano",
-    goal: "Trouver un jeu de données public puis produire un bref résumé en français.",
+    goal: "Find a public dataset and then produce a short summary in French.",
   };
 }
 

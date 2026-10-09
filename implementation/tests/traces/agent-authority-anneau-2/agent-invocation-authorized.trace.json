@@ -1,5 +1,6 @@
 {
   "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
@@ -13,7 +14,8 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "strategy:test/RunBuild"
+        "entry_ref": "strategy:test/RunBuild",
+        "max_loop_iterations": 100
       }
     },
     {
@@ -34,11 +36,21 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
         "owner_ref": "strategy:test/RunBuild",
-        "node_id": "s1"
+        "node_id": "s1",
+        "source_ref": {
+          "source_id": "test.tb",
+          "start_byte": 0,
+          "end_byte": 0,
+          "start_line": 1,
+          "start_column": 0,
+          "end_line": 1,
+          "end_column": 0
+        }
       },
       "payload": {
         "target_ref": "agent:test/Builder",
-        "caller_ref": "strategy:test/RunBuild"
+        "caller_ref": "strategy:test/RunBuild",
+        "agent_ref": null
       }
     },
     {
@@ -49,7 +61,16 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
         "owner_ref": "strategy:test/RunBuild",
-        "node_id": "s1"
+        "node_id": "s1",
+        "source_ref": {
+          "source_id": "test.tb",
+          "start_byte": 0,
+          "end_byte": 0,
+          "start_line": 1,
+          "start_column": 0,
+          "end_line": 1,
+          "end_column": 0
+        }
       },
       "payload": {
         "caller_ref": "strategy:test/RunBuild",
@@ -61,6 +82,68 @@
       "event_id": "event:run-1:5",
       "run_id": "run-1",
       "sequence_index": 4,
+      "kind": "agent_capabilities_listed",
+      "payload": {
+        "agent_ref": "agent:test/Builder",
+        "authority_source": "uses",
+        "capability_refs": [
+          "skill:test/Build"
+        ],
+        "capabilities": [
+          {
+            "target_ref": "skill:test/Build",
+            "kind": "skill",
+            "name": "Build",
+            "description": "Build test skill capability.",
+            "description_source": "source",
+            "source_description_present": true,
+            "selection_keywords": [
+              "build",
+              "test",
+              "skill",
+              "capability"
+            ],
+            "input_count": 0,
+            "output_type": "builtin:Text",
+            "signature": {
+              "inputs": [],
+              "output_type": "builtin:Text"
+            },
+            "uses": [],
+            "memory_accesses": []
+          }
+        ]
+      }
+    },
+    {
+      "event_id": "event:run-1:6",
+      "run_id": "run-1",
+      "sequence_index": 5,
+      "kind": "agent_decision_recorded",
+      "payload": {
+        "agent_ref": "agent:test/Builder",
+        "selected_ref": "skill:test/Build",
+        "decision_source": "uses_single_capability",
+        "reason": "single declared capability"
+      }
+    },
+    {
+      "event_id": "event:run-1:7",
+      "run_id": "run-1",
+      "sequence_index": 6,
+      "kind": "agent_capability_selected",
+      "payload": {
+        "agent_ref": "agent:test/Builder",
+        "selected_ref": "skill:test/Build",
+        "authority_source": "uses",
+        "decision_source": "uses_single_capability",
+        "reason": "single declared capability"
+      }
+    },
+    {
+      "event_id": "event:run-1:8",
+      "run_id": "run-1",
+      "sequence_index": 7,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:test/Build",
@@ -68,9 +151,9 @@
       }
     },
     {
-      "event_id": "event:run-1:6",
+      "event_id": "event:run-1:9",
       "run_id": "run-1",
-      "sequence_index": 5,
+      "sequence_index": 8,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:test/Build",
@@ -82,14 +165,23 @@
       }
     },
     {
-      "event_id": "event:run-1:7",
+      "event_id": "event:run-1:10",
       "run_id": "run-1",
-      "sequence_index": 6,
+      "sequence_index": 9,
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
         "owner_ref": "strategy:test/RunBuild",
-        "node_id": "s1"
+        "node_id": "s1",
+        "source_ref": {
+          "source_id": "test.tb",
+          "start_byte": 0,
+          "end_byte": 0,
+          "start_line": 1,
+          "start_column": 0,
+          "end_line": 1,
+          "end_column": 0
+        }
       },
       "payload": {
         "target_ref": "agent:test/Builder",
@@ -97,9 +189,9 @@
       }
     },
     {
-      "event_id": "event:run-1:8",
+      "event_id": "event:run-1:11",
       "run_id": "run-1",
-      "sequence_index": 7,
+      "sequence_index": 10,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
@@ -111,9 +203,9 @@
       }
     },
     {
-      "event_id": "event:run-1:9",
+      "event_id": "event:run-1:12",
       "run_id": "run-1",
-      "sequence_index": 8,
+      "sequence_index": 11,
       "kind": "run_completed",
       "payload": {
         "status": "success"

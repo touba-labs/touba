@@ -26,6 +26,7 @@ const MAX_MESSAGES_PER_SESSION = 100;
 const MAX_OPERATIONS_PER_SESSION = 50;
 const MAX_PROGRESS_EVENTS_PER_OPERATION = 80;
 const ACTIVE_OPERATION_STATUSES = new Set(["queued", "running", "cancel_requested"]);
+const TERMINAL_OPERATION_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const EXECUTABLE_INTERACTION_TARGET_KINDS = new Set([
   "agent",
   "function",
@@ -47,6 +48,20 @@ export function createInteractionSession({
   generatedAt = new Date().toISOString(),
 }) {
   const store = loadInteractionSessionStore(sessionsPath);
+  while (store.sessions.length >= MAX_SESSIONS) {
+    const evictable = store.sessions
+      .filter((session) => !sessionHasActiveOperation(session))
+      .sort(compareInteractionSessionAge)[0];
+    if (evictable === undefined) {
+      throw interactionError(
+        "ToubaServeInteractionSessionCapacityExceeded",
+        `interaction store already has ${MAX_SESSIONS} sessions with active operations`,
+      );
+    }
+    store.sessions.splice(store.sessions.findIndex((session) => (
+      session.session_id === evictable.session_id
+    )), 1);
+  }
   const session = {
     schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
     session_id: `interaction_${compactTimestamp(generatedAt)}_${randomBytes(4).toString("hex")}`,
@@ -65,10 +80,19 @@ export function createInteractionSession({
   };
   store.sessions.push(session);
   store.sessions = store.sessions
-    .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
-    .slice(-MAX_SESSIONS);
+    .sort(compareInteractionSessionAge);
   saveJsonAtomic(sessionsPath, store);
   return session;
+}
+
+function sessionHasActiveOperation(session) {
+  return session.operations.some((operation) => !TERMINAL_OPERATION_STATUSES.has(operation.status));
+}
+
+function compareInteractionSessionAge(left, right) {
+  return left.updated_at.localeCompare(right.updated_at)
+    || left.created_at.localeCompare(right.created_at)
+    || left.session_id.localeCompare(right.session_id);
 }
 
 export function listInteractionSessions(sessionsPath) {
@@ -201,6 +225,36 @@ export function startInteractionOperation({
   return operation;
 }
 
+/**
+ * An interrupted durable operation may only re-enter running through an
+ * explicit resume request. Keeping this transition separate prevents the
+ * normal queue starter from turning process recovery into an implicit retry.
+ */
+export function resumeInterruptedInteractionOperation({
+  operationId,
+  sessionId,
+  sessionsPath,
+  generatedAt = new Date().toISOString(),
+}) {
+  const store = loadInteractionSessionStore(sessionsPath);
+  const { session, operation } = requireOperation(store, sessionId, operationId);
+  if (operation.status !== "interrupted") {
+    throw interactionError(
+      "DurableResumeNotAvailable",
+      "only an interrupted interaction operation can be resumed durably",
+    );
+  }
+  operation.status = "running";
+  operation.completed_at = null;
+  operation.error = null;
+  updateUserMessageStatus(session, operation.message_id, "running");
+  session.status = "running";
+  session.last_run_status = "running";
+  session.updated_at = generatedAt;
+  saveJsonAtomic(sessionsPath, store);
+  return operation;
+}
+
 export function recordInteractionOperationProgress({
   event,
   operationId,
@@ -230,13 +284,38 @@ export function completeInteractionOperation({
 }) {
   const store = loadInteractionSessionStore(sessionsPath);
   const { session, operation } = requireOperation(store, sessionId, operationId);
-  const finalStatus = operationStatusForRun(result.status);
+  assertInteractionResultIdentity({ operation, result });
+  const finalStatus = operationStatusForRun(result);
+  const resultDigest = interactionResultDigest(result);
+  const recordedTerminal = session.messages.find((message) => (
+    message.operation_id === operation.operation_id
+    && message.role === "touba"
+    && isTerminalInteractionResult(message.run_result)
+  ));
+  if (recordedTerminal !== undefined) {
+    if (interactionResultDigest(recordedTerminal.run_result) === resultDigest) return operation;
+    throw interactionError(
+      "ToubaServeInteractionOperationResultConflict",
+      "interaction operation already has a different terminal result",
+    );
+  }
+  if (
+    TERMINAL_OPERATION_STATUSES.has(operation.status)
+    && operation.status !== finalStatus
+  ) {
+    throw interactionError(
+      "ToubaServeInteractionOperationResultConflict",
+      "interaction operation terminal status conflicts with its result projection",
+    );
+  }
   operation.status = finalStatus;
   operation.completed_at = result.completed_at ?? generatedAt;
-  operation.error = result.status === "failure"
+  operation.error = finalStatus === "failed"
     ? publicOperationError(result)
     : null;
-  const resultMessageId = `${operation.message_id}:result:${operation.status}`;
+  // One run can pause at multiple checkpoints before reaching a terminal result.
+  // Retries return the same persisted result; different outcomes must survive.
+  const resultMessageId = `${operation.message_id}:result:${resultDigest}`;
   if (!session.messages.some((message) => message.message_id === resultMessageId)) {
     session.messages.push({
       message_id: resultMessageId,
@@ -268,6 +347,12 @@ export function failInteractionOperation({
 }) {
   const store = loadInteractionSessionStore(sessionsPath);
   const { session, operation } = requireOperation(store, sessionId, operationId);
+  if (
+    operation.status === "awaiting_human"
+    || TERMINAL_OPERATION_STATUSES.has(operation.status)
+  ) {
+    return operation;
+  }
   operation.status = "failed";
   operation.completed_at = generatedAt;
   operation.error = {
@@ -290,7 +375,8 @@ export function requestInteractionOperationCancel({
 }) {
   const store = loadInteractionSessionStore(sessionsPath);
   const { session, operation } = requireOperation(store, sessionId, operationId);
-  if (!["queued", "running", "cancel_requested"].includes(operation.status)) {
+  if (operation.status === "cancel_requested") return operation;
+  if (!["queued", "running", "awaiting_human"].includes(operation.status)) {
     throw interactionError("ToubaServeInteractionOperationNotCancellable", "interaction operation is not cancellable");
   }
   operation.status = "cancel_requested";
@@ -332,6 +418,17 @@ export function recoverInterruptedInteractionOperations({
   for (const session of store.sessions) {
     for (const operation of session.operations) {
       if (!ACTIVE_OPERATION_STATUSES.has(operation.status)) continue;
+      if (operation.status === "cancel_requested") {
+        operation.status = "cancelled";
+        operation.completed_at = generatedAt;
+        operation.error = null;
+        updateUserMessageStatus(session, operation.message_id, "cancelled");
+        session.status = "open";
+        session.last_run_status = "cancelled";
+        session.updated_at = generatedAt;
+        recovered.push(operation);
+        continue;
+      }
       operation.status = "interrupted";
       operation.completed_at = generatedAt;
       operation.error = {
@@ -350,7 +447,7 @@ export function recoverInterruptedInteractionOperations({
 }
 
 export function validateInteractionResume({
-  requestId,
+  checkpointStatus,
   runId,
   sessionId,
   sessionsPath,
@@ -358,11 +455,12 @@ export function validateInteractionResume({
   const session = getInteractionSession({ sessionId, sessionsPath });
   const operation = [...session.operations].reverse()
     .find((candidate) => candidate.run_id === runId);
-  const alreadyRecorded = operation !== undefined && session.messages.some((candidate) => (
+  const alreadyRecorded = operation !== undefined && (checkpointStatus === "superseded" || session.messages.some((candidate) => (
     candidate.operation_id === operation.operation_id
-    && candidate.run_status !== "stopped"
     && candidate.role === "touba"
-  ));
+    && candidate.run_result
+    && operationStatusForRun(candidate.run_result) !== "awaiting_human"
+  )));
   if (alreadyRecorded) {
     return { alreadyRecorded, operation, session };
   }
@@ -541,11 +639,40 @@ function boundedResultText(value) {
   return `${bytes.subarray(0, MAX_INTERACTION_DISPLAY_TEXT_BYTES).toString("utf8")}...`;
 }
 
-function operationStatusForRun(status) {
-  if (status === "success") return "succeeded";
-  if (status === "stopped") return "awaiting_human";
-  if (status === "cancelled") return "cancelled";
+function operationStatusForRun(result) {
+  if (result.status === "success") return "succeeded";
+  if (result.status === "cancelled") return "cancelled";
+  if (result.status === "stopped") {
+    const codes = new Set((result.diagnostics ?? []).map((diagnostic) => diagnostic.code));
+    if (codes.has("ToubaSandboxRunAwaitingHumanDecision")) return "awaiting_human";
+    if (codes.has("ToubaSandboxHumanDecisionCancelled")) return "cancelled";
+  }
   return "failed";
+}
+
+function isTerminalInteractionResult(result) {
+  return result !== undefined
+    && result !== null
+    && TERMINAL_OPERATION_STATUSES.has(operationStatusForRun(result));
+}
+
+function interactionResultDigest(result) {
+  return createHash("sha256").update(JSON.stringify(result)).digest("hex");
+}
+
+function assertInteractionResultIdentity({ operation, result }) {
+  if (
+    result === null
+    || typeof result !== "object"
+    || Array.isArray(result)
+    || result.run_id !== operation.run_id
+    || result.target_ref !== operation.target_ref
+  ) {
+    throw interactionError(
+      "ToubaServeInteractionOperationResultMismatch",
+      "interaction result does not belong to the requested operation",
+    );
+  }
 }
 
 function sessionStatusForOperation(status) {

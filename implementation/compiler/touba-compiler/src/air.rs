@@ -318,6 +318,16 @@ pub enum AirFlowNodeKind {
     Fallback,
 }
 
+impl AirFlowNodeKind {
+    /// Closed allow-list shared by local lowering and imported-function checks.
+    pub fn is_pure_function_node(self) -> bool {
+        matches!(
+            self,
+            Self::CallFunction | Self::Bind | Self::Branch | Self::Loop | Self::Give | Self::Stop
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AirHumanApprovalMode {
@@ -568,6 +578,7 @@ pub enum AirDiagnosticCode {
     ImportKindMismatch,
     ImportCycleDetected,
     ImportFunctionNotPure,
+    FunctionNotPure,
     MissingTriggerEvent,
     UnsupportedTriggerEventKind,
     InvalidTriggerEventValue,

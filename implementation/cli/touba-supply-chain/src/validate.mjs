@@ -10,14 +10,28 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  TOUBA_MANIFEST_V1,
+  TOUBA_MANIFEST_V2,
+  TOUBA_MANIFEST_V3,
+  validateManifestEffectContracts,
+} from "../../touba-manifest/src/effect-contract.mjs";
+
 export const SUPPLY_CHAIN_LOCK_SCHEMA_VERSION = "touba-lock-v0.1";
 export const SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-validation-v0.1";
 
 const AIR_SCHEMA_VERSION = "touba-air-v1";
-const MANIFEST_VERSION = "touba-manifest-v1";
+const MANIFEST_VERSIONS = new Set([TOUBA_MANIFEST_V1, TOUBA_MANIFEST_V2, TOUBA_MANIFEST_V3]);
 const DIGEST_KIND = "sha256";
 const EXPECTED_HANDLER_SDK_NAME = "@touba/sdk";
-const EXPECTED_HANDLER_SDK_PROTOCOL = "touba-tool-handler-v1";
+const HANDLER_SDK_PROTOCOL_V1 = "touba-tool-handler-v1";
+const HANDLER_SDK_PROTOCOL_V2 = "touba-tool-handler-v2";
+const HANDLER_SDK_PROTOCOL_V3 = "touba-tool-handler-v3";
+const SUPPORTED_HANDLER_SDK_PROTOCOLS = new Set([
+  HANDLER_SDK_PROTOCOL_V1,
+  HANDLER_SDK_PROTOCOL_V2,
+  HANDLER_SDK_PROTOCOL_V3,
+]);
 const SUPPORTED_HANDLER_SDK_VERSIONS = new Set(["0.1.0"]);
 const SUPPORTED_HANDLER_PACKAGE_KINDS = new Set(["local"]);
 const SUPPLY_CHAIN_REPORT_SUFFIX = ".supply-chain-report.json";
@@ -148,6 +162,11 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
 
   const airToolRefs = collectAirToolRefs(artifacts.air?.json);
   const manifestBindings = bindingsFromManifest(artifacts.manifest?.json);
+  const compensationInverseToolRefs = collectCompensationInverseToolRefs(
+    artifacts.manifest?.json,
+    artifacts.air?.json,
+    diagnostics,
+  );
   const handlers = Array.isArray(lock?.handlers) ? lock.handlers : [];
   const handlerRefs = new Set();
 
@@ -190,6 +209,13 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
     }
     if (binding) {
       compareHandlerCommand(handler, binding.handler, report, diagnostics);
+      validateHandlerEffectProtocol(
+        handler,
+        binding,
+        report,
+        diagnostics,
+        compensationInverseToolRefs.has(toolRef),
+      );
     }
 
     const handlerPath = resolveHandlerPath(handler, artifacts);
@@ -234,6 +260,9 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
       handler_packages: handlers.length > 0,
       handler_package_files: handlers.some((handler) => Array.isArray(handler?.handler_package?.files)),
       handler_dependency_artifacts: handlers.some((handler) => Array.isArray(handler?.handler_package?.dependency_artifacts)),
+      ...([TOUBA_MANIFEST_V2, TOUBA_MANIFEST_V3].includes(artifacts.manifest?.json?.manifest_version)
+        ? { effect_contracts: true }
+        : {}),
       provenance_metadata: provenanceReport.status !== "unknown",
       review_metadata: reviewReport.status !== "unknown",
       review_evidence: reviewReport.evidence_status !== "unknown",
@@ -642,8 +671,22 @@ function validateArtifactVersions(artifacts, diagnostics) {
   if (artifacts.air && artifacts.air.json?.air_schema_version !== AIR_SCHEMA_VERSION) {
     diagnostics.push(error("SupplyChainLockSchemaMismatch", "unsupported AIR schema", "air"));
   }
-  if (artifacts.manifest && artifacts.manifest.json?.manifest_version !== MANIFEST_VERSION) {
+  if (artifacts.manifest && !MANIFEST_VERSIONS.has(artifacts.manifest.json?.manifest_version)) {
     diagnostics.push(error("SupplyChainLockSchemaMismatch", "unsupported manifest schema", "manifest"));
+    return;
+  }
+  if (artifacts.manifest) {
+    try {
+      validateManifestEffectContracts(artifacts.manifest.json);
+    } catch (cause) {
+      diagnostics.push(error(
+        typeof cause?.code === "string" ? cause.code : "EffectContractInvalid",
+        cause instanceof Error ? cause.message : String(cause),
+        "manifest",
+        "effect_contract",
+        cause?.details?.tool_ref,
+      ));
+    }
   }
 }
 
@@ -681,6 +724,53 @@ function compareHandlerCommand(handler, manifestHandler, report, diagnostics) {
   }
 }
 
+function validateHandlerEffectProtocol(handler, binding, report, diagnostics, isCompensationInverse) {
+  if (binding.effect_contract?.kind !== "external_write") {
+    return;
+  }
+  const expectedProtocol = isCompensationInverse
+    ? HANDLER_SDK_PROTOCOL_V3
+    : HANDLER_SDK_PROTOCOL_V2;
+  const declaredProtocols = Array.isArray(handler.sdk?.protocols) ? handler.sdk.protocols : [];
+  if (!declaredProtocols.includes(expectedProtocol)) {
+    addHandlerDiagnostic(report, diagnostics, error(
+      "HandlerSdkEffectProtocolMismatch",
+      `binding effect contract requires explicit SDK protocol ${expectedProtocol}`,
+      "handler",
+      "sdk.protocols",
+      handler.tool_ref,
+    ));
+    report.sdk_status = "unsupported";
+  }
+}
+
+function collectCompensationInverseToolRefs(manifest, air, diagnostics) {
+  const refs = new Set();
+  if (!isPlainObject(manifest?.bindings)) return refs;
+  const graphs = Array.isArray(air?.execution_graphs) ? air.execution_graphs : [];
+  const graphByOwner = new Map(graphs.map((graph) => [graph?.owner_ref, graph]));
+  for (const [toolRef, binding] of Object.entries(manifest.bindings)) {
+    const entryRef = binding?.effect_contract?.compensation?.entry_ref;
+    if (typeof entryRef !== "string") continue;
+    const graph = graphByOwner.get(entryRef);
+    const callTools = Array.isArray(graph?.nodes)
+      ? graph.nodes.filter((node) => node?.kind === "call_tool" && typeof node.target_ref === "string")
+      : [];
+    if (callTools.length !== 1) {
+      diagnostics.push(error(
+        "CompensationEntryUnresolved",
+        "compensation entry must resolve to exactly one tool call",
+        "air",
+        "execution_graphs",
+        toolRef,
+      ));
+      continue;
+    }
+    refs.add(callTools[0].target_ref);
+  }
+  return refs;
+}
+
 function sdkStatus(sdk, diagnostics, toolRef) {
   if (!isPlainObject(sdk) || sdk.status === undefined || sdk.status === "unknown") {
     diagnostics.push(warning("HandlerSdkUnknown", "handler SDK metadata unknown", "handler", "sdk", toolRef));
@@ -698,7 +788,13 @@ function sdkStatus(sdk, diagnostics, toolRef) {
   if (sdk.name !== EXPECTED_HANDLER_SDK_NAME) {
     unsupportedReasons.push("name");
   }
-  if (sdk.protocol !== EXPECTED_HANDLER_SDK_PROTOCOL) {
+  const protocols = sdkProtocols(sdk);
+  if (
+    sdk.protocol !== HANDLER_SDK_PROTOCOL_V1
+    || protocols.length === 0
+    || protocols.some((protocol) => !SUPPORTED_HANDLER_SDK_PROTOCOLS.has(protocol))
+    || (Array.isArray(sdk.protocols) && !sdk.protocols.includes(HANDLER_SDK_PROTOCOL_V1))
+  ) {
     unsupportedReasons.push("protocol");
   }
   if (typeof sdk.version !== "string" || !SUPPORTED_HANDLER_SDK_VERSIONS.has(sdk.version)) {
@@ -723,7 +819,23 @@ function sdkReportFields(sdk, diagnostics, toolRef) {
     sdk_name: typeof sdk?.name === "string" ? sdk.name : undefined,
     sdk_version: typeof sdk?.version === "string" ? sdk.version : undefined,
     sdk_protocol: typeof sdk?.protocol === "string" ? sdk.protocol : undefined,
+    ...(Array.isArray(sdk?.protocols) ? { sdk_protocols: sdkProtocols({ protocols: sdk.protocols }) } : {}),
   };
+}
+
+function sdkProtocols(sdk) {
+  const protocols = [];
+  if (typeof sdk?.protocol === "string" && sdk.protocol.trim() !== "") {
+    protocols.push(sdk.protocol);
+  }
+  if (Array.isArray(sdk?.protocols)) {
+    for (const protocol of sdk.protocols) {
+      if (typeof protocol === "string" && protocol.trim() !== "") {
+        protocols.push(protocol);
+      }
+    }
+  }
+  return [...new Set(protocols)];
 }
 
 function handlerPackageReportFields(handlerPackage) {

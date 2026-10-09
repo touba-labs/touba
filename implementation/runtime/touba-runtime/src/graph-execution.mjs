@@ -16,6 +16,8 @@ import { RuntimeFailure, RuntimeStop } from "./runtime-errors.mjs";
  *   airRefForNode: (graph: any, node: any) => any,
  *   executeNode: (graph: any, node: any, context: any) => Promise<any>,
  *   nextNodeId: (graph: any, nodeId: string, edgeRole: string) => string | undefined,
+ *   beforeNode?: (graph: any, node: any, context: any) => Promise<void>,
+ *   afterNode?: (graph: any, node: any, context: any, step: any, nextNodeId: string | null) => Promise<void>,
  * }} operations
  * @param {{startNodeId?: string}} [options]
  */
@@ -38,7 +40,9 @@ export async function executeGraphTraversal(graphRef, context, operations, optio
         nodeId: currentNodeId,
       });
     }
-    if (!operations.isDispatchNode(node)) {
+    if (operations.beforeNode) {
+      await operations.beforeNode(graph, node, context);
+    } else if (!operations.isDispatchNode(node)) {
       operations.assertRunCanContinue(context);
       operations.consumeStepBudget(context, {
         airRef: operations.airRefForNode(graph, node),
@@ -47,6 +51,12 @@ export async function executeGraphTraversal(graphRef, context, operations, optio
     }
 
     const step = await operations.executeNode(graph, node, context);
+    const next = step.done
+      ? null
+      : operations.nextNodeId(graph, node.id, step.edgeRole);
+    if (operations.afterNode) {
+      await operations.afterNode(graph, node, context, step, next ?? null);
+    }
     if (step.done) {
       context.trace.push("scope_exited", {
         airRef: {
@@ -66,7 +76,7 @@ export async function executeGraphTraversal(graphRef, context, operations, optio
     }
 
     result = step.result ?? result;
-    currentNodeId = operations.nextNodeId(graph, node.id, step.edgeRole);
+    currentNodeId = next;
   }
 
   context.trace.push("scope_exited", {

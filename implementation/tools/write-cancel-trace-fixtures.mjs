@@ -2,6 +2,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, validateTraceMachineContract,
+} from "../contracts/machine/contracts.mjs";
+import {
   AIR_SCHEMA_VERSION,
   executeAirDocument,
   executeTriggerEvent,
@@ -54,6 +57,7 @@ let allPassed = true;
 for (const fixture of fixtures) {
   const result = await fixture.run();
   const trace = result.trace;
+  validateTraceMachineContract(trace);
   validateCancelTrace(fixture.id, result);
   const outputPath = join(outputDir, `${fixture.id}.trace.json`);
   const serialized = `${JSON.stringify(trace, null, 2)}\n`;
@@ -205,6 +209,8 @@ function triggerManifestDocument() {
 function baseDocument(overrides = {}) {
   return {
     air_schema_version: AIR_SCHEMA_VERSION,
+    air_capability_profile: AIR_CAPABILITY_PROFILE,
+    air_json_profile: AIR_JSON_PROFILE,
     module: {
       id: "module:test",
       name: "test",
@@ -272,6 +278,7 @@ function graph(id, ownerRef, nodes, edges = []) {
     nodes,
     edges,
     failure_paths: [],
+    source_ref: sourceRef(),
   };
 }
 

@@ -15,27 +15,15 @@ function main() {
 
   check("tests directory map", () => {
     for (const file of [
-      "tests/README.md",
-      "tests/air/README.md",
-      "tests/traces/README.md",
-      "tests/audit/ta1/README.md",
-      "tests/architecture/README.md",
-      "tests/tool-binding-v1/README.md",
-      "tests/tool-binding-v1/live-donnees-quebec/README.md",
       "cli/touba-supply-chain/package.json",
       "cli/touba-supply-chain/src/validate.mjs",
       "cli/touba-supply-chain/test/validate.test.mjs",
       "tests/agent-decision-provider-v1/package.json",
       "examples/providers/ollama-decision.provider.mjs",
-      "tests/js-sdk-project/README.md",
-      "tests/js-sdk-engine-project/README.md",
-      "tests/team-multi-equipe/README.md",
-      "tests/memory-backend-host/README.md",
       "tests/memory-backend-host/backend/memory_backend_server.mjs",
       "tests/memory-backend-host/docker/Dockerfile.memory-backend",
       "tests/memory-backend-host/docker/docker-compose.memory-backend.yml",
       "tests/memory-backend-host/validate-docker.mjs",
-      "tests/memory-postgres-rb2/README.md",
       "tests/memory-postgres-rb2/source/memory-postgres-rb2.tb",
       "tests/memory-postgres-rb2/source/memory-postgres-rb2-read-only.tb",
       "tests/memory-postgres-rb2/source/memory-postgres-rb2-approval-write.tb",
@@ -52,17 +40,13 @@ function main() {
       "tests/memory-postgres-rb2/docker/Dockerfile.memory-api",
       "tests/memory-postgres-rb2/docker/docker-compose.memory-postgres.yml",
       "tests/memory-postgres-rb2/validate.mjs",
-      "tests/skills-first-v1/README.md",
       "tests/skills-first-v1/validate.mjs",
-      "tests/skills-v1/README.md",
       "tests/skills-v1/validate.mjs",
       "tools/release-readiness.mjs",
       "tools/release-readiness.test.mjs",
-      "docs/developpeur/14-triggers-source-air-anneau-2.md",
       "tools/validate-tree-sitter-corpus.mjs",
       "tools/validate-trigger-parser.mjs",
       "tools/write-trigger-trace-fixtures.mjs",
-      "../validation/audit-couverture-tests-features-touba.md",
     ]) {
       assertPath(file);
     }
@@ -113,6 +97,13 @@ function main() {
     assertScript(packageJson, "validate:triggers-source-air");
     assertScript(packageJson, "write:trigger-trace-fixtures");
     assertScript(packageJson, "check:trigger-trace-fixtures");
+    for (const family of ["authority", "trigger", "cancel", "budget"]) {
+      assertScriptContains(
+        packageJson,
+        `check:${family}-trace-fixtures`,
+        `node tools/write-${family}-trace-fixtures.mjs --check`,
+      );
+    }
     assertScript(packageJson, "validate:triggers-runtime");
     assertScript(packageJson, "validate:triggers-cli");
     assertScript(packageJson, "validate:triggers");
@@ -159,6 +150,10 @@ function main() {
       "pnpm validate:donnees-quebec-agent-provider",
       "pnpm test:audit",
       "pnpm test:supply-chain",
+      "pnpm check:authority-trace-fixtures",
+      "pnpm check:trigger-trace-fixtures",
+      "pnpm check:cancel-trace-fixtures",
+      "pnpm check:budget-trace-fixtures",
     ]);
     assertCommandsExclude(packageJson, "validate:v1-local", [
       "pnpm validate:tool-binding-live",
@@ -300,7 +295,6 @@ function main() {
     assertPath("cli/touba-audit/package.json");
     assertPath("cli/touba-audit/src/audit.mjs");
     assertPath("cli/touba-audit/test/audit.test.mjs");
-    assertPath("tests/audit/ta1/README.md");
     assertIncludes(
       "cli/touba-audit/src/audit.mjs",
       "trace-audit-export-v0.1-local",
@@ -376,9 +370,9 @@ function main() {
     assertPath("tests/tool-binding-v1/live-donnees-quebec/handlers/search_agent_datasets.handler.mjs");
     assertPath("tests/tool-binding-v1/live-donnees-quebec/handlers/summarize_datasets.handler.mjs");
     assertPath("tests/tool-binding-v1/live-donnees-quebec/providers/donnees-quebec-researcher.provider.mjs");
-    assertPath("tests/tool-binding-v1/live-donnees-quebec/secrets/touba.secrets.dev.json");
-    assertPath("tests/tool-binding-v1/live-donnees-quebec/secrets/touba.secrets.prod.json");
-    assertPath("tests/tool-binding-v1/live-donnees-quebec/secrets/variants/touba.secrets.dotenv.json");
+    assertPath("tests/tool-binding-v1/live-donnees-quebec/secrets/secret-handles.env.fixture.json");
+    assertPath("tests/tool-binding-v1/live-donnees-quebec/secrets/secret-handles.store.fixture.json");
+    assertPath("tests/tool-binding-v1/live-donnees-quebec/secrets/secret-handles.dotenv.fixture.json");
     assertPath("tests/tool-binding-v1/live-donnees-quebec/validate-agent-provider.mjs");
     assertPath("tests/tool-binding-v1/live-donnees-quebec/validate-agent.mjs");
     assertIncludes(
@@ -428,7 +422,6 @@ function main() {
   });
 
   check("Team multi-equipe scenario", () => {
-    assertPath("tests/team-multi-equipe/README.md");
     assertPath("tests/team-multi-equipe/project/src/examples/customer_review_app.tb");
     assertPath("tests/team-multi-equipe/project/packages/customer/touba.package.json");
     assertPath("tests/team-multi-equipe/project/touba.ownership.json");
@@ -485,18 +478,6 @@ function main() {
     assertIncludes(
       "tests/team-multi-equipe/validate.mjs",
       "assertHandlerSecretRedaction",
-    );
-  });
-
-  check("VS Code extension packaging includes SDK dependencies without nested node_modules", () => {
-    assertPath("lsp/touba-vscode-ext/package-vsix.mjs");
-    assertIncludes(
-      "lsp/touba-vscode-ext/package-vsix.mjs",
-      'path.join(implementationDir, "runtime", "touba-handler-sdk", "package.json")',
-    );
-    assertIncludes(
-      "lsp/touba-vscode-ext/package-vsix.mjs",
-      'for (const entry of ["package.json", "src"])',
     );
   });
 

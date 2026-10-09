@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, AIR_SCHEMA_VERSION, MachineContractError,
@@ -13,6 +15,58 @@ test("validates current AIR and trace contracts", () => {
   assert.equal(validateAirMachineContract(air), air);
   const trace = validTrace();
   assert.equal(validateTraceMachineContract(trace), trace);
+});
+
+function functionAir() {
+  const air = validAir();
+  const graph = air.execution_graphs[0];
+  graph.owner_ref = "function:contract/Run";
+  air.definitions.skills = [];
+  air.definitions.functions = [{ id: graph.owner_ref, body_graph_ref: graph.id }];
+  return air;
+}
+
+test("function purity admits pure graphs and rejects every effectful node kind", () => {
+  assert.ok(validateAirMachineContract(functionAir()));
+  for (const kind of ["call_tool", "call_skill", "call_agent", "human_approval", "user_interaction", "fallback"]) {
+    const air = functionAir();
+    // An unreachable effect is also forbidden.
+    air.execution_graphs[0].nodes.push({ id: "unreachable", kind });
+    assert.throws(() => validateAirMachineContract(air), { code: "AirFunctionNotPure" });
+  }
+});
+
+test("function graph ownership and call targets cannot launder effects", () => {
+  for (const mutate of [
+    air => { air.definitions.functions[0].body_graph_ref = "absent"; },
+    air => { air.execution_graphs[0].owner_ref = "skill:contract/Run"; },
+    air => { air.definitions.functions = []; },
+    air => { air.execution_graphs[0].nodes[0].kind = "call_function";
+      air.execution_graphs[0].nodes[0].target_ref = "tool:contract/Write"; },
+  ]) {
+    const air = functionAir();
+    mutate(air);
+    assert.throws(() => validateAirMachineContract(air), MachineContractError);
+  }
+  const recursive = functionAir();
+  recursive.execution_graphs[0].nodes[0].kind = "call_function";
+  recursive.execution_graphs[0].nodes[0].target_ref = recursive.definitions.functions[0].id;
+  assert.ok(validateAirMachineContract(recursive)); // Purity does not promise termination.
+});
+
+test("validates a contiguous resumed trace segment with opaque unique event identities", () => {
+  const trace = validTrace();
+  trace.events[0].sequence_index = 9;
+  trace.events[0].event_id = "event:run-1:10";
+  trace.events[1].sequence_index = 10;
+  trace.events[1].event_id = "event:run-1:11";
+  assert.equal(validateTraceMachineContract(trace), trace);
+
+  trace.events[1].event_id = "opaque-resumed-event";
+  assert.equal(validateTraceMachineContract(trace), trace);
+
+  trace.events[1].event_id = trace.events[0].event_id;
+  assert.throws(() => validateTraceMachineContract(trace), MachineContractError);
 });
 
 test("refuses unknown versions, profiles, extensions and enums", () => {
@@ -70,15 +124,28 @@ test("keeps schemas and Rust producer constants aligned with the canonical modul
 });
 
 test("validates generated AIR and trace fixtures through the shared contract", () => {
-  const airDir = new URL("../../tests/air/", import.meta.url);
-  const traceDir = new URL("../../tests/traces/", import.meta.url);
-  for (const name of readdirSync(airDir).filter((item) => item.endsWith(".json"))) {
-    validateAirMachineContract(JSON.parse(readFileSync(new URL(name, airDir), "utf8")));
+  const airDir = fileURLToPath(new URL("../../tests/air/", import.meta.url));
+  const traceDir = fileURLToPath(new URL("../../tests/traces/", import.meta.url));
+  const airFiles = jsonFixtures(airDir);
+  const traceFiles = jsonFixtures(traceDir);
+  assert.ok(airFiles.length > 0, "AIR fixture corpus must not be empty");
+  for (const family of ["anneau-1", "agent-authority-anneau-2", "triggers-anneau-2", "cancel-v1", "budgets-bq1"]) {
+    assert.ok(traceFiles.some((file) => relative(traceDir, file).split(/[\\/]/u)[0] === family),
+      `trace fixture family ${family} must be covered`);
   }
-  for (const name of readdirSync(traceDir).filter((item) => item.endsWith(".json"))) {
-    validateTraceMachineContract(JSON.parse(readFileSync(new URL(name, traceDir), "utf8")));
+  for (const [files, validate] of [[airFiles, validateAirMachineContract], [traceFiles, validateTraceMachineContract]]) {
+    for (const file of files) {
+      assert.doesNotThrow(() => validate(JSON.parse(readFileSync(file, "utf8"))), file);
+    }
   }
 });
+
+function jsonFixtures(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const file = join(directory, entry.name);
+    return entry.isDirectory() ? jsonFixtures(file) : entry.name.endsWith(".json") ? [file] : [];
+  }).sort();
+}
 
 function validAir() {
   const source_ref = { source_id: "contract.tb", start_byte: 0, end_byte: 1,

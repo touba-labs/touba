@@ -32,6 +32,16 @@ function checkInstall(toolchainRoot) {
       prefix,
     });
     assertFile(firstInstall.cli_path);
+    assertFile(join(
+      prefix,
+      "touba-toolchain",
+      "lib",
+      "node_modules",
+      "@touba",
+      "touba-manifest",
+      "src",
+      "effect-contract.mjs",
+    ));
 
     const env = {
       HOME: workspace,

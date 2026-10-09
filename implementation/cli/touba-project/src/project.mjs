@@ -17,12 +17,20 @@ import {
 } from "../../touba-manifest/src/stub.mjs";
 import { toolNameToHandlerFile } from "../../touba-manifest/src/generate.mjs";
 import {
+  manifestVersionForExplicitEffectContracts,
+  normalizeEffectContract,
+  TOUBA_MANIFEST_V1,
+  TOUBA_MANIFEST_V2,
+  TOUBA_MANIFEST_V3,
+  validateManifestEffectContracts,
+} from "../../touba-manifest/src/effect-contract.mjs";
+import {
   assertEffectiveProjectSafe,
   buildEffectiveProjectDocument,
 } from "./effective-project.mjs";
 
 export const PROJECT_MANIFEST_VERSION = "touba-project-workflow-v1";
-export const TOUBA_MANIFEST_VERSION = "touba-manifest-v1";
+export const TOUBA_MANIFEST_VERSION = TOUBA_MANIFEST_V1;
 export const DEFAULT_SOURCE_ROOT = "src";
 export const DEFAULT_HANDLER_ROOT = "handlers";
 export const DEFAULT_AIR_ROOT = ".touba/air";
@@ -2993,6 +3001,19 @@ function composeBindingFragments({ fragmentPaths, expectedManifest, diagnostics,
     }
   }
 
+  try {
+    manifest.manifest_version = manifestVersionForExplicitEffectContracts(manifest.bindings);
+  } catch (error) {
+    pushEffectContractDiagnostic(diagnostics, error, {
+      artifact: "binding_fragment",
+    });
+    if (Object.values(manifest.bindings).some((binding) => Object.hasOwn(binding ?? {}, "effect_contract"))) {
+      manifest.manifest_version = Object.values(manifest.bindings).some(
+        (binding) => Object.hasOwn(binding?.effect_contract ?? {}, "compensation"),
+      ) ? TOUBA_MANIFEST_V3 : TOUBA_MANIFEST_V2;
+    }
+  }
+
   return {
     manifest: {
       ...manifest,
@@ -3075,6 +3096,18 @@ function validateBindingFragmentBinding(binding, expected, diagnostics, fragment
     return;
   }
   validateManifestBindingShape(binding, diagnostics, fragmentPath, toolRef);
+  if (Object.hasOwn(binding, "effect_contract")) {
+    try {
+      normalizeEffectContract(binding.effect_contract, {
+        label: `bindings.${toolRef}.effect_contract`,
+      });
+    } catch (error) {
+      pushEffectContractDiagnostic(diagnostics, error, {
+        fragment_path: fragmentPath,
+        tool_ref: toolRef,
+      });
+    }
+  }
   validateBindingFragmentCoverage(binding, expected, diagnostics, fragmentPath, toolRef);
   validateBindingFragmentPayloadConstraints(binding.payload_constraints, diagnostics, fragmentPath, toolRef);
 }
@@ -4465,8 +4498,8 @@ function inspectManifest({ currentManifest, expectedManifest, manifestPath, diag
     return;
   }
 
-  if (currentManifest.manifest_version !== TOUBA_MANIFEST_VERSION) {
-    diagnostics.push(errorDiagnostic("ManifestVersionInvalid", `manifest_version must be ${TOUBA_MANIFEST_VERSION}`, {
+  if (![TOUBA_MANIFEST_V1, TOUBA_MANIFEST_V2, TOUBA_MANIFEST_V3].includes(currentManifest.manifest_version)) {
+    diagnostics.push(errorDiagnostic("ManifestVersionInvalid", `manifest_version must be ${TOUBA_MANIFEST_V1}, ${TOUBA_MANIFEST_V2} or ${TOUBA_MANIFEST_V3}`, {
       manifest_path: manifestPath,
       actual: currentManifest.manifest_version,
     }));
@@ -4475,6 +4508,25 @@ function inspectManifest({ currentManifest, expectedManifest, manifestPath, diag
   if (!currentManifest.bindings || typeof currentManifest.bindings !== "object" || Array.isArray(currentManifest.bindings)) {
     diagnostics.push(errorDiagnostic("ManifestBindingsInvalid", "manifest bindings must be an object", { manifest_path: manifestPath }));
     return;
+  }
+  try {
+    validateManifestEffectContracts(currentManifest);
+  } catch (error) {
+    pushEffectContractDiagnostic(diagnostics, error, { manifest_path: manifestPath });
+  }
+  if (
+    manifestVersionRank(currentManifest.manifest_version)
+      < manifestVersionRank(expectedManifest.manifest_version)
+  ) {
+    diagnostics.push(errorDiagnostic(
+      "ManifestEffectContractVersionMismatch",
+      `effect contracts require ${expectedManifest.manifest_version}`,
+      {
+        manifest_path: manifestPath,
+        expected: expectedManifest.manifest_version,
+        actual: currentManifest.manifest_version,
+      },
+    ));
   }
 
   const expectedSet = new Set(expectedToolRefs);
@@ -4936,7 +4988,7 @@ function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestP
   if (currentManifest === null) {
     return expectedManifest;
   }
-  if (currentManifest.manifest_version !== TOUBA_MANIFEST_VERSION || !currentManifest.bindings) {
+  if (![TOUBA_MANIFEST_V1, TOUBA_MANIFEST_V2, TOUBA_MANIFEST_V3].includes(currentManifest.manifest_version) || !currentManifest.bindings) {
     diagnostics.push(errorDiagnostic("ManifestCannotMerge", "existing manifest is invalid and cannot be updated safely", {
       manifest_path: manifestPath,
     }));
@@ -4944,11 +4996,20 @@ function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestP
   }
   const merged = {
     ...currentManifest,
+    manifest_version: manifestVersionRank(expectedManifest.manifest_version)
+      > manifestVersionRank(currentManifest.manifest_version)
+      ? expectedManifest.manifest_version
+      : currentManifest.manifest_version,
     bindings: { ...currentManifest.bindings },
   };
   for (const [toolRef, expectedBinding] of Object.entries(expectedManifest.bindings)) {
     if (merged.bindings[toolRef] === undefined) {
       merged.bindings[toolRef] = expectedBinding;
+    } else if (expectedManifest.manifest_version !== TOUBA_MANIFEST_V1) {
+      merged.bindings[toolRef] = {
+        ...merged.bindings[toolRef],
+        effect_contract: cloneJson(expectedBinding.effect_contract),
+      };
     }
   }
   for (const [agentRef, secrets] of Object.entries(expectedManifest.agent_secret_scopes ?? {})) {
@@ -4960,7 +5021,19 @@ function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestP
       : [];
     merged.agent_secret_scopes[agentRef] = [...new Set([...currentSecrets, ...secrets])].sort();
   }
+  try {
+    validateManifestEffectContracts(merged);
+  } catch (error) {
+    pushEffectContractDiagnostic(diagnostics, error, { manifest_path: manifestPath });
+  }
   return merged;
+}
+
+function manifestVersionRank(version) {
+  if (version === TOUBA_MANIFEST_V3) return 3;
+  if (version === TOUBA_MANIFEST_V2) return 2;
+  if (version === TOUBA_MANIFEST_V1) return 1;
+  return 0;
 }
 
 function mergeSecretProfile(currentProfile, expectedProfile) {
@@ -5023,6 +5096,17 @@ function normalizeMemoryAccesses(values) {
 
 function action(kind, path, extra = {}) {
   return { kind, path, ...extra };
+}
+
+function pushEffectContractDiagnostic(diagnostics, error, extra = {}) {
+  diagnostics.push(errorDiagnostic(
+    typeof error?.code === "string" ? error.code : "EffectContractInvalid",
+    error instanceof Error ? error.message : String(error),
+    {
+      ...(error?.details && typeof error.details === "object" ? error.details : {}),
+      ...extra,
+    },
+  ));
 }
 
 function errorDiagnostic(code, message, extra = {}) {

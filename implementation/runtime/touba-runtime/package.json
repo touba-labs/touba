@@ -5,7 +5,10 @@
   "type": "module",
   "description": "Minimal Touba runtime bootstrap.",
   "exports": {
-    ".": "./src/index.mjs"
+    ".": "./src/index.mjs",
+    "./compensation": "./src/compensation.mjs",
+    "./file-compensation-store": "./src/file-compensation-store.mjs",
+    "./file-effect-journal": "./src/file-effect-journal.mjs"
   },
   "scripts": {
     "check:types": "tsc -p tsconfig.check.json",

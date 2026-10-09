@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,9 +13,14 @@ import {
   ToubaAgentDecisionProviderError,
   ToubaHandlerError,
   TOUBA_SDK_METADATA,
+  EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
+  COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
   MCP_BRIDGE_CONFIG_VERSION,
   createAiSdkDecisionProvider,
+  createEffectReceipt,
+  createCompensationReceipt,
   createMcpStdioToolBridge,
+  createOpenAiDecisionProvider,
   createOllamaDecisionProvider,
   createToolHandler,
   handleToolRequest,
@@ -24,11 +30,50 @@ import {
 const TOOL_REF = "tool:examples.sdk/SearchDatasets";
 const testDir = dirname(fileURLToPath(import.meta.url));
 
+function effectEnvelope() {
+  return {
+    effect_id: `effect:sha256:${"a".repeat(64)}`,
+    attempt_index: 1,
+    request_digest: `sha256:${"b".repeat(64)}`,
+  };
+}
+
+function digest(value) {
+  const canonical = (item) => {
+    if (Array.isArray(item)) return item.map(canonical);
+    if (item && typeof item === "object") {
+      return Object.fromEntries(Object.keys(item).sort().map((key) => [key, canonical(item[key])]));
+    }
+    return item;
+  };
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex")}`;
+}
+
+function compensationEnvelope() {
+  const originalEffectReceipt = {
+    effect_id: `effect:sha256:${"c".repeat(64)}`,
+    request_digest: `sha256:${"d".repeat(64)}`,
+    outcome: "applied",
+    receipt_ref: "opaque:original:1",
+  };
+  return {
+    compensation_id: `compensation:sha256:${"e".repeat(64)}`,
+    compensates_effect_id: originalEffectReceipt.effect_id,
+    plan_digest: `sha256:${"f".repeat(64)}`,
+    execution_request_digest: `sha256:${"1".repeat(64)}`,
+    original_tool_ref: "tool:examples.sdk/CreateDataset",
+    original_request_digest: originalEffectReceipt.request_digest,
+    original_effect_receipt_digest: digest(originalEffectReceipt),
+    original_effect_receipt: originalEffectReceipt,
+  };
+}
+
 test("exposes descriptive SDK metadata without runtime authority fields", () => {
   assert.deepEqual(TOUBA_SDK_METADATA, {
     name: "@touba/sdk",
     version: "0.1.0",
     protocol: "touba-tool-handler-v1",
+    protocols: ["touba-tool-handler-v1", "touba-tool-handler-v2", "touba-tool-handler-v3"],
     status: "ok",
   });
   const metadata = toubaSdkMetadata();
@@ -37,6 +82,237 @@ test("exposes descriptive SDK metadata without runtime authority fields", () => 
   assert.equal(Object.hasOwn(metadata, "secrets"), false);
   assert.equal(Object.hasOwn(metadata, "memory_scopes"), false);
   assert.equal(Object.hasOwn(metadata, "permissions"), false);
+});
+
+test("handles strict V3 compensation with deeply frozen context and correlated receipt", async () => {
+  const effect = effectEnvelope();
+  const compensation = compensationEnvelope();
+  const response = await handleToolRequest(
+    JSON.stringify({
+      protocol: COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
+      tool_ref: TOOL_REF,
+      arguments: { request: { query: "parks" } },
+      effect,
+      compensation,
+    }),
+    TOOL_REF,
+    createToolHandler({
+      toolRef: TOOL_REF,
+      inputSignature: [{ name: "request", type_ref: "type:examples.sdk/SearchRequest" }],
+      run: async ({ request, context }) => {
+        assert.equal(Object.isFrozen(context.compensation), true);
+        assert.equal(Object.isFrozen(context.compensation.original_effect_receipt), true);
+        assert.throws(() => {
+          context.compensation.original_effect_receipt.receipt_ref = "mutated";
+        }, TypeError);
+        return {
+          value: { echoed: request.query },
+          effect_receipt: context.createEffectReceipt({ outcome: "applied" }),
+          compensation_receipt: context.createCompensationReceipt({ result: "completed" }),
+        };
+      },
+    }),
+  );
+
+  assert.deepEqual(response, {
+    ok: true,
+    value: { echoed: "parks" },
+    effect_receipt: {
+      effect_id: effect.effect_id,
+      request_digest: effect.request_digest,
+      outcome: "applied",
+    },
+    compensation_receipt: {
+      compensation_id: compensation.compensation_id,
+      compensates_effect_id: compensation.compensates_effect_id,
+      inverse_effect_id: effect.effect_id,
+      result: "completed",
+    },
+  });
+});
+
+test("supports partial V3 success and bounded V3 errors", async () => {
+  const effect = effectEnvelope();
+  const compensation = compensationEnvelope();
+  assert.deepEqual(
+    createCompensationReceipt(compensation, effect, { result: "partial" }).result,
+    "partial",
+  );
+  const response = await handleToolRequest(
+    JSON.stringify({
+      protocol: COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
+      tool_ref: TOOL_REF,
+      arguments: {},
+      effect,
+      compensation,
+    }),
+    TOOL_REF,
+    async ({ createEffectReceipt: receiptForRequest }) => {
+      throw new ToubaHandlerError("UndoRejected", "undo rejected", {
+        effect_receipt: receiptForRequest({ outcome: "not_applied" }),
+      });
+    },
+  );
+  assert.equal(response.ok, false);
+  assert.equal(response.effect_receipt.outcome, "not_applied");
+  assert.equal(Object.hasOwn(response, "compensation_receipt"), false);
+});
+
+test("rejects V3 compensation on legacy protocols and invalid V3 correlations", async () => {
+  const effect = effectEnvelope();
+  const compensation = compensationEnvelope();
+  for (const request of [
+    {
+      protocol: EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
+      tool_ref: TOOL_REF,
+      arguments: {},
+      effect,
+      compensation,
+    },
+    {
+      protocol: COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
+      tool_ref: TOOL_REF,
+      arguments: {},
+      effect,
+      compensation: { ...compensation, original_request_digest: `sha256:${"9".repeat(64)}` },
+    },
+    {
+      protocol: COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
+      tool_ref: TOOL_REF,
+      arguments: {},
+      effect,
+      compensation,
+      vendor: true,
+    },
+  ]) {
+    let called = false;
+    const response = await handleToolRequest(JSON.stringify(request), TOOL_REF, async () => {
+      called = true;
+      return null;
+    });
+    assert.equal(called, false);
+    assert.equal(response.ok, false);
+    assert.match(response.error.code, /Compensation/u);
+  }
+});
+
+test("handles V2 effects with a read-only envelope and a request-bound receipt", async () => {
+  const effect = effectEnvelope();
+  const response = await handleToolRequest(
+    JSON.stringify({
+      protocol: EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
+      tool_ref: TOOL_REF,
+      arguments: { request: { query: "parks" } },
+      effect,
+    }),
+    TOOL_REF,
+    createToolHandler({
+      toolRef: TOOL_REF,
+      inputSignature: [{ name: "request", type_ref: "type:examples.sdk/SearchRequest" }],
+      run: async ({ request, context }) => {
+        assert.equal(Object.isFrozen(context.effect), true);
+        assert.deepEqual(context.effect, effect);
+        return {
+          value: { echoed: request.query },
+          effect_receipt: context.createEffectReceipt({
+            outcome: "applied",
+            receipt_ref: "opaque:search:1",
+          }),
+        };
+      },
+    }),
+  );
+
+  assert.deepEqual(response, {
+    ok: true,
+    value: { echoed: "parks" },
+    effect_receipt: {
+      effect_id: effect.effect_id,
+      request_digest: effect.request_digest,
+      outcome: "applied",
+      receipt_ref: "opaque:search:1",
+    },
+  });
+});
+
+test("requires a correlated receipt for every successful V2 effect", async () => {
+  const effect = effectEnvelope();
+  for (const handler of [
+    async () => ({ echoed: "missing receipt" }),
+    async () => ({
+      value: { echoed: "wrong receipt" },
+      effect_receipt: {
+        ...createEffectReceipt(effect, { outcome: "applied" }),
+        request_digest: `sha256:${"c".repeat(64)}`,
+      },
+    }),
+  ]) {
+    const response = await handleToolRequest(
+      JSON.stringify({
+        protocol: EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
+        tool_ref: TOOL_REF,
+        arguments: {},
+        effect,
+      }),
+      TOOL_REF,
+      handler,
+    );
+    assert.equal(response.ok, false);
+    assert.match(response.error.code, /EffectReceipt/u);
+    assert.equal(Object.hasOwn(response, "effect_receipt"), false);
+  }
+});
+
+test("carries a bounded not_applied receipt on a V2 domain error", async () => {
+  const effect = effectEnvelope();
+  const response = await handleToolRequest(
+    JSON.stringify({
+      protocol: EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
+      tool_ref: TOOL_REF,
+      arguments: {},
+      effect,
+    }),
+    TOOL_REF,
+    async ({ createEffectReceipt: receiptForRequest }) => {
+      throw new ToubaHandlerError("OrderRejected", "order was rejected", {
+        effect_receipt: receiptForRequest({ outcome: "not_applied" }),
+      });
+    },
+  );
+
+  assert.deepEqual(response, {
+    ok: false,
+    error: {
+      code: "OrderRejected",
+      message: "order was rejected",
+    },
+    effect_receipt: {
+      effect_id: effect.effect_id,
+      request_digest: effect.request_digest,
+      outcome: "not_applied",
+    },
+  });
+});
+
+test("rejects effect fields on the legacy V1 protocol before handler code", async () => {
+  let called = false;
+  const response = await handleToolRequest(
+    JSON.stringify({
+      protocol: "touba-tool-handler-v1",
+      tool_ref: TOOL_REF,
+      arguments: {},
+      effect: effectEnvelope(),
+    }),
+    TOOL_REF,
+    async () => {
+      called = true;
+      return null;
+    },
+  );
+
+  assert.equal(called, false);
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, "InvalidEffect");
 });
 
 test("handles a valid tool request and hides protocol plumbing from handler code", async () => {
@@ -523,8 +799,8 @@ test("createAiSdkDecisionProvider can answer directly from orientation input", a
   assert.equal(calls[0].maxOutputTokens, 700);
 	  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
 	  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
-	  assert.match(calls[0].system, /revue, approbation, validation ou décision humaine/);
-	  assert.match(calls[0].system, /request_human_review n'est disponible qu'après le catalogue/);
+	  assert.match(calls[0].system, /human review, approval, validation, or judgment/);
+	  assert.match(calls[0].system, /request_human_review is available only after the catalogue/);
 	  const prompt = JSON.parse(calls[0].prompt);
 	  assert.equal(prompt.protocol, "touba-agent-model-input-v1");
 	  assert.equal(prompt.content_boundary.user_input_authority, "domain_data_only");
@@ -611,6 +887,47 @@ test("createAiSdkDecisionProvider rejects invalid output budget options", () => 
   );
 });
 
+test("provider helpers do not derive model configuration from domain input", async () => {
+  const envValues = {
+    TOUBA_SDK_TEST_API_KEY: "local-test-key-not-a-credential",
+    TOUBA_OPENAI_MODEL: "host-openai-model",
+    TOUBA_AGENT_DECISION_OLLAMA_MODEL: "host-ollama-model",
+  };
+  const previous = Object.fromEntries(Object.keys(envValues).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, envValues);
+  try {
+    for (const [factory, expectedModel] of [
+      [createOpenAiDecisionProvider, "host-openai-model"],
+      [createOllamaDecisionProvider, "host-ollama-model"],
+    ]) {
+      const calls = [];
+      const instrumentedFetch = async () => { throw new Error("fetch must not run in this local test"); };
+      const options = {
+        apiKeyEnvNames: ["TOUBA_SDK_TEST_API_KEY"],
+        headers: async (request) => ({ "x-test-agent": request.agent_ref }),
+        fetch: instrumentedFetch,
+        generateObject: async (call) => {
+          calls.push(call);
+          return { object: { action: "answer_directly", result: "ok" } };
+        },
+      };
+      const request = agentDecisionSummaryRequest();
+      request.inputs.request.llm_model = "untrusted-domain-model";
+      await factory(options)(request);
+      assert.equal(calls[0].model.modelId, expectedModel);
+      // The installed provider stores headers lazily; inspect locally, without fetch.
+      assert.equal(calls[0].model.config.headers()["x-test-agent"], request.agent_ref);
+      if (factory === createOpenAiDecisionProvider) {
+        assert.equal(calls[0].model.config.fetch, instrumentedFetch);
+      }
+      await factory({ ...options, model: async () => "explicit-host-model" })(request);
+      assert.equal(calls[1].model.modelId, "explicit-host-model");
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) restoreEnv(key, value);
+  }
+});
+
 test("createAiSdkDecisionProvider rejects overly rich structured decisions", async () => {
   const provider = createAiSdkDecisionProvider({
     model: "test-provider/test-model",
@@ -650,7 +967,7 @@ test("createAiSdkDecisionProvider requests a catalog and selects a capability wi
           object: {
             action: "request_capabilities",
             source: "test_ai_sdk",
-            reason: "catalogue nécessaire",
+            reason: "the capability catalog is required",
             result: "",
           },
         };
@@ -679,7 +996,7 @@ test("createAiSdkDecisionProvider requests a catalog and selects a capability wi
   assert.deepEqual(first, {
     action: "request_capabilities",
     source: "test_ai_sdk",
-    reason: "catalogue nécessaire",
+    reason: "the capability catalog is required",
   });
   assert.deepEqual(selected, {
     target_ref: "skill:test/Answer",
@@ -705,10 +1022,12 @@ test("createAiSdkDecisionProvider requests a catalog and selects a capability wi
     "select_capability",
     "request_human_review",
   ]);
-  assert.match(calls[1].system, /frontière de responsabilité déclarée/u);
-  assert.match(calls[1].system, /transmis à un autre agent/u);
-  assert.equal(jsonSchemaOf(calls[1]).properties.arguments.properties.request.type, "object");
-  assert.equal(jsonSchemaOf(calls[1]).properties.arguments.properties.request.properties.rows.type, "integer");
+  assert.match(calls[1].system, /declared responsibility boundary/u);
+  assert.match(calls[1].system, /pass a result to another agent/u);
+  const argumentSchemas = jsonSchemaOf(calls[1]).properties.arguments.anyOf;
+  assert.equal(argumentSchemas[0].properties.request.type, "object");
+  assert.equal(argumentSchemas[0].properties.request.properties.rows.type, "integer");
+  assert.deepEqual(argumentSchemas[1].properties, {});
 });
 
 test("createAiSdkDecisionProvider can request governed human review from the catalog", async () => {
@@ -720,14 +1039,14 @@ test("createAiSdkDecisionProvider can request governed human review from the cat
         action: "request_human_review",
         target_ref: "human_review",
         source: "test_ai_sdk",
-        reason: "jugement humain nécessaire",
+        reason: "human judgment is required",
         arguments: {
           request: {
             query: "postgres",
             rows: 1,
           },
         },
-        review_prompt: "Merci de relire la synthèse avant réponse finale.",
+        review_prompt: "Please review the summary before the final answer.",
       },
     }),
   });
@@ -737,8 +1056,8 @@ test("createAiSdkDecisionProvider can request governed human review from the cat
   assert.deepEqual(decision, {
     action: "request_human_review",
     source: "test_ai_sdk",
-    reason: "jugement humain nécessaire",
-    review_prompt: "Merci de relire la synthèse avant réponse finale.",
+    reason: "human judgment is required",
+    review_prompt: "Please review the summary before the final answer.",
   });
 });
 
@@ -776,10 +1095,10 @@ test("createAiSdkDecisionProvider can disable dynamic human review by policy", a
     jsonSchemaOf(calls[0]).properties.target_ref.enum.includes("human_review"),
     false,
   );
-  assert.match(calls[0].system, /review humain dynamique n'est pas autorisé/u);
+  assert.match(calls[0].system, /Dynamic human review is not authorized/u);
 });
 
-test("createAiSdkDecisionProvider excludes capabilities already consumed by the agent", async () => {
+test("createAiSdkDecisionProvider permits repeated authorized capability selections", async () => {
   const calls = [];
   const provider = createAiSdkDecisionProvider({
     model: "test-provider/test-model",
@@ -789,13 +1108,13 @@ test("createAiSdkDecisionProvider excludes capabilities already consumed by the 
       return {
         object: {
           action: "select_capability",
-          target_ref: "skill:test/Answer",
+          target_ref: "skill:test/Search",
           source: "test_ai_sdk",
-          reason: "la capacité restante finalise le travail",
+          reason: "the same capability searches another page",
           arguments: {
             request: {
               query: "postgres",
-              rows: 1,
+              rows: calls.length,
             },
           },
           review_prompt: "",
@@ -805,20 +1124,26 @@ test("createAiSdkDecisionProvider excludes capabilities already consumed by the 
   });
   const request = agentDecisionCatalogRequest();
   request.model_input.agent_state = {
-    completed_capability_refs: ["skill:test/Search"],
-    remaining_capability_refs: ["skill:test/Answer"],
+    used_capability_refs: ["skill:test/Search"],
+    available_capability_refs: [...request.capability_refs],
   };
 
   const decision = await provider(request);
 
-  assert.equal(decision.target_ref, "skill:test/Answer");
+  const repeated = await provider(request);
+  assert.equal(decision.target_ref, "skill:test/Search");
+  assert.equal(repeated.target_ref, "skill:test/Search");
+  assert.equal(decision.arguments.request.rows, 1);
+  assert.equal(repeated.arguments.request.rows, 2);
   assert.deepEqual(jsonSchemaOf(calls[0]).properties.target_ref.enum, [
+    "skill:test/Search",
     "skill:test/Answer",
     "human_review",
   ]);
+  assert.doesNotMatch(calls[0].system, /non encore sélectionnée/u);
 });
 
-test("createAiSdkDecisionProvider requires a direct answer after every capability is consumed", async () => {
+test("createAiSdkDecisionProvider does not infer completion from capability usage", async () => {
   const calls = [];
   const provider = createAiSdkDecisionProvider({
     allowHumanReview: false,
@@ -838,19 +1163,20 @@ test("createAiSdkDecisionProvider requires a direct answer after every capabilit
   });
   const request = agentDecisionSummaryRequest();
   request.model_input.agent_state = {
-    completed_capability_refs: [...request.capability_refs],
-    remaining_capability_refs: [],
+    used_capability_refs: [...request.capability_refs],
+    available_capability_refs: [...request.capability_refs],
   };
 
   const decision = await provider(request);
 
   assert.equal(decision.action, "answer_directly");
   assert.equal(decision.result, "final governed result");
-  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly"]);
-  assert.match(calls[0].system, /toutes les capacités déclarées ont déjà été consommées/iu);
+  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
+  assert.match(calls[0].system, /Usage history neither proves that the goal is complete/iu);
+  assert.doesNotMatch(calls[0].system, /capacités déclarées ont déjà été consommées/iu);
 });
 
-test("createAiSdkDecisionProvider rejects a catalog request after every capability is consumed", async () => {
+test("createAiSdkDecisionProvider permits a catalog request after every capability was used", async () => {
   const provider = createAiSdkDecisionProvider({
     allowHumanReview: false,
     model: "test-provider/test-model",
@@ -859,21 +1185,228 @@ test("createAiSdkDecisionProvider rejects a catalog request after every capabili
       object: {
         action: "request_capabilities",
         source: "test_ai_sdk",
-        reason: "invalid continuation",
+        reason: "an authorized operation needs another invocation",
         result: "",
       },
     }),
   });
   const request = agentDecisionSummaryRequest();
   request.model_input.agent_state = {
-    completed_capability_refs: [...request.capability_refs],
-    remaining_capability_refs: [],
+    used_capability_refs: [...request.capability_refs],
+    available_capability_refs: [...request.capability_refs],
   };
 
-  await assert.rejects(
-    () => provider(request),
-    /request_capabilities is unavailable after all declared capabilities have been consumed/u,
+  assert.equal((await provider(request)).action, "request_capabilities");
+});
+
+test("createAiSdkDecisionProvider supports bounded terminal completion", async () => {
+  const calls = [];
+  const provider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    source: "test_ai_sdk",
+    generateObject: async (request) => {
+      calls.push(request);
+      return {
+        object: {
+          action: "answer_directly",
+          source: "test_ai_sdk",
+          reason: "the observation satisfies the goal",
+          result: "terminal result",
+        },
+      };
+    },
+  });
+
+  const decision = await provider(agentDecisionFinalizationRequest());
+
+  assert.equal(decision.action, "answer_directly");
+  assert.equal(decision.result, "terminal result");
+  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_finalization_decision");
+  assert.deepEqual(
+    jsonSchemaOf(calls[0]).properties.action.enum,
+    ["answer_directly", "cannot_complete"],
   );
+  assert.match(calls[0].system, /no new capability call/iu);
+  assert.match(calls[0].system, /do not invent a missing result/iu);
+});
+
+test("createAiSdkDecisionProvider can declare terminal work incomplete", async () => {
+  const provider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    source: "test_ai_sdk",
+    generateObject: async () => ({
+      object: {
+        action: "cannot_complete",
+        source: "test_ai_sdk",
+        reason: "a required observation is absent",
+        result: "",
+      },
+    }),
+  });
+
+  assert.deepEqual(await provider(agentDecisionFinalizationRequest()), {
+    action: "cannot_complete",
+    source: "test_ai_sdk",
+    reason: "a required observation is absent",
+  });
+});
+
+test("createAiSdkDecisionProvider keeps heterogeneous capability signatures separate", async () => {
+  const request = agentDecisionCatalogRequest();
+  request.capabilities = [
+    { target_ref: "tool:test/Lookup", signature: { inputs: [{ name: "value", type_ref: "builtin:Text" }] } },
+    { target_ref: "tool:test/Increment", signature: { inputs: [{ name: "value", type_ref: "builtin:Int" }] } },
+    { target_ref: "tool:test/Page", signature: { inputs: [{ name: "cursor", type_ref: "builtin:Int" }] } },
+    { target_ref: "tool:test/Refresh", signature: { inputs: [] } },
+  ];
+  request.capability_refs = request.capabilities.map((capability) => capability.target_ref);
+  request.model_input.capabilities = request.capabilities;
+  const choices = [
+    { target_ref: "tool:test/Lookup", arguments: { value: "record-8" } },
+    { target_ref: "tool:test/Increment", arguments: { value: 8 } },
+    { target_ref: "tool:test/Page", arguments: { cursor: 9 } },
+    { target_ref: "tool:test/Refresh", arguments: {} },
+  ];
+  let choice = choices[0];
+  const calls = [];
+  const provider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    allowHumanReview: false,
+    generateObject: async (call) => {
+      calls.push(call);
+      return { object: { action: "select_capability", ...choice, review_prompt: "" } };
+    },
+  });
+  for (const candidate of choices) {
+    choice = candidate;
+    const decision = await provider(request);
+    assert.deepEqual(decision.arguments, choice.arguments);
+  }
+  const branches = jsonSchemaOf(calls[0]).properties.arguments.anyOf;
+  assert.equal(branches.length, 4);
+  assert.deepEqual(branches.map((branch) => branch.required), [["value"], ["value"], ["cursor"], []]);
+  assert.equal(branches[0].properties.value.type, "string");
+  assert.equal(branches[1].properties.value.type, "integer");
+  for (const invalid of [
+    { target_ref: "tool:test/Lookup", arguments: { value: 8 } },
+    { target_ref: "tool:test/Increment", arguments: { value: "8" } },
+    { target_ref: "tool:test/Page", arguments: { value: 8 } },
+    { target_ref: "tool:test/Page", arguments: { cursor: 8, value: "unrelated" } },
+    { target_ref: "tool:test/Refresh", arguments: { cursor: 8 } },
+    { target_ref: "tool:test/Lookup", arguments: {} },
+  ]) {
+    choice = invalid;
+    await assert.rejects(() => provider(request), /selected capability arguments do not match/u);
+  }
+});
+
+test("createAiSdkDecisionProvider preserves declared result types in orientation and finalization", async () => {
+  const examples = [
+    { signature: { output_type: "builtin:Int" }, result: 3, type: "integer" },
+    { signature: { output_type: "builtin:Boolean" }, result: true, type: "boolean" },
+    { signature: { output_type: "builtin:Float" }, result: 2.5, type: "number" },
+    { signature: { output_type: "list:builtin:Int" }, result: [1, 3], type: "array" },
+    {
+      signature: {
+        output_type: "type:test/Count",
+        output_fields: [{ name: "total", type_ref: "builtin:Int" }],
+      },
+      result: { total: 3 },
+      type: "object",
+    },
+    {
+      signature: {
+        output_type: "list:type:test/Batch",
+        output_fields: [{
+          name: "item",
+          type_ref: "type:test/Item",
+          fields: [{ name: "name", type_ref: "builtin:Text" }],
+        }],
+      },
+      result: [{ item: { name: "entry" } }],
+      type: "array",
+    },
+  ];
+  for (const example of examples) {
+    for (const mode of ["summary", "finalization"]) {
+      const request = mode === "summary" ? agentDecisionSummaryRequest() : agentDecisionFinalizationRequest();
+      if (mode === "summary") request.model_input.agent = { signature: example.signature };
+      else request.agent_signature = example.signature;
+      let result = example.result;
+      const calls = [];
+      const provider = createAiSdkDecisionProvider({
+        model: "test-provider/test-model",
+        generateObject: async (call) => {
+          calls.push(call);
+          return { object: { action: "answer_directly", result } };
+        },
+      });
+      assert.deepEqual((await provider(request)).result, example.result);
+      const branches = jsonSchemaOf(calls[0]).properties.result.anyOf;
+      assert.equal(branches[0].type, example.type);
+      assert.deepEqual(branches[1], { type: "string", enum: [""] });
+      result = "";
+      await assert.rejects(() => provider(request), /agent result do not match/u);
+    }
+  }
+});
+
+test("createAiSdkDecisionProvider allows non-answer actions for a typed result", async () => {
+  const provider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    generateObject: async (call) => ({ object: {
+      action: jsonSchemaOf(call).title === "touba_agent_orientation_decision" ? "request_capabilities" : "cannot_complete",
+      reason: "more observations are required",
+      result: "",
+    } }),
+  });
+  const summary = agentDecisionSummaryRequest();
+  summary.agent_signature = { output_type: "builtin:Int" };
+  assert.equal((await provider(summary)).action, "request_capabilities");
+  const final = agentDecisionFinalizationRequest();
+  final.agent_signature = summary.agent_signature;
+  assert.equal((await provider(final)).action, "cannot_complete");
+});
+
+test("createAiSdkDecisionProvider refuses incomplete type descriptors before generation", async () => {
+  let calls = 0;
+  const provider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    generateObject: async () => { calls += 1; return { object: {} }; },
+  });
+  const request = agentDecisionSummaryRequest();
+  request.agent_signature = { output_type: "type:test/Missing" };
+  await assert.rejects(() => provider(request), (error) => error.code === "UnsupportedDecisionTypeDescriptor");
+  const catalog = agentDecisionCatalogRequest();
+  catalog.capabilities[0].signature.inputs[0].fields.push({ name: "nested", type_ref: "type:test/Missing" });
+  await assert.rejects(() => provider(catalog), (error) => error.code === "UnsupportedDecisionTypeDescriptor");
+  assert.equal(calls, 0);
+});
+
+test("createAiSdkDecisionProvider never expands authority from descriptive state or allows terminal selection", async () => {
+  const request = agentDecisionCatalogRequest();
+  request.model_input.agent_state = {
+    available_capability_refs: [...request.capability_refs, "tool:test/Undeclared"],
+    used_capability_refs: request.capability_refs,
+  };
+  const provider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    generateObject: async () => ({ object: {
+      action: "select_capability",
+      target_ref: "tool:test/Undeclared",
+      arguments: {},
+    } }),
+  });
+  await assert.rejects(() => provider(request), /unavailable capability/u);
+  const terminalProvider = createAiSdkDecisionProvider({
+    model: "test-provider/test-model",
+    generateObject: async () => ({ object: {
+      action: "select_capability",
+      target_ref: request.capability_refs[0],
+      arguments: { request: { query: "x", rows: 1 } },
+    } }),
+  });
+  await assert.rejects(() => terminalProvider(agentDecisionFinalizationRequest()), /unavailable capability/u);
 });
 
 test("ToubaEngine requires a single AIR source for run", async () => {
@@ -891,7 +1424,7 @@ function agentDecisionSummaryRequest() {
     run_id: "run-sdk-test",
     agent_ref: "agent:test/Researcher",
     agent_name: "Researcher",
-    responsibility: "Répondre ou sélectionner une capacité autorisée.",
+    responsibility: "Answer directly or select an authorized capability.",
     input_keys: ["request"],
     inputs: {
       request: {
@@ -938,6 +1471,25 @@ function agentDecisionCatalogRequest() {
       capabilities: capabilityDescriptors(),
     },
     capabilities: capabilityDescriptors(),
+  };
+}
+
+function agentDecisionFinalizationRequest() {
+  const request = agentDecisionSummaryRequest();
+  return {
+    ...request,
+    mode: "finalization",
+    model_input: {
+      ...request.model_input,
+      mode: "finalization",
+      agent_state: {
+        phase: "finalization",
+        execution_budget_exhausted: true,
+        used_capability_refs: ["skill:test/Search"],
+        available_capability_refs: [],
+      },
+      allowed_actions: ["answer_directly", "cannot_complete"],
+    },
   };
 }
 

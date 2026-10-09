@@ -7,7 +7,7 @@ sidebar_position: 8
 Cette page liste les diagnostics et erreurs utilisateur principaux.
 
 :::info Comment lire cette page
-Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action recommandée. Pour approfondir, consulter la [référence CLI](./cli-v1-rc.md) ou le [guide dépannage](../guides/depannage.md).
+Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action recommandée. Pour approfondir, consulter la [référence CLI](./cli-v1-rc.md) ou le [guide dépannage](https://pap-touba.github.io/documentation-site/docs/guides/depannage).
 :::
 
 ## Compilation et sémantique

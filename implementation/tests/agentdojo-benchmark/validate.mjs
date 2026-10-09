@@ -232,13 +232,17 @@ async function runLargeObservationBudgetCase(document, caseDef) {
   const largeDocument = "AGENTDOJO_LARGE_EXTERNAL_DOCUMENT_BLOCK_".repeat(80);
   const largeDocumentAir = replaceSkillLiteral(document, READ_INBOX, largeDocument);
   const providerCalls = [];
+  // The descriptor now also carries invocation arguments and their type metadata.
+  // Keep the positive budget below the raw document size, but above its envelope.
+  const observationBudget = 1024;
+  assert.ok(Buffer.byteLength(largeDocument) > observationBudget);
 
   const result = await executeAirDocument(largeDocumentAir, {
     entryRef: ENTRY_REF,
     runId: caseDef.id,
     inputs: externalInputs(),
     agentDecisionProviderContentMode: "opaque_refs",
-    agentProviderObservationsMaxBytes: 600,
+    agentProviderObservationsMaxBytes: observationBudget,
     maxAgentSteps: 6,
     agentDecisionProviderMetadata: providerMetadata(caseDef),
     agentDecisionProvider: (request) => {
@@ -258,7 +262,7 @@ async function runLargeObservationBudgetCase(document, caseDef) {
       }
       if (request.step_index === 1 && request.mode === "summary") {
         assertOpaqueObservation(request);
-        assert.equal(request.model_input.agent_state.observation_budget.max_bytes, 600);
+        assert.equal(request.model_input.agent_state.observation_budget.max_bytes, observationBudget);
         assert.equal(request.model_input.agent_state.observation_budget.content_mode, "opaque_refs");
         return {
           action: "answer_directly",
@@ -271,12 +275,40 @@ async function runLargeObservationBudgetCase(document, caseDef) {
     },
   });
 
-  assert.equal(result.status, "success");
+  assert.equal(result.status, "success", JSON.stringify(result.trace.events
+    .filter((event) => ["failure_detected", "agent_observations_budget_refused"].includes(event.kind))));
   assert.equal(result.result, "large-summary-ready");
   assert.equal(providerCalls.length, 3);
   assert.equal(eventsOf(result.trace, "agent_observations_budget_refused").length, 0);
   assertNoLeak(result.trace, [largeDocument, USER_GOAL]);
   assertRunCompleted(result.trace, "success");
+
+  // A budget too small for the descriptor still fails before the next provider
+  // request. This is a contract regression, not a live-model benchmark score.
+  let refusedProviderCalls = 0;
+  const refused = await executeAirDocument(largeDocumentAir, {
+    entryRef: ENTRY_REF,
+    runId: `${caseDef.id}-descriptor-refusal`,
+    inputs: externalInputs(),
+    agentDecisionProviderContentMode: "opaque_refs",
+    agentProviderObservationsMaxBytes: 600,
+    maxAgentSteps: 6,
+    agentDecisionProvider: (request) => {
+      refusedProviderCalls += 1;
+      assert.equal(request.step_index, 0);
+      assertNoLeak(request, [largeDocument, USER_GOAL]);
+      return request.mode === "summary"
+        ? { action: "request_capabilities", reason: "Read the authorized document." }
+        : { target_ref: READ_INBOX, reason: "Read the document.", arguments: {} };
+    },
+  });
+  assert.equal(refused.status, "failure");
+  assert.equal(refusedProviderCalls, 2);
+  const budgetRefusal = eventOf(refused.trace, "agent_observations_budget_refused").payload;
+  assert.equal(budgetRefusal.budget_max_bytes, 600);
+  assert.ok(budgetRefusal.consumed_bytes > budgetRefusal.budget_max_bytes);
+  assertNoLeak(refused.trace, [largeDocument, USER_GOAL]);
+  assertRunCompleted(refused.trace, "failure");
   return caseReport(caseDef, result, {
     provider_calls: providerCalls.length,
     raw_payload_leak_detected: false,
@@ -465,7 +497,7 @@ function assertOpaqueRequest(request) {
   assert.equal(request.external_content_access.raw_content_in_provider_request, false);
   assert.equal(
     request.external_content_access.full_content_request_policy,
-    "explicit_authorized_capability_required",
+    "not_supported",
   );
   assert.equal(request.model_input.content_boundary.provider_content_mode, "opaque_refs");
   assert.equal(request.model_input.content_boundary.raw_external_content_in_request, false);

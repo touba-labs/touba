@@ -26,11 +26,15 @@ lossless mapping to the source contract and its `schema_version`.
 | `touba-project-change-result-v0.1` | client | Final applied/refused change result and evidence. |
 | `touba-project-change-history-v0.1` | client | Read-only change proposal inbox with pending, applied and refused states. |
 | `touba-project-change-detail-v0.1` | client | Detailed change proposal evidence without raw patch content. |
+| `touba-element-authoring-request-v0.1` | client, project server | Typed semantic intention for one Touba primitive; optionally binds submission to an exact preview digest. |
+| `touba-element-authoring-preview-v0.1` | client | Read-only Core-rendered file diffs, validations, impact and digest before a proposal exists. |
 | `touba-project-event-stream-v0.1` | client, Mobile | Live event stream descriptor for project-server clients. |
 | `touba-project-event-v0.1` | client, Mobile | Contracted event envelope emitted by the project server. |
 | `touba-authority-graph-v0.1` | client | Project authority graph derived from Touba source, AIR and metadata artifacts. |
 | `touba-product-identity-v0.1` | client, Mobile | Product identity surface for users, teams, devices, assignments and escalation policies. |
 | `touba-run-summary-v1` | client, Mobile | Compact run status, trace reference, budget usage, pending approvals. |
+| `touba-operation-resume-request-v1` | client, CLI | Exact RESUME-1 checkpoint claim for one interrupted operation. |
+| `touba-operation-recovery-v1` | client, CLI | Server-derived operation state, freshness, correlations, effect reconciliation class, allowed actions and refusal. |
 | `touba-interaction-session-create-v0.1` | client | Creates a bounded interaction session for one executable project target and one effect policy. |
 | `touba-interaction-message-request-v0.1` | client | Submits typed inputs and a display message to an interaction session. |
 | `touba-interaction-resume-request-v0.1` | client | Resumes the durable human checkpoint associated with an interaction session. |
@@ -124,6 +128,7 @@ POST /project/refresh
 GET  /authority/graph
 GET  /identity
 GET  /runs/current
+GET  /operations/<operation_id>/recovery
 POST /runs/sandbox
 POST /runs/sandbox/resume
 GET  /interactions/sessions
@@ -148,6 +153,8 @@ GET  /changes
 GET  /changes/<proposal_id>
 POST /changes/propose
 POST /changes/apply
+POST /elements/preview
+POST /elements/propose
 ```
 
 The two `pending/current` routes accept an optional `run_id` query parameter.
@@ -155,6 +162,21 @@ With it, the server returns only an undecided request for that exact run, or
 `ToubaServePendingHumanRequestNotFound` (404). Without it, the first pending
 request is preserved for existing clients. Reading a targeted request does not
 consume or approve any queue entry; client uses it for the active interaction.
+
+`GET /operations/<operation_id>/recovery` projects the durable checkpoint,
+human wait and effect journal without exposing receipts, handler payloads or
+secret values. `allowed_actions` is computed by the server: an interrupted
+checkpoint is resumable only while an ambiguous effect is retry-safe; a
+`reconcile` or `none` ambiguity is exposed as a structured refusal. Human
+waits expose `submit_decision` only before expiration. The route requires
+`executions.read`; advertised actions still require their own
+`executions.run` or `decisions.act` permission.
+
+New RESUME-1 clients send `touba-operation-resume-request-v1` to
+`POST /runs/sandbox/resume`. The server continues to accept the same five
+legacy fields without `schema_version` for existing local clients. Revision,
+digest and request identity are checked server-side; a stale or concurrent
+claim is never resolved by UI state.
 
 `/state` returns the current project server state. `/authority/graph` returns
 `touba-authority-graph-v0.1`, a graph of declared modules, packages, triggers,
@@ -197,6 +219,13 @@ view of accepted human decisions for client and Mobile.
 `touba-project-refresh-v0.1`. The refresh result includes a bounded artifact
 snapshot, changed artifacts and diagnostics such as stale AIR.
 
+`POST /elements/preview` and `POST /elements/propose` accept the same typed
+`touba-element-authoring-request-v0.1` intention. Preview renders and validates
+the exact source, manifest and guarded handler-stub targets without writing a
+file or a pending proposal. It returns `touba-element-authoring-preview-v0.1`.
+client sends its `preview_digest` with the subsequent proposal; the server
+recomputes current target digests and rejects stale previews before persistence.
+
 `/project` includes an interaction profile for each executable target. The
 profile derives a presentation mode, primary text path, structured context and
 accepted content kinds from the compiled input contract. Ambiguous signatures
@@ -210,6 +239,32 @@ When a run stops at a durable human checkpoint,
 `/interactions/sessions/<session_id>/resume` verifies that the decision and
 resumed `run_id` belong to the latest stopped run in that session before
 recording the continuation.
+
+The runtime's `stopped` status is not itself a pending human decision. A durable
+open checkpoint is projected as operation `awaiting_human` and summary
+`approval_pending` or `review_pending`. A terminal human rejection or expiration
+keeps the sandbox result `stopped`, but projects to operation/session `failed`
+and summary `refused`, with a completion time and no pending approval. A terminal
+human cancellation projects to operation/summary `cancelled`; the session is
+open again. These terminal sessions can be archived. Structured diagnostic codes
+`ToubaSandboxHumanDecisionRejected`, `ToubaSandboxHumanDecisionExpired` and
+`ToubaSandboxHumanDecisionCancelled` distinguish the causes without parsing
+diagnostic prose or changing the runtime result contract.
+
+Each distinct checkpoint result and terminal result is retained in interaction
+history. Retrying the same result does not duplicate it. Retrying a checkpoint
+already replaced by a later checkpoint returns its recorded continuation rather
+than executing it again; the interaction endpoint preserves the current
+operation. At startup, the server can repair an older interaction incorrectly
+left `awaiting_human`, but only when a matching completed durable checkpoint has
+a valid terminal result and a terminal human event in its trace. It does not
+accept a trace whose own run or entrypoint reference belongs to another run or
+target, even when the surrounding result matches the session. It does not
+infer decisions from missing requests, rerun effects, or repair history whose
+terminal evidence is absent. A current run summary is repaired only for the same
+run. Generated approval requests still allow only `approve` and `reject`; this
+projection correction does not add a client cancellation permission or an
+automatic expiration scheduler.
 
 `/interaction-assets` accepts only bounded media types declared by the target's
 canonical handle type. The server verifies the SHA-256 digest, stores the bytes

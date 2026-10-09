@@ -10,7 +10,7 @@ const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
 const implementationRoot = path.resolve(fixtureRoot, "../../..");
 const sourcePath = path.join(fixtureRoot, "source/donnees-quebec-agent-live.tb");
 const decisionProviderPath = path.join(fixtureRoot, "providers/donnees-quebec-researcher.provider.mjs");
-const defaultSecretsPath = path.join(fixtureRoot, "secrets/touba.secrets.prod.json");
+const defaultSecretsPath = path.join(fixtureRoot, "secrets/secret-handles.env.fixture.json");
 const secretsPath = argValue("--secrets") ?? defaultSecretsPath;
 const traceOutPath = argValue("--trace-out");
 const evidenceOutPath = argValue("--evidence-out");
@@ -26,7 +26,7 @@ const request = Object.freeze({
   rows: 1,
   dry_run: dryRunMode,
   llm_model: openAiModel,
-  goal: "Trouver un jeu de données public puis produire un bref résumé en français.",
+  goal: "Find a public dataset, then produce a brief summary in French.",
 });
 
 if (liveMode && process.argv.includes("--dry-run")) {

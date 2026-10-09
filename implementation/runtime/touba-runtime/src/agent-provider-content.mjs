@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
  * @property {string=} target_ref
  * @property {string=} kind
  * @property {string=} result_type
+ * @property {Record<string, unknown>=} arguments
  * @property {unknown=} value
  *
  * @typedef {object} OpaqueValueMetadata
@@ -42,6 +43,7 @@ import { createHash } from "node:crypto";
  * @property {string=} target_ref
  * @property {string=} kind
  * @property {string=} result_type
+ * @property {Record<string, unknown>=} arguments
  * @property {unknown=} value
  * @property {string=} summary
  * @property {OpaqueValueMetadata=} metadata
@@ -122,6 +124,7 @@ export function agentDecisionProviderContent(inputs, observations, context) {
     target_ref: observation.target_ref,
     kind: observation.kind,
     result_type: observation.result_type,
+    arguments: observation.arguments,
     value: observation.value,
   }));
   return {
@@ -248,6 +251,10 @@ function opaqueRuntimeObservationDescriptor(observation, index) {
     target_ref: observation.target_ref,
     kind: observation.kind,
     result_type: observation.result_type,
+    arguments: observation.arguments === undefined ? undefined : {
+      ref: `opaque:runtime_observation/${opaqueRefSegment(stepIndex, `observation-${index}`)}/arguments`,
+      metadata: opaqueValueShape(observation.arguments),
+    },
     summary: opaqueValueSummary(valueShape),
     metadata: valueShape,
   }));
@@ -322,8 +329,9 @@ function agentExternalContentAccessPolicy(mode, refCount) {
     return {
       raw_content_in_provider_request: false,
       content_ref_count: refCount,
-      full_content_request_policy: "explicit_authorized_capability_required",
-      full_content_request_path: "select_capability_with_content_ref",
+      // These are descriptors, not dereferenceable runtime handles. Do not
+      // advertise a content-fetch operation that this runtime cannot execute.
+      full_content_request_policy: "not_supported",
       budgeted_by: ["max_provider_calls", "max_agent_steps", "run_limits", "tool_binding_limits"],
       traced_by: ["agent_decision_requested", "agent_capability_selected", "agent_capability_result_returned"],
     };

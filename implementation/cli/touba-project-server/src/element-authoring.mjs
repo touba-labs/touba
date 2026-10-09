@@ -92,6 +92,7 @@ export function buildElementAuthoringChangeSet({ projectRoot, request }) {
     requested_by: normalized.requested_by,
     reason: normalized.reason,
     element_ref: elementRef,
+    preview_digest: normalized.preview_digest,
     changes,
   };
 }
@@ -105,7 +106,7 @@ export function normalizeElementAuthoringRequest(request) {
   }
   assertKnownKeys(
     request,
-    ["schema_version", "proposal_id", "module_ref", "element", "requested_by", "reason"],
+    ["schema_version", "proposal_id", "module_ref", "element", "requested_by", "reason", "preview_digest"],
     "request",
   );
   const proposalId = nonEmptyString(request.proposal_id, "proposal_id");
@@ -237,6 +238,9 @@ export function normalizeElementAuthoringRequest(request) {
     },
     requested_by: normalizeActor(request.requested_by),
     reason: typeof request.reason === "string" ? request.reason.trim() : "",
+    preview_digest: request.preview_digest === undefined
+      ? null
+      : nonEmptyString(request.preview_digest, "preview_digest"),
   };
 }
 

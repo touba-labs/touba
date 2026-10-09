@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 
+import {
+  effectContractToJson,
+  normalizeEffectContract,
+} from "../../touba-manifest/src/effect-contract.mjs";
+
 export const EFFECTIVE_PROJECT_SCHEMA_VERSION = "touba-effective-project-v1";
 
 export function buildEffectiveProjectDocument(options) {
@@ -76,6 +81,14 @@ export function buildEffectiveProjectDocument(options) {
           bindings: toolBindings.map(([toolRef, binding]) => ({
             tool_ref: toolRef,
             kind: binding.handler?.kind ?? "unknown",
+            ...(Object.hasOwn(binding, "effect_contract")
+              ? {
+                effect_contract: effectContractToJson(normalizeEffectContract(
+                  binding.effect_contract,
+                  { label: `bindings.${toolRef}.effect_contract` },
+                )),
+              }
+              : {}),
           })),
         })
         : projection("non_applicable", [], { reason: "the prepared AIR declares no tool" }),

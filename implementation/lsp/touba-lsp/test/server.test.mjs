@@ -524,6 +524,45 @@ test("definitionForPosition stays absent for unresolved positions and non-local 
   }), null);
 });
 
+test("temporary compilation source maps to the editor URI without changing AIR or imported sources", () => {
+  const air = hoverFixtureAir();
+  const compiledSource = "/tmp/touba-lsp-exact/source.tb";
+  const documentUri = "file:///project%20space/current.tb";
+  const sourceUris = new Map([[compiledSource, documentUri]]);
+  air.module.source_ref.source_id = compiledSource;
+  air.definitions.tools[0].source_ref.source_id = compiledSource;
+  // A different module with the same basename must not match the temporary file.
+  air.definitions.tools[1].source_ref.source_id = "/tmp/other-module/source.tb";
+  const unchanged = structuredClone(air);
+
+  for (const position of [{ line: 14, character: 10 }, { line: 16, character: 8 }]) {
+    assert.deepEqual(definitionForPosition(air, documentUri, position, sourceUris), {
+      uri: documentUri,
+      range: { start: { line: 9, character: 0 }, end: { line: 10, character: 0 } },
+    });
+  }
+  assert.equal(
+    definitionForPosition(air, documentUri, { line: 37, character: 3 }, sourceUris).uri,
+    "file:///tmp/other-module/source.tb",
+  );
+  const symbols = extractSymbols(air, documentUri, sourceUris);
+  assert.equal(symbols.find((symbol) => symbol.kind === SymbolKind.Module).location.uri, documentUri);
+  assert.equal(symbols.find((symbol) => symbol.name === "FetchDraft").location.uri, documentUri);
+  assert.equal(symbols.find((symbol) => symbol.name === "SearchDatasets").location.uri, "file:///tmp/other-module/source.tb");
+  assert.deepEqual(air, unchanged);
+});
+
+test("temporary source mapping preserves non-file editor URI schemes", () => {
+  const air = hoverFixtureAir();
+  const compiledSource = "/tmp/touba-lsp-unsaved/source.tb";
+  const documentUri = "untitled:Untitled-1";
+  air.definitions.tools[0].source_ref.source_id = compiledSource;
+  assert.equal(
+    definitionForPosition(air, documentUri, { line: 14, character: 10 }, new Map([[compiledSource, documentUri]])).uri,
+    documentUri,
+  );
+});
+
 test("completionForPosition returns deterministic keywords and local declarations", () => {
   const labels = completionForPosition(hoverFixtureAir(), "    us", {
     line: 0,

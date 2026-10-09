@@ -1,0 +1,7 @@
+{
+  "schema_version": "touba-operation-resume-request-v1",
+  "operation_id": "operation:invoice-17",
+  "checkpoint_revision": 3,
+  "checkpoint_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "resume_request_id": "resume:invoice-17:attempt-1"
+}

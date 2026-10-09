@@ -1,0 +1,49 @@
+{
+  "schema_version": "touba-operation-recovery-v1",
+  "generated_at": "2026-09-22T12:00:00.000Z",
+  "operation_id": "operation:invoice-17",
+  "run_id": "run:invoice-17",
+  "target_ref": "strategy:billing/IssueInvoice",
+  "status": "interrupted",
+  "freshness": {
+    "observed_at": "2026-09-22T12:00:00.000Z",
+    "source_updated_at": "2026-09-22T11:59:58.000Z",
+    "state_revision": 3,
+    "state_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "correlations": {
+    "effect_scope_id": "operation:invoice-17",
+    "checkpoint_revision": 3,
+    "checkpoint_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "human_request_id": null,
+    "resume_request_id": null
+  },
+  "effects": {
+    "total": 1,
+    "prepared": 0,
+    "dispatched": 1,
+    "applied": 0,
+    "not_applied": 0,
+    "unknown": 0,
+    "reconciliation": "retry_safe"
+  },
+  "authority": {
+    "read_permission": "executions.read",
+    "action_permission": "executions.run",
+    "enforced_by": "touba-project-server"
+  },
+  "allowed_actions": [
+    {
+      "action": "resume",
+      "method": "POST",
+      "href": "/runs/sandbox/resume",
+      "request_schema_version": "touba-operation-resume-request-v1",
+      "required_permission": "executions.run",
+      "preconditions": {
+        "checkpoint_revision": 3,
+        "checkpoint_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  ],
+  "refusal": null
+}

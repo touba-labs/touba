@@ -1,5 +1,6 @@
 {
   "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
@@ -13,7 +14,8 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "trigger:test/DailyRun"
+        "entry_ref": "trigger:test/DailyRun",
+        "max_loop_iterations": 100
       }
     },
     {
@@ -59,6 +61,20 @@
       "event_id": "event:run-1:5",
       "run_id": "run-1",
       "sequence_index": 4,
+      "kind": "failure_detected",
+      "payload": {
+        "failure_mode": "run",
+        "failure_family": "business",
+        "runtime_error_code": "TriggerRateLimited",
+        "target_ref": "trigger:test/DailyRun",
+        "selected_ref": "strategy:test/RunDaily"
+      },
+      "message": "trigger refused trigger:test/DailyRun: max_runs_per_day_reached"
+    },
+    {
+      "event_id": "event:run-1:6",
+      "run_id": "run-1",
+      "sequence_index": 5,
       "kind": "run_completed",
       "payload": {
         "status": "failure"

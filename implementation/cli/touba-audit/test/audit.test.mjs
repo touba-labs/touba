@@ -44,6 +44,15 @@ test("generates a TA-1 audit manifest and validation report for coherent artifac
   });
 });
 
+test("accepts a supplied V3 tool manifest as a versioned audit artifact", () => {
+  withFixtureProject((fixture) => {
+    fixture.manifest.manifest_version = "touba-manifest-v3";
+    writeJson(fixture.paths.manifest, fixture.manifest);
+    const validation = validateTraceAuditArtifacts(loadTraceAuditArtifacts(fixture.paths));
+    assert.equal(validation.validationReport.status, "ok");
+  });
+});
+
 test("reports trace and AIR module mismatch", () => {
   withFixtureProject((fixture) => {
     fixture.air.module.id = "module:examples.other";

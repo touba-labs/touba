@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
@@ -13,6 +14,7 @@ import {
   buildAuthorityGraph,
   buildGovernanceReadiness,
   buildHandlerSandboxStatus,
+  buildElementAuthoringPreview,
   buildSupplyChainStatus,
   readCostObservatory,
   readMobileEscalation,
@@ -22,6 +24,7 @@ import {
   buildContractIndex,
   buildLiveState,
   buildProjectEvent,
+  buildSandboxRunResult,
   buildProjectDeploymentPlan,
   buildTriggerQueueHealth,
   createToubaProjectServer,
@@ -33,6 +36,7 @@ import {
   listProjectChanges,
   loadOptionalProjectSecretStore,
   preflightServeOptions,
+  projectOperationRecoveryDecision,
   proposeProjectChange,
   proposeProjectChangeSet,
   proposeGovernanceRelationChange,
@@ -48,6 +52,16 @@ import {
   revokeMobilePairing,
   refreshProject,
 } from "../src/serve.mjs";
+import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
+import {
+  archiveInteractionSession,
+  completeInteractionOperation,
+  createInteractionSession,
+  enqueueInteractionOperation,
+  getInteractionSession,
+  listInteractionSessions,
+  startInteractionOperation,
+} from "../src/interactions.mjs";
 import { createDeploymentTargetService } from "../../touba-deployment/src/serve.mjs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 import {
@@ -65,6 +79,36 @@ test("contract index lists product-surface contracts without filesystem paths", 
   assert.equal(index.contracts.some((item) => item.schema_version === "touba-run-summary-v1"), true);
   assert.equal(index.contracts.every((item) => item.status === "available"), true);
   assert.equal(JSON.stringify(index).includes(contractsRoot), false);
+});
+
+test("element authoring preview renders and validates changes without mutating the project", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-element-preview-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    const sourcePath = join(root, "src", "main.tb");
+    const source = "module demo.preview\n";
+    writeFileSync(sourcePath, source, "utf8");
+    const preview = buildElementAuthoringPreview({
+      projectRoot: root,
+      generatedAt: "2026-09-22T20:00:00.000Z",
+      request: {
+        schema_version: "touba-element-authoring-request-v0.1",
+        proposal_id: "preview_memory_001",
+        module_ref: "demo.preview",
+        element: { kind: "memory", name: "ReviewMemory", description: "" },
+        requested_by: { kind: "studio", id: "touba-studio" },
+        reason: "Preview a governed memory.",
+      },
+    });
+    assertMatchesSchema("touba-element-authoring-preview-v0.1", preview);
+    assert.equal(preview.impact.file_count, 1);
+    assert.equal(preview.impact.update_count, 1);
+    assert.match(preview.changes[0].diff, /\+memory ReviewMemory/u);
+    assert.equal(readFileSync(sourcePath, "utf8"), source);
+    assert.equal(existsSync(join(root, ".touba", "project-change-proposals.json")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("project server contracts keep product presentation outside the Touba project", () => {
@@ -182,12 +226,40 @@ test("human identity permissions map project reads and governed actions", () => 
   assert.equal(requiredIdentityPermission("GET", "/health"), null);
   assert.equal(requiredIdentityPermission("GET", "/state"), "projects.read");
   assert.equal(requiredIdentityPermission("GET", "/events"), "executions.read");
+  assert.equal(
+    requiredIdentityPermission("GET", "/operations/operation%3A17/recovery"),
+    "executions.read",
+  );
   assert.equal(requiredIdentityPermission("POST", "/runs/sandbox"), "executions.run");
   assert.equal(requiredIdentityPermission("POST", "/decisions"), "decisions.act");
   assert.equal(requiredIdentityPermission("GET", "/decisions"), "decisions.read");
   assert.equal(requiredIdentityPermission("POST", "/changes/propose"), "governance.propose");
+  assert.equal(requiredIdentityPermission("POST", "/elements/preview"), "governance.propose");
   assert.equal(requiredIdentityPermission("POST", "/changes/apply"), "governance.apply");
   assert.equal(requiredIdentityPermission("POST", "/deployments/publish"), "deployments.publish");
+});
+
+test("operation recovery advertises resume only for retry-safe ambiguity", () => {
+  const base = {
+    correlations: { checkpoint_revision: 4, checkpoint_digest: `sha256:${"a".repeat(64)}` },
+    execution: { resume_claim: null },
+    generatedAt: "2026-09-22T12:00:00.000Z",
+    human: undefined,
+    status: "interrupted",
+  };
+  const effects = (reconciliation) => ({ reconciliation });
+
+  const safe = projectOperationRecoveryDecision({ ...base, effects: effects("retry_safe") });
+  assert.deepEqual(safe.allowedActions.map((action) => action.action), ["resume"]);
+  assert.equal(safe.refusal, null);
+
+  const reconcile = projectOperationRecoveryDecision({ ...base, effects: effects("provider_required") });
+  assert.deepEqual(reconcile.allowedActions, []);
+  assert.equal(reconcile.refusal.code, "EffectReconciliationRequired");
+
+  const unavailable = projectOperationRecoveryDecision({ ...base, effects: effects("unavailable") });
+  assert.deepEqual(unavailable.allowedActions, []);
+  assert.equal(unavailable.refusal.code, "EffectOutcomeUnknown");
 });
 
 test("human identity introspection separates active sessions from permissions", async () => {
@@ -235,6 +307,8 @@ test("HTTP project server enforces human sessions and permissions", async () => 
     assert.equal(request.headers["x-touba-service-token"], serviceToken);
     const permissions = body.access_token === "viewer-token"
       ? ["projects.read"]
+      : body.access_token === "execution-reader-token"
+        ? ["executions.read"]
       : body.access_token === "operator-token"
         ? ["projects.read", "projects.manage"]
         : body.access_token === "governor-token"
@@ -270,6 +344,17 @@ test("HTTP project server enforces human sessions and permissions", async () => 
       headers: { "x-touba-identity-token": "viewer-token" },
     });
     assert.equal(viewerRead.status, 200);
+
+    const viewerRecovery = await fetch(`${baseUrl}/operations/missing/recovery`, {
+      headers: { "x-touba-identity-token": "viewer-token" },
+    });
+    assert.equal(viewerRecovery.status, 403);
+    assert.equal((await viewerRecovery.json()).code, "ToubaServeIdentityPermissionDenied");
+    const executionReaderRecovery = await fetch(`${baseUrl}/operations/missing/recovery`, {
+      headers: { "x-touba-identity-token": "execution-reader-token" },
+    });
+    assert.equal(executionReaderRecovery.status, 404);
+    assert.equal((await executionReaderRecovery.json()).code, "ToubaServeOperationNotFound");
 
     const viewerWrite = await fetch(`${baseUrl}/project/refresh`, {
       method: "POST",
@@ -2644,7 +2729,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
-  writeFileSync(join(root, ".touba", "air", "demo", "main.air.json"), JSON.stringify(sandboxAirDocument(), null, 2), "utf8");
+  writeFileSync(join(root, ".touba", "air", "demo", "main.air.json"), JSON.stringify(sandboxAirDocument({ withInput: true }), null, 2), "utf8");
   writeFileSync(join(root, "touba.manifest.json"), JSON.stringify(sandboxManifestDocument(), null, 2), "utf8");
   const service = createToubaProjectServer({
     contractsRoot,
@@ -2702,6 +2787,21 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     assert.equal(functionRun.result, "function-ready");
     assert.equal(functionRun.trace.entry_ref, "function:demo.sandbox/FormatReady");
 
+    const inputResponse = await postJson(`${baseUrl}/runs/sandbox`, {
+      schema_version: "touba-sandbox-run-request-v0.1",
+      execution_kind: "entrypoint",
+      target_ref: "strategy:demo.sandbox/EchoInput",
+      effect_policy: "runtime_only",
+      inputs: { query: "caller-provided" },
+      requested_by: { kind: "studio", id: "test-suite" },
+      reason: "keep non-empty input runs non-durable until RESUME-1 models inputs",
+    });
+    assert.equal(inputResponse.status, 200);
+    const inputRun = await inputResponse.json();
+    assert.equal(inputRun.status, "success");
+    assert.equal(inputRun.result, "caller-provided");
+    assert.equal(inputRun.trace.entry_ref, "strategy:demo.sandbox/EchoInput");
+
     const triggerResponse = await postJson(`${baseUrl}/triggers/fire`, {
       schema_version: "touba-sandbox-run-request-v0.1",
       execution_kind: "trigger",
@@ -2719,11 +2819,1150 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     assert.equal(triggerRun.status, "success");
     assert.equal(triggerRun.result, "triggered");
     assert.equal(triggerRun.trace.entry_ref, "trigger:demo.sandbox/ManualCheck");
+    const checkpoints = JSON.parse(readFileSync(join(root, ".touba", "sandbox-checkpoints.json"), "utf8"));
+    const executionRecords = checkpoints.records.filter((record) => record.record_kind === "execution");
+    assert.deepEqual(
+      executionRecords.map((record) => record.target_ref).sort(),
+      ["function:demo.sandbox/FormatReady", "strategy:demo.sandbox/RunReady"],
+      "direct strategies and function body graphs are durable, triggers are deliberately excluded",
+    );
+    assert.equal(executionRecords.every((record) => record.status === "completed"), true);
   } finally {
     await service.stop();
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+for (const surface of ["sandbox", "interaction"]) {
+  test(`initial durable ${surface} execution revalidates control-plane authority before handler spawn`, async () => {
+    const root = mkdtempSync(join(tmpdir(), `touba-project-server-initial-authority-${surface}-`));
+    const accessToken = `identity-initial-${surface}-token`;
+    const serviceToken = "identity-initial-service-token-at-least-32-characters";
+    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+    const journalPath = join(root, ".touba", "project.effect-journal.json");
+    const sessionsPath = join(root, ".touba", "interaction-sessions.json");
+    const handlerStartedPath = join(root, ".touba", "initial-handler-started");
+    let identityActive = true;
+    let identityChecks = 0;
+    let observeDispatchAuthority;
+    const dispatchAuthorityObserved = new Promise((resolveObserved) => {
+      observeDispatchAuthority = resolveObserved;
+    });
+    let releaseDispatchAuthority;
+    const dispatchAuthorityGate = new Promise((resolveAuthority) => {
+      releaseDispatchAuthority = resolveAuthority;
+    });
+    const identityServer = createHttpServer(async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.equal(request.headers["x-touba-service-token"], serviceToken);
+      assert.equal(body.access_token, accessToken);
+      identityChecks += 1;
+      if (identityChecks === 2) {
+        observeDispatchAuthority();
+        await dispatchAuthorityGate;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        active: identityActive,
+        permissions: identityActive ? ["executions.run"] : [],
+        user: { id: "user:initial-authority" },
+      }));
+    });
+    let service;
+    try {
+      mkdirSync(join(root, "src"), { recursive: true });
+      mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+      writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
+      writeFileSync(
+        join(root, ".touba", "air", "demo", "main.air.json"),
+        JSON.stringify(sandboxAirDocument({ withTool: true }), null, 2),
+        "utf8",
+      );
+      const handlerPath = join(root, "initial-authority-handler.mjs");
+      writeFileSync(handlerPath, `
+        import { writeFileSync } from "node:fs";
+        writeFileSync(${JSON.stringify(handlerStartedPath)}, "started\\n", "utf8");
+        let input = "";
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", (chunk) => { input += chunk; });
+        process.stdin.on("end", () => {
+          const request = JSON.parse(input);
+          process.stdout.write(JSON.stringify({
+            ok: true,
+            value: "must-not-run",
+            effect_receipt: {
+              effect_id: request.effect.effect_id,
+              request_digest: request.effect.request_digest,
+              outcome: "applied",
+              receipt_ref: "opaque:test:must-not-run",
+            },
+          }));
+        });
+      `, "utf8");
+      writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
+        manifest_version: "touba-manifest-v2",
+        bindings: {
+          "tool:demo.sandbox/ReadExternal": {
+            handler: { kind: "process", command: process.execPath, args: [handlerPath], cwd: root },
+            grants: ["network"],
+            secrets: [],
+            timeout_ms: 10000,
+            max_payload_bytes: 16384,
+            effect_contract: { kind: "external_write", retry_mode: "idempotency_key" },
+          },
+        },
+      }, null, 2), "utf8");
+      let session;
+      if (surface === "interaction") {
+        session = createInteractionSession({
+          request: {
+            target_ref: "strategy:demo.sandbox/RunTool",
+            target_kind: "strategy",
+            presentation: "workflow",
+            effect_policy: "allow_declared_external_effects",
+            requested_by: { kind: "user", id: "user:initial-authority" },
+          },
+          sessionsPath,
+        });
+      }
+      await listenHttpServer(identityServer);
+      service = createToubaProjectServer({
+        contractsRoot,
+        identityControlPlaneUrl: `http://127.0.0.1:${identityServer.address().port}`,
+        identityServiceToken: serviceToken,
+        port: 0,
+        projectRoot: root,
+        quiet: true,
+      });
+      await service.start();
+      const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+      let pendingResponse;
+      let operationId;
+      if (surface === "sandbox") {
+        pendingResponse = fetch(`${baseUrl}/runs/sandbox`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-touba-identity-token": accessToken,
+          },
+          body: JSON.stringify({
+            schema_version: "touba-sandbox-run-request-v0.1",
+            execution_kind: "entrypoint",
+            target_ref: "strategy:demo.sandbox/RunTool",
+            effect_policy: "allow_declared_external_effects",
+            inputs: {},
+            requested_by: { kind: "user", id: "spoofed" },
+            reason: "verify initial pre-spawn authority",
+          }),
+        });
+      } else {
+        const accepted = await fetch(`${baseUrl}/interactions/sessions/${session.session_id}/messages`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-touba-identity-token": accessToken,
+          },
+          body: JSON.stringify({
+            schema_version: "touba-interaction-message-request-v0.1",
+            message_id: "message:initial-authority",
+            display_text: "Run only while my authority remains active.",
+            inputs: {},
+            requested_by: { kind: "user", id: "spoofed" },
+          }),
+        });
+        assert.equal(accepted.status, 202);
+        operationId = (await accepted.json()).operation_id;
+      }
+
+      await withTimeout(dispatchAuthorityObserved, "initial dispatch authority introspection");
+      assert.equal(identityChecks, 2);
+      const checkpointStore = JSON.parse(readFileSync(checkpointPath, "utf8"));
+      assert.equal(checkpointStore.records[0].status, "running");
+      const journalAtAuthorityCheck = JSON.parse(readFileSync(journalPath, "utf8"));
+      const [dispatchedEntry] = Object.values(journalAtAuthorityCheck.entries);
+      assert.equal(dispatchedEntry.state, "dispatched");
+      identityActive = false;
+      releaseDispatchAuthority();
+
+      if (surface === "sandbox") {
+        const refusedResponse = await withTimeout(pendingResponse, "initial authority-refused response");
+        assert.equal(refusedResponse.status, 200);
+        const refused = await refusedResponse.json();
+        assert.equal(refused.status, "failure");
+        assert.equal(
+          refused.diagnostics.some((diagnostic) => diagnostic.code === "DurableResumeAuthorityRefused"),
+          true,
+        );
+      } else {
+        const terminal = await waitForStoredInteractionOperation({ operationId, sessionsPath });
+        assert.equal(terminal.status, "failed");
+        assert.equal(terminal.error.code, "DurableResumeAuthorityRefused");
+      }
+      assert.equal(existsSync(handlerStartedPath), false);
+      for (const persistedPath of [checkpointPath, journalPath, sessionsPath]) {
+        if (existsSync(persistedPath)) {
+          assert.equal(readFileSync(persistedPath, "utf8").includes(accessToken), false);
+        }
+      }
+    } finally {
+      releaseDispatchAuthority?.();
+      await service?.stop();
+      await closeHttpServer(identityServer);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("HTTP durable resume reconstructs the terminal result and coalesces one claimed revision", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-durable-resume-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+  writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
+  writeFileSync(
+    join(root, ".touba", "air", "demo", "main.air.json"),
+    JSON.stringify(sandboxAirDocument(), null, 2),
+    "utf8",
+  );
+  writeFileSync(join(root, "touba.manifest.json"), JSON.stringify(sandboxManifestDocument(), null, 2), "utf8");
+  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+  try {
+    await service.start();
+    let baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const initialResponse = await postJson(`${baseUrl}/runs/sandbox`, {
+      schema_version: "touba-sandbox-run-request-v0.1",
+      execution_kind: "entrypoint",
+      target_ref: "strategy:demo.sandbox/RunReady",
+      effect_policy: "runtime_only",
+      inputs: {},
+      requested_by: { kind: "studio", id: "test-suite" },
+      reason: "create a real durable checkpoint",
+    });
+    assert.equal(initialResponse.status, 200);
+    const initial = await initialResponse.json();
+    await service.stop();
+
+    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+    const store = JSON.parse(readFileSync(checkpointPath, "utf8"));
+    const record = store.records.find((candidate) => candidate.record_kind === "execution");
+    assert.equal(record.checkpoint.cursor.phase, "started");
+    record.status = "running";
+    record.result = null;
+    record.resume_claim = null;
+    writeFileSync(checkpointPath, JSON.stringify(store), "utf8");
+
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const resumeRequest = {
+      schema_version: "touba-operation-resume-request-v1",
+      operation_id: record.operation_id,
+      checkpoint_revision: record.checkpoint.revision,
+      checkpoint_digest: record.checkpoint.checkpoint_digest,
+      resume_request_id: "resume:terminal-window",
+    };
+    const recoveryResponse = await fetch(
+      `${baseUrl}/operations/${encodeURIComponent(record.operation_id)}/recovery`,
+    );
+    assert.equal(recoveryResponse.status, 200);
+    const recovery = await recoveryResponse.json();
+    assertMatchesSchema("touba-operation-recovery-v1", recovery);
+    assert.equal(recovery.status, "interrupted");
+    assert.equal(recovery.freshness.state_revision, record.checkpoint.revision);
+    assert.equal(recovery.correlations.checkpoint_digest, record.checkpoint.checkpoint_digest);
+    assert.deepEqual(recovery.allowed_actions.map((action) => action.action), ["resume"]);
+    assert.equal(recovery.allowed_actions[0].required_permission, "executions.run");
+    assert.equal(recovery.refusal, null);
+    const wrongVersion = await postJson(`${baseUrl}/runs/sandbox/resume`, {
+      ...resumeRequest,
+      schema_version: "touba-operation-resume-request-v0",
+    });
+    assert.equal(wrongVersion.status, 400);
+    assert.equal((await wrongVersion.json()).code, "DurableResumeCheckpointInvalid");
+    const [firstResponse, coalescedResponse] = await Promise.all([
+      postJson(`${baseUrl}/runs/sandbox/resume`, resumeRequest),
+      postJson(`${baseUrl}/runs/sandbox/resume`, resumeRequest),
+    ]);
+    assert.equal(firstResponse.status, 200);
+    assert.equal(coalescedResponse.status, 200);
+    const first = await firstResponse.json();
+    const coalesced = await coalescedResponse.json();
+    assert.deepEqual(coalesced, first);
+    assert.equal(first.run_id, initial.run_id);
+    assert.equal(first.result, "ready");
+    assert.deepEqual(first.trace.events.map((event) => event.index), first.trace.events.map((_, index) => index));
+
+    const repeated = await postJson(`${baseUrl}/runs/sandbox/resume`, resumeRequest);
+    assert.equal(repeated.status, 200);
+    assert.deepEqual(await repeated.json(), first);
+    const divergent = await postJson(`${baseUrl}/runs/sandbox/resume`, {
+      ...resumeRequest,
+      resume_request_id: "resume:divergent",
+    });
+    assert.equal(divergent.status, 409);
+    assert.equal((await divergent.json()).code, "DurableResumeConflict");
+    const completedStore = JSON.parse(readFileSync(checkpointPath, "utf8"));
+    assert.equal(completedStore.records[0].status, "completed");
+    assert.equal(completedStore.records[0].resume_claim.status, "completed");
+    const completedRecovery = await getJson(
+      `${baseUrl}/operations/${encodeURIComponent(record.operation_id)}/recovery`,
+    );
+    assert.equal(completedRecovery.status, "completed");
+    assert.deepEqual(completedRecovery.allowed_actions, []);
+    assert.equal(completedRecovery.refusal.code, "OperationTerminal");
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("SIGKILL after an applied effect resumes explicitly without redispatching the mutation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-sigkill-resume-"));
+  const effectRequests = [];
+  const appliedEffects = new Set();
+  const effectService = createHttpServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    effectRequests.push(body);
+    appliedEffects.add(body.effect_id);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ value: "created-once" }));
+  });
+  let worker;
+  let resumedServer;
+  try {
+    await new Promise((resolveListen, rejectListen) => {
+      effectService.once("error", rejectListen);
+      effectService.listen(0, "127.0.0.1", resolveListen);
+    });
+    const effectPort = effectService.address().port;
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+    writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
+    writeFileSync(
+      join(root, ".touba", "air", "demo", "main.air.json"),
+      JSON.stringify(sandboxAirDocument({ withTool: true }), null, 2),
+      "utf8",
+    );
+    const handlerPath = join(root, "effect-handler.mjs");
+    writeFileSync(handlerPath, `
+      let input = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => { input += chunk; });
+      process.stdin.on("end", async () => {
+        const request = JSON.parse(input);
+        const response = await fetch("http://127.0.0.1:${effectPort}/mutate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            effect_id: request.effect.effect_id,
+            request_digest: request.effect.request_digest,
+          }),
+        });
+        const result = await response.json();
+        process.stdout.write(JSON.stringify({
+          ok: true,
+          value: result.value,
+          effect_receipt: {
+            effect_id: request.effect.effect_id,
+            request_digest: request.effect.request_digest,
+            outcome: "applied",
+            receipt_ref: "opaque:test:created-once",
+          },
+        }));
+      });
+    `, "utf8");
+    writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
+      manifest_version: "touba-manifest-v2",
+      bindings: {
+        "tool:demo.sandbox/ReadExternal": {
+          handler: { kind: "process", command: process.execPath, args: [handlerPath], cwd: root },
+          grants: ["network"],
+          secrets: [],
+          timeout_ms: 10000,
+          max_payload_bytes: 16384,
+          effect_contract: { kind: "external_write", retry_mode: "idempotency_key" },
+        },
+      },
+    }, null, 2), "utf8");
+
+    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+    const journalPath = join(root, ".touba", "project.effect-journal.json");
+    const appliedMarkerPath = join(root, ".touba", "effect-applied-before-host-advance");
+    const harnessPath = join(root, "crash-worker.mjs");
+    const projectServerModule = new URL("../src/serve.mjs", import.meta.url).href;
+    const journalModule = new URL("../../../runtime/touba-runtime/src/file-effect-journal.mjs", import.meta.url).href;
+    writeFileSync(harnessPath, `
+      import { writeFileSync } from "node:fs";
+      import { executeProjectSandboxRun } from ${JSON.stringify(projectServerModule)};
+      import { createFileEffectJournal } from ${JSON.stringify(journalModule)};
+      const persisted = createFileEffectJournal(${JSON.stringify(journalPath)});
+      const blockingJournal = {
+        schemaVersion: persisted.schemaVersion,
+        readEntry: (effectId) => persisted.readEntry(effectId),
+        entriesForScope: (scopeId) => persisted.entriesForScope(scopeId),
+        writeEntry(entry) {
+          persisted.writeEntry(entry);
+          if (entry.state === "applied") {
+            writeFileSync(${JSON.stringify(appliedMarkerPath)}, "applied\\n", "utf8");
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+          }
+        },
+      };
+      const result = await executeProjectSandboxRun({
+        contractsRoot: ${JSON.stringify(contractsRoot)},
+        effectJournal: blockingJournal,
+        effectJournalPath: ${JSON.stringify(journalPath)},
+        executionKind: "entrypoint",
+        humanRequestsPath: ${JSON.stringify(join(root, ".touba", "human-requests.json"))},
+        operationId: "operation:sigkill-applied",
+        projectRoot: ${JSON.stringify(root)},
+        request: {
+          schema_version: "touba-sandbox-run-request-v0.1",
+          execution_kind: "entrypoint",
+          target_ref: "strategy:demo.sandbox/RunTool",
+          effect_policy: "allow_declared_external_effects",
+          inputs: {},
+          requested_by: { kind: "service", id: "sigkill-proof" },
+          reason: "prove durable host recovery after applied effect",
+        },
+        runId: "run:sigkill-applied",
+        runSummaryPath: ${JSON.stringify(join(root, ".touba", "current-run-summary.json"))},
+        sandboxCheckpointsPath: ${JSON.stringify(checkpointPath)},
+        traceTimelinePath: ${JSON.stringify(join(root, ".touba", "current-trace-timeline.json"))},
+      });
+      process.stderr.write(JSON.stringify(result));
+    `, "utf8");
+
+    let workerStderr = "";
+    worker = spawn(process.execPath, [harnessPath], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    worker.stderr.on("data", (chunk) => { workerStderr += chunk.toString("utf8"); });
+    await waitForPath(appliedMarkerPath, worker, () => workerStderr);
+    assert.equal(effectRequests.length, 1);
+    assert.equal(appliedEffects.size, 1);
+    const journalBeforeKill = JSON.parse(readFileSync(journalPath, "utf8"));
+    const [appliedEntry] = Object.values(journalBeforeKill.entries);
+    assert.equal(appliedEntry.state, "applied");
+    const beforeKill = JSON.parse(readFileSync(checkpointPath, "utf8")).records[0];
+    assert.equal(beforeKill.status, "running");
+    assert.equal(beforeKill.checkpoint.pending_dispatch.effect_id, appliedEntry.effect_id);
+
+    worker.kill("SIGKILL");
+    await waitForChildExit(worker);
+    worker = undefined;
+
+    resumedServer = await startProjectServerProcess(root);
+    const interrupted = JSON.parse(readFileSync(checkpointPath, "utf8")).records[0];
+    assert.equal(interrupted.status, "interrupted");
+    const resumeRequest = {
+      operation_id: interrupted.operation_id,
+      checkpoint_revision: interrupted.checkpoint.revision,
+      checkpoint_digest: interrupted.checkpoint.checkpoint_digest,
+      resume_request_id: "resume:sigkill-applied",
+    };
+    const resumedResponse = await postJson(`${resumedServer.baseUrl}/runs/sandbox/resume`, resumeRequest);
+    assert.equal(resumedResponse.status, 200);
+    const resumed = await resumedResponse.json();
+    assert.equal(resumed.run_id, "run:sigkill-applied");
+    assert.equal(resumed.result, "created-once");
+    assert.equal(effectRequests.length, 1, "an applied journal result must not redispatch the handler");
+    assert.equal(appliedEffects.size, 1);
+    const completedJournal = JSON.parse(readFileSync(journalPath, "utf8"));
+    const [completedEntry] = Object.values(completedJournal.entries);
+    assert.equal(completedEntry.effect_id, appliedEntry.effect_id);
+    assert.equal(completedEntry.attempt_count, 1);
+    const repeatedResponse = await postJson(`${resumedServer.baseUrl}/runs/sandbox/resume`, resumeRequest);
+    assert.equal(repeatedResponse.status, 200);
+    assert.equal(effectRequests.length, 1);
+  } finally {
+    if (worker !== undefined) {
+      worker.kill("SIGKILL");
+      await waitForChildExit(worker);
+    }
+    if (resumedServer !== undefined) await stopChildProcess(resumedServer.child);
+    await closeHttpServer(effectService);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("SIGKILL after the external mutation but before its receipt retries one logical effect idempotently", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-server-sigkill-unknown-"));
+  const effectRequests = [];
+  const appliedEffects = new Set();
+  const effectService = createHttpServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    effectRequests.push(body);
+    appliedEffects.add(body.effect_id);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ value: "created-idempotently" }));
+  });
+  let worker;
+  let interruptedHandlerPid;
+  let resumedServer;
+  try {
+    await new Promise((resolveListen, rejectListen) => {
+      effectService.once("error", rejectListen);
+      effectService.listen(0, "127.0.0.1", resolveListen);
+    });
+    const effectPort = effectService.address().port;
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+    writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
+    writeFileSync(
+      join(root, ".touba", "air", "demo", "main.air.json"),
+      JSON.stringify(sandboxAirDocument({ withTool: true }), null, 2),
+      "utf8",
+    );
+    const mutationMarkerPath = join(root, ".touba", "mutation-before-receipt.json");
+    const handlerPath = join(root, "effect-handler.mjs");
+    writeFileSync(handlerPath, `
+      import { writeFileSync } from "node:fs";
+      let input = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => { input += chunk; });
+      process.stdin.on("end", async () => {
+        const request = JSON.parse(input);
+        const response = await fetch("http://127.0.0.1:${effectPort}/mutate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            effect_id: request.effect.effect_id,
+            request_digest: request.effect.request_digest,
+            attempt_index: request.effect.attempt_index,
+            call_id: request.call_id,
+          }),
+        });
+        const result = await response.json();
+        if (request.effect.attempt_index === 1) {
+          writeFileSync(${JSON.stringify(mutationMarkerPath)}, JSON.stringify({
+            pid: process.pid,
+            call_id: request.call_id,
+          }), "utf8");
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+        }
+        process.stdout.write(JSON.stringify({
+          ok: true,
+          value: result.value,
+          effect_receipt: {
+            effect_id: request.effect.effect_id,
+            request_digest: request.effect.request_digest,
+            outcome: "applied",
+            receipt_ref: "opaque:test:created-idempotently",
+          },
+        }));
+      });
+    `, "utf8");
+    writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
+      manifest_version: "touba-manifest-v2",
+      bindings: {
+        "tool:demo.sandbox/ReadExternal": {
+          handler: { kind: "process", command: process.execPath, args: [handlerPath], cwd: root },
+          grants: ["network"],
+          secrets: [],
+          timeout_ms: 10000,
+          max_payload_bytes: 16384,
+          effect_contract: { kind: "external_write", retry_mode: "idempotency_key" },
+        },
+      },
+    }, null, 2), "utf8");
+
+    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+    const journalPath = join(root, ".touba", "project.effect-journal.json");
+    const harnessPath = join(root, "crash-worker.mjs");
+    const projectServerModule = new URL("../src/serve.mjs", import.meta.url).href;
+    writeFileSync(harnessPath, `
+      import { executeProjectSandboxRun } from ${JSON.stringify(projectServerModule)};
+      await executeProjectSandboxRun({
+        contractsRoot: ${JSON.stringify(contractsRoot)},
+        effectJournalPath: ${JSON.stringify(journalPath)},
+        executionKind: "entrypoint",
+        humanRequestsPath: ${JSON.stringify(join(root, ".touba", "human-requests.json"))},
+        operationId: "operation:sigkill-unknown",
+        projectRoot: ${JSON.stringify(root)},
+        request: {
+          schema_version: "touba-sandbox-run-request-v0.1",
+          execution_kind: "entrypoint",
+          target_ref: "strategy:demo.sandbox/RunTool",
+          effect_policy: "allow_declared_external_effects",
+          inputs: {},
+          requested_by: { kind: "service", id: "sigkill-proof" },
+          reason: "prove idempotent recovery after an ambiguous external effect",
+        },
+        runId: "run:sigkill-unknown",
+        runSummaryPath: ${JSON.stringify(join(root, ".touba", "current-run-summary.json"))},
+        sandboxCheckpointsPath: ${JSON.stringify(checkpointPath)},
+        traceTimelinePath: ${JSON.stringify(join(root, ".touba", "current-trace-timeline.json"))},
+      });
+    `, "utf8");
+
+    let workerStderr = "";
+    worker = spawn(process.execPath, [harnessPath], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    worker.stderr.on("data", (chunk) => { workerStderr += chunk.toString("utf8"); });
+    await waitForPath(mutationMarkerPath, worker, () => workerStderr);
+    const mutationMarker = JSON.parse(readFileSync(mutationMarkerPath, "utf8"));
+    interruptedHandlerPid = mutationMarker.pid;
+    assert.equal(effectRequests.length, 1);
+    assert.equal(appliedEffects.size, 1);
+    const journalBeforeKill = JSON.parse(readFileSync(journalPath, "utf8"));
+    const [dispatchedEntry] = Object.values(journalBeforeKill.entries);
+    assert.equal(dispatchedEntry.state, "dispatched");
+    assert.equal(dispatchedEntry.attempt_count, 1);
+    assert.equal(dispatchedEntry.last_call_id, mutationMarker.call_id);
+    const beforeKill = JSON.parse(readFileSync(checkpointPath, "utf8")).records[0];
+    assert.equal(beforeKill.status, "running");
+    assert.equal(beforeKill.checkpoint.pending_dispatch.phase, "dispatched");
+    assert.equal(beforeKill.checkpoint.pending_dispatch.effect_id, dispatchedEntry.effect_id);
+
+    worker.kill("SIGKILL");
+    await waitForChildExit(worker);
+    worker = undefined;
+    process.kill(interruptedHandlerPid, "SIGKILL");
+    interruptedHandlerPid = undefined;
+
+    resumedServer = await startProjectServerProcess(root);
+    const interrupted = JSON.parse(readFileSync(checkpointPath, "utf8")).records[0];
+    assert.equal(interrupted.status, "interrupted");
+    const resumeRequest = {
+      operation_id: interrupted.operation_id,
+      checkpoint_revision: interrupted.checkpoint.revision,
+      checkpoint_digest: interrupted.checkpoint.checkpoint_digest,
+      resume_request_id: "resume:sigkill-unknown",
+    };
+    const recovery = await getJson(
+      `${resumedServer.baseUrl}/operations/${encodeURIComponent(interrupted.operation_id)}/recovery`,
+    );
+    assert.equal(recovery.status, "interrupted");
+    assert.equal(recovery.effects.dispatched, 1);
+    assert.equal(recovery.effects.reconciliation, "retry_safe");
+    assert.deepEqual(recovery.allowed_actions.map((action) => action.action), ["resume"]);
+    assert.equal(JSON.stringify(recovery).includes("last_call_id"), false);
+    assert.equal(JSON.stringify(recovery).includes("receipt_ref"), false);
+    const resumedResponse = await postJson(`${resumedServer.baseUrl}/runs/sandbox/resume`, resumeRequest);
+    assert.equal(resumedResponse.status, 200);
+    const resumed = await resumedResponse.json();
+    assert.equal(resumed.run_id, "run:sigkill-unknown");
+    assert.equal(resumed.result, "created-idempotently");
+    assert.equal(effectRequests.length, 2, "the ambiguous dispatch must use one bounded retry");
+    assert.equal(appliedEffects.size, 1, "the provider idempotency key must preserve one mutation");
+    assert.equal(effectRequests[0].effect_id, effectRequests[1].effect_id);
+    assert.equal(effectRequests[0].request_digest, effectRequests[1].request_digest);
+    assert.notEqual(effectRequests[0].call_id, effectRequests[1].call_id);
+    assert.deepEqual(effectRequests.map((entry) => entry.attempt_index), [1, 2]);
+    const completedJournal = JSON.parse(readFileSync(journalPath, "utf8"));
+    const [completedEntry] = Object.values(completedJournal.entries);
+    assert.equal(completedEntry.state, "applied");
+    assert.equal(completedEntry.effect_id, dispatchedEntry.effect_id);
+    assert.equal(completedEntry.attempt_count, 2);
+  } finally {
+    if (worker !== undefined) {
+      worker.kill("SIGKILL");
+      await waitForChildExit(worker);
+    }
+    if (interruptedHandlerPid !== undefined) {
+      try {
+        process.kill(interruptedHandlerPid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+    if (resumedServer !== undefined) await stopChildProcess(resumedServer.child);
+    await closeHttpServer(effectService);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const crashWindow of [
+  {
+    name: "SIGKILL after the initial checkpoint but before tool reservation resumes with monotone state",
+    mode: "before_reservation",
+  },
+  {
+    name: "SIGKILL after durable reservation and prepared journal but before handler dispatch reuses the reservation",
+    mode: "after_prepared",
+  },
+  {
+    name: "SIGKILL before reservation then cancellation after the durable claim prevents handler dispatch",
+    mode: "cancel_after_claim",
+  },
+  {
+    name: "durable resume revalidates control-plane authority immediately before handler spawn",
+    mode: "authority_generic",
+  },
+  {
+    name: "interaction durable resume revalidates control-plane authority before handler spawn",
+    mode: "authority_interaction",
+  },
+]) {
+  test(crashWindow.name, async () => {
+    const root = mkdtempSync(join(tmpdir(), `touba-project-server-${crashWindow.mode}-`));
+    const effectRequests = [];
+    const appliedEffects = new Set();
+    let observeEffectRequest;
+    const effectRequestObserved = new Promise((resolveObserved) => {
+      observeEffectRequest = resolveObserved;
+    });
+    let releaseEffectResponse;
+    const effectResponseGate = crashWindow.mode === "after_prepared"
+      ? new Promise((resolveResponse) => { releaseEffectResponse = resolveResponse; })
+      : Promise.resolve();
+    let observeResumeClaim;
+    const resumeClaimObserved = new Promise((resolveObserved) => {
+      observeResumeClaim = resolveObserved;
+    });
+    let releaseResumeClaim;
+    const resumeClaimGate = new Promise((resolveClaim) => {
+      releaseResumeClaim = resolveClaim;
+    });
+    const dynamicAuthority = crashWindow.mode.startsWith("authority_");
+    const identityAccessToken = "identity-resume-access-token";
+    const identityServiceToken = "identity-resume-service-token-at-least-32-characters";
+    let identityActive = true;
+    let identityChecks = 0;
+    let observeDispatchAuthority;
+    const dispatchAuthorityObserved = new Promise((resolveObserved) => {
+      observeDispatchAuthority = resolveObserved;
+    });
+    let releaseDispatchAuthority;
+    const dispatchAuthorityGate = new Promise((resolveAuthority) => {
+      releaseDispatchAuthority = resolveAuthority;
+    });
+    const identityServer = createHttpServer(async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.equal(request.headers["x-touba-service-token"], identityServiceToken);
+      assert.equal(body.access_token, identityAccessToken);
+      identityChecks += 1;
+      if (identityChecks === 2) {
+        observeDispatchAuthority();
+        await dispatchAuthorityGate;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        active: identityActive,
+        permissions: identityActive ? ["executions.run"] : [],
+        user: { id: "user:resume-authority" },
+      }));
+    });
+    const effectService = createHttpServer(async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      effectRequests.push(body);
+      appliedEffects.add(body.effect_id);
+      observeEffectRequest();
+      await effectResponseGate;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ value: "created-once" }));
+    });
+    let worker;
+    let resumedServer;
+    let resumedService;
+    try {
+      await new Promise((resolveListen, rejectListen) => {
+        effectService.once("error", rejectListen);
+        effectService.listen(0, "127.0.0.1", resolveListen);
+      });
+      if (dynamicAuthority) await listenHttpServer(identityServer);
+      const effectPort = effectService.address().port;
+      mkdirSync(join(root, "src"), { recursive: true });
+      mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+      writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
+      writeFileSync(
+        join(root, ".touba", "air", "demo", "main.air.json"),
+        JSON.stringify(sandboxAirDocument({ withTool: true }), null, 2),
+        "utf8",
+      );
+      const handlerPath = join(root, "effect-handler.mjs");
+      const handlerStartedPath = join(root, ".touba", "effect-handler-started");
+      writeFileSync(handlerPath, `
+        import { writeFileSync } from "node:fs";
+        writeFileSync(${JSON.stringify(handlerStartedPath)}, "started\\n", "utf8");
+        let input = "";
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", (chunk) => { input += chunk; });
+        process.stdin.on("end", async () => {
+          const request = JSON.parse(input);
+          const response = await fetch("http://127.0.0.1:${effectPort}/mutate", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              effect_id: request.effect.effect_id,
+              request_digest: request.effect.request_digest,
+              attempt_index: request.effect.attempt_index,
+              call_id: request.call_id,
+            }),
+          });
+          const result = await response.json();
+          process.stdout.write(JSON.stringify({
+            ok: true,
+            value: result.value,
+            effect_receipt: {
+              effect_id: request.effect.effect_id,
+              request_digest: request.effect.request_digest,
+              outcome: "applied",
+              receipt_ref: "opaque:test:created-once",
+            },
+          }));
+        });
+      `, "utf8");
+      writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
+        manifest_version: "touba-manifest-v2",
+        bindings: {
+          "tool:demo.sandbox/ReadExternal": {
+            handler: { kind: "process", command: process.execPath, args: [handlerPath], cwd: root },
+            grants: ["network"],
+            secrets: [],
+            timeout_ms: 10000,
+            max_payload_bytes: 16384,
+            effect_contract: { kind: "external_write", retry_mode: "idempotency_key" },
+          },
+        },
+      }, null, 2), "utf8");
+
+      const interactionSessionsPath = join(root, ".touba", "interaction-sessions.json");
+      let interactionSession;
+      let interactionOperation;
+      if (crashWindow.mode === "authority_interaction") {
+        interactionSession = createInteractionSession({
+          request: {
+            target_ref: "strategy:demo.sandbox/RunTool",
+            target_kind: "strategy",
+            presentation: "workflow",
+            effect_policy: "allow_declared_external_effects",
+            requested_by: { kind: "user", id: "user:resume-authority" },
+          },
+          sessionsPath: interactionSessionsPath,
+        });
+        interactionOperation = enqueueInteractionOperation({
+          message: {
+            message_id: "message:resume-authority",
+            display_text: "Resume the durable operation.",
+          },
+          runId: "run:authority_interaction",
+          sessionId: interactionSession.session_id,
+          sessionsPath: interactionSessionsPath,
+        });
+        startInteractionOperation({
+          operationId: interactionOperation.operation_id,
+          sessionId: interactionSession.session_id,
+          sessionsPath: interactionSessionsPath,
+        });
+      }
+      const durableOperationId = interactionOperation?.operation_id ?? `operation:${crashWindow.mode}`;
+      const durableRunId = interactionOperation?.run_id ?? `run:${crashWindow.mode}`;
+
+      const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+      const journalPath = join(root, ".touba", "project.effect-journal.json");
+      const crashMarkerPath = join(root, ".touba", `${crashWindow.mode}.json`);
+      const harnessPath = join(root, "crash-worker.mjs");
+      const projectServerModule = new URL("../src/serve.mjs", import.meta.url).href;
+      const journalModule = new URL("../../../runtime/touba-runtime/src/file-effect-journal.mjs", import.meta.url).href;
+      const preparedJournalSetup = crashWindow.mode === "after_prepared"
+        ? `
+          const persisted = createFileEffectJournal(${JSON.stringify(journalPath)});
+          const blockingJournal = {
+            schemaVersion: persisted.schemaVersion,
+            readEntry: (effectId) => persisted.readEntry(effectId),
+            entriesForScope: (scopeId) => persisted.entriesForScope(scopeId),
+            writeEntry(entry) {
+              persisted.writeEntry(entry);
+              if (entry.state === "prepared") {
+                writeFileSync(${JSON.stringify(crashMarkerPath)}, JSON.stringify({
+                  effect_id: entry.effect_id,
+                  state: entry.state,
+                }), "utf8");
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+              }
+            },
+          };
+        `
+        : "";
+      const traceBlocker = crashWindow.mode !== "after_prepared"
+        ? `
+          traceEventObserver(event) {
+            if (event.kind === "tool_binding_authorized") {
+              writeFileSync(${JSON.stringify(crashMarkerPath)}, JSON.stringify({
+                event_kind: event.kind,
+                sequence_index: event.sequence_index,
+              }), "utf8");
+              Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+            }
+          },
+        `
+        : "";
+      const effectJournalOption = crashWindow.mode === "after_prepared"
+        ? "effectJournal: blockingJournal,"
+        : "";
+      writeFileSync(harnessPath, `
+        import { writeFileSync } from "node:fs";
+        import { executeProjectSandboxRun } from ${JSON.stringify(projectServerModule)};
+        import { createFileEffectJournal } from ${JSON.stringify(journalModule)};
+        ${preparedJournalSetup}
+        await executeProjectSandboxRun({
+          contractsRoot: ${JSON.stringify(contractsRoot)},
+          ${effectJournalOption}
+          effectJournalPath: ${JSON.stringify(journalPath)},
+          executionKind: "entrypoint",
+          humanRequestsPath: ${JSON.stringify(join(root, ".touba", "human-requests.json"))},
+          operationId: ${JSON.stringify(durableOperationId)},
+          projectRoot: ${JSON.stringify(root)},
+          request: {
+            schema_version: "touba-sandbox-run-request-v0.1",
+            execution_kind: "entrypoint",
+            target_ref: "strategy:demo.sandbox/RunTool",
+            effect_policy: "allow_declared_external_effects",
+            inputs: {},
+            requested_by: { kind: "service", id: "sigkill-proof" },
+            reason: ${JSON.stringify(`prove ${crashWindow.mode} durable recovery`)},
+          },
+          runId: ${JSON.stringify(durableRunId)},
+          runSummaryPath: ${JSON.stringify(join(root, ".touba", "current-run-summary.json"))},
+          sandboxCheckpointsPath: ${JSON.stringify(checkpointPath)},
+          ${traceBlocker}
+          traceTimelinePath: ${JSON.stringify(join(root, ".touba", "current-trace-timeline.json"))},
+        });
+      `, "utf8");
+
+      let workerStderr = "";
+      worker = spawn(process.execPath, [harnessPath], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+      worker.stderr.on("data", (chunk) => { workerStderr += chunk.toString("utf8"); });
+      await waitForPath(crashMarkerPath, worker, () => workerStderr);
+      assert.equal(effectRequests.length, 0, "the handler must not dispatch before the crash marker");
+      const beforeKill = JSON.parse(readFileSync(checkpointPath, "utf8")).records[0];
+      assert.equal(beforeKill.status, "running");
+      assert.equal(beforeKill.checkpoint.cursor.phase, "started");
+      if (crashWindow.mode !== "after_prepared") {
+        assert.equal(beforeKill.checkpoint.pending_dispatch, null);
+        assert.equal(existsSync(journalPath), false);
+        assert.equal(beforeKill.checkpoint.runtime_state.budget_counters.tool_calls, 0);
+      } else {
+        assert.equal(beforeKill.checkpoint.pending_dispatch.phase, "reserved");
+        const journalBeforeKill = JSON.parse(readFileSync(journalPath, "utf8"));
+        const [preparedEntry] = Object.values(journalBeforeKill.entries);
+        assert.equal(preparedEntry.state, "prepared");
+        assert.equal(preparedEntry.attempt_count, 0);
+        assert.equal(preparedEntry.effect_id, beforeKill.checkpoint.pending_dispatch.effect_id);
+        assert.equal(beforeKill.checkpoint.runtime_state.budget_counters.tool_calls, 1);
+      }
+
+      worker.kill("SIGKILL");
+      await waitForChildExit(worker);
+      worker = undefined;
+
+      if (crashWindow.mode === "cancel_after_claim") {
+        resumedService = createToubaProjectServer({
+          contractsRoot,
+          durableResumeClaimedObserver: async () => {
+            observeResumeClaim();
+            await resumeClaimGate;
+          },
+          port: 0,
+          projectRoot: root,
+          quiet: true,
+        });
+        await resumedService.start();
+        resumedServer = {
+          baseUrl: `http://127.0.0.1:${resumedService.server.address().port}`,
+        };
+      } else if (dynamicAuthority) {
+        resumedService = createToubaProjectServer({
+          contractsRoot,
+          identityControlPlaneUrl: `http://127.0.0.1:${identityServer.address().port}`,
+          identityServiceToken,
+          port: 0,
+          projectRoot: root,
+          quiet: true,
+        });
+        await resumedService.start();
+        resumedServer = {
+          baseUrl: `http://127.0.0.1:${resumedService.server.address().port}`,
+        };
+      } else {
+        resumedServer = await startProjectServerProcess(root);
+      }
+      const interrupted = JSON.parse(readFileSync(checkpointPath, "utf8")).records[0];
+      assert.equal(interrupted.status, "interrupted");
+      const resumeRequest = {
+        operation_id: interrupted.operation_id,
+        checkpoint_revision: interrupted.checkpoint.revision,
+        checkpoint_digest: interrupted.checkpoint.checkpoint_digest,
+        resume_request_id: `resume:${crashWindow.mode}`,
+      };
+      let pendingResumedResponse;
+      if (crashWindow.mode === "authority_interaction") {
+        const acceptedResume = await fetch(
+          `${resumedServer.baseUrl}/interactions/sessions/${interactionSession.session_id}/resume`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-touba-identity-token": identityAccessToken,
+            },
+            body: JSON.stringify(resumeRequest),
+          },
+        );
+        assert.equal(acceptedResume.status, 202);
+      } else {
+        pendingResumedResponse = fetch(`${resumedServer.baseUrl}/runs/sandbox/resume`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(dynamicAuthority ? { "x-touba-identity-token": identityAccessToken } : {}),
+          },
+          body: JSON.stringify(resumeRequest),
+        });
+      }
+      if (crashWindow.mode === "cancel_after_claim") {
+        await withTimeout(resumeClaimObserved, "durable resume claim observer");
+        const claimedStore = JSON.parse(readFileSync(checkpointPath, "utf8"));
+        const claimedRecord = claimedStore.records[0];
+        assert.equal(claimedRecord.status, "resume_claimed");
+        assert.equal(claimedRecord.resume_claim.status, "claimed");
+        const cancelledAt = new Date().toISOString();
+        claimedRecord.status = "cancelled";
+        claimedRecord.updated_at = cancelledAt;
+        claimedRecord.resume_claim.status = "refused";
+        claimedRecord.resume_claim.completed_at = cancelledAt;
+        claimedRecord.resume_claim.error = {
+          code: "DurableResumeAuthorityRefused",
+          message: "operation cancellation was requested after its durable claim",
+        };
+        writeFileSync(checkpointPath, `${JSON.stringify(claimedStore, null, 2)}\n`, "utf8");
+        releaseResumeClaim();
+        const cancelledResponse = await withTimeout(pendingResumedResponse, "cancelled durable resume response");
+        assert.equal(cancelledResponse.status, 200);
+        const cancelled = await cancelledResponse.json();
+        assert.equal(cancelled.status, "cancelled");
+        assert.equal(effectRequests.length, 0);
+        assert.equal(appliedEffects.size, 0);
+        assert.equal(existsSync(handlerStartedPath), false, "cancellation must be observed before handler spawn");
+        const cancelledStore = JSON.parse(readFileSync(checkpointPath, "utf8"));
+        assert.equal(cancelledStore.records[0].status, "cancelled");
+        assert.equal(cancelledStore.records[0].resume_claim.status, "refused");
+        return;
+      }
+      if (dynamicAuthority) {
+        await withTimeout(dispatchAuthorityObserved, "dispatch authority introspection");
+        assert.equal(identityChecks, 2);
+        const claimedStore = JSON.parse(readFileSync(checkpointPath, "utf8"));
+        assert.equal(claimedStore.records[0].status, "resume_claimed");
+        assert.equal(claimedStore.records[0].resume_claim.status, "claimed");
+        const journalAtAuthorityCheck = JSON.parse(readFileSync(journalPath, "utf8"));
+        const [dispatchedEntry] = Object.values(journalAtAuthorityCheck.entries);
+        assert.equal(dispatchedEntry.state, "dispatched");
+        identityActive = false;
+        releaseDispatchAuthority();
+
+        if (crashWindow.mode === "authority_interaction") {
+          const terminal = await waitForStoredInteractionOperation({
+            operationId: interactionOperation.operation_id,
+            sessionsPath: interactionSessionsPath,
+          });
+          assert.equal(terminal.status, "failed");
+          assert.equal(terminal.error.code, "DurableResumeAuthorityRefused");
+        } else {
+          const refusedResponse = await withTimeout(
+            pendingResumedResponse,
+            "authority-refused durable resume response",
+          );
+          assert.equal(refusedResponse.status, 200);
+          const refused = await refusedResponse.json();
+          assert.equal(refused.status, "failure");
+          assert.equal(
+            refused.diagnostics.some((diagnostic) => diagnostic.code === "DurableResumeAuthorityRefused"),
+            true,
+          );
+        }
+        assert.equal(effectRequests.length, 0);
+        assert.equal(appliedEffects.size, 0);
+        assert.equal(existsSync(handlerStartedPath), false, "revoked authority must be observed before handler spawn");
+        for (const persistedPath of [checkpointPath, journalPath, interactionSessionsPath]) {
+          if (existsSync(persistedPath)) {
+            assert.equal(readFileSync(persistedPath, "utf8").includes(identityAccessToken), false);
+          }
+        }
+        return;
+      }
+      if (crashWindow.mode === "after_prepared") {
+        await effectRequestObserved;
+        const divergentResponse = await postJson(`${resumedServer.baseUrl}/runs/sandbox/resume`, {
+          ...resumeRequest,
+          checkpoint_digest: `sha256:${"b".repeat(64)}`,
+        });
+        assert.equal(divergentResponse.status, 409);
+        assert.equal((await divergentResponse.json()).code, "DurableResumeConflict");
+        releaseEffectResponse();
+      }
+      const resumedResponse = await pendingResumedResponse;
+      assert.equal(resumedResponse.status, 200);
+      const resumed = await resumedResponse.json();
+      assert.equal(resumed.status, "success", JSON.stringify(resumed));
+      assert.equal(resumed.result, "created-once");
+      assert.equal(effectRequests.length, 1);
+      assert.equal(appliedEffects.size, 1);
+
+      const completedStore = JSON.parse(readFileSync(checkpointPath, "utf8"));
+      const completed = completedStore.records[0];
+      assert.equal(completed.status, "completed");
+      assert.equal(completed.operation_id, beforeKill.operation_id);
+      assert.equal(completed.run_id, beforeKill.run_id);
+      assert.equal(completed.effect_scope_id, beforeKill.effect_scope_id);
+      assert.ok(completed.checkpoint.revision > beforeKill.checkpoint.revision);
+      for (const counter of ["steps", "tool_calls", "agent_invocations", "provider_calls"]) {
+        assert.ok(
+          completed.checkpoint.runtime_state.budget_counters[counter]
+            >= beforeKill.checkpoint.runtime_state.budget_counters[counter],
+          `${counter} must remain monotone across process recovery`,
+        );
+      }
+      assert.ok(
+        completed.checkpoint.runtime_state.active_elapsed_ms
+          >= beforeKill.checkpoint.runtime_state.active_elapsed_ms,
+        `active elapsed time regressed from ${beforeKill.checkpoint.runtime_state.active_elapsed_ms} to ${completed.checkpoint.runtime_state.active_elapsed_ms}`,
+      );
+      const completedJournal = JSON.parse(readFileSync(journalPath, "utf8"));
+      const [appliedEntry] = Object.values(completedJournal.entries);
+      assert.equal(appliedEntry.state, "applied");
+      assert.equal(appliedEntry.attempt_count, 1);
+      assert.equal(appliedEntry.effect_id, effectRequests[0].effect_id);
+      assert.equal(appliedEntry.request_digest, effectRequests[0].request_digest);
+      if (crashWindow.mode === "after_prepared") {
+        assert.equal(
+          completed.checkpoint.runtime_state.budget_counters.tool_calls,
+          beforeKill.checkpoint.runtime_state.budget_counters.tool_calls,
+          "a persisted reservation must not consume the tool budget twice",
+        );
+        assert.equal(effectRequests[0].call_id, beforeKill.checkpoint.pending_dispatch.call_id);
+      }
+
+      const repeatedResponse = await postJson(`${resumedServer.baseUrl}/runs/sandbox/resume`, resumeRequest);
+      assert.equal(repeatedResponse.status, 200);
+      assert.equal(effectRequests.length, 1);
+      assert.equal(appliedEffects.size, 1);
+    } finally {
+      releaseEffectResponse?.();
+      releaseResumeClaim?.();
+      releaseDispatchAuthority?.();
+      if (worker !== undefined) {
+        worker.kill("SIGKILL");
+        await waitForChildExit(worker);
+      }
+      if (resumedService !== undefined) {
+        await resumedService.stop();
+      } else if (resumedServer !== undefined) {
+        await stopChildProcess(resumedServer.child);
+      }
+      await closeHttpServer(effectService);
+      await closeHttpServer(identityServer);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("HTTP project server persists adaptive interaction sessions and governed assets", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-interactions-"));
@@ -3032,7 +4271,8 @@ test("HTTP interaction cancellation stops an active agent before capability disp
   }
 });
 
-test("HTTP project server persists and resumes an interaction approval checkpoint without replay", async () => {
+for (const decisionKind of ["approve", "reject"]) {
+test(`HTTP interaction ${decisionKind} preserves its terminal outcome without replay`, async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-approval-"));
   mkdirSync(join(root, "src", "demo"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
@@ -3086,6 +4326,10 @@ test("HTTP project server persists and resumes an interaction approval checkpoin
     assert.equal(pausedSession.status, "awaiting_human");
     assert.equal(paused.status, "stopped", JSON.stringify(paused, null, 2));
     assert.equal(paused.diagnostics[0].code, "ToubaSandboxRunAwaitingHumanDecision");
+    const pausedSummary = await getJson(`${baseUrl}/runs/current`);
+    assert.equal(pausedSummary.status, "approval_pending");
+    assert.equal(pausedSummary.completed_at, null);
+    assert.equal(pausedSummary.approvals_pending.length, 1);
 
     const pending = await getJson(`${baseUrl}/approvals/pending/current`);
     assertMatchesSchema("touba-approval-request-v1", pending);
@@ -3117,7 +4361,7 @@ test("HTTP project server persists and resumes an interaction approval checkpoin
       trace_ref: pending.trace_ref,
       user_ref: "user:test-reviewer",
       device_ref: "device:test-suite",
-      decision: "approve",
+      decision: decisionKind,
       decided_by: "user:test-reviewer",
       decided_at: new Date().toISOString(),
       comment: null,
@@ -3154,10 +4398,12 @@ test("HTTP project server persists and resumes an interaction approval checkpoin
     await waitForInteractionOperation(baseUrl, session.session_id, resumedOperation.operation_id);
     const resumedSession = await getJson(`${baseUrl}/interactions/sessions/${session.session_id}`);
     const resumed = resumedSession.messages.at(-1).run_result;
-    assert.equal(resumedSession.status, "open");
+    const expectedOperationStatus = { approve: "succeeded", reject: "failed", cancel: "cancelled" }[decisionKind];
+    assert.equal(resumedSession.status, decisionKind === "reject" ? "failed" : "open");
+    assert.equal(resumedSession.operations[0].status, expectedOperationStatus);
     assert.equal(resumedSession.messages.length, 3);
-    assert.equal(resumed.status, "success");
-    assert.equal(resumed.result, "approved");
+    assert.equal(resumed.status, decisionKind === "approve" ? "success" : "stopped");
+    assert.equal(resumed.result, decisionKind === "approve" ? "approved" : null);
     assert.equal(resumed.run_id, paused.run_id);
     assert.ok(resumed.trace.event_count > paused.trace.event_count);
     assert.equal(
@@ -3168,18 +4414,256 @@ test("HTTP project server persists and resumes an interaction approval checkpoin
       resumed.trace.events.filter((event) => event.type === "human_approval_checkpoint_loaded").length,
       1,
     );
+    const summary = await getJson(`${baseUrl}/runs/current`);
+    assertMatchesSchema("touba-run-summary-v1", summary);
+    assert.equal(summary.status, { approve: "succeeded", reject: "refused", cancel: "cancelled" }[decisionKind]);
+    assert.equal(summary.completed_at, resumed.completed_at);
+    assert.deepEqual(summary.approvals_pending, []);
+    assert.equal((await fetch(`${baseUrl}/approvals/pending/current`)).status, 404);
+    if (decisionKind !== "approve") {
+      assert.equal(resumed.trace.events.some((event) => event.type === `human_approval_${decisionKind === "reject" ? "rejected" : "cancelled"}`), true);
+      assert.equal(resumed.trace.events.some((event) => event.type === "human_approval_resumed"), false);
+    }
+    if (decisionKind === "reject") {
+      assert.equal(summary.refusals[0].code, "ToubaSandboxHumanDecisionRejected");
+    }
 
     const idempotentResponse = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/resume`, {
       schema_version: "touba-interaction-resume-request-v0.1",
       request_id: pending.request_id,
     });
     assert.equal(idempotentResponse.status, 200);
-    assert.equal((await idempotentResponse.json()).status, "succeeded");
+    assert.equal((await idempotentResponse.json()).status, expectedOperationStatus);
+    assert.deepEqual(await getJson(`${baseUrl}/interactions/sessions/${session.session_id}`), resumedSession);
+    if (decisionKind === "reject") {
+      const legacyRoot = mkdtempSync(join(tmpdir(), "touba-interaction-legacy-refusal-"));
+      try {
+        mkdirSync(join(legacyRoot, ".touba"));
+        const sessionsPath = join(legacyRoot, ".touba", "interaction-sessions.json");
+        const legacySession = structuredClone(resumedSession);
+        legacySession.status = "awaiting_human";
+        legacySession.last_run_status = "awaiting_human";
+        legacySession.messages = legacySession.messages.slice(0, 2);
+        legacySession.operations[0].status = "awaiting_human";
+        legacySession.operations[0].error = null;
+        writeFileSync(sessionsPath, JSON.stringify({ schema_version: "touba-interaction-sessions-v0.2", sessions: [legacySession] }));
+        const checkpoints = JSON.parse(readFileSync(join(root, ".touba", "sandbox-checkpoints.json"), "utf8"));
+        checkpoints.records[0].result.diagnostics = [{ severity: "warning", code: "ToubaSandboxRunFinishedWithStatus", message: "sandbox entrypoint run finished with status stopped" }];
+        checkpoints.records[0].human_wait.projections = {
+          terminal_event: null,
+          pause_interaction: null,
+          interaction: null,
+        };
+        const checkpointPath = join(legacyRoot, ".touba", "sandbox-checkpoints.json");
+        const withoutTerminalProof = structuredClone(checkpoints);
+        withoutTerminalProof.records[0].result.trace = paused.trace;
+        const withoutTerminalProofBytes = JSON.stringify(withoutTerminalProof);
+        writeFileSync(checkpointPath, withoutTerminalProofBytes);
+        writeFileSync(join(legacyRoot, ".touba", "current-run-summary.json"), JSON.stringify({ ...summary, status: "paused", completed_at: null, refusals: [] }));
+        assert.throws(
+          () => createToubaProjectServer({ contractsRoot, projectRoot: legacyRoot, quiet: true, port: 0 }),
+          { code: "ToubaServeSandboxCheckpointStoreInvalid" },
+        );
+        assert.equal(readFileSync(checkpointPath, "utf8"), withoutTerminalProofBytes);
+        assert.deepEqual(getInteractionSession({ sessionId: session.session_id, sessionsPath }), legacySession);
+        for (const [field, value] of [["run_id", "run_foreign"], ["entry_ref", "strategy:foreign/Unrelated"]]) {
+          const foreignTrace = structuredClone(checkpoints);
+          foreignTrace.records[0].result.trace[field] = value;
+          assertMatchesSchema("touba-sandbox-run-result-v0.1", foreignTrace.records[0].result);
+          const foreignBytes = JSON.stringify(foreignTrace);
+          writeFileSync(checkpointPath, foreignBytes);
+          assert.throws(
+            () => createToubaProjectServer({ contractsRoot, projectRoot: legacyRoot, quiet: true, port: 0 }),
+            { code: "ToubaServeSandboxCheckpointStoreInvalid" },
+          );
+          assert.equal(readFileSync(checkpointPath, "utf8"), foreignBytes, field);
+          assert.deepEqual(getInteractionSession({ sessionId: session.session_id, sessionsPath }), legacySession, field);
+          assert.equal(JSON.parse(readFileSync(join(legacyRoot, ".touba", "current-run-summary.json"), "utf8")).status, "paused", field);
+        }
+        writeFileSync(checkpointPath, JSON.stringify(checkpoints));
+        const repairedService = createToubaProjectServer({ contractsRoot, projectRoot: legacyRoot, quiet: true, port: 0 });
+        await repairedService.stop();
+        const repaired = getInteractionSession({ sessionId: session.session_id, sessionsPath });
+        assert.equal(repaired.status, "failed");
+        assert.equal(repaired.operations[0].status, "failed");
+        assert.equal(repaired.messages.length, 3);
+        assert.deepEqual(repaired.messages.at(-1).run_result, checkpoints.records[0].result);
+        assert.equal(repaired.messages.at(-1).run_result.diagnostics[0].code, "ToubaSandboxRunFinishedWithStatus");
+        const repairedSummary = JSON.parse(readFileSync(join(legacyRoot, ".touba", "current-run-summary.json"), "utf8"));
+        assert.equal(repairedSummary.status, "refused");
+        assert.equal(repairedSummary.completed_at, resumed.completed_at);
+        const repeatedService = createToubaProjectServer({ contractsRoot, projectRoot: legacyRoot, quiet: true, port: 0 });
+        await repeatedService.stop();
+        assert.deepEqual(getInteractionSession({ sessionId: session.session_id, sessionsPath }), repaired);
+      } finally {
+        rmSync(legacyRoot, { recursive: true, force: true });
+      }
+    }
+    const archiveResponse = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/archive`, {});
+    assert.equal(archiveResponse.status, 200);
+    assert.equal((await archiveResponse.json()).status, "archived");
   } finally {
     await service.stop();
     rmSync(root, { recursive: true, force: true });
   }
 });
+}
+
+test("HTTP successive checkpoints retain both pauses and never replay a superseded checkpoint", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-interaction-successive-checkpoints-"));
+  mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
+  const document = sandboxApprovalAirDocument();
+  const flow = document.execution_graphs[0];
+  flow.nodes.splice(1, 0, node("approval_second", "human_approval", {
+    approval_ref: "approval:demo/SecondApproval",
+    approval_mode: "required_approval",
+    context_refs: [],
+    result_binding: "decision",
+  }));
+  flow.edges = [edge("approval", "approval_second", "next"), edge("approval_second", "done", "next")];
+  writeFileSync(join(root, ".touba", "air", "demo", "approval.air.json"), JSON.stringify(document));
+  writeTestDecisionIdentity(root, { userRef: "user:test-reviewer", deviceRef: "device:test-suite" });
+  const service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+  try {
+    await service.start();
+    const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
+    const createResponse = await postJson(`${baseUrl}/interactions/sessions`, {
+      schema_version: "touba-interaction-session-create-v0.1",
+      target_ref: "strategy:demo.approval/RunApproval",
+      target_kind: "strategy",
+      presentation: "workflow",
+      effect_policy: "runtime_only",
+      requested_by: { kind: "studio", id: "test-suite" },
+    });
+    assert.equal(createResponse.status, 201);
+    const session = await createResponse.json();
+    const sessionUrl = `${baseUrl}/interactions/sessions/${session.session_id}`;
+    const operationResponse = await postJson(`${sessionUrl}/messages`, {
+      schema_version: "touba-interaction-message-request-v0.1",
+      message_id: "two_checkpoints",
+      display_text: "Verify both human boundaries.",
+      inputs: {},
+      requested_by: { kind: "studio", id: "test-suite" },
+    });
+    const operation = await operationResponse.json();
+    await waitForInteractionOperation(baseUrl, session.session_id, operation.operation_id);
+    let firstRequest;
+    for (const decision of ["approve", "reject"]) {
+      const pending = await getJson(`${baseUrl}/approvals/pending/current`);
+      if (decision === "approve") firstRequest = pending;
+      else assert.notEqual(pending.request_id, firstRequest.request_id);
+      const accepted = await postJson(`${baseUrl}/decisions`, {
+        schema_version: "touba-approval-decision-v1",
+        request_id: pending.request_id,
+        run_id: pending.run_id,
+        trace_ref: pending.trace_ref,
+        user_ref: "user:test-reviewer",
+        device_ref: "device:test-suite",
+        decision,
+        decided_by: "user:test-reviewer",
+        decided_at: new Date().toISOString(),
+        comment: null,
+        client_ref: "test-suite",
+      });
+      assert.equal(accepted.status, 202);
+      assert.equal((await postJson(`${sessionUrl}/resume`, {
+        schema_version: "touba-interaction-resume-request-v0.1",
+        request_id: pending.request_id,
+      })).status, 202);
+      await waitForInteractionOperation(baseUrl, session.session_id, operation.operation_id);
+      const stored = await getJson(sessionUrl);
+      assert.equal(stored.messages.length, decision === "approve" ? 3 : 4);
+      assert.equal(stored.operations[0].status, decision === "approve" ? "awaiting_human" : "failed");
+      const staleResume = await postJson(`${sessionUrl}/resume`, {
+        schema_version: "touba-interaction-resume-request-v0.1",
+        request_id: firstRequest.request_id,
+      });
+      assert.equal(staleResume.status, 200);
+      assert.deepEqual(await getJson(sessionUrl), stored);
+      const directStaleResume = await postJson(`${baseUrl}/runs/sandbox/resume`, { request_id: firstRequest.request_id });
+      assert.equal(directStaleResume.status, 200);
+      assert.deepEqual(await directStaleResume.json(), stored.messages[2].run_result);
+      assert.deepEqual(await getJson(sessionUrl), stored);
+    }
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const decision of ["rejected", "expired", "cancelled"]) {
+test(`real runtime ${decision} projects a terminal interaction and retains both outcomes`, async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-interaction-human-terminal-"));
+  const sessionsPath = join(root, "sessions.json");
+  const targetRef = "strategy:demo.approval/RunApproval";
+  const document = sandboxApprovalAirDocument();
+  try {
+    const session = createInteractionSession({
+      request: {
+        target_ref: targetRef,
+        target_kind: "strategy",
+        presentation: "workflow",
+        effect_policy: "runtime_only",
+        requested_by: { kind: "studio", id: "test-suite" },
+      },
+      sessionsPath,
+    });
+    const operation = enqueueInteractionOperation({
+      message: { message_id: "terminal_test", display_text: "Review the pure test." },
+      runId: `run_${decision}`,
+      sessionId: session.session_id,
+      sessionsPath,
+    });
+    const operationArgs = { operationId: operation.operation_id, sessionId: session.session_id, sessionsPath };
+    const paused = await executeAirDocument(document, {
+      entryRef: targetRef,
+      runId: operation.run_id,
+      durableHumanApprovals: true,
+    });
+    const projectResult = (runtimeResult) => buildSandboxRunResult({
+      completedAt: new Date().toISOString(),
+      startedAt: operation.created_at,
+      startedMs: Date.now(),
+      effectPolicy: "runtime_only",
+      executionKind: "entrypoint",
+      runId: operation.run_id,
+      runtimeResult,
+      targetRef,
+    });
+    startInteractionOperation(operationArgs);
+    const pausedResult = projectResult(paused);
+    assert.equal(completeInteractionOperation({ ...operationArgs, result: pausedResult }).status, "awaiting_human");
+    assert.throws(() => archiveInteractionSession({ sessionId: session.session_id, sessionsPath }), { code: "ToubaServeInteractionSessionBusy" });
+    startInteractionOperation(operationArgs);
+    const terminal = await executeAirDocument(document, {
+      entryRef: targetRef,
+      runId: operation.run_id,
+      durableHumanApprovals: true,
+      humanApprovalResumeCheckpoint: paused.checkpoint,
+      humanApprovalDecisions: { [paused.checkpoint.approval_ref]: decision },
+    });
+    assert.equal(terminal.status, "stopped");
+    assert.equal(terminal.checkpoint, undefined);
+    assert.equal(terminal.result, undefined);
+    assert.equal(terminal.trace.events.some((event) => event.kind === `human_approval_${decision}`), true);
+    assert.equal(terminal.trace.events.some((event) => event.kind === "human_approval_resumed"), false);
+    const terminalResult = projectResult(terminal);
+    assertMatchesSchema("touba-sandbox-run-result-v0.1", terminalResult);
+    const completed = completeInteractionOperation({ ...operationArgs, result: terminalResult });
+    assert.equal(completed.status, decision === "cancelled" ? "cancelled" : "failed");
+    assertMatchesSchema("touba-interaction-operation-v0.1", completed);
+    completeInteractionOperation({ ...operationArgs, result: terminalResult });
+    const stored = getInteractionSession({ sessionId: session.session_id, sessionsPath });
+    assert.equal(stored.messages.length, 3, "a repeated terminal result must not duplicate history");
+    assert.deepEqual(stored.messages[1].run_result, pausedResult);
+    assert.deepEqual(stored.messages[2].run_result, terminalResult);
+    assert.equal(listInteractionSessions(sessionsPath).sessions[0].active_operation, null);
+    assert.equal(archiveInteractionSession({ sessionId: session.session_id, sessionsPath }).status, "archived");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+}
 
 test("HTTP project server requires bearer auth when configured", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-auth-"));
@@ -3288,6 +4772,34 @@ test("HTTP project server requires bearer auth when configured", async () => {
     });
     assert.equal(mobileAuthorized.status, 200);
 
+    const sandboxCheckpointsPath = join(root, ".touba", "sandbox-checkpoints.json");
+    const checkpointStoreBeforeMobileExecution = existsSync(sandboxCheckpointsPath)
+      ? readFileSync(sandboxCheckpointsPath, "utf8")
+      : null;
+    const mobileResumeRefused = await fetch(`${baseUrl}/runs/sandbox/resume`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${issued.bearer_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        operation_id: "op_mobile_must_not_claim",
+        checkpoint_revision: 1,
+        checkpoint_digest: "a".repeat(64),
+        resume_request_id: "resume_mobile_must_not_dispatch",
+      }),
+    });
+    assert.equal(mobileResumeRefused.status, 401);
+    assert.equal((await mobileResumeRefused.json()).code, "ToubaServeUnauthorized");
+    const checkpointStoreAfterMobileExecution = existsSync(sandboxCheckpointsPath)
+      ? readFileSync(sandboxCheckpointsPath, "utf8")
+      : null;
+    assert.equal(
+      checkpointStoreAfterMobileExecution,
+      checkpointStoreBeforeMobileExecution,
+      "a mobile pairing token must not claim or mutate a durable execution",
+    );
+
     const revokedResponse = await fetch(`${baseUrl}/mobile/pairings/revoke`, {
       method: "POST",
       headers: {
@@ -3381,7 +4893,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     await projectServer.start();
     const baseUrl = `http://127.0.0.1:${projectServer.server.address().port}`;
 
-    const memoryProposal = await postJson(`${baseUrl}/elements/propose`, {
+    const memoryRequest = {
       schema_version: "touba-element-authoring-request-v0.1",
       proposal_id: "author_memory_lifecycle",
       module_ref: "demo.lifecycle",
@@ -3392,6 +4904,17 @@ test("client authoring and deployment routes complete a governed project lifecyc
       },
       requested_by: { kind: "studio", id: "touba-studio" },
       reason: "Add lifecycle evidence memory.",
+    };
+    const memoryPreviewResponse = await postJson(`${baseUrl}/elements/preview`, memoryRequest);
+    assert.equal(memoryPreviewResponse.status, 200);
+    const memoryPreview = await memoryPreviewResponse.json();
+    assertMatchesSchema("touba-element-authoring-preview-v0.1", memoryPreview);
+    assert.match(memoryPreview.changes[0].diff, /\+memory LifecycleEvidence/u);
+    assert.equal((await getJson(`${baseUrl}/changes`)).summary.pending, 0);
+
+    const memoryProposal = await postJson(`${baseUrl}/elements/propose`, {
+      ...memoryRequest,
+      preview_digest: memoryPreview.preview_digest,
     });
     assert.equal(memoryProposal.status, 202);
     assert.equal((await memoryProposal.json()).target_count, undefined);
@@ -3405,7 +4928,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(memoryApply.status, 202);
     assert.match(readFileSync(join(root, "src", "main.tb"), "utf8"), /memory LifecycleEvidence/u);
 
-    const toolProposal = await postJson(`${baseUrl}/elements/propose`, {
+    const toolRequest = {
       schema_version: "touba-element-authoring-request-v0.1",
       proposal_id: "author_tool_lifecycle",
       module_ref: "demo.lifecycle",
@@ -3425,6 +4948,18 @@ test("client authoring and deployment routes complete a governed project lifecyc
       },
       requested_by: { kind: "studio", id: "touba-studio" },
       reason: "Add the governed lifecycle integration.",
+    };
+    const toolPreviewResponse = await postJson(`${baseUrl}/elements/preview`, toolRequest);
+    assert.equal(toolPreviewResponse.status, 200);
+    const toolPreview = await toolPreviewResponse.json();
+    assertMatchesSchema("touba-element-authoring-preview-v0.1", toolPreview);
+    assert.equal(toolPreview.impact.file_count, 3);
+    assert.equal(toolPreview.impact.handler_stub_count, 1);
+    assert.equal(toolPreview.changes.some((change) => change.path === "touba.manifest.json"), true);
+
+    const toolProposal = await postJson(`${baseUrl}/elements/propose`, {
+      ...toolRequest,
+      preview_digest: toolPreview.preview_digest,
     });
     assert.equal(toolProposal.status, 202);
     const toolDraft = await toolProposal.json();
@@ -3441,6 +4976,23 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(existsSync(join(root, "handlers", "demo", "lifecycle", "fetch_lifecycle_record.handler.mjs")), true);
     const graph = await getJson(`${baseUrl}/authority/graph`);
     assert.equal(graph.nodes.some((node) => node.ref === "tool:demo.lifecycle/FetchLifecycleRecord"), true);
+
+    const staleRequest = {
+      schema_version: "touba-element-authoring-request-v0.1",
+      proposal_id: "author_stale_lifecycle",
+      module_ref: "demo.lifecycle",
+      element: { kind: "memory", name: "StaleEvidence", description: "" },
+      requested_by: { kind: "studio", id: "touba-studio" },
+      reason: "Prove stale preview rejection.",
+    };
+    const stalePreview = await (await postJson(`${baseUrl}/elements/preview`, staleRequest)).json();
+    writeFileSync(join(root, "src", "main.tb"), `${readFileSync(join(root, "src", "main.tb"), "utf8")}\n`, "utf8");
+    const staleProposal = await postJson(`${baseUrl}/elements/propose`, {
+      ...staleRequest,
+      preview_digest: stalePreview.preview_digest,
+    });
+    assert.equal(staleProposal.status, 409);
+    assert.equal((await staleProposal.json()).code, "ToubaServeElementPreviewStale");
 
     const planResponse = await postJson(`${baseUrl}/deployments/plan`, {
       schema_version: "touba-deployment-action-v0.1",
@@ -3559,6 +5111,19 @@ async function waitForInteractionOperation(baseUrl, sessionId, operationId) {
   assert.fail(`interaction operation ${operationId} did not reach a terminal status`);
 }
 
+async function waitForStoredInteractionOperation({ operationId, sessionsPath }) {
+  const terminalStatuses = new Set(["awaiting_human", "succeeded", "failed", "cancelled", "interrupted"]);
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const store = JSON.parse(readFileSync(sessionsPath, "utf8"));
+    const operation = store.sessions
+      .flatMap((session) => session.operations)
+      .find((candidate) => candidate.operation_id === operationId);
+    if (operation !== undefined && terminalStatuses.has(operation.status)) return operation;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.fail(`stored interaction operation ${operationId} did not reach a terminal status`);
+}
+
 async function listenHttpServer(server) {
   await new Promise((resolveListen, rejectListen) => {
     server.once("error", rejectListen);
@@ -3571,6 +5136,103 @@ async function closeHttpServer(server) {
   await new Promise((resolveClose, rejectClose) => {
     server.close((error) => error ? rejectClose(error) : resolveClose());
   });
+}
+
+async function waitForPath(path, child, stderr, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return;
+    if (child.exitCode !== null || child.signalCode !== null) {
+      assert.fail(`child exited before durable marker: ${stderr()}`);
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.fail(`timed out waiting for ${path}: ${stderr()}`);
+}
+
+async function waitForChildExit(child, timeoutMs = 10000) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await Promise.race([
+    new Promise((resolveExit) => child.once("exit", resolveExit)),
+    new Promise((_, rejectTimeout) => setTimeout(
+      () => rejectTimeout(new Error(`child ${child.pid} did not exit`)),
+      timeoutMs,
+    )),
+  ]);
+}
+
+async function withTimeout(promise, label, timeoutMs = 10000) {
+  return new Promise((resolveValue, rejectValue) => {
+    const timeout = setTimeout(
+      () => rejectValue(new Error(`timed out waiting for ${label}`)),
+      timeoutMs,
+    );
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timeout);
+        resolveValue(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        rejectValue(error);
+      },
+    );
+  });
+}
+
+async function startProjectServerProcess(projectRoot) {
+  const servePath = new URL("../src/serve.mjs", import.meta.url).pathname;
+  const child = spawn(process.execPath, [
+    servePath,
+    "--contracts-root", contractsRoot,
+    "--project-root", projectRoot,
+    "--port", "0",
+  ], {
+    cwd: projectRoot,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+  const started = await new Promise((resolveStarted, rejectStarted) => {
+    const timeout = setTimeout(() => {
+      rejectStarted(new Error(`project server child did not start: ${stderr}`));
+    }, 10000);
+    const onExit = () => {
+      clearTimeout(timeout);
+      rejectStarted(new Error(`project server child exited before listen: ${stderr}`));
+    };
+    child.once("exit", onExit);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+      const lines = stdout.split("\n");
+      stdout = lines.pop() ?? "";
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line);
+          if (event.event === "touba_project_server_started") {
+            clearTimeout(timeout);
+            child.off("exit", onExit);
+            resolveStarted(event);
+            return;
+          }
+        } catch {
+          // Preserve non-JSON process output for the next complete line.
+        }
+      }
+    });
+  });
+  return {
+    child,
+    baseUrl: `http://${started.host}:${started.port}`,
+    stderr: () => stderr,
+  };
+}
+
+async function stopChildProcess(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  await waitForChildExit(child);
 }
 
 async function readNextEvent(response) {
@@ -3610,7 +5272,7 @@ function parseSseEvent(text) {
   return JSON.parse(dataLine.slice("data: ".length));
 }
 
-function sandboxAirDocument({ withTool = false } = {}) {
+function sandboxAirDocument({ withInput = false, withTool = false } = {}) {
   const definitions = {
     types: [],
     constants: [],
@@ -3653,6 +5315,18 @@ function sandboxAirDocument({ withTool = false } = {}) {
         flow_graph_ref: "graph:strategy:demo.sandbox/RunTriggered",
         source_ref: sourceRef(),
       },
+      ...(withInput ? [
+        {
+          id: "strategy:demo.sandbox/EchoInput",
+          name: "EchoInput",
+          signature: {
+            inputs: [{ name: "query", type_ref: "builtin:Text" }],
+            output_type: "builtin:Text",
+          },
+          flow_graph_ref: "graph:strategy:demo.sandbox/EchoInput",
+          source_ref: sourceRef(),
+        },
+      ] : []),
       ...(withTool ? [
         {
           id: "strategy:demo.sandbox/RunTool",
@@ -3692,6 +5366,11 @@ function sandboxAirDocument({ withTool = false } = {}) {
       graph("graph:strategy:demo.sandbox/RunTriggered", "strategy:demo.sandbox/RunTriggered", [
         node("triggered", "give", { arguments: ["literal:string:triggered"] }),
       ]),
+      ...(withInput ? [
+        graph("graph:strategy:demo.sandbox/EchoInput", "strategy:demo.sandbox/EchoInput", [
+          node("echo", "give", { arguments: ["value:query"] }),
+        ]),
+      ] : []),
       ...(withTool ? [
         graph("graph:strategy:demo.sandbox/RunTool", "strategy:demo.sandbox/RunTool", [
           node("tool", "call_tool", { target_ref: "tool:demo.sandbox/ReadExternal", result_binding: "result" }),

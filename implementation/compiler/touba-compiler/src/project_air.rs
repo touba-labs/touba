@@ -540,29 +540,16 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
 
     fn validate_pure_imported_function(&mut self, declaration: &AirFunction, graph: &AirFlowGraph) {
         for node in &graph.nodes {
-            match node.kind {
-                AirFlowNodeKind::CallFunction
-                | AirFlowNodeKind::Bind
-                | AirFlowNodeKind::Branch
-                | AirFlowNodeKind::Loop
-                | AirFlowNodeKind::Give
-                | AirFlowNodeKind::Stop => {}
-                AirFlowNodeKind::CallTool
-                | AirFlowNodeKind::CallSkill
-                | AirFlowNodeKind::CallAgent
-                | AirFlowNodeKind::HumanApproval
-                | AirFlowNodeKind::UserInteraction
-                | AirFlowNodeKind::Fallback => {
-                    self.diagnostics.push(AirDiagnostic::new(
-                        AirDiagnosticCode::ImportFunctionNotPure,
-                        format!(
-                            "imported function `{}` is not pure enough for IM-1 because its graph contains `{}`",
-                            declaration.id,
-                            flow_node_kind_label(node.kind)
-                        ),
-                        Some(node.source_ref.clone()),
-                    ));
-                }
+            if !node.kind.is_pure_function_node() {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::ImportFunctionNotPure,
+                    format!(
+                        "imported function `{}` is not pure enough for IM-1 because its graph contains `{}`",
+                        declaration.id,
+                        flow_node_kind_label(node.kind)
+                    ),
+                    Some(node.source_ref.clone()),
+                ));
             }
         }
     }

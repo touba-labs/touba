@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -11,6 +11,10 @@ import {
   loadToolBindingManifestFromJson,
   ToubaRuntimeError,
 } from "@touba/runtime";
+import {
+  createFileEffectJournal,
+  unknownEffectRetryDecision,
+} from "./effect-journal.mjs";
 
 const QUEUE_SCHEMA_VERSION = "touba-trigger-queue-v0.1";
 const STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
@@ -19,6 +23,7 @@ const DEFAULT_PORT = 8787;
 const MAX_BODY_BYTES = 64 * 1024;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
+let atomicWriteSequence = 0;
 
 if (isMainModule()) {
   try {
@@ -40,8 +45,14 @@ export async function createTriggerService(options) {
   const manifestPath = resolve(required(options.manifestPath, "--manifest"));
   const statePath = resolve(required(options.statePath, "--state"));
   const queuePath = resolve(required(options.queuePath, "--queue"));
+  const effectJournalPath = options.effectJournalPath === undefined
+    ? undefined
+    : resolve(options.effectJournalPath);
   assertSuffix(statePath, ".trigger-state.json", "TriggerStatePathInvalid");
   assertSuffix(queuePath, ".trigger-queue.json", "TriggerQueuePathInvalid");
+  if (effectJournalPath !== undefined) {
+    assertSuffix(effectJournalPath, ".effect-journal.json", "EffectJournalPathInvalid");
+  }
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
@@ -54,6 +65,12 @@ export async function createTriggerService(options) {
     : loadSecretsFromJson(readFileSync(resolve(options.secretsPath), "utf8"), {
       baseDir: dirname(resolve(options.secretsPath)),
     });
+  if (manifestRequiresEffectJournal(manifest) && effectJournalPath === undefined) {
+    throw serviceError(
+      "EffectJournalRequired",
+      "explicit external_write effect contracts require --effect-journal",
+    );
+  }
   const routes = buildRequestRoutes(document, manifest, options.triggerRef);
   if (routes.length === 0) {
     throw serviceError(
@@ -86,6 +103,10 @@ export async function createTriggerService(options) {
   const serverState = {
     processedCount: 0,
     stopping: false,
+    workerPromise: undefined,
+    workerRequested: false,
+    retryTimer: undefined,
+    retryDueAt: undefined,
   };
   const workerOptions = {
     document,
@@ -99,6 +120,11 @@ export async function createTriggerService(options) {
     maxEvents: options.maxEvents,
     maxAttempts,
     processingTimeoutMs,
+    effectJournal: effectJournalPath === undefined
+      ? undefined
+      : createFileEffectJournal(effectJournalPath, {
+        secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
+      }),
   };
 
   const server = createServer(async (request, response) => {
@@ -150,8 +176,53 @@ export async function createTriggerService(options) {
       }
       const argumentsFromPayload = materializePayloadArguments(route, request, body);
       const eventId = triggerEventId(request, route.trigger, body.digest);
-      const queueId = `queue:${Date.now()}:${hashText(`${route.trigger.id}:${eventId}`).slice(0, 12)}`;
       const queue = loadQueue(queuePath);
+      const existingEntry = queue.entries.find((candidate) =>
+        candidate.trigger_ref === route.trigger.id
+        && candidate.event_id === eventId
+      );
+      if (existingEntry !== undefined) {
+        if (existingEntry.http?.payload_sha256 !== body.digest) {
+          throw serviceError(
+            "TriggerEventPayloadConflict",
+            "the trigger event id is already associated with a different payload digest",
+          );
+        }
+        const triggerState = loadTriggerState(statePath);
+        if (
+          isTerminalQueueStatus(existingEntry.status)
+          && isTriggerEventConsumed(triggerState, existingEntry.trigger_ref, existingEntry.event_id)
+        ) {
+          const runId = `trigger-service-${safeFilePart(existingEntry.queue_id)}-replay`;
+          const event = normalizeStateTriggerEvent(existingEntry);
+          const result = replayRejectedResult(document, event, runId);
+          recordTriggerStateEvent(triggerState, event, result);
+          saveTriggerState(statePath, triggerState);
+          writeJson(response, 409, {
+            status: "error",
+            code: "TriggerReplayRejected",
+            message: "the trigger event id has already been consumed",
+            queue_id: existingEntry.queue_id,
+            trigger_ref: existingEntry.trigger_ref,
+            event_id: existingEntry.event_id,
+          });
+          return;
+        }
+        writeJson(response, 202, {
+          status: "queued",
+          queue_id: existingEntry.queue_id,
+          trigger_ref: existingEntry.trigger_ref,
+          event_id: existingEntry.event_id,
+          deduplicated: true,
+          queue_status: existingEntry.status,
+        });
+        setImmediate(() => requestQueueProcessing({
+          ...workerOptions,
+          server,
+        }));
+        return;
+      }
+      const queueId = stableQueueId(route.trigger.id, eventId);
       const entry = {
         queue_id: queueId,
         trigger_ref: route.trigger.id,
@@ -181,14 +252,10 @@ export async function createTriggerService(options) {
         event_id: eventId,
       });
 
-      setImmediate(() => {
-        processQueue({
-          ...workerOptions,
-          server,
-        }).catch((error) => {
-          process.stderr.write(`trigger service worker error [${error.code ?? "TriggerServiceWorkerError"}]: ${error.message}\n`);
-        });
-      });
+      setImmediate(() => requestQueueProcessing({
+        ...workerOptions,
+        server,
+      }));
     } catch (error) {
       const code = error.code ?? "TriggerServiceRequestFailed";
       writeJson(response, httpStatusForServiceError(code), {
@@ -197,6 +264,10 @@ export async function createTriggerService(options) {
         message: error.message,
       });
     }
+  });
+  server.once("close", () => {
+    serverState.stopping = true;
+    clearRetryWake(serverState);
   });
 
   return {
@@ -217,19 +288,94 @@ export async function createTriggerService(options) {
           })),
           queue: queuePath,
           state: statePath,
+          effect_journal: effectJournalPath,
         })}\n`);
       }
-      setImmediate(() => {
-        processQueue({
-          ...workerOptions,
-          server,
-        }).catch((error) => {
-          process.stderr.write(`trigger service worker error [${error.code ?? "TriggerServiceWorkerError"}]: ${error.message}\n`);
-        });
-      });
+      setImmediate(() => requestQueueProcessing({
+        ...workerOptions,
+        server,
+      }));
     },
     server,
   };
+}
+
+function requestQueueProcessing(workerOptions) {
+  const { serverState } = workerOptions;
+  if (serverState.stopping) {
+    return;
+  }
+  clearRetryWake(serverState);
+  serverState.workerRequested = true;
+  if (serverState.workerPromise !== undefined) {
+    return;
+  }
+
+  const workerPromise = drainRequestedQueueWork(workerOptions);
+  serverState.workerPromise = workerPromise;
+  workerPromise.then(
+    (nextWakeDelayMs) => finishQueueWorker(workerOptions, workerPromise, nextWakeDelayMs),
+    (error) => {
+      process.stderr.write(`trigger service worker error [${error.code ?? "TriggerServiceWorkerError"}]: ${error.message}\n`);
+      finishQueueWorker(workerOptions, workerPromise, workerOptions.processingTimeoutMs);
+    },
+  );
+}
+
+async function drainRequestedQueueWork(workerOptions) {
+  const { serverState } = workerOptions;
+  let nextWakeDelayMs;
+  do {
+    serverState.workerRequested = false;
+    nextWakeDelayMs = await processQueue(workerOptions);
+  } while (!serverState.stopping && serverState.workerRequested);
+  return nextWakeDelayMs;
+}
+
+function finishQueueWorker(workerOptions, workerPromise, nextWakeDelayMs) {
+  const { serverState } = workerOptions;
+  if (serverState.workerPromise !== workerPromise) {
+    return;
+  }
+  serverState.workerPromise = undefined;
+  if (serverState.stopping) {
+    clearRetryWake(serverState);
+    return;
+  }
+  if (serverState.workerRequested) {
+    requestQueueProcessing(workerOptions);
+    return;
+  }
+  if (Number.isFinite(nextWakeDelayMs)) {
+    scheduleRetryWake(workerOptions, nextWakeDelayMs);
+  }
+}
+
+function scheduleRetryWake(workerOptions, delayMs) {
+  const { serverState } = workerOptions;
+  if (serverState.stopping) {
+    return;
+  }
+  const boundedDelayMs = Math.max(0, delayMs);
+  const dueAt = Date.now() + boundedDelayMs;
+  if (serverState.retryTimer !== undefined && serverState.retryDueAt <= dueAt) {
+    return;
+  }
+  clearRetryWake(serverState);
+  serverState.retryDueAt = dueAt;
+  serverState.retryTimer = setTimeout(() => {
+    serverState.retryTimer = undefined;
+    serverState.retryDueAt = undefined;
+    requestQueueProcessing(workerOptions);
+  }, boundedDelayMs);
+}
+
+function clearRetryWake(serverState) {
+  if (serverState.retryTimer !== undefined) {
+    clearTimeout(serverState.retryTimer);
+  }
+  serverState.retryTimer = undefined;
+  serverState.retryDueAt = undefined;
 }
 
 async function processQueue({
@@ -244,6 +390,7 @@ async function processQueue({
   maxEvents,
   maxAttempts,
   processingTimeoutMs,
+  effectJournal,
 }) {
   if (serverState.stopping) {
     return;
@@ -259,14 +406,20 @@ async function processQueue({
       if (recovered) {
         saveQueue(queuePath, queue);
       }
-      return;
+      return nextQueueWakeDelayMs(queue, processingTimeoutMs);
     }
     entry.status = "processing";
     entry.started_at = new Date().toISOString();
     entry.attempt_count = (entry.attempt_count ?? 0) + 1;
+    delete entry.next_attempt_at;
     saveQueue(queuePath, queue);
 
     const triggerState = loadTriggerState(statePath);
+    // TD-1 consumes an external event once. A later attempt owned by the same
+    // queue entry may retry its target without recording a second event.
+    const retryingConsumedEvent = entry.attempt_count > 1
+      && isTriggerEventConsumed(triggerState, entry.trigger_ref, entry.event_id);
+    const acceptedRunCount = countAcceptedTriggerEvents(triggerState, entry.trigger_ref, currentDayKey());
     const event = {
       trigger_ref: entry.trigger_ref,
       event_id: entry.event_id,
@@ -279,15 +432,19 @@ async function processQueue({
       statePath,
       runId: `trigger-service-${entry.queue_id.replaceAll(/[^A-Za-z0-9_-]/gu, "-")}-attempt-${entry.attempt_count}`,
       triggerRunCounts: {
-        [entry.trigger_ref]: countAcceptedTriggerEvents(triggerState, entry.trigger_ref, currentDayKey()),
+        [entry.trigger_ref]: Math.max(0, acceptedRunCount - (retryingConsumedEvent ? 1 : 0)),
       },
-    }, triggerState);
+      effectScopeId: entry.queue_id,
+      effectJournal,
+    }, triggerState, { retryingConsumedEvent });
 
     const finishedQueue = loadQueue(queuePath);
     const stored = finishedQueue.entries.find((candidate) => candidate.queue_id === entry.queue_id);
     if (stored) {
       const refusal = lastTriggerRefusal(result.trace, entry.trigger_ref, entry.event_id);
-      const runtimeErrorCode = refusal?.payload?.runtime_error_code;
+      const executionFailure = lastTriggerExecutionFailure(result.trace, entry.trigger_ref);
+      const runtimeErrorCode = refusal?.payload?.runtime_error_code
+        ?? executionFailure?.payload?.runtime_error_code;
       stored.completed_at = new Date().toISOString();
       stored.run_id = result.trace?.run?.run_id;
       stored.runtime_status = result.status;
@@ -301,11 +458,15 @@ async function processQueue({
       }
       if (result.status === "success") {
         stored.status = "succeeded";
-      } else if (shouldRetryQueueEntry(stored, runtimeErrorCode, maxAttempts)) {
+      } else if (shouldRetryQueueEntry(stored, runtimeErrorCode, maxAttempts, effectJournal)) {
         stored.status = "queued";
         stored.next_attempt_at = new Date(Date.now() + retryDelayMs(stored.attempt_count ?? 1)).toISOString();
       } else {
-        stored.status = isNonRetryableRuntimeErrorCode(runtimeErrorCode) ? "failed" : "dead_lettered";
+        const unknownRetryDecision = unknownEffectRetryDecisionForEntry(stored, effectJournal);
+        stored.status = isNonRetryableRuntimeErrorCode(runtimeErrorCode)
+          || unknownRetryDecision === false
+          ? "failed"
+          : "dead_lettered";
         stored.dead_lettered_at = stored.status === "dead_lettered" ? new Date().toISOString() : undefined;
       }
     }
@@ -314,20 +475,35 @@ async function processQueue({
     serverState.processedCount += 1;
     if (maxEvents !== undefined && serverState.processedCount >= maxEvents) {
       serverState.stopping = true;
+      clearRetryWake(serverState);
       server.close();
     }
   }
 }
 
-async function executeTriggerEventWithState(document, triggerEvent, executionOptions, state) {
+async function executeTriggerEventWithState(
+  document,
+  triggerEvent,
+  executionOptions,
+  state,
+  { retryingConsumedEvent = false } = {},
+) {
   const event = normalizeStateTriggerEvent(triggerEvent);
-  if (event.triggerRef && event.eventId && isTriggerEventConsumed(state, event.triggerRef, event.eventId)) {
+  if (
+    !retryingConsumedEvent
+    && event.triggerRef
+    && event.eventId
+    && isTriggerEventConsumed(state, event.triggerRef, event.eventId)
+  ) {
     const result = replayRejectedResult(document, event, executionOptions.runId);
     recordTriggerStateEvent(state, event, result);
     saveTriggerState(executionOptions.statePath, state);
     return result;
   }
   const result = await executeTriggerEvent(document, triggerEvent, executionOptions);
+  if (retryingConsumedEvent) {
+    return result;
+  }
   recordTriggerStateEvent(state, event, result);
   saveTriggerState(executionOptions.statePath, state);
   return result;
@@ -342,6 +518,15 @@ function loadManifestFromPath(manifestPath) {
     }
   }
   return loadToolBindingManifestFromJson(JSON.stringify(rawManifest));
+}
+
+function manifestRequiresEffectJournal(manifest) {
+  const bindings = manifest?.bindings instanceof Map
+    ? [...manifest.bindings.values()]
+    : Object.values(manifest?.bindings ?? {});
+  return bindings.some((binding) =>
+    (binding?.effectContract ?? binding?.effect_contract)?.kind === "external_write"
+  );
 }
 
 function buildRequestRoutes(document, manifest, triggerRef) {
@@ -485,6 +670,7 @@ function recoverStaleProcessingEntries(queue, processingTimeoutMs) {
     entry.status = "queued";
     entry.recovered_at = new Date().toISOString();
     entry.recovery_reason = "processing_timeout";
+    entry.recovery_effect_outcome = "unknown";
     recovered = true;
   }
   return recovered;
@@ -492,8 +678,7 @@ function recoverStaleProcessingEntries(queue, processingTimeoutMs) {
 
 function saveQueue(queuePath, queue) {
   queue.updated_at = new Date().toISOString();
-  mkdirSync(dirname(queuePath), { recursive: true });
-  writeFileSync(queuePath, `${JSON.stringify(queue, null, 2)}\n`, "utf8");
+  saveJsonAtomically(queuePath, queue);
 }
 
 function loadTriggerState(statePath) {
@@ -513,8 +698,41 @@ function loadTriggerState(statePath) {
 
 function saveTriggerState(statePath, state) {
   state.updated_at = new Date().toISOString();
-  mkdirSync(dirname(statePath), { recursive: true });
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  saveJsonAtomically(statePath, state);
+}
+
+function saveJsonAtomically(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  atomicWriteSequence += 1;
+  const temporaryPath = `${path}.${process.pid}.${atomicWriteSequence}.tmp`;
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    renameSync(temporaryPath, path);
+  } catch (error) {
+    rmSync(temporaryPath, { force: true });
+    throw error;
+  }
+}
+
+function nextQueueWakeDelayMs(queue, processingTimeoutMs) {
+  const now = Date.now();
+  let earliestDueAt;
+  for (const entry of queue.entries) {
+    let dueAt;
+    if (entry.status === "queued" && entry.next_attempt_at) {
+      dueAt = Date.parse(entry.next_attempt_at);
+    } else if (entry.status === "processing") {
+      const startedAt = Date.parse(entry.started_at ?? "");
+      if (Number.isFinite(startedAt)) {
+        dueAt = startedAt + processingTimeoutMs;
+      }
+    }
+    if (!Number.isFinite(dueAt)) {
+      continue;
+    }
+    earliestDueAt = earliestDueAt === undefined ? dueAt : Math.min(earliestDueAt, dueAt);
+  }
+  return earliestDueAt === undefined ? undefined : Math.max(0, earliestDueAt - now);
 }
 
 export function buildTriggerStatusContract({
@@ -659,6 +877,10 @@ function isTriggerEventConsumed(state, triggerRef, eventId) {
   return Boolean(state.triggers?.[triggerRef]?.consumed_event_ids?.includes(eventId));
 }
 
+function isTerminalQueueStatus(status) {
+  return status === "succeeded" || status === "failed" || status === "dead_lettered";
+}
+
 function countAcceptedTriggerEvents(state, triggerRef, dayKey = currentDayKey()) {
   const events = state.triggers?.[triggerRef]?.events;
   if (!Array.isArray(events)) {
@@ -711,6 +933,16 @@ function lastTriggerRefusal(trace, triggerRef, eventId) {
         event.kind === "trigger_event_refused" &&
         event.payload?.trigger_ref === triggerRef &&
         (event.payload?.event_id === undefined || event.payload?.event_id === eventId),
+    );
+}
+
+function lastTriggerExecutionFailure(trace, triggerRef) {
+  return [...(trace?.events ?? [])]
+    .reverse()
+    .find(
+      (event) =>
+        event.kind === "trigger_execution_failed"
+        && event.payload?.trigger_ref === triggerRef,
     );
 }
 
@@ -806,19 +1038,46 @@ function assertValidSignature(request, body, secret) {
   }
 }
 
-function shouldRetryQueueEntry(entry, runtimeErrorCode, maxAttempts) {
+function shouldRetryQueueEntry(entry, runtimeErrorCode, maxAttempts, effectJournal) {
+  if (isAlwaysNonRetryableRuntimeErrorCode(runtimeErrorCode)) {
+    return false;
+  }
+  const unknownDecision = unknownEffectRetryDecisionForEntry(entry, effectJournal);
+  if (unknownDecision !== null) {
+    return unknownDecision && (entry.attempt_count ?? 0) < maxAttempts;
+  }
   if (isNonRetryableRuntimeErrorCode(runtimeErrorCode)) {
     return false;
   }
   return (entry.attempt_count ?? 0) < maxAttempts;
 }
 
-function isNonRetryableRuntimeErrorCode(runtimeErrorCode) {
+function unknownEffectRetryDecisionForEntry(entry, effectJournal) {
+  if (!effectJournal?.entriesForScope) {
+    return null;
+  }
+  return unknownEffectRetryDecision(effectJournal.entriesForScope(entry.queue_id));
+}
+
+function isAlwaysNonRetryableRuntimeErrorCode(runtimeErrorCode) {
   return typeof runtimeErrorCode === "string"
     && (
       runtimeErrorCode.startsWith("Trigger")
       || runtimeErrorCode === "SecretValueInTriggerArgument"
+      || [
+        "EffectContextRequired",
+        "EffectJournalInvalid",
+        "EffectJournalRequired",
+        "EffectReconciliationRequired",
+        "EffectRequestConflict",
+        "EffectResultUnavailable",
+      ].includes(runtimeErrorCode)
     );
+}
+
+function isNonRetryableRuntimeErrorCode(runtimeErrorCode) {
+  return isAlwaysNonRetryableRuntimeErrorCode(runtimeErrorCode)
+    || runtimeErrorCode === "EffectOutcomeUnknown";
 }
 
 function retryDelayMs(attemptCount) {
@@ -827,11 +1086,17 @@ function retryDelayMs(attemptCount) {
 
 function triggerEventId(request, trigger, digest) {
   const header = request.headers["x-touba-event-id"];
-  const value = Array.isArray(header) ? header[0] : header;
+  if (header === undefined) {
+    return `evt-http-${safeFilePart(trigger.name ?? "trigger")}-${Date.now()}-${digest.slice(0, 12)}-${randomUUID()}`;
+  }
+  const value = Array.isArray(header) && header.length === 1 ? header[0] : header;
   if (typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/u.test(value)) {
     return value;
   }
-  return `evt-http-${safeFilePart(trigger.name ?? "trigger")}-${Date.now()}-${digest.slice(0, 12)}`;
+  throw serviceError(
+    "TriggerEventIdInvalid",
+    "x-touba-event-id must contain 1 to 128 ASCII letters, digits, dots, underscores, colons or hyphens",
+  );
 }
 
 function authorized(request, token) {
@@ -858,6 +1123,7 @@ function parseArgs(rawArgs) {
     manifestPath: undefined,
     statePath: undefined,
     queuePath: undefined,
+    effectJournalPath: undefined,
     secretsPath: undefined,
     triggerRef: undefined,
     host: DEFAULT_HOST,
@@ -886,6 +1152,10 @@ function parseArgs(rawArgs) {
       parsed.queuePath = requiredValue(rawArgs, ++index, "--queue");
     } else if (arg.startsWith("--queue=")) {
       parsed.queuePath = nonEmptyValue(arg.slice("--queue=".length), "--queue");
+    } else if (arg === "--effect-journal") {
+      parsed.effectJournalPath = requiredValue(rawArgs, ++index, "--effect-journal");
+    } else if (arg.startsWith("--effect-journal=")) {
+      parsed.effectJournalPath = nonEmptyValue(arg.slice("--effect-journal=".length), "--effect-journal");
     } else if (arg === "--secrets") {
       parsed.secretsPath = requiredValue(rawArgs, ++index, "--secrets");
     } else if (arg.startsWith("--secrets=")) {
@@ -946,6 +1216,7 @@ function usage() {
     "  --host <host>                   Bind host, default 127.0.0.1",
     "  --port <port>                   Bind port, default 8787; use 0 for an ephemeral test port",
     "  --trace-dir <dir>               Persist one trace JSON file per processed queue entry",
+    "  --effect-journal <path>          Persist touba-effect-journal-v1 for external writes",
     "  --max-events <n>                Stop after n processed entries, useful for tests and supervised jobs",
     "  --max-attempts <n>              Retry target failures up to n attempts, default 3",
     "  --processing-timeout-ms <n>     Requeue stale processing entries after n ms, default 300000",
@@ -1006,6 +1277,10 @@ function hashText(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
+function stableQueueId(triggerRef, eventId) {
+  return `queue:sha256:${hashText(JSON.stringify([triggerRef, eventId]))}`;
+}
+
 function safeFilePart(value) {
   return String(value)
     .replaceAll(/[^A-Za-z0-9_.-]/gu, "-")
@@ -1027,6 +1302,9 @@ function serviceError(code, message) {
 }
 
 function httpStatusForServiceError(code) {
+  if (code === "TriggerEventPayloadConflict" || code === "TriggerReplayRejected") {
+    return 409;
+  }
   if (code === "TriggerPayloadTooLarge") {
     return 413;
   }

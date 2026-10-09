@@ -660,6 +660,18 @@ generate` émet alors l’entrée `payload.map` correspondante.
 `--state` et `--queue` doivent pointer vers des chemins terminant par
 `.trigger-state.json` et `.trigger-queue.json`.
 
+Avec un `x-touba-event-id` explicite, `(trigger_ref, event_id)` identifie une
+réception logique. Le même digest de payload réutilise l'entrée existante et son
+`queue_id`, sans nouvel enqueue. Un digest différent sous la même identité est
+refusé avec `TriggerEventPayloadConflict` avant enqueue. Une redelivery pendant
+que l'entrée est active répond `deduplicated: true` ; une entrée terminale déjà
+consommée produit `TriggerReplayRejected`, toujours avec le même `queue_id`.
+Sans cet en-tête stable, chaque requête reçoit une nouvelle identité et la
+déduplication des retries de l'émetteur n'est pas possible.
+Un en-tête présent mais invalide produit `TriggerEventIdInvalid` avant enqueue.
+Sa valeur doit contenir de 1 à 128 lettres ASCII, chiffres, points, tirets bas,
+deux-points ou tirets.
+
 Options principales :
 
 | Option | Rôle |
@@ -669,9 +681,31 @@ Options principales :
 | `--max-events <n>` | arrête le service après `n` entrées traitées |
 | `--max-attempts <n>` | borne les retries des échecs non structurels |
 | `--processing-timeout-ms <n>` | remet en queue une entrée `processing` périmée |
+| `--effect-journal <path>` | persiste `touba-effect-journal-v1` pour les bindings `external_write` |
 | `--auth-token-env <NAME>` | exige un bearer token ou `x-touba-trigger-token` |
 | `--signature-secret-env <NAME>` | exige `x-touba-signature: sha256=<hex>` |
 | `--secrets <path>` | résout les handles de secrets déclarés par les runs déclenchés |
+
+Le service utilise un worker unique par processus et réveille de lui-même les
+retries arrivés à `next_attempt_at`. Un couple `--queue` / `--state` ne doit pas
+être partagé entre plusieurs processus. Après récupération d’une entrée
+`processing` périmée, `recovery_effect_outcome: "unknown"` signale que l’effet
+externe précédent peut avoir eu lieu. La livraison de queue reste
+at-least-once ; le contrat V2 ci-dessous décide si le redispatch de l'effet est
+sûr ou doit être bloqué. Les remplacements atomiques des fichiers ne
+constituent pas une transaction avec l’effet externe.
+
+`--effect-journal` devient obligatoire si le manifest V2 contient au moins un
+binding `external_write` ; son chemin doit se terminer par
+`.effect-journal.json`. Le service utilise le `queue_id` comme portée stable.
+Une issue `unknown` n'est répétée que pour le mode `idempotency_key` ; les modes
+`reconcile` et `none` bloquent explicitement. Le package reste responsable de
+transmettre réellement la clé au service externe. Le service de triggers est le
+seul hôte durable raccordé à ce journal dans cette tranche : la CLI directe et
+le serveur de projet refusent ou n'exposent pas encore cette exécution
+effectful. Les fichiers de queue, d'état et de journal sont locaux et ne doivent
+pas être partagés entre plusieurs processus ou machines. Aucune garantie
+`exactly-once` n'est annoncée.
 
 Exemple source et manifest pour un webhook typé :
 

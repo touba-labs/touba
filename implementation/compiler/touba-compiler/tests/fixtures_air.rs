@@ -1814,10 +1814,21 @@ fn reports_project_air_import_cycles() {
 
 #[test]
 fn refuses_impure_function_imports_in_im1_project_air() {
-    let source = compile_air_fixture(
-        "im1-project-impure-source",
-        IMPORTS_IM1_PROJECT_IMPURE_SOURCE,
+    // Local compilation now refuses this source. Keep testing the independent
+    // project-assembly defence with a forged imported AIR function graph.
+    let local = compile_source_to_air("impure-source", IMPORTS_IM1_PROJECT_IMPURE_SOURCE);
+    assert!(local.document.is_none());
+    assert!(
+        local.diagnostics.iter().any(|d| d.code == AirDiagnosticCode::FunctionNotPure)
     );
+    let pure_source = IMPORTS_IM1_PROJECT_IMPURE_SOURCE.replace(
+        "        FetchSource\n            into fetched\n        give fetched",
+        "        give \"pure\"",
+    );
+    let mut source = compile_air_fixture("im1-project-impure-source", &pure_source);
+    let node = &mut source.execution_graphs[0].nodes[0];
+    node.kind = AirFlowNodeKind::CallTool;
+    node.target_ref = Some(source.definitions.tools[0].id.clone());
     let importer = compile_air_fixture(
         "im1-project-impure-importer",
         IMPORTS_IM1_PROJECT_IMPURE_IMPORTER,

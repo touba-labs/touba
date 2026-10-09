@@ -1,5 +1,6 @@
 {
   "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
@@ -13,7 +14,8 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "skill:test/TwoTools"
+        "entry_ref": "skill:test/TwoTools",
+        "max_loop_iterations": 100
       }
     },
     {
@@ -200,6 +202,24 @@
       "event_id": "event:run-1:10",
       "run_id": "run-1",
       "sequence_index": 9,
+      "kind": "failure_detected",
+      "payload": {
+        "failure_mode": "run",
+        "failure_family": "authority",
+        "runtime_error_code": "ToolCallBudgetExceeded",
+        "target_ref": "skill:test/TwoTools",
+        "selected_ref": "tool:test/Second",
+        "budget_kind": "max_tool_calls",
+        "budget_limit_value": 1,
+        "budget_consumed_value": 1,
+        "budget_authority_source": "manifest"
+      },
+      "message": "max_tool_calls exceeded"
+    },
+    {
+      "event_id": "event:run-1:11",
+      "run_id": "run-1",
+      "sequence_index": 10,
       "kind": "run_completed",
       "payload": {
         "status": "failure"

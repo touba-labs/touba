@@ -22,23 +22,30 @@ Documentation: https://pap-touba.github.io/documentation-site/
 
 Benchmarks: https://pap-touba.github.io/documentation-site/benchmarks/
 
-Benchmark evidence separates five-run live-model comparisons from structural
-runtime/CLI checks for traces, triggers, memory provenance, budgets,
-supply-chain drift, cancellation and multi-team authority.
+Benchmark evidence separates shared behavioral cases, source/runtime
+conformance and structural checks. Historical live-model runs are development
+evidence, not a current general-performance claim.
 
 Release history: [`CHANGELOG.md`](CHANGELOG.md)
 
 ## Benchmark Evidence
 
-Touba benchmark evidence is tracked in two separate forms:
+The current interface study uses 7 English business cases, including two
+three-agent workflows, with shared services, task oracles and execution budgets.
+It compares the structured and native-call Touba SDK interfaces with framework
+interfaces on two fixed model snapshots. Each case has one observation per
+system and model; these results describe the tested conditions, not a general
+ranking. Both Touba interfaces leave authorization and execution in the runtime.
 
-- Live-model comparative benchmark: 36 cases across simple, medium and complex
- levels, comparing Touba with OpenAI-compatible agentic frameworks under real
- model calls. The current minimum evidence batch is five complete runs.
-- Structural Touba benchmark: 24 runtime/CLI cases covering trace forensics,
- trigger replay, memory provenance, memory-poisoning sequences, budgets,
- supply-chain drift, cancellation, kill switch behavior and multi-team
- responsibility boundaries.
+Separate deterministic tests cover authority, secrets, memory, human approval,
+replay, cancellation, budgets and trace attribution. These are invariant
+coverage, not a behavioral score assigned to frameworks without Touba contracts.
+
+The formal results concern a sequential kernel under explicit trust assumptions
+and a supported source-to-graph fragment. PAP defines responsibility-boundary
+requirements independently of Touba; AIR, the SDK protocols and the compiler
+are Touba's implementation choices. Neither the proof nor the tests establish
+the correctness of arbitrary model answers or unmediated external effects.
 
 Public summaries are available from the benchmark page:
 https://pap-touba.github.io/documentation-site/benchmarks/
@@ -254,6 +261,10 @@ pnpm validate:v1-local
 
 `pnpm validate:v1-local` aggregates the runtime, CLI, project, SDK, corpus and
 fixture validations used to qualify a local build.
+
+Editor renderer and VSIX installation checks belong to the separate
+`touba-ide` checkout; follow its Development section. Research proofs and
+benchmark data are not prerequisites for the Core validation command.
 
 ## Source CI
 

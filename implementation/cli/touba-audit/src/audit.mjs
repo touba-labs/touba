@@ -17,7 +17,11 @@ export const TRACE_TIMELINE_SCHEMA_VERSION = "touba-trace-timeline-v1";
 
 const TRACE_PROTOCOL_VERSION = "touba-trace-v1";
 const AIR_SCHEMA_VERSION = "touba-air-v1";
-const MANIFEST_VERSION = "touba-manifest-v1";
+const MANIFEST_VERSIONS = new Set([
+  "touba-manifest-v1",
+  "touba-manifest-v2",
+  "touba-manifest-v3",
+]);
 const DIGEST_KIND = "sha256";
 const RUNTIME_NAME = "touba-audit";
 const RUNTIME_VERSION = "0.1.0";
@@ -515,7 +519,7 @@ function validateRuntimeArtifactVersions(artifacts, diagnostics) {
   if (artifacts.air && artifacts.air.json?.air_schema_version !== AIR_SCHEMA_VERSION) {
     diagnostics.push(error("TraceAuditManifestInvalid", "unsupported AIR schema", "air"));
   }
-  if (artifacts.manifest && artifacts.manifest.json?.manifest_version !== MANIFEST_VERSION) {
+  if (artifacts.manifest && !MANIFEST_VERSIONS.has(artifacts.manifest.json?.manifest_version)) {
     diagnostics.push(error("TraceAuditManifestInvalid", "unsupported runtime manifest schema", "manifest"));
   }
 }

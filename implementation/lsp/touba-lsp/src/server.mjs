@@ -8,7 +8,7 @@ import {
 } from "vscode-languageserver/node.js";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -17,13 +17,11 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const implDir = process.env.TOUBA_IMPLEMENTATION_DIR
   ? resolve(process.env.TOUBA_IMPLEMENTATION_DIR)
   : join(__dir, "../../..");
-const cargoManifest = join(implDir, "Cargo.toml");
-const CARGO = process.env.CARGO ?? "cargo";
 
 let connection = null;
 let documents = null;
 
-// Cache the last successful AIR per document URI.
+// Keep source URI mappings outside AIR: temporary compilation never rewrites it.
 const airCache = new Map();
 
 export function startServer() {
@@ -54,27 +52,27 @@ export function startServer() {
   });
 
   connection.onDocumentSymbol(({ textDocument }) => {
-    const air = airCache.get(textDocument.uri);
-    if (!air) return [];
-    return extractSymbols(air, textDocument.uri);
+    const cached = airCache.get(textDocument.uri);
+    if (!cached) return [];
+    return extractSymbols(cached.air, textDocument.uri, cached.sourceUris);
   });
 
   connection.onHover(({ textDocument, position }) => {
-    const air = airCache.get(textDocument.uri);
+    const air = airCache.get(textDocument.uri)?.air;
     if (!air) return null;
     const value = hoverForPosition(air, position);
     return value ? { contents: { kind: "plaintext", value } } : null;
   });
 
   connection.onDefinition(({ textDocument, position }) => {
-    const air = airCache.get(textDocument.uri);
-    if (!air) return null;
-    return definitionForPosition(air, textDocument.uri, position);
+    const cached = airCache.get(textDocument.uri);
+    if (!cached) return null;
+    return definitionForPosition(cached.air, textDocument.uri, position, cached.sourceUris);
   });
 
   connection.onCompletion(({ textDocument, position }) => {
     const document = documents.get(textDocument.uri);
-    const air = airCache.get(textDocument.uri);
+    const air = airCache.get(textDocument.uri)?.air;
     return completionForPosition(air, document?.getText() ?? "", position);
   });
 
@@ -88,7 +86,7 @@ function validate(document) {
   try {
     writeFileSync(tmpFile, document.getText(), "utf8");
     const result = runToubaCompileJson(tmpFile);
-    publishResult(document.uri, result);
+    publishResult(document.uri, result, new Map([[tmpFile, document.uri]]));
   } catch (e) {
     // cargo not available or hard crash: clear diagnostics without crashing the server
     airCache.delete(document.uri);
@@ -98,9 +96,9 @@ function validate(document) {
   }
 }
 
-function publishResult(uri, result) {
+function publishResult(uri, result, sourceUris) {
   if (result.ok && result.air) {
-    airCache.set(uri, result.air);
+    airCache.set(uri, { air: result.air, sourceUris });
   } else {
     airCache.delete(uri);
   }
@@ -108,24 +106,41 @@ function publishResult(uri, result) {
   connection.sendDiagnostics({ uri, diagnostics });
 }
 
-export function runToubaCompileJson(sourcePath) {
+export function compilerCommandSpec(sourcePath, {
+  implementationDir = implDir,
+  env = process.env,
+  platform = process.platform,
+} = {}) {
+  const args = ["--json", sourcePath];
+  if (env.TOUBA_COMPILE_BIN) {
+    return { command: env.TOUBA_COMPILE_BIN, args };
+  }
+  const executableName = platform === "win32" ? "touba-compile.exe" : "touba-compile";
+  const packagedCompiler = join(implementationDir, "bin", executableName);
+  if (existsSync(packagedCompiler)) {
+    return { command: packagedCompiler, args };
+  }
+  const cargoManifest = join(implementationDir, "Cargo.toml");
+  if (![
+    cargoManifest,
+    join(implementationDir, "compiler", "touba-compiler", "Cargo.toml"),
+    join(implementationDir, "cli", "touba-cli", "Cargo.toml"),
+  ].every((file) => existsSync(file))) {
+    throw new Error(`Touba compiler unavailable: provide ${packagedCompiler} or set TOUBA_COMPILE_BIN; Cargo requires local compiler sources.`);
+  }
+  return {
+    command: env.CARGO ?? "cargo",
+    args: ["run", "--manifest-path", cargoManifest, "-p", "touba-cli", "--bin", "touba-compile", "--quiet", "--", ...args],
+  };
+}
+
+export function runToubaCompileJson(sourcePath, options = {}) {
+  const compiler = compilerCommandSpec(sourcePath, options);
   try {
     const raw = execFileSync(
-      CARGO,
-      [
-        "run",
-        "--manifest-path",
-        cargoManifest,
-        "-p",
-        "touba-cli",
-        "--bin",
-        "touba-compile",
-        "--quiet",
-        "--",
-        "--json",
-        sourcePath,
-      ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      compiler.command,
+      compiler.args,
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: options.env ?? process.env },
     );
     return parseCompilerEnvelope(raw);
   } catch (error) {
@@ -181,14 +196,14 @@ export function toLspDiagnostic(d) {
   };
 }
 
-export function extractSymbols(air, uri) {
+export function extractSymbols(air, uri, sourceUris) {
   const symbols = [];
 
   if (air.module?.name && air.module?.source_ref) {
     symbols.push({
       name: air.module.name,
       kind: SymbolKind.Module,
-      location: locationForSourceRef(uri, air.module.source_ref),
+      location: locationForSourceRef(uri, air.module.source_ref, sourceUris),
     });
   }
 
@@ -199,7 +214,7 @@ export function extractSymbols(air, uri) {
     symbols.push({
       name: `${item.kind} ${item.name}`,
       kind: SymbolKind.Namespace,
-      location: locationForSourceRef(uri, ref),
+      location: locationForSourceRef(uri, ref, sourceUris),
     });
   }
 
@@ -220,7 +235,7 @@ export function extractSymbols(air, uri) {
       symbols.push({
         name: item.name,
         kind: symbolKind,
-        location: locationForSourceRef(uri, ref),
+        location: locationForSourceRef(uri, ref, sourceUris),
       });
     }
   }
@@ -525,12 +540,12 @@ function isOnDeclarationHeader(position, ref) {
   return position.character >= (ref.start_column ?? 0);
 }
 
-export function definitionForPosition(air, uri, position) {
+export function definitionForPosition(air, uri, position, sourceUris) {
   const definitions = indexDefinitionsById(air);
   const reference = findReferenceAtPosition(air, position);
   if (!reference) return null;
   const target = definitions.get(reference.target_ref);
-  return target?.source_ref ? locationForSourceRef(uri, target.source_ref) : null;
+  return target?.source_ref ? locationForSourceRef(uri, target.source_ref, sourceUris) : null;
 }
 
 export function findReferenceAtPosition(air, position) {
@@ -680,8 +695,8 @@ function containsPosition(position, ref) {
   return true;
 }
 
-function locationForSourceRef(uri, ref) {
-  const targetUri = uriForSourceRef(uri, ref);
+function locationForSourceRef(uri, ref, sourceUris) {
+  const targetUri = uriForSourceRef(uri, ref, sourceUris);
   return {
     uri: targetUri,
     range: {
@@ -691,7 +706,10 @@ function locationForSourceRef(uri, ref) {
   };
 }
 
-function uriForSourceRef(defaultUri, ref) {
+function uriForSourceRef(defaultUri, ref, sourceUris) {
+  if (sourceUris?.has(ref?.source_id)) {
+    return sourceUris.get(ref.source_id);
+  }
   if (typeof ref?.source_id !== "string" || ref.source_id.length === 0) {
     return defaultUri;
   }
@@ -753,6 +771,16 @@ const TOUBA_V01_KEYWORDS = Object.freeze([
   "false",
 ]);
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+export function isMainModule(moduleUrl, entryPath) {
+  if (typeof entryPath !== "string" || entryPath.length === 0) return false;
+  try {
+    return realpathSync(entryPath) === realpathSync(fileURLToPath(moduleUrl));
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
   startServer();
 }

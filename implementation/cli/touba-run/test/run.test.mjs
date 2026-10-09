@@ -206,7 +206,13 @@ test("compiles the strategy agents fixture and runs it without stubs through App
         runPath,
         airPath,
         "--inputs-json",
-        JSON.stringify({ request: { summary: "requested change" } }),
+        // This legacy untyped-agent fixture has no explicit Engineer ->
+        // Reviewer argument binding. Supply both declared skill inputs; the
+        // source-to-runtime agent-interface suite covers actual typed chaining.
+        JSON.stringify({
+          request: { summary: "requested change" },
+          change: { summary: "change to review" },
+        }),
         "--local-apply-change-summary",
         "bounded local change",
         "--output",

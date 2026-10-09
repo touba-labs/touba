@@ -35,8 +35,12 @@ export class TraceBuilder {
    * @param {string} entryRef
    * @param {string} runId
    * @param {((event: TraceEvent) => void) | null} [eventObserver]
+   * @param {number} [initialSequenceIndex]
    */
-  constructor(airDocument, entryRef, runId, eventObserver = null) {
+  constructor(airDocument, entryRef, runId, eventObserver = null, initialSequenceIndex = 0) {
+    if (!Number.isSafeInteger(initialSequenceIndex) || initialSequenceIndex < 0) {
+      throw new TypeError("initialSequenceIndex must be a non-negative safe integer");
+    }
     /** @type {TraceAirDocument} */
     this.airDocument = airDocument;
     /** @type {string} */
@@ -45,6 +49,8 @@ export class TraceBuilder {
     this.entryRef = entryRef;
     /** @type {TraceEvent[]} */
     this.events = [];
+    /** @type {number} */
+    this.initialSequenceIndex = initialSequenceIndex;
     /** @type {((event: TraceEvent) => void) | null} */
     this.eventObserver = eventObserver;
   }
@@ -55,7 +61,7 @@ export class TraceBuilder {
    * @returns {TraceEvent}
    */
   push(kind, options = {}) {
-    const payload = kind === "failure_detected" && options.payload
+    const rawPayload = kind === "failure_detected" && options.payload
       ? {
         ...options.payload,
         failure_family: options.payload.failure_family
@@ -65,10 +71,14 @@ export class TraceBuilder {
           ),
       }
       : options.payload;
+    const payload = rawPayload === undefined
+      ? undefined
+      : jsonPortableTraceValue(rawPayload);
+    const sequenceIndex = this.initialSequenceIndex + this.events.length;
     const event = /** @type {TraceEvent} */ (compactPayload({
-      event_id: `event:${this.runId}:${this.events.length + 1}`,
+      event_id: `event:${this.runId}:${sequenceIndex + 1}`,
       run_id: this.runId,
-      sequence_index: this.events.length,
+      sequence_index: sequenceIndex,
       kind,
       air_ref: options.airRef,
       payload,
@@ -83,6 +93,11 @@ export class TraceBuilder {
       }
     }
     return event;
+  }
+
+  /** @returns {number} */
+  nextSequenceIndex() {
+    return this.initialSequenceIndex + this.events.length;
   }
 
   /**
@@ -111,6 +126,28 @@ export function compactPayload(payload) {
   return Object.fromEntries(
     Object.entries(payload).filter(([, value]) => value !== undefined && value !== null),
   );
+}
+
+/**
+ * Trace events are hashed before durable dispatch. Normalize the same nested
+ * `undefined` values that JSON serialization would otherwise silently drop so
+ * the in-memory trace is already canonical and its digest is stable.
+ *
+ * @param {unknown} value
+ * @returns {any}
+ */
+function jsonPortableTraceValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => item === undefined ? null : jsonPortableTraceValue(item));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, jsonPortableTraceValue(item)]),
+    );
+  }
+  return value;
 }
 
 /**

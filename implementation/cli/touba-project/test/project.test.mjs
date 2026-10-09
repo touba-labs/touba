@@ -640,6 +640,10 @@ test("prepare composes explicit binding fragments into the project manifest", as
           secrets: ["API_TOKEN"],
           timeout_ms: 12000,
           max_payload_bytes: 2048,
+          effect_contract: {
+            kind: "external_write",
+            retry_mode: "idempotency_key",
+          },
           payload_constraints: {
             input: {
               request: { non_empty: true, max_length: 80 },
@@ -663,12 +667,124 @@ test("prepare composes explicit binding fragments into the project manifest", as
     assert.equal(report.actions.some((item) => item.kind === "compose_binding_fragment"), true);
     const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
     const binding = manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
+    assert.equal(manifest.manifest_version, "touba-manifest-v2");
     assert.equal(binding.handler.args[0], "custom/search.handler.mjs");
     assert.equal(binding.timeout_ms, 12000);
     assert.equal(binding.max_payload_bytes, 2048);
     assert.deepEqual(binding.payload_constraints.input.request, { non_empty: true, max_length: 80 });
     assert.deepEqual(binding.payload_constraints.input["request.tags"], { min_items: 1, max_items: 5 });
     assert.deepEqual(binding.payload_constraints.input["request.mode"], { allowed_values: ["dry_run", "review"] });
+    assert.deepEqual(binding.effect_contract, {
+      kind: "external_write",
+      retry_mode: "idempotency_key",
+    });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("prepare preserves V3 compensation declarations from explicit binding fragments", async () => {
+  const root = tempRoot();
+  try {
+    writeJson(join(root, "input.air.json"), airDocumentWithTool());
+    writeJson(join(root, "bindings.compensation.json"), bindingFragmentDocument({
+      bindings: {
+        "tool:donnees_quebec.live_search/SearchDatasets": {
+          handler: { kind: "process", command: "node", args: ["handlers/search.mjs"], cwd: "." },
+          grants: ["network"],
+          secrets: ["API_TOKEN"],
+          timeout_ms: 5000,
+          max_payload_bytes: 2048,
+          effect_contract: {
+            kind: "external_write",
+            retry_mode: "idempotency_key",
+            compensation: {
+              entry_ref: "strategy:donnees_quebec.live_search/CancelSearch",
+            },
+          },
+        },
+      },
+    }));
+
+    const report = await prepareProject({
+      root,
+      mode: "write",
+      airPaths: ["input.air.json"],
+      bindingFragmentPaths: ["bindings.compensation.json"],
+    });
+    assert.equal(report.status, "success", JSON.stringify(report.diagnostics));
+    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
+    assert.equal(manifest.manifest_version, "touba-manifest-v3");
+    assert.deepEqual(
+      manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"].effect_contract.compensation,
+      { entry_ref: "strategy:donnees_quebec.live_search/CancelSearch" },
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("prepare refuses effect contracts smuggled into a legacy V1 manifest", async () => {
+  const root = tempRoot();
+  try {
+    writeFileSync(join(root, "input.air.json"), JSON.stringify(airDocumentWithTool(), null, 2), "utf8");
+    const initial = await prepareProject({ root, mode: "write", airPaths: ["input.air.json"] });
+    assert.equal(initial.status, "success");
+    const manifestPath = join(root, "touba.manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"].effect_contract = { kind: "none" };
+    writeJson(manifestPath, manifest);
+
+    const report = await prepareProject({ root, mode: "check", airPaths: ["input.air.json"] });
+    assert.equal(report.status, "error");
+    assert.equal(
+      report.diagnostics.some((item) => item.code === "EffectContractForbiddenInManifestV1"),
+      true,
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("prepare refuses a partial V2 upgrade when one binding has no effect contract", async () => {
+  const root = tempRoot();
+  try {
+    const air = airDocumentWithTool();
+    air.definitions.tools.push({
+      id: "tool:donnees_quebec.live_search/CreateBookmark",
+      name: "CreateBookmark",
+      required_capabilities: ["network"],
+      required_secrets: [],
+      memory_accesses: [],
+    });
+    writeJson(join(root, "input.air.json"), air);
+    writeJson(join(root, "bindings.search.json"), bindingFragmentDocument({
+      bindings: {
+        "tool:donnees_quebec.live_search/CreateBookmark": {
+          handler: {
+            kind: "process",
+            command: "node",
+            args: ["custom/create_bookmark.handler.mjs"],
+            cwd: ".",
+          },
+          grants: ["network"],
+          secrets: [],
+          timeout_ms: 5000,
+          max_payload_bytes: 1048576,
+          effect_contract: { kind: "external_write", retry_mode: "none" },
+        },
+      },
+    }));
+
+    const report = await prepareProject({
+      root,
+      mode: "check",
+      airPaths: ["input.air.json"],
+      bindingFragmentPaths: ["bindings.search.json"],
+    });
+    assert.equal(report.status, "error");
+    const diagnostic = report.diagnostics.find((item) => item.code === "EffectContractMissing");
+    assert.deepEqual(diagnostic.tool_refs, ["tool:donnees_quebec.live_search/SearchDatasets"]);
   } finally {
     cleanup(root);
   }
@@ -796,6 +912,22 @@ test("prepare rejects invalid binding fragments without assembling authority", a
       callable_by: ["strategy:examples/Run"],
       bindings: {},
     });
+    writeJson(join(root, "effect-unknown-field.json"), bindingFragmentDocument({
+      bindings: {
+        "tool:donnees_quebec.live_search/SearchDatasets": {
+          ...bindingFragmentDocument().bindings["tool:donnees_quebec.live_search/SearchDatasets"],
+          effect_contract: { kind: "none", vendor: "example" },
+        },
+      },
+    }));
+    writeJson(join(root, "effect-unknown-mode.json"), bindingFragmentDocument({
+      bindings: {
+        "tool:donnees_quebec.live_search/SearchDatasets": {
+          ...bindingFragmentDocument().bindings["tool:donnees_quebec.live_search/SearchDatasets"],
+          effect_contract: { kind: "external_write", retry_mode: "automatic" },
+        },
+      },
+    }));
 
     const cases = [
       ["missing-grant.json", "BindingFragmentMissingGrant"],
@@ -806,6 +938,8 @@ test("prepare rejects invalid binding fragments without assembling authority", a
       ["bad-list-constraint.json", "BindingFragmentConstraintInvalid"],
       ["bad-list-constraint-type.json", "BindingFragmentConstraintInvalid"],
       ["authority.json", "BindingFragmentAuthorityFieldForbidden"],
+      ["effect-unknown-field.json", "EffectContractFieldUnknown"],
+      ["effect-unknown-mode.json", "EffectRetryModeUnsupported"],
     ];
     for (const [fragmentPath, expectedCode, fragmentPaths = [fragmentPath]] of cases) {
       const report = await prepareProject({
@@ -1123,6 +1257,10 @@ test("converged preparation reads only configuration paths explicitly referenced
           secrets: ["API_TOKEN"],
           timeout_ms: 12000,
           max_payload_bytes: 2048,
+          effect_contract: {
+            kind: "external_write",
+            retry_mode: "reconcile",
+          },
         },
       },
     }));
@@ -1133,8 +1271,15 @@ test("converged preparation reads only configuration paths explicitly referenced
     assert.deepEqual(report.binding_fragments.map((item) => item.path), [join(root, "bindings.search.json")]);
     const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
     const binding = manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
+    assert.equal(manifest.manifest_version, "touba-manifest-v2");
     assert.deepEqual(binding.grants, ["network"]);
     assert.equal(binding.handler.args[0], "custom/search.handler.mjs");
+    assert.deepEqual(binding.effect_contract, { kind: "external_write", retry_mode: "reconcile" });
+    const effective = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.effective-project.json"), "utf8"));
+    assert.deepEqual(effective.contract.handlers.bindings[0].effect_contract, {
+      kind: "external_write",
+      retry_mode: "reconcile",
+    });
     assert.equal(JSON.stringify(manifest).includes("filesystem_write"), false);
   } finally {
     cleanup(root);

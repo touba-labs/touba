@@ -48,7 +48,24 @@ export async function executeRunLifecycle(context, execute, operations) {
   }
 
   trace.push("run_completed", {
-    payload: { status },
+    payload: {
+      status,
+      ...(context.compensation
+        ? {
+          compensation_id: context.compensation.config.envelope.compensation_id,
+          compensates_effect_id:
+            context.compensation.config.envelope.compensates_effect_id,
+          inverse_effect_id: context.compensation.lastAttempt?.inverseEffectId
+            ?? context.compensation.config.inverse_effect_id,
+          ...(context.compensation.outcome === null
+            ? {}
+            : { result: context.compensation.outcome }),
+          ...(context.compensation.blockerCode === null
+            ? {}
+            : { blocker_code: context.compensation.blockerCode }),
+        }
+        : {}),
+    },
   });
 
   const traceDocument = trace.document();

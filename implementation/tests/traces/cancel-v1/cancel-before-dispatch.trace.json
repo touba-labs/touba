@@ -1,5 +1,6 @@
 {
   "trace_protocol_version": "touba-trace-v1",
+  "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
@@ -13,7 +14,8 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "skill:test/Build"
+        "entry_ref": "skill:test/Build",
+        "max_loop_iterations": 100
       }
     },
     {

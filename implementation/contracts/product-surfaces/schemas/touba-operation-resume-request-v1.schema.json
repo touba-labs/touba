@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-operation-resume-request-v1.schema.json",
+  "title": "touba-operation-resume-request-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "operation_id",
+    "checkpoint_revision",
+    "checkpoint_digest",
+    "resume_request_id"
+  ],
+  "properties": {
+    "schema_version": { "const": "touba-operation-resume-request-v1" },
+    "operation_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "checkpoint_revision": { "type": "integer", "minimum": 0 },
+    "checkpoint_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "resume_request_id": { "type": "string", "minLength": 1, "maxLength": 512 }
+  }
+}

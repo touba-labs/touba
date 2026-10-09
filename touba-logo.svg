@@ -1,10 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Touba">
-  <path
-    fill="#2f63c6"
-    fill-rule="evenodd"
-    d="M70 18H113V69H154A84 84 0 0 1 154 237A84 84 0 0 1 70 153V111H20V69H70ZM154 110A43 43 0 1 1 154 196A43 43 0 1 1 154 110Z"
-  />
-  <rect x="70" y="18" width="43" height="135" fill="#143f92" opacity="0.18" />
-  <rect x="20" y="69" width="134" height="42" fill="#3f78dc" opacity="0.16" />
-  <path d="M70 153A84 84 0 0 0 154 237H155Z" fill="#6ba2f2" opacity="0.26" />
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Touba Labs"><path fill="#2f63c6" fill-rule="evenodd" d="M24 70Q24 61 31 56L62 33Q68 29 68 37V88H108V42Q108 32 118 32H138Q148 32 148 42V88H199Q232 88 232 121V179Q232 212 199 212H118Q108 212 108 202V124H68V166Q68 178 80 178H89Q94 178 94 183V207Q94 212 89 212H57Q24 212 24 179ZM148 124V178H181Q190 178 190 169V133Q190 124 181 124Z"/></svg>

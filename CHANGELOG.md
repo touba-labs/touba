@@ -5,6 +5,21 @@ notes remain the source of truth for version deltas, validation evidence,
 downloadable artifacts, checksums and platform-specific installation
 instructions.
 
+## Unreleased
+
+- Added an opt-in native-call SDK interface while retaining structured decisions
+  by default and runtime ownership of execution, authorization and budgets.
+- Added effect identities and journals, bounded durable resume, expiring human
+  waits and explicit compensation under declared contracts.
+- Hardened typed agent inputs/results, repeated capability use, provider
+  completion checks, observation history and serialized request limits.
+- Enforced function purity at compilation and AIR admission; corrected
+  sequential-loop continuation and checkpoint cursor handling.
+- Aligned V1 machine contracts, editor renderers, public examples and the
+  distinction between PAP requirements, the formal kernel and Touba.
+
+These are source changes, not a new published binary release.
+
 ## 0.1.0 - Initial Public Release
 
 Detailed release note: `implementation/release/notes/v0.1.0.md`.

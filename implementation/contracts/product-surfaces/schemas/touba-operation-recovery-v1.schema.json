@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-operation-recovery-v1.schema.json",
+  "title": "touba-operation-recovery-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "operation_id",
+    "run_id",
+    "target_ref",
+    "status",
+    "freshness",
+    "correlations",
+    "effects",
+    "authority",
+    "allowed_actions",
+    "refusal"
+  ],
+  "properties": {
+    "schema_version": { "const": "touba-operation-recovery-v1" },
+    "generated_at": { "type": "string", "minLength": 1 },
+    "operation_id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "target_ref": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": [
+        "running",
+        "interrupted",
+        "resume_claimed",
+        "awaiting_human",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observed_at", "source_updated_at", "state_revision", "state_digest"],
+      "properties": {
+        "observed_at": { "type": "string", "minLength": 1 },
+        "source_updated_at": { "type": "string", "minLength": 1 },
+        "state_revision": { "type": "integer", "minimum": 0 },
+        "state_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "correlations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect_scope_id",
+        "checkpoint_revision",
+        "checkpoint_digest",
+        "human_request_id",
+        "resume_request_id"
+      ],
+      "properties": {
+        "effect_scope_id": { "type": "string", "minLength": 1 },
+        "checkpoint_revision": { "type": ["integer", "null"], "minimum": 0 },
+        "checkpoint_digest": { "type": ["string", "null"] },
+        "human_request_id": { "type": ["string", "null"] },
+        "resume_request_id": { "type": ["string", "null"] }
+      }
+    },
+    "effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "prepared", "dispatched", "applied", "not_applied", "unknown", "reconciliation"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "prepared": { "type": "integer", "minimum": 0 },
+        "dispatched": { "type": "integer", "minimum": 0 },
+        "applied": { "type": "integer", "minimum": 0 },
+        "not_applied": { "type": "integer", "minimum": 0 },
+        "unknown": { "type": "integer", "minimum": 0 },
+        "reconciliation": {
+          "enum": ["not_required", "retry_safe", "provider_required", "unavailable"]
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read_permission", "action_permission", "enforced_by"],
+      "properties": {
+        "read_permission": { "const": "executions.read" },
+        "action_permission": { "const": "executions.run" },
+        "enforced_by": { "const": "touba-project-server" }
+      }
+    },
+    "allowed_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "method", "href", "request_schema_version", "required_permission", "preconditions"],
+        "properties": {
+          "action": { "enum": ["resume", "submit_decision"] },
+          "method": { "const": "POST" },
+          "href": { "type": "string", "minLength": 1 },
+          "request_schema_version": { "type": "string", "minLength": 1 },
+          "required_permission": { "type": "string", "minLength": 1 },
+          "preconditions": { "type": "object", "additionalProperties": true }
+        }
+      }
+    },
+    "refusal": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["code", "reason"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

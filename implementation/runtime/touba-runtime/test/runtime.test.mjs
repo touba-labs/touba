@@ -6,6 +6,7 @@ import {
   AIR_CAPABILITY_PROFILE,
   AIR_JSON_PROFILE,
   AIR_SCHEMA_VERSION,
+  EFFECT_JOURNAL_SCHEMA_VERSION,
   RUNTIME_CAPABILITIES,
   TRACE_PROTOCOL_VERSION,
   ToubaRuntimeError,
@@ -745,6 +746,7 @@ test("refuses malformed PI-1 memory metadata without tracing raw content", async
 });
 
 test("refuses PI-1 metadata containing a resolved secret value", async () => {
+  const secretValue = "resolved-\"secret\"\nwith\\slashes-never-disclose";
   const handlerScript = `
     process.stdout.write(JSON.stringify({
       ok: true,
@@ -754,21 +756,38 @@ test("refuses PI-1 metadata containing a resolved secret value", async () => {
           memory_ref: "memory:test/ProjectKnowledge",
           operation: "read",
           source_kind: "backend_import",
-          source_ref: "resolved-secret-value",
+          source_ref: ${JSON.stringify(secretValue)},
           integrity_evidence: "handler_reported"
         }
       ]
     }));
   `;
 
+  const manifestDocument = processMemoryBindingManifestDocument(handlerScript);
+  manifestDocument.manifest_version = "touba-manifest-v2";
+  manifestDocument.bindings["tool:test/ReadProjectKnowledge"].effect_contract = { kind: "none" };
+  const observed = [];
+
   const result = await executeAirDocument(memoryToolDocument(), {
     entryRef: "skill:test/ReadKnowledgeFlow",
+    runId: "run:memory-metadata-secret",
+    operationId: "operation:memory-metadata-secret",
+    effectScopeId: "operation:memory-metadata-secret",
     toolBindingManifest: loadToolBindingManifestFromJson(
-      JSON.stringify(processMemoryBindingManifestDocument(handlerScript)),
+      JSON.stringify(manifestDocument),
     ),
     secretStore: loadSecretsFromJson(JSON.stringify(secretsDocument()), {
-      env: { SEARCH_API_TOKEN: "resolved-secret-value" },
+      env: { SEARCH_API_TOKEN: secretValue },
     }),
+    effectJournal: {
+      schemaVersion: EFFECT_JOURNAL_SCHEMA_VERSION,
+      readEntry: () => null,
+      writeEntry: () => {},
+      entriesForScope: () => [],
+    },
+    executionCheckpointObserver: async (snapshot) => {
+      observed.push(structuredClone(snapshot));
+    },
   });
 
   assert.equal(result.status, "failure");
@@ -776,7 +795,8 @@ test("refuses PI-1 metadata containing a resolved secret value", async () => {
   const failure = eventOf(result.trace, "failure_detected");
   assert.equal(failure.payload.runtime_error_code, "MemoryMetadataLeakDetected");
   assert.deepEqual(failure.payload.secret_handles_refused, ["SEARCH_API_KEY"]);
-  assert.equal(JSON.stringify(result.trace).includes("resolved-secret-value"), false);
+  assert.equal(JSON.stringify(result.trace).includes(secretValue), false);
+  assert.equal(JSON.stringify(observed).includes(secretValue), false);
 });
 
 test("executes a process tool handler V1 with JSON protocol and minimal secret environment", async () => {
@@ -921,16 +941,17 @@ test("redacts secrets from process handler controlled errors and non-zero exits"
 
 test("refuses resolved secret values in tool arguments before handler dispatch", async () => {
   let handlerWasCalled = false;
+  const resolvedSecret = 'resolved-"secret"\nwith\\slashes-never-disclose';
   const result = await executeAirDocument(processToolDocument(), {
     entryRef: "skill:test/SearchFlow",
     inputs: {
-      query: "resolved-secret-value",
+      query: resolvedSecret,
     },
     toolBindingManifest: loadToolBindingManifestFromJson(
       JSON.stringify(processBindingManifestDocument("process.stdout.write('{}');")),
     ),
     secretStore: loadSecretsFromJson(JSON.stringify(secretsDocument()), {
-      env: { SEARCH_API_TOKEN: "resolved-secret-value" },
+      env: { SEARCH_API_TOKEN: resolvedSecret },
     }),
     toolHandlers: {
       "tool:test/Search": () => {
@@ -946,7 +967,7 @@ test("refuses resolved secret values in tool arguments before handler dispatch",
   assert.equal(failure.payload.runtime_error_code, "SecretValueInToolArguments");
   assert.equal(failure.payload.tool_ref, "tool:test/Search");
   assert.deepEqual(failure.payload.secret_handles_refused, ["SEARCH_API_KEY"]);
-  assert.equal(JSON.stringify(result.trace).includes("resolved-secret-value"), false);
+  assert.equal(JSON.stringify(result.trace).includes(resolvedSecret), false);
 });
 
 test("redacts secrets from in-process handler errors", async () => {
@@ -2550,6 +2571,82 @@ test("executes a bounded collection loop", async () => {
   assert.equal(eventsOf(result.trace, "loop_evaluated").length, 3);
 });
 
+test("loop cursors are fresh after an early return and local to each graph invocation", async () => {
+  const document = baseDocument({
+    functions: [fnDef("First", "graph:function:test/First", [parameter("items", "list:builtin:Int")], "builtin:Int")],
+    skills: [{ ...skill("Twice", "graph:skill:test/Twice", ["function:test/First"]),
+      signature: { inputs: [parameter("items", "list:builtin:Int")], output_type: "builtin:Int" } }],
+    graphs: [
+      graph("graph:function:test/First", "function:test/First", [
+        node("loop", "loop", { arguments: ["value:items", "value:item"], condition_ref: "loop_has_next:value:items" }),
+        node("found", "give", { arguments: ["value:item"] }),
+        node("empty", "give", { arguments: ["literal:int:0"] }),
+      ], [edge("loop", "found", "loop_next"), edge("loop", "empty", "loop_exit")]),
+      graph("graph:skill:test/Twice", "skill:test/Twice", [
+        node("first", "call_function", { target_ref: "function:test/First", arguments: ["value:items"], result_binding: "first" }),
+        node("again", "call_function", { target_ref: "function:test/First", arguments: ["value:items"], result_binding: "again" }),
+        node("return", "give", { arguments: ["value:again"] }),
+      ], [edge("first", "again", "next"), edge("again", "return", "next")]),
+    ],
+  });
+  const result = await executeAirDocument(document, { entryRef: "skill:test/Twice", inputs: { items: [6, 12] } });
+  assert.equal(result.status, "success");
+  assert.equal(result.result, 6);
+  assert.deepEqual(eventsOf(result.trace, "loop_evaluated").map(event => event.payload.iteration_index), [0, 0]);
+});
+
+test("a binding at the end of a loop follows its loop continuation", async () => {
+  const document = baseDocument({
+    skills: [skill("Iterate", "graph:skill:test/Iterate")],
+    graphs: [graph("graph:skill:test/Iterate", "skill:test/Iterate", [
+      node("loop", "loop", { condition_ref: "literal:bool:true" }),
+      node("bind", "bind", { arguments: ["literal:string:iteration"], result_binding: "label" }),
+      node("exit", "give", { arguments: ["literal:string:done"] }),
+    ], [edge("loop", "bind", "loop_next"), edge("bind", "loop", "loop_next"), edge("loop", "exit", "loop_exit")])],
+  });
+  const result = await executeAirDocument(document, { maxLoopIterations: 2 });
+  assert.equal(result.status, "failure");
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "LoopIterationLimitExceeded");
+  assert.equal(eventsOf(result.trace, "binding_created").length, 2);
+});
+
+test("human checkpoints preserve collection cursors and loop continuations", async () => {
+  const document = baseDocument({
+    tools: [tool("Write")],
+    skills: [skill("ReviewItems", "graph:skill:test/ReviewItems", ["tool:test/Write"])],
+    graphs: [graph("graph:skill:test/ReviewItems", "skill:test/ReviewItems", [
+      node("loop", "loop", { arguments: ["value:items", "value:item"], condition_ref: "loop_has_next:value:items" }),
+      node("write", "call_tool", { target_ref: "tool:test/Write" }),
+      node("review", "human_approval", { approval_ref: "approval:items", approval_mode: "required_approval", result_binding: "decision" }),
+      node("exit", "give", { arguments: ["literal:string:done"] }),
+    ], [edge("loop", "write", "loop_next"), edge("write", "review", "next"),
+      edge("review", "loop", "loop_next"), edge("loop", "exit", "loop_exit")])],
+  });
+  const writes = [];
+  const options = { entryRef: "skill:test/ReviewItems", inputs: { items: ["first", "second"] }, durableHumanApprovals: true,
+    toolHandlers: { "tool:test/Write": ({ values }) => { writes.push(values["value:item"]); return "stored"; } } };
+  const paused = await executeAirDocument(document, options);
+  assert.equal(paused.status, "stopped");
+  assert.deepEqual(paused.checkpoint.loop_state, { "graph:skill:test/ReviewItems:loop": { index: 1 } });
+  for (const corrupt of [
+    checkpoint => { delete checkpoint.loop_state; },
+    checkpoint => { checkpoint.loop_state["graph:skill:test/ReviewItems:loop"].index = -1; },
+    checkpoint => { checkpoint.loop_state["foreign"] = { index: 1 }; },
+  ]) {
+    const checkpoint = structuredClone(paused.checkpoint);
+    corrupt(checkpoint);
+    const refused = await executeAirDocument(document, { ...options, humanApprovalResumeCheckpoint: checkpoint,
+      humanApprovalDecisions: { "approval:items": "approved" } });
+    assert.equal(refused.status, "failure");
+    assert.deepEqual(writes, ["first"]);
+  }
+  const resumed = await executeAirDocument(document, { ...options, humanApprovalResumeCheckpoint: paused.checkpoint,
+    humanApprovalDecisions: { "approval:items": "approved" } });
+  assert.equal(resumed.status, "success");
+  assert.equal(resumed.result, "done");
+  assert.deepEqual(writes, ["first", "second"]);
+});
+
 test("selects a fallback path after a tool failure", async () => {
   const document = baseDocument({
     tools: [tool("Primary")],
@@ -3019,7 +3116,8 @@ test("lets the runtime decision provider request a capability catalog and provid
 	          planned_capability_use_is_not_completion: true,
 	          answer_directly_must_not_replace_required_human_review: true,
 	          after_observation_answer_directly_only_if_goal_satisfied: true,
-	          after_observation_request_capabilities_if_remaining_capability_can_complete_goal: true,
+	          request_capabilities_if_authorized_work_is_needed: true,
+	          prior_use_does_not_exhaust_capability: true,
 	        });
 	        assert.deepEqual(request.model_input.human_interaction, {
 	          request_present: false,
@@ -3263,8 +3361,9 @@ test("can send external content to the agent decision provider as opaque refs", 
       assert.equal(request.external_content_access.raw_content_in_provider_request, false);
       assert.equal(
         request.external_content_access.full_content_request_policy,
-        "explicit_authorized_capability_required",
+        "not_supported",
       );
+      assert.equal(request.external_content_access.full_content_request_path, undefined);
 
       if (request.step_index === 0 && request.mode === "summary") {
         assert.equal(request.inputs.topic.ref, "opaque:runtime_input/topic");
@@ -3497,7 +3596,8 @@ test("keeps oversized observations as opaque refs within the provider observatio
 
   const result = await executeAirDocument(document, {
     agentDecisionProviderContentMode: "opaque_refs",
-    agentProviderObservationsMaxBytes: 600,
+    // Includes both the result descriptor and the invocation-arguments descriptor.
+    agentProviderObservationsMaxBytes: 900,
     agentDecisionProvider: (request) => {
       providerCalls.push(`${request.mode}:${request.step_index}`);
       assert.equal(JSON.stringify(request).includes(largeObservation), false);
@@ -3515,7 +3615,7 @@ test("keeps oversized observations as opaque refs within the provider observatio
       assert.equal(request.mode, "summary");
       assert.equal(request.observations[0].ref, "opaque:runtime_observation/0");
       assert.equal(request.observations[0].value, undefined);
-      assert.equal(request.model_input.agent_state.observation_budget.max_bytes, 600);
+      assert.equal(request.model_input.agent_state.observation_budget.max_bytes, 900);
       assert.equal(request.model_input.agent_state.observation_budget.content_mode, "opaque_refs");
       return {
         action: "answer_directly",
@@ -4223,6 +4323,287 @@ test("lets an agent consume multiple resources sequentially before answering", a
   assert.equal(JSON.stringify(result.trace).includes("dataset"), false);
 });
 
+test("reuses a tool with the same arguments and observes its new result", async () => {
+  const document = agentReviewAfterToolDocument();
+  document.definitions.agents[0].uses = ["tool:test/Fetch"];
+  document.definitions.agents[0].signature = { inputs: [], output_type: "builtin:Text" };
+  let dispatches = 0;
+  const result = await executeAirDocument(document, {
+    maxAgentSteps: 2,
+    toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(bindingManifestDocument({
+      bindings: { "tool:test/Fetch": toolBindingEntry({ grants: [] }) },
+    }))),
+    toolHandlers: { "tool:test/Fetch": () => `poll-${++dispatches}` },
+    agentDecisionProvider: (request) => {
+      assert.equal(request.agent_signature.output_type, "builtin:Text");
+      assert.equal(request.model_input.agent.signature.output_type, "builtin:Text");
+      const state = request.model_input.agent_state;
+      assert.equal(state.completed_capability_refs, undefined);
+      assert.equal(state.remaining_capability_refs, undefined);
+      if (request.mode === "finalization") {
+        assert.deepEqual(state.available_capability_refs, []);
+        assert.deepEqual(state.used_capability_refs, ["tool:test/Fetch"]);
+        assert.deepEqual(request.observations.map((item) => item.value), ["poll-1", "poll-2"]);
+        return { action: "answer_directly", result: request.observations.at(-1).value };
+      }
+      assert.deepEqual(state.available_capability_refs, ["tool:test/Fetch"]);
+      return request.mode === "summary"
+        ? { action: "request_capabilities" }
+        : { target_ref: "tool:test/Fetch", arguments: {} };
+    },
+  });
+  assert.equal(result.status, "success");
+  assert.equal(result.result, "poll-2");
+  assert.equal(dispatches, 2);
+  assert.equal(eventsOf(result.trace, "agent_capability_result_returned").length, 2);
+});
+
+test("keeps validated named, positional and implicit arguments alongside repeated scalar observations", async () => {
+  const document = agentReviewAfterToolDocument();
+  document.definitions.agents[0].uses = ["tool:test/Fetch"];
+  document.definitions.tools[0].signature = {
+    inputs: [parameter("sku", "builtin:Text")], output_type: "builtin:Int",
+  };
+  const decisions = [{ sku: "A" }, ["B"], undefined, { sku: "B" }];
+  const dispatched = [];
+  const result = await executeAirDocument(document, {
+    inputs: { sku: "C" }, maxAgentSteps: 4,
+    agentDecisionProviderInitialMode: "capabilities",
+    toolHandlers: { "tool:test/Fetch": ({ arguments: args }) => {
+      dispatched.push(args.sku);
+      return { A: 17, B: 23, C: 31 }[args.sku];
+    } },
+    agentDecisionProvider: (request) => {
+      if (request.mode === "finalization") {
+        assert.deepEqual(request.observations.map(({ arguments: args, value }) => ({ args, value })), [
+          { args: { sku: "A" }, value: 17 }, { args: { sku: "B" }, value: 23 },
+          { args: { sku: "C" }, value: 31 }, { args: { sku: "B" }, value: 23 },
+        ]);
+        assert.deepEqual(request.model_input.agent_state.observations, request.observations);
+        assert.deepEqual(request.model_input.input_layers.runtime_observations, request.observations);
+        return { action: "answer_directly", result: "prices compared" };
+      }
+      return request.mode === "summary" ? { action: "request_capabilities" }
+        : { target_ref: "tool:test/Fetch", arguments: decisions[request.step_index] };
+    },
+  });
+  assert.equal(result.status, "success");
+  assert.deepEqual(dispatched, ["A", "B", "C", "B"]);
+  assert.equal(eventsOf(result.trace, "agent_capability_result_returned").length, 4);
+  assert.equal(JSON.stringify(result.trace).includes('"sku":"A"'), false);
+});
+
+test("keeps the invocation snapshot when a handler mutates a record argument", async () => {
+  const document = agentReviewAfterToolDocument();
+  document.definitions.agents[0].uses = ["tool:test/Fetch"];
+  document.definitions.types.push({
+    id: "type:test/ProductRequest", name: "ProductRequest",
+    fields: [parameter("sku", "builtin:Text")], source_ref: sourceRef(),
+  });
+  document.definitions.tools[0].signature = {
+    inputs: [parameter("request", "type:test/ProductRequest")], output_type: "builtin:Int",
+  };
+  const result = await executeAirDocument(document, {
+    maxAgentSteps: 1, agentDecisionProviderInitialMode: "capabilities",
+    toolHandlers: { "tool:test/Fetch": ({ arguments: args }) => {
+      args.request.sku = "handler-local-change";
+      return 17;
+    } },
+    agentDecisionProvider: (request) => {
+      if (request.mode === "capabilities") {
+        return { target_ref: "tool:test/Fetch", arguments: { request: { sku: "original-sku" } } };
+      }
+      assert.deepEqual(request.observations[0].arguments, { request: { sku: "original-sku" } });
+      assert.equal(request.observations[0].value, 17);
+      return { action: "answer_directly", result: "observed" };
+    },
+  });
+  assert.equal(result.status, "success");
+});
+
+test("counts observation arguments in the inline budget and hides them in opaque mode", async () => {
+  const largeArgument = "PRIVATE-SKU-".repeat(80);
+  for (const mode of ["inline", "opaque_refs"]) {
+    const document = agentReviewAfterToolDocument();
+    document.definitions.agents[0].uses = ["tool:test/Fetch"];
+    document.definitions.tools[0].signature = {
+      inputs: [parameter("sku", "builtin:Text")], output_type: "builtin:Int",
+    };
+    let calls = 0;
+    const result = await executeAirDocument(document, {
+      agentDecisionProviderInitialMode: "capabilities",
+      agentDecisionProviderContentMode: mode,
+      agentProviderObservationsMaxBytes: 900,
+      toolHandlers: { "tool:test/Fetch": () => 17 },
+      agentDecisionProvider: (request) => {
+        calls += 1;
+        assert.equal(JSON.stringify(request).includes(largeArgument), false);
+        if (request.step_index === 0) return { target_ref: "tool:test/Fetch", arguments: { sku: largeArgument } };
+        assert.equal(mode, "opaque_refs");
+        const observation = request.observations[0];
+        assert.equal(observation.arguments.ref, "opaque:runtime_observation/0/arguments");
+        assert.equal(observation.arguments.metadata.field_count, 1);
+        assert.equal(observation.arguments.metadata.approx_size_bytes, Buffer.byteLength(JSON.stringify({ sku: largeArgument })));
+        assert.equal(observation.arguments.sku, undefined);
+        assert.equal(observation.value, undefined);
+        assert.ok(request.model_input.agent_state.observation_budget.consumed_bytes <= 900);
+        return { action: "answer_directly", result: "opaque observation received" };
+      },
+    });
+    assert.equal(result.status, mode === "inline" ? "failure" : "success");
+    assert.equal(calls, mode === "inline" ? 1 : 2);
+    if (mode === "inline") {
+      assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "AgentProviderObservationsBudgetExceeded");
+    }
+    assert.equal(JSON.stringify(result.trace).includes(largeArgument), false);
+  }
+});
+
+test("does not resend a resolved secret hidden in an observation argument", async () => {
+  const document = agentProviderDocument();
+  document.execution_graphs.find((item) => item.owner_ref === "skill:test/Answer").nodes[0].arguments = ["literal:string:done"];
+  let providerCalls = 0;
+  const result = await executeAirDocument(document, {
+    agentDecisionProviderInitialMode: "capabilities",
+    secretStore: loadSecretsFromJson(JSON.stringify(secretsDocument()), {
+      env: { SEARCH_API_TOKEN: "resolved-secret-value" },
+    }),
+    agentDecisionProvider: () => {
+      providerCalls += 1;
+      return { target_ref: "skill:test/Answer", arguments: { topic: "resolved-secret-value" } };
+    },
+  });
+  assert.equal(result.status, "failure");
+  assert.equal(providerCalls, 1);
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "SecretValueInAgentDecisionRequest");
+  assert.equal(JSON.stringify(result.trace).includes("resolved-secret-value"), false);
+});
+
+test("refuses JSON-escaped resolved secrets before exposing provider context", async (t) => {
+  const fixtures = [
+    { name: "quotation", value: 'synthetic"secret-value' },
+    { name: "backslash", value: "synthetic\\secret-value" },
+    { name: "newline", value: "synthetic\nsecret-value" },
+  ];
+  const placements = [
+    "inline intent", "opaque intent", "nested inline inputs", "capability description",
+    "observation argument", "nested observation argument",
+  ];
+  for (const fixture of fixtures) {
+    for (const placement of placements) {
+      await t.test(`${fixture.name} in ${placement}`, async () => {
+        const document = agentProviderDocument();
+        const isObservation = placement.endsWith("observation argument");
+        const isDescriptor = placement === "capability description";
+        const escapedValue = JSON.stringify(fixture.value).slice(1, -1);
+        const argument = placement.startsWith("nested") ? [[fixture.value]] : fixture.value;
+        const options = {
+          agentDecisionProviderInitialMode: "capabilities",
+          agentDecisionProviderContentMode: placement === "opaque intent" ? "opaque_refs" : "inline",
+          secretStore: loadSecretsFromJson(JSON.stringify(secretsDocument()), {
+            env: { SEARCH_API_TOKEN: fixture.value },
+          }),
+        };
+        if (isDescriptor) {
+          document.definitions.skills.find((item) => item.id === "skill:test/Search").description =
+            `Select the source with ${fixture.value}.`;
+        } else if (isObservation) {
+          // The result is deliberately safe: refusal must cover the retained
+          // invocation arguments, not merely the capability's return value.
+          document.execution_graphs.find((item) => item.owner_ref === "skill:test/Answer")
+            .nodes[0].arguments = ["literal:string:done"];
+          if (placement.startsWith("nested")) {
+            document.definitions.skills.find((item) => item.id === "skill:test/Answer")
+              .signature.inputs = [parameter("topic", "list:list:builtin:Text")];
+          }
+        } else {
+          options.inputs = placement === "nested inline inputs"
+            ? { rows: [{ values: [[`prefix-${fixture.value}-suffix`]] }] }
+            : { user_goal: fixture.value };
+        }
+        let providerCalls = 0;
+        let providerExposedSecret = false;
+        options.agentDecisionProvider = (request) => {
+          providerCalls += 1;
+          const serialized = JSON.stringify(request);
+          providerExposedSecret ||= serialized.includes(fixture.value) || serialized.includes(escapedValue);
+          if (isObservation && providerCalls === 1) {
+            return { target_ref: "skill:test/Answer", arguments: { topic: argument } };
+          }
+          return { action: "answer_directly", result: "done" };
+        };
+        const result = await executeAirDocument(document, options);
+        assert.equal(result.status, "failure");
+        assert.equal(providerCalls, isObservation ? 1 : 0);
+        assert.equal(providerExposedSecret, false);
+        const failure = eventOf(result.trace, "failure_detected").payload;
+        assert.equal(failure.runtime_error_code, isDescriptor
+          ? "SecretValueInAgentCapabilityDescriptor" : "SecretValueInAgentDecisionRequest");
+        assert.deepEqual(failure.secret_handles_refused, ["SEARCH_API_KEY"]);
+        const serializedTrace = JSON.stringify(result.trace);
+        assert.equal(serializedTrace.includes(fixture.value), false);
+        assert.equal(serializedTrace.includes(escapedValue), false);
+      });
+    }
+  }
+});
+
+test("allows unrelated JSON escapes when no resolved secret occurs in provider context", async () => {
+  let providerCalls = 0;
+  const result = await executeAirDocument(agentProviderDocument(), {
+    inputs: { rows: [{ values: [['ordinary "quotation"', "a\\path", "two\nlines"]] }] },
+    secretStore: loadSecretsFromJson(JSON.stringify(secretsDocument()), {
+      env: { SEARCH_API_TOKEN: 'synthetic"secret-value' },
+    }),
+    agentDecisionProvider: () => {
+      providerCalls += 1;
+      return { action: "answer_directly", result: "done" };
+    },
+  });
+  assert.equal(result.status, "success");
+  assert.equal(providerCalls, 1);
+});
+
+test("applies the tool-call quota to each repeated invocation before dispatch", async () => {
+  const document = agentReviewAfterToolDocument();
+  document.definitions.agents[0].uses = ["tool:test/Fetch"];
+  let dispatches = 0;
+  const result = await executeAirDocument(document, {
+    maxAgentSteps: 3,
+    runLimits: { max_tool_calls: 1 },
+    toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(bindingManifestDocument({
+      bindings: { "tool:test/Fetch": toolBindingEntry({ grants: [] }) },
+    }))),
+    toolHandlers: { "tool:test/Fetch": () => `poll-${++dispatches}` },
+    agentDecisionProvider: () => ({ target_ref: "tool:test/Fetch", arguments: {} }),
+  });
+  assert.equal(result.status, "failure");
+  assert.equal(dispatches, 1);
+  assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "ToolCallBudgetExceeded");
+  assert.equal(eventOf(result.trace, "dispatch_refused_budget_exceeded").payload.target_ref, "tool:test/Fetch");
+});
+
+test("a repeated invocation cannot evade argument validation or uses", async () => {
+  for (const secondDecision of [
+    { target_ref: "skill:test/Answer", arguments: { unexpected: "wrong" } },
+    { target_ref: "skill:test/Hidden", arguments: {} },
+  ]) {
+    const document = agentProviderDocument();
+    const result = await executeAirDocument(document, {
+      agentDecisionProvider: (request) => {
+        if (request.step_index === 0) {
+          return { target_ref: "skill:test/Answer", arguments: { topic: "first" } };
+        }
+        return secondDecision;
+      },
+    });
+    assert.equal(result.status, "failure");
+    assert.equal(eventsOf(result.trace, "agent_capability_result_returned").length, 1);
+    assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code,
+      secondDecision.target_ref.endsWith("/Hidden") ? "AgentCapabilityNotAllowed" : "AgentCapabilityArgumentsInvalid");
+  }
+});
+
 test("exposes continuation guidance after intermediate opaque observations", async () => {
   const document = multiStepAgentDocument();
   const calls = [];
@@ -4232,8 +4613,8 @@ test("exposes continuation guidance after intermediate opaque observations", asy
     agentDecisionProvider: (request) => {
       calls.push(request);
       if (request.step_index === 0 && request.mode === "summary") {
-        assert.deepEqual(request.model_input.agent_state.completed_capability_refs, []);
-        assert.deepEqual(request.model_input.agent_state.remaining_capability_refs, [
+        assert.deepEqual(request.model_input.agent_state.used_capability_refs, []);
+        assert.deepEqual(request.model_input.agent_state.available_capability_refs, [
           "skill:test/Search",
           "skill:test/Summarize",
         ]);
@@ -4244,7 +4625,8 @@ test("exposes continuation guidance after intermediate opaque observations", asy
 	          select_exactly_one_catalog_capability_when_execution_is_needed: true,
 	          request_human_review_only_when_no_catalog_capability_suffices: true,
 	          request_human_review_when_goal_requires_human_judgment: true,
-	          prefer_unselected_capability_when_previous_observation_only_provides_intermediate_data: true,
+	          select_by_task_need_not_usage_history: true,
+	          prior_use_does_not_exhaust_capability: true,
 	        });
         return {
           target_ref: "skill:test/Search",
@@ -4255,25 +4637,25 @@ test("exposes continuation guidance after intermediate opaque observations", asy
       if (request.step_index === 1 && request.mode === "summary") {
         assert.equal(request.observations[0].ref, "opaque:runtime_observation/0");
         assert.equal(request.observations[0].value, undefined);
-        assert.deepEqual(request.model_input.agent_state.completed_capability_refs, ["skill:test/Search"]);
-        assert.deepEqual(request.model_input.agent_state.remaining_capability_refs, ["skill:test/Summarize"]);
+        assert.deepEqual(request.model_input.agent_state.used_capability_refs, ["skill:test/Search"]);
+        assert.deepEqual(request.model_input.agent_state.available_capability_refs, ["skill:test/Search", "skill:test/Summarize"]);
         assert.equal(
           request.model_input.decision_policy.after_observation_answer_directly_only_if_goal_satisfied,
           true,
         );
         assert.equal(
-          request.model_input.decision_policy.after_observation_request_capabilities_if_remaining_capability_can_complete_goal,
+          request.model_input.decision_policy.request_capabilities_if_authorized_work_is_needed,
           true,
         );
         assert.equal(JSON.stringify(request).includes("dataset"), false);
         return { action: "request_capabilities", reason: "intermediate data still needs summarization" };
       }
       if (request.step_index === 1 && request.mode === "capabilities") {
-        assert.deepEqual(request.model_input.agent_state.completed_capability_refs, ["skill:test/Search"]);
-        assert.deepEqual(request.model_input.agent_state.remaining_capability_refs, ["skill:test/Summarize"]);
+        assert.deepEqual(request.model_input.agent_state.used_capability_refs, ["skill:test/Search"]);
+        assert.deepEqual(request.model_input.agent_state.available_capability_refs, ["skill:test/Search", "skill:test/Summarize"]);
         return {
           target_ref: "skill:test/Summarize",
-          reason: "finalize intermediate data through an unselected capability",
+          reason: "exercise reference transport, not content dereferencing",
           arguments: {
             item: "opaque:runtime_observation/0",
           },
@@ -4367,6 +4749,35 @@ test("lets an agent delegate to an authorized sub-agent and continue from its re
       authority_source: "callable_by",
     },
   ]);
+});
+
+test("can reuse an authorized sub-agent, with every invocation charged to the run quota", async () => {
+  for (const maxAgentInvocations of [3, 2]) {
+    const document = delegatedAgentDocument({ authorized: true });
+    let specialistCalls = 0;
+    const result = await executeAirDocument(document, {
+      maxAgentSteps: 2,
+      runLimits: { max_agent_invocations: maxAgentInvocations },
+      agentDecisionProvider: (request) => {
+        if (request.agent_ref === "agent:test/Specialist") {
+          specialistCalls += 1;
+          return { action: "answer_directly", result: `delegated-${specialistCalls}` };
+        }
+        if (request.mode === "finalization") {
+          assert.deepEqual(request.observations.map((item) => item.value), ["delegated-1", "delegated-2"]);
+          return { action: "answer_directly", result: request.observations.at(-1).value };
+        }
+        return { target_ref: "agent:test/Specialist", arguments: {} };
+      },
+    });
+    assert.equal(specialistCalls, maxAgentInvocations - 1);
+    assert.equal(result.status, maxAgentInvocations === 3 ? "success" : "failure");
+    if (result.status === "success") {
+      assert.equal(result.result, "delegated-2");
+    } else {
+      assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "AgentInvocationBudgetExceeded");
+    }
+  }
 });
 
 test("refuses model-selected sub-agent when callable_by does not authorize the caller agent", async () => {
@@ -4578,10 +4989,13 @@ test("refuses agent-requested human review pause after external tool dispatch wi
 
 test("resumes agent-requested human review from checkpoint without redispatching prior effects", async () => {
   const document = agentReviewAfterToolDocument();
+  document.definitions.agents[0].uses = ["tool:test/Fetch"];
+  document.definitions.tools[0].signature.inputs = [parameter("topic", "builtin:Text")];
   const approvalRef = "approval:agent:test/Researcher:step-1:human-review";
   let toolCalls = 0;
   const toolHandlers = {
-    "tool:test/Fetch": async () => {
+    "tool:test/Fetch": async ({ arguments: args }) => {
+      assert.deepEqual(args, { topic: "source-17" });
       toolCalls += 1;
       return "fetched";
     },
@@ -4596,9 +5010,9 @@ test("resumes agent-requested human review from checkpoint without redispatching
       }
       if (request.step_index === 0 && request.mode === "capabilities") {
         return {
-          target_ref: "skill:test/FetchData",
+          target_ref: "tool:test/Fetch",
           reason: "fetch once",
-          arguments: {},
+          arguments: { topic: "source-17" },
         };
       }
       if (request.step_index === 1 && request.mode === "summary") {
@@ -4625,12 +5039,13 @@ test("resumes agent-requested human review from checkpoint without redispatching
   assert.equal(paused.checkpoint.agent_loop_state.step_index, 1);
   assert.equal(paused.checkpoint.agent_loop_state.next_step_index, 2);
   assert.equal(paused.checkpoint.agent_loop_state.observations.length, 1);
+  assert.deepEqual(paused.checkpoint.agent_loop_state.observations[0].arguments, { topic: "source-17" });
   assert.equal(paused.checkpoint.call_frame.graph_ref, "graph:strategy:test/RunResearch");
   assert.equal(eventOf(paused.trace, "human_approval_checkpoint_created").payload.external_tool_dispatches, 1);
 
   const resumedProviderCalls = [];
   const resumed = await executeAirDocument(document, {
-    humanApprovalResumeCheckpoint: paused.checkpoint,
+    humanApprovalResumeCheckpoint: JSON.parse(JSON.stringify(paused.checkpoint)),
     humanApprovalDecisions: {
       [approvalRef]: "approved",
     },
@@ -4641,6 +5056,7 @@ test("resumes agent-requested human review from checkpoint without redispatching
       assert.equal(request.mode, "summary");
       assert.equal(request.observations.length, 2);
       assert.equal(request.observations[0].value, "fetched");
+      assert.deepEqual(request.observations[0].arguments, { topic: "source-17" });
       assert.deepEqual(request.observations[1].value, {
         approval_ref: approvalRef,
         decision: "approved",
@@ -4863,10 +5279,22 @@ test("refuses human approval checkpoint resume without an explicit decision", as
 
 test("fails when an agent decision loop exceeds the configured step limit", async () => {
   const document = multiStepAgentDocument();
+  const providerModes = [];
 
   const result = await executeAirDocument(document, {
     maxAgentSteps: 1,
     agentDecisionProvider: (request) => {
+      providerModes.push(request.mode);
+      if (request.mode === "finalization") {
+        assert.equal(request.model_input.mode, "finalization");
+        assert.equal(request.model_input.agent_state.execution_budget_exhausted, true);
+        assert.deepEqual(request.model_input.allowed_actions, ["answer_directly", "cannot_complete"]);
+        return {
+          action: "cannot_complete",
+          source: "development_fixture",
+          reason: "the remaining declared work did not fit the execution budget",
+        };
+      }
       if (request.mode === "summary") {
         return { action: "request_capabilities", reason: "keep working" };
       }
@@ -4883,7 +5311,74 @@ test("fails when an agent decision loop exceeds the configured step limit", asyn
     agent_ref: "agent:test/Researcher",
     max_agent_steps: 1,
   });
+  assert.deepEqual(providerModes, ["summary", "capabilities", "finalization"]);
   assert.equal(eventOf(result.trace, "failure_detected").payload.runtime_error_code, "AgentStepLimitExceeded");
+});
+
+test("returns a governed final answer after the last permitted capability execution", async () => {
+  const document = multiStepAgentDocument();
+  const providerModes = [];
+
+  const result = await executeAirDocument(document, {
+    maxAgentSteps: 1,
+    agentDecisionProvider: (request) => {
+      providerModes.push(request.mode);
+      if (request.mode === "summary") {
+        return { action: "request_capabilities", reason: "one observation is required" };
+      }
+      if (request.mode === "capabilities") {
+        return {
+          target_ref: "skill:test/Search",
+          source: "development_fixture",
+          reason: "collect the declared observation",
+          arguments: {},
+        };
+      }
+      assert.equal(request.mode, "finalization");
+      assert.equal(request.observations.length, 1);
+      assert.equal(request.observations[0].value, "dataset");
+      assert.deepEqual(request.model_input.decision_policy, {
+        no_additional_capability_execution: true,
+        answer_directly_only_if_goal_satisfied: true,
+        declare_incomplete_if_goal_not_satisfied: true,
+      });
+      assert.equal(request.model_input.human_interaction.review_available, false);
+      return {
+        action: "answer_directly",
+        source: "development_fixture",
+        reason: "the last observation satisfies the bounded goal",
+        result: "final dataset",
+      };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(result.result, "final dataset");
+  assert.deepEqual(providerModes, ["summary", "capabilities", "finalization"]);
+  assert.equal(eventsOf(result.trace, "agent_capability_selected").length, 1);
+  assert.equal(eventsOf(result.trace, "agent_step_limit_exceeded").length, 0);
+  assert.equal(
+    eventsOf(result.trace, "agent_decision_recorded").at(-1).payload.decision_phase,
+    "finalization",
+  );
+});
+
+test("rejects cannot_complete outside the non-executable finalization phase", async () => {
+  const result = await executeAirDocument(multiStepAgentDocument(), {
+    maxAgentSteps: 1,
+    agentDecisionProvider: () => ({
+      action: "cannot_complete",
+      source: "invalid_development_fixture",
+      reason: "this action is not valid during summary selection",
+    }),
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(
+    eventOf(result.trace, "failure_detected").payload.runtime_error_code,
+    "AgentDecisionProviderSchemaViolation",
+  );
+  assert.equal(eventsOf(result.trace, "agent_capability_selected").length, 0);
 });
 
 test("rejects invalid agent step limits before execution", async () => {

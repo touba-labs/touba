@@ -4,8 +4,6 @@ import test from "node:test";
 import {
   extractToubaExamples,
   validateExampleMetadata,
-  validatePublishedProofCounts,
-  validateRepositoryReferences,
 } from "./validate-doc-examples.mjs";
 
 test("extracts displayed Touba blocks with explicit compile and fragment status", () => {
@@ -48,24 +46,4 @@ responsibility "Review the change."
 \`\`\`
 `, "docs/fragment.md");
   assert.deepEqual(validateExampleMetadata(fragment), []);
-});
-
-test("checks public proof counts against the machine source", () => {
-  const documents = new Map([
-    ["touba/README.md", "36 cases and 24 structural cases"],
-    ["pap/README.md", "36 cases and 24 structural cases"],
-  ]);
-  const status = { benchmarks: { live_model_cases: 36, structural_cases: 24 } };
-  assert.deepEqual(validatePublishedProofCounts(documents, status), []);
-  documents.set("pap/README.md", "35 cases and 24 structural cases");
-  assert.match(validatePublishedProofCounts(documents, status)[0], /live-model case count/);
-});
-
-test("rejects missing repository references in PAP documents", () => {
-  const diagnostics = validateRepositoryReferences(
-    "See `pap/pap-projet/source-absente.md`.",
-    "pap/inventaire-fonctionnel.md",
-  );
-  assert.equal(diagnostics.length, 1);
-  assert.match(diagnostics[0], /broken repository reference/);
 });

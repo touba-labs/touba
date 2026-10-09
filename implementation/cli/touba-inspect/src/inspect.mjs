@@ -10,6 +10,15 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  effectContractToJson,
+  normalizeEffectContract,
+  TOUBA_MANIFEST_V1,
+  TOUBA_MANIFEST_V2,
+  TOUBA_MANIFEST_V3,
+  validateManifestEffectContracts,
+} from "../../touba-manifest/src/effect-contract.mjs";
 import { buildAirInputContract } from "../../../contracts/product-surfaces/input-contracts.mjs";
 
 export const INSPECT_ABSENT_DATA = [
@@ -42,7 +51,11 @@ const cargoManifest = path.join(implementationDir, "Cargo.toml");
 const EXPECTED_AIR_SCHEMA_VERSION = "touba-air-v1";
 const EXPECTED_TRACE_PROTOCOL_VERSION = "touba-trace-v1";
 const EXPECTED_ARCHITECTURE_SCHEMA_VERSION = "architecture-projection-v0.1";
-const EXPECTED_MANIFEST_VERSION = "touba-manifest-v1";
+const SUPPORTED_MANIFEST_VERSIONS = new Set([
+  TOUBA_MANIFEST_V1,
+  TOUBA_MANIFEST_V2,
+  TOUBA_MANIFEST_V3,
+]);
 const EXPECTED_PACKAGE_SCHEMA_VERSION = "touba-package-v0.1";
 const EXPECTED_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v0.1";
 const EXPECTED_RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
@@ -151,7 +164,7 @@ export function inspectPath(inputPath, options = {}) {
     });
   }
 
-  if (artifact.manifest_version === EXPECTED_MANIFEST_VERSION) {
+  if (SUPPORTED_MANIFEST_VERSIONS.has(artifact.manifest_version)) {
     return inspectionDocument(absolutePath, "tool_binding_manifest", {
       source: absent("source artifact not provided"),
       air: absent("AIR artifact not provided"),
@@ -1008,6 +1021,7 @@ function summarizeArchitecture(projection) {
 }
 
 function summarizeManifest(manifest) {
+  const validatedEffects = validateManifestEffectContracts(manifest).effectContracts;
   const bindings = Object.entries(manifest.bindings ?? {}).map(([toolRef, binding]) => ({
     tool_ref: toolRef,
     handler_kind: binding.handler?.kind,
@@ -1024,6 +1038,9 @@ function summarizeManifest(manifest) {
       : [],
     timeout_ms: binding.timeout_ms,
     max_payload_bytes: binding.max_payload_bytes,
+    ...(validatedEffects.has(toolRef)
+      ? { effect_contract: effectContractToJson(validatedEffects.get(toolRef)) }
+      : {}),
   }));
   const triggers = Object.entries(manifest.triggers ?? {}).map(([triggerRef, trigger]) => ({
     trigger_ref: triggerRef,
@@ -1085,18 +1102,26 @@ function summarizePackage(packageDocument) {
 }
 
 function summarizeBindingFragment(fragment) {
-  const bindings = Object.entries(fragment.bindings ?? {}).map(([toolRef, binding]) => ({
-    tool_ref: toolRef,
-    handler_kind: binding.handler?.kind,
-    handler_command: binding.handler?.command,
-    handler_args: Array.isArray(binding.handler?.args) ? binding.handler.args : [],
-    handler_cwd: binding.handler?.cwd,
-    grants: Array.isArray(binding.grants) ? binding.grants : [],
-    secrets: Array.isArray(binding.secrets) ? binding.secrets : [],
-    timeout_ms: binding.timeout_ms,
-    max_payload_bytes: binding.max_payload_bytes,
-    payload_constraints: countPayloadConstraints(binding.payload_constraints),
-  }));
+  const bindings = Object.entries(fragment.bindings ?? {}).map(([toolRef, binding]) => {
+    const effectContract = Object.hasOwn(binding ?? {}, "effect_contract")
+      ? normalizeEffectContract(binding.effect_contract, {
+        label: `bindings.${toolRef}.effect_contract`,
+      })
+      : null;
+    return {
+      tool_ref: toolRef,
+      handler_kind: binding.handler?.kind,
+      handler_command: binding.handler?.command,
+      handler_args: Array.isArray(binding.handler?.args) ? binding.handler.args : [],
+      handler_cwd: binding.handler?.cwd,
+      grants: Array.isArray(binding.grants) ? binding.grants : [],
+      secrets: Array.isArray(binding.secrets) ? binding.secrets : [],
+      timeout_ms: binding.timeout_ms,
+      max_payload_bytes: binding.max_payload_bytes,
+      payload_constraints: countPayloadConstraints(binding.payload_constraints),
+      ...(effectContract === null ? {} : { effect_contract: effectContractToJson(effectContract) }),
+    };
+  });
   return {
     present: true,
     fragment_schema_version: fragment.fragment_schema_version,
@@ -1626,6 +1651,14 @@ function summarizeEffectiveProject(artifact) {
       throw new Error(`effective project input ${input.path} has invalid provenance`);
     }
   }
+  const effectContracts = (artifact.contract?.handlers?.bindings ?? [])
+    .filter((binding) => Object.hasOwn(binding ?? {}, "effect_contract"))
+    .map((binding) => ({
+      tool_ref: binding.tool_ref,
+      effect_contract: effectContractToJson(normalizeEffectContract(binding.effect_contract, {
+        label: `contract.handlers.bindings.${binding.tool_ref}.effect_contract`,
+      })),
+    }));
   assertNoEffectiveProjectSensitiveFields(artifact);
   return {
     present: true,
@@ -1635,6 +1668,7 @@ function summarizeEffectiveProject(artifact) {
     artifact_layout: artifact.project?.artifact_layout,
     input_count: (artifact.inputs ?? []).length,
     sections,
+    ...(effectContracts.length > 0 ? { effect_contracts: effectContracts } : {}),
     document: artifact,
   };
 }
@@ -1807,6 +1841,9 @@ function renderManifest(lines, manifest) {
     if (binding.handler_cwd) {
       lines.push(`  cwd=${binding.handler_cwd}`);
     }
+    if (binding.effect_contract) {
+      lines.push(`  effect_contract=${formatEffectContract(binding.effect_contract)}`);
+    }
   }
   for (const trigger of manifest.triggers) {
     lines.push(
@@ -1880,6 +1917,9 @@ function renderBindingFragment(lines, fragment) {
     );
     if (binding.handler_cwd) {
       lines.push(`  cwd=${binding.handler_cwd}`);
+    }
+    if (binding.effect_contract) {
+      lines.push(`  effect_contract=${formatEffectContract(binding.effect_contract)}`);
     }
   }
 }
@@ -2229,6 +2269,11 @@ function renderEffectiveProject(lines, effectiveProject) {
       `- ${section.name} provenance=${section.status} sources=[${section.sources.join(",")}]`,
     );
   }
+  for (const binding of effectiveProject.effect_contracts ?? []) {
+    lines.push(
+      `- effect_contract ${binding.tool_ref} ${formatEffectContract(binding.effect_contract)}`,
+    );
+  }
 }
 
 function renderCompatibility(lines, compatibility) {
@@ -2280,10 +2325,10 @@ function validateCompatibility({
       )}`,
     });
   }
-  if (manifest.present && manifest.manifest_version !== EXPECTED_MANIFEST_VERSION) {
+  if (manifest.present && !SUPPORTED_MANIFEST_VERSIONS.has(manifest.manifest_version)) {
     diagnostics.push({
       code: "ManifestVersionMismatch",
-      message: `expected ${EXPECTED_MANIFEST_VERSION}, got ${valueOrAbsent(
+      message: `expected ${[...SUPPORTED_MANIFEST_VERSIONS].join(" or ")}, got ${valueOrAbsent(
         manifest.manifest_version,
       )}`,
     });
@@ -3252,6 +3297,14 @@ function formatTriggerArgument(argument) {
 
 function formatManifestMemories(memories) {
   return memories.map((memory) => `${memory.ref}:${memory.access}`).join(",");
+}
+
+function formatEffectContract(contract) {
+  return contract.kind === "external_write"
+    ? `${contract.kind}:${contract.retry_mode}${contract.compensation?.entry_ref
+      ? `:compensation=${contract.compensation.entry_ref}`
+      : ""}`
+    : contract.kind;
 }
 
 function diagnosticCodes(diagnostics) {

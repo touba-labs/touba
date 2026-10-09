@@ -20,7 +20,7 @@ await defineTool({
         api_url: DONNEES_QUEBEC_PACKAGE_SEARCH_URL,
         query: sourceRequest.query,
         result_count: 1,
-        first_dataset_title: "Jeu de données de démonstration",
+        first_dataset_title: "Demonstration dataset",
         llm_model: sourceRequest.llm_model,
       };
     }

@@ -58,15 +58,15 @@ async function summarizeWithOpenAI(search, apiKey) {
   const body = {
     model: search.llm_model,
     instructions: [
-      "Tu es un assistant de synthèse pour un test Touba.",
-      "Réponds en une phrase courte en français.",
-      "N'invente pas de données absentes du payload.",
+      "You are a summarization assistant for a Touba test.",
+      "Answer in one short French sentence.",
+      "Do not invent data that is absent from the payload.",
     ].join(" "),
     input: [
-      `Requête Données Québec: ${search.query}`,
-      `Nombre de résultats: ${search.result_count}`,
-      `Premier titre: ${search.first_dataset_title || "(aucun titre)"}`,
-      `URL API: ${search.api_url}`,
+      `Données Québec query: ${search.query}`,
+      `Result count: ${search.result_count}`,
+      `First title: ${search.first_dataset_title || "(no title)"}`,
+      `API URL: ${search.api_url}`,
     ].join("\n"),
     max_output_tokens: 120,
     store: false,

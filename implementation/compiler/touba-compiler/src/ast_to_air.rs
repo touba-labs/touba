@@ -753,6 +753,16 @@ impl AirLowerer {
         let graph_id = graph_id(&id);
         let (graph, trace_points) = self.lower_graph(&id, &graph_id, body, &signature, &[]);
 
+        for node in &graph.nodes {
+            if !node.kind.is_pure_function_node() {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::FunctionNotPure,
+                    format!("function `{id}` must be pure; {:?} is not permitted", node.kind),
+                    Some(node.source_ref.clone()),
+                ));
+            }
+        }
+
         Some((
             AirFunction {
                 id,

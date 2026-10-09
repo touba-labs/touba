@@ -1,0 +1,33 @@
+{
+  "schema_version": "touba-element-authoring-preview-v0.1",
+  "generated_at": "2026-09-22T20:00:00.000Z",
+  "proposal_id": "studio_element_001",
+  "element_ref": "memory:demo.main/ReviewMemory",
+  "preview_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "ready",
+  "changes": [
+    {
+      "path": "src/main.tb",
+      "role": "source",
+      "operation": "update",
+      "current_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proposed_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "diff": "--- a/src/main.tb\n+++ b/src/main.tb\n@@ -2,0 +3,1 @@\n+memory ReviewMemory\n"
+    }
+  ],
+  "validations": [
+    {
+      "severity": "info",
+      "code": "ToubaServeChangeContentValidated",
+      "message": "src/main.tb: change content passed project-server validation"
+    }
+  ],
+  "impact": {
+    "file_count": 1,
+    "create_count": 0,
+    "update_count": 1,
+    "source_count": 1,
+    "metadata_count": 0,
+    "handler_stub_count": 0
+  }
+}

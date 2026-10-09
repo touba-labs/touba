@@ -18,6 +18,7 @@ import { compactPayload } from "./trace-builder.mjs";
  *   executeAgentHumanReview: (agent: any, decision: any, context: any, stepIndex: number, observations: any[]) => any,
  *   assertAgentDecisionDoesNotExecuteSkillPack: (decision: any, agent: any, capabilityRefs: string[], context: any, stepIndex: number) => void,
  *   callArgumentsForAgentDecision: (decision: any, context: any) => any,
+ *   argumentsForAgentObservation: (targetRef: string, callArguments: any, context: any) => Record<string, unknown>,
  *   authorizeAgentInvocationByCaller: (callerRef: string, targetRef: string, context: any) => void,
  *   executeTarget: (targetRef: string, context: any, callArguments: any) => Promise<any>,
  *   validateAgentFinalResult: (agent: any, result: unknown, context: any) => unknown,
@@ -40,7 +41,7 @@ export async function runAgentDecisionLoop(
     : 0;
 
   for (let stepIndex = startStepIndex; stepIndex < context.maxAgentSteps; stepIndex += 1) {
-    const loopState = { stepIndex, observations };
+    const loopState = { stepIndex, observations, phase: "execution" };
     const decision = await operations.resolveAgentDecision(
       agent,
       capabilityRefs,
@@ -97,6 +98,9 @@ export async function runAgentDecisionLoop(
       continue;
     }
 
+    // Usage history is evidence, not authority. Reusing a declared capability
+    // is valid; every invocation goes through the same type/authority/budget
+    // checks in the dispatcher, including invocations with identical arguments.
     operations.assertAgentDecisionDoesNotExecuteSkillPack(
       decision,
       agent,
@@ -138,6 +142,13 @@ export async function runAgentDecisionLoop(
     });
 
     const selectedCallArguments = operations.callArgumentsForAgentDecision(decision, context);
+    // Snapshot the validated invocation before dispatch: a handler may mutate
+    // an argument, and scalar results do not identify the request they answer.
+    const observationArguments = operations.argumentsForAgentObservation(
+      decision.targetRef,
+      selectedCallArguments,
+      context,
+    );
     if (decision.targetRef.startsWith("agent:")) {
       operations.authorizeAgentInvocationByCaller(agent.id, decision.targetRef, context);
     }
@@ -163,6 +174,7 @@ export async function runAgentDecisionLoop(
       action: "select_capability",
       target_ref: decision.targetRef,
       kind: callerKindFromRef(decision.targetRef),
+      arguments: observationArguments,
       result_type: payloadValueKind(result),
       value: result,
     };
@@ -176,6 +188,48 @@ export async function runAgentDecisionLoop(
         result_type: observation.result_type,
       }),
     });
+  }
+
+  // maxAgentSteps bounds capability/review execution, not the provider's
+  // ability to close the loop from the last observation. Without this
+  // terminal decision, a result produced on the final allowed execution can
+  // never be returned. Finalization is deliberately non-executable: every
+  // action other than a direct answer falls through to the existing refusal.
+  const finalizationStepIndex = context.maxAgentSteps;
+  const finalizationDecision = await operations.resolveAgentDecision(
+    agent,
+    capabilityRefs,
+    context,
+    {
+      stepIndex: finalizationStepIndex,
+      observations,
+      phase: "finalization",
+    },
+  );
+  if (finalizationDecision) {
+    context.trace.push("agent_decision_recorded", {
+      payload: compactPayload({
+        agent_ref: agent.id,
+        step_index: finalizationStepIndex,
+        decision_phase: "finalization",
+        action: finalizationDecision.action,
+        decision_source: finalizationDecision.source,
+        reason: finalizationDecision.reason,
+      }),
+    });
+    if (finalizationDecision.action === "answer_directly") {
+      operations.validateAgentFinalResult(agent, finalizationDecision.result, context);
+      context.trace.push("agent_direct_answer_returned", {
+        payload: compactPayload({
+          agent_ref: agent.id,
+          step_index: finalizationStepIndex,
+          decision_phase: "finalization",
+          decision_source: finalizationDecision.source,
+          reason: finalizationDecision.reason,
+        }),
+      });
+      return finalizationDecision.result;
+    }
   }
 
   context.trace.push("agent_step_limit_exceeded", {

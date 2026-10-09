@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const __dir = dirname(fileURLToPath(import.meta.url));
 const implementationRoot = resolve(__dir, "..");
 const toubaRoot = resolve(implementationRoot, "..");
-const repoRoot = resolve(toubaRoot, "..");
+const repoRoot = toubaRoot;
 const MARKER_PATTERN = /^<!-- touba-example: (compile|fragment) -->$/;
 
 export function extractToubaExamples(content, docPath = "document.md") {
@@ -79,77 +79,13 @@ export function validateRelativeMarkdownLinks(content, docPath, root = repoRoot)
   return diagnostics;
 }
 
-export function validateRepositoryReferences(content, docPath, root = repoRoot) {
-  const diagnostics = [];
-  const pattern = /`((?:pap|touba|pilotage|publications|ide|livre)\/[A-Za-z0-9._\/-]+)`/g;
-  for (const match of content.matchAll(pattern)) {
-    if (!existsAsDocumentTarget(resolve(root, match[1]))) {
-      diagnostics.push(`${docPath}: broken repository reference ${match[1]}`);
-    }
-  }
-  return diagnostics;
-}
-
 export function publicDocumentationPaths(root = repoRoot) {
-  const paths = ["touba/README.md", "pap/README.md"];
-  const docsRoot = resolve(root, "touba/docs");
+  const paths = ["README.md"];
+  const docsRoot = resolve(root, "docs");
   for (const path of walkMarkdown(docsRoot)) {
     paths.push(relative(root, path));
   }
-  const papRoot = resolve(root, "pap");
-  for (const path of walkMarkdown(papRoot)) {
-    paths.push(relative(root, path));
-  }
   return [...new Set(paths)].sort();
-}
-
-export function proofStatusFromSources(root = repoRoot) {
-  const live = readJson(resolve(
-    root,
-    "publications/artefacts/pap-touba-v1/benchmarks/pap002-live-model-benchmark/live-model-report.json",
-  ));
-  const structural = readJson(resolve(
-    root,
-    "publications/artefacts/pap-touba-v1/benchmarks/pap002-live-model-benchmark/runs/reverify-structural/structural-evidence-report.json",
-  ));
-  const liveCases = live.aggregate?.find((item) => item.id === "touba-openai-decision-provider-direct-catalog")?.cases;
-  const structuralCases = structural.aggregate?.cases
-    ?? structural.summary?.cases
-    ?? (Array.isArray(structural.cases) ? structural.cases.length : structural.cases);
-  if (!Number.isSafeInteger(liveCases) || !Number.isSafeInteger(structuralCases)) {
-    throw new Error("benchmark proof sources do not expose integer case counts");
-  }
-  return {
-    schema_version: "touba-documentation-proof-status-v1",
-    sources: {
-      live_model_report: "publications/artefacts/pap-touba-v1/benchmarks/pap002-live-model-benchmark/live-model-report.json",
-      structural_evidence_report: "publications/artefacts/pap-touba-v1/benchmarks/pap002-live-model-benchmark/runs/reverify-structural/structural-evidence-report.json",
-    },
-    benchmarks: {
-      live_model_cases: liveCases,
-      structural_cases: structuralCases,
-    },
-  };
-}
-
-export function validatePublishedProofCounts(contentByPath, proofStatus) {
-  const diagnostics = [];
-  const live = proofStatus.benchmarks.live_model_cases;
-  const structural = proofStatus.benchmarks.structural_cases;
-  for (const docPath of ["touba/README.md", "pap/README.md"]) {
-    const content = contentByPath.get(docPath);
-    if (content === undefined) {
-      diagnostics.push(`${docPath}: public proof document missing`);
-      continue;
-    }
-    if (!content.includes(`${live} cases`)) {
-      diagnostics.push(`${docPath}: live-model case count must match machine source (${live})`);
-    }
-    if (!content.includes(`${structural} `) && !content.includes(`${structural} cases`)) {
-      diagnostics.push(`${docPath}: structural case count must match machine source (${structural})`);
-    }
-  }
-  return diagnostics;
 }
 
 export function runDocumentationValidation(options = {}) {
@@ -176,9 +112,7 @@ export function runDocumentationValidation(options = {}) {
       diagnostics.push(error instanceof Error ? error.message : String(error));
     }
     diagnostics.push(...validateRelativeMarkdownLinks(content, docPath, root));
-    if (docPath.startsWith("pap/")) {
-      diagnostics.push(...validateRepositoryReferences(content, docPath, root));
-    }
+
   }
 
   const tempRoot = mkdtempSync(join(tmpdir(), "touba-doc-examples-"));
@@ -191,7 +125,7 @@ export function runDocumentationValidation(options = {}) {
       const result = spawnSync(
         cargo,
         ["run", "-p", "touba-cli", "--bin", "touba-compile", "--quiet", "--", sourcePath],
-        { cwd: resolve(root, "touba/implementation"), encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: options.implementationRoot ?? resolve(root, "implementation"), encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
       );
       if (result.status !== 0) {
         diagnostics.push(`${example.docPath}:${example.startLine}: displayed Touba block does not compile: ${(result.stderr || result.stdout || `exit ${result.status}`).trim()}`);
@@ -209,8 +143,6 @@ export function runDocumentationValidation(options = {}) {
     rmSync(tempRoot, { recursive: true, force: true });
   }
 
-  const proofStatus = proofStatusFromSources(root);
-  diagnostics.push(...validatePublishedProofCounts(contentByPath, proofStatus));
   const summary = {
     documents_checked: contentByPath.size,
     examples_checked: examples.length,
@@ -221,7 +153,7 @@ export function runDocumentationValidation(options = {}) {
   if (diagnostics.length > 0) {
     throw new Error(`documentation validation failed (${diagnostics.length}):\n- ${diagnostics.join("\n- ")}`);
   }
-  return { summary, proofStatus };
+  return { summary };
 }
 
 function lastNonEmptyLine(lines, before) {
@@ -264,11 +196,6 @@ function existsAsDocumentTarget(path) {
   return existsSync(path) || existsSync(`${path}.md`) || existsSync(join(path, "README.md"));
 }
 
-function readJson(path) {
-  if (!existsSync(path)) throw new Error(`proof source missing: ${path}`);
-  return JSON.parse(readFileSync(path, "utf8"));
-}
-
 function safeName(value) {
   return value.replace(/[^A-Za-z0-9._-]+/g, "-");
 }
@@ -281,7 +208,6 @@ if (isMain) {
     process.stdout.write(
       `docs-examples: status=success documents=${result.summary.documents_checked} checked=${result.summary.examples_checked} compiled=${result.summary.compiled} fragments=${result.summary.fragments}\n`,
     );
-    process.stdout.write(`docs-proof-status: ${JSON.stringify(result.proofStatus)}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

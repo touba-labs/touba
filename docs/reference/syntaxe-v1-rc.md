@@ -326,7 +326,7 @@ tool ReadProjectKnowledge
 :::info
 - Pas de code handler inline dans `.tb`
 - Pas de `handled_by`
-- Pas d'appel enrichi d'agent avec `with` / `into`
+- Les appels enrichis d'agents utilisent `with` / `into` avec une signature locale explicite ; les signatures d'agents importés ne sont pas prises en charge dans cette tranche.
 - Pas de méthode hôte comme `title.toLowerCase()`
 - Pas de lecture `stdin`
 - Pas de `show` ou `ask` dans `function`

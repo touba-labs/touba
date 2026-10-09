@@ -40,6 +40,9 @@ const copiedPackages = [
 const nodeModuleAliases = [
   ["runtime/touba-runtime", "@touba/runtime"],
   ["runtime/touba-handler-sdk", "@touba/sdk"],
+  // Preserve the source-relative dependency used by the aliased supply-chain
+  // package: ../../touba-manifest resolves to this sibling directory.
+  ["cli/touba-manifest", "@touba/touba-manifest"],
   ["cli/touba-supply-chain", "@touba/supply-chain"],
   ["cli/touba-deployment", "@touba/deployment"],
 ];

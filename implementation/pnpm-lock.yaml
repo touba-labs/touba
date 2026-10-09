@@ -116,11 +116,7 @@ importers:
 
   tests/failure-flow-v1: {}
 
-  tests/governance-cost-v1:
-    dependencies:
-      '@touba/runtime':
-        specifier: workspace:*
-        version: link:../../runtime/touba-runtime
+  tests/governance-cost-v1: {}
 
   tests/js-sdk-engine-project: {}
 
@@ -129,6 +125,8 @@ importers:
   tests/multi-agent-sequential-v1: {}
 
   tests/record-construction-v1: {}
+
+  tests/reliable-effects-pilot: {}
 
 packages:
 
