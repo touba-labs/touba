@@ -1,0 +1,14 @@
+{
+  "schema_version": "touba-sandbox-run-request-v1",
+  "execution_kind": "entrypoint",
+  "target_ref": "strategy:billing/RunInvoiceReview",
+  "effect_policy": "runtime_only",
+  "inputs": {
+    "invoice_id": "INV-001"
+  },
+  "requested_by": {
+    "kind": "studio",
+    "id": "khadim"
+  },
+  "reason": "Manual sandbox run from client"
+}

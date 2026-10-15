@@ -1,0 +1,63 @@
+{
+  "schema_version": "touba-governance-readiness-v1",
+  "generated_at": "2026-06-23T10:00:00Z",
+  "project_root": "/workspace/invoice-agent",
+  "summary": {
+    "artifact_count": 3,
+    "approved": 2,
+    "pending_review": 1,
+    "blocked": 0,
+    "stale": 0
+  },
+  "artifacts": [
+    {
+      "ref": "agent:billing/InvoiceAgent",
+      "kind": "agent",
+      "label": "InvoiceAgent",
+      "status_dev": "approved",
+      "status_prod": "pending_review",
+      "owners": ["user:khadim"],
+      "reviewers": ["user:soukaina"],
+      "review_gates": ["human_gate:billing/ApproveInvoice"],
+      "evidence": {
+        "source": "authority_graph",
+        "path": "src/main.tb",
+        "source_ref": "src/main.tb:18",
+        "message": "agent is reviewable before production use"
+      }
+    },
+    {
+      "ref": "skill:billing/SummarizeInvoice",
+      "kind": "skill",
+      "label": "SummarizeInvoice",
+      "status_dev": "approved",
+      "status_prod": "approved",
+      "owners": ["user:khadim"],
+      "reviewers": [],
+      "review_gates": [],
+      "evidence": {
+        "source": "authority_graph",
+        "path": "src/main.tb",
+        "source_ref": "src/main.tb:8",
+        "message": "skill is present in the declared authority graph"
+      }
+    },
+    {
+      "ref": "tool:billing/ReadInvoice",
+      "kind": "tool",
+      "label": "ReadInvoice",
+      "status_dev": "approved",
+      "status_prod": "approved",
+      "owners": ["user:khadim"],
+      "reviewers": [],
+      "review_gates": [],
+      "evidence": {
+        "source": "authority_graph",
+        "path": "touba.manifest.json",
+        "source_ref": "tool:billing/ReadInvoice",
+        "message": "tool grants are declared in the manifest"
+      }
+    }
+  ],
+  "diagnostics": []
+}

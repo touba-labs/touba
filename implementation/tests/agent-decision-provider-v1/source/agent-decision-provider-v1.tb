@@ -29,6 +29,8 @@ skill HiddenAdminPath
         give "hidden"
 
 agent DonneesQuebecResearcher
+    takes request as ResearchRequest
+    gives Text
     description "Selects declared dataset research capabilities for one request."
     responsibility "Selects declared dataset research capabilities for one request."
     uses ListDatasets
@@ -36,7 +38,12 @@ agent DonneesQuebecResearcher
     callable_by strategy RunResearch
 
 strategy RunResearch
+    takes request as ResearchRequest
+    gives Text
     description "Runs one governed dataset research request."
     uses DonneesQuebecResearcher
     do
         DonneesQuebecResearcher
+            with request as request
+            into brief
+        give brief

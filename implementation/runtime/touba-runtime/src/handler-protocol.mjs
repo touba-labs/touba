@@ -2,15 +2,12 @@
 
 import { spawn as spawnProcess } from "node:child_process";
 import {
-  COMPENSATION_HANDLER_PROTOCOL_VERSION,
-  EFFECT_HANDLER_PROTOCOL_VERSION,
   validateEffectReceipt,
 } from "./effect-contract.mjs";
 import { RuntimeFailure } from "./runtime-errors.mjs";
 import { redactSecrets, secretValuesForRedaction } from "./secret-redaction.mjs";
 
 export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
-export { COMPENSATION_HANDLER_PROTOCOL_VERSION, EFFECT_HANDLER_PROTOCOL_VERSION };
 
 const COMPENSATION_ID_PATTERN = /^compensation:sha256:[0-9a-f]{64}$/u;
 const EFFECT_ID_PATTERN = /^effect:sha256:[0-9a-f]{64}$/u;
@@ -78,7 +75,7 @@ export async function runProcessToolHandler(input) {
     platform: input.platform ?? process.platform,
     env: input.env ?? process.env,
   });
-  const isCompensation = request.protocol === COMPENSATION_HANDLER_PROTOCOL_VERSION;
+  const isCompensation = request.operation === "compensate";
   const preparedChildEnv = isCompensation
     ? buildHandlerEnv(secretHandles, secretStore)
     : null;
@@ -201,6 +198,17 @@ export async function runProcessToolHandler(input) {
       const stderr = redactSecrets(Buffer.concat(stderrChunks).toString("utf8"), secretValues);
 
       if (code !== 0) {
+        const missingSdk = /Cannot find package ['"]@touba\/sdk['"]|Cannot find module ['"]@touba\/sdk['"]/u.test(stderr);
+        const missingProviderDependency = /Cannot find package ['"](?:ai|@ai-sdk\/[^'"]+|zod)['"]/u.test(stderr);
+        if (missingSdk || missingProviderDependency) {
+          finishReject(new RuntimeFailure(
+            missingSdk
+              ? "handler SDK is missing; install the SDK tarball shown by touba version --json in the project with npm install --offline --ignore-scripts --save-exact <archive.tgz>"
+              : "handler SDK provider dependency is missing; reinstall the complete SDK tarball in the project",
+            { toolRef }, missingSdk ? "ToolHandlerSdkMissing" : "ToolHandlerSdkDependencyMissing",
+          ));
+          return;
+        }
         const suffix = stderr.trim() ? `: ${stderr.trim()}` : "";
         finishReject(
           new RuntimeFailure(
@@ -233,11 +241,8 @@ export async function runProcessToolHandler(input) {
 
       try {
         finishResolve(decodeToolHandlerResponse(response, toolRef, secretValues, {
-          effect: request.protocol === EFFECT_HANDLER_PROTOCOL_VERSION
-            || request.protocol === COMPENSATION_HANDLER_PROTOCOL_VERSION
-            ? request.effect
-            : undefined,
-          compensation: request.protocol === COMPENSATION_HANDLER_PROTOCOL_VERSION
+          effect: request.effect,
+          compensation: request.operation === "compensate"
             ? request.compensation
             : undefined,
         }));

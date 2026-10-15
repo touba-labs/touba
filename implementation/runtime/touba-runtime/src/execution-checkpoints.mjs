@@ -5,7 +5,7 @@ import { canonicalizeMachineValue } from "../../../contracts/machine/contracts.m
 import { RuntimeFailure, ToubaRuntimeError } from "./runtime-errors.mjs";
 
 export const EXECUTION_CHECKPOINT_VERSION = "touba-run-checkpoint-v1";
-const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-run-checkpoint-v0.1";
+const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-human-approval-checkpoint-v1";
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const CHECKPOINT_PHASES = new Set(["ready", "started", "completed"]);
 const PENDING_PHASES = new Set(["reserved", "dispatched"]);

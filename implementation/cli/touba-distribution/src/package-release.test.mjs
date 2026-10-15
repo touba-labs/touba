@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { npmCommand } from "./npm-command.mjs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -10,7 +11,16 @@ import {
   renderWindowsCmdLauncher,
 } from "./package-release.mjs";
 
-test("release plan keeps the locally verified macOS profile explicit", () => {
+test("npm execution preserves Windows paths with spaces without a shell", () => {
+  const args = ["install", "C:\\isolated project\\touba-sdk.tgz"];
+  const invocation = npmCommand(args, { platform: "win32", node: "C:\\Program Files\\nodejs\\node.exe", exists: () => true });
+  assert.equal(invocation.command, "C:\\Program Files\\nodejs\\node.exe");
+  assert.deepEqual(invocation.args, ["C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js", ...args]);
+  assert.throws(() => npmCommand(args, { platform: "win32", node: invocation.command, exists: () => false }), /npm is missing/);
+  assert.deepEqual(npmCommand(args, { platform: "darwin" }), { command: "npm", args });
+});
+
+test("release plan keeps the local macOS build pending qualification", () => {
   const plan = createReleasePlan({
     platform: "darwin-arm64",
     hostPlatform: "darwin-arm64",
@@ -20,8 +30,8 @@ test("release plan keeps the locally verified macOS profile explicit", () => {
 
   assert.equal(plan.releaseName, "touba-v1.2.3-darwin-arm64");
   assert.equal(plan.channel, "macos-local-release");
-  assert.equal(plan.validationStatus, "local_verified");
-  assert.equal(plan.releaseProfile, "touba-local-release-v0.2");
+  assert.equal(plan.validationStatus, "pending_validation");
+  assert.equal(plan.releaseProfile, "touba-local-release-v1");
   assert.equal(plan.releaseScope, "local_validation");
   assert.equal(plan.draftPath, join("/tmp/touba-release-test", "GITHUB_RELEASE_DRAFT.md"));
   assert.equal(plan.publicRelease, false);
@@ -39,7 +49,7 @@ test("release plan refuses public channel overrides for local-only artifacts", (
   }), /not allowed for local-only artifacts/u);
 });
 
-test("release plan supports public GitHub Release artifacts for validated platforms", () => {
+test("release plan supports public GitHub Release artifacts for supported build targets", () => {
   const plan = createReleasePlan({
     platform: "linux-x64",
     hostPlatform: "linux-x64",
@@ -50,9 +60,9 @@ test("release plan supports public GitHub Release artifacts for validated platfo
 
   assert.equal(plan.releaseName, "touba-v1.2.3-linux-x64");
   assert.equal(plan.channel, "github-release");
-  assert.equal(plan.validationStatus, "ci_verified");
-  assert.equal(plan.releaseProfile, "touba-github-release-v0.1");
-  assert.equal(plan.installationProfile, "touba-github-release-install-v0.1");
+  assert.equal(plan.validationStatus, "pending_validation");
+  assert.equal(plan.releaseProfile, "touba-github-release-v1");
+  assert.equal(plan.installationProfile, "touba-github-release-install-v1");
   assert.equal(plan.releaseScope, "public_distribution");
   assert.equal(plan.publicRelease, true);
   assert.ok(plan.limitations.includes("manual update policy; automatic self-update is not enabled in V1"));
@@ -89,7 +99,7 @@ test("release plan marks experimental platforms as non-public artifacts", () => 
 
   assert.equal(plan.channel, "local-release-experimental");
   assert.equal(plan.validationStatus, "experimental_unvalidated");
-  assert.equal(plan.releaseProfile, "touba-local-release-experimental-v0.1");
+  assert.equal(plan.releaseProfile, "touba-local-release-experimental-v1");
   assert.equal(plan.publicRelease, false);
   assert.match(plan.limitations.join("\n"), /not a supported platform release/u);
 });
@@ -151,7 +161,7 @@ test("PowerShell install script writes touba.cmd and INSTALLATION metadata", () 
   assert.match(script, /\[switch\]\$Force/u);
   assert.match(script, /Join-Path \$Source "bin\\touba\.cmd"/u);
   assert.match(script, /Set-Content -Path \(Join-Path \$Prefix "bin\\touba\.cmd"\)/u);
-  assert.match(script, /installation_profile = "touba-local-release-install-experimental-v0\.1"/u);
+  assert.match(script, /installation_profile = "touba-local-release-install-experimental-v1"/u);
   assert.match(script, /validation_status = "experimental_unvalidated"/u);
   assert.match(script, /public_release = \$false/u);
 });
@@ -166,8 +176,8 @@ test("PowerShell install script marks public release metadata", () => {
   });
 
   const script = renderInstallPowerShell(plan);
-  assert.match(script, /installation_profile = "touba-github-release-install-v0\.1"/u);
-  assert.match(script, /validation_status = "ci_verified"/u);
+  assert.match(script, /installation_profile = "touba-github-release-install-v1"/u);
+  assert.match(script, /validation_status = "pending_validation"/u);
   assert.match(script, /public_release = \$true/u);
   assert.match(script, /newer GitHub Release archive/u);
 });

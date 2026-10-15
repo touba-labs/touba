@@ -84,7 +84,7 @@ test("cancel-requested interaction operations recover as cancelled and can be ar
     });
     assert.equal(archived.status, "archived");
     const store = JSON.parse(readFileSync(sessionsPath, "utf8"));
-    assert.equal(store.schema_version, "touba-interaction-sessions-v0.2");
+    assert.equal(store.schema_version, "touba-interaction-sessions-v1");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -285,7 +285,7 @@ test("interaction session index preserves generic executable target kinds", () =
       request: {
         target_ref: "function:demo/Format",
         target_kind: "function",
-        presentation: "typed_invocation",
+        presentation: "invocation",
         effect_policy: "runtime_only",
         requested_by: { kind: "studio", id: "test-suite" },
       },
@@ -450,7 +450,7 @@ function interactionMessage() {
 
 function interactionRunResult(operation, { code, completedAt }) {
   return {
-    schema_version: "touba-sandbox-run-result-v0.1",
+    schema_version: "touba-sandbox-run-result-v1",
     run_id: operation.run_id,
     target_ref: operation.target_ref,
     status: "stopped",

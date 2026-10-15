@@ -40,9 +40,10 @@ if (missingEnvSecrets.length > 0) {
 try {
   compileSourceToAir();
   materializeManifestFromAir();
-  const trace = runAir();
-  assertTrace(trace);
-  const evidence = buildEvidence(trace);
+  const run = runAir();
+  const trace = run.trace;
+  assertTrace(trace, run.messages);
+  const evidence = buildEvidence(trace, run.messages);
   if (traceOutPath) {
     writeJsonArtifact(traceOutPath, trace);
   }
@@ -70,9 +71,13 @@ function materializeManifestFromAir() {
   manifest.bindings["tool:examples.donnees_quebec_agent_live/SummarizeDatasets"].handler.args = [
     "handlers/summarize_datasets.handler.mjs",
   ];
+  for (const binding of Object.values(manifest.bindings)) binding.effect_contract = { kind: "none" };
   manifest.agent_secret_scopes = {
     "agent:examples.donnees_quebec_agent_live/Researcher": ["OPENAI_API_KEY"],
   };
+  manifest.bindings["tool:examples.donnees_quebec_agent_live/SearchDatasets"].grants = ["network"];
+  manifest.bindings["tool:examples.donnees_quebec_agent_live/SummarizeDatasets"].grants = ["network", "secret_read"];
+  manifest.bindings["tool:examples.donnees_quebec_agent_live/SummarizeDatasets"].secrets = ["OPENAI_API_KEY"];
 
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
@@ -118,11 +123,14 @@ function runAir() {
       "--agent-decision-provider-timeout-ms",
       "30000",
       "--agent-decision-provider-max-retries",
-      "1",
+      "0",
+      "--max-agent-steps",
+      "8",
       "--max-provider-calls",
-      "4",
+      argValue("--max-provider-calls") ?? "17",
+      ...(traceOutPath ? ["--trace-out", traceOutPath] : []),
       "--output",
-      "trace",
+      "json",
     ],
     {
       cwd: implementationRoot,
@@ -229,7 +237,7 @@ function parseDotenvEntries(raw) {
   return entries;
 }
 
-function buildEvidence(trace) {
+function buildEvidence(trace, messages) {
   const authorizedAgent = trace.events.find((event) => event.kind === "agent_invocation_authorized");
   const listedCapabilities = trace.events.find((event) => event.kind === "agent_capabilities_listed");
   const selectedCapability = trace.events.find((event) => event.kind === "agent_capability_selected");
@@ -241,12 +249,9 @@ function buildEvidence(trace) {
   const summarizeEvent = toolEvents.find(
     (event) => event.payload.tool_ref === "tool:examples.donnees_quebec_agent_live/SummarizeDatasets",
   );
-  const showMessages = trace.events
-    .filter((event) => event.kind === "user_interaction_shown")
-    .map((event) => event.payload?.message)
-    .filter((message) => typeof message === "string");
+  const showMessages = messages.map(message => message.text);
   const firstDatasetMessage = showMessages.find((message) => message.startsWith("First dataset: "));
-  const summary = showMessages.find((message) => !message.startsWith("First dataset: ")) ?? "";
+  const summary = showMessages.findLast((message) => !message.startsWith("First dataset: ") && !message.startsWith("Search-only first dataset: ")) ?? "";
 
   return {
     evidence_schema_version: "touba-live-agent-evidence-v1",
@@ -266,10 +271,9 @@ function buildEvidence(trace) {
     model_input_modes: decisionRequestsModes(trace),
     provider_metadata: decisionRequestsProviderMetadata(trace),
     provider_request_digests: decisionRequestsDigests(trace),
-    tools: [
-      evidenceTool(searchEvent),
-      evidenceTool(summarizeEvent),
-    ],
+    selected_capability_refs: trace.events.filter((event) => event.kind === "agent_capability_selected").map((event) => event.payload.selected_ref),
+    provider_calls: trace.events.filter((event) => event.kind === "budget_consumed" && event.payload?.budget_kind === "max_provider_calls").length,
+    tools: toolEvents.map(evidenceTool),
     first_dataset_title: firstDatasetMessage?.slice("First dataset: ".length) ?? "",
     summary,
     trace_event_count: trace.events.length,
@@ -303,6 +307,7 @@ function renderEvidence(evidence) {
     `agent-work: first_dataset_title=${compactText(evidence.first_dataset_title)}`,
     `agent-work: summary=${compactText(evidence.summary)}`,
     `agent-work: trace_events=${evidence.trace_event_count}`,
+    `agent-work: provider_calls=${evidence.provider_calls} tool_calls=${evidence.tools.length} capability_invocations=${evidence.selected_capability_refs.length}`,
   ].join("\n");
 }
 
@@ -314,7 +319,7 @@ function compactText(value) {
   return String(value).replace(/\s+/gu, " ").trim();
 }
 
-function assertTrace(trace) {
+function assertTrace(trace, messages) {
   const completed = trace.events?.find((event) => event.kind === "run_completed");
   if (completed?.payload?.status !== "success") {
     throw new Error(`expected trace status success, got ${completed?.payload?.status}`);
@@ -341,8 +346,8 @@ function assertTrace(trace) {
   ], "agent capability refs");
 
   const decisionRequests = trace.events.filter((event) => event.kind === "agent_decision_requested");
-  if (decisionRequests.length !== 3) {
-    throw new Error(`expected summary, catalog and final summary decision requests, got ${decisionRequests.length}`);
+  if ((!liveMode && decisionRequests.length !== 3) || decisionRequests.length < 3 || decisionRequests.length > Number(argValue("--max-provider-calls") ?? "17")) {
+    throw new Error(`unexpected bounded provider decision count ${decisionRequests.length}`);
   }
   for (const requestEvent of decisionRequests) {
     if (!/^[a-f0-9]{64}$/.test(requestEvent.payload.request_digest)) {
@@ -358,8 +363,8 @@ function assertTrace(trace) {
   const providerBudget = trace.events
     .filter((event) => event.kind === "budget_consumed")
     .filter((event) => event.payload?.budget_kind === "max_provider_calls");
-  if (providerBudget.length !== 3) {
-    throw new Error(`expected three provider budget consumptions, got ${providerBudget.length}`);
+  if (providerBudget.length !== decisionRequests.length) {
+    throw new Error(`provider budget must account for every request, got ${providerBudget.length} for ${decisionRequests.length}`);
   }
   if (decisionRequests[0].payload.mode !== "summary" || decisionRequests[0].payload.catalog_presented === true) {
     throw new Error("expected first agent decision request to be summary-only");
@@ -380,14 +385,14 @@ function assertTrace(trace) {
     throw new Error("expected second model input to be capability catalog");
   }
   if (
-    decisionRequests[2].payload.mode !== "summary"
-    || decisionRequests[2].payload.model_input_mode !== "orientation"
-    || decisionRequests[2].payload.observation_count !== 1
+    !["summary", "finalization"].includes(decisionRequests.at(-1).payload.mode)
+    || decisionRequests.at(-1).payload.observation_count < 1
+    || (!liveMode && decisionRequests.at(-1).payload.observation_count !== 1)
   ) {
-    throw new Error("expected final summary decision request with one runtime observation");
+    throw new Error("expected a terminal decision grounded in runtime observations");
   }
 
-  const selectedCapability = trace.events.find((event) => event.kind === "agent_capability_selected");
+  const selectedCapability = trace.events.find((event) => event.kind === "agent_capability_selected" && event.payload.selected_ref === "skill:examples.donnees_quebec_agent_live/BuildDatasetBrief");
   if (selectedCapability?.payload?.selected_ref !== "skill:examples.donnees_quebec_agent_live/BuildDatasetBrief") {
     throw new Error(`unexpected selected capability ${selectedCapability?.payload?.selected_ref}`);
   }
@@ -422,7 +427,7 @@ function assertTrace(trace) {
   }
 
   const showEvents = trace.events.filter((event) => event.kind === "user_interaction_shown");
-  if (!showEvents.some((event) => event.payload?.message?.startsWith("First dataset: "))) {
+  if (!messages.some(message => message.text.startsWith("First dataset: "))) {
     throw new Error("expected dataset title show event");
   }
   if (showEvents.length < 2) {

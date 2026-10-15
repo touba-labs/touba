@@ -21,7 +21,7 @@ import { createFileCompensationStore } from "../src/file-compensation-store.mjs"
 import { sealCompensationRecord } from "../src/compensation-store.mjs";
 import { airDocumentDigest } from "../src/human-approval-checkpoints.mjs";
 
-test("executes one V3 inverse, journals its crash-safe result, and replays creation as a pure read", async () => {
+test("executes one inverse, journals its crash-safe result, and replays creation as a pure read", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-comp-success-"));
   try {
     const callsPath = join(workspace, "calls.log");
@@ -48,7 +48,8 @@ test("executes one V3 inverse, journals its crash-safe result, and replays creat
     assert.equal(authorityRequests[1].requires_spawn, true);
     const requests = readJsonLines(callsPath);
     assert.equal(requests.length, 1);
-    assert.equal(requests[0].protocol, "touba-tool-handler-v3");
+    assert.equal(requests[0].protocol, "touba-tool-handler-v1");
+    assert.equal(requests[0].operation, "compensate");
     assert.equal(requests[0].compensation.compensates_effect_id, fixture.originalEffectId);
     const inverse = fixture.journal.entries.get(result.record.inverse.effect_id);
     assert.equal(inverse.state, "applied");
@@ -524,7 +525,7 @@ function originalEntry(document, effectId, state) {
 
 function compensationManifest(callsPath, result) {
   return {
-    manifest_version: "touba-manifest-v3",
+    manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:test/CreateReservation": {
         handler: { kind: "process", command: process.execPath, args: ["-e", ""] },

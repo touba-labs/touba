@@ -410,7 +410,7 @@ function buildBenchmarkReport(mapping, realCases, results, generatedOn) {
   const governedRefusals = results.filter((result) => result.checks.governed_refusal_code !== undefined).length;
   const matched = results.filter((result) => result.matched_expectation).length;
   return {
-    benchmark_report_version: "touba-agentdojo-benchmark-report-v0.1",
+    benchmark_report_version: "touba-agentdojo-benchmark-report-v1",
     generated_on: generatedOn,
     status: matched === results.length ? "success" : "mismatch",
     benchmark: {

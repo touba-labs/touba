@@ -120,6 +120,13 @@ function materializeManifestFromAir() {
   manifest.bindings["tool:examples.memory_backend_host/ReadMemoryNote"].handler.args = [
     "handlers/read_memory_note.handler.mjs",
   ];
+  for (const [name, access] of [["WriteMemoryNote", "write"], ["ReadMemoryNote", "read"]]) {
+    const binding = manifest.bindings[`tool:examples.memory_backend_host/${name}`];
+    binding.effect_contract = access === "write" ? { kind: "external_write", retry_mode: "none" } : { kind: "none" };
+    binding.grants = ["network", "secret_read", `memory_${access}`];
+    binding.secrets = ["MEMORY_BACKEND_TOKEN"];
+    binding.memories = [{ ref: "memory:examples.memory_backend_host/CustomerMemory", access }];
+  }
 
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
@@ -161,7 +168,7 @@ function writeResourceBindings(options = {}) {
   writeFileSync(
     resourceBindingsPath,
     `${JSON.stringify({
-      resource_bindings_schema_version: "touba-resource-bindings-v0.1",
+      resource_bindings_schema_version: "touba-resource-bindings-v1",
       resources: {
         "memory:examples.memory_backend_host/CustomerMemory": resource,
       },
@@ -178,6 +185,8 @@ async function runAir(options = {}) {
     manifestPath,
     "--secrets",
     secretsPath,
+    "--effect-journal",
+    path.join(tmpRoot, "memory.effect-journal.json"),
     "--inputs-json",
     JSON.stringify({
       request: {
@@ -186,7 +195,7 @@ async function runAir(options = {}) {
       },
     }),
     "--output",
-    "result",
+    "json",
     "--trace-out",
     tracePath,
   ];
@@ -212,7 +221,7 @@ async function runAir(options = {}) {
 
   assertSuccess("run", runResult);
   return {
-    result: JSON.parse(runResult.stdout),
+    ...JSON.parse(runResult.stdout),
     trace: JSON.parse(readFileSync(tracePath, "utf8")),
   };
 }
@@ -303,9 +312,9 @@ function assertPositiveRun(run) {
   if (JSON.stringify(accesses) !== JSON.stringify(["read", "write"])) {
     throw new Error(`unexpected memory accesses ${JSON.stringify(accesses)}`);
   }
-  const show = event(run.trace, "user_interaction_shown");
-  if (show.payload.message !== "Memory backend returned: Renewal risk escalated to account team") {
-    throw new Error(`unexpected show message ${show.payload.message}`);
+  const show = run.messages[0];
+  if (show?.text !== "Memory backend returned: Renewal risk escalated to account team") {
+    throw new Error(`unexpected show message ${show?.text}`);
   }
 }
 

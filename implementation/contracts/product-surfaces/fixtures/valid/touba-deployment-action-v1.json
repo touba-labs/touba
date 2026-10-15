@@ -1,0 +1,7 @@
+{
+  "schema_version": "touba-deployment-action-v1",
+  "action": "publish",
+  "profile": "prod",
+  "revision_id": null,
+  "actor": "user:khadim"
+}

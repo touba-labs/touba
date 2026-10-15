@@ -1,0 +1,16 @@
+{
+  "schema_version": "touba-mobile-pairing-request-v1",
+  "pairing_id": "pair_20260623_001",
+  "server_url": "http://127.0.0.1:8791",
+  "bearer_token": "PAIRING_TOKEN_TEST_ONLY",
+  "device_ref": "device:review-phone-01",
+  "user_ref": "user:khadim",
+  "nonce": "nonce_20260623_001",
+  "expires_at": "2026-06-24T00:00:00Z",
+  "scopes": [
+    "approvals:read",
+    "reviews:read",
+    "decisions:write"
+  ],
+  "deep_link": "touba-mobile://pair?pairing_id=pair_20260623_001&server=http%3A%2F%2F127.0.0.1%3A8791&token=PAIRING_TOKEN_TEST_ONLY&device=device%3Areview-phone-01&user=user%3Akhadim&nonce=nonce_20260623_001&expires=2026-06-24T00%3A00%3A00Z&scopes=approvals%3Aread%2Creviews%3Aread%2Cdecisions%3Awrite"
+}

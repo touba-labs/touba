@@ -70,6 +70,7 @@ export async function executeGraphTraversal(graphRef, context, operations, optio
         throw new RuntimeStop("AIR stop node reached", {
           graphRef: graph.id,
           nodeId: node.id,
+          reason: step.reason ?? "explicit_stop",
         });
       }
       return step.result;

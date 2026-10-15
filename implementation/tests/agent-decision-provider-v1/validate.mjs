@@ -84,7 +84,7 @@ function runWithProvider(providerName, inputs, options = {}) {
       "--trace-out",
       tracePath,
       "--output",
-      "result",
+      "json",
     ],
     {
       cwd: implementationRoot,
@@ -102,12 +102,13 @@ function runWithProvider(providerName, inputs, options = {}) {
   }
   return {
     result,
+    output: JSON.parse(result.stdout),
     trace,
   };
 }
 
 function assertPositiveRun(run) {
-  if (JSON.parse(run.result.stdout) !== "postgres") {
+  if (run.output.result !== "postgres") {
     throw new Error(`unexpected result ${run.result.stdout}`);
   }
   const requested = events(run.trace, "agent_decision_requested");
@@ -141,9 +142,7 @@ function assertPositiveRun(run) {
   if (observed.payload.selected_ref !== "skill:examples.agent_decision_provider_v1/BuildBrief") {
     throw new Error(`unexpected observed capability ${observed.payload.selected_ref}`);
   }
-  const messages = run.trace.events
-    .filter((item) => item.kind === "user_interaction_shown")
-    .map((item) => item.payload?.message);
+  const messages = run.output.messages.map(message => message.text);
   if (JSON.stringify(messages) !== JSON.stringify(["Brief selected"])) {
     throw new Error(`unexpected shown messages ${JSON.stringify(messages)}`);
   }

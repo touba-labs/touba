@@ -56,7 +56,7 @@ test("prod bundle creation rejects missing lock and raw secret values", () => {
     );
     writeFileSync(join(project.root, "touba.lock.json"), "{}\n", "utf8");
     writeFileSync(join(project.root, "touba.resources.json"), JSON.stringify({
-      resource_bindings_schema_version: "touba-resource-bindings-v0.1",
+      resource_bindings_schema_version: "touba-resource-bindings-v1",
       resources: {},
       connection_string: "postgres://raw-secret",
     }), "utf8");
@@ -214,7 +214,7 @@ test("deployment target requires strong authentication and TLS outside loopback"
       headers: { authorization: `Bearer ${TOKEN}` },
     });
     assert.equal(authorized.status, 200);
-    assert.equal((await authorized.json()).schema_version, "touba-deployment-status-v0.1");
+    assert.equal((await authorized.json()).schema_version, "touba-deployment-status-v1");
   } finally {
     await service.stop();
     rmSync(storageRoot, { recursive: true, force: true });
@@ -243,7 +243,7 @@ function createProject() {
     triggers: {},
   }, null, 2)}\n`, "utf8");
   writeFileSync(join(root, "touba.lock.json"), `${JSON.stringify({
-    lock_version: "touba-lock-v0.1",
+    lock_version: "touba-lock-v1",
     artifacts: [],
   }, null, 2)}\n`, "utf8");
   writeFileSync(join(root, ".env"), "RAW_SECRET=never-bundle-this\n", "utf8");

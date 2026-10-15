@@ -1,0 +1,22 @@
+{
+  "schema_version": "touba-project-change-proposed-v1",
+  "status": "proposed",
+  "proposal_id": "change_demo_001",
+  "action": "write_text_file",
+  "target": {
+    "path": "src/main.tb"
+  },
+  "requested_by": {
+    "kind": "studio",
+    "id": "touba-studio"
+  },
+  "proposed_at": "2026-06-22T18:00:01.000Z",
+  "content_sha256": "c4a1d9d773f80401d73f1ef5e1f6f8b5b6b341dbab4e2a1d4aa8dd92c394b70d",
+  "validations": [
+    {
+      "severity": "info",
+      "code": "ToubaServeChangeContentValidated",
+      "message": "change content passed project-server validation"
+    }
+  ]
+}

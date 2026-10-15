@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
+  existsSync,
+  cpSync,
+  symlinkSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -10,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { generateSupplyChainLock } from "../src/generate.mjs";
 
 import {
   implementationDir,
@@ -37,7 +41,7 @@ test("validates coherent AIR, manifest and handler artifacts", () => {
     assert.equal(report.handlers[0].handler_package_kind, "local");
     assert.equal(report.handlers[0].handler_package_name, "examples.sc1.handlers");
     assert.equal(report.handlers[0].handler_package_version, "0.1.0");
-    assert.equal(report.handlers[0].handler_package_entrypoint, "handlers/search.handler.mjs");
+    assert.equal(report.handlers[0].handler_package_entrypoint, "search.handler.mjs");
     assert.equal(report.handlers[0].handler_package_root, "handlers");
     assert.equal(report.handlers[0].handler_package_files_status, "ok");
     assert.equal(report.handlers[0].handler_dependency_artifacts_status, "ok");
@@ -49,7 +53,7 @@ test("validates coherent AIR, manifest and handler artifacts", () => {
     assert.equal(report.review.reviewers, 1);
     assert.equal(report.checked.handler_package_files, true);
     assert.equal(report.checked.handler_dependency_artifacts, true);
-    assert.equal(report.checked.effect_contracts, undefined);
+    assert.equal(report.checked.effect_contracts, true);
     assert.equal(report.checked.provenance_metadata, true);
     assert.equal(report.checked.review_metadata, true);
     assert.equal(report.checked.review_evidence, true);
@@ -60,37 +64,30 @@ test("validates coherent AIR, manifest and handler artifacts", () => {
   });
 });
 
-test("requires an explicit handler V2 capability for external-write effect contracts", () => {
+test("one SDK protocol covers external writes and refuses legacy protocol metadata", () => {
   withFixtureProject((fixture) => {
-    fixture.manifest.manifest_version = "touba-manifest-v2";
-    fixture.manifest.bindings["tool:examples.sc1/Search"].effect_contract = {
-      kind: "external_write",
-      retry_mode: "idempotency_key",
-    };
+    fixture.manifest.bindings["tool:examples.sc1/Search"].effect_contract = { kind: "external_write", retry_mode: "idempotency_key" };
     refreshManifestLock(fixture);
-
-    let report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
-    assert.equal(report.status, "error");
-    assert.equal(report.checked.effect_contracts, true);
-    assertDiagnostic(report, "HandlerSdkEffectProtocolMismatch");
-
-    fixture.lock.handlers[0].sdk.protocols = [
-      "touba-tool-handler-v1",
-      "touba-tool-handler-v2",
-    ];
-    writeJson(fixture.paths.lock, fixture.lock);
-    report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
+    const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
     assert.equal(report.status, "ok");
-    assert.deepEqual(report.handlers[0].sdk_protocols, [
-      "touba-tool-handler-v1",
-      "touba-tool-handler-v2",
-    ]);
+    assert.equal(report.checked.effect_contracts, true);
+    for (const protocol of ["touba-tool-handler-v2", "touba-tool-handler-v3"]) {
+      fixture.lock.handlers[0].sdk.protocol = protocol;
+      writeJson(fixture.paths.lock, fixture.lock);
+      const refused = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
+      assert.equal(refused.handlers[0].sdk_status, "unsupported");
+      assertDiagnostic(refused, "HandlerSdkUnsupported");
+    }
+    fixture.lock.handlers[0].sdk.protocol = "touba-tool-handler-v1";
+    fixture.lock.handlers[0].sdk.protocols = ["touba-tool-handler-v1"];
+    writeJson(fixture.paths.lock, fixture.lock);
+    assert.equal(validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths)).handlers[0].sdk_status, "unsupported");
   });
 });
 
-test("keeps V2 kind none compatible with legacy handler protocol V1", () => {
+test("validates kind none with the canonical handler protocol", () => {
   withFixtureProject((fixture) => {
-    fixture.manifest.manifest_version = "touba-manifest-v2";
+    fixture.manifest.manifest_version = "touba-manifest-v1";
     fixture.manifest.bindings["tool:examples.sc1/Search"].effect_contract = { kind: "none" };
     refreshManifestLock(fixture);
 
@@ -100,9 +97,9 @@ test("keeps V2 kind none compatible with legacy handler protocol V1", () => {
   });
 });
 
-test("validates V3 compensation entry references instead of ignoring them", () => {
+test("validates compensation entry references instead of ignoring them", () => {
   withFixtureProject((fixture) => {
-    fixture.manifest.manifest_version = "touba-manifest-v3";
+    fixture.manifest.manifest_version = "touba-manifest-v1";
     fixture.manifest.bindings["tool:examples.sc1/Search"].effect_contract = {
       kind: "external_write",
       retry_mode: "idempotency_key",
@@ -120,11 +117,11 @@ test("rejects unknown effect fields, retry modes and manifest versions fail clos
   const cases = [
     [{ manifest_version: "touba-manifest-v4" }, "SupplyChainLockSchemaMismatch"],
     [{
-      manifest_version: "touba-manifest-v2",
+      manifest_version: "touba-manifest-v1",
       effect_contract: { kind: "none", vendor: "example" },
     }, "EffectContractFieldUnknown"],
     [{
-      manifest_version: "touba-manifest-v2",
+      manifest_version: "touba-manifest-v1",
       effect_contract: { kind: "external_write", retry_mode: "automatic" },
     }, "EffectRetryModeUnsupported"],
   ];
@@ -436,7 +433,7 @@ test("CLI validates SC-1 lock and supports JSON output", () => {
 
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(result.stdout);
-    assert.equal(report.supply_chain_validation_schema_version, "touba-supply-chain-validation-v0.1");
+    assert.equal(report.supply_chain_validation_schema_version, "touba-supply-chain-validation-v1");
     assert.equal(report.status, "ok");
   });
 });
@@ -463,7 +460,7 @@ test("CLI writes an explicit supply-chain report with the canonical suffix", () 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Touba Supply Chain/);
     const report = JSON.parse(readFileSync(reportPath, "utf8"));
-    assert.equal(report.supply_chain_validation_schema_version, "touba-supply-chain-validation-v0.1");
+    assert.equal(report.supply_chain_validation_schema_version, "touba-supply-chain-validation-v1");
     assert.equal(report.status, "ok");
   });
 });
@@ -515,6 +512,81 @@ test("CLI strict mode fails on warning", () => {
 
     assert.equal(result.status, 1);
     assert.match(result.stdout, /HandlerSdkUnknown/);
+  });
+});
+
+test("generates real digests without approvals or overwriting review decisions", () => {
+  withFixtureProject((fixture) => {
+    const output = path.join(fixture.root, "generated.lock.json");
+    const options = { ...fixture.paths, out: output, packageRoot: "handlers" };
+    const result = generateSupplyChainLock(options);
+    assert.equal(result.review_status, "pending");
+    const generated = JSON.parse(readFileSync(output, "utf8"));
+    assert.deepEqual(generated.review, { status: "pending" });
+    assert.equal(generated.handlers[0].digest.value, sha256Text(readFileSync(fixture.paths.handler)));
+    assert.equal(generated.handlers[0].handler_package.dependency_artifacts[0].digest.value, sha256Text(readFileSync(fixture.paths.dependencyLock)));
+    assert.equal(generated.handlers[0].sdk, undefined);
+    const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: output }), { requireReview: true });
+    assert.equal(report.status, "error");
+    assertDiagnostic(report, "SupplyChainReviewNotApproved");
+    assert.throws(() => generateSupplyChainLock(options), /already exists/);
+    const cli = spawnSync(process.execPath, [path.join(implementationDir, "cli/touba-project/src/main.mjs"), "supply-chain", "generate", "--air", fixture.paths.air, "--manifest", fixture.paths.manifest, "--out", path.join(fixture.root, "cli.lock.json"), "--package-root", "handlers"], { encoding: "utf8" });
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(JSON.parse(cli.stdout).review_status, "pending");
+    const declared = path.join(fixture.root, "sdk.lock.json");
+    generateSupplyChainLock({ ...options, out: declared, sdkMetadataJson: JSON.stringify(fixture.lock.handlers[0].sdk) });
+    const checked = validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: declared }));
+    assert.deepEqual(checked.diagnostics.map(item => item.code), ["SupplyChainReviewNotApproved"]);
+    assert.throws(() => generateSupplyChainLock({ ...options, out: path.join(fixture.root, "forbidden.lock.json"), sdkMetadataJson: JSON.stringify({ ...fixture.lock.handlers[0].sdk, grants: ["network"] }) }), /SupplyChainAuthorityFieldForbidden/);
+    assert.equal(existsSync(path.join(fixture.root, "forbidden.lock.json")), false);
+  });
+});
+
+test("accepts equivalent project-root aliases without relaxing file confinement", () => {
+  withFixtureProject((fixture) => {
+    const aliases = mkdtempSync(path.join(tmpdir(), "touba-lock-alias-"));
+    try {
+      const alias = path.join(aliases, "project");
+      symlinkSync(fixture.root, alias, "dir");
+      const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts({
+        ...fixture.paths, manifest: path.join(alias, path.relative(fixture.root, fixture.paths.manifest)),
+      }));
+      assert.equal(report.status, "ok", JSON.stringify(report.diagnostics));
+    } finally { rmSync(aliases, { recursive: true, force: true }); }
+  });
+});
+
+test("rejects contradictory paths, an untracked entrypoint, missing commands and symlink escapes", () => {
+  for (const [mutate, code] of [
+    [(f) => { f.lock.handlers[0].path = "handlers/missing.mjs"; f.lock.handlers[0].handler_package.entrypoint = "missing.mjs"; }, "HandlerPathMismatch"],
+    [(f) => { f.lock.handlers[0].handler_package.files.shift(); }, "HandlerPackageEntrypointUntracked"],
+    [(f) => { f.lock.air.path = "elsewhere.air.json"; }, "SupplyChainArtifactPathMismatch"],
+    [(f) => { f.lock.handlers[0].command = path.join(f.root, "missing-node"); f.manifest.bindings["tool:examples.sc1/Search"].handler.command = f.lock.handlers[0].command; refreshManifestLock(f); }, "HandlerCommandUnavailable"],
+    [(f) => { symlinkSync(f.paths.reviewEvidence, path.join(f.root, "handlers", "escape.txt")); f.lock.handlers[0].handler_package.files.push({ path: "escape.txt", digest: { kind: "sha256", value: sha256Text(readFileSync(f.paths.reviewEvidence)) } }); }, "HandlerPackageFileInvalid"],
+  ]) withFixtureProject((fixture) => {
+    mutate(fixture);
+    writeJson(fixture.paths.lock, fixture.lock);
+    const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
+    assert.equal(report.status, "error");
+    assertDiagnostic(report, code);
+  });
+});
+
+test("resolves nested manifests relative to their cwd and package paths relative to the relocated lock", () => {
+  withFixtureProject((fixture) => {
+    const relocated = mkdtempSync(path.join(tmpdir(), "touba relocated "));
+    try {
+      fixture.paths.manifest = path.join(fixture.root, ".touba/build/dev/touba.manifest.json");
+      mkdirSync(path.dirname(fixture.paths.manifest), { recursive: true });
+      fixture.manifest.bindings["tool:examples.sc1/Search"].handler.cwd = "../../..";
+      fixture.lock.handlers[0].cwd = "../../..";
+      fixture.lock.manifest.path = ".touba/build/dev/touba.manifest.json";
+      refreshManifestLock(fixture);
+      cpSync(fixture.root, relocated, { recursive: true });
+      const paths = Object.fromEntries(Object.entries(fixture.paths).map(([key, value]) => [key, path.join(relocated, path.relative(fixture.root, value))]));
+      const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(paths));
+      assert.equal(report.status, "ok", JSON.stringify(report.diagnostics));
+    } finally { rmSync(relocated, { recursive: true, force: true }); }
   });
 });
 
@@ -573,7 +645,7 @@ function withFixtureProject(callback) {
       manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:examples.sc1/Search": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "node",
             cwd: ".",
@@ -588,7 +660,7 @@ function withFixtureProject(callback) {
     const manifestText = writeJson(paths.manifest, manifest);
 
     const lock = {
-      lock_schema_version: "touba-lock-v0.1",
+      lock_schema_version: "touba-lock-v1",
       lock_kind: "supply_chain",
       generated_at: "2026-06-05T12:00:00Z",
       generated_by: {
@@ -663,7 +735,7 @@ function withFixtureProject(callback) {
             kind: "local",
             name: "examples.sc1.handlers",
             version: "0.1.0",
-            entrypoint: "handlers/search.handler.mjs",
+            entrypoint: "search.handler.mjs",
             package_root: "handlers",
             files: [
               {

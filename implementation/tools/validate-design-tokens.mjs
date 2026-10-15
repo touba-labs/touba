@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const DESIGN_TOKENS_REPORT_SCHEMA_VERSION = "touba-design-tokens-report-v0.1";
+export const DESIGN_TOKENS_REPORT_SCHEMA_VERSION = "touba-design-tokens-report-v1";
 export const DESIGN_TOKENS_SCHEMA_VERSION = "touba-design-tokens-v1";
 
 const REQUIRED_PALETTE = Object.freeze([

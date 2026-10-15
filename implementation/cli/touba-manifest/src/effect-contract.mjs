@@ -1,6 +1,4 @@
 export const TOUBA_MANIFEST_V1 = "touba-manifest-v1";
-export const TOUBA_MANIFEST_V2 = "touba-manifest-v2";
-export const TOUBA_MANIFEST_V3 = "touba-manifest-v3";
 
 const EFFECT_KINDS = new Set(["none", "external_write"]);
 const EXTERNAL_WRITE_RETRY_MODES = new Set(["idempotency_key", "reconcile", "none"]);
@@ -78,15 +76,9 @@ export function validateManifestEffectContracts(manifest) {
   if (!isPlainObject(manifest)) {
     fail("ManifestInvalid", "manifest must be an object");
   }
-  if (![TOUBA_MANIFEST_V1, TOUBA_MANIFEST_V2, TOUBA_MANIFEST_V3].includes(manifest.manifest_version)) {
+  if (manifest.manifest_version !== TOUBA_MANIFEST_V1) {
     fail("ManifestVersionUnsupported", "manifest_version is unsupported", {
       actual: manifest.manifest_version,
-    });
-  }
-  if (manifest.bindings === undefined && manifest.manifest_version === TOUBA_MANIFEST_V1) {
-    return Object.freeze({
-      manifestVersion: manifest.manifest_version,
-      effectContracts: new Map(),
     });
   }
   if (!isPlainObject(manifest.bindings)) {
@@ -99,16 +91,6 @@ export function validateManifestEffectContracts(manifest) {
       fail("ManifestBindingInvalid", `manifest binding ${toolRef} must be an object`, { tool_ref: toolRef });
     }
     const hasContract = Object.hasOwn(binding, "effect_contract");
-    if (manifest.manifest_version === TOUBA_MANIFEST_V1) {
-      if (hasContract) {
-        fail(
-          "EffectContractForbiddenInManifestV1",
-          `manifest binding ${toolRef} cannot declare effect_contract in touba-manifest-v1`,
-          { tool_ref: toolRef },
-        );
-      }
-      continue;
-    }
     if (!hasContract) {
       fail("EffectContractMissing", `manifest binding ${toolRef} must declare effect_contract`, {
         tool_ref: toolRef,
@@ -123,34 +105,6 @@ export function validateManifestEffectContracts(manifest) {
     manifestVersion: manifest.manifest_version,
     effectContracts: normalized,
   });
-}
-
-export function manifestVersionForExplicitEffectContracts(bindings) {
-  if (!isPlainObject(bindings)) {
-    fail("ManifestBindingsInvalid", "manifest bindings must be an object");
-  }
-  const entries = Object.entries(bindings);
-  const declared = entries.filter(([, binding]) => isPlainObject(binding) && Object.hasOwn(binding, "effect_contract"));
-  if (declared.length === 0) {
-    return TOUBA_MANIFEST_V1;
-  }
-  if (declared.length !== entries.length) {
-    const missing = entries
-      .filter(([, binding]) => !isPlainObject(binding) || !Object.hasOwn(binding, "effect_contract"))
-      .map(([toolRef]) => toolRef)
-      .sort();
-    fail("EffectContractMissing", "every binding must declare effect_contract when producing touba-manifest-v2", {
-      tool_refs: missing,
-    });
-  }
-  let requiresV3 = false;
-  for (const [toolRef, binding] of entries) {
-    const contract = normalizeEffectContract(binding.effect_contract, {
-      label: `bindings.${toolRef}.effect_contract`,
-    });
-    requiresV3 ||= contract.compensation !== undefined;
-  }
-  return requiresV3 ? TOUBA_MANIFEST_V3 : TOUBA_MANIFEST_V2;
 }
 
 export function effectContractToJson(contract) {
@@ -168,13 +122,6 @@ export function effectContractToJson(contract) {
 
 function normalizeOptionalCompensation(value, options) {
   if (value === undefined) return null;
-  if (options.manifestVersion !== undefined && options.manifestVersion !== TOUBA_MANIFEST_V3) {
-    fail(
-      "EffectCompensationRequiresManifestV3",
-      `${options.label} requires touba-manifest-v3`,
-      { label: options.label, manifest_version: options.manifestVersion },
-    );
-  }
   if (!isPlainObject(value)) {
     fail("EffectCompensationInvalid", `${options.label} must be an object`, { label: options.label });
   }

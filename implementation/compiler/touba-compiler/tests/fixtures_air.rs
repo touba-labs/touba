@@ -9,6 +9,7 @@ use touba_compiler::ast::{
 };
 use touba_compiler::{
     AIR_JSON_PROFILE, assemble_project_air, build_air, compile_source_to_air,
+    compile_module_sources, compile_project_sources, AirBuildResult,
     deserialize_air_from_json, serialize_air_to_json,
 };
 
@@ -1396,12 +1397,12 @@ fn lowers_all_expr1_positive_fixtures_to_air() {
 }
 
 #[test]
-fn lowers_imports_im1_to_air_refs_without_resolution() {
+fn lowers_imports_im1_to_air_refs_with_explicit_contracts() {
     let source = include_str!(
         "../../../grammar/tree-sitter-touba/examples/imports-im1/positive/tb-im1-p09-imports-air-only.tb"
     );
 
-    let result = compile_source_to_air("tb-im1-p09", source);
+    let result = compile_module_fixture(source, &[&IMPORTS_IM1_PROJECT_COMMON.replace("project_common", "common")]);
 
     assert_eq!(result.diagnostics, []);
     let document = result.document.expect("fixture should lower to AIR");
@@ -1428,7 +1429,7 @@ fn lowers_imports_im1_to_air_refs_without_resolution() {
 
 #[test]
 fn lowers_import_tool_to_air_local_ref_without_project_execution() {
-    let result = compile_source_to_air("tb-im2a-p01", IMPORTS_IM2A_TOOL_AIR_LOCAL);
+    let result = compile_module_fixture(IMPORTS_IM2A_TOOL_AIR_LOCAL, &[IMPORTS_IM2A_PROJECT_DATA_TOOLS]);
 
     assert_eq!(result.diagnostics, []);
     let document = result.document.expect("fixture should lower to AIR");
@@ -1449,15 +1450,7 @@ fn lowers_import_tool_to_air_local_ref_without_project_execution() {
 
 #[test]
 fn project_air_assembles_imported_tools_with_declaring_refs() {
-    let data_tools = compile_source_to_air("tb-im2a-project-data", IMPORTS_IM2A_PROJECT_DATA_TOOLS)
-        .document
-        .expect("source tool module should lower to AIR");
-    let research_app =
-        compile_source_to_air("tb-im2a-project-app", IMPORTS_IM2A_PROJECT_RESEARCH_APP)
-            .document
-            .expect("importing module should lower to local AIR");
-
-    let result = assemble_project_air("examples.research_app", &[research_app, data_tools]);
+    let result = compile_project_fixture(IMPORTS_IM2A_PROJECT_RESEARCH_APP, &[IMPORTS_IM2A_PROJECT_DATA_TOOLS]);
 
     assert_eq!(result.diagnostics, []);
     let document = result
@@ -1491,7 +1484,7 @@ fn project_air_assembles_imported_tools_with_declaring_refs() {
 
 #[test]
 fn lowers_imports_im2b_skill_strategy_to_air_local_refs() {
-    let result = compile_source_to_air("tb-im2b-p01", IMPORTS_IM2B_FLOW_AIR_LOCAL);
+    let result = compile_module_fixture(IMPORTS_IM2B_FLOW_AIR_LOCAL, &[IMPORTS_IM2B_PROJECT_SHARED_FLOW]);
 
     assert_eq!(result.diagnostics, []);
     let document = result.document.expect("fixture should lower to AIR");
@@ -1515,15 +1508,7 @@ fn lowers_imports_im2b_skill_strategy_to_air_local_refs() {
 
 #[test]
 fn project_air_assembles_imported_skills_and_strategies_with_graphs() {
-    let shared_flow =
-        compile_source_to_air("tb-im2b-project-shared", IMPORTS_IM2B_PROJECT_SHARED_FLOW)
-            .document
-            .expect("shared flow module should lower to AIR");
-    let flow_app = compile_source_to_air("tb-im2b-project-app", IMPORTS_IM2B_PROJECT_FLOW_APP)
-        .document
-        .expect("flow app module should lower to AIR");
-
-    let result = assemble_project_air("examples.flow_app", &[flow_app, shared_flow]);
+    let result = compile_project_fixture(IMPORTS_IM2B_PROJECT_FLOW_APP, &[IMPORTS_IM2B_PROJECT_SHARED_FLOW]);
 
     assert_eq!(result.diagnostics, []);
     let document = result
@@ -1556,7 +1541,7 @@ fn project_air_assembles_imported_skills_and_strategies_with_graphs() {
 
 #[test]
 fn lowers_imports_im2c_agent_to_air_local_ref_without_authority_leak() {
-    let result = compile_source_to_air("tb-im2c-p01", IMPORTS_IM2C_AGENT_AIR_LOCAL);
+    let result = compile_module_fixture(IMPORTS_IM2C_AGENT_AIR_LOCAL, &[IMPORTS_IM2C_PROJECT_AGENT_POOL]);
 
     assert_eq!(result.diagnostics, []);
     let document = result.document.expect("fixture should lower to AIR");
@@ -1575,14 +1560,7 @@ fn lowers_imports_im2c_agent_to_air_local_ref_without_authority_leak() {
 
 #[test]
 fn project_air_assembles_imported_agents_with_inter_module_callable_by() {
-    let agent_pool = compile_source_to_air("tb-im2c-project-pool", IMPORTS_IM2C_PROJECT_AGENT_POOL)
-        .document
-        .expect("agent pool should lower to AIR");
-    let agent_app = compile_source_to_air("tb-im2c-project-app", IMPORTS_IM2C_PROJECT_AGENT_APP)
-        .document
-        .expect("agent app should lower to AIR");
-
-    let result = assemble_project_air("examples.agent_app", &[agent_app, agent_pool]);
+    let result = compile_project_fixture(IMPORTS_IM2C_PROJECT_AGENT_APP, &[IMPORTS_IM2C_PROJECT_AGENT_POOL]);
 
     assert_eq!(result.diagnostics, []);
     let document = result
@@ -1602,26 +1580,12 @@ fn project_air_assembles_imported_agents_with_inter_module_callable_by() {
 
 #[test]
 fn project_air_refuses_imported_agent_without_matching_callable_by() {
-    let agent_pool = compile_source_to_air("tb-im2c-project-pool", IMPORTS_IM2C_PROJECT_AGENT_POOL)
-        .document
-        .expect("agent pool should lower to AIR");
-    let agent_app = compile_source_to_air(
-        "tb-im2c-project-app-unauthorized",
-        IMPORTS_IM2C_PROJECT_AGENT_APP_UNAUTHORIZED,
-    )
-    .document
-    .expect("unauthorized agent app should lower to local AIR");
-
-    assert_project_air_diagnostic(
-        "examples.agent_app_unauthorized",
-        &[agent_app, agent_pool],
-        AirDiagnosticCode::AgentCallerNotAllowed,
-    );
+    assert_source_diagnostic(IMPORTS_IM2C_PROJECT_AGENT_APP_UNAUTHORIZED, &[IMPORTS_IM2C_PROJECT_AGENT_POOL], AirDiagnosticCode::AgentCallerNotAllowed);
 }
 
 #[test]
 fn lowers_imports_im2d_memory_to_air_local_ref() {
-    let result = compile_source_to_air("tb-im2d-p01", IMPORTS_IM2D_MEMORY_AIR_LOCAL);
+    let result = compile_module_fixture(IMPORTS_IM2D_MEMORY_AIR_LOCAL, &[IMPORTS_IM2D_PROJECT_SHARED_MEMORY, IMPORTS_IM2D_PROJECT_MEMORY_TOOLS]);
 
     assert_eq!(result.diagnostics, []);
     let document = result.document.expect("fixture should lower to AIR");
@@ -1635,22 +1599,7 @@ fn lowers_imports_im2d_memory_to_air_local_ref() {
 
 #[test]
 fn project_air_assembles_imported_memories_and_checks_scoped_access() {
-    let shared_memory =
-        compile_source_to_air("tb-im2d-project-memory", IMPORTS_IM2D_PROJECT_SHARED_MEMORY)
-            .document
-            .expect("shared memory should lower to AIR");
-    let memory_tools =
-        compile_source_to_air("tb-im2d-project-tools", IMPORTS_IM2D_PROJECT_MEMORY_TOOLS)
-            .document
-            .expect("memory tool module should lower to AIR");
-    let memory_app = compile_source_to_air("tb-im2d-project-app", IMPORTS_IM2D_PROJECT_MEMORY_APP)
-        .document
-        .expect("memory app should lower to AIR");
-
-    let result = assemble_project_air(
-        "examples.memory_app",
-        &[memory_app, memory_tools, shared_memory],
-    );
+    let result = compile_project_fixture(IMPORTS_IM2D_PROJECT_MEMORY_APP, &[IMPORTS_IM2D_PROJECT_SHARED_MEMORY, IMPORTS_IM2D_PROJECT_MEMORY_TOOLS]);
 
     assert_eq!(result.diagnostics, []);
     let document = result
@@ -1676,32 +1625,16 @@ fn project_air_assembles_imported_memories_and_checks_scoped_access() {
 
 #[test]
 fn project_air_refuses_imported_memory_tool_without_owner_scope() {
-    let shared_memory =
-        compile_source_to_air("tb-im2d-project-memory", IMPORTS_IM2D_PROJECT_SHARED_MEMORY)
-            .document
-            .expect("shared memory should lower to AIR");
-    let memory_tools =
-        compile_source_to_air("tb-im2d-project-tools", IMPORTS_IM2D_PROJECT_MEMORY_TOOLS)
-            .document
-            .expect("memory tool module should lower to AIR");
-    let memory_app = compile_source_to_air(
-        "tb-im2d-project-app-missing-scope",
-        IMPORTS_IM2D_PROJECT_MEMORY_APP_MISSING_SCOPE,
-    )
-    .document
-    .expect("memory app should lower to local AIR");
-
-    assert_project_air_diagnostic(
-        "examples.memory_app_missing_scope",
-        &[memory_app, memory_tools, shared_memory],
-        AirDiagnosticCode::OwnerMemoryScopeMissing,
-    );
+    assert_source_diagnostic(IMPORTS_IM2D_PROJECT_MEMORY_APP_MISSING_SCOPE, &[IMPORTS_IM2D_PROJECT_SHARED_MEMORY, IMPORTS_IM2D_PROJECT_MEMORY_TOOLS], AirDiagnosticCode::OwnerMemoryScopeMissing);
 }
 
 #[test]
 fn reports_expected_diagnostics_for_imports_im1_negative_air_fixtures() {
     for fixture in IMPORTS_IM1_NEGATIVE_AIR_FIXTURES {
-        let result = compile_source_to_air(fixture.source_id, fixture.source);
+        let result = compile_project_fixture(fixture.source, &[
+            "module examples.common\ntype SearchRequest\n    query is Text\nfunction BuildLabel\n    takes query as Text\n    gives Text\n    do\n        give query\n",
+            "module examples.shared\ntype SearchRequest\n    query is Text\n",
+        ]);
 
         assert!(
             result.document.is_none(),
@@ -1723,10 +1656,7 @@ fn reports_expected_diagnostics_for_imports_im1_negative_air_fixtures() {
 
 #[test]
 fn assembles_imports_im1_project_air_from_explicit_modules() {
-    let common = compile_air_fixture("im1-project-common", IMPORTS_IM1_PROJECT_COMMON);
-    let search = compile_air_fixture("im1-project-search", IMPORTS_IM1_PROJECT_SEARCH);
-
-    let result = assemble_project_air("examples.project_search", &[search.clone(), common.clone()]);
+    let result = compile_project_fixture(IMPORTS_IM1_PROJECT_SEARCH, &[IMPORTS_IM1_PROJECT_COMMON]);
 
     assert_eq!(result.diagnostics, []);
     let document = result
@@ -1764,52 +1694,16 @@ fn assembles_imports_im1_project_air_from_explicit_modules() {
 
 #[test]
 fn reports_project_air_import_resolution_diagnostics() {
-    let common = compile_air_fixture("im1-project-common", IMPORTS_IM1_PROJECT_COMMON);
-
-    assert_project_air_diagnostic(
-        "examples.project_missing_module",
-        &[compile_air_fixture(
-            "im1-project-missing-module",
-            IMPORTS_IM1_PROJECT_MISSING_MODULE,
-        )],
-        AirDiagnosticCode::ImportModuleNotFound,
-    );
-
-    assert_project_air_diagnostic(
-        "examples.project_missing_declaration",
-        &[
-            compile_air_fixture(
-                "im1-project-missing-declaration",
-                IMPORTS_IM1_PROJECT_MISSING_DECLARATION,
-            ),
-            common.clone(),
-        ],
-        AirDiagnosticCode::ImportDeclarationNotFound,
-    );
-
-    assert_project_air_diagnostic(
-        "examples.project_kind_mismatch",
-        &[
-            compile_air_fixture(
-                "im1-project-kind-mismatch",
-                IMPORTS_IM1_PROJECT_KIND_MISMATCH,
-            ),
-            common,
-        ],
-        AirDiagnosticCode::ImportKindMismatch,
-    );
+    for (source, code) in [
+        (IMPORTS_IM1_PROJECT_MISSING_MODULE, AirDiagnosticCode::ImportModuleNotFound),
+        (IMPORTS_IM1_PROJECT_MISSING_DECLARATION, AirDiagnosticCode::ImportDeclarationNotFound),
+        (IMPORTS_IM1_PROJECT_KIND_MISMATCH, AirDiagnosticCode::ImportKindMismatch),
+    ] { assert_source_diagnostic(source, &[IMPORTS_IM1_PROJECT_COMMON], code); }
 }
 
 #[test]
 fn reports_project_air_import_cycles() {
-    let cycle_a = compile_air_fixture("im1-project-cycle-a", IMPORTS_IM1_PROJECT_CYCLE_A);
-    let cycle_b = compile_air_fixture("im1-project-cycle-b", IMPORTS_IM1_PROJECT_CYCLE_B);
-
-    assert_project_air_diagnostic(
-        "examples.project_cycle_a",
-        &[cycle_a, cycle_b],
-        AirDiagnosticCode::ImportCycleDetected,
-    );
+    assert_source_diagnostic(IMPORTS_IM1_PROJECT_CYCLE_A, &[IMPORTS_IM1_PROJECT_CYCLE_B], AirDiagnosticCode::ImportCycleDetected);
 }
 
 #[test]
@@ -1819,7 +1713,10 @@ fn refuses_impure_function_imports_in_im1_project_air() {
     let local = compile_source_to_air("impure-source", IMPORTS_IM1_PROJECT_IMPURE_SOURCE);
     assert!(local.document.is_none());
     assert!(
-        local.diagnostics.iter().any(|d| d.code == AirDiagnosticCode::FunctionNotPure)
+        local
+            .diagnostics
+            .iter()
+            .any(|d| d.code == AirDiagnosticCode::FunctionNotPure)
     );
     let pure_source = IMPORTS_IM1_PROJECT_IMPURE_SOURCE.replace(
         "        FetchSource\n            into fetched\n        give fetched",
@@ -1829,10 +1726,7 @@ fn refuses_impure_function_imports_in_im1_project_air() {
     let node = &mut source.execution_graphs[0].nodes[0];
     node.kind = AirFlowNodeKind::CallTool;
     node.target_ref = Some(source.definitions.tools[0].id.clone());
-    let importer = compile_air_fixture(
-        "im1-project-impure-importer",
-        IMPORTS_IM1_PROJECT_IMPURE_IMPORTER,
-    );
+    let importer = compile_module_fixture(IMPORTS_IM1_PROJECT_IMPURE_IMPORTER, &[&pure_source]).document.expect("typed importer must compile");
 
     assert_project_air_diagnostic(
         "examples.project_impure_importer",
@@ -2227,6 +2121,34 @@ fn lowers_all_trigger_a2_positive_fixtures_to_air() {
             1,
             "{source_id} should produce one AirTrigger"
         );
+    }
+}
+
+fn fixture_sources(entry: &str, dependencies: &[&str]) -> Vec<(String, String)> {
+    std::iter::once(("entry.tb".into(), entry.into())).chain(dependencies.iter().enumerate().map(|(index, source)| (format!("dependency-{index}.tb"), (*source).into()))).collect()
+}
+fn compile_project_fixture(entry: &str, dependencies: &[&str]) -> AirBuildResult {
+    compile_project_sources("entry.tb", &fixture_sources(entry, dependencies))
+}
+fn compile_module_fixture(entry: &str, dependencies: &[&str]) -> AirBuildResult {
+    compile_module_sources("entry.tb", &fixture_sources(entry, dependencies))
+}
+fn assert_source_diagnostic(entry: &str, dependencies: &[&str], code: AirDiagnosticCode) {
+    let result = compile_project_fixture(entry, dependencies);
+    assert!(result.document.is_none());
+    assert!(result.diagnostics.iter().any(|d| d.code == code), "expected {code:?}, got {:?}", result.diagnostics);
+}
+
+#[test]
+fn single_source_and_ast_entrypoints_refuse_unresolved_imports() {
+    for source in [IMPORTS_IM2A_TOOL_AIR_LOCAL, IMPORTS_IM2B_FLOW_AIR_LOCAL, IMPORTS_IM2C_AGENT_AIR_LOCAL, IMPORTS_IM2D_MEMORY_AIR_LOCAL] {
+        let compiled = compile_source_to_air("isolated.tb", source);
+        assert!(compiled.document.is_none());
+        assert!(compiled.diagnostics.iter().any(|d| d.code == AirDiagnosticCode::ImportModuleNotFound));
+        let ast = touba_compiler::parse_source("isolated.tb", source).document.unwrap();
+        let lowered = build_air(&ast);
+        assert!(lowered.document.is_none());
+        assert!(lowered.diagnostics.iter().any(|d| d.code == AirDiagnosticCode::ImportModuleNotFound));
     }
 }
 

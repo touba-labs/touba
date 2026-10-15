@@ -37,7 +37,9 @@ export function buildEffectiveProjectDocument(options) {
   const toolBindings = Object.entries(expectedManifest.bindings ?? {})
     .sort(([left], [right]) => left.localeCompare(right));
   const inputRecords = [
-    declaredInput(root, "project", projectConfigPath),
+    declaredInput(root, "project", projectConfigPath) ?? {
+      ...derivedInput(root, "project", projectConfigPath, projectConfig), provenance: "declared",
+    },
     ...sources.map((source) => declaredInput(root, "source", source.path)),
     ...bindingFragmentPaths.map((item) => declaredInput(root, "binding_fragment", item)),
     ...resourceBindingsPaths.map((item) => declaredInput(root, "resource_bindings", item)),
@@ -83,7 +85,7 @@ export function buildEffectiveProjectDocument(options) {
             kind: binding.handler?.kind ?? "unknown",
             ...(Object.hasOwn(binding, "effect_contract")
               ? {
-                effect_contract: effectContractToJson(normalizeEffectContract(
+                effect_contract: binding.effect_contract === null ? null : effectContractToJson(normalizeEffectContract(
                   binding.effect_contract,
                   { label: `bindings.${toolRef}.effect_contract` },
                 )),

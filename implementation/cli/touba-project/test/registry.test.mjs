@@ -35,7 +35,7 @@ test("CLI registry resolve writes a verified draft static lock with explicit opt
 
     assert.equal(result.status, 0, result.stderr);
     const lock = JSON.parse(result.stdout);
-    assert.equal(lock.lock_schema_version, "touba-static-registry-lock-v0.1");
+    assert.equal(lock.lock_schema_version, "touba-static-registry-lock-v1");
     assert.equal(lock.package.status, "draft");
     assert.equal(lock.artifacts[0].verified, true);
     assert.equal(existsSync(outPath), true);
@@ -201,7 +201,7 @@ function createRegistryFixture(options = {}) {
 
   const descriptorPath = join(sourcePack, "skill.json");
   writeJson(descriptorPath, {
-    skill_pack_schema_version: "touba-skill-pack-v0.1",
+    skill_pack_schema_version: "touba-skill-pack-v1",
     ref: "skill_pack:touba/example-pack",
     name: "Example Pack",
     description: "Example pack.",
@@ -217,7 +217,7 @@ function createRegistryFixture(options = {}) {
   });
 
   const metadata = {
-    schema_version: "touba-registry-package-v0.1",
+    schema_version: "touba-registry-package-v1",
     package_ref: "pkg:touba-library/example-pack",
     namespace: "touba-library",
     name: "example-pack",
@@ -233,7 +233,7 @@ function createRegistryFixture(options = {}) {
     },
     compatibility: {
       touba: ">=0.1.0 <1.0.0",
-      protocols: options.protocols ?? ["touba-skill-pack-v0.1"],
+      protocols: options.protocols ?? ["touba-skill-pack-v1"],
     },
     artifacts: [
       {
@@ -253,7 +253,7 @@ function createRegistryFixture(options = {}) {
   writeJson(metadataPath, metadata);
   const metadataDigest = options.metadataDigest ?? digestFile(metadataPath);
   writeJson(join(registryRoot, "index.json"), {
-    index_schema_version: "touba-registry-index-v0.1",
+    index_schema_version: "touba-registry-index-v1",
     updated_on: "2026-06-12",
     packages: [
       {

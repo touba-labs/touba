@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { packageSdk } from "./package-sdk.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -25,6 +26,7 @@ const toolchainRoot = join(distRoot, toolchainName);
 
 const copiedPackages = [
   "cli/touba-project",
+  "cli/touba-project-server",
   "cli/touba-run",
   "cli/touba-inspect",
   "cli/touba-audit",
@@ -60,8 +62,12 @@ export function packageLocalToolchain(options = {}) {
   copyCompiler();
   copyToubaPackages();
   copyRuntimeContracts();
+  mkdirSync(join(toolchainRoot, "lib/tools"), { recursive: true });
+  copyFileSync(join(implementationRoot, "tools/validate-product-surface-contracts.mjs"),
+    join(toolchainRoot, "lib/tools/validate-product-surface-contracts.mjs"));
+  const sdk = packageSdk(implementationRoot, toolchainRoot);
   writeLaunchers();
-  writeMetadata();
+  writeMetadata(sdk);
 
   if (options.quiet !== true) {
     process.stdout.write(`TOOLCHAIN ${toolchainRoot}\n`);
@@ -75,6 +81,7 @@ export function packageLocalToolchain(options = {}) {
 function buildCompiler() {
   const result = spawnSync(process.env.CARGO ?? "cargo", [
     "build",
+    "--locked",
     "-p",
     "touba-cli",
     "--bin",
@@ -141,6 +148,11 @@ function copyPackage(relativePackage, destination) {
 }
 
 function copyRuntimeContracts() {
+  for (const root of ["lib/contracts", "lib/node_modules/contracts"]) {
+    mkdirSync(join(toolchainRoot, root), { recursive: true });
+    copyFileSync(join(implementationRoot, "contracts/resource-bindings.mjs"), join(toolchainRoot, root, "resource-bindings.mjs"));
+    copyFileSync(join(implementationRoot, "contracts/run-outcome.mjs"), join(toolchainRoot, root, "run-outcome.mjs"));
+  }
   for (const family of ["machine", "product-surfaces", "hardened"]) {
     const source = join(implementationRoot, "contracts", family);
     for (const destination of [
@@ -178,10 +190,11 @@ set "PATH=%ROOT%\\bin;%PATH%"
   writeFileSync(join(toolchainRoot, "bin", "touba.cmd"), cmdLauncher, "utf8");
 }
 
-function writeMetadata() {
+function writeMetadata(sdk) {
   const metadata = {
-    toolchain_profile: "touba-local-toolchain-v0.1",
+    toolchain_profile: "touba-local-toolchain-v1",
     platform,
+    sdk,
     touba_version: readPackageVersion(join(implementationRoot, "cli", "touba-project", "package.json")),
     node_source: resolveNodeRuntimeSource(process.platform === "win32" ? "node.exe" : "node"),
     entrypoints: {
@@ -195,6 +208,8 @@ function writeMetadata() {
       "Touba runtime Node packages",
       "Touba inspect and manifest CLI tools",
       "Touba trigger ingress service",
+      "Touba project server",
+      "Installable SDK tarball with locked runtime dependencies and licenses",
       "Node runtime used to package the archive",
     ],
     excluded_prerequisites_for_users: [

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-device-pairing-v1.schema.json",
+  "title": "touba-device-pairing-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "pairing_id", "pairing_token", "expires_at"],
+  "properties": {
+    "schema_version": { "const": "touba-device-pairing-v1" },
+    "pairing_id": { "type": "string" },
+    "pairing_token": { "type": "string" },
+    "expires_at": { "type": "string" }
+  }
+}

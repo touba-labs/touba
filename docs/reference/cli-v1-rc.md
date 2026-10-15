@@ -4,6 +4,31 @@ Les commandes de cette page supposent que la commande `touba` est disponible dan
 
 L’extension VS Code Touba aide à travailler dans l’éditeur, mais elle ne remplace pas la CLI pour les commandes terminal.
 
+## Admission des entrées et des ressources
+
+Les clés de `--inputs-json` doivent correspondre exactement aux paramètres
+`takes` de l'entrée choisie. Les paramètres manquants, supplémentaires,
+mal typés et les records contenant des champs inconnus sont refusés avant
+le premier appel. Les réponses `ask`, décisions humaines et décisions
+d'agents doivent viser des références du programme courant. Une réponse
+anticipée à une interaction déclarée reste permise.
+
+Dans un fichier de resource bindings, `required_resources` liste les
+ressources externes que l'hôte exige pour ce run, par exemple :
+
+```json
+"required_resources": ["memory:app/Records"]
+```
+
+Le champ appartient à la racine du document, à côté de `resources`.
+Un binding requis absent, inactif ou visant une ressource inconnue est refusé
+avant tout handler. Une mémoire logique seule n'implique pas un backend.
+`--require-resource-bindings` impose, lui, tous les besoins de l'inventaire.
+Le provider est un identifiant de l'adaptateur hôte, pas un catalogue fermé de
+bases de données. Un `event_source` décrit le raccordement d'un trigger ;
+l'adaptateur doit encore recevoir, authentifier et normaliser les événements.
+Ce document n'active pas le trigger à la place du manifest hôte.
+
 ## Vue d’ensemble
 
 | Commande | Rôle |
@@ -12,7 +37,6 @@ L’extension VS Code Touba aide à travailler dans l’éditeur, mais elle ne r
 | `touba new module` | Crée un fichier source `.tb` selon la convention projet |
 | `touba skill` | Crée et valide des skill packs locaux |
 | `touba prepare` | Prépare ou vérifie les artefacts dérivés du projet |
-| `touba project migrate` | Adopte explicitement le layout d’artefacts convergent sans supprimer l’historique |
 | `touba secret` | Gère le store de secrets de développement |
 | `touba compile` | Compile une source `.tb` vers AIR JSON |
 | `touba run` | Exécute un AIR JSON |
@@ -22,6 +46,7 @@ L’extension VS Code Touba aide à travailler dans l’éditeur, mais elle ne r
 | `touba deploy` | Planifie, publie, active ou restaure une révision immuable |
 | `touba inspect` | Inspecte une source, un AIR, une trace ou un manifest |
 | `touba audit` | Valide une trace et peut produire un export d’audit |
+| `touba supply-chain generate` | Calcule un lock depuis les fichiers réels ; revue pending, sans écrasement |
 | `touba supply-chain validate` | Valide un lock supply chain pour AIR, manifest, handlers, SDK, paquet handler, provenance et revue déclarées |
 | `touba registry resolve` | Résout une entrée de registry statique vers un lock local sans installer ni exécuter de package |
 | `touba manifest generate` | Génère un manifest de binding à partir d’un AIR |
@@ -123,6 +148,17 @@ touba new module examples.search --root mon-projet
 
 ## `touba skill`
 
+Les dossiers de ressources sont optionnels. Pour vérifier les cibles des
+`execution_links`, passez `--air program.air.json` à `skill validate` ; sans
+AIR, le rapport annonce que ces cibles restent à vérifier.
+
+À l'exécution, fournissez explicitement `--skill-pack <dossier>` (répétable)
+pour les hints, et `--activate-skill-pack <ref>` (répétable) pour charger le
+contexte. Les options `--skill-pack-discovery-max-bytes`,
+`--skill-pack-activation-max-bytes` et `--agent-model-input-max-bytes` bornent
+ce contexte. L'activation n'accorde aucun droit et exige `user_invocable: true`.
+Voir le [tutoriel complet](../tutoriels/skill-pack-script-tool.md).
+
 ```sh title="Terminal"
 touba skill new research-review
 touba skill validate research-review
@@ -135,16 +171,11 @@ touba skill validate
 skills/research-review/
   skill.json
   SKILL.md
-  resources/
-    references/
-    examples/
-    templates/
-    samples/
-  scripts/
-  tests/
 ```
 
-Le descriptor `skill.json` utilise le schéma `touba-skill-pack-v0.1`. Il
+Les dossiers de ressources, scripts et tests sont optionnels et créés au besoin.
+
+Le descriptor `skill.json` utilise le schéma `touba-skill-pack-v1`. Il
 déclare les métadonnées, l’activation, les ressources et les liens informatifs
 vers des capacités Touba.
 
@@ -237,15 +268,15 @@ triggers et preuves avec leur provenance. Elle est dérivée et ne devient jamai
 une autorité runtime.
 
 `--package` ne fait pas de recherche par nom global et ne télécharge rien. Le
-chemin pointe vers un manifeste local `touba-package-v0.1`.
+chemin pointe vers un manifeste local `touba-package-v1`.
 
-`--binding-fragment` lit un fragment explicite `touba-binding-fragment-v0.1` et
+`--binding-fragment` lit un fragment explicite `touba-binding-fragment-v1` et
 le compose dans le manifest projet. Le fragment peut proposer handler, grants,
 secrets, limites et contraintes de payload, mais il n’est jamais consommé
 directement par `touba run`. Le manifest assemblé reste l’autorité runtime.
 
 `--resource-bindings` valide un artefact explicite
-`touba-resource-bindings-v0.1` contre l’AIR préparé. Les resource bindings
+`touba-resource-bindings-v1` contre l’AIR préparé. Les resource bindings
 couvrent les familles rattachables à l’AIR actuel : `memory_backend`,
 `event_source` et `decision_provider`. La CLI vérifie ressource connue, famille
 supportée, grants, handles de secrets requis, scopes mémoire et absence de
@@ -257,7 +288,7 @@ choisit pas de backend officiel.
 n’a pas de binding actif.
 
 `--run-plan` demande à `prepare` de produire ou vérifier un plan d’exécution
-explicite `touba-run-plan-v0.1`. Le plan pointe vers l’AIR préparé, le manifest
+explicite `touba-run-plan-v1`. Le plan pointe vers l’AIR préparé, le manifest
 si un tool est utilisé, le profil de secrets si un secret est requis, et le lock
 supply chain si le profil l’exige. Il ne contient pas d’inputs métier, de prompt brut ou
 de valeur secrète.
@@ -271,7 +302,7 @@ touba prepare --run-plan touba.run-plan.json \
 ```
 
 `--ownership` demande à `prepare` de valider un artefact
-`touba-ownership-v0.1` contre l’AIR préparé et le profil courant. La validation
+`touba-ownership-v1` contre l’AIR préparé et le profil courant. La validation
 couvre teams, owners, review gates et reviews. Elle refuse les reviews
 manquantes, les owners manquants pour les cibles sensibles et les champs qui
 tentent d’accorder une autorité runtime comme `grants`, `secrets`, `handler`,
@@ -288,18 +319,14 @@ touba prepare \
 `touba.ownership.json` ne modifie jamais le manifest, les resource bindings, le
 run plan, les locks, les secrets, les handlers ou les scopes mémoire.
 
-## `touba project migrate`
+## Layout projet canonique
 
-```sh title="Terminal"
-touba project migrate --mode plan
-touba project migrate --mode check
-touba project migrate --mode write
-```
-
-La migration ajoute le layout `touba-artifacts-v1` et le profil `pure`, mais
-ne déplace ni ne supprime AIR, manifest, run plan ou store historique. Elle
-refuse un build cible déjà occupé. Après `write`, utilisez `touba prepare
---mode write --profile <profil>` pour régénérer les dérivés.
+Les projets déclarent `artifact_layout: "touba-artifacts-v1"`. Un seul layout
+est utilisé : `.touba/build/<profil>` pour les artefacts préparés et
+`.touba/state` pour les états. Les anciens layouts sont refusés sans réécrire
+les fichiers utilisateur. Prepare et le lancement projet utilisent `dev`
+par défaut. Une entrée unique est déduite ; sinon, renseignez `entry` dans
+la configuration projet ou passez `--entry` à prepare.
 
 ## `touba secret`
 
@@ -382,7 +409,7 @@ Il peut pointer vers :
 
 ```json title="touba.run-plan.json"
 {
-  "run_plan_schema_version": "touba-run-plan-v0.1",
+  "run_plan_schema_version": "touba-run-plan-v1",
   "entry_ref": "strategy:examples.search/Run",
   "air": "air/examples/search.air.json",
   "manifest": "touba.manifest.json",
@@ -400,7 +427,7 @@ strict exige un lock absent, si le lock supply chain est en drift, ou si le run 
 contient des champs sensibles comme `inputs`, `payload`, `prompt`, `secret` ou
 `secrets`.
 
-Si `--manifest` pointe vers un fragment `touba-binding-fragment-v0.1` au lieu
+Si `--manifest` pointe vers un fragment `touba-binding-fragment-v1` au lieu
 d’un manifest assemblé `touba-manifest-v1`, le runtime refuse avec
 `BindingFragmentNotAssembled`.
 
@@ -624,7 +651,7 @@ même runtime que le mode `--trigger-event-json`. `--max-runs` et `--state` sont
 obligatoires pour le runner foreground.
 
 `--state <touba.trigger-state.json>` active l’état durable de trigger
-`touba-trigger-state-v0.1`. Le runner y conserve les `event_id` consommés, les
+`touba-trigger-state-v1`. Le runner y conserve les `event_id` consommés, les
 acceptations, les refus et la clé du jour UTC utilisée pour appliquer
 `max_runs_per_day`. Un même `event_id` déjà consommé pour le même `trigger_ref`
 est refusé avec `TriggerReplayRejected` avant de relancer la stratégie. Une
@@ -648,7 +675,7 @@ touba trigger serve program.air.json \
 ```
 
 Le service route les triggers `request` activés par le manifest. Chaque requête
-acceptée est ajoutée à la queue `touba-trigger-queue-v0.1`, puis remise au même
+acceptée est ajoutée à la queue `touba-trigger-queue-v1`, puis remise au même
 runtime que `--trigger-event-json`. La queue conserve l’identité d’événement, la
 méthode, le chemin, la taille et le digest SHA-256 du payload ; elle ne conserve
 pas le corps brut. Si le manifest déclare `payload`, seuls les champs JSON
@@ -691,19 +718,18 @@ retries arrivés à `next_attempt_at`. Un couple `--queue` / `--state` ne doit p
 être partagé entre plusieurs processus. Après récupération d’une entrée
 `processing` périmée, `recovery_effect_outcome: "unknown"` signale que l’effet
 externe précédent peut avoir eu lieu. La livraison de queue reste
-at-least-once ; le contrat V2 ci-dessous décide si le redispatch de l'effet est
+at-least-once ; le contrat V1 ci-dessous décide si le redispatch de l'effet est
 sûr ou doit être bloqué. Les remplacements atomiques des fichiers ne
 constituent pas une transaction avec l’effet externe.
 
-`--effect-journal` devient obligatoire si le manifest V2 contient au moins un
+`--effect-journal` devient obligatoire si le manifest V1 contient au moins un
 binding `external_write` ; son chemin doit se terminer par
 `.effect-journal.json`. Le service utilise le `queue_id` comme portée stable.
 Une issue `unknown` n'est répétée que pour le mode `idempotency_key` ; les modes
 `reconcile` et `none` bloquent explicitement. Le package reste responsable de
-transmettre réellement la clé au service externe. Le service de triggers est le
-seul hôte durable raccordé à ce journal dans cette tranche : la CLI directe et
-le serveur de projet refusent ou n'exposent pas encore cette exécution
-effectful. Les fichiers de queue, d'état et de journal sont locaux et ne doivent
+transmettre réellement la clé au service externe. La CLI directe accepte aussi `--effect-journal`, le SDK accepte
+`effectJournal`, et le serveur projet dispose de son journal. Chaque hôte
+possède ses fichiers et sa portée ; leur partage concurrent n'est pas supporté. Les fichiers de queue, d'état et de journal sont locaux et ne doivent
 pas être partagés entre plusieurs processus ou machines. Aucune garantie
 `exactly-once` n'est annoncée.
 
@@ -877,32 +903,36 @@ export const provider_metadata = {
 Le provider peut répondre directement ou demander le catalogue complet :
 
 ```js title="researcher.provider.mjs"
+import { isDeepStrictEqual } from "node:util";
+
 export function decideAgentCapability(request) {
-  if (request.mode === "summary") {
-    if (request.inputs.request?.query === "bonjour") {
-      return {
-        action: "answer_directly",
-        source: "custom_provider",
-        reason: "Aucune capacité Touba n’est nécessaire",
-        result: "Bonjour.",
-      };
-    }
-
-    return {
-      action: "request_capabilities",
-      source: "custom_provider",
-      reason: "Comparer les contrats disponibles",
-    };
-  }
-
-  return {
-    target_ref: "skill:examples.research/BuildBrief",
-    source: "custom_provider",
-    reason: "La demande exige une synthèse",
-    arguments: {
-      request: request.inputs.request,
-    },
+  const target = "skill:examples.research/BuildBrief";
+  const input = request.inputs.request;
+  const completed = request.observations?.findLast((item) =>
+    item.target_ref === target
+    && isDeepStrictEqual(item.arguments, { request: input })
+    && typeof item.value?.summary === "string");
+  if (completed) return {
+    action: "answer_directly", source: "custom_provider",
+    reason: "The requested dataset brief is available in the matching observation.",
+    result: completed.value.summary,
   };
+  if (request.mode === "finalization") return {
+    action: "cannot_complete", source: "custom_provider",
+    reason: "No matching brief is available within the execution budget.",
+  };
+  if (request.mode === "summary") {
+    if (input?.query === "hello") return {
+      action: "answer_directly", source: "custom_provider",
+      reason: "A greeting needs no dataset operation.", result: "Hello.",
+    };
+    return { action: "request_capabilities", source: "custom_provider",
+      reason: "The requested brief still requires execution." };
+  }
+  if (!request.capability_refs.includes(target)) throw new Error("Brief capability unavailable");
+  return { target_ref: target, source: "custom_provider",
+    reason: "The authorized skill produces the requested dataset brief.",
+    arguments: { request: input } };
 }
 ```
 
@@ -980,6 +1010,33 @@ handlers projet.
 
 ## Sorties de `touba run`
 
+### Contrat de sortie pour les intégrations
+
+Utilisez `touba run program.air.json --output json` : l'enveloppe
+`touba-run-result-v1` contient `status`, `reason`, `result`, `messages` et
+`trace`. Une saisie attendue ajoute `pending_interaction` avec sa référence et
+son prompt. Les messages métier restent séparés de la trace ; aucun checkpoint
+privé n'est inclus. Ne parsez pas l'affichage humain.
+
+| Code | Signification |
+| --- | --- |
+| 0 | Réussite |
+| 1 | Échec d'admission ou d'exécution |
+| 2 | Options CLI invalides |
+| 3 | Attente d'approbation humaine ou de saisie |
+| 4 | Arrêt explicite, approbation rejetée ou expirée |
+| 5 | Annulation, y compris timeout ou décision humaine d'annuler |
+
+`reason` distingue notamment `completed`, `explicit_stop`,
+`human_approval_pending`, `user_input_pending`, `human_approval_rejected`,
+`human_approval_expired`, `human_approval_cancelled`, `cancelled`, `timeout`
+et `kill_switch`. Pour un échec runtime, il contient le code machine.
+Les scripts doivent traiter le code 3 comme une attente, pas comme une réussite.
+
+`touba inspect trace.json` présente une chronologie compacte et les limites
+observées. `--json` conserve la chronologie complète. Une justification fournie
+est signalée comme `reported_reason` ; aucune intention du modèle n'est inventée.
+
 ```sh title="Terminal"
 touba run program.air.json --output show
 touba run program.air.json --output result
@@ -1012,7 +1069,7 @@ touba run program.air.json \
   --evidence-ref db=postgres://example.local/runs/123
 ```
 
-Le manifeste `touba-run-evidence-v0.1` référence le run, le digest de la trace,
+Le manifeste `touba-run-evidence-v1` référence le run, le digest de la trace,
 le digest du résultat, le checkpoint éventuel et les références externes
 déclarées avec `--evidence-ref`. Il ne copie pas le contenu métier et ne remplace
 pas la trace. L'utilisateur choisit où sauvegarder l'evidence externe :
@@ -1170,7 +1227,7 @@ touba inspect \
   --ownership touba.ownership.json
 ```
 
-Le fragment `touba-binding-fragment-v0.1` peut aussi être inspecté avec
+Le fragment `touba-binding-fragment-v1` peut aussi être inspecté avec
 `--binding-fragment`, mais il reste affiché comme non autoritaire pour le
 runtime. Seul le manifest assemblé est une autorité d’exécution.
 
@@ -1255,10 +1312,10 @@ Options :
 
 | Option | Rôle |
 | --- | --- |
-| `--lock` | lock `touba-lock-v0.1`, obligatoire |
+| `--lock` | lock `touba-lock-v1`, obligatoire |
 | `--air` | AIR attendu par le lock, obligatoire |
 | `--manifest` | manifest attendu par le lock, requis si le lock en déclare un |
-| `--report-out` | fichier de rapport `touba-supply-chain-validation-v0.1` écrit avec le suffixe `.supply-chain-report.json` |
+| `--report-out` | fichier de rapport `touba-supply-chain-validation-v1` écrit avec le suffixe `.supply-chain-report.json` |
 | `--output text\|json` | format du rapport |
 | `--strict` | échoue aussi sur les warnings |
 | `--require-review` | exige une revue `approved` cohérente dans le lock |
@@ -1308,7 +1365,7 @@ La commande lit `index.json`, le metadata package référencé, puis vérifie le
 digest du metadata. Si `--source-root` est fourni, elle vérifie aussi les
 digests des artefacts source listés dans le metadata.
 
-Elle produit un lock local `touba-static-registry-lock-v0.1`.
+Elle produit un lock local `touba-static-registry-lock-v1`.
 
 Options principales :
 
@@ -1464,7 +1521,7 @@ Vérifie l'installation active : version Node, versions des composants Touba,
 présence des scripts publics et profils projet disponibles dans le dossier
 courant.
 
-`touba doctor --json` produit un rapport `touba-doctor-v0.1` avec un statut
+`touba doctor --json` produit un rapport `touba-doctor-v1` avec un statut
 `ok`, `warning` ou `error`. C'est la commande à demander en priorité quand un
 utilisateur voit une différence entre la documentation, `touba run --help` et
 le comportement de son binaire.

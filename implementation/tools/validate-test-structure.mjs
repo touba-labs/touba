@@ -297,7 +297,7 @@ function main() {
     assertPath("cli/touba-audit/test/audit.test.mjs");
     assertIncludes(
       "cli/touba-audit/src/audit.mjs",
-      "trace-audit-export-v0.1-local",
+      "trace-audit-export-v1-local",
     );
     assertIncludes(
       "cli/touba-audit/src/audit.mjs",
@@ -319,7 +319,7 @@ function main() {
     assertPath("cli/touba-supply-chain/test/validate.test.mjs");
     assertIncludes(
       "cli/touba-supply-chain/src/validate.mjs",
-      "touba-supply-chain-validation-v0.1",
+      "touba-supply-chain-validation-v1",
     );
     assertIncludes(
       "cli/touba-supply-chain/src/validate.mjs",

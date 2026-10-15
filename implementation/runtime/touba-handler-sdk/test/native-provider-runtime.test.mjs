@@ -1,3 +1,4 @@
+import { structuredModelObject } from "./model-output.fixture.mjs";
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -119,7 +120,7 @@ let unauthorizedDelegatedAir;
 let secretAir;
 let effectAir;
 
-function compile(sourceText) {
+function compile(sourceText, expectedError = null) {
   const directory = mkdtempSync(path.join(tmpdir(), "native-provider-runtime-"));
   try {
     const filename = path.join(directory, "source.tb");
@@ -128,6 +129,11 @@ function compile(sourceText) {
       cwd: implementation, encoding: "utf8", timeout: 60000,
     });
     if (compiled.error) throw compiled.error;
+    if (expectedError) {
+      assert.notEqual(compiled.status, 0);
+      assert.ok(compiled.stderr.includes(expectedError), compiled.stderr);
+      return null;
+    }
     assert.equal(compiled.status, 0, compiled.stderr);
     return JSON.parse(compiled.stdout);
   } finally { rmSync(directory, { recursive: true }); }
@@ -135,13 +141,17 @@ function compile(sourceText) {
 
 before(() => {
   air = compile(source);
-  noMemoryScopeAir = compile(source.replace("    memory Notes read\n", ""));
+  compile(source.replace("    memory Notes read\n", ""), "OwnerMemoryScopeMissing");
+  noMemoryScopeAir = structuredClone(air);
+  noMemoryScopeAir.definitions.agents[0].memory_scopes = [];
   requiredApprovalAir = compile(source.replace("    do\n        Worker", "    do\n        human.approve\n            with context as user_goal\n            into approval\n        Worker"));
   delegatedAir = compile(delegatedSource);
-  unauthorizedDelegatedAir = compile(delegatedSource.replace(
+  compile(delegatedSource.replace(
     "    callable_by agent Coordinator\n",
     "    callable_by strategy Run\n",
-  ));
+  ), "AgentCallerNotAllowed");
+  unauthorizedDelegatedAir = structuredClone(delegatedAir);
+  unauthorizedDelegatedAir.definitions.agents.find(agent => agent.name === "Specialist").callable_by = [];
   secretAir = compile(source.replace(
     "    gives Text\n\ntool ReadNotes",
     "    gives Text\n    requires secret_read\n    secrets FETCH_API_KEY\n\ntool ReadNotes",
@@ -155,10 +165,10 @@ function nativeCall(toolName, input) {
 function select(name, input = { topic: "source-17" }) { return nativeCall(nativeCapabilityName(ref("tool", name)), input); }
 function review() { return nativeCall(reviewName, { review_prompt: "Please review the current source." }); }
 function answer(result = "done") {
-  return { finishReason: "stop", object: { action: "answer_directly", source: "tests", reason: "Assigned work is complete.", result } };
+  return { finishReason: "stop", object: structuredModelObject({ action: "answer_directly", source: "tests", reason: "Assigned work is complete.", result }) };
 }
 function catalogue() {
-  return { finishReason: "stop", object: { action: "request_capabilities", source: "tests", reason: "An authorized operation or review is needed.", result: "" } };
+  return { finishReason: "stop", object: structuredModelObject({ action: "request_capabilities", source: "tests", reason: "An authorized operation or review is needed.", result: "" }) };
 }
 
 // Only model output is scripted. Parsing, source compilation, provider mapping,
@@ -180,7 +190,7 @@ async function execute({ document = air, options = {}, decide, providerOptions =
     },
   });
   const result = await executeAirDocument(document, {
-    entryRef, inputs: { user_goal: "Handle the requested source." },
+    entryRef, inputs: options.humanApprovalResumeCheckpoint ? {} : { user_goal: "Handle the requested source." },
     agentDecisionProviderInitialMode: "capabilities", agentDecisionProviderContentMode: "inline",
     ...options,
     agentDecisionProvider: async (request) => {
@@ -215,7 +225,11 @@ test("native opaque projection selects a real capability without manufacturing o
   const argumentMarker = "OPAQUE_ARGUMENT_MUST_STAY_PRIVATE";
   const resultMarker = "OPAQUE_RESULT_MUST_STAY_PRIVATE";
   let dispatches = 0;
+  const opaqueAir = compile(source
+    .replaceAll("    takes user_goal as Text\n", "    takes user_goal as Text\n    takes attachment as Text\n")
+    .replace("            with user_goal as user_goal\n", "            with user_goal as user_goal\n            with attachment as attachment\n"));
   const run = await execute({
+    document: opaqueAir,
     options: {
       agentDecisionProviderContentMode: "opaque_refs",
       inputs: { user_goal: "Read the approved source.", attachment: "OPAQUE_INPUT_MUST_STAY_PRIVATE" },
@@ -379,7 +393,7 @@ test("native skill pack hints, procedures and script metadata remain non-executa
 
 function memoryManifest(grants = ["memory_read"]) {
   return loadToolBindingManifestFromJson(JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {
-    [ref("tool", "ReadNotes")]: { handler: { kind: "process", command: "node", args: ["unused-by-in-process-test.mjs"] },
+    [ref("tool", "ReadNotes")]: { effect_contract: { kind: "none" }, handler: { kind: "process", command: "node", args: ["unused-by-in-process-test.mjs"] },
       grants, memories: [{ ref: ref("memory", "Notes"), access: "read" }], timeout_ms: 5000, max_payload_bytes: 1048576 },
   } }));
 }
@@ -463,7 +477,7 @@ function secretManifest() {
     agent_secret_scopes: { [agentRef]: ["FETCH_API_KEY"] },
     bindings: {
       [ref("tool", "Fetch")]: {
-        handler: { kind: "process", command: "node", args: ["unused-by-in-process-test.mjs"] },
+        effect_contract: { kind: "none" }, handler: { kind: "process", command: "node", args: ["unused-by-in-process-test.mjs"] },
         grants: ["secret_read"],
         secrets: ["FETCH_API_KEY"],
         timeout_ms: 5000,
@@ -541,7 +555,7 @@ function effectManifest() {
     });
   `;
   return loadToolBindingManifestFromJson(JSON.stringify({
-    manifest_version: "touba-manifest-v2",
+    manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:tests.native_effect/Create": {
         handler: { kind: "process", command: process.execPath, args: ["-e", script] },

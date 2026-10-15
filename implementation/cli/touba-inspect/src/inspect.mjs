@@ -15,8 +15,6 @@ import {
   effectContractToJson,
   normalizeEffectContract,
   TOUBA_MANIFEST_V1,
-  TOUBA_MANIFEST_V2,
-  TOUBA_MANIFEST_V3,
   validateManifestEffectContracts,
 } from "../../touba-manifest/src/effect-contract.mjs";
 import { buildAirInputContract } from "../../../contracts/product-surfaces/input-contracts.mjs";
@@ -50,24 +48,22 @@ export const implementationDir = path.resolve(__dirname, "../../..");
 const cargoManifest = path.join(implementationDir, "Cargo.toml");
 const EXPECTED_AIR_SCHEMA_VERSION = "touba-air-v1";
 const EXPECTED_TRACE_PROTOCOL_VERSION = "touba-trace-v1";
-const EXPECTED_ARCHITECTURE_SCHEMA_VERSION = "architecture-projection-v0.1";
+const EXPECTED_ARCHITECTURE_SCHEMA_VERSION = "architecture-projection-v1";
 const SUPPORTED_MANIFEST_VERSIONS = new Set([
   TOUBA_MANIFEST_V1,
-  TOUBA_MANIFEST_V2,
-  TOUBA_MANIFEST_V3,
 ]);
-const EXPECTED_PACKAGE_SCHEMA_VERSION = "touba-package-v0.1";
-const EXPECTED_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v0.1";
-const EXPECTED_RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
-const EXPECTED_RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v0.1";
-const EXPECTED_OWNERSHIP_SCHEMA_VERSION = "touba-ownership-v0.1";
-const EXPECTED_TRACE_AUDIT_SCHEMA_VERSION = "trace-audit-v0.1";
-const EXPECTED_TRACE_AUDIT_VALIDATION_SCHEMA_VERSION = "trace-audit-validation-v0.1";
-const EXPECTED_TRACE_AUDIT_EXPORT_SCHEMA_VERSION = "trace-audit-export-v0.1-local";
+const EXPECTED_PACKAGE_SCHEMA_VERSION = "touba-package-v1";
+const EXPECTED_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v1";
+const EXPECTED_RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v1";
+const EXPECTED_RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v1";
+const EXPECTED_OWNERSHIP_SCHEMA_VERSION = "touba-ownership-v1";
+const EXPECTED_TRACE_AUDIT_SCHEMA_VERSION = "trace-audit-v1";
+const EXPECTED_TRACE_AUDIT_VALIDATION_SCHEMA_VERSION = "trace-audit-validation-v1";
+const EXPECTED_TRACE_AUDIT_EXPORT_SCHEMA_VERSION = "trace-audit-export-v1-local";
 const EXPECTED_TRACE_TIMELINE_SCHEMA_VERSION = "touba-trace-timeline-v1";
-const EXPECTED_SUPPLY_CHAIN_LOCK_SCHEMA_VERSION = "touba-lock-v0.1";
-const EXPECTED_SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-validation-v0.1";
-const EXPECTED_TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
+const EXPECTED_SUPPLY_CHAIN_LOCK_SCHEMA_VERSION = "touba-lock-v1";
+const EXPECTED_SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-validation-v1";
+const EXPECTED_TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v1";
 const EXPECTED_EFFECTIVE_PROJECT_SCHEMA_VERSION = "touba-effective-project-v1";
 const INSPECT_REPORT_SUFFIX = ".inspect.txt";
 const OTEL_EXPORT_SUFFIX = ".otel.json";
@@ -497,22 +493,18 @@ export function renderInspection(inspection) {
     `Artifact ${inspection.artifact_kind}`,
   ];
 
-  renderSource(lines, inspection.source);
-  renderAir(lines, inspection.air);
-  renderTrace(lines, inspection.trace);
-  renderArchitecture(lines, inspection.architecture);
-  renderManifest(lines, inspection.manifest);
-  renderPackage(lines, inspection.package);
-  renderBindingFragment(lines, inspection.binding_fragment);
-  renderResourceBindings(lines, inspection.resource_bindings);
-  renderRunPlan(lines, inspection.run_plan);
-  renderOwnership(lines, inspection.ownership);
-  renderWorkspacePackageSurface(lines, inspection.workspace_package_surface);
-  renderTraceAudit(lines, inspection.trace_audit);
-  renderTraceTimeline(lines, inspection.trace_timeline);
-  renderSupplyChain(lines, inspection.supply_chain);
-  renderTriggerState(lines, inspection.trigger_state);
-  renderEffectiveProject(lines, inspection.effective_project);
+  for (const [key, render] of [
+    ["source", renderSource], ["air", renderAir], ["trace", renderTrace],
+    ["architecture", renderArchitecture], ["manifest", renderManifest],
+    ["package", renderPackage], ["binding_fragment", renderBindingFragment],
+    ["resource_bindings", renderResourceBindings], ["run_plan", renderRunPlan],
+    ["ownership", renderOwnership], ["workspace_package_surface", renderWorkspacePackageSurface],
+    ["trace_audit", renderTraceAudit], ["trace_timeline", renderTraceTimeline],
+    ["supply_chain", renderSupplyChain], ["trigger_state", renderTriggerState],
+    ["effective_project", renderEffectiveProject],
+  ]) {
+    if (inspection[key]?.present) render(lines, inspection[key]);
+  }
   renderCompatibility(lines, inspection.compatibility);
 
   return `${lines.join("\n")}\n`;
@@ -670,7 +662,7 @@ function projectDiagnostic(severity, code, message) {
 
 function inspectionDocument(inputPath, artifactKind, summaries) {
   const document = {
-    inspect_schema_version: "touba-inspect-v0.1",
+    inspect_schema_version: "touba-inspect-v1",
     input_path: typeof inputPath === "string" ? inputPath : undefined,
     input_paths: typeof inputPath === "string" ? undefined : compactObject(inputPath),
     artifact_kind: artifactKind,
@@ -780,6 +772,13 @@ function summarizeAir(air) {
 
 function summarizeTrace(trace, sourcePath = undefined) {
   const events = trace.events ?? [];
+  const noteworthy = new Set([
+    "run_started", "run_completed", "admission_refused", "tool_binding_authorized",
+    "agent_decision_recorded", "agent_capability_selected", "agent_direct_answer_returned",
+    "human_approval_requested", "human_approval_decided", "human_approval_rejected",
+    "human_approval_expired", "human_approval_cancelled", "user_interaction_paused",
+    "failure_detected", "run_cancelled", "budget_limit_exceeded", "fallback_selected",
+  ]);
   return {
     present: true,
     source_path: sourcePath,
@@ -787,8 +786,25 @@ function summarizeTrace(trace, sourcePath = undefined) {
     run_id: trace.run?.run_id,
     module_ref: trace.run?.module_ref,
     entry_ref: trace.run?.entry_ref,
-    status: finalRunStatus(events) ?? "absent",
+    air_digest: trace.run?.air_digest,
+    status: trace.run?.admission === "refused" ? "admission_refused" : finalRunStatus(events) ?? "absent",
     events: events.length,
+    reason: events.at(-1)?.payload?.reason,
+    chronology: events.filter(event => noteworthy.has(event.kind)).map(event => ({
+      index: event.sequence_index,
+      kind: event.kind,
+      ...Object.fromEntries(Object.entries(event.payload ?? {}).filter(([key, value]) =>
+        ["repeated_from_step", "identical_invocation_number"].includes(key)
+        && Number.isSafeInteger(value) && value >= 0)),
+      ...(typeof event.payload?.reason === "string" && event.payload.reason.length > 0
+        ? { reported_reason: event.payload.reason } : {}),
+      ...Object.fromEntries(Object.entries(event.payload ?? {}).filter(([key, value]) =>
+        ["action", "selected_ref", "target_ref", "tool_ref", "agent_ref", "approval_ref", "interaction_ref", "decision", "runtime_error_code", "status"].includes(key)
+        && typeof value === "string")),
+    })),
+    effective_limits: events.filter(event => event.kind === "budget_limit_checked").map(event => ({
+      kind: event.payload.budget_kind, limit: event.payload.limit_value, authority: event.payload.authority_source,
+    })),
     human_approvals: summarizeHumanApprovalTrace(events),
     user_interactions: summarizeUserInteractionTrace(events),
     bindings: summarizeBindingTrace(events),
@@ -1777,33 +1793,46 @@ function renderTrace(lines, trace) {
   lines.push(`Trace ${trace.protocol_version}`);
   lines.push(`- run=${trace.run_id} module=${trace.module_ref} entry=${trace.entry_ref}`);
   lines.push(`- status=${trace.status} events=${trace.events}`);
-  lines.push(
+  if (trace.reason) lines.push(`- reason=${trace.reason}`);
+  if (Object.values(trace.human_approvals).some(value => typeof value === "number" && value > 0)) lines.push(
     `- human_approvals requested=${trace.human_approvals.requested} paused=${trace.human_approvals.paused} approved=${trace.human_approvals.approved} rejected=${trace.human_approvals.rejected} expired=${trace.human_approvals.expired} cancelled=${trace.human_approvals.cancelled}`,
   );
-  lines.push(
+  if (Object.values(trace.user_interactions).some(value => typeof value === "number" && value > 0)) lines.push(
     `- user_interactions shown=${trace.user_interactions.shown} requested=${trace.user_interactions.requested} paused=${trace.user_interactions.paused} answered=${trace.user_interactions.answered}`,
   );
-  lines.push(`- bindings created=${trace.bindings.created}`);
-  lines.push(
+  if (trace.bindings.created > 0) lines.push(`- bindings created=${trace.bindings.created}`);
+  if (Object.values(trace.agent_invocations).some(value => typeof value === "number" && value > 0)) lines.push(
     `- agent_invocations authorized=${trace.agent_invocations.authorized} refused=${trace.agent_invocations.refused}`,
   );
-  lines.push(
+  if (Object.values(trace.memory_accesses).some(value => typeof value === "number" && value > 0)) lines.push(
     `- memory_accesses authorized=${trace.memory_accesses.authorized} refused=${trace.memory_accesses.refused}`,
   );
-  lines.push(
+  if (Object.values(trace.memory_metadata).some(value => typeof value === "number" && value > 0)) lines.push(
     `- memory_metadata provenance_observed=${trace.memory_metadata.provenance_observed} integrity_observed=${trace.memory_metadata.integrity_observed} metadata_refused=${trace.memory_metadata.metadata_refused} integrity_refused=${trace.memory_metadata.integrity_refused} evidence=[${trace.memory_metadata.evidence.join(",")}]`,
   );
-  lines.push(
+  if (Object.values(trace.triggers).some(value => typeof value === "number" && value > 0)) lines.push(
     `- triggers received=${trace.triggers.received} accepted=${trace.triggers.accepted} refused=${trace.triggers.refused} rate_limited=${trace.triggers.rate_limited} started=${trace.triggers.started} completed=${trace.triggers.completed} failed=${trace.triggers.failed}`,
   );
-  lines.push(
+  if (Object.values(trace.run_controls).some(value => typeof value === "number" && value > 0)) lines.push(
     `- run_controls cancel_requested=${trace.run_controls.cancel_requested} cancelled=${trace.run_controls.cancelled} timeout_exceeded=${trace.run_controls.timeout_exceeded} kill_switch_enabled=${trace.run_controls.kill_switch_enabled} kill_switch_disabled=${trace.run_controls.kill_switch_disabled} dispatch_refused_cancelled=${trace.run_controls.dispatch_refused_cancelled}`,
   );
-  lines.push(
+  if (Object.values(trace.budgets).some(value => typeof value === "number" && value > 0)) lines.push(
     `- budgets checked=${trace.budgets.checked} consumed=${trace.budgets.consumed} exceeded=${trace.budgets.exceeded} dispatch_refused=${trace.budgets.dispatch_refused} kinds=[${trace.budgets.kinds.join(",")}]`,
   );
   if (trace.source_path) {
     lines.push(`- source=${trace.source_path}`);
+  }
+  for (const limit of trace.effective_limits ?? []) {
+    lines.push(`- limit ${limit.kind}=${limit.limit} authority=${limit.authority}`);
+  }
+  if (trace.chronology?.length) {
+    lines.push("Chronology:");
+    for (const event of trace.chronology.slice(0, 100)) {
+      const fields = Object.entries(event).filter(([key]) => key !== "index" && key !== "kind")
+        .map(([key, value]) => `${key}=${key === "reported_reason" ? JSON.stringify(value.length > 240 ? `${value.slice(0, 240)}…` : value) : value}`).join(" ");
+      lines.push(`  ${event.index} ${event.kind}${fields ? ` ${fields}` : ""}`);
+    }
+    if (trace.chronology.length > 100) lines.push(`  ${trace.chronology.length - 100} additional events; use --json for the full chronology.`);
   }
 }
 
@@ -3249,26 +3278,10 @@ function compactObject(value) {
 }
 
 function renderInputPaths(inspection) {
-  if (inspection.input_path) {
-    return [`Input ${inspection.input_path}`];
-  }
-  return [
-    "Input explicit_artifacts",
-    `- source=${inspection.input_paths?.source ?? "absent"}`,
-    `- air=${inspection.input_paths?.air ?? "absent"}`,
-    `- trace=${inspection.input_paths?.trace ?? "absent"}`,
-    `- architecture=${inspection.input_paths?.architecture ?? "absent"}`,
-    `- manifest=${inspection.input_paths?.manifest ?? "absent"}`,
-    `- package=${inspection.input_paths?.package ?? "absent"}`,
-    `- binding_fragment=${inspection.input_paths?.binding_fragment ?? "absent"}`,
-    `- resource_bindings=${inspection.input_paths?.resource_bindings ?? "absent"}`,
-    `- run_plan=${inspection.input_paths?.run_plan ?? "absent"}`,
-    `- ownership=${inspection.input_paths?.ownership ?? "absent"}`,
-    `- trace_audit=${inspection.input_paths?.trace_audit ?? "absent"}`,
-    `- supply_chain=${inspection.input_paths?.supply_chain ?? "absent"}`,
-  ];
+  if (inspection.input_path) return [`Input ${inspection.input_path}`];
+  return ["Input explicit_artifacts", ...Object.entries(inspection.input_paths ?? {})
+    .filter(([, value]) => value).map(([key, value]) => `- ${key}=${value}`)];
 }
-
 function valueOrAbsent(value) {
   return value ?? "absent";
 }

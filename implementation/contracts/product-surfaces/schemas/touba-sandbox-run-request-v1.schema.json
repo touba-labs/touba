@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-sandbox-run-request-v1.schema.json",
+  "title": "touba-sandbox-run-request-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "execution_kind", "target_ref", "effect_policy", "requested_by", "reason"],
+  "properties": {
+    "schema_version": { "const": "touba-sandbox-run-request-v1" },
+    "execution_kind": { "enum": ["entrypoint", "trigger"] },
+    "target_ref": { "type": "string" },
+    "effect_policy": { "enum": ["runtime_only", "allow_declared_external_effects"] },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "event_id": { "type": "string" },
+    "source_kind": { "enum": ["schedule", "request"] },
+    "requested_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["studio", "ide", "cli", "user", "service"] },
+        "id": { "type": "string" }
+      }
+    },
+    "reason": { "type": "string" }
+  }
+}

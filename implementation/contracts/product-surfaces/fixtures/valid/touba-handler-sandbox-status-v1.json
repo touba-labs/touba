@@ -1,0 +1,44 @@
+{
+  "schema_version": "touba-handler-sandbox-status-v1",
+  "generated_at": "2026-06-23T12:00:00Z",
+  "project_root": "/workspace/invoice-agent",
+  "platform": "darwin",
+  "summary": {
+    "handler_count": 2,
+    "isolated": 1,
+    "not_isolated": 1,
+    "unsupported": 0,
+    "unknown": 0
+  },
+  "handlers": [
+    {
+      "tool_ref": "tool:billing/ReadInvoice",
+      "handler_kind": "process",
+      "command_ref": "node",
+      "status": "isolated",
+      "mechanism": "sandbox-exec",
+      "grants": ["filesystem_read"],
+      "required": true,
+      "evidence": {
+        "source": "touba.manifest.json",
+        "source_ref": "tool:billing/ReadInvoice",
+        "message": "handler binding requires platform sandbox isolation"
+      }
+    },
+    {
+      "tool_ref": "tool:billing/LegacyExport",
+      "handler_kind": "process",
+      "command_ref": "node",
+      "status": "not_isolated",
+      "mechanism": null,
+      "grants": ["filesystem_read", "filesystem_write"],
+      "required": false,
+      "evidence": {
+        "source": "touba.manifest.json",
+        "source_ref": "tool:billing/LegacyExport",
+        "message": "handler binding does not require sandbox isolation"
+      }
+    }
+  ],
+  "diagnostics": []
+}

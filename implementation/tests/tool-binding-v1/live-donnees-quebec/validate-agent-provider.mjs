@@ -36,13 +36,13 @@ async function validatesLiveOrientationUsesAiSdkStructuredOutput() {
   const provider = createDonneesQuebecDecisionProvider({
     generateObject: async (request) => {
       calls.push(request);
-      return {
-        object: {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+        object: { decision: {
           action: "request_capabilities",
           source: "openai_structured_output",
           reason: "The authorized catalogue is required.",
           result: "",
-        },
+        } },
       };
     },
   });
@@ -52,10 +52,10 @@ async function validatesLiveOrientationUsesAiSdkStructuredOutput() {
   assert.equal(decision.action, "request_capabilities");
   assert.equal(calls.length, 1);
 	  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
-	  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
+	  assert.deepEqual(jsonSchemaOf(calls[0]).properties.decision.anyOf.map(branch => branch.properties.action.enum[0]), ["answer_directly", "request_capabilities"]);
 	  assert.match(calls[0].system, /human review, approval, validation, or judgment/);
 	  assert.match(calls[0].system, /request_human_review is available only after the catalogue/);
-	  const modelInput = JSON.parse(calls[0].prompt);
+	  const modelInput = JSON.parse(calls[0].system.split("\n\nRuntime context: ").at(-1));
   assert.equal(modelInput.protocol, "touba-agent-model-input-v1");
   assert.equal(modelInput.mode, "orientation");
   assert.deepEqual(modelInput.allowed_actions, ["answer_directly", "request_capabilities"]);
@@ -65,13 +65,13 @@ async function validatesLiveOrientationUsesAiSdkStructuredOutput() {
 async function validatesLiveOrientationCanAnswerDirectly() {
   process.env.TOUBA_AGENT_DECISION_OPENAI_API_KEY = "test-only-openai-key";
   const provider = createDonneesQuebecDecisionProvider({
-    generateObject: async () => ({
-      object: {
+    generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+      object: { decision: {
         action: "answer_directly",
         source: "openai_structured_output",
         reason: "Simple greeting.",
         result: "Hello.",
-      },
+      } },
     }),
   });
 
@@ -91,7 +91,7 @@ async function validatesLiveCatalogSelectionUsesAiSdkStructuredOutput() {
   const provider = createDonneesQuebecDecisionProvider({
     generateObject: async (request) => {
       calls.push(request);
-      return {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
         object: {
           action: "select_capability",
           target_ref: "skill:examples.donnees_quebec_agent_live/BuildDatasetBrief",
@@ -128,7 +128,7 @@ async function validatesLiveCatalogSelectionUsesAiSdkStructuredOutput() {
     .find((schema) => schema.properties?.request);
   assert.equal(requestArgumentsSchema.properties.request.type, "object");
   assert.equal(requestArgumentsSchema.properties.request.properties.query.type, "string");
-  const modelInput = JSON.parse(calls[0].prompt);
+  const modelInput = JSON.parse(calls[0].system.split("\n\nRuntime context: ").at(-1));
   assert.equal(modelInput.mode, "capability_catalog");
   assert.equal(modelInput.capabilities[1].signature.inputs[0].fields[0].name, "query");
 }
@@ -136,7 +136,7 @@ async function validatesLiveCatalogSelectionUsesAiSdkStructuredOutput() {
 async function validatesLiveCatalogCanRequestHumanReview() {
   process.env.TOUBA_AGENT_DECISION_OPENAI_API_KEY = "test-only-openai-key";
   const provider = createDonneesQuebecDecisionProvider({
-    generateObject: async () => ({
+    generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
       object: {
         action: "request_human_review",
         target_ref: "human_review",

@@ -1,0 +1,51 @@
+{
+  "schema_version": "touba-project-change-history-v1",
+  "generated_at": "2026-06-23T00:00:00.000Z",
+  "summary": {
+    "total": 2,
+    "pending": 1,
+    "applied": 1,
+    "refused": 0
+  },
+  "changes": [
+    {
+      "proposal_id": "change_001",
+      "status": "pending",
+      "action": "write_text_file",
+      "target": {
+        "path": "src/main.tb"
+      },
+      "requested_by": {
+        "kind": "studio",
+        "id": "touba-studio"
+      },
+      "proposed_at": "2026-06-23T00:00:00.000Z",
+      "proposal_reason": "client-authored project change",
+      "content_sha256": "abc123",
+      "decided_at": null,
+      "decided_by": null,
+      "decision_reason": null
+    },
+    {
+      "proposal_id": "change_002",
+      "status": "applied",
+      "action": "write_text_file",
+      "target": {
+        "path": "touba.project.json"
+      },
+      "requested_by": {
+        "kind": "user",
+        "id": "khadim"
+      },
+      "proposed_at": "2026-06-23T00:00:00.000Z",
+      "proposal_reason": "Update project metadata",
+      "content_sha256": "def456",
+      "decided_at": "2026-06-23T00:01:00.000Z",
+      "decided_by": {
+        "kind": "user",
+        "id": "khadim"
+      },
+      "decision_reason": "Approved in client"
+    }
+  ]
+}

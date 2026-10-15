@@ -73,7 +73,7 @@ test("mcp import plans and writes governed Touba artifacts from a tools snapshot
     assert.match(source, /secrets DEMO_MCP_TOKEN, GITHUB_TOKEN/);
 
     const manifest = JSON.parse(readFileSync(join(root, "integrations/demo/touba.manifest.fragment.json"), "utf8"));
-    assert.equal(manifest.binding_fragment_schema_version, "touba-binding-fragment-v0.1");
+    assert.equal(manifest.binding_fragment_schema_version, "touba-binding-fragment-v1");
     assert.deepEqual(
       manifest.bindings["tool:integrations.mcp.demo/PostComment"].grants,
       ["network", "secret_read"],
@@ -84,7 +84,7 @@ test("mcp import plans and writes governed Touba artifacts from a tools snapshot
     );
 
     const bridgeConfig = JSON.parse(readFileSync(join(root, "integrations/demo/mcp.bridge.config.json"), "utf8"));
-    assert.equal(bridgeConfig.mcp_bridge_config_version, "touba-mcp-bridge-config-v0.1");
+    assert.equal(bridgeConfig.mcp_bridge_config_version, "touba-mcp-bridge-config-v1");
     assert.equal(bridgeConfig.server.transport, "stdio");
     assert.equal(bridgeConfig.server.command, "");
     assert.deepEqual(bridgeConfig.server.env.GITHUB_TOKEN, { from_secret_handle: "GITHUB_TOKEN" });
@@ -231,7 +231,7 @@ test("CLI mcp import writes JSON report and check detects drift", () => {
 
 function writeMcpConfig(root, overrides = {}) {
   const config = {
-    mcp_import_config_version: "touba-mcp-import-config-v0.1",
+    mcp_import_config_version: "touba-mcp-import-config-v1",
     server: {
       name: "demo",
       transport: "snapshot",

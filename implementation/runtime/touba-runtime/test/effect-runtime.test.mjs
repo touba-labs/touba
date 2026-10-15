@@ -40,61 +40,21 @@ test("requires a stable scope and host journal before spawning an external write
   assert.equal(failureCode(withoutJournal), "EffectJournalRequired");
 });
 
-test("normalizes manifest V2 effect contracts strictly while preserving V1 legacy", () => {
+test("canonical manifest requires an explicit effect contract and refuses old formats", () => {
   const binding = {
     handler: { kind: "process", command: "node", args: ["handler.mjs"] },
-    grants: [],
-    timeout_ms: 1000,
-    max_payload_bytes: 4096,
+    grants: [], timeout_ms: 1000, max_payload_bytes: 4096,
   };
-  const legacy = loadToolBindingManifestFromJson(JSON.stringify({
-    manifest_version: "touba-manifest-v1",
-    bindings: { "tool:test/Create": binding },
+  const load = (version, effect_contract) => loadToolBindingManifestFromJson(JSON.stringify({
+    manifest_version: version,
+    bindings: { "tool:test/Create": { ...binding, ...(effect_contract === undefined ? {} : { effect_contract }) } },
   }));
-  assert.equal(legacy.bindings.get("tool:test/Create").effectContract, null);
-
-  for (const manifest of [
-    {
-      __toubaToolBindingManifest: true,
-      manifest_version: "forged",
-      bindings: {},
-    },
-    {
-      __toubaToolBindingManifest: true,
-      manifest_version: "touba-manifest-v2",
-      bindings: { "tool:test/Create": binding },
-    },
-    {
-      manifest_version: "touba-manifest-v1",
-      bindings: { "tool:test/Create": { ...binding, effect_contract: { kind: "none" } } },
-    },
-    {
-      manifest_version: "touba-manifest-v2",
-      bindings: { "tool:test/Create": binding },
-    },
-    {
-      manifest_version: "touba-manifest-v2",
-      bindings: {
-        "tool:test/Create": {
-          ...binding,
-          effect_contract: { kind: "none", retry_mode: "none" },
-        },
-      },
-    },
-    {
-      manifest_version: "touba-manifest-v2",
-      bindings: {
-        "tool:test/Create": {
-          ...binding,
-          effect_contract: { kind: "external_write", retry_mode: "unsafe" },
-        },
-      },
-    },
-  ]) {
-    assert.throws(
-      () => loadToolBindingManifestFromJson(JSON.stringify(manifest)),
-      (error) => error?.code === "InvalidToolBindingManifest",
-    );
+  assert.deepEqual(load("touba-manifest-v1", { kind: "none" }).bindings.get("tool:test/Create").effectContract, { kind: "none" });
+  for (const contract of [undefined, null, { kind: "none", retry_mode: "none" }, { kind: "external_write", retry_mode: "unsafe" }]) {
+    assert.throws(() => load("touba-manifest-v1", contract), { code: "InvalidToolBindingManifest" });
+  }
+  for (const version of ["touba-manifest-v2", "touba-manifest-v3", "forged"]) {
+    assert.throws(() => load(version, { kind: "none" }), { code: "InvalidToolBindingManifest" });
   }
 });
 
@@ -129,6 +89,32 @@ test("persists an applied result and serves its replay without redispatch", asyn
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("identical arguments in two intentional invocations create distinct effects; replay creates neither again", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-two-intentional-effects-"));
+  try {
+    const callsPath = join(workspace, "calls.log");
+    const journal = journalAdapter();
+    const document = effectDocument();
+    const graph = document.execution_graphs[0];
+    graph.nodes.splice(1, 0, { ...structuredClone(graph.nodes[0]), id: "second-call", result_binding: "second-created" });
+    graph.edges = [{ from_node_id: "call", to_node_id: "second-call", role: "next" }, { from_node_id: "second-call", to_node_id: "give", role: "next" }];
+    const options = { entryRef: "skill:test/CreateFlow", inputs: { query: "same" },
+      toolBindingManifest: effectManifest(successHandlerScript(callsPath)),
+      effectScopeId: "operation:two-intentional-writes", effectJournal: journal.adapter };
+    const first = await executeAirDocument(document, options);
+    assert.equal(first.status, "success", failureCode(first));
+    const entries = [...journal.entries.values()];
+    assert.equal(entries.length, 2);
+    assert.notEqual(entries[0].effect_id, entries[1].effect_id);
+    assert.deepEqual(entries.map((item) => item.effect_index), [1, 2]);
+    assert.deepEqual(entries.map((item) => item.attempt_count), [1, 1]);
+    assert.equal(readFileSync(callsPath, "utf8"), "called\ncalled\n");
+    const replay = await executeAirDocument(document, options);
+    assert.equal(replay.status, "success", failureCode(replay));
+    assert.equal(readFileSync(callsPath, "utf8"), "called\ncalled\n");
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
 
 test("refuses the same effect identity with divergent request content before spawn", async () => {
@@ -180,6 +166,32 @@ test("records unknown when a dispatched V2 handler omits or corrupts its receipt
     assert.equal(entry.state, "unknown");
     assert.equal(Object.hasOwn(entry, "receipt"), false);
   }
+});
+
+test("preserves an acquired effect receipt but never persists or retries its secret-bearing result", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-effect-result-secret-"));
+  try {
+    const callsPath = join(root, "calls.txt");
+    const sentinel = "synthetic-effect-result-secret";
+    const journal = journalAdapter();
+    const options = {
+      entryRef: "skill:test/CreateFlow", inputs: { query: "one" },
+      toolBindingManifest: effectManifest(successHandlerScript(callsPath, { valueExpression: JSON.stringify(sentinel) })),
+      effectScopeId: "operation:secret-result", effectJournal: journal.adapter,
+      secretStore: testSecretStore(sentinel),
+    };
+    const result = await executeAirDocument(effectDocument(), options);
+    assert.equal(result.status, "failure");
+    assert.equal(failureCode(result), "SecretValueInEffectArtifact");
+    const entry = [...journal.entries.values()][0];
+    assert.equal(entry.state, "applied");
+    assert.equal(entry.receipt.outcome, "applied");
+    assert.equal(Object.hasOwn(entry, "result"), false);
+    assert.equal(JSON.stringify({ result, snapshots: journal.snapshots }).includes(sentinel), false);
+    const repeated = await executeAirDocument(effectDocument(), options);
+    assert.equal(failureCode(repeated), "EffectResultUnavailable");
+    assert.equal(readFileSync(callsPath, "utf8"), "called\n");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("refuses a secret-bearing call_id and an overflowing attempt counter before dispatch", async () => {
@@ -615,7 +627,7 @@ function effectManifest(script, {
   timeoutMs = 1000,
 } = {}) {
   return loadToolBindingManifestFromJson(JSON.stringify({
-    manifest_version: "touba-manifest-v2",
+    manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:test/Create": {
         handler: {

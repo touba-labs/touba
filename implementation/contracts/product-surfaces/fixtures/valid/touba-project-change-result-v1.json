@@ -1,0 +1,27 @@
+{
+  "schema_version": "touba-project-change-result-v1",
+  "status": "applied",
+  "proposal_id": "change_demo_001",
+  "target": {
+    "path": "src/main.tb"
+  },
+  "decided_at": "2026-06-22T18:00:02.000Z",
+  "decided_by": {
+    "kind": "user",
+    "id": "khadim"
+  },
+  "reason": "Reviewed and accepted",
+  "content_sha256": "c4a1d9d773f80401d73f1ef5e1f6f8b5b6b341dbab4e2a1d4aa8dd92c394b70d",
+  "validations": [
+    {
+      "severity": "info",
+      "code": "ToubaServeChangeContentValidated",
+      "message": "change content passed project-server validation"
+    }
+  ],
+  "evidence": {
+    "write_mode": "atomic_rename",
+    "project_root": "/workspace/example",
+    "relative_path": "src/main.tb"
+  }
+}

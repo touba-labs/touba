@@ -44,7 +44,102 @@ pub fn compile_source_to_air(source_id: impl Into<String>, source: &str) -> AirB
 
 pub fn build_air(document: &AstDocument) -> AirBuildResult {
     let mut lowerer = AirLowerer::new(document);
+    // An isolated AST cannot supply the contracts of imported modules. The
+    // project/module APIs require those sources explicitly before lowering.
+    if !document.imports.is_empty() {
+        lowerer.resolve_import_contracts(document, &[]);
+        return AirBuildResult {
+            document: None,
+            diagnostics: lowerer.diagnostics,
+        };
+    }
     lowerer.lower_document(document)
+}
+
+/// Compile an explicitly supplied set of source modules, resolving contracts
+/// before lowering expressions. Filesystem discovery belongs to the host.
+pub fn compile_project_sources(entry_source: &str, sources: &[(String, String)]) -> AirBuildResult {
+    compile_sources(entry_source, sources, true)
+}
+
+/// Produce a typed module for project linking, after checking the complete
+/// source context. This is not an unchecked single-source compilation path.
+pub fn compile_module_sources(entry_source: &str, sources: &[(String, String)]) -> AirBuildResult {
+    compile_sources(entry_source, sources, false)
+}
+
+fn compile_sources(entry_source: &str, sources: &[(String, String)], link: bool) -> AirBuildResult {
+    let mut documents = Vec::new();
+    let mut diagnostics = Vec::new();
+    let mut entry_module = None;
+    let mut names = HashSet::new();
+    for (source_id, source) in sources {
+        let parsed = parse_source(source_id.clone(), source);
+        diagnostics.extend(parsed.diagnostics.into_iter().map(map_ast_diagnostic));
+        if let Some(document) = parsed.document {
+            if source_id == entry_source {
+                entry_module = Some(document.module.name.clone());
+            }
+            if !names.insert(document.module.name.clone()) {
+                diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::DuplicateProjectModule,
+                    format!("duplicate source module `{}`", document.module.name),
+                    Some(document.module.source_ref.clone()),
+                ));
+            }
+            documents.push(document);
+        }
+    }
+    if !diagnostics.is_empty() {
+        return AirBuildResult {
+            document: None,
+            diagnostics,
+        };
+    }
+    let Some(entry_module) = entry_module else {
+        return AirBuildResult {
+            document: None,
+            diagnostics: vec![AirDiagnostic::new(
+                AirDiagnosticCode::ProjectEntryModuleNotFound,
+                "entry source is absent from explicit project inputs",
+                None,
+            )],
+        };
+    };
+    let contexts: Vec<_> = documents.iter().map(AirLowerer::new).collect();
+    let mut modules = Vec::new();
+    for document in &documents {
+        let mut lowerer = AirLowerer::new(document);
+        lowerer.resolve_import_contracts(document, &contexts);
+        // A missing contract is the primary cause, not an unknown operand type.
+        if !lowerer.diagnostics.is_empty() {
+            diagnostics.extend(lowerer.diagnostics);
+            continue;
+        }
+        let result = lowerer.lower_document(document);
+        diagnostics.extend(result.diagnostics);
+        if let Some(module) = result.document {
+            modules.push(module);
+        }
+    }
+    if !diagnostics.is_empty() {
+        return AirBuildResult {
+            document: None,
+            diagnostics,
+        };
+    }
+    let result = crate::assemble_project_air(&entry_module, &modules);
+    let document = if result.document.is_some() && !link {
+        modules
+            .into_iter()
+            .find(|module| module.module.name == entry_module)
+    } else {
+        result.document
+    };
+    AirBuildResult {
+        document,
+        diagnostics: result.diagnostics,
+    }
 }
 
 fn map_ast_diagnostic(diagnostic: AstDiagnostic) -> AirDiagnostic {
@@ -66,6 +161,59 @@ struct AirLowerer {
 }
 
 impl AirLowerer {
+    fn resolve_import_contracts(&mut self, document: &AstDocument, contexts: &[AirLowerer]) {
+        for context in contexts {
+            self.type_fields.extend(context.type_fields.clone());
+            self.agent_authority.extend(context.agent_authority.clone());
+            self.tool_memory_accesses
+                .extend(context.tool_memory_accesses.clone());
+        }
+        for import in &document.imports {
+            let Some(context) = contexts
+                .iter()
+                .find(|c| c.module_name == import.from_module)
+            else {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::ImportModuleNotFound,
+                    format!(
+                        "import `{}` references missing module `{}`",
+                        import.name, import.from_module
+                    ),
+                    Some(import.source_ref.clone()),
+                ));
+                continue;
+            };
+            let Some(contract) = context.symbols.get(&import.name).filter(|s| !s.imported) else {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::ImportDeclarationNotFound,
+                    format!(
+                        "module `{}` does not declare `{}`",
+                        import.from_module, import.name
+                    ),
+                    Some(import.source_ref.clone()),
+                ));
+                continue;
+            };
+            let Some(imported) = self.symbols.get_mut(&import.name).filter(|s| s.imported) else {
+                continue; // Local collisions are diagnosed by lower_imports.
+            };
+            if imported.kind != contract.kind {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::ImportKindMismatch,
+                    format!(
+                        "import `{}` requests a different declaration kind",
+                        import.name
+                    ),
+                    Some(import.source_ref.clone()),
+                ));
+                continue;
+            }
+            imported.signature_inputs = contract.signature_inputs.clone();
+            imported.output_type = contract.output_type.clone();
+            imported.contract_resolved = true;
+        }
+    }
+
     fn new(document: &AstDocument) -> Self {
         let mut lowerer = Self {
             module_name: document.module.name.clone(),
@@ -757,7 +905,10 @@ impl AirLowerer {
             if !node.kind.is_pure_function_node() {
                 self.diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::FunctionNotPure,
-                    format!("function `{id}` must be pure; {:?} is not permitted", node.kind),
+                    format!(
+                        "function `{id}` must be pure; {:?} is not permitted",
+                        node.kind
+                    ),
                     Some(node.source_ref.clone()),
                 ));
             }
@@ -1045,6 +1196,30 @@ impl AirLowerer {
         let (uses, use_refs) = self.lower_uses(&declaration.uses);
         let callable_by = self.agent_authority.get(&id).cloned().unwrap_or_default();
         let memory_scopes = self.lower_memory_scopes(&declaration.memory_scopes);
+        // Every catalog entry is selectable. Reject locally resolved contracts
+        // that this agent can never satisfy, even before a model makes a choice.
+        for target in &uses {
+            if let Some(callers) = self.agent_authority.get(target) {
+                if !callers.iter().any(|caller| caller.caller_ref == id) {
+                    self.diagnostics.push(AirDiagnostic::new(
+                        AirDiagnosticCode::AgentCallerNotAllowed,
+                        format!("agent `{id}` cannot select `{target}` without a matching `callable_by` rule"),
+                        Some(declaration.source_ref.clone()),
+                    ));
+                }
+            }
+            if let Some(accesses) = self.tool_memory_accesses.get(target) {
+                for access in accesses {
+                    if !memory_scopes.iter().any(|scope| scope.memory_ref == access.memory_ref && scope.access == access.access) {
+                        self.diagnostics.push(AirDiagnostic::new(
+                            AirDiagnosticCode::OwnerMemoryScopeMissing,
+                            format!("agent `{id}` cannot select `{target}` without scope `{}` `{}`", access.memory_ref, access.access),
+                            Some(declaration.source_ref.clone()),
+                        ));
+                    }
+                }
+            }
+        }
         let signature =
             if declaration.signature.inputs.is_empty() && declaration.signature.output.is_none() {
                 None
@@ -1393,7 +1568,7 @@ impl AirLowerer {
         let mut payload_map = BTreeMap::new();
         let mut payload_source_ref: Option<SourceRef> = None;
 
-        if target.imported {
+        if !target.contract_resolved {
             let mut lowered = Vec::new();
             let mut seen = HashSet::new();
             for argument in &declaration.arguments {
@@ -2036,7 +2211,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     fn finish(mut self) -> GraphBuildResult {
-        if self.nodes.is_empty() {
+        if self.nodes.is_empty() && self.diagnostics.is_empty() {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::EmptyFlowGraph,
                 format!("AIR graph `{}` has no executable node", self.graph_id),
@@ -2183,7 +2358,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 return FlowFragment::empty();
             }
             SymbolKind::Agent => {
-                if !symbol.imported && !self.is_agent_call_authorized(&symbol.id) {
+                if symbol.contract_resolved && !self.is_agent_call_authorized(&symbol.id) {
                     self.diagnostics.push(AirDiagnostic::new(
                         AirDiagnosticCode::AgentCallerNotAllowed,
                         format!(
@@ -2203,7 +2378,7 @@ impl<'a> FlowGraphBuilder<'a> {
             | SymbolKind::Trigger => {
                 self.diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::UnknownReference,
-                    format!("`{}` is not callable in Touba v0.1", statement.target),
+                    format!("`{}` is not callable in Touba V1", statement.target),
                     Some(statement.source_ref.clone()),
                 ));
                 return FlowFragment::empty();
@@ -2211,7 +2386,7 @@ impl<'a> FlowGraphBuilder<'a> {
         };
         self.check_tool_memory_accesses(&symbol, &statement.source_ref);
         let requires_explicit_agent_inputs = symbol.kind == SymbolKind::Agent
-            && !symbol.imported
+            && symbol.contract_resolved
             && !symbol.signature_inputs.is_empty();
         let arguments = if enriched || requires_explicit_agent_inputs {
             self.lower_call_arguments(statement, &symbol)
@@ -2498,7 +2673,7 @@ impl<'a> FlowGraphBuilder<'a> {
         statement: &AstCallStatement,
         symbol: &SymbolRef,
     ) -> Vec<String> {
-        if symbol.imported && symbol.signature_inputs.is_empty() {
+        if !symbol.contract_resolved {
             let mut lowered = Vec::new();
             let mut seen_names = HashSet::new();
             for argument in &statement.arguments {
@@ -3000,7 +3175,7 @@ impl<'a> FlowGraphBuilder<'a> {
         let Some(fields) = self.type_fields.get(target_type) else {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::InvalidExpressionOperandType,
-                format!("field access requires a local structured type, got `{target_type}`"),
+                format!("field access requires a resolved structured type, got `{target_type}`"),
                 Some(source_ref.clone()),
             ));
             return self.push_field_access_expression(
@@ -3129,6 +3304,24 @@ impl<'a> FlowGraphBuilder<'a> {
     ) -> Option<String> {
         let left_type = left.type_ref.as_deref();
         let right_type = right.type_ref.as_deref();
+        // Unknown types already have a primary resolution/type diagnostic.
+        // Do not turn one missing field into errors for every enclosing `++`.
+        // A literal zero is independent evidence and must still be reported.
+        if left_type.is_none() || right_type.is_none() {
+            if right.literal_zero
+                && matches!(
+                    operator,
+                    AstBinaryOperator::Divide | AstBinaryOperator::Modulo
+                )
+            {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::StaticExpressionDivisionByZero,
+                    "division or modulo by zero is statically detectable",
+                    Some(source_ref.clone()),
+                ));
+            }
+            return None;
+        }
         match operator {
             AstBinaryOperator::Add | AstBinaryOperator::Subtract | AstBinaryOperator::Multiply => {
                 if is_numeric_pair(left_type, right_type) {
@@ -3653,6 +3846,7 @@ struct SymbolRef {
     signature_inputs: Vec<SymbolInputRef>,
     output_type: Option<String>,
     imported: bool,
+    contract_resolved: bool,
 }
 
 impl SymbolRef {
@@ -3663,6 +3857,7 @@ impl SymbolRef {
             signature_inputs: Vec::new(),
             output_type: None,
             imported: false,
+            contract_resolved: true,
         }
     }
 
@@ -3673,6 +3868,7 @@ impl SymbolRef {
             signature_inputs: Vec::new(),
             output_type: None,
             imported: true,
+            contract_resolved: false,
         }
     }
 

@@ -139,6 +139,7 @@ async function main() {
 async function validateOrientation(skillPacks) {
   const result = await executeAirDocument(scenarioDocument(), {
     entryRef: "strategy:test/RunSkillsFirst",
+    inputs: { topic: "fire safety open data" },
     skillPacks,
     agentDecisionProvider: (request) => {
       assert.equal(request.mode, "summary");
@@ -262,6 +263,7 @@ async function validateInvalidExecutionLink(skillPacks) {
   const result = await executeAirDocument(scenarioDocument(), {
     entryRef: "strategy:test/RunSkillsFirst",
     skillPacks: badPacks,
+    inputs: { topic: "fire safety open data" },
     activeSkillPackRefs: ["skill_pack:project/dataset-brief"],
     agentDecisionProvider: () => {
       providerCalled = true;
@@ -309,7 +311,7 @@ function materializeSkillPackProject(tempRoot) {
 
 function skillPackDescriptor(definition) {
   return {
-    skill_pack_schema_version: "touba-skill-pack-v0.1",
+    skill_pack_schema_version: "touba-skill-pack-v1",
     ref: `skill_pack:project/${definition.skillId}`,
     name: titleFromSkillId(definition.skillId),
     description: definition.description,
@@ -433,6 +435,7 @@ function scenarioDocument() {
           id: "agent:test/Researcher",
           name: "Researcher",
           responsibility: "Prepare governed dataset briefs from selected skill packs.",
+          signature: { inputs: [{ name: "topic", type_ref: "builtin:Text", source_ref: sourceRef() }], output_type: "builtin:Text" },
           uses: ["skill:test/BuildDatasetBrief"],
           callable_by: [
             {
@@ -448,6 +451,7 @@ function scenarioDocument() {
         {
           id: "strategy:test/RunSkillsFirst",
           name: "RunSkillsFirst",
+          signature: { inputs: [{ name: "topic", type_ref: "builtin:Text", source_ref: sourceRef() }], output_type: "builtin:Text" },
           uses: ["agent:test/Researcher"],
           flow_graph_ref: "graph:strategy:test/RunSkillsFirst",
           source_ref: sourceRef(),
@@ -499,7 +503,7 @@ function scenarioDocument() {
             id: "run",
             kind: "call_agent",
             target_ref: "agent:test/Researcher",
-            arguments: [],
+            arguments: ["value:topic"],
             trace_point_refs: [],
             source_ref: sourceRef(),
           },
@@ -520,7 +524,7 @@ function governedManifest() {
     manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:test/RenderDatasetBrief": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: "node",
           args: ["./handlers/render_dataset_brief.handler.js"],

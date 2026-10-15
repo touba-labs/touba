@@ -1,8 +1,0 @@
-{
-  "schema_version": "touba-interaction-session-create-v0.1",
-  "target_ref": "agent:billing/InvoiceAgent",
-  "target_kind": "agent",
-  "presentation": "conversation",
-  "effect_policy": "runtime_only",
-  "requested_by": { "kind": "studio", "id": "touba-studio" }
-}

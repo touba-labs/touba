@@ -5,8 +5,9 @@ import {
   statSync,
 } from "node:fs";
 import { basename, join, relative } from "node:path";
+import { effectContractToJson, normalizeEffectContract } from "../../touba-manifest/src/effect-contract.mjs";
 
-export const ELEMENT_AUTHORING_SCHEMA_VERSION = "touba-element-authoring-request-v0.1";
+export const ELEMENT_AUTHORING_SCHEMA_VERSION = "touba-element-authoring-request-v1";
 
 const ELEMENT_KINDS = new Set([
   "memory",
@@ -328,6 +329,7 @@ function renderManifest({ projectRoot, moduleRef, element, handlerPath }) {
       cwd: ".",
     },
     grants: [...element.requirements],
+    effect_contract: element.handler.effect_contract,
     timeout_ms: element.handler.timeout_ms,
     max_payload_bytes: element.handler.max_payload_bytes,
   };
@@ -554,7 +556,12 @@ function normalizeHandler(value, kind) {
   if (!isRecord(source)) {
     throw authoringError("ToubaServeElementAuthoringInvalid", "element.handler must be an object");
   }
+  if (source.effect_contract === undefined) {
+    throw authoringError("ToubaServeElementEffectContractRequired", "Choose an explicit effect contract for the tool handler");
+  }
+  const effectContract = effectContractToJson(normalizeEffectContract(source.effect_contract));
   return {
+    effect_contract: effectContract,
     timeout_ms: source.timeout_ms === undefined
       ? 5000
       : boundedInteger(source.timeout_ms, "element.handler.timeout_ms", 1, 3600000),

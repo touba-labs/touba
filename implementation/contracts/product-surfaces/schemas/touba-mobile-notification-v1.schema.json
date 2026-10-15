@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-mobile-notification-v1.schema.json",
+  "title": "touba-mobile-notification-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "summary", "notifications"],
+  "properties": {
+    "schema_version": { "const": "touba-mobile-notification-v1" },
+    "generated_at": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["notification_count", "pending_decisions", "alerts"],
+      "properties": {
+        "notification_count": { "type": "integer" },
+        "pending_decisions": { "type": "integer" },
+        "alerts": { "type": "integer" }
+      }
+    },
+    "notifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["notification_id", "mode", "request_id", "title", "summary", "run_id", "trace_ref", "risk", "redaction", "target_path", "expires_at"],
+        "properties": {
+          "notification_id": { "type": "string" },
+          "mode": { "enum": ["approval", "human_review", "alert"] },
+          "request_id": { "type": ["string", "null"] },
+          "title": { "type": "string" },
+          "summary": { "type": "string" },
+          "run_id": { "type": ["string", "null"] },
+          "trace_ref": { "type": ["string", "null"] },
+          "risk": { "enum": ["low", "medium", "high"] },
+          "redaction": { "type": "string" },
+          "target_path": { "type": "string" },
+          "expires_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

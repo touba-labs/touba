@@ -67,7 +67,7 @@ function writeInstallationMetadata(source, prefix) {
     toolchain = JSON.parse(readFileSync(metadataPath, "utf8"));
   }
   writeFileSync(join(prefix, "INSTALLATION.json"), `${JSON.stringify({
-    installation_profile: "touba-local-install-v0.1",
+    installation_profile: "touba-local-install-v1",
     channel: "local-archive",
     prefix,
     toolchain_profile: toolchain.toolchain_profile ?? null,

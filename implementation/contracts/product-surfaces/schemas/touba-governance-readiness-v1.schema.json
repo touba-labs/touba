@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-governance-readiness-v1.schema.json",
+  "title": "touba-governance-readiness-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "project_root", "summary", "artifacts", "diagnostics"],
+  "properties": {
+    "schema_version": { "const": "touba-governance-readiness-v1" },
+    "generated_at": { "type": "string" },
+    "project_root": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_count", "approved", "pending_review", "blocked", "stale"],
+      "properties": {
+        "artifact_count": { "type": "integer" },
+        "approved": { "type": "integer" },
+        "pending_review": { "type": "integer" },
+        "blocked": { "type": "integer" },
+        "stale": { "type": "integer" }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ref", "kind", "label", "status_dev", "status_prod", "owners", "reviewers", "review_gates", "evidence"],
+        "properties": {
+          "ref": { "type": "string" },
+          "kind": { "enum": ["agent", "skill", "tool", "strategy", "package", "trigger", "run_plan"] },
+          "label": { "type": "string" },
+          "status_dev": { "enum": ["approved", "pending_review", "blocked", "stale"] },
+          "status_prod": { "enum": ["approved", "pending_review", "blocked", "stale"] },
+          "owners": { "type": "array", "items": { "type": "string" } },
+          "reviewers": { "type": "array", "items": { "type": "string" } },
+          "review_gates": { "type": "array", "items": { "type": "string" } },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "path", "source_ref", "message"],
+            "properties": {
+              "source": { "type": "string" },
+              "path": { "type": ["string", "null"] },
+              "source_ref": { "type": ["string", "null"] },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "enum": ["info", "warning", "error"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

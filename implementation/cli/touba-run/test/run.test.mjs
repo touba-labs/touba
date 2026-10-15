@@ -1,17 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sha256Text } from "@touba/supply-chain";
+import { generateSupplyChainLock } from "../../touba-supply-chain/src/generate.mjs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
+import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
+import { validateRunResult } from "../../../contracts/run-outcome.mjs";
 
-import {
-  LINEAR_FETCH_SOURCE_TOOL_REF,
-  STRATEGY_APPLY_CHANGE_TOOL_REF,
-} from "../src/local-handlers.mjs";
+const LINEAR_FETCH_SOURCE_TOOL_REF = "tool:examples.linear_skill/FetchSource";
+const STRATEGY_APPLY_CHANGE_TOOL_REF = "tool:examples.strategy_agents/ApplyChange";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const runPath = join(__dir, "../src/run.mjs");
@@ -43,10 +44,83 @@ const donneesQuebecLiveValidatePath = join(
   "live-donnees-quebec/validate.mjs",
 );
 const CARGO = process.env.CARGO ?? "cargo";
+function execWithStatus(expected, command, args, options) {
+  const run = spawnSync(command, args, options);
+  assert.equal(run.status, expected, run.stderr);
+  return run.stdout;
+}
 const hardenedProfileFixture = join(
   implementationDir,
   "contracts/hardened/profile.json",
 );
+
+test("invalid run options refuse admission before reading or executing AIR", () => {
+  for (const [args, diagnostic] of [
+    [["--unknown-option"], /unknown option --unknown-option/],
+    [["--max-agent-steps", "-1"], /max-agent-steps/],
+    [["--inputs-json"], /--inputs-json requires/],
+  ]) {
+    const result = spawnSync(process.execPath, [runPath, ...args], { encoding: "utf8" });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, diagnostic);
+    assert.doesNotMatch(result.stdout, /run_started|tool_called/);
+  }
+});
+
+test("compiled local and imported functions isolate bindings from their caller", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-lexical-scopes-"));
+  try {
+    const sourceDir = join(workspace, "src/examples");
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(join(sourceDir, "common.tb"), `module examples.common
+
+function MakeShort
+    takes name as Text
+    gives Text
+    do
+        bind label as Text = "short"
+        give label
+`, "utf8");
+    const sourcePath = join(sourceDir, "scope.tb");
+    writeFileSync(sourcePath, `module examples.scope
+import function MakeShort from examples.common
+
+function MakeLong
+    takes name as Text
+    gives Text
+    do
+        bind label as Text = "long: " ++ name ++ " / end"
+        give label
+
+strategy Check
+    gives Text
+    uses MakeLong
+    uses MakeShort
+    do
+        MakeLong
+            with name as "X"
+            into label
+        MakeShort
+            with name as "X"
+            into other
+        give label
+`, "utf8");
+    const prepared = spawnSync(process.execPath, [
+      join(implementationDir, "cli/touba-project/src/main.mjs"),
+      "prepare", "--root", workspace, "--mode", "write", "--json",
+    ], { encoding: "utf8" });
+    assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+    const preparation = JSON.parse(prepared.stdout);
+    assert.equal(preparation.status, "success", prepared.stdout);
+    const airPath = preparation.actions.find((action) =>
+      action.kind === "write_air" && action.module_name === "examples.scope").path;
+    const result = spawnSync(process.execPath, [runPath, airPath, "--output", "result"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout), "long: X / end");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
 test("refuses an explicit hardened profile without supply-chain evidence before execution", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-hardened-"));
@@ -63,13 +137,13 @@ test("refuses an explicit hardened profile without supply-chain evidence before 
   }
 });
 
-test("runs an AIR document with the bounded local FetchSource handler", () => {
+test("runs an AIR document with the explicit process FetchSource handler", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-"));
   try {
     const airPath = writeAirDocument(workspace, linearSourceDocument());
     const stdout = execFileSync(
       process.execPath,
-      [runPath, airPath, "--local-fetch-source-text", "local source text", "--output", "trace"],
+      [runPath, airPath, ...fixtureBindingArgs(airPath, { content: "local source text" }), "--output", "trace"],
       { encoding: "utf8" },
     );
 
@@ -92,8 +166,7 @@ test("emits touba-run-summary-v1 for a successful run", () => {
       [
         runPath,
         airPath,
-        "--local-fetch-source-text",
-        "local source text",
+        ...fixtureBindingArgs(airPath, { content: "local source text" }),
         "--max-steps",
         "10",
         "--max-tool-calls",
@@ -127,7 +200,7 @@ test("emits approval_pending run summary for a paused approval", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-summary-approval-"));
   try {
     const airPath = writeAirDocument(workspace, humanApprovalDocument());
-    const stdout = execFileSync(
+    const stdout = execWithStatus(3,
       process.execPath,
       [runPath, airPath, "--output", "run-summary"],
       { encoding: "utf8" },
@@ -151,7 +224,7 @@ test("surfaces a local handler error through the existing fallback path", () => 
     const airPath = writeAirDocument(workspace, linearSourceDocument({ withFallback: true }));
     const stdout = execFileSync(
       process.execPath,
-      [runPath, airPath, "--local-fetch-source-text", "", "--output", "trace"],
+      [runPath, airPath, ...fixtureBindingArgs(airPath, { content: "" }), "--output", "trace"],
       { encoding: "utf8" },
     );
 
@@ -164,7 +237,7 @@ test("surfaces a local handler error through the existing fallback path", () => 
   }
 });
 
-test("compiles the linear corpus fixture and runs it without stubs through the local handler", () => {
+test("compiles the linear corpus fixture and runs it through an explicit process manifest", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-corpus-"));
   try {
     const airPath = compileFixtureToAir(workspace, linearSkillFixture, "linear-skill");
@@ -176,8 +249,7 @@ test("compiles the linear corpus fixture and runs it without stubs through the l
         airPath,
         "--inputs-json",
         JSON.stringify({ request: { topic: "corpus" } }),
-        "--local-fetch-source-text",
-        "corpus local source",
+        ...fixtureBindingArgs(airPath, { content: "corpus local source" }),
         "--output",
         "trace",
       ],
@@ -195,7 +267,7 @@ test("compiles the linear corpus fixture and runs it without stubs through the l
   }
 });
 
-test("compiles the strategy agents fixture and runs it without stubs through ApplyChange", () => {
+test("compiles the strategy agents fixture and runs it through an explicit ApplyChange process", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-corpus-"));
   try {
     const airPath = compileFixtureToAir(workspace, strategyAgentsFixture, "strategy-agents");
@@ -206,15 +278,11 @@ test("compiles the strategy agents fixture and runs it without stubs through App
         runPath,
         airPath,
         "--inputs-json",
-        // This legacy untyped-agent fixture has no explicit Engineer ->
-        // Reviewer argument binding. Supply both declared skill inputs; the
-        // source-to-runtime agent-interface suite covers actual typed chaining.
+        // The Engineer result is explicitly passed to the Reviewer by source.
         JSON.stringify({
           request: { summary: "requested change" },
-          change: { summary: "change to review" },
         }),
-        "--local-apply-change-summary",
-        "bounded local change",
+        ...fixtureBindingArgs(airPath, { summary: "bounded local change" }),
         "--output",
         "trace",
       ],
@@ -244,7 +312,7 @@ test("reports an explicit diagnostic when a tool binding is missing", () => {
     assert.equal(failure.status, 1);
     assert.match(failure.stderr, /missing tool binding/);
     assert.match(failure.stderr, /tool:examples\.linear_skill\/FetchSource/);
-    assert.match(failure.stderr, /--local-fetch-source-text <text>/);
+    assert.match(failure.stderr, /--manifest <path>/);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -254,11 +322,12 @@ test("reports an explicit diagnostic when a local handler fails", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-"));
   try {
     const airPath = writeAirDocument(workspace, linearSourceDocument());
-    const failure = runCliExpectFailure([runPath, airPath, "--local-fetch-source-text", ""]);
+    const failure = runCliExpectFailure([runPath, airPath, ...fixtureBindingArgs(airPath, { content: "" })]);
 
     assert.equal(failure.status, 1);
     assert.match(failure.stderr, /failed tool binding/);
-    assert.match(failure.stderr, /handler reported: local source text must be a non-empty string/);
+    assert.match(failure.stderr, /local source text must be a non-empty string/);
+    assert.equal((failure.stderr.match(/local source text must be a non-empty string/g) ?? []).length, 1);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -273,8 +342,7 @@ test("reports an explicit diagnostic when the ApplyChange handler fails", () => 
       airPath,
       "--inputs-json",
       JSON.stringify({ request: { summary: "requested change" } }),
-      "--local-apply-change-summary",
-      "",
+      ...fixtureBindingArgs(airPath, { summary: "" }),
     ]);
 
     assert.equal(failure.status, 1);
@@ -282,43 +350,23 @@ test("reports an explicit diagnostic when the ApplyChange handler fails", () => 
     assert.match(failure.stderr, /tool:examples\.strategy_agents\/ApplyChange/);
     assert.match(
       failure.stderr,
-      /handler reported: local change summary must be a non-empty string/,
+      /local change summary must be a non-empty string/,
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
 });
 
-test("rejects incompatible binding configuration flags before execution", () => {
-  const failure = runCliExpectFailure([
-    runPath,
-    "fixture.air.json",
-    "--stubs",
-    "--local-fetch-source-text",
-    "text",
-  ]);
-
-  assert.equal(failure.status, 2);
-  assert.match(failure.stderr, /--stubs cannot be combined with local handler options/);
-
-  const manifestWithStubs = runCliExpectFailure([
-    runPath,
-    "fixture.air.json",
-    "--manifest",
-    "touba.manifest.json",
-    "--stubs",
-  ]);
-  assert.equal(manifestWithStubs.status, 2);
-  assert.match(manifestWithStubs.stderr, /--manifest cannot be combined/);
-
-  const secretsWithoutManifest = runCliExpectFailure([
-    runPath,
-    "fixture.air.json",
-    "--secrets",
-    "touba.secrets.json",
-  ]);
-  assert.equal(secretsWithoutManifest.status, 2);
-  assert.match(secretsWithoutManifest.stderr, /--secrets requires --manifest/);
+test("refuses removed fixture switches before reading AIR", () => {
+  for (const option of ["--stubs", "--local-fetch-source-text", "--local-apply-change-summary"]) {
+    const result = runCliExpectFailure([runPath, "fixture.air.json", option]);
+    assert.equal(result.status, 2);
+    assert.ok(result.stderr.includes("unknown option " + option));
+    assert.doesNotMatch(result.stdout, /run_started|tool_called/);
+  }
+  const result = runCliExpectFailure([runPath, "fixture.air.json", "--secrets", "secrets.json"]);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--secrets requires --manifest/);
 });
 
 test("rejects invalid run timeout values before execution", () => {
@@ -369,7 +417,7 @@ test("surfaces BQ-1 budget refusals through CLI diagnostics and traces", () => {
     const airPath = writeAirDocument(workspace, twoToolBudgetDocument());
     const result = spawnSync(
       process.execPath,
-      [runPath, airPath, "--stubs", "--max-tool-calls", "1", "--output", "trace"],
+      [runPath, airPath, ...fixtureBindingArgs(airPath, null), "--max-tool-calls", "1", "--output", "trace"],
       { encoding: "utf8" },
     );
 
@@ -436,13 +484,36 @@ test("runs the tool binding V1 fixture through explicit manifest and secrets fil
   }
 });
 
+test("CLI refuses secret-bearing success output without publishing it to result or trace", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-secret-result-"));
+  try {
+    const airPath = compileFixtureToAir(workspace, toolBindingV1SourceFixture, "secret-result");
+    const manifestPath = writeFixtureManifest(workspace, "touba.manifest.positive.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const binding = manifest.bindings["tool:examples.v1_process_binding/FetchSource"];
+    binding.handler.command = process.execPath;
+    binding.handler.args = ["-e", 'process.stdout.write(JSON.stringify({ok:true,value:{nested:[process.env.SEARCH_API_KEY]}}));'];
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const tracePath = join(workspace, "trace.json");
+    const result = spawnSync(process.execPath, [runPath, airPath, "--manifest", manifestPath,
+      "--secrets", toolBindingV1SecretsFixture, "--inputs-json", JSON.stringify({ request: { query: "ordinary" } }),
+      "--trace-out", tracePath, "--output", "result"], {
+      encoding: "utf8", env: { ...process.env, SEARCH_API_TOKEN: "synthetic-cli-result-secret" },
+    });
+    assert.equal(result.status, 1, result.stderr);
+    const trace = readFileSync(tracePath, "utf8");
+    assert.match(trace, /SecretValueInResult/);
+    assert.equal((result.stdout + result.stderr + trace).includes("synthetic-cli-result-secret"), false);
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
+});
+
 test("refuses a binding fragment passed directly as the runtime manifest", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-binding-fragment-"));
   try {
     const airPath = writeAirDocument(workspace, projectToolDocument());
     const manifestPath = join(workspace, "fragment.json");
     writeFileSync(manifestPath, JSON.stringify({
-      fragment_schema_version: "touba-binding-fragment-v0.1",
+      fragment_schema_version: "touba-binding-fragment-v1",
       source: {
         kind: "module",
         module: "project.echo",
@@ -476,7 +547,7 @@ test("refuses invalid RB-1 resource bindings before runtime dispatch", () => {
     const airPath = writeAirDocument(workspace, memoryResourceDocument());
     const unknownPath = join(workspace, "unknown.resources.json");
     writeFileSync(unknownPath, JSON.stringify({
-      resource_bindings_schema_version: "touba-resource-bindings-v0.1",
+      resource_bindings_schema_version: "touba-resource-bindings-v1",
       resources: {
         "memory:project.memory/Unknown": {
           kind: "memory_backend",
@@ -488,7 +559,7 @@ test("refuses invalid RB-1 resource bindings before runtime dispatch", () => {
     }, null, 2), "utf8");
     const payloadPath = join(workspace, "payload.resources.json");
     writeFileSync(payloadPath, JSON.stringify({
-      resource_bindings_schema_version: "touba-resource-bindings-v0.1",
+      resource_bindings_schema_version: "touba-resource-bindings-v1",
       resources: {
         "memory:project.memory/Notes": {
           kind: "memory_backend",
@@ -529,6 +600,38 @@ test("refuses invalid RB-1 resource bindings before runtime dispatch", () => {
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("explicit resource requirements are checked and bindings reach the real process without the global strict flag", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-run-resource-transmission-"));
+  try {
+    const airPath = writeAirDocument(root, memoryResourceDocument());
+    const resourcesPath = join(root, "resources.json"), manifestPath = join(root, "manifest.json");
+    const callsPath = join(root, "calls.log");
+    const script = `import { appendFileSync } from "node:fs";
+      let input = ""; for await (const chunk of process.stdin) input += chunk;
+      const request = JSON.parse(input); appendFileSync(${JSON.stringify(callsPath)}, "called\\n");
+      process.stdout.write(JSON.stringify({ ok: true, value: request.resource_bindings[0].provider }));`;
+    writeFileSync(manifestPath, JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {
+      "tool:project.memory/ReadNotes": { effect_contract: { kind: "none" }, handler: { kind: "process", command: process.execPath, args: ["--input-type=module", "-e", script] },
+        grants: ["memory_read"], secrets: [], memories: [{ ref: "memory:project.memory/Notes", access: "read" }],
+        timeout_ms: 5000, max_payload_bytes: 65536 },
+    } }));
+    const resources = { resource_bindings_schema_version: "touba-resource-bindings-v1",
+      required_resources: ["memory:project.memory/Notes"], resources: {} };
+    const args = [runPath, airPath, "--manifest", manifestPath, "--resource-bindings", resourcesPath,
+      "--inputs-json", '{"query":"notes"}', "--output", "result"];
+    writeFileSync(resourcesPath, JSON.stringify(resources));
+    const missing = spawnSync(process.execPath, args, { encoding: "utf8" });
+    assert.equal(missing.status, 1); assert.match(missing.stderr, /ResourceBindingMissing/);
+    assert.equal(existsSync(callsPath), false);
+    resources.resources["memory:project.memory/Notes"] = { kind: "memory_backend", provider: "host.custom-adapter", grants: ["memory.read"], secrets: [] };
+    writeFileSync(resourcesPath, JSON.stringify(resources));
+    const accepted = spawnSync(process.execPath, args, { encoding: "utf8" });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(JSON.parse(accepted.stdout), "host.custom-adapter");
+    assert.equal(readFileSync(callsPath, "utf8"), "called\n");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("runs an IM-2A imported tool through manifest, secrets, constraints and SC-1", () => {
@@ -767,7 +870,7 @@ test("resolves relative handler cwd from manifest location", () => {
       manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:project.echo/Echo": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: process.execPath,
             args: ["handlers/echo.handler.mjs"],
@@ -836,6 +939,52 @@ test("enforces a coherent SC-1 supply chain lock before process handler dispatch
   }
 });
 
+test("CLI external writes require a journal and fresh runs get distinct durable effect identities", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-cli-write-"));
+  try {
+    const fixture = writeProjectToolRuntimeFixture(workspace);
+    const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8"));
+    manifest.bindings["tool:project.echo/Echo"].effect_contract = { kind: "external_write", retry_mode: "none" };
+    writeFileSync(fixture.manifestPath, JSON.stringify(manifest));
+    const marker = join(workspace, "writes.txt");
+    writeFileSync(fixture.handlerPath, `import { appendFileSync } from 'node:fs';
+let data = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', chunk => data += chunk);
+process.stdin.on('end', () => {
+  const request = JSON.parse(data);
+  if (!request.effect || request.operation !== 'invoke') process.exit(2);
+  appendFileSync(${JSON.stringify(marker)}, 'write\\n');
+  process.stdout.write(JSON.stringify({ok:true,value:'stored',effect_receipt:{
+    effect_id:request.effect.effect_id,request_digest:request.effect.request_digest,outcome:'applied'
+  }}));
+});`);
+    const args = [runPath, fixture.airPath, "--manifest", fixture.manifestPath,
+      "--inputs-json", '{"request":"write"}', "--output", "json"];
+    const refused = spawnSync(process.execPath, args, { encoding: "utf8" });
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /EffectContextRequired|EffectJournalRequired/);
+    assert.equal(existsSync(marker), false);
+    const journal = join(workspace, "run.effect-journal.json");
+    for (let index = 0; index < 2; index++) {
+      const run = spawnSync(process.execPath, [...args, "--effect-journal", journal], { encoding: "utf8" });
+      assert.equal(run.status, 0, run.stderr);
+      assert.equal(JSON.parse(run.stdout).result, "stored");
+      assert.equal(existsSync(journal + ".lock"), false);
+    }
+    assert.equal(readFileSync(marker, "utf8"), "write\nwrite\n");
+    const entries = Object.values(JSON.parse(readFileSync(journal, "utf8")).entries);
+    assert.equal(entries.length, 2);
+    assert.equal(new Set(entries.map(entry => entry.effect_scope_id)).size, 2);
+    assert.deepEqual(entries.map(entry => entry.state), ["applied", "applied"]);
+    writeFileSync(journal + ".lock", "another writer");
+    const busy = spawnSync(process.execPath, [...args, "--effect-journal", journal], { encoding: "utf8" });
+    assert.equal(busy.status, 1);
+    assert.match(busy.stderr, /EffectJournalBusy/);
+    assert.equal(readFileSync(marker, "utf8"), "write\nwrite\n");
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
+});
+
 test("requires an explicit SC-1 lock path when the run gate is required", () => {
   const failure = runCliExpectFailure([
     runPath,
@@ -851,6 +1000,7 @@ test("refuses process handler dispatch when the SC-1 lock detects handler drift"
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-sc1-drift-"));
   try {
     const markerPath = join(workspace, "handler-called");
+    const tracePath = join(workspace, "refusal.trace.json");
     const fixture = writeProjectToolRuntimeFixture(workspace);
     writeFileSync(
       fixture.handlerPath,
@@ -871,8 +1021,9 @@ test("refuses process handler dispatch when the SC-1 lock detects handler drift"
       "--supply-chain-lock",
       fixture.lockPath,
       "--require-supply-chain-lock",
+      "--trace-out", tracePath,
       "--inputs-json",
-      JSON.stringify({ request: "hello" }),
+      JSON.stringify({ request: "PRIVATE_ADMISSION_INPUT" }),
     ]);
 
     assert.equal(failure.status, 1);
@@ -880,9 +1031,37 @@ test("refuses process handler dispatch when the SC-1 lock detects handler drift"
     assert.match(failure.stderr, /HandlerChanged/);
     assert.equal(failure.stderr.includes("changed'"), false);
     assert.equal(fileExists(markerPath), false);
+    const trace = JSON.parse(readFileSync(tracePath, "utf8"));
+    validateTraceMachineContract(trace);
+    assert.equal(trace.run.admission, "refused");
+    assert.equal(trace.run.air_digest, null);
+    assert.deepEqual(trace.events.map(event => event.kind), ["admission_refused"]);
+    assert.equal(trace.events[0].payload.stage, "supply_chain");
+    assert.doesNotMatch(JSON.stringify(trace), /PRIVATE_ADMISSION_INPUT|handler-called|changed|run_started/);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("invalid AIR admission trace contains no invented module identity or source content", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-admission-invalid-"));
+  try {
+    const air = join(workspace, "invalid.air.json"), tracePath = join(workspace, "refused.trace.json");
+    writeFileSync(air, JSON.stringify({ module: { id: "PRIVATE_INVALID_MODULE" } }));
+    const result = spawnSync(process.execPath, [runPath, air, "--trace-out", tracePath, "--output", "json"], { encoding: "utf8" });
+    assert.equal(result.status, 1);
+    const trace = JSON.parse(readFileSync(tracePath, "utf8"));
+    validateTraceMachineContract(trace);
+    assert.equal(trace.run.module_ref, null);
+    assert.equal(trace.events[0].payload.code, "AirInvalid");
+    const envelope = JSON.parse(result.stdout);
+    assert.equal(envelope.status, "failure");
+    assert.equal(envelope.reason, "AirInvalid");
+    assert.equal(envelope.result, null);
+    assert.deepEqual(envelope.messages, []);
+    assert.deepEqual(envelope.trace, trace);
+    assert.doesNotMatch(JSON.stringify(trace), /PRIVATE_INVALID_MODULE|run_started|run_completed/);
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
 
 test("allows a non-required SC-1 warning while preserving explicit strict refusal", () => {
@@ -1063,7 +1242,7 @@ test("reports explicit manifest, grant and secret diagnostics for tool binding V
   }
 });
 
-test("reports tool payload schema diagnostics before process handler dispatch", () => {
+test("reports entry payload schema diagnostics before process handler dispatch", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-binding-schema-"));
   try {
     const airPath = compileFixtureToAir(workspace, toolBindingV1SourceFixture, "tool-binding-v1");
@@ -1088,8 +1267,8 @@ test("reports tool payload schema diagnostics before process handler dispatch", 
     );
 
     assert.equal(failure.status, 1);
-    assert.match(failure.stderr, /ToolInputSchemaInvalid/);
-    assert.match(failure.stderr, /arguments\.request\.query/);
+    assert.match(failure.stderr, /EntryInputSchemaInvalid/);
+    assert.match(failure.stderr, /inputs\.request\.query/);
     assert.equal(failure.stderr.includes("fixture-secret-value"), false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
@@ -1123,7 +1302,7 @@ test("reports tool payload constraint diagnostics before process handler dispatc
       manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:examples.v1_process_binding/FetchSource": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: process.execPath,
             args: [handlerPath, markerPath],
@@ -1194,7 +1373,7 @@ test("reports list payload constraint diagnostics before process handler dispatc
       manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:project.batch/SendBatch": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: process.execPath,
             args: [handlerPath, markerPath],
@@ -1272,7 +1451,7 @@ test("runs human approval with explicit paused and approved decisions", () => {
   try {
     const airPath = writeAirDocument(workspace, humanApprovalDocument());
 
-    const pausedStdout = execFileSync(
+    const pausedStdout = execWithStatus(3,
       process.execPath,
       [runPath, airPath, "--output", "trace"],
       { encoding: "utf8" },
@@ -1314,13 +1493,12 @@ test("writes and resumes a human approval checkpoint without replaying prior too
     const airPath = writeAirDocument(workspace, toolThenHumanApprovalDocument());
     const checkpointPath = join(workspace, "human.checkpoint.json");
 
-    const pausedStdout = execFileSync(
+    const pausedStdout = execWithStatus(3,
       process.execPath,
       [
         runPath,
         airPath,
-        "--local-fetch-source-text",
-        "fetched before pause",
+        ...fixtureBindingArgs(airPath, { content: "fetched before pause" }),
         "--human-checkpoint-out",
         checkpointPath,
         "--output",
@@ -1331,8 +1509,9 @@ test("writes and resumes a human approval checkpoint without replaying prior too
     const pausedTrace = JSON.parse(pausedStdout);
     const checkpoint = JSON.parse(readFileSync(checkpointPath, "utf8"));
 
+    if (process.platform !== "win32") assert.equal(statSync(checkpointPath).mode & 0o777, 0o600);
     assert.equal(pausedTrace.events.at(-1).payload.status, "stopped");
-    assert.equal(checkpoint.checkpoint_schema_version, "touba-run-checkpoint-v0.1");
+    assert.equal(checkpoint.checkpoint_schema_version, "touba-human-approval-checkpoint-v1");
     assert.equal(checkpoint.approval_ref, "approval:examples.cli:after-fetch");
     assert.equal(checkpoint.values["value:fetched"].content, "fetched before pause");
     assert.equal(eventOf(pausedTrace, "human_approval_checkpoint_created").payload.external_tool_dispatches, 1);
@@ -1342,8 +1521,7 @@ test("writes and resumes a human approval checkpoint without replaying prior too
       [
         runPath,
         airPath,
-        "--local-fetch-source-text",
-        "would indicate replay",
+        ...fixtureBindingArgs(airPath, { content: "would indicate replay" }),
         "--human-resume-checkpoint",
         checkpointPath,
         "--human-decisions-json",
@@ -1395,13 +1573,12 @@ test("writes and resumes an agent human review checkpoint without replaying prio
       "utf8",
     );
 
-    const pausedStdout = execFileSync(
+    const pausedStdout = execWithStatus(3,
       process.execPath,
       [
         runPath,
         airPath,
-        "--local-fetch-source-text",
-        "fetched before pause",
+        ...fixtureBindingArgs(airPath, { content: "fetched before pause" }),
         "--agent-decision-provider",
         providerPath,
         "--human-checkpoint-out",
@@ -1446,8 +1623,7 @@ test("writes and resumes an agent human review checkpoint without replaying prio
       [
         runPath,
         airPath,
-        "--local-fetch-source-text",
-        "would indicate replay",
+        ...fixtureBindingArgs(airPath, { content: "would indicate replay" }),
         "--agent-decision-provider",
         providerPath,
         "--human-resume-checkpoint",
@@ -1497,14 +1673,15 @@ test("runs user interaction show and ask with explicit user inputs", () => {
   try {
     const airPath = writeAirDocument(workspace, userInteractionDocument());
 
-    const pausedStdout = execFileSync(
+    const pausedStdout = execWithStatus(3,
       process.execPath,
       [runPath, airPath, "--output", "trace"],
       { encoding: "utf8" },
     );
     const pausedTrace = JSON.parse(pausedStdout);
     assert.equal(pausedTrace.events.at(-1).payload.status, "stopped");
-    assert.equal(eventOf(pausedTrace, "user_interaction_shown").payload.message, "Touba ready");
+    assert.equal(eventOf(pausedTrace, "user_interaction_shown").payload.message, undefined);
+    assert.equal(JSON.stringify(pausedTrace).includes("Touba ready"), false);
     assert.equal(
       eventOf(pausedTrace, "user_interaction_paused").payload.interaction_ref,
       "interaction:examples.cli:user-query",
@@ -1561,7 +1738,7 @@ test("cancels before first dispatch through an explicit CLI cancel request", () 
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-cancel-before-"));
   try {
     const airPath = writeAirDocument(workspace, linearSourceDocument());
-    const stdout = execFileSync(
+    const stdout = execWithStatus(5,
       process.execPath,
       [runPath, airPath, "--cancel-before-dispatch", "--output", "trace"],
       { encoding: "utf8" },
@@ -1581,7 +1758,7 @@ test("cancels paused human approval and ask interactions through CLI host contro
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-cancel-pause-"));
   try {
     const humanAirPath = writeAirDocument(workspace, humanApprovalDocument());
-    const humanStdout = execFileSync(
+    const humanStdout = execWithStatus(5,
       process.execPath,
       [runPath, humanAirPath, "--cancel-on-pause", "--output", "trace"],
       { encoding: "utf8" },
@@ -1595,7 +1772,7 @@ test("cancels paused human approval and ask interactions through CLI host contro
     assert.equal(eventOf(humanTrace, "run_cancel_requested").payload.reason, "cancel_requested");
 
     const userAirPath = writeAirDocument(workspace, userInteractionDocument());
-    const userStdout = execFileSync(
+    const userStdout = execWithStatus(5,
       process.execPath,
       [runPath, userAirPath, "--cancel-on-pause", "--output", "trace"],
       { encoding: "utf8" },
@@ -1644,7 +1821,7 @@ test("prints show messages by default and keeps trace available through --trace-
     const airPath = writeAirDocument(workspace, userInteractionDocument());
     const tracePath = join(workspace, "trace.json");
 
-    const stdout = execFileSync(
+    const stdout = execWithStatus(3,
       process.execPath,
       [runPath, airPath, "--trace-out", tracePath],
       { encoding: "utf8" },
@@ -1653,7 +1830,7 @@ test("prints show messages by default and keeps trace available through --trace-
     assert.equal(stdout, "Touba ready\n");
     const trace = JSON.parse(readFileSync(tracePath, "utf8"));
     assert.equal(trace.events.at(-1).payload.status, "stopped");
-    assert.equal(eventOf(trace, "user_interaction_shown").payload.message, "Touba ready");
+    assert.equal(eventOf(trace, "user_interaction_shown").payload.message, undefined);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -1670,8 +1847,7 @@ test("writes optional run evidence manifest separately from trace output", () =>
       [
         runPath,
         airPath,
-        "--local-fetch-source-text",
-        "local source text",
+        ...fixtureBindingArgs(airPath, { content: "local source text" }),
         "--output",
         "result",
         "--trace-out",
@@ -1688,7 +1864,7 @@ test("writes optional run evidence manifest separately from trace output", () =>
     assert.equal(existsSync(tracePath), true);
     const evidenceText = readFileSync(evidencePath, "utf8");
     const evidence = JSON.parse(evidenceText);
-    assert.equal(evidence.evidence_schema_version, "touba-run-evidence-v0.1");
+    assert.equal(evidence.evidence_schema_version, "touba-run-evidence-v1");
     assert.equal(evidence.run.status, "success");
     assert.equal(evidence.run.entry_ref, "skill:examples.linear_skill/BuildNote");
     assert.equal(evidence.trace.output.path, tracePath);
@@ -1713,8 +1889,7 @@ test("refuses external evidence refs without an evidence output manifest", () =>
     const failure = runCliExpectFailure([
       runPath,
       airPath,
-      "--local-fetch-source-text",
-      "local source text",
+      ...fixtureBindingArgs(airPath, { content: "local source text" }),
       "--evidence-ref",
       "db=postgres://example.local/runs/123",
     ]);
@@ -1734,8 +1909,7 @@ test("prints returned value with --output result", () => {
       [
         runPath,
         airPath,
-        "--local-fetch-source-text",
-        "local source text",
+        ...fixtureBindingArgs(airPath, { content: "local source text" }),
         "--output",
         "result",
       ],
@@ -1879,7 +2053,7 @@ test("RP-1 prod run plan defaults agent decision provider to capabilities", () =
     const tracePath = join(workspace, "trace.json");
 
     writeFileSync(runPlanPath, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.linear_skill/RunResearch",
       air: "fixture.air.json",
       profile: "prod",
@@ -1949,7 +2123,7 @@ test("RP-1 prod run plan keeps explicit agent decision provider initial mode", (
     const tracePath = join(workspace, "trace.json");
 
     writeFileSync(runPlanPath, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.linear_skill/RunResearch",
       air: "fixture.air.json",
       profile: "prod",
@@ -2225,7 +2399,7 @@ test("runs a pure AIR document through an explicit RP-1 run plan", () => {
     writeFileSync(airPath, JSON.stringify(runPlanPureDocument()), "utf8");
     const runPlanPath = join(workspace, "touba.run-plan.json");
     writeFileSync(runPlanPath, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.run_plan/Run",
       air: "program.air.json",
       profile: "dev",
@@ -2253,7 +2427,7 @@ test("RP-1 run plan can request a run summary output", () => {
     writeFileSync(airPath, JSON.stringify(runPlanPureDocument()), "utf8");
     const runPlanPath = join(workspace, "touba.run-plan.json");
     writeFileSync(runPlanPath, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.run_plan/Run",
       air: "program.air.json",
       profile: "dev",
@@ -2287,7 +2461,7 @@ test("RP-1 run plan routes trace and optional evidence outputs", () => {
     const evidencePath = join(workspace, "planned.evidence.json");
     const runPlanPath = join(workspace, "touba.run-plan.json");
     writeFileSync(runPlanPath, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.run_plan/Run",
       air: "program.air.json",
       profile: "dev",
@@ -2310,7 +2484,7 @@ test("RP-1 run plan routes trace and optional evidence outputs", () => {
     assert.equal(JSON.parse(stdout), "planned");
     assert.equal(existsSync(tracePath), true);
     const evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
-    assert.equal(evidence.evidence_schema_version, "touba-run-evidence-v0.1");
+    assert.equal(evidence.evidence_schema_version, "touba-run-evidence-v1");
     assert.equal(evidence.trace.output.path, tracePath);
     assert.deepEqual(evidence.external_evidence_refs, [
       { label: "storage", uri: "file://evidence/state.json" },
@@ -2326,9 +2500,9 @@ test("runs a process tool through an explicit RP-1 run plan", () => {
     const fixture = writeProjectToolRuntimeFixture(workspace);
     const runPlanPath = join(fixture.projectRoot, "touba.run-plan.json");
     writeFileSync(runPlanPath, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "skill:project.echo/Main",
-      air: "../fixture.air.json",
+      air: "fixture.air.json",
       manifest: "touba.manifest.json",
       profile: "dev",
       outputs: {
@@ -2362,7 +2536,7 @@ test("RP-1 run plan refuses missing AIR, unknown entries and sensitive payload f
   try {
     const missingAirPlan = join(workspace, "missing-air.run-plan.json");
     writeFileSync(missingAirPlan, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.run_plan/Run",
       air: "missing.air.json",
       profile: "dev",
@@ -2375,7 +2549,7 @@ test("RP-1 run plan refuses missing AIR, unknown entries and sensitive payload f
     writeFileSync(airPath, JSON.stringify(runPlanPureDocument()), "utf8");
     const unknownEntryPlan = join(workspace, "unknown-entry.run-plan.json");
     writeFileSync(unknownEntryPlan, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.run_plan/Missing",
       air: "program.air.json",
       profile: "dev",
@@ -2386,7 +2560,7 @@ test("RP-1 run plan refuses missing AIR, unknown entries and sensitive payload f
 
     const sensitivePlan = join(workspace, "sensitive.run-plan.json");
     writeFileSync(sensitivePlan, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.run_plan/Run",
       air: "program.air.json",
       profile: "dev",
@@ -2408,7 +2582,7 @@ test("RP-1 run plan refuses missing manifest, secrets profile and required prod 
     writeAirDocument(workspace, importedToolDocument());
     const missingManifestPlan = join(workspace, "missing-manifest.run-plan.json");
     writeFileSync(missingManifestPlan, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.research_app/RunDatasetSearch",
       air: "fixture.air.json",
       profile: "dev",
@@ -2421,7 +2595,7 @@ test("RP-1 run plan refuses missing manifest, secrets profile and required prod 
     writeFileSync(manifestPath, importedToolManifestText(), "utf8");
     const missingSecretsPlan = join(workspace, "missing-secrets.run-plan.json");
     writeFileSync(missingSecretsPlan, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.research_app/RunDatasetSearch",
       air: "fixture.air.json",
       manifest: "touba.manifest.json",
@@ -2435,7 +2609,7 @@ test("RP-1 run plan refuses missing manifest, secrets profile and required prod 
     writeFileSync(pureAirPath, JSON.stringify(runPlanPureDocument()), "utf8");
     const missingLockPlan = join(workspace, "missing-lock.run-plan.json");
     writeFileSync(missingLockPlan, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:examples.run_plan/Run",
       air: "pure.air.json",
       profile: "prod",
@@ -2454,9 +2628,9 @@ test("RP-1 run plan surfaces supply-chain lock drift before handler dispatch", (
     const fixture = writeProjectToolRuntimeFixture(workspace);
     const runPlanPath = join(fixture.projectRoot, "touba.run-plan.json");
     writeFileSync(runPlanPath, JSON.stringify({
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "skill:project.echo/Main",
-      air: "../fixture.air.json",
+      air: "fixture.air.json",
       manifest: "touba.manifest.json",
       profile: "prod",
       supply_chain_lock: "touba.lock.json",
@@ -2565,6 +2739,9 @@ test("persists trigger state and refuses replayed trigger events", () => {
     assert.equal(replay.status, 1);
     assert.match(replay.stderr, /TriggerReplayRejected/);
     const replayTrace = JSON.parse(replay.stdout);
+    validateTraceMachineContract(replayTrace);
+    assert.equal(replayTrace.run.air_digest, firstTrace.run.air_digest);
+    assert.equal(replayTrace.events.at(-1).payload.reason, "TriggerReplayRejected");
     assert.equal(eventOf(replayTrace, "trigger_event_refused").payload.reason, "event_replay");
     assert.equal(eventOf(replayTrace, "trigger_event_refused").payload.runtime_error_code, "TriggerReplayRejected");
 
@@ -2591,7 +2768,7 @@ test("persists trigger state and refuses replayed trigger events", () => {
 
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     const triggerState = state.triggers["trigger:examples.cli_trigger/DailyRun"];
-    assert.equal(state.trigger_state_schema_version, "touba-trigger-state-v0.1");
+    assert.equal(state.trigger_state_schema_version, "touba-trigger-state-v1");
     assert.equal(triggerState.accepted_count, 1);
     assert.equal(triggerState.refused_count, 2);
     assert.deepEqual(triggerState.consumed_event_ids, ["evt-cli-001"]);
@@ -2608,7 +2785,7 @@ test("applies trigger max_runs_per_day to the current UTC day", () => {
     const manifestPath = writeTriggerManifest(workspace);
     const statePath = join(workspace, "touba.trigger-state.json");
     writeFileSync(statePath, JSON.stringify({
-      trigger_state_schema_version: "touba-trigger-state-v0.1",
+      trigger_state_schema_version: "touba-trigger-state-v1",
       created_at: "2026-01-01T00:00:00.000Z",
       triggers: {
         "trigger:examples.cli_trigger/DailyRun": {
@@ -2726,7 +2903,7 @@ test("refuses trigger execution when the local CLI kill switch is enabled", () =
     const airPath = writeAirDocument(workspace, triggerDocument());
     const manifestPath = writeTriggerManifest(workspace);
 
-    const stdout = execFileSync(
+    const stdout = execWithStatus(5,
       process.execPath,
       [
         runPath,
@@ -2771,7 +2948,7 @@ test("cancels after a global run timeout before the next tool dispatch", () => {
     const airPath = writeAirDocument(workspace, timeoutToolDocument());
     const manifestPath = writeTimeoutToolManifest(workspace, firstHandlerPath, secondHandlerPath);
 
-    const stdout = execFileSync(
+    const stdout = execWithStatus(5,
       process.execPath,
       [
         runPath,
@@ -2831,11 +3008,59 @@ test("runs a local schedule trigger runner with a real bounded interval", () => 
     assert.equal(eventOf(trace, "trigger_event_accepted").payload.target_ref, "strategy:examples.cli_trigger/RunDaily");
     assert.equal(eventOf(trace, "trigger_execution_completed").payload.status, "success");
     const state = JSON.parse(readFileSync(statePath, "utf8"));
-    assert.equal(state.trigger_state_schema_version, "touba-trigger-state-v0.1");
+    assert.equal(state.trigger_state_schema_version, "touba-trigger-state-v1");
     assert.equal(state.triggers["trigger:examples.cli_trigger/DailyRun"].accepted_count, 1);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("schedule runner aggregates canonical traces and preserves a later quota refusal", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-aggregate-"));
+  try {
+    const document = triggerDocument({ scheduleValue: "every 1s" });
+    document.definitions.triggers[0].limits.max_runs_per_day = 2;
+    const air = writeAirDocument(workspace, document);
+    const manifest = writeTriggerManifest(workspace, { limits: { max_runs_per_day: 2, timeout_ms: 30000 } });
+    for (const [maxRuns, expectedStatus, exit] of [[2, "success", 0], [3, "failure", 1]]) {
+      const result = spawnSync(process.execPath, [runPath, air, "--manifest", manifest,
+        "--trigger", "trigger:examples.cli_trigger/DailyRun", "--max-runs", String(maxRuns),
+        "--state", join(workspace, `runs-${maxRuns}.trigger-state.json`), "--output", "json"], { encoding: "utf8" });
+      assert.equal(result.status, exit, result.stderr);
+      const envelope = JSON.parse(result.stdout);
+      validateRunResult(envelope);
+      validateTraceMachineContract(envelope.trace);
+      assert.equal(envelope.status, expectedStatus);
+      assert.equal(envelope.result.length, maxRuns);
+      assert.equal(envelope.trace.events.filter(event => event.kind === "run_completed").length, 1);
+      assert.equal(envelope.trace.events.filter(event => event.kind === "trigger_runner_run_completed").length, maxRuns);
+      const origins = envelope.trace.events.filter(event => event.payload?.origin_run_id).map(event => event.payload.origin_run_id);
+      assert.equal(new Set(origins).size, maxRuns);
+      if (exit === 1) assert.equal(envelope.result.at(-1).status, "failure");
+    }
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
+});
+
+test("schedule runner stops immediately on an explicit stop, without claiming completion", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-stopped-"));
+  try {
+    const document = triggerDocument({ scheduleValue: "every 1s" });
+    document.definitions.triggers[0].limits.max_runs_per_day = 3;
+    document.execution_graphs[0].nodes = [node("n1", "stop", {})];
+    const air = writeAirDocument(workspace, document);
+    const manifest = writeTriggerManifest(workspace, { limits: { max_runs_per_day: 3, timeout_ms: 30000 } });
+    const statePath = join(workspace, "stop.trigger-state.json");
+    const result = spawnSync(process.execPath, [runPath, air, "--manifest", manifest,
+      "--trigger", "trigger:examples.cli_trigger/DailyRun", "--max-runs", "3", "--state", statePath,
+      "--output", "json"], { encoding: "utf8" });
+    assert.equal(result.status, 4, result.stderr);
+    const envelope = JSON.parse(result.stdout);
+    validateRunResult(envelope);
+    validateTraceMachineContract(envelope.trace);
+    assert.equal(envelope.status, "stopped");
+    assert.equal(envelope.reason, "explicit_stop");
+    assert.equal(JSON.parse(readFileSync(statePath, "utf8")).triggers["trigger:examples.cli_trigger/DailyRun"].accepted_count, 1);
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
 
 test("rejects local schedule trigger runner ambiguity and unsupported schedule formats", () => {
@@ -3017,7 +3242,7 @@ function writeAirOnlySupplyChainLock(workspace, airPath) {
   const airText = readFileSync(airPath, "utf8");
   const lockPath = join(workspace, "touba.lock.json");
   writeFileSync(lockPath, `${JSON.stringify({
-    lock_schema_version: "touba-lock-v0.1",
+    lock_schema_version: "touba-lock-v1",
     lock_kind: "supply_chain",
     generated_at: "2026-06-22T00:00:00Z",
     generated_by: {
@@ -3465,7 +3690,6 @@ function twoToolBudgetDocument() {
           name: "First",
           signature: {
             inputs: [],
-            output_type: "type:examples.budget_cli/StubValue",
           },
           required_capabilities: [],
           required_secrets: [],
@@ -3476,7 +3700,6 @@ function twoToolBudgetDocument() {
           name: "Second",
           signature: {
             inputs: [],
-            output_type: "type:examples.budget_cli/StubValue",
           },
           required_capabilities: [],
           required_secrets: [],
@@ -3584,6 +3807,7 @@ function agentDecisionProviderDocument() {
         {
           id: "strategy:examples.linear_skill/RunResearch",
           name: "RunResearch",
+          signature: { inputs: [{ name: "topic", type_ref: "builtin:Text" }] },
           uses: ["agent:examples.linear_skill/Researcher"],
           flow_graph_ref: "graph:strategy:examples.linear_skill/RunResearch",
           source_ref: sourceRef(),
@@ -3645,7 +3869,7 @@ function writeProjectToolRuntimeFixture(workspace, { sdk = {
   const project = join(workspace, "project");
   mkdirSync(join(project, "handlers"), { recursive: true });
 
-  const airPath = writeAirDocument(workspace, projectToolDocument());
+  const airPath = writeAirDocument(project, projectToolDocument());
   const handlerPath = join(project, "handlers/echo.handler.mjs");
   const handlerText = [
     "let input = '';",
@@ -3661,7 +3885,7 @@ function writeProjectToolRuntimeFixture(workspace, { sdk = {
     manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:project.echo/Echo": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: process.execPath,
           args: ["handlers/echo.handler.mjs"],
@@ -3675,52 +3899,11 @@ function writeProjectToolRuntimeFixture(workspace, { sdk = {
   }, null, 2)}\n`;
   writeFileSync(manifestPath, manifestText, "utf8");
 
-  const airText = readFileSync(airPath, "utf8");
+  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "project.echo.handlers", version: "0.1.0" }));
   const lockPath = join(project, "touba.lock.json");
-  const handlerLock = {
-    tool_ref: "tool:project.echo/Echo",
-    path: "handlers/echo.handler.mjs",
-    command: process.execPath,
-    cwd: ".",
-    args: ["handlers/echo.handler.mjs"],
-    digest: {
-      kind: "sha256",
-      value: sha256Text(handlerText),
-    },
-    handler_package: {
-      kind: "local",
-      name: "project.echo.handlers",
-      version: "0.1.0",
-      entrypoint: "handlers/echo.handler.mjs",
-    },
-  };
-  if (sdk !== undefined) {
-    handlerLock.sdk = sdk;
-  }
-  writeFileSync(lockPath, `${JSON.stringify({
-    lock_schema_version: "touba-lock-v0.1",
-    lock_kind: "supply_chain",
-    generated_at: "2026-06-05T12:00:00Z",
-    generated_by: {
-      tool: "touba test",
-      version: "0.1.0",
-    },
-    air: {
-      path: "../fixture.air.json",
-      digest: {
-        kind: "sha256",
-        value: sha256Text(airText),
-      },
-    },
-    manifest: {
-      path: "touba.manifest.json",
-      digest: {
-        kind: "sha256",
-        value: sha256Text(manifestText),
-      },
-    },
-    handlers: [handlerLock],
-  }, null, 2)}\n`, "utf8");
+  generateSupplyChainLock({ air: airPath, manifest: manifestPath, out: lockPath,
+    sdkMetadataJson: JSON.stringify(sdk) });
+  approveFixtureLock(lockPath);
 
   return {
     airPath,
@@ -3735,7 +3918,7 @@ function writeImportedToolRuntimeFixture(workspace) {
   const projectRoot = join(workspace, "project");
   mkdirSync(join(projectRoot, "handlers/examples/data_tools"), { recursive: true });
 
-  const airPath = writeAirDocument(workspace, importedToolDocument());
+  const airPath = writeAirDocument(projectRoot, importedToolDocument());
   const markerPath = join(workspace, "handler-called");
   const handlerPath = join(projectRoot, "handlers/examples/data_tools/search_datasets.handler.mjs");
   const handlerText = [
@@ -3776,56 +3959,11 @@ function writeImportedToolRuntimeFixture(workspace) {
     },
   }), "utf8");
 
-  const airText = readFileSync(airPath, "utf8");
+  writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ name: "examples.data_tools.handlers", version: "0.1.0" }));
   const lockPath = join(projectRoot, "touba.lock.json");
-  writeFileSync(lockPath, `${JSON.stringify({
-    lock_schema_version: "touba-lock-v0.1",
-    lock_kind: "supply_chain",
-    generated_at: "2026-06-05T12:00:00Z",
-    generated_by: {
-      tool: "touba test",
-      version: "0.1.0",
-    },
-    air: {
-      path: "../fixture.air.json",
-      digest: {
-        kind: "sha256",
-        value: sha256Text(airText),
-      },
-    },
-    manifest: {
-      path: "touba.manifest.json",
-      digest: {
-        kind: "sha256",
-        value: sha256Text(manifestText),
-      },
-    },
-    handlers: [
-      {
-        tool_ref: "tool:examples.data_tools/SearchDatasets",
-        path: "handlers/examples/data_tools/search_datasets.handler.mjs",
-        command: process.execPath,
-        cwd: ".",
-        args: ["handlers/examples/data_tools/search_datasets.handler.mjs"],
-        digest: {
-          kind: "sha256",
-          value: sha256Text(handlerText),
-        },
-        sdk: {
-          name: "@touba/sdk",
-          version: "0.1.0",
-          protocol: "touba-tool-handler-v1",
-          status: "ok",
-        },
-        handler_package: {
-          kind: "local",
-          name: "examples.data_tools.handlers",
-          version: "0.1.0",
-          entrypoint: "handlers/examples/data_tools/search_datasets.handler.mjs",
-        },
-      },
-    ],
-  }, null, 2)}\n`, "utf8");
+  generateSupplyChainLock({ air: airPath, manifest: manifestPath, out: lockPath,
+    sdkMetadataJson: JSON.stringify({ name: "@touba/sdk", version: "0.1.0", protocol: "touba-tool-handler-v1", status: "ok" }) });
+  approveFixtureLock(lockPath);
 
   return {
     airPath,
@@ -3838,12 +3976,25 @@ function writeImportedToolRuntimeFixture(workspace) {
   };
 }
 
+// Explicit fixture-host decision, separate from generation (which remains pending).
+function approveFixtureLock(lockPath) {
+  const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+  const evidence = "Reviewed isolated test handler, manifest and exact generated lock inputs.\n";
+  writeFileSync(join(dirname(lockPath), "review-note.txt"), evidence);
+  lock.review = {
+    status: "approved", reviewed_at: "2026-10-15T12:00:00Z",
+    reviewers: [{ kind: "human", id: "fixture:reviewer", role: "test-host" }],
+    evidence: [{ kind: "review_note", path: "review-note.txt", digest: { kind: "sha256", value: sha256Text(evidence) } }],
+  };
+  writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+}
+
 function importedToolManifestText({ grants = ["network", "secret_read"] } = {}) {
   return `${JSON.stringify({
     manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:examples.data_tools/SearchDatasets": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: process.execPath,
           args: ["handlers/examples/data_tools/search_datasets.handler.mjs"],
@@ -3914,7 +4065,7 @@ function writeTimeoutToolManifest(workspace, firstHandlerPath, secondHandlerPath
 
 function processBinding(handlerPath) {
   return {
-    handler: {
+    effect_contract: { kind: "none" }, handler: {
       kind: "process",
       command: process.execPath,
       args: [handlerPath],
@@ -4027,7 +4178,7 @@ function linearSourceDocument({ withFallback = false } = {}) {
       source_ref: sourceRef(),
     },
     definitions: {
-      types: [],
+      types: [{ id: "type:examples.linear_skill/SourceText", name: "SourceText", fields: [{ name: "content", type_ref: "builtin:Text" }], source_ref: sourceRef() }],
       functions: [],
       tools: [
         {
@@ -4110,7 +4261,7 @@ function toolThenHumanApprovalDocument() {
       source_ref: sourceRef(),
     },
     definitions: {
-      types: [],
+      types: [{ id: "type:examples.linear_skill/SourceText", name: "SourceText", fields: [{ name: "content", type_ref: "builtin:Text" }], source_ref: sourceRef() }],
       functions: [],
       tools: [
         {
@@ -4516,6 +4667,7 @@ function runCliExpectFailure(args, options = {}) {
     return {
       status: error.status,
       stderr: error.stderr,
+      stdout: error.stdout,
     };
   }
 
@@ -4533,4 +4685,31 @@ function fileExists(path) {
 
 function eventOf(trace, kind) {
   return trace.events.find((event) => event.kind === kind);
+}
+
+function fixtureBindingArgs(airPath, value) {
+  const root = dirname(airPath);
+  const air = JSON.parse(readFileSync(airPath, "utf8"));
+  const handlerPath = join(root, "fixture-handler.mjs");
+  const manifestPath = join(root, "fixture-manifest.json");
+  const encoded = JSON.stringify(value);
+  writeFileSync(handlerPath, [
+    'let input = ""; for await (const chunk of process.stdin) input += chunk;',
+    'const request = JSON.parse(input);',
+    'if (request.protocol !== "touba-tool-handler-v1" || request.operation !== "invoke") throw new Error("invalid request");',
+    'const value = ' + encoded + ';',
+    'const text = value?.content ?? value?.summary;',
+    'const message = value?.content !== undefined ? "local source text" : "local change summary";',
+    'const response = text === "" ? { ok: false, error: { code: "EmptyFixtureText", message: message + " must be a non-empty string" } } : { ok: true, value };',
+    'process.stdout.write(JSON.stringify(response));',
+  ].join("\n"));
+  writeFileSync(manifestPath, JSON.stringify({
+    manifest_version: "touba-manifest-v1",
+    bindings: Object.fromEntries(air.definitions.tools.map(tool => [tool.id, {
+      handler: { kind: "process", command: process.execPath, args: [handlerPath] },
+      effect_contract: { kind: "none" }, grants: tool.required_capabilities ?? [],
+      timeout_ms: 5000, max_payload_bytes: 65536,
+    }])),
+  }));
+  return ["--manifest", manifestPath];
 }

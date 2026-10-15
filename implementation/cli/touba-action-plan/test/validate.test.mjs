@@ -192,7 +192,7 @@ test("CLI validates explicit artifacts without modifying them", () => {
     );
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /Touba Action Plan touba-action-plan-validation-v0\.1/);
+    assert.match(result.stdout, /Touba Action Plan touba-action-plan-validation-v1/);
     assert.match(result.stdout, /Status ok/);
     assert.equal(readFileSync(airPath, "utf8"), beforeAir);
     assert.equal(readFileSync(manifestPath, "utf8"), beforeManifest);
@@ -296,7 +296,7 @@ function memoryManifestFixture({ grants = ["memory_read"], memories = undefined 
     manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:examples.a2_memory_agent_read/ReadProjectKnowledge": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: "node",
           args: ["./handlers/read_project_knowledge.handler.mjs"],

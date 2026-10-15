@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -100,6 +100,32 @@ test("parses release versioning CLI flags", () => {
   });
 });
 
+test("standalone conformance has an independent but still validated version", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
+  const implementationRoot = join(repoRoot, "implementation");
+  try {
+    writeFixtureRepo({ repoRoot, implementationRoot, version: "0.2.0" });
+    mkdirSync(join(implementationRoot, "contracts"));
+    const file = join(implementationRoot, "contracts/package.json");
+    writeJson(file, { name: "@touba/machine-conformance", version: "1.0.0" });
+    assert.equal(buildReleaseVersioningReport({ repoRoot, implementationRoot }).status, "ok");
+    writeJson(file, { name: "@touba/machine-conformance", version: "invalid" });
+    assert.ok(buildReleaseVersioningReport({ repoRoot, implementationRoot }).diagnostics.some(d => d.code === "PackageVersionInvalid"));
+    writeJson(file, { name: "@touba/another-package", version: "1.0.0" });
+    assert.ok(buildReleaseVersioningReport({ repoRoot, implementationRoot }).diagnostics.some(d => d.code === "PackageVersionMismatch"));
+  } finally { rmSync(repoRoot, { recursive: true, force: true }); }
+});
+
+test("release validator rejects asset replacement", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
+  const implementationRoot = join(repoRoot, "implementation");
+  try {
+    writeFixtureRepo({ repoRoot, implementationRoot, version: "0.2.0" });
+    appendFileSync(join(repoRoot, ".github/workflows/release.yml"), "  - run: gh release upload v0.2.0 asset --clobber\n");
+    assert.ok(buildReleaseVersioningReport({ repoRoot, implementationRoot }).diagnostics.some(d => d.code === "MutableReleaseWorkflow"));
+  } finally { rmSync(repoRoot, { recursive: true, force: true }); }
+});
+
 function writeFixtureRepo({ repoRoot, implementationRoot, version, childVersion = version, retiredCurrent = false, omitReleaseNote = false }) {
   mkdirSync(join(implementationRoot, "release", "notes"), { recursive: true });
   mkdirSync(join(implementationRoot, "runtime", "touba-runtime"), { recursive: true });
@@ -112,7 +138,7 @@ function writeFixtureRepo({ repoRoot, implementationRoot, version, childVersion 
   }
   writeFileSync(
     join(repoRoot, ".github", "workflows", "release.yml"),
-    "on: workflow_dispatch\nsteps:\n  - run: pnpm --filter @touba/distribution package:release --public\n  - run: node tools/assemble-release-assets.mjs\n  - run: gh release create\n",
+    "on: workflow_dispatch\nsteps:\n  - run: pnpm --filter @touba/distribution package:release --public\n  - run: node tools/assemble-release-assets.mjs\n  - run: gh release create --verify-tag --draft\n# Guards: GITHUB_REF_TYPE refs/tags/ Release already exists\n",
     "utf8",
   );
   writeJson(join(implementationRoot, "release", "releases.json"), releaseIndex(version, retiredCurrent));
@@ -120,7 +146,7 @@ function writeFixtureRepo({ repoRoot, implementationRoot, version, childVersion 
 
 function releaseIndex(version, retiredCurrent) {
   return {
-    schema_version: "touba-release-index-v0.1",
+    schema_version: "touba-release-index-v1",
     product: "touba",
     current_version: version,
     policy: {

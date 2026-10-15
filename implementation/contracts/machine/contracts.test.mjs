@@ -3,6 +3,32 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { createAdmissionRefusalTrace } from "../../runtime/touba-runtime/src/admission-trace.mjs";
+import { publicRunResult, runExitCode, validateRunResult } from "../run-outcome.mjs";
+import { validateObject } from "../../tools/validate-product-surface-contracts.mjs";
+
+test("run result separates business messages and defines process exits without parsing prose", () => {
+  const schema = JSON.parse(readFileSync(new URL("schemas/touba-run-result-v1.schema.json", import.meta.url), "utf8"));
+  for (const [status, reason, exit] of [
+    ["success", "completed", 0], ["failure", "EntryInputSchemaInvalid", 1],
+    ["stopped", "user_input_pending", 3], ["stopped", "human_approval_pending", 3],
+    ["stopped", "explicit_stop", 4], ["stopped", "human_approval_rejected", 4],
+    ["stopped", "human_approval_expired", 4], ["stopped", "human_approval_cancelled", 5],
+    ["cancelled", "timeout", 5], ["cancelled", "kill_switch", 5],
+  ]) {
+    const trace = validTrace();
+    trace.events.at(-1).payload = { status, reason };
+    const output = publicRunResult({ status, reason, messages: [], trace, checkpoint: { private: true } });
+    assert.deepEqual(validateObject(schema, output), []);
+    assert.equal(validateRunResult(output), output);
+    assert.equal(runExitCode(output), exit);
+    assert.equal(Object.hasOwn(output, "checkpoint"), false);
+    const invalid = structuredClone(output);
+    invalid.trace.events.at(-1).payload.status = "different";
+    assert.throws(() => validateRunResult(invalid), TypeError);
+  }
+});
 
 import {
   AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, AIR_SCHEMA_VERSION, MachineContractError,
@@ -10,11 +36,49 @@ import {
   validateAirMachineContract, validateTraceMachineContract,
 } from "./contracts.mjs";
 
+test("admission failure has a result envelope without inventing an executed run", () => {
+  const output = publicRunResult({ status: "failure", reason: "ResourceBindingMissing", result: null,
+    messages: [], trace: createAdmissionRefusalTrace("ResourceBindingMissing", "resources") });
+  const schema = JSON.parse(readFileSync(new URL("schemas/touba-run-result-v1.schema.json", import.meta.url), "utf8"));
+  assert.deepEqual(validateObject(schema, output), []);
+  assert.equal(validateRunResult(output), output);
+  for (const mutate of [
+    value => { value.status = "success"; }, value => { value.reason = "OtherReason"; },
+    value => { value.result = "invented result"; }, value => { value.messages = [{ interaction_ref: "fake", text: "invented" }]; },
+  ]) {
+    const invalid = structuredClone(output);
+    mutate(invalid);
+    assert.throws(() => validateRunResult(invalid), TypeError);
+  }
+});
+
 test("validates current AIR and trace contracts", () => {
   const air = validAir();
   assert.equal(validateAirMachineContract(air), air);
   const trace = validTrace();
   assert.equal(validateTraceMachineContract(trace), trace);
+});
+
+test("admission evidence refuses invented execution, raw payloads and AIR identity", () => {
+  for (const mutate of [
+    value => { value.run.air_digest = `sha256:${"a".repeat(64)}`; },
+    value => { value.run.module_ref = "module:unvalidated"; },
+    value => { value.events.push(validTrace().events[0]); },
+    value => { value.events[0].message = "private input"; },
+    value => { value.events[0].payload.input = "private input"; },
+    value => { value.events[0].payload.code = "error with raw data"; },
+    value => { value.events[0].run_id = "another-run"; },
+    value => { value.events[0].sequence_index = 1; },
+  ]) {
+    const trace = createAdmissionRefusalTrace("AirInvalid", "air");
+    assert.equal(validateTraceMachineContract(trace), trace);
+    mutate(trace);
+    assert.throws(() => validateTraceMachineContract(trace), MachineContractError);
+  }
+  const execution = validTrace();
+  execution.events.splice(1, 0, { ...execution.events[0], event_id: "refusal", kind: "admission_refused" });
+  execution.events.forEach((event, i) => { event.sequence_index = i; });
+  assert.throws(() => validateTraceMachineContract(execution), { code: "TraceAdmissionInvalid" });
 });
 
 function functionAir() {
@@ -172,12 +236,13 @@ function validTrace() {
     trace_protocol_version: TRACE_PROTOCOL_VERSION,
     trace_capability_profile: TRACE_CAPABILITY_PROFILE,
     run: { run_id: "run-1", air_schema_version: AIR_SCHEMA_VERSION,
+      air_digest: `sha256:${createHash("sha256").update(canonicalizeMachineValue(validAir())).digest("hex")}`,
       module_ref: "module:contract", entry_ref: "skill:contract/Run" },
     events: [
       { event_id: "event:run-1:1", run_id: "run-1", sequence_index: 0,
         kind: "run_started", payload: { max_loop_iterations: 100 } },
       { event_id: "event:run-1:2", run_id: "run-1", sequence_index: 1,
-        kind: "run_completed", payload: { status: "success" } },
+        kind: "run_completed", payload: { status: "success", reason: "completed" } },
     ],
   };
 }

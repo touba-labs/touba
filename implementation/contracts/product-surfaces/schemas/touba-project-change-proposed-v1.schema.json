@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-change-proposed-v1.schema.json",
+  "title": "touba-project-change-proposed-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "proposal_id", "action", "target", "requested_by", "proposed_at", "content_sha256", "validations"],
+  "properties": {
+    "schema_version": { "const": "touba-project-change-proposed-v1" },
+    "status": { "const": "proposed" },
+    "proposal_id": { "type": "string" },
+    "action": { "enum": ["write_text_file"] },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "role", "content_sha256"],
+        "properties": {
+          "path": { "type": "string" },
+          "role": { "type": "string" },
+          "content_sha256": { "type": "string" }
+        }
+      }
+    },
+    "target_count": { "type": "integer" },
+    "requested_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string" },
+        "id": { "type": "string" }
+      }
+    },
+    "proposed_at": { "type": "string" },
+    "content_sha256": { "type": "string" },
+    "validations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "enum": ["info", "warning", "error"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

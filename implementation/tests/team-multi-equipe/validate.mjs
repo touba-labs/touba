@@ -168,6 +168,8 @@ function prepareArgs(projectRoot, { mode, ownershipPath, resourceBindingsPath })
     "src/examples/customer_review_app.tb",
     "--package",
     "packages/customer/touba.package.json",
+    "--manifest",
+    "touba.manifest.json",
     "--resource-bindings",
     resourceBindingsPath,
     "--require-resource-bindings",
@@ -201,14 +203,14 @@ function overwriteLeakyHandler(projectRoot) {
 }
 
 function writeSupplyChainLock(projectRoot, handlerPath) {
-  const airPath = join(projectRoot, ".touba/air/examples/customer_review_app.air.json");
+  const airPath = join(projectRoot, ".touba/build/prod/air/examples/customer_review_app.air.json");
   const manifestPath = join(projectRoot, "touba.manifest.json");
   const manifest = readJson(manifestPath);
   const binding = manifest.bindings[TOOL_REF];
   assert.ok(binding, "expected manifest binding");
 
   const lock = {
-    lock_schema_version: "touba-lock-v0.1",
+    lock_schema_version: "touba-lock-v1",
     lock_kind: "supply_chain",
     generated_at: "2026-06-05T00:00:00Z",
     generated_by: {
@@ -242,6 +244,8 @@ function writeSupplyChainLock(projectRoot, handlerPath) {
           name: "org.example.customer.handlers",
           version: "0.1.0",
           entrypoint: binding.handler.args[0],
+          package_root: ".",
+          files: [{ path: binding.handler.args[0], digest: digestForFile(handlerPath) }],
         },
       },
     ],
@@ -257,7 +261,7 @@ function validateSupplyChain(projectRoot, lockPath) {
     "--lock",
     lockPath,
     "--air",
-    join(projectRoot, ".touba/air/examples/customer_review_app.air.json"),
+    join(projectRoot, ".touba/build/prod/air/examples/customer_review_app.air.json"),
     "--manifest",
     join(projectRoot, "touba.manifest.json"),
     "--output",
@@ -285,7 +289,7 @@ function assertSupplyChainMissingHandlerEntry() {
     "--lock",
     lockPath,
     "--air",
-    join(projectRoot, ".touba/air/examples/customer_review_app.air.json"),
+    join(projectRoot, ".touba/build/prod/air/examples/customer_review_app.air.json"),
     "--manifest",
     join(projectRoot, "touba.manifest.json"),
     "--output",
@@ -346,7 +350,7 @@ function inspectWorkspace(projectRoot) {
   const result = spawnSync(process.execPath, [
     inspectCli,
     "--air",
-    join(projectRoot, ".touba/air/examples/customer_review_app.air.json"),
+    join(projectRoot, ".touba/build/prod/air/examples/customer_review_app.air.json"),
     "--manifest",
     join(projectRoot, "touba.manifest.json"),
     "--package",
@@ -380,7 +384,7 @@ function runPositive(projectRoot) {
       },
     }),
     "--output",
-    "trace",
+    "json",
   ], {
     cwd: implementationRoot,
     encoding: "utf8",
@@ -393,7 +397,7 @@ function runPositive(projectRoot) {
   return result.stdout;
 }
 
-function assertTrace(trace) {
+function assertTrace({ trace, messages }) {
   const completed = trace.events?.find((event) => event.kind === "run_completed");
   assert.equal(completed?.payload?.status, "success");
 
@@ -422,8 +426,7 @@ function assertTrace(trace) {
   assert.ok(memoryAuthorized, "expected memory_access_authorized");
   assert.equal(memoryAuthorized.payload.memory_ref, "memory:org.example.customer/CustomerNotes");
 
-  const showEvent = trace.events.find((event) => event.kind === "user_interaction_shown");
-  assert.equal(showEvent?.payload?.message, "Customer profile ready");
+  assert.equal(messages[0]?.text, "Customer profile ready");
 }
 
 function assertNoSecretLeak(text) {

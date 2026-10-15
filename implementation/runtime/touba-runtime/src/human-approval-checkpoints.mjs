@@ -3,9 +3,10 @@
 import { payloadValueKind } from "./payload-validation.mjs";
 import { RuntimeFailure, ToubaRuntimeError } from "./runtime-errors.mjs";
 import { resolvedSecretEntries } from "./secret-redaction.mjs";
-import { sha256Json } from "./trace-builder.mjs";
+import { airDocumentDigest } from "./air-identity.mjs";
+export { airDocumentDigest } from "./air-identity.mjs";
 
-export const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-run-checkpoint-v0.1";
+export const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-human-approval-checkpoint-v1";
 
 /**
  * @typedef {Record<string, any>} CheckpointRecord
@@ -32,7 +33,6 @@ export function normalizeOptionalHumanApprovalCheckpoint(checkpoint) {
   }
   return record;
 }
-
 /**
  * @param {{ air_schema_version: string, module: { id: string } }} document
  * @param {string} entryRef
@@ -242,12 +242,4 @@ export function assertCheckpointHasNoResolvedSecret(values, context, approvalRef
     },
     "SecretValueInHumanApprovalCheckpoint",
   );
-}
-
-/**
- * @param {unknown} document
- * @returns {string}
- */
-export function airDocumentDigest(document) {
-  return `sha256:${sha256Json(document)}`;
 }

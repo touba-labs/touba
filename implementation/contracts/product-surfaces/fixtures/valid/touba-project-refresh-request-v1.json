@@ -1,0 +1,8 @@
+{
+  "schema_version": "touba-project-refresh-request-v1",
+  "requested_by": {
+    "kind": "studio",
+    "id": "touba-studio"
+  },
+  "reason": "user-requested-refresh"
+}

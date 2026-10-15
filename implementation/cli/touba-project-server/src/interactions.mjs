@@ -8,16 +8,19 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 
-export const INTERACTION_SESSION_CREATE_SCHEMA_VERSION = "touba-interaction-session-create-v0.1";
-export const INTERACTION_MESSAGE_REQUEST_SCHEMA_VERSION = "touba-interaction-message-request-v0.1";
-export const INTERACTION_RESUME_REQUEST_SCHEMA_VERSION = "touba-interaction-resume-request-v0.1";
-export const INTERACTION_SESSION_SCHEMA_VERSION = "touba-interaction-session-v0.2";
-export const INTERACTION_SESSION_LIST_SCHEMA_VERSION = "touba-interaction-session-list-v0.2";
-export const INTERACTION_OPERATION_SCHEMA_VERSION = "touba-interaction-operation-v0.1";
-export const INTERACTION_ASSET_SCHEMA_VERSION = "touba-interaction-asset-v0.1";
-export const INTERACTION_SESSION_STORE_SCHEMA_VERSION = "touba-interaction-sessions-v0.2";
-export const INTERACTION_ASSET_STORE_SCHEMA_VERSION = "touba-interaction-assets-v0.1";
+const SESSION_SCHEMA = JSON.parse(readFileSync(new URL("../../../contracts/product-surfaces/schemas/touba-interaction-session-v1.schema.json", import.meta.url), "utf8"));
+
+export const INTERACTION_SESSION_CREATE_SCHEMA_VERSION = "touba-interaction-session-create-v1";
+export const INTERACTION_MESSAGE_REQUEST_SCHEMA_VERSION = "touba-interaction-message-request-v1";
+export const INTERACTION_RESUME_REQUEST_SCHEMA_VERSION = "touba-interaction-resume-request-v1";
+export const INTERACTION_SESSION_SCHEMA_VERSION = "touba-interaction-session-v1";
+export const INTERACTION_SESSION_LIST_SCHEMA_VERSION = "touba-interaction-session-list-v1";
+export const INTERACTION_OPERATION_SCHEMA_VERSION = "touba-interaction-operation-v1";
+export const INTERACTION_ASSET_SCHEMA_VERSION = "touba-interaction-asset-v1";
+export const INTERACTION_SESSION_STORE_SCHEMA_VERSION = "touba-interaction-sessions-v1";
+export const INTERACTION_ASSET_STORE_SCHEMA_VERSION = "touba-interaction-assets-v1";
 export const MAX_INTERACTION_ASSET_BYTES = 10 * 1024 * 1024;
 export const MAX_INTERACTION_DISPLAY_TEXT_BYTES = 4096;
 
@@ -543,22 +546,17 @@ function loadInteractionSessionStore(path) {
       "interaction session store must contain a sessions array",
     );
   }
-  if (store.schema_version === "touba-interaction-sessions-v0.1") {
-    return {
-      schema_version: INTERACTION_SESSION_STORE_SCHEMA_VERSION,
-      sessions: store.sessions.map(migrateV01Session),
-    };
-  }
   if (store.schema_version !== INTERACTION_SESSION_STORE_SCHEMA_VERSION) {
     throw interactionError(
       "ToubaServeInteractionSessionStoreInvalid",
       `interaction session store must use ${INTERACTION_SESSION_STORE_SCHEMA_VERSION}`,
     );
   }
-  return {
-    ...store,
-    sessions: store.sessions.map(normalizeCurrentSession),
-  };
+  if (Object.keys(store).some(key => !["schema_version", "sessions"].includes(key))
+    || store.sessions.some(session => validateObject(SESSION_SCHEMA, session).length > 0)) {
+    throw interactionError("ToubaServeInteractionSessionStoreInvalid", "stored sessions must satisfy the canonical session contract");
+  }
+  return store;
 }
 
 function loadInteractionAssetStore(path) {
@@ -758,42 +756,6 @@ function sessionTitle(session, displayText) {
 function shortTargetRef(ref) {
   const value = String(ref ?? "");
   return value.split("/").at(-1) || value;
-}
-
-function migrateV01Session(session) {
-  const migratedMessages = (session.messages ?? []).map((message) => ({
-    ...message,
-    operation_id: `legacy:${message.run_id ?? message.message_id}`,
-    run_status: message.run_status === "pending" ? "queued" : message.run_status,
-  }));
-  return normalizeCurrentSession({
-    ...session,
-    schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
-    title: shortTargetRef(session.target_ref),
-    status: session.status === "awaiting_human"
-      ? "awaiting_human"
-      : session.status === "failed"
-        ? "failed"
-        : "open",
-    last_run_status: null,
-    messages: migratedMessages,
-    operations: [],
-  });
-}
-
-function normalizeCurrentSession(session) {
-  return {
-    ...session,
-    schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
-    title: session.title ?? shortTargetRef(session.target_ref),
-    status: session.status ?? "open",
-    last_run_status: session.last_run_status ?? null,
-    messages: (session.messages ?? []).map((message) => ({
-      ...message,
-      operation_id: message.operation_id ?? `legacy:${message.run_id ?? message.message_id}`,
-    })),
-    operations: Array.isArray(session.operations) ? session.operations : [],
-  };
 }
 
 function compactTimestamp(value) {

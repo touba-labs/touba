@@ -46,7 +46,7 @@ test("serves a request trigger through HTTP, durable queue, state and trace", as
     const queueText = readFileSync(fixture.queuePath, "utf8");
     assert.equal(queueText.includes("raw-secret-payload"), false);
     const queue = JSON.parse(queueText);
-    assert.equal(queue.trigger_queue_schema_version, "touba-trigger-queue-v0.1");
+    assert.equal(queue.trigger_queue_schema_version, "touba-trigger-queue-v1");
     assert.equal(queue.entries.length, 1);
     assert.equal(queue.entries[0].status, "succeeded");
     assert.equal(queue.entries[0].http.payload_bytes > 0, true);
@@ -449,7 +449,7 @@ test("recovers stale processing queue entries when the service starts", async ()
   try {
     const fixture = writeFixture(workspace);
     writeFileSync(fixture.queuePath, JSON.stringify({
-      trigger_queue_schema_version: "touba-trigger-queue-v0.1",
+      trigger_queue_schema_version: "touba-trigger-queue-v1",
       created_at: new Date().toISOString(),
       entries: [
         {
@@ -645,7 +645,7 @@ test("an immediate HTTP event preserves the earlier wake-up of a delayed queue e
     const fixture = writeFixture(workspace);
     const delayedDueAt = Date.now() + 700;
     writeFileSync(fixture.queuePath, JSON.stringify({
-      trigger_queue_schema_version: "touba-trigger-queue-v0.1",
+      trigger_queue_schema_version: "touba-trigger-queue-v1",
       created_at: new Date().toISOString(),
       entries: [queuedEntry("queue:delayed:001", "evt-delayed-existing", {
         nextAttemptAt: new Date(delayedDueAt).toISOString(),
@@ -693,7 +693,7 @@ test("cancels delayed queue wake-up when max-events stops the service", async ()
   try {
     const fixture = writeFixture(workspace);
     writeFileSync(fixture.queuePath, JSON.stringify({
-      trigger_queue_schema_version: "touba-trigger-queue-v0.1",
+      trigger_queue_schema_version: "touba-trigger-queue-v1",
       created_at: new Date().toISOString(),
       entries: [
         queuedEntry("queue:eligible:001", "evt-stop-first"),
@@ -1599,12 +1599,12 @@ function webhookManifest(options = {}) {
   return {
     manifest_version: options.effectContractKind === undefined
       ? "touba-manifest-v1"
-      : "touba-manifest-v2",
+      : "touba-manifest-v1",
     bindings: options.effectHandlerPath === undefined
       ? {}
       : {
         "tool:examples.webhook/RecordEffect": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: process.execPath,
             args: [options.effectHandlerPath],

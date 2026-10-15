@@ -106,7 +106,7 @@ fn lowers_linear_skill_fixture() {
         AstStatement::Give(statement)
             if matches!(
                 &statement.expression,
-                Some(AstExpression::Symbol { value, .. }) if value == "SourceNote"
+                Some(AstExpression::Record { type_name, .. }) if type_name == "SourceNote"
             )
     ));
 }

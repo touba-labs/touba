@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:99057e4b420ea7dcf62e4e80f07a33031e7611c381d73f56dd1f9809406268d8",
     "module_ref": "module:examples.a1_loop_binding",
     "entry_ref": "skill:examples.a1_loop_binding/BuildBatch"
   },
@@ -228,7 +229,8 @@
       "sequence_index": 10,
       "kind": "run_completed",
       "payload": {
-        "status": "success"
+        "status": "success",
+        "reason": "completed"
       }
     }
   ]

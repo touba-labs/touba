@@ -1,0 +1,12 @@
+{
+  "schema_version": "touba-project-event-v1",
+  "event_id": "evt_000001",
+  "sequence": 1,
+  "type": "project.changed",
+  "source": "touba-project-server",
+  "emitted_at": "2026-06-23T00:00:00.000Z",
+  "payload": {
+    "schema_version": "touba-project-refresh-v1",
+    "status": "refreshed"
+  }
+}

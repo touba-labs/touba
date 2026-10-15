@@ -1,0 +1,34 @@
+{
+  "manifest_version": "touba-manifest-v1",
+  "bindings": {
+    "tool:org.example.customer/FetchCustomerProfile": {
+      "handler": {
+        "kind": "process",
+        "command": "node",
+        "cwd": ".",
+        "args": [
+          "handlers/org/example/customer/fetch_customer_profile.handler.mjs"
+        ]
+      },
+      "grants": [
+        "network",
+        "secret_read",
+        "memory_read"
+      ],
+      "secrets": [
+        "CRM_API_TOKEN"
+      ],
+      "memories": [
+        {
+          "ref": "memory:org.example.customer/CustomerNotes",
+          "access": "read"
+        }
+      ],
+      "timeout_ms": 5000,
+      "max_payload_bytes": 1048576,
+      "effect_contract": {
+        "kind": "none"
+      }
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import { structuredModelObject } from "./model-output.fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createAiSdkDecisionProvider } from "../src/index.mjs";
@@ -24,7 +25,7 @@ test("business instructions supplement the SDK protocol and resolve per request"
     model: "test/model", instructions: (input) => `Support service, mode ${input.mode}.`,
     generateObject: async (options) => {
       captured = options;
-      return { object: { action: "answer_directly", result: "Hello." } };
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({ action: "answer_directly", result: "Hello." }) };
     },
   });
   await provider(request());
@@ -37,10 +38,10 @@ test("explicit system override remains explicit and instructions reject non-text
   let captured;
   const provider = createAiSdkDecisionProvider({
     model: "test/model", system: "Custom protocol", instructions: "Application guidance",
-    generateObject: async (options) => { captured = options; return { object: { action: "answer_directly", result: "ok" } }; },
+    generateObject: async (options) => { captured = options; return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({ action: "answer_directly", result: "ok" }) }; },
   });
   await provider(request());
-  assert.equal(captured.system, "Custom protocol\n\nApplication guidance");
+  assert.ok(captured.system.startsWith("Custom protocol\n\nApplication guidance\n\nRuntime context: "));
   const invalid = createAiSdkDecisionProvider({ model: "test/model", instructions: () => ({ invalid: true }), generateObject: () => assert.fail("must reject before model") });
   await assert.rejects(() => invalid(request()), /instructions must resolve to a string/);
 });
@@ -51,7 +52,7 @@ test("disabled review is absent from the model action space without mutating run
   let prompt;
   const provider = createAiSdkDecisionProvider({
     model: "test/model", allowHumanReview: false,
-    generateObject: async (options) => { prompt = JSON.parse(options.prompt); return { object: { action: "answer_directly", result: "ok" } }; },
+    generateObject: async (options) => { prompt = JSON.parse(options.system.split("\n\nRuntime context: ").at(-1)); return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({ action: "answer_directly", result: "ok" }) }; },
   });
   await provider(input);
   assert.deepEqual(input, original);

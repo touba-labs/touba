@@ -5,13 +5,23 @@
       "handler": {
         "kind": "process",
         "command": "__NODE_EXECUTABLE__",
-        "args": ["handlers/fetch_profile.handler.mjs"],
+        "args": [
+          "handlers/fetch_profile.handler.mjs"
+        ],
         "cwd": "__PROJECT_ROOT__"
       },
-      "grants": ["network", "secret_read"],
-      "secrets": ["DEMO_API_KEY"],
+      "grants": [
+        "network",
+        "secret_read"
+      ],
+      "secrets": [
+        "DEMO_API_KEY"
+      ],
       "timeout_ms": 5000,
-      "max_payload_bytes": 1048576
+      "max_payload_bytes": 1048576,
+      "effect_contract": {
+        "kind": "none"
+      }
     }
   }
 }

@@ -1,0 +1,14 @@
+{
+  "schema_version": "touba-project-change-proposal-v1",
+  "proposal_id": "change_demo_001",
+  "action": "write_text_file",
+  "target": {
+    "path": "src/main.tb"
+  },
+  "requested_by": {
+    "kind": "studio",
+    "id": "touba-studio"
+  },
+  "reason": "Create a reviewed Touba source patch",
+  "content": "module demo.main\n"
+}

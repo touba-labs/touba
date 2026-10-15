@@ -5,12 +5,19 @@
       "handler": {
         "kind": "process",
         "command": "__NODE_EXECUTABLE__",
-        "args": ["handlers/search_datasets.handler.mjs"],
+        "args": [
+          "handlers/search_datasets.handler.mjs"
+        ],
         "cwd": "__FIXTURE_ROOT__"
       },
-      "grants": ["network"],
+      "grants": [
+        "network"
+      ],
       "timeout_ms": 10000,
-      "max_payload_bytes": 1048576
+      "max_payload_bytes": 1048576,
+      "effect_contract": {
+        "kind": "none"
+      }
     }
   }
 }

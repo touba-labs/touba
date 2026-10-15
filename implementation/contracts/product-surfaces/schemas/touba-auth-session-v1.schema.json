@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-auth-session-v1.schema.json",
+  "title": "touba-auth-session-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "user", "organization", "permissions", "session"],
+  "properties": {
+    "schema_version": { "const": "touba-auth-session-v1" },
+    "access_token": { "type": "string" },
+    "refresh_token": { "type": "string" },
+    "user": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "email", "display_name", "status", "created_at"],
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "display_name": { "type": "string" },
+        "status": { "enum": ["active", "disabled"] },
+        "created_at": { "type": "string" }
+      }
+    },
+    "organization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "slug", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "status": { "enum": ["active", "disabled"] }
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "user_id", "device_id", "client", "platform", "created_at", "last_seen_at", "expires_at", "refresh_expires_at", "revoked_at"],
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "device_id": { "type": ["string", "null"] },
+        "client": { "type": "string" },
+        "platform": { "type": ["string", "null"] },
+        "created_at": { "type": "string" },
+        "last_seen_at": { "type": "string" },
+        "expires_at": { "type": "string" },
+        "refresh_expires_at": { "type": "string" },
+        "revoked_at": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

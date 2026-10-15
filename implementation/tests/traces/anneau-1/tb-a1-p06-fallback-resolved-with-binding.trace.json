@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:a573f16a7b116a7639867274e3664336feebb8312a3f5c7032130c8e01178662",
     "module_ref": "module:examples.a1_fallback_binding",
     "entry_ref": "skill:examples.a1_fallback_binding/FallbackSource"
   },
@@ -48,7 +49,8 @@
       "sequence_index": 3,
       "kind": "run_completed",
       "payload": {
-        "status": "success"
+        "status": "success",
+        "reason": "completed"
       }
     }
   ]

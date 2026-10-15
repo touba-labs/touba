@@ -3,6 +3,10 @@
 import crypto from "node:crypto";
 import {
   existsSync as defaultExistsSync,
+  accessSync as defaultAccessSync,
+  constants,
+  realpathSync as defaultRealpathSync,
+  statSync as defaultStatSync,
   mkdirSync as defaultMkdirSync,
   readFileSync as defaultReadFileSync,
   writeFileSync as defaultWriteFileSync,
@@ -12,26 +16,17 @@ import { fileURLToPath } from "node:url";
 
 import {
   TOUBA_MANIFEST_V1,
-  TOUBA_MANIFEST_V2,
-  TOUBA_MANIFEST_V3,
   validateManifestEffectContracts,
 } from "../../touba-manifest/src/effect-contract.mjs";
 
-export const SUPPLY_CHAIN_LOCK_SCHEMA_VERSION = "touba-lock-v0.1";
-export const SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-validation-v0.1";
+export const SUPPLY_CHAIN_LOCK_SCHEMA_VERSION = "touba-lock-v1";
+export const SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-validation-v1";
 
 const AIR_SCHEMA_VERSION = "touba-air-v1";
-const MANIFEST_VERSIONS = new Set([TOUBA_MANIFEST_V1, TOUBA_MANIFEST_V2, TOUBA_MANIFEST_V3]);
+const MANIFEST_VERSIONS = new Set([TOUBA_MANIFEST_V1]);
 const DIGEST_KIND = "sha256";
 const EXPECTED_HANDLER_SDK_NAME = "@touba/sdk";
 const HANDLER_SDK_PROTOCOL_V1 = "touba-tool-handler-v1";
-const HANDLER_SDK_PROTOCOL_V2 = "touba-tool-handler-v2";
-const HANDLER_SDK_PROTOCOL_V3 = "touba-tool-handler-v3";
-const SUPPORTED_HANDLER_SDK_PROTOCOLS = new Set([
-  HANDLER_SDK_PROTOCOL_V1,
-  HANDLER_SDK_PROTOCOL_V2,
-  HANDLER_SDK_PROTOCOL_V3,
-]);
 const SUPPORTED_HANDLER_SDK_VERSIONS = new Set(["0.1.0"]);
 const SUPPORTED_HANDLER_PACKAGE_KINDS = new Set(["local"]);
 const SUPPLY_CHAIN_REPORT_SUFFIX = ".supply-chain-report.json";
@@ -98,6 +93,9 @@ const __dirname = path.dirname(__filename);
 export const implementationDir = path.resolve(__dirname, "../../..");
 
 const defaultFs = {
+  accessSync: defaultAccessSync,
+  realpathSync: defaultRealpathSync,
+  statSync: defaultStatSync,
   existsSync: defaultExistsSync,
   mkdirSync: defaultMkdirSync,
   readFileSync: defaultReadFileSync,
@@ -137,6 +135,18 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
   };
   const handlerReports = [];
 
+  for (const kind of ["air", "manifest"]) {
+    if (!lock?.[kind] || !artifacts[kind]) continue;
+    const relative = lock[kind].path;
+    const root = path.dirname(artifacts.lock.path);
+    const declaredPath = typeof relative === "string" ? path.resolve(root, relative) : root;
+    if (typeof relative !== "string" || path.isAbsolute(relative) || hasUnsafeRelativeSegments(relative)
+      || !safeContainedFile(root, declaredPath, fs)
+      || !sameFilePath(declaredPath, artifacts[kind].path, fs)) {
+      diagnostics.push(error("SupplyChainArtifactPathMismatch", `${kind} path must identify the supplied artifact inside the lock directory`, kind, "path"));
+    }
+  }
+
   if (lock?.air && artifacts.air) {
     artifactStatus.air.drift_status = validateArtifactDigest("air", lock.air.digest, artifacts.air.digest, diagnostics)
       ? "ok"
@@ -162,7 +172,7 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
 
   const airToolRefs = collectAirToolRefs(artifacts.air?.json);
   const manifestBindings = bindingsFromManifest(artifacts.manifest?.json);
-  const compensationInverseToolRefs = collectCompensationInverseToolRefs(
+  collectCompensationInverseToolRefs(
     artifacts.manifest?.json,
     artifacts.air?.json,
     diagnostics,
@@ -209,23 +219,17 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
     }
     if (binding) {
       compareHandlerCommand(handler, binding.handler, report, diagnostics);
-      validateHandlerEffectProtocol(
-        handler,
-        binding,
-        report,
-        diagnostics,
-        compensationInverseToolRefs.has(toolRef),
-      );
+      validateExecutableIdentity(handler, binding.handler, artifacts, fs, report, diagnostics);
     }
 
     const handlerPath = resolveHandlerPath(handler, artifacts);
-    if (!fs.existsSync(handlerPath)) {
+    if (!safeContainedFile(path.dirname(artifacts.lock.path), handlerPath, fs)) {
       report.drift_status = "missing";
       addHandlerDiagnostic(report, diagnostics, error("HandlerMissing", "handler file missing", "handler", undefined, toolRef));
       continue;
     }
 
-    const handlerText = fs.readFileSync(handlerPath, "utf8");
+    const handlerText = fs.readFileSync(handlerPath);
     const observedDigest = sha256Text(handlerText);
     if (!validateArtifactDigest("handler", handler.digest, observedDigest, diagnostics, toolRef)) {
       report.drift_status = "changed";
@@ -260,9 +264,7 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
       handler_packages: handlers.length > 0,
       handler_package_files: handlers.some((handler) => Array.isArray(handler?.handler_package?.files)),
       handler_dependency_artifacts: handlers.some((handler) => Array.isArray(handler?.handler_package?.dependency_artifacts)),
-      ...([TOUBA_MANIFEST_V2, TOUBA_MANIFEST_V3].includes(artifacts.manifest?.json?.manifest_version)
-        ? { effect_contracts: true }
-        : {}),
+      effect_contracts: Boolean(artifacts.manifest),
       provenance_metadata: provenanceReport.status !== "unknown",
       review_metadata: reviewReport.status !== "unknown",
       review_evidence: reviewReport.evidence_status !== "unknown",
@@ -580,7 +582,12 @@ function validateReviewEvidence(evidence, artifacts, fs, diagnostics) {
       status = worstDeclaredArtifactStatus(status, "missing");
       return;
     }
-    const observedDigest = sha256Text(fs.readFileSync(evidencePath, "utf8"));
+    if (!safeContainedFile(lockDir, evidencePath, fs)) {
+      diagnostics.push(error("SupplyChainReviewEvidenceInvalid", `${field}.path escapes the lock directory or is not a regular file`, "lock", `${field}.path`));
+      status = worstDeclaredArtifactStatus(status, "invalid");
+      return;
+    }
+    const observedDigest = sha256Text(fs.readFileSync(evidencePath));
     if (entry.digest.value !== observedDigest) {
       diagnostics.push(error("SupplyChainReviewEvidenceChanged", "review evidence digest changed", "lock", `${field}.digest`));
       status = worstDeclaredArtifactStatus(status, "changed");
@@ -724,23 +731,49 @@ function compareHandlerCommand(handler, manifestHandler, report, diagnostics) {
   }
 }
 
-function validateHandlerEffectProtocol(handler, binding, report, diagnostics, isCompensationInverse) {
-  if (binding.effect_contract?.kind !== "external_write") {
-    return;
+// Resolve without executing the command. PATH is an environment input, not a
+// promise that an interpreter will execute every argument as source code.
+export function resolveExecutable(command, cwd, fs = defaultFs) {
+  if (typeof command !== "string" || !command.trim()) return null;
+  // Match handler-protocol.mjs: Node aliases use the running Node binary.
+  // Other commands are spawned without a parent PATH on POSIX.
+  if (command === "node" || command === "node.exe") command = process.execPath;
+  const env = process.platform === "win32" ? process.env : { PATH: "/usr/bin:/bin" };
+  const candidates = command.includes("/") || command.includes("\\")
+    ? [path.resolve(cwd, command)]
+    : (env.PATH ?? "").split(path.delimiter).flatMap((directory) => {
+      const extensions = process.platform === "win32" && !path.extname(command)
+        ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";") : [""];
+      return extensions.map((extension) => path.resolve(directory || cwd, command + extension));
+    });
+  for (const candidate of candidates) {
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch { /* Try the next PATH entry. */ }
   }
-  const expectedProtocol = isCompensationInverse
-    ? HANDLER_SDK_PROTOCOL_V3
-    : HANDLER_SDK_PROTOCOL_V2;
-  const declaredProtocols = Array.isArray(handler.sdk?.protocols) ? handler.sdk.protocols : [];
-  if (!declaredProtocols.includes(expectedProtocol)) {
-    addHandlerDiagnostic(report, diagnostics, error(
-      "HandlerSdkEffectProtocolMismatch",
-      `binding effect contract requires explicit SDK protocol ${expectedProtocol}`,
-      "handler",
-      "sdk.protocols",
-      handler.tool_ref,
-    ));
-    report.sdk_status = "unsupported";
+  return null;
+}
+
+function validateExecutableIdentity(handler, manifestHandler, artifacts, fs, report, diagnostics) {
+  const manifestDir = path.dirname(artifacts.manifest.path);
+  const cwd = path.resolve(manifestDir, manifestHandler.cwd ?? ".");
+  const executable = resolveExecutable(manifestHandler.command, cwd, fs);
+  if (!executable) {
+    addHandlerDiagnostic(report, diagnostics, error("HandlerCommandUnavailable", "handler command is missing or not executable", "handler", "command", handler.tool_ref));
+  }
+  const declared = resolveHandlerPath(handler, artifacts);
+  const arguments_ = Array.isArray(manifestHandler.args) ? manifestHandler.args : [];
+  const candidates = arguments_.filter((arg) => typeof arg === "string" && !arg.startsWith("-"))
+    .map((arg) => path.resolve(cwd, arg));
+  if (executable) candidates.push(executable);
+  if (!candidates.some((candidate) => sameFilePath(candidate, declared, fs))) {
+    addHandlerDiagnostic(report, diagnostics, error("HandlerPathMismatch", "lock handler path is neither the executable nor an explicit manifest argument path", "handler", "path", handler.tool_ref));
+  }
+  const root = path.dirname(artifacts.lock.path);
+  if (!safeContainedFile(root, declared, fs)) {
+    addHandlerDiagnostic(report, diagnostics, error("HandlerPathInvalid", "handler must be a regular file confined to the lock directory, including symlinks", "handler", "path", handler.tool_ref));
   }
 }
 
@@ -788,13 +821,7 @@ function sdkStatus(sdk, diagnostics, toolRef) {
   if (sdk.name !== EXPECTED_HANDLER_SDK_NAME) {
     unsupportedReasons.push("name");
   }
-  const protocols = sdkProtocols(sdk);
-  if (
-    sdk.protocol !== HANDLER_SDK_PROTOCOL_V1
-    || protocols.length === 0
-    || protocols.some((protocol) => !SUPPORTED_HANDLER_SDK_PROTOCOLS.has(protocol))
-    || (Array.isArray(sdk.protocols) && !sdk.protocols.includes(HANDLER_SDK_PROTOCOL_V1))
-  ) {
+  if (sdk.protocol !== HANDLER_SDK_PROTOCOL_V1 || Object.hasOwn(sdk, "protocols")) {
     unsupportedReasons.push("protocol");
   }
   if (typeof sdk.version !== "string" || !SUPPORTED_HANDLER_SDK_VERSIONS.has(sdk.version)) {
@@ -819,23 +846,7 @@ function sdkReportFields(sdk, diagnostics, toolRef) {
     sdk_name: typeof sdk?.name === "string" ? sdk.name : undefined,
     sdk_version: typeof sdk?.version === "string" ? sdk.version : undefined,
     sdk_protocol: typeof sdk?.protocol === "string" ? sdk.protocol : undefined,
-    ...(Array.isArray(sdk?.protocols) ? { sdk_protocols: sdkProtocols({ protocols: sdk.protocols }) } : {}),
   };
-}
-
-function sdkProtocols(sdk) {
-  const protocols = [];
-  if (typeof sdk?.protocol === "string" && sdk.protocol.trim() !== "") {
-    protocols.push(sdk.protocol);
-  }
-  if (Array.isArray(sdk?.protocols)) {
-    for (const protocol of sdk.protocols) {
-      if (typeof protocol === "string" && protocol.trim() !== "") {
-        protocols.push(protocol);
-      }
-    }
-  }
-  return [...new Set(protocols)];
 }
 
 function handlerPackageReportFields(handlerPackage) {
@@ -896,8 +907,9 @@ function validateHandlerPackage(handler, report, artifacts, fs) {
 
   const entrypoint = handlerPackage.entrypoint;
   if (typeof entrypoint === "string" && entrypoint.trim() !== "") {
-    const executablePath = handlerPathFromManifestFields(handler);
-    if (entrypoint !== handler.path && entrypoint !== executablePath) {
+    const root = resolveHandlerPackageRoot(handlerPackage, artifacts, report, diagnostics, toolRef, fs);
+    if (!root || path.isAbsolute(entrypoint) || hasUnsafeRelativeSegments(entrypoint)
+      || path.resolve(root, entrypoint) !== resolveHandlerPath(handler, artifacts)) {
       report.handler_package_status = "mismatch";
       report.drift_status = "changed";
       diagnostics.push(error(
@@ -907,6 +919,9 @@ function validateHandlerPackage(handler, report, artifacts, fs) {
         "handler_package.entrypoint",
         toolRef,
       ));
+    }
+    if (!Array.isArray(handlerPackage.files) || !handlerPackage.files.some((file) => file.path === entrypoint)) {
+      diagnostics.push(error("HandlerPackageEntrypointUntracked", "handler package files must include its entrypoint", "handler", "handler_package.files", toolRef));
     }
   }
 
@@ -923,7 +938,7 @@ function validateHandlerPackageArtifacts(handlerPackage, report, artifacts, fs, 
     return diagnostics;
   }
 
-  const packageRoot = resolveHandlerPackageRoot(handlerPackage, artifacts, report, diagnostics, toolRef);
+  const packageRoot = resolveHandlerPackageRoot(handlerPackage, artifacts, report, diagnostics, toolRef, fs);
   if (!packageRoot) {
     if (hasPackageFiles) {
       report.handler_package_files_status = "invalid";
@@ -975,7 +990,7 @@ function validateHandlerPackageArtifacts(handlerPackage, report, artifacts, fs, 
   return diagnostics;
 }
 
-function resolveHandlerPackageRoot(handlerPackage, artifacts, report, diagnostics, toolRef) {
+function resolveHandlerPackageRoot(handlerPackage, artifacts, report, diagnostics, toolRef, fs) {
   if (typeof handlerPackage.package_root !== "string" || handlerPackage.package_root.trim() === "") {
     diagnostics.push(error(
       "HandlerPackageRootMissing",
@@ -1002,8 +1017,17 @@ function resolveHandlerPackageRoot(handlerPackage, artifacts, report, diagnostic
   }
 
   const lockDir = artifacts.lock ? path.dirname(artifacts.lock.path) : process.cwd();
-  const manifestDir = artifacts.manifest ? path.dirname(artifacts.manifest.path) : lockDir;
-  return path.resolve(manifestDir, root);
+  const packageRoot = path.resolve(lockDir, root);
+  try {
+    if (!isPathInside(fs.realpathSync(lockDir), fs.realpathSync(packageRoot))) {
+      diagnostics.push(error("HandlerPackageRootInvalid", "package root escapes lock directory through a symlink", "handler_package", "handler_package.package_root", toolRef));
+      return undefined;
+    }
+  } catch {
+    diagnostics.push(error("HandlerPackageRootInvalid", "package root does not exist", "handler_package", "handler_package.package_root", toolRef));
+    return undefined;
+  }
+  return packageRoot;
 }
 
 function validateDeclaredArtifactGroup(options) {
@@ -1063,7 +1087,12 @@ function validateDeclaredArtifactGroup(options) {
       return;
     }
 
-    const text = fs.readFileSync(artifactPath, "utf8");
+    if (!safeContainedFile(rootPath, artifactPath, fs)) {
+      diagnostics.push(error(invalidCode, `${field}.path escapes its root through a symlink or is not a regular file`, artifactKind, `${field}.path`, toolRef));
+      status = worstDeclaredArtifactStatus(status, "invalid");
+      return;
+    }
+    const text = fs.readFileSync(artifactPath);
     const observedDigest = sha256Text(text);
     if (entry.digest.value !== observedDigest) {
       diagnostics.push(error(changedCode, changedMessage, artifactKind, `${field}.digest`, toolRef));
@@ -1091,14 +1120,19 @@ function hasUnsafeRelativeSegments(value) {
 
 function isPathInside(rootPath, candidatePath) {
   const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
-  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
-function handlerPathFromManifestFields(handler) {
-  if (Array.isArray(handler.args) && typeof handler.args[0] === "string" && handler.args[0].trim() !== "") {
-    return handler.args[0];
-  }
-  return handler.path;
+function safeContainedFile(root, file, fs) {
+  try {
+    return isPathInside(root, file) && fs.statSync(file).isFile()
+      && isPathInside(fs.realpathSync(root), fs.realpathSync(file));
+  } catch { return false; }
+}
+
+function sameFilePath(left, right, fs) {
+  try { return fs.realpathSync(left) === fs.realpathSync(right); }
+  catch { return false; }
 }
 
 function addHandlerDiagnostic(report, diagnostics, diagnostic) {
@@ -1112,11 +1146,7 @@ function addHandlerDiagnostic(report, diagnostics, diagnostic) {
 
 function resolveHandlerPath(handler, artifacts) {
   const lockDir = artifacts.lock ? path.dirname(artifacts.lock.path) : process.cwd();
-  const manifestDir = artifacts.manifest ? path.dirname(artifacts.manifest.path) : lockDir;
-  if (typeof handler.cwd === "string" && Array.isArray(handler.args) && typeof handler.args[0] === "string") {
-    return path.resolve(manifestDir, handler.cwd, handler.args[0]);
-  }
-  return path.resolve(lockDir, handler.path);
+  return path.resolve(lockDir, typeof handler.path === "string" ? handler.path : ".");
 }
 
 function collectAirToolRefs(air) {
@@ -1210,7 +1240,7 @@ function isSha256Hex(value) {
 }
 
 function isIsoUtcTimestamp(value) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(value) && !Number.isNaN(Date.parse(value));
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value) && !Number.isNaN(Date.parse(value));
 }
 
 function isPlainObject(value) {
@@ -1322,7 +1352,7 @@ function main(argv) {
 function writeSupplyChainReport(filePath, report, fs) {
   assertReportOutputPath(filePath, SUPPLY_CHAIN_REPORT_SUFFIX);
   if (report?.supply_chain_validation_schema_version !== SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION) {
-    throw new Error("supply chain report must contain touba-supply-chain-validation-v0.1");
+    throw new Error("supply chain report must contain touba-supply-chain-validation-v1");
   }
   const resolved = path.resolve(filePath);
   fs.mkdirSync(path.dirname(resolved), { recursive: true });

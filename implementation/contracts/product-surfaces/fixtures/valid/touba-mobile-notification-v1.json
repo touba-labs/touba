@@ -1,0 +1,37 @@
+{
+  "schema_version": "touba-mobile-notification-v1",
+  "generated_at": "2026-06-23T12:00:00Z",
+  "summary": {
+    "notification_count": 2,
+    "pending_decisions": 1,
+    "alerts": 1
+  },
+  "notifications": [
+    {
+      "notification_id": "notif:approval:req_20260622_001",
+      "mode": "approval",
+      "request_id": "req_20260622_001",
+      "title": "Approval required",
+      "summary": "A governed action is waiting for a reviewer decision.",
+      "run_id": "run_20260622_001",
+      "trace_ref": "trace:run_20260622_001",
+      "risk": "low",
+      "redaction": "sensitive payload omitted",
+      "target_path": "/approvals/pending/current",
+      "expires_at": "2026-06-23T13:00:00Z"
+    },
+    {
+      "notification_id": "notif:alert:queue-watch",
+      "mode": "alert",
+      "request_id": null,
+      "title": "Trigger queue requires attention",
+      "summary": "A trigger queue has pending or refused events.",
+      "run_id": null,
+      "trace_ref": null,
+      "risk": "medium",
+      "redaction": "operational summary only",
+      "target_path": "/alerts/current",
+      "expires_at": null
+    }
+  ]
+}

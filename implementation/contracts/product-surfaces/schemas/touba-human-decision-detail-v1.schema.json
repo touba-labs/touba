@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-human-decision-detail-v1.schema.json",
+  "title": "touba-human-decision-detail-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "decision"],
+  "properties": {
+    "schema_version": { "const": "touba-human-decision-detail-v1" },
+    "generated_at": { "type": "string" },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_schema_version",
+        "request_id",
+        "run_id",
+        "trace_ref",
+        "user_ref",
+        "device_ref",
+        "decision_kind",
+        "result",
+        "decided_by",
+        "decided_at",
+        "comment",
+        "client_ref",
+        "accepted_at"
+      ],
+      "properties": {
+        "source_schema_version": { "type": "string" },
+        "request_id": { "type": "string" },
+        "run_id": { "type": "string" },
+        "trace_ref": { "type": "string" },
+        "user_ref": { "type": "string" },
+        "device_ref": { "type": "string" },
+        "decision_kind": { "enum": ["approval", "human_review"] },
+        "result": { "type": "string" },
+        "decided_by": { "type": "string" },
+        "decided_at": { "type": "string" },
+        "comment": { "type": ["string", "null"] },
+        "client_ref": { "type": "string" },
+        "accepted_at": { "type": "string" }
+      }
+    }
+  }
+}

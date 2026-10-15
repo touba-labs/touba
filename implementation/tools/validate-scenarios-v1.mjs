@@ -207,6 +207,10 @@ async function validateHumanInteraction() {
 async function validateMemoryScope() {
   const document = compileScenario(positives.memoryScope);
   const manifest = generateManifestFromAirDocument(document);
+  Object.assign(manifest.bindings["tool:examples.scenario_memory_scope/ReadProjectKnowledge"], {
+    grants: ["memory_read"],
+    memories: [{ ref: "memory:examples.scenario_memory_scope/ProjectKnowledge", access: "read" }],
+  });
   const result = await executeAirDocument(document, {
     entryRef: "strategy:examples.scenario_memory_scope/RunKnowledgeReview",
     inputs: { query: { text: "handler contract" } },
@@ -251,6 +255,9 @@ async function validateMemoryScope() {
 async function validateRegulatedPayment() {
   const document = compileScenario(positives.regulatedPayment);
   const manifest = generateManifestFromAirDocument(document);
+  Object.assign(manifest.bindings["tool:examples.scenario_external_approval/SendPayment"], {
+    grants: ["network", "secret_read"], secrets: ["PAYMENT_API_KEY"],
+  });
   const secretStore = loadSecretsFromJson(JSON.stringify({
     secrets_version: "touba-secrets-v1",
     secrets: {
@@ -323,6 +330,9 @@ async function validateToolSecurityRefusals() {
   );
   const document = compileSourcePath(sourcePath);
   const manifest = generateManifestFromAirDocument(document);
+  Object.assign(manifest.bindings["tool:examples.v1_process_binding/FetchSource"], {
+    grants: ["network", "secret_read"], secrets: ["SEARCH_API_KEY"],
+  });
   const secretStore = loadSecretsFromJson(
     readFileSync(
       resolve(implementationRoot, "tests/tool-binding-v1/secrets/touba.secret-handles.fixture.json"),

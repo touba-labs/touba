@@ -233,6 +233,14 @@ function materializeManifestFromAir(sourceAirPath, options = {}) {
       "agent:examples.memory_postgres_rb2/MemoryAgent": ["POSTGRES_MEMORY_TOKEN"],
     };
   }
+  for (const [name, access] of [["WriteCustomerMemory", "write"], ["ReadCustomerMemory", "read"], ["WriteTriggerMemory", "write"]]) {
+    const binding = manifest.bindings[`tool:examples.memory_postgres_rb2/${name}`];
+    if (!binding) continue;
+    binding.effect_contract = access === "write" ? { kind: "external_write", retry_mode: "none" } : { kind: "none" };
+    binding.grants = ["network", "secret_read", `memory_${access}`];
+    binding.secrets = ["POSTGRES_MEMORY_TOKEN"];
+    binding.memories = [{ ref: "memory:examples.memory_postgres_rb2/CustomerMemory", access }];
+  }
   if (airDocument.definitions?.triggers?.some((trigger) => trigger.id === "trigger:examples.memory_postgres_rb2/ScheduledMemoryWrite")) {
     manifest.triggers = {
       "trigger:examples.memory_postgres_rb2/ScheduledMemoryWrite": {
@@ -306,7 +314,7 @@ function writeResourceBindings(options = {}) {
   writeFileSync(
     resourceBindingsPath,
     `${JSON.stringify({
-      resource_bindings_schema_version: "touba-resource-bindings-v0.1",
+      resource_bindings_schema_version: "touba-resource-bindings-v1",
       resources,
     }, null, 2)}\n`,
     "utf8",
@@ -343,6 +351,8 @@ async function runAir(options) {
     manifestPath,
     "--secrets",
     secretsPath,
+    "--effect-journal",
+    path.join(tmpRoot, "memory.effect-journal.json"),
     "--output",
     options.output ?? "result",
     "--trace-out",
@@ -381,7 +391,7 @@ async function runAir(options) {
     args.push("--max-steps", String(options.maxSteps));
   }
   if (options.triggerRef) {
-    args.push("--trigger", options.triggerRef, "--max-runs", String(options.maxRuns ?? 1));
+    args.push("--trigger", options.triggerRef, "--max-runs", String(options.maxRuns ?? 1), "--state", path.join(projectRoot, "memory.trigger-state.json"));
   }
   if (options.entryRef) {
     args.push("--entry", options.entryRef);
@@ -401,7 +411,9 @@ async function runAir(options) {
     }
     return runResult;
   }
-  assertSuccess("run", runResult);
+  if (options.expectedExit !== undefined) {
+    if (runResult.status !== options.expectedExit) throw new Error(`expected exit ${options.expectedExit}, got ${runResult.status}: ${runResult.stderr}`);
+  } else assertSuccess("run", runResult);
   if (options.output === "trace") {
     return JSON.parse(runResult.stdout);
   }
@@ -551,6 +563,7 @@ async function assertApprovalBeforeWrite() {
     customerId: "ACME-PG-APPROVAL-PAUSE",
     note: "must wait for approval",
     output: "trace",
+    expectedExit: 3,
   });
   const paused = event(pauseTrace, "human_approval_paused");
   await assertNoPostgresNote("ACME-PG-APPROVAL-PAUSE");
@@ -559,6 +572,7 @@ async function assertApprovalBeforeWrite() {
     airFile: approvalAirPath,
     customerId: "ACME-PG-APPROVAL-REJECTED",
     note: "must not be persisted after rejection",
+    expectedExit: 4,
     humanDecisions: {
       [paused.payload.approval_ref]: "rejected",
     },
@@ -633,24 +647,35 @@ async function assertOpenAiDecisionProviderWithPostgres() {
   }
   materializeManifestFromAir(airPath);
   writeResourceBindings();
-  const run = await runAir({
-    customerId: "ACME-PG-OPENAI",
-    note: "OpenAI selected a governed PostgreSQL memory capability",
-    agentDecisionProviderPath: path.join(fixtureRoot, "providers/postgres-memory-openai.provider.mjs"),
-  });
-  if (run.result?.stored_note !== "OpenAI selected a governed PostgreSQL memory capability") {
-    throw new Error("OpenAI live path did not complete the governed PostgreSQL memory operation");
-  }
-  const decisions = run.trace.events.filter((item) => item.kind === "agent_decision_recorded");
-  if (!decisions.some((item) => item.payload.source === "openai_structured_output")) {
-    throw new Error("expected an OpenAI structured decision in the trace");
+  for (let repetition = 1; repetition <= 3; repetition++) {
+    const customerId = `ACME-PG-OPENAI-${repetition}`;
+    const note = "The customer prefers email updates.";
+    const run = await runAir({ customerId, note,
+      agentDecisionProviderPath: path.join(fixtureRoot, "providers/postgres-memory-openai.provider.mjs"),
+    });
+    const persisted = await fetchPostgresNote(customerId);
+    // The counter is committed by PostgreSQL itself, independently of Touba's trace.
+    const count = await dockerCompose(["exec", "-T", "postgres", "psql", "-U", "touba_memory", "-d", "touba_memory", "-Atc",
+      `SELECT write_count FROM customer_memory WHERE customer_id = '${customerId}'`]);
+    const writes = Number(count.stdout.trim());
+    // Budget events exist only when that budget is configured; call-attempt
+    // events count actual provider invocations regardless of budget policy.
+    const providerCalls = run.trace.events.filter((item) => item.kind === "agent_decision_provider_call_attempted").length;
+    if (providerCalls < 1) throw new Error("The live path did not invoke its configured provider");
+    console.log(`postgres-live: repetition=${repetition} acquired_writes=${writes} provider_calls=${providerCalls}`);
+    if (run.result?.stored_note !== note || persisted.stored_note !== note || writes !== 1) {
+      throw new Error("OpenAI live path did not complete exactly the requested single PostgreSQL write and verified read");
+    }
+    if (!run.trace.events.some((item) => item.kind === "agent_decision_recorded" && item.payload.decision_source === "openai_structured_output")) {
+      throw new Error("expected an OpenAI structured decision in the trace");
+    }
   }
 }
 
 function writeSupplyChainLock(handlerPaths) {
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const lock = {
-    lock_schema_version: "touba-lock-v0.1",
+    lock_schema_version: "touba-lock-v1",
     lock_kind: "supply_chain",
     generated_at: "2026-06-05T00:00:00Z",
     generated_by: {
@@ -690,6 +715,8 @@ function writeSupplyChainLock(handlerPaths) {
           name: "examples.memory-postgres.handlers",
           version: "0.1.0",
           entrypoint: handlerPath,
+          package_root: ".",
+          files: [{ path: handlerPath, digest: digestForFile(absoluteHandlerPath) }],
         },
       };
     }),

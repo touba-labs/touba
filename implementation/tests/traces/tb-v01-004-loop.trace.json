@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:7dd0a059f1298b25beace93eade2c8c949eb22b6f27c345efdf70763ebda29a6",
     "module_ref": "module:examples.loop",
     "entry_ref": "strategy:examples.loop/RunNormalization"
   },
@@ -39,18 +40,19 @@
         "node_id": "node:graph:strategy:examples.loop/RunNormalization:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 583,
-          "end_byte": 593,
-          "start_line": 27,
+          "start_byte": 750,
+          "end_byte": 829,
+          "start_line": 33,
           "start_column": 8,
-          "end_line": 27,
-          "end_column": 18
+          "end_line": 36,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "agent:examples.loop/Normalizer",
         "caller_ref": "strategy:examples.loop/RunNormalization",
-        "agent_ref": null
+        "agent_ref": null,
+        "argument_count": 1
       }
     },
     {
@@ -64,12 +66,12 @@
         "node_id": "node:graph:strategy:examples.loop/RunNormalization:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 583,
-          "end_byte": 593,
-          "start_line": 27,
+          "start_byte": 750,
+          "end_byte": 829,
+          "start_line": 33,
           "start_column": 8,
-          "end_line": 27,
-          "end_column": 18
+          "end_line": 36,
+          "end_column": 8
         }
       },
       "payload": {
@@ -82,6 +84,18 @@
       "event_id": "event:run-1:5",
       "run_id": "run-1",
       "sequence_index": 4,
+      "kind": "agent_interface_entered",
+      "payload": {
+        "agent_ref": "agent:examples.loop/Normalizer",
+        "caller_ref": "strategy:examples.loop/RunNormalization",
+        "input_count": 1,
+        "output_type": "type:examples.loop/NormalizedItems"
+      }
+    },
+    {
+      "event_id": "event:run-1:6",
+      "run_id": "run-1",
+      "sequence_index": 5,
       "kind": "agent_capabilities_listed",
       "payload": {
         "agent_ref": "agent:examples.loop/Normalizer",
@@ -140,9 +154,9 @@
       }
     },
     {
-      "event_id": "event:run-1:6",
+      "event_id": "event:run-1:7",
       "run_id": "run-1",
-      "sequence_index": 5,
+      "sequence_index": 6,
       "kind": "agent_decision_recorded",
       "payload": {
         "agent_ref": "agent:examples.loop/Normalizer",
@@ -152,9 +166,9 @@
       }
     },
     {
-      "event_id": "event:run-1:7",
+      "event_id": "event:run-1:8",
       "run_id": "run-1",
-      "sequence_index": 6,
+      "sequence_index": 7,
       "kind": "agent_capability_selected",
       "payload": {
         "agent_ref": "agent:examples.loop/Normalizer",
@@ -165,9 +179,9 @@
       }
     },
     {
-      "event_id": "event:run-1:8",
+      "event_id": "event:run-1:9",
       "run_id": "run-1",
-      "sequence_index": 7,
+      "sequence_index": 8,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
@@ -175,9 +189,9 @@
       }
     },
     {
-      "event_id": "event:run-1:9",
+      "event_id": "event:run-1:10",
       "run_id": "run-1",
-      "sequence_index": 8,
+      "sequence_index": 9,
       "kind": "loop_evaluated",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
@@ -185,11 +199,11 @@
         "node_id": "node:graph:skill:examples.loop/NormalizeItems:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 260,
-          "end_byte": 312,
-          "start_line": 15,
+          "start_byte": 275,
+          "end_byte": 361,
+          "start_line": 16,
           "start_column": 8,
-          "end_line": 17,
+          "end_line": 19,
           "end_column": 8
         }
       },
@@ -201,9 +215,9 @@
       }
     },
     {
-      "event_id": "event:run-1:10",
+      "event_id": "event:run-1:11",
       "run_id": "run-1",
-      "sequence_index": 9,
+      "sequence_index": 10,
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
@@ -211,24 +225,25 @@
         "node_id": "node:graph:skill:examples.loop/NormalizeItems:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 290,
-          "end_byte": 303,
-          "start_line": 16,
+          "start_byte": 305,
+          "end_byte": 361,
+          "start_line": 17,
           "start_column": 12,
-          "end_line": 16,
-          "end_column": 25
+          "end_line": 19,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "function:examples.loop/NormalizeItem",
         "caller_ref": "skill:examples.loop/NormalizeItems",
-        "agent_ref": "agent:examples.loop/Normalizer"
+        "agent_ref": "agent:examples.loop/Normalizer",
+        "argument_count": 1
       }
     },
     {
-      "event_id": "event:run-1:11",
+      "event_id": "event:run-1:12",
       "run_id": "run-1",
-      "sequence_index": 10,
+      "sequence_index": 11,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:function:examples.loop/NormalizeItem",
@@ -236,9 +251,9 @@
       }
     },
     {
-      "event_id": "event:run-1:12",
+      "event_id": "event:run-1:13",
       "run_id": "run-1",
-      "sequence_index": 11,
+      "sequence_index": 12,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:function:examples.loop/NormalizeItem",
@@ -250,9 +265,9 @@
       }
     },
     {
-      "event_id": "event:run-1:13",
+      "event_id": "event:run-1:14",
       "run_id": "run-1",
-      "sequence_index": 12,
+      "sequence_index": 13,
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
@@ -260,12 +275,12 @@
         "node_id": "node:graph:skill:examples.loop/NormalizeItems:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 290,
-          "end_byte": 303,
-          "start_line": 16,
+          "start_byte": 305,
+          "end_byte": 361,
+          "start_line": 17,
           "start_column": 12,
-          "end_line": 16,
-          "end_column": 25
+          "end_line": 19,
+          "end_column": 8
         }
       },
       "payload": {
@@ -275,9 +290,9 @@
       }
     },
     {
-      "event_id": "event:run-1:14",
+      "event_id": "event:run-1:15",
       "run_id": "run-1",
-      "sequence_index": 13,
+      "sequence_index": 14,
       "kind": "loop_evaluated",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
@@ -285,11 +300,11 @@
         "node_id": "node:graph:skill:examples.loop/NormalizeItems:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 260,
-          "end_byte": 312,
-          "start_line": 15,
+          "start_byte": 275,
+          "end_byte": 361,
+          "start_line": 16,
           "start_column": 8,
-          "end_line": 17,
+          "end_line": 19,
           "end_column": 8
         }
       },
@@ -301,9 +316,9 @@
       }
     },
     {
-      "event_id": "event:run-1:15",
+      "event_id": "event:run-1:16",
       "run_id": "run-1",
-      "sequence_index": 14,
+      "sequence_index": 15,
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
@@ -311,24 +326,25 @@
         "node_id": "node:graph:skill:examples.loop/NormalizeItems:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 290,
-          "end_byte": 303,
-          "start_line": 16,
+          "start_byte": 305,
+          "end_byte": 361,
+          "start_line": 17,
           "start_column": 12,
-          "end_line": 16,
-          "end_column": 25
+          "end_line": 19,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "function:examples.loop/NormalizeItem",
         "caller_ref": "skill:examples.loop/NormalizeItems",
-        "agent_ref": "agent:examples.loop/Normalizer"
+        "agent_ref": "agent:examples.loop/Normalizer",
+        "argument_count": 1
       }
     },
     {
-      "event_id": "event:run-1:16",
+      "event_id": "event:run-1:17",
       "run_id": "run-1",
-      "sequence_index": 15,
+      "sequence_index": 16,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:function:examples.loop/NormalizeItem",
@@ -336,9 +352,9 @@
       }
     },
     {
-      "event_id": "event:run-1:17",
+      "event_id": "event:run-1:18",
       "run_id": "run-1",
-      "sequence_index": 16,
+      "sequence_index": 17,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:function:examples.loop/NormalizeItem",
@@ -350,9 +366,9 @@
       }
     },
     {
-      "event_id": "event:run-1:18",
+      "event_id": "event:run-1:19",
       "run_id": "run-1",
-      "sequence_index": 17,
+      "sequence_index": 18,
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
@@ -360,12 +376,12 @@
         "node_id": "node:graph:skill:examples.loop/NormalizeItems:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 290,
-          "end_byte": 303,
-          "start_line": 16,
+          "start_byte": 305,
+          "end_byte": 361,
+          "start_line": 17,
           "start_column": 12,
-          "end_line": 16,
-          "end_column": 25
+          "end_line": 19,
+          "end_column": 8
         }
       },
       "payload": {
@@ -375,9 +391,9 @@
       }
     },
     {
-      "event_id": "event:run-1:19",
+      "event_id": "event:run-1:20",
       "run_id": "run-1",
-      "sequence_index": 18,
+      "sequence_index": 19,
       "kind": "loop_evaluated",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
@@ -385,11 +401,11 @@
         "node_id": "node:graph:skill:examples.loop/NormalizeItems:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 260,
-          "end_byte": 312,
-          "start_line": 15,
+          "start_byte": 275,
+          "end_byte": 361,
+          "start_line": 16,
           "start_column": 8,
-          "end_line": 17,
+          "end_line": 19,
           "end_column": 8
         }
       },
@@ -401,9 +417,9 @@
       }
     },
     {
-      "event_id": "event:run-1:20",
+      "event_id": "event:run-1:21",
       "run_id": "run-1",
-      "sequence_index": 19,
+      "sequence_index": 20,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
@@ -415,9 +431,21 @@
       }
     },
     {
-      "event_id": "event:run-1:21",
+      "event_id": "event:run-1:22",
       "run_id": "run-1",
-      "sequence_index": 20,
+      "sequence_index": 21,
+      "kind": "agent_interface_result_returned",
+      "payload": {
+        "agent_ref": "agent:examples.loop/Normalizer",
+        "caller_ref": "strategy:examples.loop/RunNormalization",
+        "output_type": "type:examples.loop/NormalizedItems",
+        "result_type": "object"
+      }
+    },
+    {
+      "event_id": "event:run-1:23",
+      "run_id": "run-1",
+      "sequence_index": 22,
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.loop/RunNormalization",
@@ -425,23 +453,24 @@
         "node_id": "node:graph:strategy:examples.loop/RunNormalization:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
-          "start_byte": 583,
-          "end_byte": 593,
-          "start_line": 27,
+          "start_byte": 750,
+          "end_byte": 829,
+          "start_line": 33,
           "start_column": 8,
-          "end_line": 27,
-          "end_column": 18
+          "end_line": 36,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "agent:examples.loop/Normalizer",
-        "caller_ref": "strategy:examples.loop/RunNormalization"
+        "caller_ref": "strategy:examples.loop/RunNormalization",
+        "result_binding": "normalized"
       }
     },
     {
-      "event_id": "event:run-1:22",
+      "event_id": "event:run-1:24",
       "run_id": "run-1",
-      "sequence_index": 21,
+      "sequence_index": 23,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.loop/RunNormalization",
@@ -453,12 +482,13 @@
       }
     },
     {
-      "event_id": "event:run-1:23",
+      "event_id": "event:run-1:25",
       "run_id": "run-1",
-      "sequence_index": 22,
+      "sequence_index": 24,
       "kind": "run_completed",
       "payload": {
-        "status": "success"
+        "status": "success",
+        "reason": "completed"
       }
     }
   ]

@@ -20,12 +20,12 @@ try {
       reason: "memory path requested",
     },
   });
-  assertSelectedTrace(selected.trace);
+  assertSelectedTrace(selected.trace, selected.messages);
 
   const refused = runAir({
     "agent:examples.agent_autonomy_v1/Researcher": "skill:examples.agent_autonomy_v1/HiddenSearch",
   }, { expectFailure: true });
-  assertRefusedTrace(refused.trace, refused.stderr);
+  assertRefusedTrace(refused.trace, refused.stderr, refused.messages);
 
   console.log("agent-autonomy-v1: status=success decision=governed_selection refusal=uses_boundary");
 } finally {
@@ -62,7 +62,7 @@ function runAir(agentDecisions, options = {}) {
       "--agent-decisions-json",
       JSON.stringify(agentDecisions),
       "--output",
-      "trace",
+      "json",
     ],
     {
       cwd: implementationRoot,
@@ -79,12 +79,12 @@ function runAir(agentDecisions, options = {}) {
   }
 
   return {
-    trace: JSON.parse(runResult.stdout),
+    ...JSON.parse(runResult.stdout),
     stderr: runResult.stderr,
   };
 }
 
-function assertSelectedTrace(trace) {
+function assertSelectedTrace(trace, outputs) {
   const listed = event(trace, "agent_capabilities_listed");
   assertDeepEqual(listed.payload.capability_refs, [
     "skill:examples.agent_autonomy_v1/UseDatasetSearch",
@@ -104,7 +104,7 @@ function assertSelectedTrace(trace) {
     throw new Error(`unexpected authority_source ${selected.payload.authority_source}`);
   }
 
-  const messages = shownMessages(trace);
+  const messages = outputs.map(message => message.text);
   assertDeepEqual(messages, ["Memory search selected"], "shown messages");
   if (trace.events.some((item) => item.kind === "agent_capability_refused")) {
     throw new Error("selected run must not include agent_capability_refused");
@@ -112,7 +112,7 @@ function assertSelectedTrace(trace) {
   assertRunStatus(trace, "success");
 }
 
-function assertRefusedTrace(trace, stderr) {
+function assertRefusedTrace(trace, stderr, messages) {
   const refused = event(trace, "agent_capability_refused");
   if (refused.payload.selected_ref !== "skill:examples.agent_autonomy_v1/HiddenSearch") {
     throw new Error(`unexpected refused selected_ref ${refused.payload.selected_ref}`);
@@ -124,17 +124,10 @@ function assertRefusedTrace(trace, stderr) {
   if (!stderr.includes("AgentCapabilityNotAllowed")) {
     throw new Error("stderr must expose AgentCapabilityNotAllowed");
   }
-  if (shownMessages(trace).length !== 0) {
+  if (messages.length !== 0) {
     throw new Error("refused capability must not enter any selected skill");
   }
   assertRunStatus(trace, "failure");
-}
-
-function shownMessages(trace) {
-  return trace.events
-    .filter((item) => item.kind === "user_interaction_shown")
-    .map((item) => item.payload?.message)
-    .filter((message) => typeof message === "string");
 }
 
 function assertRunStatus(trace, expected) {

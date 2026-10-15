@@ -2,7 +2,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { toolNameToHandlerFile } from "./generate.mjs";
+import { handlerRelativePathForTool } from "./requirements.mjs";
+import { SDK_INSTALL_HINT } from "./sdk-dependency.mjs";
 
 const DEFAULT_HANDLER_ROOT = "handlers";
 const DEFAULT_HANDLER_EXTENSION = "mjs";
@@ -109,6 +110,7 @@ test("handler contract refuses an unexpected tool ref before business code", asy
   const response = await handleToolRequest(
     JSON.stringify({
       protocol: "touba-tool-handler-v1",
+      operation: "invoke",
       tool_ref: "tool:contract/UnexpectedTool",
       arguments: sampleArguments(),
       grants: REQUIRED_GRANTS,
@@ -134,6 +136,7 @@ test("handler contract enforces declared grants and secret handles before busine
   const response = await handleToolRequest(
     JSON.stringify({
       protocol: "touba-tool-handler-v1",
+      operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: sampleArguments(),
       grants: [],
@@ -215,10 +218,7 @@ export function planHandlerStubsFromAirDocument(airDocument, options = {}) {
 
   return selectedTools.map((tool) => {
     const normalizedTool = normalizeTool(tool);
-    const targetPath = join(
-      handlerRoot,
-      toolNameToHandlerFile(normalizedTool.name, handlerExtension),
-    );
+    const targetPath = handlerRelativePathForTool(normalizedTool, { handlerRoot, handlerExtension });
     return {
       toolRef: normalizedTool.id,
       path: targetPath,
@@ -369,6 +369,7 @@ async function main() {
     for (const stub of written) {
       process.stdout.write(`generated ${stub.path} for ${stub.toolRef}\n`);
     }
+    process.stdout.write(`${SDK_INSTALL_HINT}\n`);
   } catch (error) {
     process.stderr.write(`touba-handler-stub: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

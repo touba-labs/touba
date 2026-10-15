@@ -9,18 +9,18 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { airDocumentDigest } from "../../../runtime/touba-runtime/src/air-identity.mjs";
+import { validateAirMachineContract, validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
 
-export const TRACE_AUDIT_SCHEMA_VERSION = "trace-audit-v0.1";
-export const TRACE_AUDIT_VALIDATION_SCHEMA_VERSION = "trace-audit-validation-v0.1";
-export const TRACE_AUDIT_EXPORT_SCHEMA_VERSION = "trace-audit-export-v0.1-local";
+export const TRACE_AUDIT_SCHEMA_VERSION = "trace-audit-v1";
+export const TRACE_AUDIT_VALIDATION_SCHEMA_VERSION = "trace-audit-validation-v1";
+export const TRACE_AUDIT_EXPORT_SCHEMA_VERSION = "trace-audit-export-v1-local";
 export const TRACE_TIMELINE_SCHEMA_VERSION = "touba-trace-timeline-v1";
 
 const TRACE_PROTOCOL_VERSION = "touba-trace-v1";
 const AIR_SCHEMA_VERSION = "touba-air-v1";
 const MANIFEST_VERSIONS = new Set([
   "touba-manifest-v1",
-  "touba-manifest-v2",
-  "touba-manifest-v3",
 ]);
 const DIGEST_KIND = "sha256";
 const RUNTIME_NAME = "touba-audit";
@@ -166,7 +166,7 @@ export function validateTraceAuditArtifacts(artifacts, options = {}) {
     status,
     checked: {
       trace_schema: Boolean(artifacts.trace),
-      trace_air_coherence: Boolean(artifacts.trace && artifacts.air),
+      trace_air_coherence: Boolean(artifacts.trace && artifacts.air && artifacts.trace.json.run?.admission !== "refused"),
       source_refs: Boolean(artifacts.source && (artifacts.trace || artifacts.air)),
       digests: true,
       redaction: true,
@@ -181,6 +181,9 @@ export function validateTraceAuditArtifacts(artifacts, options = {}) {
 }
 
 export function createTraceAuditExport(artifacts, validation) {
+  if (validation?.validationReport?.status !== "ok") {
+    throw new Error("TraceAuditExportRefused: only a successful audit may be exported");
+  }
   const exportDocument = {
     trace_audit_export_schema_version: TRACE_AUDIT_EXPORT_SCHEMA_VERSION,
     trace_audit_manifest: validation.traceAuditManifest,
@@ -513,6 +516,11 @@ function validateAuditManifestShape(manifest, diagnostics) {
 }
 
 function validateRuntimeArtifactVersions(artifacts, diagnostics) {
+  for (const [name, validate] of [["trace", validateTraceMachineContract], ["air", validateAirMachineContract]]) {
+    if (!artifacts[name]) continue;
+    try { validate(artifacts[name].json); }
+    catch (cause) { diagnostics.push(error(cause.code ?? "TraceAuditArtifactInvalid", `invalid ${name} machine contract`, name, cause.path)); }
+  }
   if (artifacts.trace?.json?.trace_protocol_version !== TRACE_PROTOCOL_VERSION) {
     diagnostics.push(error("TraceAuditManifestInvalid", "unsupported trace protocol", "trace"));
   }
@@ -578,9 +586,22 @@ function validateDigestShape(field, digest, diagnostics) {
 
 function validateTraceAirCoherence(trace, air, diagnostics) {
   if (!trace) {
+    diagnostics.push(error("TraceMissing", "execution trace is required for audit", "trace"));
     return;
   }
   validateTraceSequence(trace, diagnostics);
+
+  if (trace.run?.admission === "refused") {
+    diagnostics.push({ severity: "warning", code: "AdmissionRefused", message: "admission refusal only: no execution or AIR identity is attested", artifact: "trace" });
+    return;
+  }
+
+  const commitment = trace.run?.air_digest;
+  if (typeof commitment !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(commitment)) {
+    diagnostics.push(error("TraceAirCommitmentMissing", "trace does not carry a valid execution-time AIR commitment", "trace", "run.air_digest"));
+  } else if (air && commitment !== airDocumentDigest(air)) {
+    diagnostics.push(error("TraceAirDigestMismatch", "provided AIR differs from the AIR committed by the execution trace", "air", "run.air_digest"));
+  }
 
   if (!air) {
     return;
@@ -806,7 +827,7 @@ function writeJsonFile(filePath, document, fs) {
 function writeTraceAuditReport(filePath, validation, fs) {
   assertReportOutputPath(filePath, TRACE_AUDIT_REPORT_SUFFIX);
   if (validation?.validationReport?.trace_audit_validation_schema_version !== TRACE_AUDIT_VALIDATION_SCHEMA_VERSION) {
-    throw new Error("trace audit report must contain trace-audit-validation-v0.1");
+    throw new Error("trace audit report must contain trace-audit-validation-v1");
   }
   writeJsonFile(filePath, validation, fs);
 }

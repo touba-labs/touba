@@ -1,5 +1,5 @@
 {
-  "resource_bindings_schema_version": "touba-resource-bindings-v0.1",
+  "resource_bindings_schema_version": "touba-resource-bindings-v1",
   "resources": {
     "memory:org.example.customer/CustomerNotes": {
       "kind": "memory_backend",

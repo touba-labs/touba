@@ -1,3 +1,4 @@
+import { structuredModelObject } from "./model-output.fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -13,8 +14,6 @@ import {
   ToubaAgentDecisionProviderError,
   ToubaHandlerError,
   TOUBA_SDK_METADATA,
-  EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
-  COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
   MCP_BRIDGE_CONFIG_VERSION,
   createAiSdkDecisionProvider,
   createEffectReceipt,
@@ -23,12 +22,37 @@ import {
   createOpenAiDecisionProvider,
   createOllamaDecisionProvider,
   createToolHandler,
+  createToolResult,
   handleToolRequest,
   toubaSdkMetadata,
 } from "../src/index.mjs";
 
 const TOOL_REF = "tool:examples.sdk/SearchDatasets";
 const testDir = dirname(fileURLToPath(import.meta.url));
+
+test("explicit tool result transports memory provenance separately from business data", async () => {
+  const metadata = [{ memory_ref: "memory:examples.sdk/Notes", operation: "read", source_kind: "backend_import" }];
+  const input = JSON.stringify({ protocol: "touba-tool-handler-v1", operation: "invoke", tool_ref: TOOL_REF, arguments: {} });
+  const result = await handleToolRequest(input, TOOL_REF, async () => createToolResult("note", { memoryMetadata: metadata }));
+  assert.deepEqual(result, { ok: true, value: "note", memory_metadata: metadata });
+  const domainValue = { value: "domain field", memory_metadata: "domain field too" };
+  assert.deepEqual(await handleToolRequest(input, TOOL_REF, async () => domainValue), { ok: true, value: domainValue });
+  for (const entries of [{}, [null], [{ ...metadata[0], content: "private" }], [{ ...metadata[0], operation: "admin" }]]) {
+    const refused = await handleToolRequest(input, TOOL_REF, async () => createToolResult("note", { memoryMetadata: entries }));
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error.code, "MemoryMetadataInvalid");
+    assert.doesNotMatch(JSON.stringify(refused), /private/);
+  }
+});
+
+test("tool definitions refuse malformed signatures and output types", () => {
+  const base = { toolRef: TOOL_REF, run: async () => "value" };
+  for (const change of [
+    { outputType: 42 }, { outputType: "" },
+    { inputSignature: [{ name: "request", type_ref: "builtin:Text", typo: true }] },
+    { inputSignature: [{ name: "request", type_ref: "builtin:Text" }, { name: "request", type_ref: "builtin:Int" }] },
+  ]) assert.throws(() => createToolHandler({ ...base, ...change }), { code: "InvalidToolDefinition" });
+});
 
 function effectEnvelope() {
   return {
@@ -73,7 +97,6 @@ test("exposes descriptive SDK metadata without runtime authority fields", () => 
     name: "@touba/sdk",
     version: "0.1.0",
     protocol: "touba-tool-handler-v1",
-    protocols: ["touba-tool-handler-v1", "touba-tool-handler-v2", "touba-tool-handler-v3"],
     status: "ok",
   });
   const metadata = toubaSdkMetadata();
@@ -84,12 +107,12 @@ test("exposes descriptive SDK metadata without runtime authority fields", () => 
   assert.equal(Object.hasOwn(metadata, "permissions"), false);
 });
 
-test("handles strict V3 compensation with deeply frozen context and correlated receipt", async () => {
+test("handles strict compensation with deeply frozen context and correlated receipt", async () => {
   const effect = effectEnvelope();
   const compensation = compensationEnvelope();
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
+      protocol: "touba-tool-handler-v1", operation: "compensate",
       tool_ref: TOOL_REF,
       arguments: { request: { query: "parks" } },
       effect,
@@ -131,7 +154,7 @@ test("handles strict V3 compensation with deeply frozen context and correlated r
   });
 });
 
-test("supports partial V3 success and bounded V3 errors", async () => {
+test("supports partial compensation success and bounded compensation errors", async () => {
   const effect = effectEnvelope();
   const compensation = compensationEnvelope();
   assert.deepEqual(
@@ -140,7 +163,7 @@ test("supports partial V3 success and bounded V3 errors", async () => {
   );
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
+      protocol: "touba-tool-handler-v1", operation: "compensate",
       tool_ref: TOOL_REF,
       arguments: {},
       effect,
@@ -158,26 +181,26 @@ test("supports partial V3 success and bounded V3 errors", async () => {
   assert.equal(Object.hasOwn(response, "compensation_receipt"), false);
 });
 
-test("rejects V3 compensation on legacy protocols and invalid V3 correlations", async () => {
+test("rejects compensation on invoke and invalid compensation correlations", async () => {
   const effect = effectEnvelope();
   const compensation = compensationEnvelope();
   for (const request of [
     {
-      protocol: EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: {},
       effect,
       compensation,
     },
     {
-      protocol: COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
+      protocol: "touba-tool-handler-v1", operation: "compensate",
       tool_ref: TOOL_REF,
       arguments: {},
       effect,
       compensation: { ...compensation, original_request_digest: `sha256:${"9".repeat(64)}` },
     },
     {
-      protocol: COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
+      protocol: "touba-tool-handler-v1", operation: "compensate",
       tool_ref: TOOL_REF,
       arguments: {},
       effect,
@@ -196,11 +219,11 @@ test("rejects V3 compensation on legacy protocols and invalid V3 correlations", 
   }
 });
 
-test("handles V2 effects with a read-only envelope and a request-bound receipt", async () => {
+test("handles effects with a read-only envelope and a request-bound receipt", async () => {
   const effect = effectEnvelope();
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: { request: { query: "parks" } },
       effect,
@@ -235,7 +258,7 @@ test("handles V2 effects with a read-only envelope and a request-bound receipt",
   });
 });
 
-test("requires a correlated receipt for every successful V2 effect", async () => {
+test("requires a correlated receipt for every successful effect", async () => {
   const effect = effectEnvelope();
   for (const handler of [
     async () => ({ echoed: "missing receipt" }),
@@ -249,7 +272,7 @@ test("requires a correlated receipt for every successful V2 effect", async () =>
   ]) {
     const response = await handleToolRequest(
       JSON.stringify({
-        protocol: EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
+        protocol: "touba-tool-handler-v1", operation: "invoke",
         tool_ref: TOOL_REF,
         arguments: {},
         effect,
@@ -263,11 +286,11 @@ test("requires a correlated receipt for every successful V2 effect", async () =>
   }
 });
 
-test("carries a bounded not_applied receipt on a V2 domain error", async () => {
+test("carries a bounded not_applied receipt on a effect domain error", async () => {
   const effect = effectEnvelope();
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: {},
       effect,
@@ -294,7 +317,7 @@ test("carries a bounded not_applied receipt on a V2 domain error", async () => {
   });
 });
 
-test("rejects effect fields on the legacy V1 protocol before handler code", async () => {
+test("rejects a request missing its operation before handler code", async () => {
   let called = false;
   const response = await handleToolRequest(
     JSON.stringify({
@@ -312,13 +335,13 @@ test("rejects effect fields on the legacy V1 protocol before handler code", asyn
 
   assert.equal(called, false);
   assert.equal(response.ok, false);
-  assert.equal(response.error.code, "InvalidEffect");
+  assert.equal(response.error.code, "InvalidHandlerOperation");
 });
 
 test("handles a valid tool request and hides protocol plumbing from handler code", async () => {
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: "touba-tool-handler-v1",
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: { request: { query: "parks" } },
       grants: ["network"],
@@ -354,7 +377,7 @@ test("createToolHandler exposes a small run request and preserves context", asyn
 
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: "touba-tool-handler-v1",
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: { request: { query: "parks" } },
       grants: ["network"],
@@ -380,7 +403,7 @@ test("createToolHandler keeps the full arguments object when a tool has several 
 
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: "touba-tool-handler-v1",
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: { query: "parks", rows: 3 },
     }),
@@ -394,7 +417,7 @@ test("createToolHandler keeps the full arguments object when a tool has several 
 test("returns controlled protocol errors", async () => {
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: "touba-tool-handler-v1",
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: "tool:examples.sdk/Other",
       grants: ["network"],
     }),
@@ -409,7 +432,7 @@ test("returns controlled protocol errors", async () => {
 test("returns controlled domain errors from handler code", async () => {
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: "touba-tool-handler-v1",
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: {},
       grants: ["network"],
@@ -433,7 +456,7 @@ test("returns controlled domain errors from handler code", async () => {
 test("redacts unexpected handler errors", async () => {
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: "touba-tool-handler-v1",
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: {},
       grants: ["network"],
@@ -457,7 +480,7 @@ test("redacts unexpected handler errors", async () => {
 test("checks defense-in-depth grants and secret handles", async () => {
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: "touba-tool-handler-v1",
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: {},
       grants: ["network"],
@@ -478,7 +501,7 @@ test("checks defense-in-depth grants and secret handles", async () => {
 test("accepts required grants and secret handles when the envelope is complete", async () => {
   const response = await handleToolRequest(
     JSON.stringify({
-      protocol: "touba-tool-handler-v1",
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: TOOL_REF,
       arguments: { request: { query: "parks" } },
       grants: ["network", "secret_read"],
@@ -595,9 +618,9 @@ test("rejects malformed handler envelopes before user handler code", async () =>
     ["not-json", "InvalidHandlerJson"],
     [JSON.stringify(null), "InvalidHandlerRequest"],
     [JSON.stringify({ protocol: "other", tool_ref: TOOL_REF }), "InvalidProtocol"],
-    [JSON.stringify({ protocol: "touba-tool-handler-v1", tool_ref: TOOL_REF, arguments: [] }), "InvalidArguments"],
-    [JSON.stringify({ protocol: "touba-tool-handler-v1", tool_ref: TOOL_REF, grants: "network" }), "InvalidHandlerRequest"],
-    [JSON.stringify({ protocol: "touba-tool-handler-v1", tool_ref: TOOL_REF, grants: [1] }), "InvalidHandlerRequest"],
+    [JSON.stringify({ protocol: "touba-tool-handler-v1", operation: "invoke", tool_ref: TOOL_REF, arguments: [] }), "InvalidArguments"],
+    [JSON.stringify({ protocol: "touba-tool-handler-v1", operation: "invoke", tool_ref: TOOL_REF, grants: "network" }), "InvalidHandlerRequest"],
+    [JSON.stringify({ protocol: "touba-tool-handler-v1", operation: "invoke", tool_ref: TOOL_REF, grants: [1] }), "InvalidHandlerRequest"],
   ]) {
     const response = await handleToolRequest(
       rawInput,
@@ -615,7 +638,7 @@ test("defineTool reads stdin and writes a protocol response to stdout", () => {
     [join(testDir, "fixtures/echo.handler.mjs")],
     {
       input: JSON.stringify({
-        protocol: "touba-tool-handler-v1",
+        protocol: "touba-tool-handler-v1", operation: "invoke",
         tool_ref: "tool:examples.sdk/EchoProfile",
         call_id: "call:test-sdk:1",
         arguments: { request: { name: "Bamba" } },
@@ -736,6 +759,44 @@ test("ToubaEngine compiles a source and runs it through the Touba CLI facade", a
   }
 });
 
+test("real ToubaEngine refuses a successful handler that returns a resolved secret", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-sdk-secret-result-"));
+  try {
+    writeFileSync(join(root, "program.tb"), 'module examples.secret_result\ntool Echo\n    gives Text\n    requires secret_read\n    secrets TEST_TOKEN\nskill Run\n    gives Text\n    uses Echo\n    do\n        Echo\n            into value\n        give value\n');
+    writeFileSync(join(root, "manifest.json"), JSON.stringify({
+      manifest_version: "touba-manifest-v1", bindings: { "tool:examples.secret_result/Echo": {
+        effect_contract: { kind: "none" }, handler: { kind: "process", command: process.execPath, args: ["-e", 'process.stdout.write(JSON.stringify({ok:true,value:process.env.TEST_TOKEN}));'] },
+        grants: ["secret_read"], secrets: ["TEST_TOKEN"], timeout_ms: 5000, max_payload_bytes: 4096,
+      } },
+    }));
+    writeFileSync(join(root, "secrets.json"), JSON.stringify({ secrets_version: "touba-secrets-v1", secrets: { TEST_TOKEN: { source: "env", name: "TEST_TOKEN" } } }));
+    const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+      commandArgs: [join(testDir, "../../../cli/touba-project/src/main.mjs")], env: { TEST_TOKEN: "synthetic-sdk-result-secret" } });
+    await assert.rejects(() => engine.run({ source: "program.tb", manifest: "manifest.json", secrets: "secrets.json" }), error => {
+      assert.ok(error instanceof ToubaEngineError);
+      assert.ok(error.details.trace.events.some(event => event.payload?.runtime_error_code === "SecretValueInResult"));
+      assert.equal(JSON.stringify(error).includes("synthetic-sdk-result-secret"), false);
+      assert.equal(String(error.message).includes("synthetic-sdk-result-secret"), false);
+      return true;
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("real ToubaEngine preserves admission refusal evidence on invalid AIR", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-sdk-admission-"));
+  try {
+    const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+      commandArgs: [join(testDir, "../../../cli/touba-project/src/main.mjs")] });
+    await assert.rejects(engine.run({ airJson: { module: { id: "PRIVATE_INVALID_MODULE" } } }), error => {
+      assert.ok(error instanceof ToubaEngineError);
+      assert.equal(error.details.trace.run.admission, "refused");
+      assert.equal(error.details.trace.events[0].payload.code, "AirInvalid");
+      assert.doesNotMatch(JSON.stringify(error.details.trace), /PRIVATE_INVALID_MODULE|run_started/);
+      return true;
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("ToubaEngine redacts known secret values from command failures", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-sdk-engine-fail-"));
   try {
@@ -775,13 +836,13 @@ test("createAiSdkDecisionProvider can answer directly from orientation input", a
     source: "test_ai_sdk",
     generateObject: async (request) => {
       calls.push(request);
-      return {
-        object: {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+        object: structuredModelObject({
           action: "answer_directly",
           source: "test_ai_sdk",
           reason: "salutation simple",
           result: "Bonjour.",
-        },
+        }),
       };
     },
   });
@@ -798,10 +859,10 @@ test("createAiSdkDecisionProvider can answer directly from orientation input", a
   assert.equal(calls[0].model, "test-provider/test-model");
   assert.equal(calls[0].maxOutputTokens, 700);
 	  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
-	  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
+	  assert.deepEqual(jsonSchemaOf(calls[0]).properties.decision.anyOf.map(branch => branch.properties.action.enum[0]), ["answer_directly", "request_capabilities"]);
 	  assert.match(calls[0].system, /human review, approval, validation, or judgment/);
 	  assert.match(calls[0].system, /request_human_review is available only after the catalogue/);
-	  const prompt = JSON.parse(calls[0].prompt);
+	  const prompt = JSON.parse(calls[0].system.split("\n\nRuntime context: ").at(-1));
 	  assert.equal(prompt.protocol, "touba-agent-model-input-v1");
 	  assert.equal(prompt.content_boundary.user_input_authority, "domain_data_only");
 });
@@ -814,13 +875,13 @@ test("createAiSdkDecisionProvider passes an explicit maxOutputTokens budget", as
     maxOutputTokens: 96,
     generateObject: async (request) => {
       calls.push(request);
-      return {
-        object: {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+        object: structuredModelObject({
           action: "answer_directly",
           source: "test_ai_sdk",
           reason: "bounded structured output",
           result: "ok",
-        },
+        }),
       };
     },
   });
@@ -843,13 +904,13 @@ test("createOllamaDecisionProvider provides a non-OpenAI AI SDK helper without a
       baseURL: "http://127.0.0.1:11434/v1",
       generateObject: async (request) => {
         calls.push(request);
-        return {
-          object: {
+        return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+          object: structuredModelObject({
             action: "answer_directly",
             source: "ollama_openai_compatible",
             reason: "local provider answered",
             result: "Bonjour depuis un provider local.",
-          },
+          }),
         };
       },
     });
@@ -864,7 +925,7 @@ test("createOllamaDecisionProvider provides a non-OpenAI AI SDK helper without a
     });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].providerOptions.openai.store, false);
-    assert.deepEqual(jsonSchemaOf(calls[0]).properties.source.enum, [
+    assert.deepEqual(jsonSchemaOf(calls[0]).properties.decision.anyOf[0].properties.source.enum, [
       "ollama_openai_compatible",
     ]);
   } finally {
@@ -878,7 +939,7 @@ test("createAiSdkDecisionProvider rejects invalid output budget options", () => 
     () => createAiSdkDecisionProvider({
       model: "test-provider/test-model",
       maxOutputTokens: 0,
-      generateObject: async () => ({ object: {} }),
+      generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({}) }),
     }),
     (error) =>
       error instanceof ToubaAgentDecisionProviderError
@@ -908,7 +969,7 @@ test("provider helpers do not derive model configuration from domain input", asy
         fetch: instrumentedFetch,
         generateObject: async (call) => {
           calls.push(call);
-          return { object: { action: "answer_directly", result: "ok" } };
+          return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({ action: "answer_directly", result: "ok" }) };
         },
       };
       const request = agentDecisionSummaryRequest();
@@ -932,8 +993,8 @@ test("createAiSdkDecisionProvider rejects overly rich structured decisions", asy
   const provider = createAiSdkDecisionProvider({
     model: "test-provider/test-model",
     source: "test_ai_sdk",
-    generateObject: async () => ({
-      object: {
+    generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+      object: structuredModelObject({
         action: "answer_directly",
         source: "test_ai_sdk",
         reason: "too much output",
@@ -941,7 +1002,7 @@ test("createAiSdkDecisionProvider rejects overly rich structured decisions", asy
         debug_payload: {
           hidden: "extra",
         },
-      },
+      }),
     }),
   });
 
@@ -963,17 +1024,17 @@ test("createAiSdkDecisionProvider requests a catalog and selects a capability wi
     generateObject: async (request) => {
       calls.push(request);
       if (jsonSchemaOf(request).title === "touba_agent_orientation_decision") {
-        return {
-          object: {
+        return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+          object: structuredModelObject({
             action: "request_capabilities",
             source: "test_ai_sdk",
             reason: "the capability catalog is required",
             result: "",
-          },
+          }),
         };
       }
-      return {
-        object: {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+        object: structuredModelObject({
           action: "select_capability",
           target_ref: "skill:test/Answer",
           source: "test_ai_sdk",
@@ -984,7 +1045,7 @@ test("createAiSdkDecisionProvider requests a catalog and selects a capability wi
               rows: 1,
             },
           },
-        },
+        }),
       };
     },
   });
@@ -1034,8 +1095,8 @@ test("createAiSdkDecisionProvider can request governed human review from the cat
   const provider = createAiSdkDecisionProvider({
     model: "test-provider/test-model",
     source: "test_ai_sdk",
-    generateObject: async () => ({
-      object: {
+    generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+      object: structuredModelObject({
         action: "request_human_review",
         target_ref: "human_review",
         source: "test_ai_sdk",
@@ -1047,7 +1108,7 @@ test("createAiSdkDecisionProvider can request governed human review from the cat
           },
         },
         review_prompt: "Please review the summary before the final answer.",
-      },
+      }),
     }),
   });
 
@@ -1069,8 +1130,8 @@ test("createAiSdkDecisionProvider can disable dynamic human review by policy", a
     source: "test_ai_sdk",
     generateObject: async (request) => {
       calls.push(request);
-      return {
-        object: {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+        object: structuredModelObject({
           action: "select_capability",
           target_ref: "skill:test/Answer",
           source: "test_ai_sdk",
@@ -1082,7 +1143,7 @@ test("createAiSdkDecisionProvider can disable dynamic human review by policy", a
             },
           },
           review_prompt: "",
-        },
+        }),
       };
     },
   });
@@ -1105,8 +1166,8 @@ test("createAiSdkDecisionProvider permits repeated authorized capability selecti
     source: "test_ai_sdk",
     generateObject: async (request) => {
       calls.push(request);
-      return {
-        object: {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+        object: structuredModelObject({
           action: "select_capability",
           target_ref: "skill:test/Search",
           source: "test_ai_sdk",
@@ -1118,7 +1179,7 @@ test("createAiSdkDecisionProvider permits repeated authorized capability selecti
             },
           },
           review_prompt: "",
-        },
+        }),
       };
     },
   });
@@ -1151,13 +1212,13 @@ test("createAiSdkDecisionProvider does not infer completion from capability usag
     source: "test_ai_sdk",
     generateObject: async (request) => {
       calls.push(request);
-      return {
-        object: {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+        object: structuredModelObject({
           action: "answer_directly",
           source: "test_ai_sdk",
           reason: "all declared work is complete",
           result: "final governed result",
-        },
+        }),
       };
     },
   });
@@ -1171,7 +1232,7 @@ test("createAiSdkDecisionProvider does not infer completion from capability usag
 
   assert.equal(decision.action, "answer_directly");
   assert.equal(decision.result, "final governed result");
-  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["answer_directly", "request_capabilities"]);
+  assert.deepEqual(jsonSchemaOf(calls[0]).properties.decision.anyOf.map(branch => branch.properties.action.enum[0]), ["answer_directly", "request_capabilities"]);
   assert.match(calls[0].system, /Usage history neither proves that the goal is complete/iu);
   assert.doesNotMatch(calls[0].system, /capacités déclarées ont déjà été consommées/iu);
 });
@@ -1181,13 +1242,13 @@ test("createAiSdkDecisionProvider permits a catalog request after every capabili
     allowHumanReview: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
-    generateObject: async () => ({
-      object: {
+    generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+      object: structuredModelObject({
         action: "request_capabilities",
         source: "test_ai_sdk",
         reason: "an authorized operation needs another invocation",
         result: "",
-      },
+      }),
     }),
   });
   const request = agentDecisionSummaryRequest();
@@ -1206,13 +1267,13 @@ test("createAiSdkDecisionProvider supports bounded terminal completion", async (
     source: "test_ai_sdk",
     generateObject: async (request) => {
       calls.push(request);
-      return {
-        object: {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+        object: structuredModelObject({
           action: "answer_directly",
           source: "test_ai_sdk",
           reason: "the observation satisfies the goal",
           result: "terminal result",
-        },
+        }),
       };
     },
   });
@@ -1223,7 +1284,7 @@ test("createAiSdkDecisionProvider supports bounded terminal completion", async (
   assert.equal(decision.result, "terminal result");
   assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_finalization_decision");
   assert.deepEqual(
-    jsonSchemaOf(calls[0]).properties.action.enum,
+    jsonSchemaOf(calls[0]).properties.decision.anyOf.map(branch => branch.properties.action.enum[0]),
     ["answer_directly", "cannot_complete"],
   );
   assert.match(calls[0].system, /no new capability call/iu);
@@ -1234,13 +1295,13 @@ test("createAiSdkDecisionProvider can declare terminal work incomplete", async (
   const provider = createAiSdkDecisionProvider({
     model: "test-provider/test-model",
     source: "test_ai_sdk",
-    generateObject: async () => ({
-      object: {
+    generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
+      object: structuredModelObject({
         action: "cannot_complete",
         source: "test_ai_sdk",
         reason: "a required observation is absent",
         result: "",
-      },
+      }),
     }),
   });
 
@@ -1274,7 +1335,7 @@ test("createAiSdkDecisionProvider keeps heterogeneous capability signatures sepa
     allowHumanReview: false,
     generateObject: async (call) => {
       calls.push(call);
-      return { object: { action: "select_capability", ...choice, review_prompt: "" } };
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({ action: "select_capability", ...choice, review_prompt: "" }) };
     },
   });
   for (const candidate of choices) {
@@ -1338,13 +1399,14 @@ test("createAiSdkDecisionProvider preserves declared result types in orientation
         model: "test-provider/test-model",
         generateObject: async (call) => {
           calls.push(call);
-          return { object: { action: "answer_directly", result } };
+          return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({ action: "answer_directly", result }) };
         },
       });
       assert.deepEqual((await provider(request)).result, example.result);
-      const branches = jsonSchemaOf(calls[0]).properties.result.anyOf;
-      assert.equal(branches[0].type, example.type);
-      assert.deepEqual(branches[1], { type: "string", enum: [""] });
+      const branches = jsonSchemaOf(calls[0]).properties.decision.anyOf;
+      assert.deepEqual(branches[0].properties.action.enum, ["answer_directly"]);
+      assert.equal(branches[0].properties.result.type, example.type);
+      assert.deepEqual(branches[1].properties.result, { type: "string", enum: [""] });
       result = "";
       await assert.rejects(() => provider(request), /agent result do not match/u);
     }
@@ -1354,11 +1416,11 @@ test("createAiSdkDecisionProvider preserves declared result types in orientation
 test("createAiSdkDecisionProvider allows non-answer actions for a typed result", async () => {
   const provider = createAiSdkDecisionProvider({
     model: "test-provider/test-model",
-    generateObject: async (call) => ({ object: {
+    generateObject: async (call) => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({
       action: jsonSchemaOf(call).title === "touba_agent_orientation_decision" ? "request_capabilities" : "cannot_complete",
       reason: "more observations are required",
       result: "",
-    } }),
+    }) }),
   });
   const summary = agentDecisionSummaryRequest();
   summary.agent_signature = { output_type: "builtin:Int" };
@@ -1372,7 +1434,7 @@ test("createAiSdkDecisionProvider refuses incomplete type descriptors before gen
   let calls = 0;
   const provider = createAiSdkDecisionProvider({
     model: "test-provider/test-model",
-    generateObject: async () => { calls += 1; return { object: {} }; },
+    generateObject: async () => { calls += 1; return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({}) }; },
   });
   const request = agentDecisionSummaryRequest();
   request.agent_signature = { output_type: "type:test/Missing" };
@@ -1391,20 +1453,20 @@ test("createAiSdkDecisionProvider never expands authority from descriptive state
   };
   const provider = createAiSdkDecisionProvider({
     model: "test-provider/test-model",
-    generateObject: async () => ({ object: {
+    generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({
       action: "select_capability",
       target_ref: "tool:test/Undeclared",
       arguments: {},
-    } }),
+    }) }),
   });
   await assert.rejects(() => provider(request), /unavailable capability/u);
   const terminalProvider = createAiSdkDecisionProvider({
     model: "test-provider/test-model",
-    generateObject: async () => ({ object: {
+    generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: { decision: {
       action: "select_capability",
       target_ref: request.capability_refs[0],
       arguments: { request: { query: "x", rows: 1 } },
-    } }),
+    } } }),
   });
   await assert.rejects(() => terminalProvider(agentDecisionFinalizationRequest()), /unavailable capability/u);
 });
@@ -1667,12 +1729,13 @@ if (command === "compile") {
   const trace = {
     trace_protocol_version: "touba-trace-v1",
     run: { id: "run-sdk-engine", entry_ref: entryRef },
-    events: [{ kind: "run_completed", payload: { status: "success" } }]
+    events: [{ kind: "run_completed", payload: { status: "success", reason: "completed" } }]
   };
   writeFileSync(option("--trace-out"), JSON.stringify(trace), "utf8");
   process.stdout.write(JSON.stringify({
-    message: "Hello " + inputs.request.name,
-    entry_ref: entryRef
+    schema_version: "touba-run-result-v1", status: "success", reason: "completed",
+    result: { message: "Hello " + inputs.request.name, entry_ref: entryRef },
+    messages: [], trace
   }));
 } else {
   process.stderr.write("unknown command " + command);
@@ -1683,3 +1746,22 @@ if (command === "compile") {
   );
   return fakeCliPath;
 }
+
+test("rejects obsolete handler protocols without dispatch", async () => {
+  for (const protocol of ["touba-tool-handler-v2", "touba-tool-handler-v3"]) {
+    let called = false;
+    const result = await handleToolRequest(JSON.stringify({ protocol, operation: "invoke", tool_ref: TOOL_REF }), TOOL_REF, async () => { called = true; });
+    assert.equal(called, false);
+    assert.equal(result.error.code, "InvalidProtocol");
+  }
+});
+
+test("canonical handler requests require an operation and reject undeclared fields", async () => {
+  for (const [extra, code] of [[{}, "InvalidHandlerOperation"], [{ operation: "invoke", unexpected: true }, "InvalidHandlerRequest"]]) {
+    let called = false;
+    const result = await handleToolRequest(JSON.stringify({ protocol: "touba-tool-handler-v1", tool_ref: TOOL_REF, ...extra }), TOOL_REF,
+      async () => { called = true; });
+    assert.equal(called, false);
+    assert.equal(result.error.code, code);
+  }
+});

@@ -23,8 +23,8 @@ if (liveMode && process.argv.includes("--dry-run")) {
 try {
   compileSourceToAir();
   materializeManifestFromAir();
-  const trace = runAir();
-  assertTrace(trace);
+  const run = runAir();
+  assertTrace(run.trace, run.messages);
   console.log(
     `tool-binding:donnees-quebec mode=${liveMode ? "live" : "dry_run"} status=success endpoint=package_search`,
   );
@@ -41,6 +41,10 @@ function materializeManifestFromAir() {
     timeoutMs: 10000,
     maxPayloadBytes: 1048576,
   });
+  const binding = manifest.bindings["tool:examples.donnees_quebec_live/SearchDatasets"];
+  binding.handler.args = ["handlers/search_datasets.handler.mjs"];
+  binding.grants = ["network"];
+  binding.effect_contract = { kind: "none" };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
@@ -74,7 +78,7 @@ function runAir() {
         },
       }),
       "--output",
-      "trace",
+      "json",
     ],
     {
       cwd: implementationRoot,
@@ -85,7 +89,7 @@ function runAir() {
   return JSON.parse(runResult.stdout);
 }
 
-function assertTrace(trace) {
+function assertTrace(trace, messages) {
   const completed = trace.events?.find((event) => event.kind === "run_completed");
   if (completed?.payload?.status !== "success") {
     throw new Error(`expected trace status success, got ${completed?.payload?.status}`);
@@ -102,10 +106,10 @@ function assertTrace(trace) {
     throw new Error("expected network grant in trace");
   }
 
-  const showEvent = trace.events.find((event) => event.kind === "user_interaction_shown");
-  if (!showEvent?.payload?.message?.startsWith("First dataset: ")) {
-    throw new Error("expected user_interaction_shown event with dataset title");
+  if (!messages.some(message => message.text.startsWith("First dataset: "))) {
+    throw new Error("expected a structured show message with dataset title");
   }
+  if (trace.events.some(event => event.payload?.message || event.payload?.prompt)) throw new Error("interaction content leaked into trace");
 }
 
 function assertSuccess(label, result) {

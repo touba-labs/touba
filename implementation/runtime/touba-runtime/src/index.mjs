@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { failureFamilyForRuntimeCode } from "../../../contracts/machine/contracts.mjs";
+import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
 import {
   agentDecisionProviderContent,
   agentProviderObservationBudgetReport,
@@ -20,8 +21,6 @@ import {
 import { normalizeInternalCompensationContext } from "./compensation-context.mjs";
 import { executeGraphTraversal } from "./graph-execution.mjs";
 import {
-  COMPENSATION_HANDLER_PROTOCOL_VERSION,
-  EFFECT_HANDLER_PROTOCOL_VERSION,
   EFFECT_JOURNAL_SCHEMA_VERSION,
   assertJsonPortable,
   deriveEffectId,
@@ -75,6 +74,7 @@ import {
   isPortablePayloadConstraintScalar,
   payloadValueKind,
   validateToolInputPayload,
+  validateEntryInputPayload,
   validateToolOutputPayload,
   validateToolPayloadConstraints,
 } from "./payload-validation.mjs";
@@ -114,6 +114,7 @@ import {
 } from "./runtime-options.mjs";
 import {
   redactSecrets,
+  assertResultHasNoResolvedSecret,
   resolvedSecretEntries,
   secretValuesForRedaction,
 } from "./secret-redaction.mjs";
@@ -129,8 +130,6 @@ export { TRACE_PROTOCOL_VERSION };
 export { AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, AIR_SCHEMA_VERSION };
 export { HARDENED_EXECUTION_PROFILE_VERSION, enforceHardenedExecutionProfile, probeHostSandbox };
 export {
-  COMPENSATION_HANDLER_PROTOCOL_VERSION,
-  EFFECT_HANDLER_PROTOCOL_VERSION,
   EFFECT_JOURNAL_SCHEMA_VERSION,
   validateEffectJournalEntry,
 };
@@ -146,18 +145,11 @@ const BUILTIN_TEXT = "builtin:Text";
 const BUILTIN_BOOLEAN = "builtin:Boolean";
 const BUILTIN_INT = "builtin:Int";
 const BUILTIN_FLOAT = "builtin:Float";
-const TOOL_BINDING_MANIFEST_V1 = "touba-manifest-v1";
-const TOOL_BINDING_MANIFEST_V2 = "touba-manifest-v2";
-const TOOL_BINDING_MANIFEST_V3 = "touba-manifest-v3";
-const TOOL_BINDING_MANIFEST_VERSIONS = new Set([
-  TOOL_BINDING_MANIFEST_V1,
-  TOOL_BINDING_MANIFEST_V2,
-  TOOL_BINDING_MANIFEST_V3,
-]);
+const TOOL_BINDING_MANIFEST_VERSION = "touba-manifest-v1";
 const COMPENSATION_ENTRY_REF_PATTERN = /^strategy:[A-Za-z0-9_.-]+\/[A-Za-z][A-Za-z0-9_]*$/u;
 const NORMALIZED_TOOL_BINDING_MANIFESTS = new WeakSet();
 const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
-const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
+const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v1";
 const AGENT_DECISION_PROTOCOL_VERSION = "touba-agent-decision-v1";
 const AGENT_MODEL_INPUT_PROTOCOL_VERSION = "touba-agent-model-input-v1";
 const SECRET_HANDLE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
@@ -250,8 +242,8 @@ export const RUNTIME_CAPABILITIES = Object.freeze([
   AIR_SCHEMA_VERSION,
   AIR_JSON_PROFILE,
   AIR_CAPABILITY_PROFILE,
-  "sequential-flow-v0.1",
-  "simple-failure-paths-v0.1",
+  "sequential-flow-v1",
+  "simple-failure-paths-v1",
   TRACE_PROTOCOL_VERSION,
 ]);
 
@@ -293,6 +285,7 @@ export function loadSecretsFromJson(json, options = {}) {
 }
 
 export async function executeAirDocument(document, options = {}) {
+  document = structuredClone(document);
   validateAirDocument(document);
 
   const entryRef = options.entryRef ?? defaultEntryRef(document);
@@ -301,12 +294,19 @@ export async function executeAirDocument(document, options = {}) {
   return executeRunLifecycle(
     context,
     async () => {
+      validateConfiguredInteractionReferences(document, context);
+      if (!context.humanApprovalResumeCheckpoint && !context.executionDurability.resumeCheckpoint) {
+        const entry = Object.values(document.definitions).flat().find(item => item.id === entryRef);
+        if (entry) validateEntryInputPayload(entry, context.values, context);
+      } else if (options.inputs && Object.keys(options.inputs).length) {
+        throw new RuntimeFailure("resume restores checkpoint inputs; do not supply replacement inputs", {}, "ResumeInputsNotAllowed");
+      }
       if (context.executionDurability.enabled) {
         return executeDurableEntry(document, entryRef, context);
       }
       return context.humanApprovalResumeCheckpoint
         ? await executeHumanApprovalResumeCheckpoint(document, entryRef, context)
-        : executeTarget(entryRef, context);
+        : executeTarget(entryRef, context, null, { entryInputs: true });
     },
     {
       initializeRunControls,
@@ -317,6 +317,7 @@ export async function executeAirDocument(document, options = {}) {
 }
 
 export async function executeTriggerEvent(document, event, options = {}) {
+  document = structuredClone(document);
   validateAirDocument(document);
 
   const triggerEvent = normalizeTriggerEvent(event);
@@ -325,9 +326,12 @@ export async function executeTriggerEvent(document, event, options = {}) {
   const context = createExecutionContext(document, entryRef, { ...options, ...hardenedOptions });
   return executeRunLifecycle(
     context,
-    async () => context.humanApprovalResumeCheckpoint
-      ? await executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, context)
-      : executeNormalizedTriggerEvent(triggerEvent, context),
+    async () => {
+      validateConfiguredInteractionReferences(document, context);
+      return context.humanApprovalResumeCheckpoint
+        ? await executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, context)
+        : executeNormalizedTriggerEvent(triggerEvent, context);
+    },
     {
       initializeRunControls,
       traceRunCancelled,
@@ -368,7 +372,7 @@ function createExecutionContext(document, entryRef, options = {}) {
   );
   if (executionDurabilityEnabled && humanApprovalResumeCheckpoint !== null) {
     throw new RuntimeFailure(
-      "RESUME-1 cannot be combined with a human approval v0.1 checkpoint",
+      "An execution checkpoint cannot be combined with a local human approval checkpoint",
       {},
       "DurableResumeUnsupportedState",
     );
@@ -490,6 +494,8 @@ function createExecutionContext(document, entryRef, options = {}) {
       "maxLoopIterations",
     ),
     activeAgentRef: null,
+    messages: [],
+    pendingInteraction: null,
     activeCallerRef: null,
     nextCallIndex: 1,
     executionDurability: createExecutionDurabilityState({
@@ -510,6 +516,44 @@ function createExecutionContext(document, entryRef, options = {}) {
     restoreDurableRuntimeState(context, executionResumeCheckpoint);
   }
   return context;
+}
+
+function validateConfiguredInteractionReferences(document, context) {
+  const knownResources = new Set([
+    ...context.indexes.memories.keys(), ...context.indexes.triggers.keys(), ...context.indexes.agents.keys(),
+  ]);
+  for (const ref of context.resourceBindings?.requiredResourceRefs ?? []) {
+    if (!knownResources.has(ref)) throw new RuntimeFailure("required resource is absent from AIR", { resourceRef: ref }, "ResourceBindingUnknownResource");
+    if (!context.resourceBindings.bindings.has(ref)) throw new RuntimeFailure("required external resource has no active host binding", { resourceRef: ref }, "ResourceBindingMissing");
+  }
+  const approvals = new Set();
+  const interactions = new Set();
+  for (const graph of document.execution_graphs) {
+    for (const node of graph.nodes) {
+      if (node.kind === "human_approval") approvals.add(node.approval_ref ?? `approval:${graph.id}:${node.id}`);
+      if (node.kind === "user_interaction" && node.interaction_mode === "ask") {
+        interactions.add(node.interaction_ref ?? `interaction:${graph.id}:${node.id}`);
+      }
+    }
+  }
+  const knownAgentReview = ref => {
+    const match = typeof ref === "string" && /^approval:(agent:.+):step-(\d+):human-review$/u.exec(ref);
+    return match && context.indexes.agents.has(match[1]) && Number(match[2]) < context.maxAgentSteps;
+  };
+  for (const [ref, decision] of context.humanApprovalDecisions) {
+    if (!approvals.has(ref) && !knownAgentReview(ref)) {
+      throw new RuntimeFailure("approval decision must reference a declared approval or an existing agent review", {}, "UnknownApprovalReference");
+    }
+    if (!classifyHumanApprovalDecision(decision).valid) {
+      throw new RuntimeFailure("approval decision must be approved, rejected, expired or cancelled", { approvalRef: ref }, "InvalidHumanApprovalDecision");
+    }
+  }
+  for (const ref of context.userInputs.keys()) {
+    if (!interactions.has(ref)) throw new RuntimeFailure("user input must reference a declared ask interaction", {}, "UnknownInteractionReference");
+  }
+  for (const ref of context.agentDecisions.keys()) {
+    if (!context.indexes.agents.has(ref)) throw new RuntimeFailure("agent decision must reference an agent in the program", {}, "UnknownAgentDecisionReference");
+  }
 }
 
 function createEffectState() {
@@ -754,7 +798,7 @@ function validateCompensationRuntimeClosure(graph, entryRef, context) {
   }
   const binding = context.toolBindingManifest?.bindings.get(config.inverse_tool_ref);
   if (
-    context.toolBindingManifest?.version !== TOOL_BINDING_MANIFEST_V3
+    context.toolBindingManifest?.version !== TOOL_BINDING_MANIFEST_VERSION
     || binding?.effectContract?.kind !== "external_write"
     || binding.effectContract.compensation
   ) {
@@ -1286,10 +1330,10 @@ function validateDurableToolNode(graph, node, context) {
   const binding = manifest?.bindings.get(toolRef);
   if (
     !tool
-    || ![TOOL_BINDING_MANIFEST_V2, TOOL_BINDING_MANIFEST_V3].includes(manifest?.version)
+    || manifest?.version !== TOOL_BINDING_MANIFEST_VERSION
     || !binding?.effectContract
   ) {
-    throw durableUnsupported(graph.id, node.id, "manifest_v2_effect_contract_required");
+    throw durableUnsupported(graph.id, node.id, "explicit_effect_contract_required");
   }
   if (context.toolHandlers[toolRef]) {
     throw durableUnsupported(graph.id, node.id, "in_process_handler_not_resumable");
@@ -1804,11 +1848,16 @@ async function executeAgentHumanReviewResumeCheckpoint(document, entryRef, conte
       value: reviewResult,
     },
   ];
-  const agentResult = await executeAgentDecisionLoop(agent, capabilityRefs, context, {
-    startStepIndex: loopState.nextStepIndex,
-    observations,
-  });
-
+  if (checkpoint.call_frame) context.callStack.push(checkpoint.call_frame);
+  let agentResult;
+  try {
+    agentResult = await executeAgentDecisionLoop(agent, capabilityRefs, context, {
+      startStepIndex: loopState.nextStepIndex,
+      observations,
+    });
+  } finally {
+    if (checkpoint.call_frame) context.callStack.pop();
+  }
   return resumeAgentHumanReviewCaller(context, checkpoint, agent, agentResult);
 }
 
@@ -1912,6 +1961,8 @@ function validateAgentHumanReviewCallFrame(context, checkpoint, agentRef) {
     );
   }
   const graphRef = checkpointString(frame.graph_ref, "call_frame.graph_ref");
+  // Validate both environments before resuming any provider or external effect.
+  callerValueScopeFromCheckpoint(frame.caller_scope);
   const nodeId = checkpointString(frame.node_id, "call_frame.node_id");
   const graph = context.indexes.graphs.get(graphRef);
   const node = graph?.nodes?.find((candidate) => candidate.id === nodeId);
@@ -1999,6 +2050,7 @@ function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
     approvalRef,
     agentRef: agent.id,
     decision: humanDecision,
+    reason: `human_approval_${humanDecision}`,
   });
 }
 
@@ -2006,6 +2058,10 @@ async function resumeAgentHumanReviewCaller(context, checkpoint, agent, agentRes
   if (checkpoint.call_frame === undefined || checkpoint.call_frame === null) {
     return agentResult;
   }
+  const callerScope = callerValueScopeFromCheckpoint(checkpoint.call_frame.caller_scope);
+  context.values = callerScope.values;
+  context.valueTypes = callerScope.valueTypes;
+  context.inputValueKeys = callerScope.inputValueKeys;
   const graph = requireDefinition(context.indexes.graphs, checkpoint.call_frame.graph_ref);
   const node = graph.nodes.find((candidate) => candidate.id === checkpoint.call_frame.node_id);
   if (!node) {
@@ -2120,6 +2176,9 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
 function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, observations, payload, callFrame) {
   const values = checkpointObjectFromMap(context.values, "values");
   assertCheckpointHasNoResolvedSecret(values, context, payload.approval_ref);
+  if (callFrame) {
+    assertCheckpointHasNoResolvedSecret(callFrame.caller_scope, context, payload.approval_ref);
+  }
   const checkpointObservations = checkpointJsonClone(observations, "agent_loop_state.observations");
   assertCheckpointHasNoResolvedSecret(checkpointObservations, context, payload.approval_ref);
   const valueTypes = checkpointObjectFromMap(context.valueTypes, "value_types");
@@ -2288,7 +2347,24 @@ function refuseAgentHumanReviewCheckpointUnavailable(context, payload, support) 
   throw error;
 }
 
-function callFrameForNode(graph, node, targetRef) {
+function callerValueScopeFromCheckpoint(scope) {
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)
+    || !Array.isArray(scope.input_value_keys)) {
+    throw new RuntimeFailure("agent review checkpoint requires the caller value scope",
+      {}, "InvalidHumanApprovalCheckpoint");
+  }
+  const values = mapFromCheckpointObject(scope.values, "call_frame.caller_scope.values");
+  const valueTypes = mapFromCheckpointObject(scope.value_types, "call_frame.caller_scope.value_types");
+  const inputValueKeys = new Set(checkpointStringArray(scope.input_value_keys, "call_frame.caller_scope.input_value_keys"));
+  if ([...inputValueKeys].some(key => !values.has(key))
+    || [...valueTypes.values()].some(type => typeof type !== "string")) {
+    throw new RuntimeFailure("agent review checkpoint caller value scope is inconsistent",
+      {}, "InvalidHumanApprovalCheckpoint");
+  }
+  return { values, valueTypes, inputValueKeys };
+}
+
+function callFrameForNode(graph, node, targetRef, context) {
   const edgeRole = successEdgeRole(graph, node.id);
   return compactPayload({
     kind: node.kind,
@@ -2300,6 +2376,13 @@ function callFrameForNode(graph, node, targetRef) {
     result_binding: node.result_binding,
     success_edge_role: edgeRole,
     resume_target_ref: nextNodeId(graph, node.id, edgeRole),
+    caller_scope: node.kind === "call_agent" && context.durableHumanApprovals
+      ? {
+        values: checkpointObjectFromMap(context.values, "call_frame.caller_scope.values"),
+        value_types: checkpointObjectFromMap(context.valueTypes, "call_frame.caller_scope.value_types"),
+        input_value_keys: [...context.inputValueKeys],
+      }
+      : undefined,
   });
 }
 
@@ -2843,7 +2926,7 @@ async function executeTarget(targetRef, context, callArguments = null, options =
       callArguments,
       context,
       () => executeGraph(fn.body_graph_ref, context),
-      { markInputValues: options.inputValueArguments === true },
+      { markInputValues: options.inputValueArguments === true, entryInputs: options.entryInputs === true },
     );
   }
   if (targetRef.startsWith("skill:")) {
@@ -2853,7 +2936,7 @@ async function executeTarget(targetRef, context, callArguments = null, options =
       callArguments,
       context,
       () => executeGraph(skill.flow_graph_ref, context),
-      { markInputValues: options.inputValueArguments === true },
+      { markInputValues: options.inputValueArguments === true, entryInputs: options.entryInputs === true },
     );
   }
   if (targetRef.startsWith("agent:")) {
@@ -2967,7 +3050,7 @@ async function executeTarget(targetRef, context, callArguments = null, options =
       callArguments,
       context,
       () => executeGraph(strategy.flow_graph_ref, context),
-      { markInputValues: options.inputValueArguments === true },
+      { markInputValues: options.inputValueArguments === true, entryInputs: options.entryInputs === true },
     );
   }
   if (targetRef.startsWith("tool:")) {
@@ -2977,7 +3060,7 @@ async function executeTarget(targetRef, context, callArguments = null, options =
       callArguments,
       context,
       () => executeTool(tool, context),
-      { markInputValues: options.inputValueArguments === true },
+      { markInputValues: options.inputValueArguments === true, entryInputs: options.entryInputs === true },
     );
   }
   throw new RuntimeFailure(`unsupported AIR target ${targetRef}`, { targetRef });
@@ -3081,6 +3164,7 @@ async function executeAgentInterface(agent, callArguments, context, execute) {
 }
 
 function validateAgentFinalResult(agent, result, context) {
+  assertResultHasNoResolvedSecret(result, context.secretStore);
   const expectedTypeRef = agent.signature?.output_type;
   if (!expectedTypeRef || isValueCompatibleWithType(result, expectedTypeRef, context)) {
     return result;
@@ -3199,7 +3283,7 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
         reason: "cancel_requested",
       });
     }
-    throw new RuntimeStop("agent human review paused", { approvalRef, agentRef: agent.id });
+    throw new RuntimeStop("agent human review paused", { approvalRef, agentRef: agent.id, reason: "human_approval_pending" });
   }
   context.trace.push("human_approval_paused", {
     payload: basePayload,
@@ -3243,6 +3327,7 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
     approvalRef,
     agentRef: agent.id,
     decision: humanDecision,
+    reason: `human_approval_${humanDecision}`,
   });
 }
 
@@ -3523,6 +3608,7 @@ function definitionForCapability(targetRef, context) {
 async function resolveAgentDecision(agent, capabilityRefs, context, loopState = null) {
   const explicitDecision = context.agentDecisions.get(agent.id);
   if (explicitDecision) {
+    assertResultHasNoResolvedSecret(explicitDecision, context.secretStore);
     return explicitDecision;
   }
 
@@ -3921,6 +4007,16 @@ function prepareSkillPackModelContext(context, agent, providerMode, capabilityRe
       continue;
     }
     const reason = context.skillPackActivationReasons.get(pack.ref) ?? "host_policy";
+    if ((reason === "user_invoked" && !pack.activation.user_invocable)
+      || (reason === "provider_requested" && !pack.activation.model_invocable)) {
+      context.trace.push("skill_pack_activation_refused", { payload: {
+        agent_ref: agent.id, skill_pack_ref: pack.ref, phase: "activation", reason,
+        runtime_error_code: "SkillPackActivationForbidden",
+      } });
+      throw new RuntimeFailure("skill pack does not allow this activation mode", {
+        agentRef: agent.id, skillPackRef: pack.ref, reason,
+      }, "SkillPackActivationForbidden");
+    }
     const activePack = activeSkillPackRecord(context, pack, reason, agent, providerMode, capabilityRefs);
     const activeBytes = estimateJsonBytes(activePack);
     assertSkillPackBudget(context, "activation", activeBytes, context.skillPackBudgets.activationMaxBytes, {
@@ -4277,6 +4373,7 @@ async function callAgentDecisionProviderAttempt(request, context, attemptIndex) 
       context.agentDecisionProviderTimeoutMs,
       request,
     );
+    assertResultHasNoResolvedSecret(response, context.secretStore);
     const decision = normalizeAgentDecisionProviderResponse(request.agent_ref, response);
     if (decision.action === "cannot_complete" && request.mode !== "finalization") {
       throw new RuntimeFailure(
@@ -4611,7 +4708,7 @@ function callArgumentsForAgentDecision(decision, context) {
   const definition = definitionForCapability(decision.targetRef, context);
   const inputs = definition?.signature?.inputs ?? [];
   if (decision.arguments === undefined) {
-    // The legacy implicit-binding route may reuse named runtime inputs, but
+    // Named input binding may reuse the current runtime frame, but
     // omission must not bypass the same value checks as explicit arguments.
     const missingFields = inputs.filter((input) => !context.values.has(valueHandle(input.name)))
       .map((input) => input.name);
@@ -4752,6 +4849,7 @@ async function executeTool(tool, context) {
       const secretHandles = tool.required_secrets ?? [];
       const handlerRequest = {
         protocol: TOOL_HANDLER_PROTOCOL_VERSION,
+        operation: "invoke",
         tool_ref: tool.id,
         call_id: durableReservation?.call_id
           ?? `call:${context.trace.runId}:${context.nextCallIndex}`,
@@ -4776,8 +4874,9 @@ async function executeTool(tool, context) {
           ? () => assertDurableToolCanSpawn(tool, binding, context)
           : undefined,
       });
-      observeToolMemoryMetadata(tool, handlerResponse.memoryMetadata, context);
       const value = handlerResponse.value;
+      assertResultHasNoResolvedSecret(value, context.secretStore);
+      observeToolMemoryMetadata(tool, handlerResponse.memoryMetadata, context);
       validateToolOutputPayload(tool, value, context);
       validateToolPayloadConstraints("output", tool, value, binding.payloadConstraints.output);
       return value;
@@ -4793,6 +4892,7 @@ async function executeTool(tool, context) {
       binding: binding ? bindingPublicView(binding) : undefined,
       resourceBindings,
     });
+    assertResultHasNoResolvedSecret(value, context.secretStore);
     validateToolOutputPayload(tool, value, context);
     validateToolPayloadConstraints("output", tool, value, binding?.payloadConstraints?.output ?? []);
     return value;
@@ -5002,9 +5102,8 @@ async function executeEffectfulProcessTool(
     request_digest: requestDigest,
   });
   const handlerRequest = {
-    protocol: context.compensation
-      ? COMPENSATION_HANDLER_PROTOCOL_VERSION
-      : EFFECT_HANDLER_PROTOCOL_VERSION,
+    protocol: TOOL_HANDLER_PROTOCOL_VERSION,
+    operation: context.compensation ? "compensate" : "invoke",
     tool_ref: toolRef,
     call_id: callId,
     arguments: toolArguments,
@@ -6517,10 +6616,10 @@ function normalizeToolBindingManifest(manifest) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     throw new ToubaRuntimeError("InvalidToolBindingManifest", "manifest must be an object");
   }
-  if (!TOOL_BINDING_MANIFEST_VERSIONS.has(manifest.manifest_version)) {
+  if (manifest.manifest_version !== TOOL_BINDING_MANIFEST_VERSION) {
     throw new ToubaRuntimeError(
       "InvalidToolBindingManifest",
-      `manifest_version must be ${TOOL_BINDING_MANIFEST_V1}, ${TOOL_BINDING_MANIFEST_V2} or ${TOOL_BINDING_MANIFEST_V3}`,
+      `manifest_version must be ${TOOL_BINDING_MANIFEST_VERSION}`,
       { actual: manifest.manifest_version },
     );
   }
@@ -6806,20 +6905,10 @@ function normalizeManifestBinding(toolRef, binding, manifestVersion) {
 
 function normalizeManifestEffectContract(toolRef, binding, manifestVersion) {
   const hasContract = Object.hasOwn(binding, "effect_contract");
-  if (manifestVersion === TOOL_BINDING_MANIFEST_V1) {
-    if (hasContract) {
-      throw new ToubaRuntimeError(
-        "InvalidToolBindingManifest",
-        "effect_contract is forbidden in touba-manifest-v1",
-        { toolRef },
-      );
-    }
-    return null;
-  }
   if (!hasContract) {
     throw new ToubaRuntimeError(
       "InvalidToolBindingManifest",
-      "effect_contract is required for every explicit-effect manifest binding",
+      "effect_contract is required for every manifest binding",
       { toolRef },
     );
   }
@@ -6886,13 +6975,6 @@ function normalizeManifestEffectContract(toolRef, binding, manifestVersion) {
 
 function normalizeManifestCompensation(toolRef, value, manifestVersion) {
   if (value === undefined) return null;
-  if (manifestVersion !== TOOL_BINDING_MANIFEST_V3) {
-    throw new ToubaRuntimeError(
-      "InvalidToolBindingManifest",
-      "effect_contract.compensation requires touba-manifest-v3",
-      { toolRef },
-    );
-  }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new ToubaRuntimeError(
       "InvalidToolBindingManifest",
@@ -7191,8 +7273,12 @@ function normalizeResourceBindings(document) {
   }
 
   const bindings = new Map();
+  let requiredResourceRefs;
+  try { requiredResourceRefs = requiredResourceReferences(document); }
+  catch (error) { throw new ToubaRuntimeError(error.code, error.message); }
   for (const [resourceRef, binding] of Object.entries(document.resources)) {
     if (binding?.active === false) {
+      if (requiredResourceRefs.includes(resourceRef)) throw new ToubaRuntimeError("ResourceBindingInactive", "required external resource binding is inactive", { resourceRef });
       continue;
     }
     bindings.set(resourceRef, normalizeResourceBindingEntry(resourceRef, binding));
@@ -7200,6 +7286,7 @@ function normalizeResourceBindings(document) {
 
   return Object.freeze({
     __toubaResourceBindings: true,
+    requiredResourceRefs: Object.freeze([...requiredResourceRefs]),
     bindings,
   });
 }
@@ -7912,6 +7999,13 @@ function executeHumanApprovalNode(graph, node, context) {
       resume_target_ref: resumeTargetRef,
     });
     const durableResumeAvailable = canCreateHumanApprovalCheckpoint(context, graph);
+    if (context.durableHumanApprovals && !durableResumeAvailable) {
+      throw new RuntimeFailure(
+        "the local human checkpoint requires an entry-graph approval; nested continuations require execution durability",
+        { approvalRef, graphRef: graph.id },
+        "HumanApprovalCheckpointUnsupportedScope",
+      );
+    }
     assertHumanApprovalCanPause(context, pausePayload, airRefForNode(graph, node), {
       durableResumeAvailable,
     });
@@ -7937,6 +8031,7 @@ function executeHumanApprovalNode(graph, node, context) {
     return {
       done: true,
       status: "stopped",
+      reason: "human_approval_pending",
     };
   }
   context.trace.push("human_approval_paused", {
@@ -8021,6 +8116,7 @@ function executeHumanApprovalNode(graph, node, context) {
   return {
     done: true,
     status: "stopped",
+    reason: `human_approval_${decision}`,
   };
 }
 
@@ -8061,13 +8157,13 @@ async function executeUserInteractionNode(graph, node, context) {
   }
 
   if (mode === "show") {
+    context.messages.push({ interaction_ref: interactionRef, text });
     context.trace.push("user_interaction_shown", {
       airRef: airRefForNode(graph, node),
       payload: compactPayload({
         interaction_ref: interactionRef,
         mode,
-        message_ref: argumentRef,
-        message: text,
+        message_ref: argumentRef.startsWith("literal:") ? undefined : argumentRef,
         caller_ref: graph.owner_ref,
         agent_ref: context.activeAgentRef,
       }),
@@ -8092,8 +8188,7 @@ async function executeUserInteractionNode(graph, node, context) {
     payload: compactPayload({
       interaction_ref: interactionRef,
       mode,
-      prompt_ref: argumentRef,
-      prompt: text,
+      prompt_ref: argumentRef.startsWith("literal:") ? undefined : argumentRef,
       caller_ref: graph.owner_ref,
       agent_ref: context.activeAgentRef,
     }),
@@ -8103,7 +8198,7 @@ async function executeUserInteractionNode(graph, node, context) {
     payload: compactPayload({
       interaction_ref: interactionRef,
       mode,
-      prompt_ref: argumentRef,
+      prompt_ref: argumentRef.startsWith("literal:") ? undefined : argumentRef,
       caller_ref: graph.owner_ref,
       agent_ref: context.activeAgentRef,
       resume_target_ref: nextNodeId(graph, node.id, "next"),
@@ -8149,9 +8244,11 @@ async function executeUserInteractionNode(graph, node, context) {
         reason: "cancel_requested",
       });
     }
+    context.pendingInteraction = { interaction_ref: interactionRef, prompt: text };
     return {
       done: true,
       status: "stopped",
+      reason: "user_input_pending",
     };
   }
   if (!node.result_binding) {
@@ -8268,7 +8365,7 @@ async function executeCallNode(graph, node, context) {
     }
 
     const previousCallerRef = context.activeCallerRef;
-    const callFrame = callFrameForNode(graph, node, targetRef);
+    const callFrame = callFrameForNode(graph, node, targetRef, context);
     context.activeCallerRef = graph.owner_ref;
     context.callStack.push(callFrame);
     let result;
@@ -8786,9 +8883,7 @@ function resolveHandle(handle, context, graph) {
     return evaluateExpression(resolveExpressionHandle(handle, graph), context, graph);
   }
   if (handle.startsWith("constant:")) {
-    const legacyConstantRef = handle.slice("constant:".length);
-    const constant =
-      context.indexes.constants.get(handle) ?? requireDefinition(context.indexes.constants, legacyConstantRef);
+    const constant = requireDefinition(context.indexes.constants, handle);
     return decodeAirConstant(constant);
   }
   if (handle.startsWith("literal:bool:")) {
@@ -8853,9 +8948,7 @@ function resolveHandleType(handle, context, graph) {
     return resolveExpressionHandle(handle, graph).type_ref ?? null;
   }
   if (handle.startsWith("constant:")) {
-    const legacyConstantRef = handle.slice("constant:".length);
-    const constant =
-      context.indexes.constants.get(handle) ?? context.indexes.constants.get(legacyConstantRef);
+    const constant = context.indexes.constants.get(handle);
     return constant?.type_ref ?? null;
   }
   if (handle.startsWith("literal:bool:")) {
@@ -9200,7 +9293,7 @@ async function withBoundArguments(
   argumentValues,
   context,
   execute,
-  { markInputValues = false } = {},
+  { markInputValues = false, entryInputs = false } = {},
 ) {
   const inputs = signature?.inputs ?? [];
   if (argumentValues !== null && inputs.length !== argumentValues.length) {
@@ -9210,58 +9303,36 @@ async function withBoundArguments(
     });
   }
 
-  const previousValues = [];
-  const previousTypes = [];
-  const previousInputValueMembership = [];
+  // Names belong to an invocation. Restoring just the parameters leaves bind,
+  // into and loop locals in the caller, and permits accidental dynamic scope.
+  // Only the entry invocation receives host inputs; callees receive parameters.
+  const callerValues = context.values;
+  const callerTypes = context.valueTypes;
+  const callerInputKeys = context.inputValueKeys;
+  context.values = entryInputs ? new Map(callerValues) : new Map();
+  context.valueTypes = entryInputs ? new Map(callerTypes) : new Map();
+  context.inputValueKeys = entryInputs ? new Set(callerInputKeys) : new Set();
   for (let index = 0; index < inputs.length; index += 1) {
     const handle = valueHandle(inputs[index].name);
-    previousTypes.push({
-      handle,
-      existed: context.valueTypes.has(handle),
-      typeRef: context.valueTypes.get(handle),
-    });
     if (inputs[index].type_ref) {
       context.valueTypes.set(handle, inputs[index].type_ref);
     }
-    if (argumentValues !== null) {
-      previousValues.push({
-        handle,
-        existed: context.values.has(handle),
-        value: context.values.get(handle),
-      });
-      context.values.set(handle, argumentValues[index]);
-      if (markInputValues) {
-        previousInputValueMembership.push({
-          handle,
-          existed: context.inputValueKeys.has(handle),
-        });
+    if (argumentValues !== null || callerValues.has(handle)) {
+      context.values.set(handle, argumentValues === null ? callerValues.get(handle) : argumentValues[index]);
+      if (markInputValues || (argumentValues === null && callerInputKeys.has(handle))) {
         context.inputValueKeys.add(handle);
       }
     }
   }
 
   try {
-    return await execute();
+    const result = await execute();
+    assertResultHasNoResolvedSecret(result, context.secretStore);
+    return result;
   } finally {
-    for (const previous of previousValues.reverse()) {
-      if (previous.existed) {
-        context.values.set(previous.handle, previous.value);
-      } else {
-        context.values.delete(previous.handle);
-      }
-    }
-    for (const previous of previousTypes.reverse()) {
-      if (previous.existed) {
-        context.valueTypes.set(previous.handle, previous.typeRef);
-      } else {
-        context.valueTypes.delete(previous.handle);
-      }
-    }
-    for (const previous of previousInputValueMembership.reverse()) {
-      if (!previous.existed) {
-        context.inputValueKeys.delete(previous.handle);
-      }
-    }
+    context.values = callerValues;
+    context.valueTypes = callerTypes;
+    context.inputValueKeys = callerInputKeys;
   }
 }
 
@@ -9611,9 +9682,15 @@ function normalizeTriggerRunCountKey(triggerRef) {
 }
 
 function normalizeInputs(inputs) {
+  if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(inputs))) {
+    throw new ToubaRuntimeError("InvalidEntryInputs", "inputs must be an object of declared parameter names");
+  }
   const values = new Map();
   for (const [key, value] of Object.entries(inputs)) {
-    values.set(key.startsWith("value:") ? key : `value:${key}`, value);
+    const handle = key.startsWith("value:") ? key : `value:${key}`;
+    if (values.has(handle)) throw new ToubaRuntimeError("DuplicateEntryInput", "each entry parameter must be supplied once");
+    values.set(handle, value);
   }
   return values;
 }
@@ -9658,6 +9735,8 @@ function airRefForNode(graph, node) {
 function runtimeFailureTracePayload(error, context) {
   return compactPayload({
     runtime_error_code: error.code,
+    entry_ref: error.details?.entryRef,
+    unknown_field_count: error.details?.unknownFieldCount,
     target_ref: context.fallbackTargetRef,
     selected_ref: error.details?.targetRef,
     allowed_refs: error.details?.allowedRefs,
@@ -9682,6 +9761,7 @@ function runtimeFailureTracePayload(error, context) {
     field: error.details?.field,
     integrity_evidence: error.details?.integrityEvidence,
     interaction_ref: error.details?.interactionRef,
+    approval_ref: error.details?.approvalRef,
     mode: error.details?.mode,
     missing_memory_accesses: error.details?.missingMemoryAccesses,
     required_memory_accesses: error.details?.requiredMemoryAccesses,

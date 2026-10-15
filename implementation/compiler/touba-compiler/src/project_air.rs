@@ -76,6 +76,7 @@ impl<'a> ProjectAirAssembler<'a> {
         let mut collector = ProjectAirCollector::new(&self.modules, &mut assembled);
         collector.collect_module_imports(entry);
         collector.collect_graph_dependencies(entry);
+        collector.validate_agent_catalog_memory();
         self.diagnostics.extend(collector.diagnostics);
 
         if self.diagnostics.is_empty() {
@@ -739,6 +740,47 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
                     ),
                     source_ref.cloned(),
                 ));
+            }
+        }
+    }
+
+    // An agent remains the effective memory owner while a selected skill or
+    // strategy executes. Structural scopes alone cannot authorize this path.
+    // Delegation starts a new agent boundary, checked separately below.
+    fn validate_agent_catalog_memory(&mut self) {
+        for agent in self.assembled.definitions.agents.clone() {
+            let mut visited = HashSet::new();
+            for usage in &agent.use_refs {
+                self.validate_catalog_memory_target(
+                    &agent.id, &usage.target_ref, &usage.source_ref, &mut visited,
+                );
+            }
+        }
+    }
+
+    fn validate_catalog_memory_target(
+        &mut self,
+        agent_ref: &str,
+        target_ref: &str,
+        source_ref: &SourceRef,
+        visited: &mut HashSet<String>,
+    ) {
+        if !visited.insert(target_ref.to_string()) || target_ref.starts_with("agent:") {
+            return;
+        }
+        if target_ref.starts_with("tool:") {
+            self.validate_tool_memory_access(agent_ref, target_ref, Some(source_ref));
+            return;
+        }
+        let graphs: Vec<_> = self.assembled.execution_graphs.iter()
+            .filter(|graph| graph.owner_ref == target_ref).cloned().collect();
+        for graph in graphs {
+            for node in graph.nodes {
+                if let Some(target) = node.target_ref {
+                    self.validate_catalog_memory_target(
+                        agent_ref, &target, &node.source_ref, visited,
+                    );
+                }
             }
         }
     }

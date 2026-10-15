@@ -1,6 +1,7 @@
 import {
   ToubaHandlerError,
   defineTool,
+  createToolResult,
 } from "@touba/sdk";
 
 const TOOL_REF = "tool:examples.memory_postgres_rb2/WriteCustomerMemory";
@@ -14,6 +15,7 @@ await defineTool({
   inputSignature: [{ name: "request", type_ref: "type:examples.memory_postgres_rb2/MemoryRequest" }],
   outputType: "type:examples.memory_postgres_rb2/MemoryResult",
   run: async ({ request, context }) => {
+    if (!context.effect) throw new ToubaHandlerError("EffectContextRequired", "memory writes require a governed effect");
     const endpointUrl = endpointFromBinding(memoryBinding(context));
     const response = await fetch(`${endpointUrl}/notes/${encodeURIComponent(request.customer_id)}`, {
       method: "POST",
@@ -28,7 +30,7 @@ await defineTool({
       throw new ToubaHandlerError("PostgresMemoryWriteFailed", `backend write failed with HTTP ${response.status}`);
     }
 
-    return normalizeResult(await response.json());
+    return createToolResult(normalizeResult(await response.json()), { effectReceipt: context.createEffectReceipt({ outcome: "applied" }) });
   },
 });
 

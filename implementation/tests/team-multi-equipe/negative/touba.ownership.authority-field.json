@@ -1,5 +1,5 @@
 {
-  "ownership_schema_version": "touba-ownership-v0.1",
+  "ownership_schema_version": "touba-ownership-v1",
   "teams": {
     "team:security": {
       "display_name": "Security"

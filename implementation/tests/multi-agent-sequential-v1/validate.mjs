@@ -45,7 +45,7 @@ try {
   const wrongType = await executeScenario(air, approvalRef, "approved", {
     inputs: { request: "not-an-incident" },
   });
-  assertFailureBeforeEffect(wrongType, "AgentInterfaceInputTypeMismatch");
+  assertFailureBeforeEffect(wrongType, "EntryInputSchemaInvalid");
 
   const overBudget = await executeScenario(air, approvalRef, "approved", {
     runLimits: { max_agent_invocations: 2 },
@@ -129,7 +129,7 @@ function manifest() {
     agent_secret_scopes: { [executionAgentRef]: ["REMEDIATION_TOKEN"] },
     bindings: {
       [toolRef]: {
-        handler: { kind: "process", command: process.execPath, args: ["unused"] },
+        effect_contract: { kind: "none" }, handler: { kind: "process", command: process.execPath, args: ["unused"] },
         grants: ["network", "memory_write", "secret_read"],
         secrets: ["REMEDIATION_TOKEN"],
         memories: [{ ref: "memory:examples.incident_remediation/RemediationLedger", access: "write" }],

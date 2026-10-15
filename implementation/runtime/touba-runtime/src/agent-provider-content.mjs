@@ -15,6 +15,8 @@ import { createHash } from "node:crypto";
  * @property {string=} kind
  * @property {string=} result_type
  * @property {Record<string, unknown>=} arguments
+ * @property {number=} repeated_from_step
+ * @property {number=} identical_invocation_number
  * @property {unknown=} value
  *
  * @typedef {object} OpaqueValueMetadata
@@ -44,6 +46,8 @@ import { createHash } from "node:crypto";
  * @property {string=} kind
  * @property {string=} result_type
  * @property {Record<string, unknown>=} arguments
+ * @property {number=} repeated_from_step
+ * @property {number=} identical_invocation_number
  * @property {unknown=} value
  * @property {string=} summary
  * @property {OpaqueValueMetadata=} metadata
@@ -126,6 +130,8 @@ export function agentDecisionProviderContent(inputs, observations, context) {
     result_type: observation.result_type,
     arguments: observation.arguments,
     value: observation.value,
+    repeated_from_step: observation.repeated_from_step,
+    identical_invocation_number: observation.identical_invocation_number,
   }));
   return {
     mode,
@@ -248,6 +254,8 @@ function opaqueRuntimeObservationDescriptor(observation, index) {
     trust: "external_content",
     step_index: observation.step_index,
     action: observation.action,
+    repeated_from_step: observation.repeated_from_step,
+    identical_invocation_number: observation.identical_invocation_number,
     target_ref: observation.target_ref,
     kind: observation.kind,
     result_type: observation.result_type,

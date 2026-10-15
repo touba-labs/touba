@@ -28,6 +28,8 @@
     "package:touba-release": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution package:release",
     "check:touba-release-archive": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution check:release-archive",
     "test:distribution-release": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution test:release-metadata",
+    "test:distribution-sdk": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution test:sdk-archive",
+    "validate:docs-recipes": "node tools/check-node-version.mjs && node cli/touba-distribution/src/check-tutorial-recipes.mjs",
     "release:readiness": "node tools/check-node-version.mjs && node tools/release-readiness.mjs",
     "test:release-readiness": "node tools/check-node-version.mjs && node --test tools/release-readiness.test.mjs",
     "release:versioning": "node tools/check-node-version.mjs && node tools/validate-release-versioning.mjs",

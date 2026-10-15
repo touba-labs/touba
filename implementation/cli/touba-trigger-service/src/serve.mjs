@@ -16,8 +16,8 @@ import {
   unknownEffectRetryDecision,
 } from "./effect-journal.mjs";
 
-const QUEUE_SCHEMA_VERSION = "touba-trigger-queue-v0.1";
-const STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
+const QUEUE_SCHEMA_VERSION = "touba-trigger-queue-v1";
+const STATE_SCHEMA_VERSION = "touba-trigger-state-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -706,7 +706,7 @@ function saveJsonAtomically(path, value) {
   atomicWriteSequence += 1;
   const temporaryPath = `${path}.${process.pid}.${atomicWriteSequence}.tmp`;
   try {
-    writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
     renameSync(temporaryPath, path);
   } catch (error) {
     rmSync(temporaryPath, { force: true });

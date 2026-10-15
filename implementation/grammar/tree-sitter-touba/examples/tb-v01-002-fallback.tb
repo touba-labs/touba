@@ -23,17 +23,25 @@ skill BuildSource
     uses BuildFallbackSource
     do
         FetchPrimarySource
-        give SourceText
+            with request as request
+            into source
+        give source
     on failure handler
         fallback BuildFallbackSource
 
 agent Researcher
-    responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
+    takes request as SourceRequest
+    gives SourceText
+    responsibility "Retrieve the requested source, using the fallback if the primary source is unavailable."
     uses BuildSource
     callable_by strategy RunSourceLookup
 
 strategy RunSourceLookup
+    takes request as SourceRequest
+    gives SourceText
     uses Researcher
     do
         Researcher
-        give SourceText
+            with request as request
+            into source
+        give source

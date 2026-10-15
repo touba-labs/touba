@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createHash } from "node:crypto";
+import { airDocumentDigest } from "./air-identity.mjs";
 import {
   TRACE_CAPABILITY_PROFILE,
   TRACE_PROTOCOL_VERSION,
@@ -43,6 +44,7 @@ export class TraceBuilder {
     }
     /** @type {TraceAirDocument} */
     this.airDocument = airDocument;
+    this.airDigest = airDocumentDigest(airDocument);
     /** @type {string} */
     this.runId = runId;
     /** @type {string} */
@@ -101,7 +103,7 @@ export class TraceBuilder {
   }
 
   /**
-   * @returns {{ trace_protocol_version: string, trace_capability_profile: string, run: { run_id: string, air_schema_version: string, module_ref: string, entry_ref: string }, events: TraceEvent[] }}
+   * @returns {{ trace_protocol_version: string, trace_capability_profile: string, run: { run_id: string, air_schema_version: string, air_digest: string, module_ref: string, entry_ref: string }, events: TraceEvent[] }}
    */
   document() {
     return {
@@ -110,6 +112,7 @@ export class TraceBuilder {
       run: {
         run_id: this.runId,
         air_schema_version: this.airDocument.air_schema_version,
+        air_digest: this.airDigest,
         module_ref: this.airDocument.module.id,
         entry_ref: this.entryRef,
       },

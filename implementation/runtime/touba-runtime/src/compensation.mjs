@@ -251,9 +251,9 @@ function normalizeHost(options) {
   if (!options || typeof options !== "object" || Array.isArray(options)) requestInvalid();
   validateAirDocument(options.airDocument);
   const manifest = loadToolBindingManifestFromJson(JSON.stringify(options.toolBindingManifest));
-  if (manifest.version !== "touba-manifest-v3") {
+  if (manifest.version !== "touba-manifest-v1") {
     throw new RuntimeFailure(
-      "COMP-1 requires touba-manifest-v3",
+      "COMP-1 requires touba-manifest-v1",
       {},
       "CompensationUnsupportedGraph",
     );
@@ -1001,6 +1001,7 @@ function localOutcomeTrace(record, outcome, airDocument, initialSequence = 0) {
   builder.push("run_completed", {
     payload: {
       status: outcome.state === "terminal" ? "success" : "failure",
+      reason: outcome.state === "terminal" ? "completed" : outcome.blockerCode,
       compensation_id: record.compensation_id,
       compensates_effect_id: record.compensates_effect_id,
       inverse_effect_id: record.inverse?.effect_id ?? null,

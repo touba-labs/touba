@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:760ecc2485bbd6883527836d85bd068e610b2c5d32ca9c3bde52762a8615c255",
     "module_ref": "module:test.triggers",
     "entry_ref": "trigger:test/DailyRun"
   },
@@ -64,7 +65,8 @@
       "sequence_index": 4,
       "kind": "run_completed",
       "payload": {
-        "status": "failure"
+        "status": "failure",
+        "reason": "TriggerSourceMismatch"
       }
     }
   ]

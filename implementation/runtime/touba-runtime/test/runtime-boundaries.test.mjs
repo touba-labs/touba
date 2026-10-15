@@ -821,7 +821,7 @@ function processToolDocument() {
         required_secrets: ["SEARCH_API_KEY"],
       }),
     ],
-    skills: [skill("SearchFlow", "graph:skill:test/SearchFlow", ["tool:test/Search"])],
+    skills: [skill("SearchFlow", "graph:skill:test/SearchFlow", ["tool:test/Search"], [parameter("query", "builtin:Text")])],
     graphs: [
       graph("graph:skill:test/SearchFlow", "skill:test/SearchFlow", [
         node("n1", "call_tool", {
@@ -868,7 +868,7 @@ function payloadConstraintDocument() {
         },
       }),
     ],
-    skills: [skill("SearchFlow", "graph:skill:test/SearchFlow", ["tool:test/Search"])],
+    skills: [skill("SearchFlow", "graph:skill:test/SearchFlow", ["tool:test/Search"], [parameter("request", "type:test/SearchRequest")])],
     graphs: [
       graph("graph:skill:test/SearchFlow", "skill:test/SearchFlow", [
         node("n1", "call_tool", {
@@ -888,7 +888,7 @@ function processBindingManifestDocument(script) {
   return bindingManifestDocument({
     bindings: {
       "tool:test/Search": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: process.execPath,
           args: ["-e", script],
@@ -906,7 +906,7 @@ function payloadConstraintManifestDocument() {
   return bindingManifestDocument({
     bindings: {
       "tool:test/Search": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: process.execPath,
           args: ["-e", ""],
@@ -994,12 +994,12 @@ function tool(name, fields = {}) {
   };
 }
 
-function skill(name, flowGraphRef, uses = []) {
+function skill(name, flowGraphRef, uses = [], inputs = []) {
   return {
     id: `skill:test/${name}`,
     name,
     signature: {
-      inputs: [],
+      inputs,
       output_type: "builtin:Text",
     },
     uses,

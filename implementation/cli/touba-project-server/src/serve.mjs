@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   PRODUCT_SURFACE_CONTRACTS,
@@ -80,7 +80,6 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8791;
 const DEFAULT_HUMAN_DECISIONS_PATH = ".touba/human-decisions.json";
 const DEFAULT_CHANGE_PROPOSALS_PATH = ".touba/project-change-proposals.json";
-const LEGACY_CHANGE_PROPOSALS_PATH = ".touba/studio-change-proposals.json";
 const DEFAULT_EVENT_JOURNAL_PATH = ".touba/project-events.jsonl";
 const DEFAULT_RUN_SUMMARY_PATH = ".touba/current-run-summary.json";
 const DEFAULT_TRACE_TIMELINE_PATH = ".touba/current-trace-timeline.json";
@@ -106,14 +105,12 @@ const MAX_CHANGE_SET_BYTES = 512 * 1024;
 const MAX_CHANGE_SET_TARGETS = 16;
 const MAX_PROJECT_ARTIFACTS = 200;
 const MAX_PROJECT_SCAN_DEPTH = 6;
-const CONTRACT_INDEX_SCHEMA_VERSION = "touba-project-server-contract-index-v0.1";
-const LIVE_STATE_SCHEMA_VERSION = "touba-project-live-state-v0.1";
-const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v0.1";
-const HUMAN_DECISION_STORE_SCHEMA_VERSION = "touba-human-decisions-v0.1";
-const HUMAN_REQUEST_STORE_SCHEMA_VERSION = "touba-human-requests-v0.1";
-const SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION = "touba-sandbox-checkpoints-v0.3";
-const PREVIOUS_SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION = "touba-sandbox-checkpoints-v0.2";
-const LEGACY_SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION = "touba-sandbox-checkpoints-v0.1";
+const CONTRACT_INDEX_SCHEMA_VERSION = "touba-project-server-contract-index-v1";
+const LIVE_STATE_SCHEMA_VERSION = "touba-project-live-state-v1";
+const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v1";
+const HUMAN_DECISION_STORE_SCHEMA_VERSION = "touba-human-decisions-v1";
+const HUMAN_REQUEST_STORE_SCHEMA_VERSION = "touba-human-requests-v1";
+const SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION = "touba-sandbox-checkpoints-v1";
 const HUMAN_WAIT_SCHEMA_VERSION = "touba-human-wait-v1";
 const HUMAN_WAIT_TTL_MS = 86_400_000;
 const MAX_ACTIVE_HUMAN_WAITS = 100;
@@ -124,39 +121,38 @@ const MAX_HUMAN_WAIT_IDENTIFIER_LENGTH = 512;
 const MAX_HUMAN_WAIT_RESOLUTION_ID_LENGTH = 1_024;
 const MAX_HUMAN_WAIT_TIMESTAMP_LENGTH = 64;
 const MAX_HUMAN_WAIT_TEXT_LENGTH = 4_096;
-const HUMAN_DECISION_HISTORY_SCHEMA_VERSION = "touba-human-decision-history-v0.1";
-const HUMAN_DECISION_DETAIL_SCHEMA_VERSION = "touba-human-decision-detail-v0.1";
-const AUTHORITY_GRAPH_SCHEMA_VERSION = "touba-authority-graph-v0.1";
-const PRODUCT_IDENTITY_SCHEMA_VERSION = "touba-product-identity-v0.1";
-const SUPPLY_CHAIN_STATUS_SCHEMA_VERSION = "touba-supply-chain-status-v0.1";
-const GOVERNANCE_READINESS_SCHEMA_VERSION = "touba-governance-readiness-v0.1";
-const TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION = "touba-trigger-queue-health-v0.1";
-const COST_OBSERVATORY_SCHEMA_VERSION = "touba-cost-observatory-v0.1";
-const HANDLER_SANDBOX_STATUS_SCHEMA_VERSION = "touba-handler-sandbox-status-v0.1";
-const MOBILE_NOTIFICATION_SCHEMA_VERSION = "touba-mobile-notification-v0.1";
-const MOBILE_PAIRING_REQUEST_SCHEMA_VERSION = "touba-mobile-pairing-request-v0.1";
-const MOBILE_PAIRING_STORE_SCHEMA_VERSION = "touba-mobile-pairings-v0.1";
-const MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION = "touba-mobile-quick-approval-policy-v0.1";
-const MOBILE_ESCALATION_SCHEMA_VERSION = "touba-mobile-escalation-v0.1";
-const PROJECT_REFRESH_REQUEST_SCHEMA_VERSION = "touba-project-refresh-request-v0.1";
-const PROJECT_REFRESH_SCHEMA_VERSION = "touba-project-refresh-v0.1";
-const SANDBOX_RUN_REQUEST_SCHEMA_VERSION = "touba-sandbox-run-request-v0.1";
-const SANDBOX_RUN_RESULT_SCHEMA_VERSION = "touba-sandbox-run-result-v0.1";
+const HUMAN_DECISION_HISTORY_SCHEMA_VERSION = "touba-human-decision-history-v1";
+const HUMAN_DECISION_DETAIL_SCHEMA_VERSION = "touba-human-decision-detail-v1";
+const AUTHORITY_GRAPH_SCHEMA_VERSION = "touba-authority-graph-v1";
+const PRODUCT_IDENTITY_SCHEMA_VERSION = "touba-product-identity-v1";
+const SUPPLY_CHAIN_STATUS_SCHEMA_VERSION = "touba-supply-chain-status-v1";
+const GOVERNANCE_READINESS_SCHEMA_VERSION = "touba-governance-readiness-v1";
+const TRIGGER_QUEUE_HEALTH_SCHEMA_VERSION = "touba-trigger-queue-health-v1";
+const COST_OBSERVATORY_SCHEMA_VERSION = "touba-cost-observatory-v1";
+const HANDLER_SANDBOX_STATUS_SCHEMA_VERSION = "touba-handler-sandbox-status-v1";
+const MOBILE_NOTIFICATION_SCHEMA_VERSION = "touba-mobile-notification-v1";
+const MOBILE_PAIRING_REQUEST_SCHEMA_VERSION = "touba-mobile-pairing-request-v1";
+const MOBILE_PAIRING_STORE_SCHEMA_VERSION = "touba-mobile-pairings-v1";
+const MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION = "touba-mobile-quick-approval-policy-v1";
+const MOBILE_ESCALATION_SCHEMA_VERSION = "touba-mobile-escalation-v1";
+const PROJECT_REFRESH_REQUEST_SCHEMA_VERSION = "touba-project-refresh-request-v1";
+const PROJECT_REFRESH_SCHEMA_VERSION = "touba-project-refresh-v1";
+const SANDBOX_RUN_REQUEST_SCHEMA_VERSION = "touba-sandbox-run-request-v1";
+const SANDBOX_RUN_RESULT_SCHEMA_VERSION = "touba-sandbox-run-result-v1";
 const OPERATION_RESUME_REQUEST_SCHEMA_VERSION = "touba-operation-resume-request-v1";
 const OPERATION_RECOVERY_SCHEMA_VERSION = "touba-operation-recovery-v1";
-const CHANGE_PROPOSAL_SCHEMA_VERSION = "touba-project-change-proposal-v0.1";
-const CHANGE_PROPOSED_SCHEMA_VERSION = "touba-project-change-proposed-v0.1";
-const CHANGE_APPLY_SCHEMA_VERSION = "touba-project-change-apply-v0.1";
-const CHANGE_RESULT_SCHEMA_VERSION = "touba-project-change-result-v0.1";
-const CHANGE_HISTORY_SCHEMA_VERSION = "touba-project-change-history-v0.1";
-const CHANGE_DETAIL_SCHEMA_VERSION = "touba-project-change-detail-v0.1";
-const ELEMENT_AUTHORING_PREVIEW_SCHEMA_VERSION = "touba-element-authoring-preview-v0.1";
-const DEPLOYMENT_ACTION_SCHEMA_VERSION = "touba-deployment-action-v0.1";
-const DEPLOYMENT_PLAN_SCHEMA_VERSION = "touba-deployment-plan-v0.1";
-const GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION = "touba-governance-relation-change-v0.1";
-const PROJECT_EVENT_SCHEMA_VERSION = "touba-project-event-v0.1";
-const CHANGE_STORE_SCHEMA_VERSION = "touba-project-change-proposals-v0.1";
-const LEGACY_CHANGE_STORE_SCHEMA_VERSION = "touba-studio-change-proposals-v0.1";
+const CHANGE_PROPOSAL_SCHEMA_VERSION = "touba-project-change-proposal-v1";
+const CHANGE_PROPOSED_SCHEMA_VERSION = "touba-project-change-proposed-v1";
+const CHANGE_APPLY_SCHEMA_VERSION = "touba-project-change-apply-v1";
+const CHANGE_RESULT_SCHEMA_VERSION = "touba-project-change-result-v1";
+const CHANGE_HISTORY_SCHEMA_VERSION = "touba-project-change-history-v1";
+const CHANGE_DETAIL_SCHEMA_VERSION = "touba-project-change-detail-v1";
+const ELEMENT_AUTHORING_PREVIEW_SCHEMA_VERSION = "touba-element-authoring-preview-v1";
+const DEPLOYMENT_ACTION_SCHEMA_VERSION = "touba-deployment-action-v1";
+const DEPLOYMENT_PLAN_SCHEMA_VERSION = "touba-deployment-plan-v1";
+const GOVERNANCE_RELATION_CHANGE_SCHEMA_VERSION = "touba-governance-relation-change-v1";
+const PROJECT_EVENT_SCHEMA_VERSION = "touba-project-event-v1";
+const CHANGE_STORE_SCHEMA_VERSION = "touba-project-change-proposals-v1";
 const CHANGE_ACTIONS = Object.freeze(["write_text_file"]);
 const CHANGE_DECISIONS = Object.freeze(["apply", "refuse"]);
 const MOBILE_PAIRING_ALLOWED_SCOPES = Object.freeze([
@@ -166,7 +162,7 @@ const MOBILE_PAIRING_ALLOWED_SCOPES = Object.freeze([
   "notifications:read",
   "events:read",
 ]);
-const TOUBA_CLI_PATH = new URL("../../touba-project/src/main.mjs", import.meta.url).pathname;
+const TOUBA_CLI_PATH = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
 const PROJECT_SCAN_EXCLUDED_DIRS = Object.freeze(new Set([
   ".git",
   "node_modules",
@@ -242,7 +238,7 @@ if (isMainModule()) {
 
 export function createToubaProjectServer(options = {}) {
   const contractsRoot = resolve(
-    options.contractsRoot ?? new URL("../../../contracts/product-surfaces/", import.meta.url).pathname,
+    options.contractsRoot ?? fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url)),
   );
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const deploymentTargetUrl = options.deploymentTargetUrl;
@@ -423,16 +419,10 @@ export function createToubaProjectServer(options = {}) {
     eventJournalLimit,
     strict: options.strict === true,
   });
-  if (options.changeProposalsPath === undefined) {
-    migrateLegacyChangeProposalStore({
-      changeProposalsPath,
-      legacyPath: join(projectRoot, LEGACY_CHANGE_PROPOSALS_PATH),
-    });
-  }
   recoverProjectChangeTransactions({ projectRoot });
-  // Migrate legacy human waits while the host still has access to the
-  // interaction correlation store. Subsequent loads see the strict v0.3 file.
-  loadSandboxCheckpointStore(sandboxCheckpointsPath, { interactionSessionsPath });
+  // Stored waits must already satisfy the canonical contract; never rewrite
+  // historical records or invent missing correlation/trace evidence.
+  loadSandboxCheckpointStore(sandboxCheckpointsPath);
   validateHumanWaitInteractionProjectionMarkers({
     interactionSessionsPath,
     sandboxCheckpointsPath,
@@ -540,7 +530,7 @@ export function createToubaProjectServer(options = {}) {
     if (!isCompletedAutomaticHumanWait(record)) return;
     const current = readProjectRunSummary({ contractsRoot, runSummaryPath });
     if (current.run_id === record.run_id || current.status === "unavailable") {
-      const runtimeResult = { status: record.result.status, trace: record.result.trace };
+      const runtimeResult = { status: record.result.status, reason: record.result.reason, trace: record.result.trace };
       persistSandboxCurrentSurfaces({
         contractsRoot,
         result: record.result,
@@ -575,7 +565,7 @@ export function createToubaProjectServer(options = {}) {
         contractsRoot,
         result: record.result,
         runSummaryPath,
-        runtimeResult: { status: record.result.status, trace: record.result.trace },
+        runtimeResult: { status: record.result.status, reason: record.result.reason, trace: record.result.trace },
         traceTimelinePath,
       });
     }
@@ -2155,7 +2145,7 @@ export function createToubaProjectServer(options = {}) {
       }
       if (request.method === "POST" && url.pathname === "/runs/sandbox/resume") {
         const body = await readJsonBody(request);
-        if (isPlainObject(body) && Object.hasOwn(body, "operation_id") && body.schema_version !== undefined) {
+        if (isPlainObject(body) && Object.hasOwn(body, "operation_id")) {
           validateContractPayload({
             contractsRoot,
             schemaVersion: OPERATION_RESUME_REQUEST_SCHEMA_VERSION,
@@ -2830,7 +2820,7 @@ export function preflightServeOptions({
     throw error;
   }
   return {
-    schema_version: "touba-serve-preflight-v0.1",
+    schema_version: "touba-serve-preflight-v1",
     status: diagnostics.length === 0 ? "ok" : "warning",
     diagnostics,
   };
@@ -3011,7 +3001,7 @@ function prepareDecisionAcceptance({
 
 function decisionAcceptedProjection(storedDecision) {
   return {
-    schema_version: "touba-decision-accepted-v0.1",
+    schema_version: "touba-decision-accepted-v1",
     status: "accepted",
     request_id: storedDecision.request_id,
     decision_schema_version: storedDecision.schema_version,
@@ -3419,7 +3409,7 @@ export async function executeProjectSandboxRun({
     schemaVersion: SANDBOX_RUN_REQUEST_SCHEMA_VERSION,
     value: request,
     errorCode: "ToubaServeSandboxInvalid",
-    message: "sandbox run request does not match touba-sandbox-run-request-v0.1",
+    message: "sandbox run request does not match touba-sandbox-run-request-v1",
   });
   if (request.execution_kind !== executionKind) {
     throw serviceError("ToubaServeSandboxInvalid", `sandbox route expects execution_kind ${executionKind}`);
@@ -3558,7 +3548,7 @@ export async function executeProjectSandboxRun({
     schemaVersion: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
     value: result,
     errorCode: "ToubaServeSandboxResultInvalid",
-    message: "sandbox run result does not match touba-sandbox-run-result-v0.1",
+    message: "sandbox run result does not match touba-sandbox-run-result-v1",
   });
   persistSandboxCurrentSurfaces({
     contractsRoot,
@@ -3586,6 +3576,7 @@ export function buildSandboxRunResult({
     execution_kind: executionKind,
     target_ref: targetRef,
     status: runtimeResult.status,
+    reason: runtimeResult.reason,
     started_at: startedAt,
     completed_at: completedAt,
     duration_ms: Math.max(0, Date.now() - startedMs),
@@ -3638,6 +3629,7 @@ function sandboxRunDiagnostic(runtimeResult, executionKind) {
 }
 
 export async function resumeProjectSandboxRun({
+  projectRoot,
   agentDecisionProvider,
   agentDecisionProviderContentMode,
   agentDecisionProviderInitialMode,
@@ -3652,7 +3644,6 @@ export async function resumeProjectSandboxRun({
   humanDecisionsPath,
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   nowMs = Date.now,
-  projectRoot,
   request,
   runSummaryPath,
   sandboxCheckpointsPath = join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
@@ -3781,7 +3772,7 @@ export async function resumeProjectSandboxRun({
     schemaVersion: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
     value: result,
     errorCode: "ToubaServeSandboxResultInvalid",
-    message: "resumed sandbox run result does not match touba-sandbox-run-result-v0.1",
+    message: "resumed sandbox run result does not match touba-sandbox-run-result-v1",
   });
   if (runtimeResult.checkpoint) {
     completeHumanDecisionWithSuccessor({
@@ -3916,7 +3907,7 @@ async function terminalizeAutomaticHumanWait({
       schemaVersion: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
       value: result,
       errorCode: "ToubaServeSandboxResultInvalid",
-      message: "automatic human wait result does not match touba-sandbox-run-result-v0.1",
+      message: "automatic human wait result does not match touba-sandbox-run-result-v1",
     });
     const completedRecord = completeAutomaticHumanWaitTerminalization({
       completedAt,
@@ -4075,7 +4066,7 @@ async function resumeProjectDurableSandboxRun({
     schemaVersion: SANDBOX_RUN_RESULT_SCHEMA_VERSION,
     value: result,
     errorCode: "ToubaServeSandboxResultInvalid",
-    message: "resumed sandbox run result does not match touba-sandbox-run-result-v0.1",
+    message: "resumed sandbox run result does not match touba-sandbox-run-result-v1",
   });
   persistSandboxCurrentSurfaces({
     contractsRoot,
@@ -4282,7 +4273,7 @@ function sandboxDurableResumeCandidate({ document, inputs, targetRef, toolBindin
   if (graph.nodes.some((node) => !allowedKinds.has(node.kind))) return false;
   if (
     graph.nodes.some((node) => node.kind === "call_tool")
-    && !["touba-manifest-v2", "touba-manifest-v3"].includes(toolBindingManifest?.version)
+    && toolBindingManifest?.version !== "touba-manifest-v1"
   ) return false;
   return true;
 }
@@ -4538,9 +4529,13 @@ function humanDecisionResultProvesResolution(record) {
 
 function sandboxRunSummaryStatus(runtimeResult) {
   const { status, checkpoint } = runtimeResult;
+  const reason = runtimeResult.reason;
   if (status === "success") return "succeeded";
   if (status === "failure") return "failed";
   if (status === "cancelled") return "cancelled";
+  if (status === "stopped" && reason === "explicit_stop") return "stopped";
+  if (status === "stopped" && reason === "human_approval_cancelled") return "cancelled";
+  if (status === "stopped" && ["human_approval_rejected", "human_approval_expired"].includes(reason)) return "refused";
   if (status === "stopped" && checkpoint?.kind === "agent_human_review") return "review_pending";
   if (status === "stopped" && checkpoint) return "approval_pending";
   if (status === "stopped" && sandboxHumanTerminalDecision(runtimeResult) === "cancelled") return "cancelled";
@@ -4622,7 +4617,7 @@ function recoverTerminalHumanInteractions({
       // Older projections lost this result after deduplicating it with the pause.
       // Recover only from a matching durable terminal checkpoint and its trace;
       // never rerun the program or infer a decision from the absence of a request.
-      const runtimeResult = { status: record.result.status, trace: record.result.trace };
+      const runtimeResult = { status: record.result.status, reason: record.result.reason, trace: record.result.trace };
       const result = structuredClone(record.result);
       const completed = completeInteractionOperation({
         operationId: operation.operation_id,
@@ -4821,7 +4816,7 @@ function sandboxRunEventPayload(result) {
 }
 
 export function buildTriggerQueueHealth({
-  contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname,
+  contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url)),
   projectRoot = process.cwd(),
   triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
   eventJournalPath = join(projectRoot, DEFAULT_EVENT_JOURNAL_PATH),
@@ -4926,7 +4921,7 @@ export function buildSupplyChainStatus({
 }
 
 export function buildGovernanceReadiness({
-  contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname,
+  contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url)),
   projectRoot = process.cwd(),
   productIdentityPath = join(projectRoot, DEFAULT_PRODUCT_IDENTITY_PATH),
   changeProposalsPath = join(projectRoot, DEFAULT_CHANGE_PROPOSALS_PATH),
@@ -5390,7 +5385,7 @@ export function readProductIdentity({
     filePath: productIdentityPath,
     schemaVersion: PRODUCT_IDENTITY_SCHEMA_VERSION,
     errorCode: "ToubaServeProductIdentityInvalid",
-    message: "project product identity does not match touba-product-identity-v0.1",
+    message: "project product identity does not match touba-product-identity-v1",
   });
   return stored ?? emptyProductIdentity(generatedAt);
 }
@@ -5428,7 +5423,7 @@ export function readCostObservatory({
     filePath: costObservatoryPath,
     schemaVersion: COST_OBSERVATORY_SCHEMA_VERSION,
     errorCode: "ToubaServeCostObservatoryInvalid",
-    message: "project cost observatory report does not match touba-cost-observatory-v0.1",
+    message: "project cost observatory report does not match touba-cost-observatory-v1",
   });
   return stored ?? emptyCostObservatory({ generatedAt, projectRoot });
 }
@@ -5462,7 +5457,7 @@ export function readMobileNotifications({
     filePath: mobileNotificationsPath,
     schemaVersion: MOBILE_NOTIFICATION_SCHEMA_VERSION,
     errorCode: "ToubaServeMobileNotificationsInvalid",
-    message: "mobile notification report does not match mobile client-notification-v0.1",
+    message: "mobile notification report does not match mobile client-notification-v1",
   });
   return stored ?? emptyMobileNotifications(generatedAt);
 }
@@ -5527,7 +5522,7 @@ export function issueMobilePairingRequest({
     schemaVersion: MOBILE_PAIRING_REQUEST_SCHEMA_VERSION,
     value: pairingRequest,
     errorCode: "ToubaServeMobilePairingInvalid",
-    message: "mobile pairing request does not match mobile client-pairing-request-v0.1",
+    message: "mobile pairing request does not match mobile client-pairing-request-v1",
   });
   const store = loadMobilePairingStore(mobilePairingsPath);
   if (store.pairings.some((item) => item.pairing_id === pairingId && item.status !== "revoked")) {
@@ -5563,7 +5558,7 @@ export function acceptMobilePairing({
     schemaVersion: MOBILE_PAIRING_REQUEST_SCHEMA_VERSION,
     value: pairingRequest,
     errorCode: "ToubaServeMobilePairingInvalid",
-    message: "mobile pairing request does not match mobile client-pairing-request-v0.1",
+    message: "mobile pairing request does not match mobile client-pairing-request-v1",
   });
   const scopes = normalizeMobilePairingScopes(pairingRequest.scopes);
   const store = loadMobilePairingStore(mobilePairingsPath);
@@ -5596,7 +5591,7 @@ export function acceptMobilePairing({
   pairing.accepted_at = acceptedAt;
   saveMobilePairingStore(mobilePairingsPath, store);
   return {
-    schema_version: "touba-mobile-pairing-accepted-v0.1",
+    schema_version: "touba-mobile-pairing-accepted-v1",
     status: "accepted",
     pairing_id: pairing.pairing_id,
     device_ref: pairing.device_ref,
@@ -5636,7 +5631,7 @@ export function revokeMobilePairing({
   pairing.revocation_reason = nonEmptyString(reason) ?? "revoked";
   saveMobilePairingStore(mobilePairingsPath, store);
   return {
-    schema_version: "touba-mobile-pairing-revoked-v0.1",
+    schema_version: "touba-mobile-pairing-revoked-v1",
     status: "revoked",
     pairing_id: pairing.pairing_id,
     device_ref: pairing.device_ref,
@@ -5653,7 +5648,7 @@ export function readMobileQuickApprovalPolicy({ contractsRoot, mobileQuickApprov
     filePath: mobileQuickApprovalPolicyPath,
     schemaVersion: MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION,
     errorCode: "ToubaServeMobileQuickApprovalPolicyInvalid",
-    message: "mobile quick approval policy does not match mobile client-quick-approval-policy-v0.1",
+    message: "mobile quick approval policy does not match mobile client-quick-approval-policy-v1",
   });
   return stored ?? disabledMobileQuickApprovalPolicy();
 }
@@ -5682,7 +5677,7 @@ export function readMobileEscalation({ contractsRoot, mobileEscalationPath }) {
     filePath: mobileEscalationPath,
     schemaVersion: MOBILE_ESCALATION_SCHEMA_VERSION,
     errorCode: "ToubaServeMobileEscalationInvalid",
-    message: "mobile escalation report does not match mobile client-escalation-v0.1",
+    message: "mobile escalation report does not match mobile client-escalation-v1",
   });
   return stored ?? emptyMobileEscalation();
 }
@@ -5714,7 +5709,7 @@ export function buildHandlerSandboxStatus({
     filePath: handlerSandboxStatusPath,
     schemaVersion: HANDLER_SANDBOX_STATUS_SCHEMA_VERSION,
     errorCode: "ToubaServeHandlerSandboxStatusInvalid",
-    message: "handler sandbox status does not match touba-handler-sandbox-status-v0.1",
+    message: "handler sandbox status does not match touba-handler-sandbox-status-v1",
   });
   if (stored !== undefined) {
     return stored;
@@ -6441,7 +6436,7 @@ function buildProjectPackages({ projectRoot, artifacts, diagnostics }) {
     }
     const name = nonEmptyString(document?.name);
     const version = nonEmptyString(document?.version);
-    const valid = document?.package_schema_version === "touba-package-v0.1"
+    const valid = document?.package_schema_version === "touba-package-v1"
       && name !== undefined
       && version !== undefined
       && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)
@@ -6449,7 +6444,7 @@ function buildProjectPackages({ projectRoot, artifacts, diagnostics }) {
     if (!valid) {
       diagnostics.push(serviceDiagnostic(
         "ToubaProjectPackageInvalid",
-        `${artifact.relative_path} is not a valid touba-package-v0.1 document`,
+        `${artifact.relative_path} is not a valid touba-package-v1 document`,
         "warning",
         artifact.relative_path,
       ));
@@ -7691,7 +7686,7 @@ function validateProjectMetadataDocument(fileName, document) {
       document,
       fileName,
       field: "package_schema_version",
-      expected: "touba-package-v0.1",
+      expected: "touba-package-v1",
     });
     if (typeof document.name !== "string" || document.name.trim() === "") {
       diagnostics.push(serviceDiagnostic("ToubaServeChangePackageNameMissing", `${fileName}.name is required`));
@@ -7709,7 +7704,7 @@ function validateProjectMetadataDocument(fileName, document) {
       document,
       fileName,
       field: "ownership_schema_version",
-      expected: "touba-ownership-v0.1",
+      expected: "touba-ownership-v1",
     });
     for (const field of ["teams", "owners", "review_gates"]) {
       if (document[field] !== undefined && !isPlainObject(document[field])) {
@@ -7729,7 +7724,7 @@ function validateProjectMetadataDocument(fileName, document) {
       document,
       fileName,
       field: "resource_bindings_schema_version",
-      expected: "touba-resource-bindings-v0.1",
+      expected: "touba-resource-bindings-v1",
     });
     if (!isPlainObject(document.resources)) {
       diagnostics.push(serviceDiagnostic("ToubaServeChangeResourcesMissing", `${fileName}.resources must be an object`));
@@ -7744,7 +7739,7 @@ function validateGovernanceActionMetadata({ document, fileName }) {
     document,
     fileName,
     field: "governance_action_schema_version",
-    expected: "touba-governance-action-v0.1",
+    expected: "touba-governance-action-v1",
   });
   const allowedOperations = new Set(["grant_authority", "revoke_authority", "require_review", "set_quota"]);
   const allowedIntents = new Set(["grant", "revoke", "review", "quota"]);
@@ -7891,7 +7886,7 @@ function applyChangeTargetsTransaction({ projectRoot, proposalId, targets, decid
   const backupRoot = join(transactionRoot, "backup");
   const journalPath = join(transactionRoot, "journal.json");
   const journal = {
-    schema_version: "touba-project-change-transaction-v0.1",
+    schema_version: "touba-project-change-transaction-v1",
     transaction_id: transactionId,
     proposal_id: proposalId,
     status: "preparing",
@@ -8008,7 +8003,7 @@ export function recoverProjectChangeTransactions({
       continue;
     }
     if (
-      journal.schema_version !== "touba-project-change-transaction-v0.1"
+      journal.schema_version !== "touba-project-change-transaction-v1"
       || !Array.isArray(journal.targets)
     ) {
       failures.push(`${entry.name}: invalid transaction journal`);
@@ -8234,28 +8229,6 @@ function assertChangeTargetUnchanged(proposal, targetPath) {
       "change target changed after validation; propose the governance change again",
     );
   }
-}
-
-function migrateLegacyChangeProposalStore({ changeProposalsPath, legacyPath }) {
-  if (existsSync(changeProposalsPath) || !existsSync(legacyPath)) return;
-  if (statSync(legacyPath).isDirectory()) {
-    throw serviceError("ToubaServeChangeStoreInvalid", `${legacyPath} is a directory`);
-  }
-  const legacy = JSON.parse(readFileSync(legacyPath, "utf8"));
-  if (
-    legacy.schema_version !== LEGACY_CHANGE_STORE_SCHEMA_VERSION
-    || !Array.isArray(legacy.proposals)
-  ) {
-    throw serviceError(
-      "ToubaServeChangeStoreInvalid",
-      `legacy change proposal store must use ${LEGACY_CHANGE_STORE_SCHEMA_VERSION}`,
-    );
-  }
-  saveChangeProposalStore(changeProposalsPath, {
-    schema_version: CHANGE_STORE_SCHEMA_VERSION,
-    proposals: legacy.proposals,
-  });
-  renameSync(legacyPath, `${legacyPath}.migrated`);
 }
 
 function loadChangeProposalStore(changeProposalsPath) {
@@ -8625,7 +8598,7 @@ function completeHumanDecisionWithSuccessor({
     throw serviceError("ToubaServeHumanWaitConflict", "previous durable decision is not claimable for a successor wait");
   }
   if (
-    durableCheckpoint.checkpoint_schema_version !== "touba-run-checkpoint-v0.1"
+    durableCheckpoint.checkpoint_schema_version !== "touba-human-approval-checkpoint-v1"
     || durableCheckpoint.run_id !== previous.run_id
     || operationId !== previous.operation_id
   ) {
@@ -8979,7 +8952,7 @@ function claimSandboxExecutionResume({
   if (record.record_kind !== "execution") {
     throw serviceError(
       "DurableResumeCheckpointMigrationRequired",
-      "touba-run-checkpoint-v0.1 cannot be resumed as a sequential execution checkpoint",
+      "touba-human-approval-checkpoint-v1 cannot be resumed as a sequential execution checkpoint",
     );
   }
   if (record.status === "cancelled") {
@@ -9065,8 +9038,7 @@ function normalizeDurableResumeRequest(request) {
     throw serviceError("DurableResumeCheckpointInvalid", "resume request contains unknown fields");
   }
   if (
-    request.schema_version !== undefined
-    && request.schema_version !== OPERATION_RESUME_REQUEST_SCHEMA_VERSION
+    request.schema_version !== OPERATION_RESUME_REQUEST_SCHEMA_VERSION
   ) {
     throw serviceError(
       "DurableResumeCheckpointInvalid",
@@ -9085,7 +9057,7 @@ function normalizeDurableResumeRequest(request) {
     throw serviceError("DurableResumeCheckpointInvalid", "checkpoint_digest must be a sha256 digest");
   }
   return {
-    ...(request.schema_version === undefined ? {} : { schema_version: request.schema_version }),
+    schema_version: OPERATION_RESUME_REQUEST_SCHEMA_VERSION,
     operation_id: operationId,
     checkpoint_revision: request.checkpoint_revision,
     checkpoint_digest: request.checkpoint_digest,
@@ -9593,7 +9565,7 @@ function isCompletedAutomaticHumanWait(record) {
     && isPlainObject(record.result);
 }
 
-export function loadSandboxCheckpointStore(sandboxCheckpointsPath, { interactionSessionsPath } = {}) {
+export function loadSandboxCheckpointStore(sandboxCheckpointsPath) {
   if (!existsSync(sandboxCheckpointsPath)) {
     return { schema_version: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION, records: [] };
   }
@@ -9602,13 +9574,6 @@ export function loadSandboxCheckpointStore(sandboxCheckpointsPath, { interaction
     store = JSON.parse(readFileSync(sandboxCheckpointsPath, "utf8"));
   } catch {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "sandbox checkpoint store is not valid JSON");
-  }
-  if (
-    store?.schema_version === LEGACY_SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION
-    || store?.schema_version === PREVIOUS_SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION
-  ) {
-    store = migrateSandboxCheckpointStore(store, { interactionSessionsPath });
-    saveSandboxCheckpointStore(sandboxCheckpointsPath, store);
   }
   if (
     !isPlainObject(store)
@@ -9634,172 +9599,6 @@ function saveSandboxCheckpointStore(sandboxCheckpointsPath, store) {
   store.records.forEach((record, index) => validateSandboxCheckpointRecord(record, index));
   validateSandboxHumanWaitSet(store.records);
   writeJsonStoreAtomic(sandboxCheckpointsPath, store);
-}
-
-function legacyHumanOperationId({ interactionSessionsPath, record, index }) {
-  if (interactionSessionsPath === undefined || !existsSync(interactionSessionsPath)) {
-    return record.run_id;
-  }
-  let matches;
-  try {
-    matches = listInteractionSessions(interactionSessionsPath).sessions.flatMap((summary) => {
-      const session = getInteractionSession({
-        sessionId: summary.session_id,
-        sessionsPath: interactionSessionsPath,
-      });
-      return session.operations
-        .filter((operation) => operation.run_id === record.run_id)
-        .map((operation) => ({ operation, session }));
-    });
-  } catch {
-    throw serviceError(
-      "ToubaServeSandboxCheckpointStoreInvalid",
-      `records[${index}].operation_id cannot be correlated from the interaction store`,
-    );
-  }
-  if (matches.length === 0) return record.run_id;
-  if (
-    matches.length !== 1
-    || matches[0].operation.target_ref !== record.target_ref
-    || matches[0].session.target_ref !== record.target_ref
-  ) {
-    throw serviceError(
-      "ToubaServeSandboxCheckpointStoreInvalid",
-      `records[${index}].operation_id cannot be correlated unambiguously`,
-    );
-  }
-  return matches[0].operation.operation_id;
-}
-
-function migrateSandboxCheckpointStore(store, { interactionSessionsPath } = {}) {
-  if (
-    !isPlainObject(store)
-    || ![
-      LEGACY_SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION,
-      PREVIOUS_SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION,
-    ].includes(store.schema_version)
-    || !Array.isArray(store.records)
-    || Object.keys(store).some((field) => !["schema_version", "records"].includes(field))
-  ) {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "previous sandbox checkpoint store is malformed");
-  }
-  const legacyV01 = store.schema_version === LEGACY_SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION;
-  return {
-    schema_version: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION,
-    records: store.records.map((record, index) => {
-      let migrated;
-      if (legacyV01) {
-        validateLegacySandboxCheckpointRecord(record, index);
-        const operationId = requiredHumanWaitIdentifier(
-          record.operation_id ?? legacyHumanOperationId({ interactionSessionsPath, record, index }),
-          `records[${index}].operation_id`,
-        );
-        migrated = {
-          record_kind: "human",
-          ...structuredClone(record),
-          operation_id: operationId,
-          effect_scope_id: operationId,
-        };
-      } else {
-        if (!isPlainObject(record)) {
-          throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `records[${index}] must be an object`);
-        }
-        if (record.record_kind === "human") validatePreviousHumanSandboxCheckpointRecord(record, index);
-        else if (record.record_kind === "execution") validateExecutionSandboxCheckpointRecord(record, index);
-        else throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `records[${index}].record_kind is invalid`);
-        migrated = structuredClone(record);
-      }
-      if (migrated.record_kind !== "human") return migrated;
-      const canonicalizeMigratedInstant = (value, field) => new Date(
-        parseHumanWaitInstant(value, field),
-      ).toISOString();
-      migrated.created_at = canonicalizeMigratedInstant(
-        migrated.created_at,
-        `records[${index}].created_at`,
-      );
-      for (const [resultField, result] of [
-        ["paused_result", migrated.paused_result],
-        ["result", migrated.result],
-      ]) {
-        if (!isPlainObject(result)) continue;
-        result.started_at = canonicalizeMigratedInstant(
-          result.started_at,
-          `records[${index}].${resultField}.started_at`,
-        );
-        result.completed_at = canonicalizeMigratedInstant(
-          result.completed_at,
-          `records[${index}].${resultField}.completed_at`,
-        );
-      }
-      if (migrated.resumed_at !== undefined) {
-        migrated.resumed_at = canonicalizeMigratedInstant(
-          migrated.resumed_at,
-          `records[${index}].resumed_at`,
-        );
-      }
-      addMigratedPausedHumanTraceProof(migrated.paused_result, migrated.approval_ref);
-      const request = humanRequestFromCheckpoint({
-        checkpoint: migrated.checkpoint,
-        createdAt: migrated.created_at,
-        requestId: migrated.request_id,
-      });
-      validateHumanWaitRequestShape(request, migrated, index);
-      return {
-        ...migrated,
-        human_wait: {
-          schema_version: HUMAN_WAIT_SCHEMA_VERSION,
-          deadline_at: request.expires_at,
-          request,
-          request_digest: canonicalDigest(request),
-          // Historical terminal records do not contain enough durable data to
-          // reconstruct the winning decision. Keep it unknown instead of
-          // inventing a resolution during migration.
-          resolution: null,
-          terminalization: null,
-          projections: { terminal_event: null, pause_interaction: null, interaction: null },
-        },
-      };
-    }),
-  };
-}
-
-function addMigratedPausedHumanTraceProof(pausedResult, approvalRef) {
-  const events = pausedResult?.trace?.events;
-  if (!Array.isArray(events)) return;
-  let paused = [...events].reverse().find((event) => (
-    (event?.type ?? event?.kind) === "human_approval_paused"
-  ));
-  if (paused === undefined) {
-    paused = {
-      index: events.length,
-      type: "human_approval_paused",
-      summary: "migrated durable human checkpoint pause",
-      severity: "warning",
-      redaction: "payload_minimized",
-    };
-    events.push(paused);
-    pausedResult.trace.event_count = events.length;
-  }
-  paused.authority_ref = approvalRef;
-  paused.related_ref = "decision:pending";
-}
-
-function validateLegacySandboxCheckpointRecord(record, index) {
-  const allowed = new Set([
-    "request_id", "approval_ref", "run_id", "operation_id", "target_ref",
-    "execution_kind", "effect_policy", "status", "created_at", "checkpoint",
-    "paused_result", "resumed_at", "result",
-  ]);
-  if (!isPlainObject(record) || Object.keys(record).some((field) => !allowed.has(field))) {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `records[${index}] is not a valid legacy checkpoint record`);
-  }
-  for (const field of ["request_id", "approval_ref", "run_id", "target_ref", "execution_kind", "effect_policy", "status", "created_at"]) {
-    if (field === "created_at") parseHumanWaitInstant(record[field], `records[${index}].${field}`);
-    else requiredHumanWaitIdentifier(record[field], `records[${index}].${field}`);
-  }
-  if (!isPlainObject(record.checkpoint) || !isPlainObject(record.paused_result)) {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `records[${index}] has an invalid human checkpoint`);
-  }
 }
 
 function validateSandboxCheckpointRecord(record, index) {
@@ -9856,40 +9655,6 @@ function validateHumanSandboxCheckpointRecord(record, index) {
   validateHumanWaitState(record.human_wait, record, index);
 }
 
-function validatePreviousHumanSandboxCheckpointRecord(record, index) {
-  const allowed = new Set([
-    "record_kind", "request_id", "approval_ref", "run_id", "operation_id",
-    "effect_scope_id", "target_ref", "execution_kind", "effect_policy", "status",
-    "created_at", "checkpoint", "paused_result", "resumed_at", "result",
-  ]);
-  if (Object.keys(record).some((field) => !allowed.has(field))) {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `records[${index}] contains unknown v0.2 human checkpoint fields`);
-  }
-  for (const field of [
-    "request_id", "approval_ref", "run_id", "operation_id", "effect_scope_id",
-    "target_ref", "execution_kind", "effect_policy", "status",
-  ]) {
-    requiredHumanWaitIdentifier(record[field], `records[${index}].${field}`);
-  }
-  parseHumanWaitInstant(record.created_at, `records[${index}].created_at`);
-  if (record.effect_scope_id !== record.operation_id || !isPlainObject(record.checkpoint) || !isPlainObject(record.paused_result)) {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `records[${index}] has an invalid v0.2 human checkpoint`);
-  }
-  validateStoredHumanCheckpoint(record, index);
-  validateStoredHumanResult(record.paused_result, record, `records[${index}].paused_result`, {
-    requirePaused: true,
-    requireCanonicalTimestamps: false,
-    requireHumanTraceProof: false,
-  });
-  if (!["pending", "superseded", "completed"].includes(record.status)) {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `records[${index}].status is invalid`);
-  }
-  if (record.resumed_at !== undefined) parseHumanWaitInstant(record.resumed_at, `records[${index}].resumed_at`);
-  if (record.result !== undefined && !isPlainObject(record.result)) {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `records[${index}].result is invalid`);
-  }
-}
-
 function validateStoredHumanCheckpoint(record, index) {
   const checkpoint = record.checkpoint;
   const prefix = `records[${index}].checkpoint`;
@@ -9916,7 +9681,7 @@ function validateStoredHumanCheckpoint(record, index) {
     requiredHumanWaitIdentifier(checkpoint[field], `${prefix}.${field}`);
   }
   if (
-    checkpoint.checkpoint_schema_version !== "touba-run-checkpoint-v0.1"
+    checkpoint.checkpoint_schema_version !== "touba-human-approval-checkpoint-v1"
     || !["human_approval", "agent_human_review"].includes(checkpoint.kind)
     || checkpoint.run_id !== record.run_id
     || checkpoint.approval_ref !== record.approval_ref
@@ -10014,8 +9779,6 @@ function validateStoredHumanCheckpoint(record, index) {
 }
 
 function validateStoredHumanResult(result, record, prefix, {
-  requireCanonicalTimestamps = true,
-  requireHumanTraceProof = true,
   requirePaused = false,
 } = {}) {
   if (
@@ -10032,7 +9795,7 @@ function validateStoredHumanResult(result, record, prefix, {
   ) {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix} identity is invalid`);
   }
-  const parseInstant = requireCanonicalTimestamps ? parseCanonicalHumanWaitInstant : parseHumanWaitInstant;
+  const parseInstant = parseCanonicalHumanWaitInstant;
   const startedAtMs = parseInstant(result.started_at, `${prefix}.started_at`);
   const completedAtMs = parseInstant(result.completed_at, `${prefix}.completed_at`);
   if (completedAtMs < startedAtMs) {
@@ -10048,8 +9811,7 @@ function validateStoredHumanResult(result, record, prefix, {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix} is not a paused human result`);
   }
   if (
-    requireHumanTraceProof
-    && requirePaused
+    requirePaused
     && !summarizedHumanApprovalEventExists(
       result,
       "human_approval_paused",
@@ -10063,8 +9825,7 @@ function validateStoredHumanResult(result, record, prefix, {
     );
   }
   if (
-    requireHumanTraceProof
-    && !requirePaused
+    !requirePaused
     && record.human_wait?.resolution?.status === "completed"
   ) {
     const resolution = record.human_wait.resolution;
@@ -10631,7 +10392,7 @@ function runtimeDecisionFromStoredDecision(decision) {
 function writeJsonStoreAtomic(filePath, value) {
   mkdirSync(dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
   renameSync(tempPath, filePath);
 }
 
@@ -11966,7 +11727,7 @@ function buildMobilePairingDeepLink({
 
 function mobilePairingEventPayload(pairingRequest) {
   return {
-    schema_version: "touba-mobile-pairing-event-v0.1",
+    schema_version: "touba-mobile-pairing-event-v1",
     pairing_id: pairingRequest.pairing_id,
     server_url: pairingRequest.server_url,
     device_ref: pairingRequest.device_ref,

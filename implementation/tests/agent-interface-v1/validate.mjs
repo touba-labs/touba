@@ -50,6 +50,9 @@ try {
   assertSuccess("run", run);
   assert.deepEqual(JSON.parse(run.stdout), { verdict: "approved" });
   const trace = readJson(tracePath);
+  if (process.argv.includes("--write-trace-fixture")) {
+    writeFileSync(expectedTracePath, JSON.stringify(stripSourceRefs(trace), null, 2) + "\n");
+  }
   assert.deepEqual(stripSourceRefs(trace), readJson(expectedTracePath));
   assert.equal(JSON.stringify(trace).includes("Review fixture"), false);
   assert.equal(JSON.stringify(trace).includes("approved"), false);

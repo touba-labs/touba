@@ -1,3 +1,4 @@
+import { structuredModelObject } from "./model-output.fixture.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAiSdkDecisionProvider, createOpenAiDecisionProvider, createOllamaDecisionProvider } from "../src/index.mjs";
@@ -30,7 +31,7 @@ function responseBody(mode, status, decisionInterface = "native") {
     output: mode === "capabilities" && decisionInterface === "native"
       ? [{ type: "function_call", id: "fc_completion", call_id: "call_completion", name: toolName, arguments: "{}", status: "completed" }]
       : [{ type: "message", id: "msg_completion", role: "assistant", status: "completed",
-        content: [{ type: "output_text", text: JSON.stringify(object), annotations: [] }] }],
+        content: [{ type: "output_text", text: JSON.stringify(structuredModelObject(object)), annotations: [] }] }],
     usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
   };
 }
@@ -103,7 +104,7 @@ test("generic AI SDK models keep provider-neutral completion while explicit Resp
   for (const mode of ["summary", "capabilities", "finalization"]) {
     const success = mode === "capabilities"
       ? { finishReason: "tool-calls", toolCalls: [{ toolName, input: {} }] }
-      : { finishReason: "stop", object: completeAnswer };
+      : { finishReason: "stop", object: structuredModelObject(completeAnswer) };
     for (const body of [undefined, { object: "another-provider", status: "provider-specific" }, { object: "response", status: "completed" }]) {
       const provider = createAiSdkDecisionProvider({ model, source, decisionInterface: "native", allowHumanReview: false,
         jsonSchema: (schema) => schema,

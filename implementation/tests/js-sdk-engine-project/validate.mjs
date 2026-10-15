@@ -89,7 +89,7 @@ function manifestDocument() {
     manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:examples.js_sdk_engine_project/BuildGreeting": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: process.execPath,
           args: ["handlers/build_greeting.handler.mjs"],
@@ -125,9 +125,8 @@ function assertRun(run) {
   if (!bindingEvent.payload.secret_handles_used.includes("DEMO_API_KEY")) {
     throw new Error("expected DEMO_API_KEY handle in trace");
   }
-  const showEvent = run.trace.events.find((event) => event.kind === "user_interaction_shown");
-  if (showEvent?.payload?.message !== "Hello Bamba from ToubaEngine") {
-    throw new Error(`unexpected show message ${showEvent?.payload?.message}`);
+  if (run.messages[0]?.text !== "Hello Bamba from ToubaEngine") {
+    throw new Error(`unexpected show message ${run.messages[0]?.text}`);
   }
 }
 

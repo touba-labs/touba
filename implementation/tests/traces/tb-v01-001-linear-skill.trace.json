@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:17dc7cd8670a5776b493811d21ffb742b24ffa313323d2f7fad65ab7c6c72c9e",
     "module_ref": "module:examples.linear_skill",
     "entry_ref": "strategy:examples.linear_skill/RunSourcedNote"
   },
@@ -39,18 +40,19 @@
         "node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
-          "start_byte": 601,
-          "end_byte": 611,
-          "start_line": 31,
+          "start_byte": 781,
+          "end_byte": 858,
+          "start_line": 37,
           "start_column": 8,
-          "end_line": 31,
-          "end_column": 18
+          "end_line": 40,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "agent:examples.linear_skill/Researcher",
         "caller_ref": "strategy:examples.linear_skill/RunSourcedNote",
-        "agent_ref": null
+        "agent_ref": null,
+        "argument_count": 1
       }
     },
     {
@@ -64,12 +66,12 @@
         "node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
-          "start_byte": 601,
-          "end_byte": 611,
-          "start_line": 31,
+          "start_byte": 781,
+          "end_byte": 858,
+          "start_line": 37,
           "start_column": 8,
-          "end_line": 31,
-          "end_column": 18
+          "end_line": 40,
+          "end_column": 8
         }
       },
       "payload": {
@@ -82,6 +84,18 @@
       "event_id": "event:run-1:5",
       "run_id": "run-1",
       "sequence_index": 4,
+      "kind": "agent_interface_entered",
+      "payload": {
+        "agent_ref": "agent:examples.linear_skill/Researcher",
+        "caller_ref": "strategy:examples.linear_skill/RunSourcedNote",
+        "input_count": 1,
+        "output_type": "type:examples.linear_skill/SourceNote"
+      }
+    },
+    {
+      "event_id": "event:run-1:6",
+      "run_id": "run-1",
+      "sequence_index": 5,
       "kind": "agent_capabilities_listed",
       "payload": {
         "agent_ref": "agent:examples.linear_skill/Researcher",
@@ -147,9 +161,9 @@
       }
     },
     {
-      "event_id": "event:run-1:6",
+      "event_id": "event:run-1:7",
       "run_id": "run-1",
-      "sequence_index": 5,
+      "sequence_index": 6,
       "kind": "agent_decision_recorded",
       "payload": {
         "agent_ref": "agent:examples.linear_skill/Researcher",
@@ -159,9 +173,9 @@
       }
     },
     {
-      "event_id": "event:run-1:7",
+      "event_id": "event:run-1:8",
       "run_id": "run-1",
-      "sequence_index": 6,
+      "sequence_index": 7,
       "kind": "agent_capability_selected",
       "payload": {
         "agent_ref": "agent:examples.linear_skill/Researcher",
@@ -172,9 +186,9 @@
       }
     },
     {
-      "event_id": "event:run-1:8",
+      "event_id": "event:run-1:9",
       "run_id": "run-1",
-      "sequence_index": 7,
+      "sequence_index": 8,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.linear_skill/BuildNote",
@@ -182,9 +196,9 @@
       }
     },
     {
-      "event_id": "event:run-1:9",
+      "event_id": "event:run-1:10",
       "run_id": "run-1",
-      "sequence_index": 8,
+      "sequence_index": 9,
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.linear_skill/BuildNote",
@@ -193,23 +207,24 @@
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
           "start_byte": 324,
-          "end_byte": 335,
+          "end_byte": 404,
           "start_line": 20,
           "start_column": 8,
-          "end_line": 20,
-          "end_column": 19
+          "end_line": 23,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "tool:examples.linear_skill/FetchSource",
         "caller_ref": "skill:examples.linear_skill/BuildNote",
-        "agent_ref": "agent:examples.linear_skill/Researcher"
+        "agent_ref": "agent:examples.linear_skill/Researcher",
+        "argument_count": 1
       }
     },
     {
-      "event_id": "event:run-1:10",
+      "event_id": "event:run-1:11",
       "run_id": "run-1",
-      "sequence_index": 9,
+      "sequence_index": 10,
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.linear_skill/BuildNote",
@@ -218,23 +233,24 @@
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
           "start_byte": 324,
-          "end_byte": 335,
+          "end_byte": 404,
           "start_line": 20,
           "start_column": 8,
-          "end_line": 20,
-          "end_column": 19
+          "end_line": 23,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "tool:examples.linear_skill/FetchSource",
         "caller_ref": "skill:examples.linear_skill/BuildNote",
-        "agent_ref": "agent:examples.linear_skill/Researcher"
+        "agent_ref": "agent:examples.linear_skill/Researcher",
+        "result_binding": "source"
       }
     },
     {
-      "event_id": "event:run-1:11",
+      "event_id": "event:run-1:12",
       "run_id": "run-1",
-      "sequence_index": 10,
+      "sequence_index": 11,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.linear_skill/BuildNote",
@@ -246,9 +262,21 @@
       }
     },
     {
-      "event_id": "event:run-1:12",
+      "event_id": "event:run-1:13",
       "run_id": "run-1",
-      "sequence_index": 11,
+      "sequence_index": 12,
+      "kind": "agent_interface_result_returned",
+      "payload": {
+        "agent_ref": "agent:examples.linear_skill/Researcher",
+        "caller_ref": "strategy:examples.linear_skill/RunSourcedNote",
+        "output_type": "type:examples.linear_skill/SourceNote",
+        "result_type": "object"
+      }
+    },
+    {
+      "event_id": "event:run-1:14",
+      "run_id": "run-1",
+      "sequence_index": 13,
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
@@ -256,23 +284,24 @@
         "node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
-          "start_byte": 601,
-          "end_byte": 611,
-          "start_line": 31,
+          "start_byte": 781,
+          "end_byte": 858,
+          "start_line": 37,
           "start_column": 8,
-          "end_line": 31,
-          "end_column": 18
+          "end_line": 40,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "agent:examples.linear_skill/Researcher",
-        "caller_ref": "strategy:examples.linear_skill/RunSourcedNote"
+        "caller_ref": "strategy:examples.linear_skill/RunSourcedNote",
+        "result_binding": "note"
       }
     },
     {
-      "event_id": "event:run-1:13",
+      "event_id": "event:run-1:15",
       "run_id": "run-1",
-      "sequence_index": 12,
+      "sequence_index": 14,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
@@ -284,12 +313,13 @@
       }
     },
     {
-      "event_id": "event:run-1:14",
+      "event_id": "event:run-1:16",
       "run_id": "run-1",
-      "sequence_index": 13,
+      "sequence_index": 15,
       "kind": "run_completed",
       "payload": {
-        "status": "success"
+        "status": "success",
+        "reason": "completed"
       }
     }
   ]

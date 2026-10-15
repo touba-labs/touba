@@ -5,7 +5,9 @@ import {
   failureFamilyForRuntimeCode,
   validateAirMachineContract,
   validateTraceMachineContract,
+  canonicalizeMachineValue,
 } from "../machine/contracts.mjs";
+import { createHash } from "node:crypto";
 
 export const REFERENCE_RUNTIME_PROFILE = "touba-reference-runtime-pure-governed-v1";
 
@@ -33,10 +35,11 @@ export async function executeReferenceAir(document, {
       failure_family: error.failureFamily ?? failureFamilyForRuntimeCode(failureCode),
     });
   }
-  trace.push("run_completed", { status });
+  const reason = status === "success" ? "completed" : status === "stopped" ? "explicit_stop" : failureCode;
+  trace.push("run_completed", { status, reason });
   const traceDocument = trace.document();
   validateTraceMachineContract(traceDocument);
-  return { status, result, failure_code: failureCode, trace: traceDocument };
+  return { status, reason, result, failure_code: failureCode, trace: traceDocument };
 }
 
 async function executeGraph(document, graph, trace, adapters, maxSteps) {
@@ -106,6 +109,7 @@ function refusal(code, failureFamily) {
 
 function traceWriter(document, entryRef, runId) {
   const events = [];
+  const airDigest = `sha256:${createHash("sha256").update(canonicalizeMachineValue(document)).digest("hex")}`;
   return {
     push(kind, payload) {
       events.push({ event_id: `event:${runId}:${events.length + 1}`, run_id: runId,
@@ -116,6 +120,7 @@ function traceWriter(document, entryRef, runId) {
         trace_protocol_version: TRACE_PROTOCOL_VERSION,
         trace_capability_profile: TRACE_CAPABILITY_PROFILE,
         run: { run_id: runId, air_schema_version: AIR_SCHEMA_VERSION,
+          air_digest: airDigest,
           module_ref: document.module.id, entry_ref: entryRef },
         events,
       };

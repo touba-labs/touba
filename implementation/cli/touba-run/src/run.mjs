@@ -1,9 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { openCliEffectJournal } from "./effect-journal.mjs";
+import { resolvedSecretEntries } from "../../../runtime/touba-runtime/src/secret-redaction.mjs";
+import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
+import { publicRunResult, runExitCode } from "../../../contracts/run-outcome.mjs";
+import { loadSkillPack } from "../../touba-project/src/skill-packs.mjs";
 import { createInterface } from "node:readline/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { TraceBuilder } from "../../../runtime/touba-runtime/src/trace-builder.mjs";
+import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
+import { createAdmissionRefusalTrace } from "../../../runtime/touba-runtime/src/admission-trace.mjs";
 import {
   loadAirFromJson,
   executeAirDocument,
@@ -17,20 +25,15 @@ import {
   renderSupplyChainValidation,
   validateSupplyChainArtifacts,
 } from "@touba/supply-chain";
-import {
-  buildLocalToolHandlers,
-  LINEAR_FETCH_SOURCE_TOOL_REF,
-  STRATEGY_APPLY_CHANGE_TOOL_REF,
-} from "./local-handlers.mjs";
 
 const args = process.argv.slice(2);
-const RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v0.1";
-const RUN_EVIDENCE_SCHEMA_VERSION = "touba-run-evidence-v0.1";
+const RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v1";
+const RUN_EVIDENCE_SCHEMA_VERSION = "touba-run-evidence-v1";
 const RUN_SUMMARY_SCHEMA_VERSION = "touba-run-summary-v1";
-const BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v0.1";
-const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
-const RUN_OUTPUT_MODES = new Set(["show", "result", "trace", "all", "run-summary"]);
-const TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v0.1";
+const BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v1";
+const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v1";
+const RUN_OUTPUT_MODES = new Set(["show", "result", "trace", "all", "run-summary", "json"]);
+const TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v1";
 const RESOURCE_BINDING_KINDS = new Set(["memory_backend", "event_source", "decision_provider"]);
 const RUN_LIMIT_KEYS = new Set([
   "max_run_ms",
@@ -87,10 +90,26 @@ class ResourceBindingsCliError extends Error {
 
 const parsedArgs = parseArgs(args);
 
+function refuseAdmission(code, stage, exitCode = 1) {
+  const trace = createAdmissionRefusalTrace(code, stage);
+  if (parsedArgs.traceOutPath !== undefined) {
+    try {
+      writeFileSync(parsedArgs.traceOutPath, serializeJson(trace), "utf8");
+    } catch {
+      process.stderr.write("error: admission refusal trace could not be written\n");
+    }
+  }
+  if (parsedArgs.outputMode === "json") {
+    process.stdout.write(serializeJson(publicRunResult({ status: "failure", reason: code,
+      result: null, messages: [], trace })));
+  }
+  process.exit(exitCode);
+}
+
 if (parsedArgs.error) {
   process.stderr.write(`error: ${parsedArgs.error}\n`);
   printUsage();
-  process.exit(2);
+  refuseAdmission("ArgumentsInvalid", "arguments", 2);
 }
 
 if (parsedArgs.runPlanPath !== undefined) {
@@ -100,7 +119,7 @@ if (parsedArgs.runPlanPath !== undefined) {
     applyRunPlanProfileDefaults(parsedArgs);
   } catch (e) {
     process.stderr.write(`run plan error [${e.code ?? "RunPlanInvalid"}]: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("RunPlanInvalid", "run_plan", 1);
   }
 }
 
@@ -108,17 +127,17 @@ const parsedArgsError = validateParsedArgsAfterRunPlan(parsedArgs);
 if (parsedArgsError) {
   if (typeof parsedArgsError === "object") {
     process.stderr.write(`run plan error [${parsedArgsError.code}]: ${parsedArgsError.message}\n`);
-    process.exit(1);
+    refuseAdmission("RunPlanInvalid", "run_plan", 1);
   } else {
     process.stderr.write(`error: ${parsedArgsError}\n`);
     printUsage();
-    process.exit(2);
+    refuseAdmission("ArgumentsInvalid", "arguments", 2);
   }
 }
 
 if (parsedArgs.positional.length !== 1) {
   printUsage();
-  process.exit(2);
+  refuseAdmission("ArgumentsInvalid", "arguments", 2);
 }
 
 const filePath = parsedArgs.positional[0];
@@ -127,7 +146,7 @@ try {
   json = readFileSync(filePath, "utf8");
 } catch (e) {
   process.stderr.write(`error: cannot read ${filePath}: ${e.message}\n`);
-  process.exit(2);
+  refuseAdmission("AirUnreadable", "air", 2);
 }
 
 let document;
@@ -135,7 +154,7 @@ try {
   document = loadAirFromJson(json);
 } catch (e) {
   process.stderr.write(`error: invalid AIR JSON: ${e.message}\n`);
-  process.exit(1);
+  refuseAdmission("AirInvalid", "air", 1);
 }
 
 if (parsedArgs.runPlanPath !== undefined) {
@@ -143,8 +162,17 @@ if (parsedArgs.runPlanPath !== undefined) {
     validateRunPlanAgainstAir(parsedArgs, document, filePath);
   } catch (e) {
     process.stderr.write(`run plan error [${e.code ?? "RunPlanInvalid"}]: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("RunPlanInvalid", "run_plan", 1);
   }
+}
+
+let skillPacks;
+try {
+  skillPacks = parsedArgs.skillPackPaths.map(path => loadSkillPack(path, document));
+} catch (error) {
+  const code = error.code ?? "SkillPackInvalid";
+  process.stderr.write(`skill pack error [${code}]: ${error.message}\n`);
+  refuseAdmission(/^SkillPack[A-Za-z]+$/.test(code) ? code : "SkillPackInvalid", "skill_pack", 1);
 }
 
 let resourceBindings;
@@ -157,21 +185,11 @@ if (parsedArgs.resourceBindingsPath !== undefined || parsedArgs.requireResourceB
     });
   } catch (e) {
     process.stderr.write(`resource bindings error [${e.code ?? "ResourceBindingsInvalid"}]: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission(e instanceof ResourceBindingsCliError ? e.code : "ResourceBindingsInvalid", "resources", 1);
   }
 }
 
-const localHandlerOptions = {};
-if (parsedArgs.localFetchSourceText !== undefined) {
-  localHandlerOptions.linearSourceText = parsedArgs.localFetchSourceText;
-}
-if (parsedArgs.localApplyChangeSummary !== undefined) {
-  localHandlerOptions.changeSummary = parsedArgs.localApplyChangeSummary;
-}
-
-const toolHandlers = parsedArgs.stubs
-  ? buildStubHandlers(document)
-  : buildLocalToolHandlers(localHandlerOptions);
+const toolHandlers = {};
 
 let toolBindingManifest;
 if (parsedArgs.manifestPath !== undefined) {
@@ -179,7 +197,7 @@ if (parsedArgs.manifestPath !== undefined) {
     toolBindingManifest = loadManifestFromPath(parsedArgs.manifestPath);
   } catch (e) {
     process.stderr.write(`error: invalid manifest ${parsedArgs.manifestPath}: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("ManifestInvalid", "manifest", 1);
   }
 }
 
@@ -196,7 +214,7 @@ if (parsedArgs.supplyChainLockPath !== undefined) {
       supplyChainGate.code = "RunPlanSupplyChainDrift";
     }
     process.stderr.write(formatSupplyChainGateError(supplyChainGate));
-    process.exit(1);
+    refuseAdmission("SupplyChainAdmissionRefused", "supply_chain", 1);
   }
   supplyChainValidated = true;
 }
@@ -210,7 +228,7 @@ if (parsedArgs.hardenedProfilePath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid hardened execution profile ${parsedArgs.hardenedProfilePath}: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("HardenedProfileInvalid", "profile", 1);
   }
 }
 
@@ -220,7 +238,7 @@ if (parsedArgs.secretsPath !== undefined) {
     secretStore = loadSecretsFromPath(parsedArgs.secretsPath);
   } catch (e) {
     process.stderr.write(`error: invalid secrets file ${parsedArgs.secretsPath}: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("SecretsInvalid", "secrets", 1);
   }
 }
 
@@ -230,11 +248,11 @@ if (parsedArgs.inputsJson !== undefined) {
     inputs = JSON.parse(parsedArgs.inputsJson);
   } catch (e) {
     process.stderr.write(`error: invalid --inputs-json: ${e.message}\n`);
-    process.exit(2);
+    refuseAdmission("InputsInvalid", "inputs", 2);
   }
   if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) {
     process.stderr.write("error: --inputs-json must decode to a JSON object\n");
-    process.exit(2);
+    refuseAdmission("InputsInvalid", "inputs", 2);
   }
 }
 
@@ -247,7 +265,7 @@ if (parsedArgs.humanDecisionsPath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid human decisions ${parsedArgs.humanDecisionsPath}: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("HumanDecisionsInvalid", "human_decisions", 1);
   }
 }
 if (parsedArgs.humanDecisionsJson !== undefined) {
@@ -255,7 +273,7 @@ if (parsedArgs.humanDecisionsJson !== undefined) {
     humanApprovalDecisions = parseJsonObject(parsedArgs.humanDecisionsJson, "--human-decisions-json");
   } catch (e) {
     process.stderr.write(`error: invalid --human-decisions-json: ${e.message}\n`);
-    process.exit(2);
+    refuseAdmission("HumanDecisionsInvalid", "human_decisions", 2);
   }
 }
 
@@ -268,7 +286,7 @@ if (parsedArgs.humanResumeCheckpointPath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid human resume checkpoint ${parsedArgs.humanResumeCheckpointPath}: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("HumanCheckpointInvalid", "checkpoint", 1);
   }
 }
 
@@ -281,7 +299,7 @@ if (parsedArgs.userInputsPath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid user inputs ${parsedArgs.userInputsPath}: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("UserInputsInvalid", "user_inputs", 1);
   }
 }
 if (parsedArgs.userInputsJson !== undefined) {
@@ -289,7 +307,7 @@ if (parsedArgs.userInputsJson !== undefined) {
     userInputs = parseJsonObject(parsedArgs.userInputsJson, "--user-inputs-json");
   } catch (e) {
     process.stderr.write(`error: invalid --user-inputs-json: ${e.message}\n`);
-    process.exit(2);
+    refuseAdmission("UserInputsInvalid", "user_inputs", 2);
   }
 }
 
@@ -302,7 +320,7 @@ if (parsedArgs.agentDecisionsPath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid agent decisions ${parsedArgs.agentDecisionsPath}: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("AgentDecisionsInvalid", "agent_decisions", 1);
   }
 }
 if (parsedArgs.agentDecisionsJson !== undefined) {
@@ -310,7 +328,7 @@ if (parsedArgs.agentDecisionsJson !== undefined) {
     agentDecisions = parseJsonObject(parsedArgs.agentDecisionsJson, "--agent-decisions-json");
   } catch (e) {
     process.stderr.write(`error: invalid --agent-decisions-json: ${e.message}\n`);
-    process.exit(2);
+    refuseAdmission("AgentDecisionsInvalid", "agent_decisions", 2);
   }
 }
 
@@ -320,7 +338,7 @@ if (parsedArgs.agentDecisionProviderPath !== undefined) {
     agentDecisionProvider = await loadAgentDecisionProviderFromPath(parsedArgs.agentDecisionProviderPath);
   } catch (e) {
     process.stderr.write(`error: invalid agent decision provider ${parsedArgs.agentDecisionProviderPath}: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("DecisionProviderInvalid", "provider", 1);
   }
 }
 
@@ -333,7 +351,7 @@ if (parsedArgs.triggerEventPath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid trigger event ${parsedArgs.triggerEventPath}: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("TriggerEventInvalid", "trigger", 1);
   }
 }
 if (parsedArgs.triggerEventJson !== undefined) {
@@ -341,7 +359,7 @@ if (parsedArgs.triggerEventJson !== undefined) {
     triggerEvent = parseJsonObject(parsedArgs.triggerEventJson, "--trigger-event-json");
   } catch (e) {
     process.stderr.write(`error: invalid --trigger-event-json: ${e.message}\n`);
-    process.exit(2);
+    refuseAdmission("TriggerEventInvalid", "trigger", 2);
   }
 }
 
@@ -357,16 +375,25 @@ if (parsedArgs.triggerStatePath !== undefined) {
     triggerState = loadTriggerStateFromPath(parsedArgs.triggerStatePath);
   } catch (e) {
     process.stderr.write(`trigger state error [${e.code ?? "TriggerStateInvalid"}]: ${e.message}\n`);
-    process.exit(1);
+    refuseAdmission("TriggerStateInvalid", "trigger_state", 1);
   }
 }
 
 let result;
+let effectHost;
 const interactiveUserInputSession = parsedArgs.interactiveUserInputs
   ? createInteractiveUserInputSession()
   : null;
 try {
+  if (parsedArgs.effectJournalPath !== undefined) {
+    effectHost = openCliEffectJournal(parsedArgs.effectJournalPath, resolvedSecretEntries(secretStore).map(entry => entry.value));
+    process.once("exit", effectHost.close);
+  }
+  const effectRunId = effectHost ? (humanApprovalResumeCheckpoint?.run_id ?? `cli_${randomUUID()}`) : undefined;
   const executionOptions = {
+    runId: effectRunId,
+    effectScopeId: effectRunId,
+    effectJournal: effectHost?.journal,
     inputs,
     toolHandlers,
     toolBindingManifest,
@@ -377,6 +404,12 @@ try {
     userInputProvider: interactiveUserInputSession?.provider,
     agentDecisions,
     agentDecisionProvider,
+    skillPacks,
+    activeSkillPackRefs: parsedArgs.activeSkillPackRefs,
+    skillPackActivationReasons: Object.fromEntries(parsedArgs.activeSkillPackRefs.map(ref => [ref, "user_invoked"])),
+    skillPackDiscoveryMaxBytes: parsedArgs.skillPackDiscoveryMaxBytes,
+    skillPackActivationMaxBytes: parsedArgs.skillPackActivationMaxBytes,
+    agentModelInputMaxBytes: parsedArgs.agentModelInputMaxBytes,
     agentDecisionProviderMetadata: parsedArgs.agentDecisionProviderMetadata,
     agentDecisionProviderContentMode: parsedArgs.agentDecisionProviderContentMode,
     agentDecisionProviderInitialMode: resolvedAgentDecisionProviderInitialMode(parsedArgs),
@@ -411,8 +444,10 @@ try {
     process.stderr.write(`unexpected error: ${e.message}\n`);
   }
   interactiveUserInputSession?.close();
-  process.exit(1);
+  refuseAdmission("RuntimeAdmissionRefused", "runtime", 1);
 } finally {
+  effectHost?.close();
+  if (effectHost) process.removeListener("exit", effectHost.close);
   interactiveUserInputSession?.close();
 }
 
@@ -435,13 +470,18 @@ if (parsedArgs.traceOutPath !== undefined) {
   }
 }
 
-if (parsedArgs.humanCheckpointOutPath !== undefined) {
+if (parsedArgs.humanCheckpointOutPath !== undefined && result.status !== "failure") {
   if (!result.checkpoint) {
     process.stderr.write("error: no human approval checkpoint was produced\n");
     process.exit(1);
   }
   try {
-    writeFileSync(parsedArgs.humanCheckpointOutPath, serializeJson(result.checkpoint), "utf8");
+    const fd = openSync(parsedArgs.humanCheckpointOutPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0), 0o600);
+    try {
+      fchmodSync(fd, 0o600);
+      writeFileSync(fd, serializeJson(result.checkpoint), "utf8");
+    } finally { closeSync(fd); }
   } catch (e) {
     process.stderr.write(`error: cannot write human checkpoint ${parsedArgs.humanCheckpointOutPath}: ${e.message}\n`);
     process.exit(1);
@@ -458,7 +498,7 @@ if (parsedArgs.evidenceOutPath !== undefined) {
 }
 
 process.stdout.write(renderOutput(result, parsedArgs.outputMode, parsedArgs));
-process.exit(result.status === "failure" ? 1 : 0);
+process.exit(runExitCode(result));
 
 function loadRunPlanFromPath(runPlanPath) {
   const resolvedPath = resolve(runPlanPath);
@@ -587,20 +627,10 @@ function resolvedAgentDecisionProviderInitialMode(parsed) {
   if (parsed.agentDecisionProviderInitialMode !== undefined) {
     return parsed.agentDecisionProviderInitialMode;
   }
-  return parsed.runPlanProfile === "prod" ? "capabilities" : undefined;
+  return undefined;
 }
 
 function validateParsedArgsAfterRunPlan(parsed) {
-  if (
-    parsed.manifestPath !== undefined
-    && (
-      parsed.stubs
-      || parsed.localFetchSourceText !== undefined
-      || parsed.localApplyChangeSummary !== undefined
-    )
-  ) {
-    return "--manifest cannot be combined with --stubs or local handler options";
-  }
   if (parsed.secretsPath !== undefined && parsed.manifestPath === undefined) {
     return parsed.runPlanPath !== undefined
       ? {
@@ -773,15 +803,15 @@ function validateResourceBindingsForAir({ resourceBindingsPath, requireAll, docu
 
   validateRequiredMemoryScopes(inventory);
 
-  if (requireAll) {
-    for (const resourceRef of inventory.requiredResourceRefs) {
-      if (!boundResources.has(resourceRef)) {
+  const required = new Set([...requiredResourceReferences(bindingsDocument), ...(requireAll ? inventory.requiredResourceRefs : [])]);
+  for (const resourceRef of required) {
+    if (!inventory.knownResourceRefs.has(resourceRef)) throw new ResourceBindingsCliError("ResourceBindingUnknownResource", `required resource ${resourceRef} is absent from AIR`);
+    if (!boundResources.has(resourceRef)) {
       throw new ResourceBindingsCliError("ResourceBindingMissing", `resource ${resourceRef} requires an active resource binding`);
     }
   }
 
   return bindingsDocument;
-}
 }
 
 function readResourceBindingsDocument(resourceBindingsPath) {
@@ -993,9 +1023,8 @@ function parseArgs(rawArgs) {
     runPlanProfile: undefined,
     outputModeExplicit: false,
     traceOutExplicit: false,
-    stubs: false,
-    localFetchSourceText: undefined,
-    localApplyChangeSummary: undefined,
+    skillPackPaths: [],
+    activeSkillPackRefs: [],
     manifestPath: undefined,
     resourceBindingsPath: undefined,
     requireResourceBindings: false,
@@ -1045,36 +1074,35 @@ function parseArgs(rawArgs) {
 
   for (let index = 0; index < rawArgs.length; index += 1) {
     const arg = rawArgs[index];
-    if (arg === "--run-plan") {
+    const packOption = arg.split("=", 1)[0];
+    const packFlags = {
+      "--skill-pack": "skillPackPaths", "--activate-skill-pack": "activeSkillPackRefs",
+      "--skill-pack-discovery-max-bytes": "skillPackDiscoveryMaxBytes",
+      "--skill-pack-activation-max-bytes": "skillPackActivationMaxBytes",
+      "--agent-model-input-max-bytes": "agentModelInputMaxBytes",
+    };
+    if (Object.hasOwn(packFlags, packOption)) {
+      const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : rawArgs[++index];
+      if (!value || value.startsWith("--")) return { ...parsed, error: `${packOption} requires a value` };
+      const key = packFlags[packOption];
+      if (Array.isArray(parsed[key])) parsed[key].push(value);
+      else {
+        const limit = parsePositiveInteger(value);
+        if (!limit) return { ...parsed, error: `${packOption} requires a positive integer` };
+        parsed[key] = limit;
+      }
+    } else if (arg === "--run-plan") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--run-plan requires a path" };
+        return { ...parsed, error: "--run-plan requires a path" };
       }
       parsed.runPlanPath = rawArgs[index];
     } else if (arg.startsWith("--run-plan=")) {
       parsed.runPlanPath = arg.slice("--run-plan=".length);
-    } else if (arg === "--stubs") {
-      parsed.stubs = true;
-    } else if (arg === "--local-fetch-source-text") {
-      index += 1;
-      if (index >= rawArgs.length) {
-        return { error: "--local-fetch-source-text requires a value" };
-      }
-      parsed.localFetchSourceText = rawArgs[index];
-    } else if (arg.startsWith("--local-fetch-source-text=")) {
-      parsed.localFetchSourceText = arg.slice("--local-fetch-source-text=".length);
-    } else if (arg === "--local-apply-change-summary") {
-      index += 1;
-      if (index >= rawArgs.length) {
-        return { error: "--local-apply-change-summary requires a value" };
-      }
-      parsed.localApplyChangeSummary = rawArgs[index];
-    } else if (arg.startsWith("--local-apply-change-summary=")) {
-      parsed.localApplyChangeSummary = arg.slice("--local-apply-change-summary=".length);
     } else if (arg === "--manifest") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--manifest requires a path" };
+        return { ...parsed, error: "--manifest requires a path" };
       }
       parsed.manifestPath = rawArgs[index];
     } else if (arg.startsWith("--manifest=")) {
@@ -1082,7 +1110,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--resource-bindings") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--resource-bindings requires a path" };
+        return { ...parsed, error: "--resource-bindings requires a path" };
       }
       parsed.resourceBindingsPath = rawArgs[index];
     } else if (arg.startsWith("--resource-bindings=")) {
@@ -1092,7 +1120,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--secrets") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--secrets requires a path" };
+        return { ...parsed, error: "--secrets requires a path" };
       }
       parsed.secretsPath = rawArgs[index];
     } else if (arg.startsWith("--secrets=")) {
@@ -1100,7 +1128,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--inputs-json") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--inputs-json requires a JSON object" };
+        return { ...parsed, error: "--inputs-json requires a JSON object" };
       }
       parsed.inputsJson = rawArgs[index];
     } else if (arg.startsWith("--inputs-json=")) {
@@ -1108,7 +1136,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--human-decisions") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--human-decisions requires a path" };
+        return { ...parsed, error: "--human-decisions requires a path" };
       }
       parsed.humanDecisionsPath = rawArgs[index];
     } else if (arg.startsWith("--human-decisions=")) {
@@ -1116,15 +1144,22 @@ function parseArgs(rawArgs) {
     } else if (arg === "--human-decisions-json") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--human-decisions-json requires a JSON object" };
+        return { ...parsed, error: "--human-decisions-json requires a JSON object" };
       }
       parsed.humanDecisionsJson = rawArgs[index];
     } else if (arg.startsWith("--human-decisions-json=")) {
       parsed.humanDecisionsJson = arg.slice("--human-decisions-json=".length);
+    } else if (arg === "--effect-journal") {
+      index += 1;
+      parsed.effectJournalPath = rawArgs[index];
+      if (!parsed.effectJournalPath?.endsWith(".effect-journal.json")) return { ...parsed, error: "--effect-journal requires a .effect-journal.json path" };
+    } else if (arg.startsWith("--effect-journal=")) {
+      parsed.effectJournalPath = arg.slice("--effect-journal=".length);
+      if (!parsed.effectJournalPath.endsWith(".effect-journal.json")) return { ...parsed, error: "--effect-journal requires a .effect-journal.json path" };
     } else if (arg === "--human-checkpoint-out") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--human-checkpoint-out requires a path" };
+        return { ...parsed, error: "--human-checkpoint-out requires a path" };
       }
       parsed.humanCheckpointOutPath = rawArgs[index];
     } else if (arg.startsWith("--human-checkpoint-out=")) {
@@ -1132,7 +1167,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--human-resume-checkpoint") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--human-resume-checkpoint requires a path" };
+        return { ...parsed, error: "--human-resume-checkpoint requires a path" };
       }
       parsed.humanResumeCheckpointPath = rawArgs[index];
     } else if (arg.startsWith("--human-resume-checkpoint=")) {
@@ -1140,7 +1175,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--user-inputs") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--user-inputs requires a path" };
+        return { ...parsed, error: "--user-inputs requires a path" };
       }
       parsed.userInputsPath = rawArgs[index];
     } else if (arg.startsWith("--user-inputs=")) {
@@ -1148,7 +1183,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--user-inputs-json") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--user-inputs-json requires a JSON object" };
+        return { ...parsed, error: "--user-inputs-json requires a JSON object" };
       }
       parsed.userInputsJson = rawArgs[index];
     } else if (arg.startsWith("--user-inputs-json=")) {
@@ -1158,7 +1193,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--agent-decisions") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--agent-decisions requires a path" };
+        return { ...parsed, error: "--agent-decisions requires a path" };
       }
       parsed.agentDecisionsPath = rawArgs[index];
     } else if (arg.startsWith("--agent-decisions=")) {
@@ -1166,7 +1201,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--agent-decisions-json") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--agent-decisions-json requires a JSON object" };
+        return { ...parsed, error: "--agent-decisions-json requires a JSON object" };
       }
       parsed.agentDecisionsJson = rawArgs[index];
     } else if (arg.startsWith("--agent-decisions-json=")) {
@@ -1174,7 +1209,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--agent-decision-provider") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--agent-decision-provider requires a path" };
+        return { ...parsed, error: "--agent-decision-provider requires a path" };
       }
       parsed.agentDecisionProviderPath = rawArgs[index];
     } else if (arg.startsWith("--agent-decision-provider=")) {
@@ -1182,7 +1217,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--agent-decision-provider-metadata-json") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--agent-decision-provider-metadata-json requires a JSON object" };
+        return { ...parsed, error: "--agent-decision-provider-metadata-json requires a JSON object" };
       }
       parsed.agentDecisionProviderMetadataJson = rawArgs[index];
     } else if (arg.startsWith("--agent-decision-provider-metadata-json=")) {
@@ -1191,56 +1226,56 @@ function parseArgs(rawArgs) {
       index += 1;
       const timeoutMs = parsePositiveInteger(rawArgs[index]);
       if (!timeoutMs) {
-        return { error: "--agent-decision-provider-timeout-ms requires a positive integer" };
+        return { ...parsed, error: "--agent-decision-provider-timeout-ms requires a positive integer" };
       }
       parsed.agentDecisionProviderTimeoutMs = timeoutMs;
     } else if (arg.startsWith("--agent-decision-provider-timeout-ms=")) {
       const timeoutMs = parsePositiveInteger(arg.slice("--agent-decision-provider-timeout-ms=".length));
       if (!timeoutMs) {
-        return { error: "--agent-decision-provider-timeout-ms requires a positive integer" };
+        return { ...parsed, error: "--agent-decision-provider-timeout-ms requires a positive integer" };
       }
       parsed.agentDecisionProviderTimeoutMs = timeoutMs;
     } else if (arg === "--agent-decision-provider-max-retries") {
       index += 1;
       const maxRetries = parseNonNegativeInteger(rawArgs[index]);
       if (maxRetries === null) {
-        return { error: "--agent-decision-provider-max-retries requires a non-negative integer" };
+        return { ...parsed, error: "--agent-decision-provider-max-retries requires a non-negative integer" };
       }
       parsed.agentDecisionProviderMaxRetries = maxRetries;
     } else if (arg.startsWith("--agent-decision-provider-max-retries=")) {
       const maxRetries = parseNonNegativeInteger(arg.slice("--agent-decision-provider-max-retries=".length));
       if (maxRetries === null) {
-        return { error: "--agent-decision-provider-max-retries requires a non-negative integer" };
+        return { ...parsed, error: "--agent-decision-provider-max-retries requires a non-negative integer" };
       }
       parsed.agentDecisionProviderMaxRetries = maxRetries;
     } else if (arg === "--agent-decision-provider-content-mode") {
       index += 1;
       if (!["inline", "opaque_refs"].includes(rawArgs[index])) {
-        return { error: "--agent-decision-provider-content-mode must be one of: inline, opaque_refs" };
+        return { ...parsed, error: "--agent-decision-provider-content-mode must be one of: inline, opaque_refs" };
       }
       parsed.agentDecisionProviderContentMode = rawArgs[index];
     } else if (arg.startsWith("--agent-decision-provider-content-mode=")) {
       const contentMode = arg.slice("--agent-decision-provider-content-mode=".length);
       if (!["inline", "opaque_refs"].includes(contentMode)) {
-        return { error: "--agent-decision-provider-content-mode must be one of: inline, opaque_refs" };
+        return { ...parsed, error: "--agent-decision-provider-content-mode must be one of: inline, opaque_refs" };
       }
       parsed.agentDecisionProviderContentMode = contentMode;
     } else if (arg === "--agent-decision-provider-initial-mode") {
       index += 1;
       if (!["summary", "capabilities"].includes(rawArgs[index])) {
-        return { error: "--agent-decision-provider-initial-mode must be one of: summary, capabilities" };
+        return { ...parsed, error: "--agent-decision-provider-initial-mode must be one of: summary, capabilities" };
       }
       parsed.agentDecisionProviderInitialMode = rawArgs[index];
     } else if (arg.startsWith("--agent-decision-provider-initial-mode=")) {
       const initialMode = arg.slice("--agent-decision-provider-initial-mode=".length);
       if (!["summary", "capabilities"].includes(initialMode)) {
-        return { error: "--agent-decision-provider-initial-mode must be one of: summary, capabilities" };
+        return { ...parsed, error: "--agent-decision-provider-initial-mode must be one of: summary, capabilities" };
       }
       parsed.agentDecisionProviderInitialMode = initialMode;
     } else if (arg === "--trigger-event") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--trigger-event requires a path" };
+        return { ...parsed, error: "--trigger-event requires a path" };
       }
       parsed.triggerEventPath = rawArgs[index];
     } else if (arg.startsWith("--trigger-event=")) {
@@ -1248,7 +1283,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--trigger-event-json") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--trigger-event-json requires a JSON object" };
+        return { ...parsed, error: "--trigger-event-json requires a JSON object" };
       }
       parsed.triggerEventJson = rawArgs[index];
     } else if (arg.startsWith("--trigger-event-json=")) {
@@ -1258,7 +1293,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--state" || arg === "--trigger-state") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: `${arg} requires a path` };
+        return { ...parsed, error: `${arg} requires a path` };
       }
       parsed.triggerStatePath = rawArgs[index];
     } else if (arg.startsWith("--state=")) {
@@ -1268,7 +1303,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--supply-chain-lock") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--supply-chain-lock requires a path" };
+        return { ...parsed, error: "--supply-chain-lock requires a path" };
       }
       parsed.supplyChainLockPath = rawArgs[index];
     } else if (arg.startsWith("--supply-chain-lock=")) {
@@ -1278,7 +1313,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--hardened-profile") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--hardened-profile requires a path" };
+        return { ...parsed, error: "--hardened-profile requires a path" };
       }
       parsed.hardenedProfilePath = rawArgs[index];
     } else if (arg.startsWith("--hardened-profile=")) {
@@ -1286,7 +1321,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--trigger") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--trigger requires a trigger ref" };
+        return { ...parsed, error: "--trigger requires a trigger ref" };
       }
       parsed.triggerRef = rawArgs[index];
     } else if (arg.startsWith("--trigger=")) {
@@ -1294,71 +1329,71 @@ function parseArgs(rawArgs) {
     } else if (arg === "--max-runs") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--max-runs requires a positive integer" };
+        return { ...parsed, error: "--max-runs requires a positive integer" };
       }
       const maxRuns = parsePositiveInteger(rawArgs[index]);
       if (!maxRuns) {
-        return { error: "--max-runs requires a positive integer" };
+        return { ...parsed, error: "--max-runs requires a positive integer" };
       }
       parsed.triggerRunnerMaxRuns = maxRuns;
     } else if (arg.startsWith("--max-runs=")) {
       const maxRuns = parsePositiveInteger(arg.slice("--max-runs=".length));
       if (!maxRuns) {
-        return { error: "--max-runs requires a positive integer" };
+        return { ...parsed, error: "--max-runs requires a positive integer" };
       }
       parsed.triggerRunnerMaxRuns = maxRuns;
     } else if (arg === "--max-agent-steps") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--max-agent-steps requires a positive integer" };
+        return { ...parsed, error: "--max-agent-steps requires a positive integer" };
       }
       const maxAgentSteps = parsePositiveInteger(rawArgs[index]);
       if (!maxAgentSteps) {
-        return { error: "--max-agent-steps requires a positive integer" };
+        return { ...parsed, error: "--max-agent-steps requires a positive integer" };
       }
       parsed.maxAgentSteps = maxAgentSteps;
     } else if (arg.startsWith("--max-agent-steps=")) {
       const maxAgentSteps = parsePositiveInteger(arg.slice("--max-agent-steps=".length));
       if (!maxAgentSteps) {
-        return { error: "--max-agent-steps requires a positive integer" };
+        return { ...parsed, error: "--max-agent-steps requires a positive integer" };
       }
       parsed.maxAgentSteps = maxAgentSteps;
     } else if (arg === "--max-loop-iterations") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--max-loop-iterations requires a positive integer" };
+        return { ...parsed, error: "--max-loop-iterations requires a positive integer" };
       }
       const maxLoopIterations = parsePositiveInteger(rawArgs[index]);
       if (!maxLoopIterations) {
-        return { error: "--max-loop-iterations requires a positive integer" };
+        return { ...parsed, error: "--max-loop-iterations requires a positive integer" };
       }
       parsed.maxLoopIterations = maxLoopIterations;
     } else if (arg.startsWith("--max-loop-iterations=")) {
       const maxLoopIterations = parsePositiveInteger(arg.slice("--max-loop-iterations=".length));
       if (!maxLoopIterations) {
-        return { error: "--max-loop-iterations requires a positive integer" };
+        return { ...parsed, error: "--max-loop-iterations requires a positive integer" };
       }
       parsed.maxLoopIterations = maxLoopIterations;
     } else if (arg === "--run-timeout-ms") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--run-timeout-ms requires a positive integer" };
+        return { ...parsed, error: "--run-timeout-ms requires a positive integer" };
       }
       const runTimeoutMs = parsePositiveInteger(rawArgs[index]);
       if (!runTimeoutMs) {
-        return { error: "--run-timeout-ms requires a positive integer" };
+        return { ...parsed, error: "--run-timeout-ms requires a positive integer" };
       }
       parsed.runTimeoutMs = runTimeoutMs;
     } else if (arg.startsWith("--run-timeout-ms=")) {
       const runTimeoutMs = parsePositiveInteger(arg.slice("--run-timeout-ms=".length));
       if (!runTimeoutMs) {
-        return { error: "--run-timeout-ms requires a positive integer" };
+        return { ...parsed, error: "--run-timeout-ms requires a positive integer" };
       }
       parsed.runTimeoutMs = runTimeoutMs;
     } else if (arg === "--run-limits-json") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--run-limits-json requires a JSON object" };
+        return { ...parsed, error: "--run-limits-json requires a JSON object" };
       }
       parsed.runLimitsJson = rawArgs[index];
     } else if (arg.startsWith("--run-limits-json=")) {
@@ -1437,7 +1472,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--entry") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--entry requires an AIR reference" };
+        return { ...parsed, error: "--entry requires an AIR reference" };
       }
       parsed.entryRef = rawArgs[index];
     } else if (arg.startsWith("--entry=")) {
@@ -1445,7 +1480,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--output") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: `--output requires one of: ${runOutputModesLabel()}` };
+        return { ...parsed, error: `--output requires one of: ${runOutputModesLabel()}` };
       }
       parsed.outputMode = rawArgs[index];
       parsed.outputModeExplicit = true;
@@ -1455,7 +1490,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--trace-out") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--trace-out requires a path" };
+        return { ...parsed, error: "--trace-out requires a path" };
       }
       parsed.traceOutPath = rawArgs[index];
       parsed.traceOutExplicit = true;
@@ -1465,7 +1500,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--evidence-out") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--evidence-out requires a path" };
+        return { ...parsed, error: "--evidence-out requires a path" };
       }
       parsed.evidenceOutPath = rawArgs[index];
       parsed.evidenceOutExplicit = true;
@@ -1475,50 +1510,34 @@ function parseArgs(rawArgs) {
     } else if (arg === "--evidence-ref") {
       index += 1;
       if (index >= rawArgs.length) {
-        return { error: "--evidence-ref requires label=uri" };
+        return { ...parsed, error: "--evidence-ref requires label=uri" };
       }
       try {
         parsed.evidenceRefs.push(parseEvidenceRef(rawArgs[index]));
       } catch (error) {
-        return { error: error.message };
+        return { ...parsed, error: error.message };
       }
     } else if (arg.startsWith("--evidence-ref=")) {
       try {
         parsed.evidenceRefs.push(parseEvidenceRef(arg.slice("--evidence-ref=".length)));
       } catch (error) {
-        return { error: error.message };
+        return { ...parsed, error: error.message };
       }
     } else if (arg.startsWith("--")) {
-      return { error: `unknown option ${arg}` };
+      return { ...parsed, error: `unknown option ${arg}` };
     } else {
       parsed.positional.push(arg);
     }
   }
 
-  if (
-    parsed.stubs
-    && (parsed.localFetchSourceText !== undefined || parsed.localApplyChangeSummary !== undefined)
-  ) {
-    return { error: "--stubs cannot be combined with local handler options" };
-  }
 
-  if (
-    parsed.manifestPath !== undefined
-    && (
-      parsed.stubs
-      || parsed.localFetchSourceText !== undefined
-      || parsed.localApplyChangeSummary !== undefined
-    )
-  ) {
-    return { error: "--manifest cannot be combined with --stubs or local handler options" };
-  }
 
   if (parsed.humanDecisionsPath !== undefined && parsed.humanDecisionsJson !== undefined) {
-    return { error: "--human-decisions cannot be combined with --human-decisions-json" };
+    return { ...parsed, error: "--human-decisions cannot be combined with --human-decisions-json" };
   }
 
   if (parsed.humanCheckpointOutPath !== undefined && parsed.humanResumeCheckpointPath !== undefined) {
-    return { error: "--human-checkpoint-out cannot be combined with --human-resume-checkpoint" };
+    return { ...parsed, error: "--human-checkpoint-out cannot be combined with --human-resume-checkpoint" };
   }
 
   if (
@@ -1526,15 +1545,15 @@ function parseArgs(rawArgs) {
     && parsed.humanDecisionsPath === undefined
     && parsed.humanDecisionsJson === undefined
   ) {
-    return { error: "--human-resume-checkpoint requires --human-decisions or --human-decisions-json" };
+    return { ...parsed, error: "--human-resume-checkpoint requires --human-decisions or --human-decisions-json" };
   }
 
   if (parsed.userInputsPath !== undefined && parsed.userInputsJson !== undefined) {
-    return { error: "--user-inputs cannot be combined with --user-inputs-json" };
+    return { ...parsed, error: "--user-inputs cannot be combined with --user-inputs-json" };
   }
 
   if (parsed.agentDecisionsPath !== undefined && parsed.agentDecisionsJson !== undefined) {
-    return { error: "--agent-decisions cannot be combined with --agent-decisions-json" };
+    return { ...parsed, error: "--agent-decisions cannot be combined with --agent-decisions-json" };
   }
 
   if (parsed.agentDecisionProviderMetadataJson !== undefined) {
@@ -1544,20 +1563,20 @@ function parseArgs(rawArgs) {
         "--agent-decision-provider-metadata-json",
       );
     } catch (e) {
-      return { error: `invalid --agent-decision-provider-metadata-json: ${e.message}` };
+      return { ...parsed, error: `invalid --agent-decision-provider-metadata-json: ${e.message}` };
     }
   }
 
   if (parsed.triggerEventPath !== undefined && parsed.triggerEventJson !== undefined) {
-    return { error: "--trigger-event cannot be combined with --trigger-event-json" };
+    return { ...parsed, error: "--trigger-event cannot be combined with --trigger-event-json" };
   }
 
   if (parsed.triggerDryRun && parsed.triggerEventPath === undefined && parsed.triggerEventJson === undefined) {
-    return { error: "--trigger-dry-run requires --trigger-event or --trigger-event-json" };
+    return { ...parsed, error: "--trigger-dry-run requires --trigger-event or --trigger-event-json" };
   }
 
   if (parsed.triggerDryRun && parsed.triggerStatePath !== undefined) {
-    return { error: "--state cannot be combined with --trigger-dry-run" };
+    return { ...parsed, error: "--state cannot be combined with --trigger-dry-run" };
   }
 
   if (
@@ -1566,73 +1585,73 @@ function parseArgs(rawArgs) {
     && parsed.triggerEventPath === undefined
     && parsed.triggerEventJson === undefined
   ) {
-    return { error: "--state requires --trigger, --trigger-event or --trigger-event-json" };
+    return { ...parsed, error: "--state requires --trigger, --trigger-event or --trigger-event-json" };
   }
 
   if (parsed.triggerRef !== undefined && parsed.triggerRunnerMaxRuns === undefined) {
-    return { error: "--trigger requires --max-runs" };
+    return { ...parsed, error: "--trigger requires --max-runs" };
   }
 
   if (parsed.triggerRef !== undefined && parsed.triggerStatePath === undefined) {
-    return { error: "--trigger requires --state <*.trigger-state.json> for durable replay and quota checks" };
+    return { ...parsed, error: "--trigger requires --state <*.trigger-state.json> for durable replay and quota checks" };
   }
 
   if (parsed.triggerRunnerMaxRuns !== undefined && parsed.triggerRef === undefined) {
-    return { error: "--max-runs requires --trigger" };
+    return { ...parsed, error: "--max-runs requires --trigger" };
   }
 
   if (
     parsed.triggerRef !== undefined
     && (parsed.triggerEventPath !== undefined || parsed.triggerEventJson !== undefined || parsed.triggerDryRun)
   ) {
-    return { error: "--trigger cannot be combined with --trigger-event, --trigger-event-json or --trigger-dry-run" };
+    return { ...parsed, error: "--trigger cannot be combined with --trigger-event, --trigger-event-json or --trigger-dry-run" };
   }
 
   if (parsed.triggerRef !== undefined && parsed.entryRef !== undefined) {
-    return { error: "--entry cannot be combined with trigger runner execution" };
+    return { ...parsed, error: "--entry cannot be combined with trigger runner execution" };
   }
 
   if (parsed.triggerRef !== undefined && parsed.humanCheckpointOutPath !== undefined) {
-    return { error: "--human-checkpoint-out cannot be combined with trigger runner execution" };
+    return { ...parsed, error: "--human-checkpoint-out cannot be combined with trigger runner execution" };
   }
 
   if (parsed.triggerRef !== undefined && parsed.humanResumeCheckpointPath !== undefined) {
-    return { error: "--human-resume-checkpoint cannot be combined with trigger runner execution" };
+    return { ...parsed, error: "--human-resume-checkpoint cannot be combined with trigger runner execution" };
   }
 
   if (
     (parsed.triggerEventPath !== undefined || parsed.triggerEventJson !== undefined)
     && parsed.entryRef !== undefined
   ) {
-    return { error: "--entry cannot be combined with trigger execution" };
+    return { ...parsed, error: "--entry cannot be combined with trigger execution" };
   }
 
   if (
     (parsed.triggerEventPath !== undefined || parsed.triggerEventJson !== undefined)
     && parsed.humanCheckpointOutPath !== undefined
   ) {
-    return { error: "--human-checkpoint-out cannot be combined with trigger execution" };
+    return { ...parsed, error: "--human-checkpoint-out cannot be combined with trigger execution" };
   }
 
   if (
     (parsed.triggerEventPath !== undefined || parsed.triggerEventJson !== undefined)
     && parsed.humanResumeCheckpointPath !== undefined
   ) {
-    return { error: "--human-resume-checkpoint cannot be combined with trigger execution" };
+    return { ...parsed, error: "--human-resume-checkpoint cannot be combined with trigger execution" };
   }
 
   if (
     parsed.interactiveUserInputs
     && (parsed.userInputsPath !== undefined || parsed.userInputsJson !== undefined)
   ) {
-    return { error: "--interactive-user-inputs cannot be combined with --user-inputs or --user-inputs-json" };
+    return { ...parsed, error: "--interactive-user-inputs cannot be combined with --user-inputs or --user-inputs-json" };
   }
 
   if (parsed.runLimitsJson !== undefined) {
     try {
       parsed.runLimits = parseJsonObject(parsed.runLimitsJson, "--run-limits-json");
     } catch (e) {
-      return { error: `invalid --run-limits-json: ${e.message}` };
+      return { ...parsed, error: `invalid --run-limits-json: ${e.message}` };
     }
   }
 
@@ -1645,11 +1664,11 @@ function parseArgs(rawArgs) {
   }
 
   if (!RUN_OUTPUT_MODES.has(parsed.outputMode)) {
-    return { error: `--output must be one of: ${runOutputModesLabel()}` };
+    return { ...parsed, error: `--output must be one of: ${runOutputModesLabel()}` };
   }
 
   if (parsed.evidenceRefs.length > 0 && parsed.evidenceOutPath === undefined) {
-    return { error: "--evidence-ref requires --evidence-out" };
+    return { ...parsed, error: "--evidence-ref requires --evidence-out" };
   }
 
   return parsed;
@@ -1657,7 +1676,7 @@ function parseArgs(rawArgs) {
 
 function printUsage() {
   process.stderr.write(
-    "usage: node run.mjs (<file.air.json> | --run-plan <touba.run-plan.json>) [--stubs | --local-fetch-source-text <text> | --local-apply-change-summary <text> | --manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
+    "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.json>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
 }
 
@@ -1733,8 +1752,9 @@ function createInteractiveUserInputSession() {
 
 function renderOutput(result, mode, parsed = {}) {
   if (mode === "show") {
-    return renderShowOutput(result.trace);
+    return renderShowOutput(result);
   }
+  if (mode === "json") return serializeJson(publicRunResult(result));
   if (mode === "result") {
     return serializeJson(result.result ?? null);
   }
@@ -1750,11 +1770,8 @@ function renderOutput(result, mode, parsed = {}) {
   throw new Error(`unsupported output mode ${mode}`);
 }
 
-function renderShowOutput(trace) {
-  const messages = (trace.events ?? [])
-    .filter((event) => event.kind === "user_interaction_shown")
-    .map((event) => event.payload?.message)
-    .filter((message) => typeof message === "string");
+function renderShowOutput(result) {
+  const messages = (result.messages ?? []).map(message => message.text);
 
   if (messages.length === 0) {
     return "";
@@ -1764,7 +1781,7 @@ function renderShowOutput(trace) {
 
 function renderAllOutput(result) {
   const sections = [];
-  const showOutput = renderShowOutput(result.trace).trimEnd();
+  const showOutput = renderShowOutput(result).trimEnd();
   if (showOutput !== "") {
     sections.push(`[show]\n${showOutput}`);
   }
@@ -1808,9 +1825,9 @@ function productRunStatus(result, events) {
     return "cancelled";
   }
   if (result.status === "stopped") {
-    return hasHumanApprovalTerminalRefusal(events) || refusalSummaries(events).length > 0
-      ? "refused"
-      : "paused";
+    if (result.reason === "human_approval_cancelled") return "cancelled";
+    if (["human_approval_rejected", "human_approval_expired"].includes(result.reason)) return "refused";
+    return result.reason === "explicit_stop" ? "stopped" : "paused";
   }
   if (result.status === "failure") {
     return refusalSummaries(events).length > 0 ? "refused" : "failed";
@@ -1819,7 +1836,7 @@ function productRunStatus(result, events) {
 }
 
 function isTerminalProductRunStatus(status) {
-  return ["succeeded", "failed", "cancelled", "refused"].includes(status);
+  return ["succeeded", "failed", "cancelled", "refused", "stopped"].includes(status);
 }
 
 function triggerRefFromTrace(trace, events) {
@@ -2099,8 +2116,14 @@ function formatRuntimeError(error) {
   const agentRef = error.details?.agentRef;
   const triggerRef = error.details?.triggerRef;
 
+  if (error.details?.entryRef) {
+    lines.push(`entry: ${error.details.entryRef}`);
+    if (error.details.schemaPath) lines.push(`schema path: ${error.details.schemaPath}`);
+    if (error.details.expectedTypeRef) lines.push(`expected type: ${error.details.expectedTypeRef}`);
+  }
+
   if (toolRef) {
-    const missing = error.message.startsWith("missing tool binding");
+    const missing = error.code === "ToolBindingMissing" || error.code === "ToolBindingManifestMissing";
     lines.push(`${missing ? "missing" : "failed"} tool binding: ${toolRef}`);
 
     if (error.details.cause) {
@@ -2200,8 +2223,8 @@ function formatFailureTraceDiagnostic(trace) {
       failureEvent.payload?.runtime_error_code ?? "RuntimeFailure",
       failureEvent.message,
       {
-        ...parseToolFailureDetails(failureEvent.message),
-        toolRef: failureEvent.payload?.tool_ref ?? parseToolFailureDetails(failureEvent.message).toolRef,
+        toolRef: failureEvent.payload?.tool_ref,
+        entryRef: failureEvent.payload?.entry_ref,
         missingCapability: failureEvent.payload?.missing_capability,
         missingCapabilities: failureEvent.payload?.missing_capabilities,
         missingSecrets: failureEvent.payload?.missing_secret_handles,
@@ -2334,40 +2357,9 @@ function formatTriggerTraceDiagnostic(trace) {
   return `${lines.join("\n")}\n`;
 }
 
-function parseToolFailureDetails(message) {
-  const missingPrefix = "missing tool binding ";
-  if (message.startsWith(missingPrefix)) {
-    return { toolRef: extractToolRef(message) ?? message.slice(missingPrefix.length) };
-  }
 
-  const failedPrefix = "tool handler failed ";
-  if (message.startsWith(failedPrefix)) {
-    const rest = message.slice(failedPrefix.length);
-    const causeSeparator = rest.indexOf(": ");
-    if (causeSeparator >= 0) {
-      return {
-        toolRef: rest.slice(0, causeSeparator),
-        cause: rest.slice(causeSeparator + 2),
-      };
-    }
-    return { toolRef: rest };
-  }
-
-  return { toolRef: extractToolRef(message) };
-}
-
-function extractToolRef(message) {
-  return message.match(/tool:[^\s:,)]+/u)?.[0];
-}
 
 function bindingGuidance(toolRef) {
-  if (toolRef === LINEAR_FETCH_SOURCE_TOOL_REF) {
-    return "available local binding: --local-fetch-source-text <text> (cannot be combined with --stubs)";
-  }
-  if (toolRef === STRATEGY_APPLY_CHANGE_TOOL_REF) {
-    return "available local binding: --local-apply-change-summary <text> (cannot be combined with --stubs)";
-  }
-
   return "provide --manifest <path> with a matching touba-manifest-v1 binding; add --secrets <path> when the tool declares required secrets";
 }
 
@@ -2411,7 +2403,8 @@ async function runTriggerScheduleRunner(document, parsedArgs, executionOptions, 
     };
     const runResult = await executeTriggerEventWithState(document, event, {
       ...executionOptions,
-      runId: `trigger-runner-${runIndex}`,
+      runId: executionOptions.effectJournal ? `${executionOptions.runId}-${runIndex}` : `trigger-runner-${runIndex}`,
+      effectScopeId: executionOptions.effectJournal ? `${executionOptions.runId}-${runIndex}` : undefined,
       triggerRunCounts: {
         [triggerRef]: triggerState
           ? countAcceptedTriggerEvents(triggerState.document, triggerRef, currentTriggerDayKey())
@@ -2419,9 +2412,7 @@ async function runTriggerScheduleRunner(document, parsedArgs, executionOptions, 
       },
     }, triggerState);
     runResults.push({ event, result: runResult });
-    if (runResult.status === "failure") {
-      return runResult;
-    }
+    if (runResult.status !== "success") break;
   }
 
   if (runResults.length === 1) {
@@ -2653,50 +2644,18 @@ function lastTriggerRefusal(trace, triggerRef, eventId) {
 }
 
 function replayRejectedResult(document, event, runId = undefined) {
-  const effectiveRunId = runId ?? "trigger-replay-rejected";
-  const trace = {
-    trace_protocol_version: "touba-trace-v1",
-    run: {
-      module_ref: document.module?.id,
-      entry_ref: event.triggerRef,
-      run_id: effectiveRunId,
-    },
-    events: [
-      traceEvent(effectiveRunId, 0, "run_started", {
-        entry_ref: event.triggerRef,
-      }),
-      traceEvent(effectiveRunId, 1, "trigger_event_received", {
-        trigger_ref: event.triggerRef,
-        event_id: event.eventId,
-        source_kind: event.sourceKind,
-      }),
-      traceEvent(effectiveRunId, 2, "trigger_event_refused", {
-        trigger_ref: event.triggerRef,
-        event_id: event.eventId,
-        source_kind: event.sourceKind,
-        reason: "event_replay",
-        runtime_error_code: "TriggerReplayRejected",
-      }),
-      traceEvent(effectiveRunId, 3, "run_completed", {
-        status: "failure",
-      }),
-    ],
-  };
-  return {
-    status: "failure",
-    result: null,
-    trace,
-  };
-}
-
-function traceEvent(runId, sequenceIndex, kind, payload) {
-  return {
-    event_id: `event:${runId}:${sequenceIndex + 1}`,
-    run_id: runId,
-    sequence_index: sequenceIndex,
-    kind,
-    payload,
-  };
+  const trace = new TraceBuilder(document, event.triggerRef, runId ?? `trigger-replay:${randomUUID()}`);
+  trace.push("run_started", { payload: { entry_ref: event.triggerRef } });
+  trace.push("trigger_event_received", { payload: {
+    trigger_ref: event.triggerRef, event_id: event.eventId, source_kind: event.sourceKind,
+  } });
+  trace.push("trigger_event_refused", { payload: {
+    trigger_ref: event.triggerRef, event_id: event.eventId, source_kind: event.sourceKind,
+    reason: "event_replay", runtime_error_code: "TriggerReplayRejected",
+  } });
+  trace.push("run_completed", { payload: { status: "failure", reason: "TriggerReplayRejected" } });
+  return { status: "failure", reason: "TriggerReplayRejected", result: null, messages: [],
+    trace: validateTraceMachineContract(trace.document()) };
 }
 
 function parseTriggerRunnerSchedule(value) {
@@ -2740,22 +2699,29 @@ function localTriggerEventId(trigger, runIndex) {
 }
 
 function aggregateTriggerRunnerResults(document, triggerRef, runResults) {
+  const last = runResults.at(-1).result;
+  const trace = new TraceBuilder(document, triggerRef, `trigger-runner:${randomUUID()}`);
+  trace.push("run_started", { payload: { entry_ref: triggerRef, execution_kind: "trigger_runner" } });
+  // This is an explicitly correlated aggregate, not a concatenation of events
+  // pretending to share a run ID. Keep each original event's provenance.
+  for (const { result } of runResults) {
+    validateTraceMachineContract(result.trace);
+    for (const event of result.trace.events) {
+      const kind = event.kind === "run_started" ? "trigger_runner_run_started"
+        : event.kind === "run_completed" ? "trigger_runner_run_completed" : event.kind;
+      trace.push(kind, { airRef: event.air_ref, message: event.message,
+        payload: { ...event.payload, origin_run_id: event.run_id, origin_event_id: event.event_id } });
+    }
+  }
+  trace.push("run_completed", { payload: { status: last.status, reason: last.reason } });
   return {
-    status: "success",
-    result: runResults.map(({ event, result }) => ({
-      event_id: event.event_id,
-      status: result.status,
-      result: result.result ?? null,
-    })),
-    trace: {
-      trace_protocol_version: "touba-trace-v1",
-      run: {
-        module_ref: document.module?.id,
-        entry_ref: triggerRef,
-        run_id: "trigger-runner",
-      },
-      events: runResults.flatMap(({ result }) => result.trace?.events ?? []),
-    },
+    status: last.status, reason: last.reason,
+    result: runResults.map(({ event, result }) => ({ event_id: event.event_id,
+      status: result.status, reason: result.reason, result: result.result ?? null })),
+    messages: runResults.flatMap(({ result }) => result.messages ?? []),
+    ...(last.pending_interaction ? { pending_interaction: last.pending_interaction } : {}),
+    ...(last.checkpoint ? { checkpoint: last.checkpoint } : {}),
+    trace: validateTraceMachineContract(trace.document()),
   };
 }
 
@@ -2956,22 +2922,10 @@ function refusedDryRun(base, checks, check, runtimeErrorCode, reason, details = 
     ...details,
   };
 }
-
 function checkOk(check, details = {}) {
   return {
     check,
     status: "ok",
     ...details,
   };
-}
-
-function buildStubHandlers(document) {
-  const handlers = {};
-  for (const tool of document.definitions?.tools ?? []) {
-    handlers[tool.id] = ({ toolRef }) => {
-      process.stderr.write(`[corpus-stub] tool ${toolRef} called — returning null\n`);
-      return null;
-    };
-  }
-  return handlers;
 }

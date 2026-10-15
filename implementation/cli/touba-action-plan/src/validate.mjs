@@ -7,8 +7,8 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const EXPECTED_PLAN_SCHEMA_VERSION = "touba-action-plan-v0.1";
-export const VALIDATION_SCHEMA_VERSION = "touba-action-plan-validation-v0.1";
+export const EXPECTED_PLAN_SCHEMA_VERSION = "touba-action-plan-v1";
+export const VALIDATION_SCHEMA_VERSION = "touba-action-plan-validation-v1";
 
 const EXPECTED_AIR_SCHEMA_VERSION = "touba-air-v1";
 const EXPECTED_MANIFEST_VERSION = "touba-manifest-v1";

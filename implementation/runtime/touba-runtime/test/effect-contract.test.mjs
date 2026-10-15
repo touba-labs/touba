@@ -5,8 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  COMPENSATION_HANDLER_PROTOCOL_VERSION,
-  EFFECT_HANDLER_PROTOCOL_VERSION,
   EFFECT_JOURNAL_SCHEMA_VERSION,
   deriveEffectId,
   deriveEffectRequestDigest,
@@ -334,7 +332,7 @@ test("enforces journal invariants between state, attempts, receipt and result", 
   });
 });
 
-test("decodes V2 success and error receipts without changing V1", () => {
+test("decodes effectful success and error receipts and pure results", () => {
   const effect = {
     effect_id: EFFECT_ID,
     attempt_index: 1,
@@ -376,7 +374,7 @@ test("decodes V2 success and error receipts without changing V1", () => {
   );
 });
 
-test("decodes only strict correlated V3 compensation responses", () => {
+test("decodes only strict correlated compensation compensation responses", () => {
   const effect = {
     effect_id: EFFECT_ID,
     attempt_index: 1,
@@ -431,7 +429,7 @@ test("decodes only strict correlated V3 compensation responses", () => {
   );
 });
 
-test("redacts resolved secrets from V1 and V2 handler error codes", () => {
+test("redacts resolved secrets from V1 and effectful handler error codes", () => {
   const secretValue = "handler-code-\"secret\"\nwith\\escapes";
   const baseResponse = {
     ok: false,
@@ -494,7 +492,7 @@ test("persists dispatched before an effectful process receives its request", asy
       limits: { timeout_ms: 1000, max_payload_bytes: 4096 },
     },
     request: {
-      protocol: EFFECT_HANDLER_PROTOCOL_VERSION,
+      protocol: "touba-tool-handler-v1", operation: "invoke",
       tool_ref: "tool:test/CreateOrder",
       call_id: "call:test:1",
       arguments: {},
@@ -515,7 +513,7 @@ test("persists dispatched before an effectful process receives its request", asy
   });
 });
 
-test("prepares V3 secrets before the single dispatch guard and skips a second guard", async () => {
+test("prepares compensation secrets before the single dispatch guard and skips a second guard", async () => {
   const sequence = [];
   const compensation = {
     compensation_id: `compensation:sha256:${"e".repeat(64)}`,
@@ -551,7 +549,7 @@ test("prepares V3 secrets before the single dispatch guard and skips a second gu
       limits: { timeout_ms: 1000, max_payload_bytes: 4096 },
     },
     request: {
-      protocol: COMPENSATION_HANDLER_PROTOCOL_VERSION,
+      protocol: "touba-tool-handler-v1", operation: "compensate",
       tool_ref: "tool:test/Undo",
       arguments: {},
       effect: { effect_id: EFFECT_ID, attempt_index: 1, request_digest: REQUEST_DIGEST },

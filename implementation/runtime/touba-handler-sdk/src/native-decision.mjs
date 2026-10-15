@@ -5,6 +5,7 @@ import {
   decisionSchemaForRequest,
   modelInputForDecision,
   normalizeAiSdkDecisionObject,
+  normalizeStructuredDecisionObject,
   assertCompleteProviderResponse,
 } from "./decision-contract.mjs";
 
@@ -100,7 +101,7 @@ export async function decideNativeCapability(request, options) {
       schema: await jsonSchema(schema), schemaName: schema.title, schemaDescription: schema.description,
     });
     assertCompleteProviderResponse(result, options);
-    return normalizeAiSdkDecisionObject(request, result.object, options.source, { allowHumanReview });
+    return normalizeStructuredDecisionObject(request, result.object, options.source, { allowHumanReview });
   }
 
   const tools = {};

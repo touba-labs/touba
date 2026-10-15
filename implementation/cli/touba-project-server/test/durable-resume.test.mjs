@@ -11,6 +11,7 @@ import {
   loadSandboxCheckpointStore,
   persistSandboxExecutionCheckpoint,
   recoverInterruptedSandboxExecutions,
+  resumeProjectSandboxRun,
 } from "../src/serve.mjs";
 import {
   createInteractionSession,
@@ -21,77 +22,30 @@ import {
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
 
-test("sandbox checkpoint store migrates only legacy human records to strict v0.3 waits", () => {
-  const root = mkdtempSync(join(tmpdir(), "touba-checkpoint-migration-"));
+test("durable resume requires the explicit current request contract before store access", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-resume-contract-"));
+  try {
+    for (const schema_version of [undefined, "touba-operation-resume-request-v0.1"]) {
+      await assert.rejects(resumeProjectSandboxRun({ projectRoot: root, contractsRoot, request: {
+        ...(schema_version === undefined ? {} : { schema_version }),
+        operation_id: "operation:absent", checkpoint_revision: 1,
+        checkpoint_digest: `sha256:${"a".repeat(64)}`, resume_request_id: "resume:absent",
+      } }), error => error.code === "DurableResumeCheckpointInvalid" && /schema_version/.test(error.message));
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("execution store refuses obsolete human and execution envelopes without migration", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-checkpoint-obsolete-"));
   const path = join(root, "sandbox-checkpoints.json");
   try {
-    writeFileSync(path, `${JSON.stringify({
-      schema_version: "touba-sandbox-checkpoints-v0.1",
-      records: [{
-        request_id: "approval:demo/Review:run_legacy",
-        approval_ref: "approval:demo/Review",
-        run_id: "run_legacy",
-        target_ref: "strategy:demo/Run",
-        execution_kind: "entrypoint",
-        effect_policy: "runtime_only",
-        status: "pending",
-        created_at: "2026-09-16T00:00:00.000Z",
-        checkpoint: {
-          checkpoint_schema_version: "touba-run-checkpoint-v0.1",
-          kind: "human_approval",
-          scope: "entry_graph",
-          run_id: "run_legacy",
-          approval_ref: "approval:demo/Review",
-          entry_ref: "strategy:demo/Run",
-          caller_ref: "strategy:demo/Run",
-          module_ref: "module:demo",
-          air_schema_version: "touba-air-v0.1",
-          air_digest: `sha256:${"a".repeat(64)}`,
-          mode: "required_approval",
-          graph_ref: "graph:strategy:demo/Run",
-          node_id: "review",
-          resume_target_ref: "done",
-          decision_binding: "decision",
-          context_refs: [],
-          values: {},
-          input_value_keys: [],
-          value_types: {},
-          budget_counters: { steps: 0, tool_calls: 0, agent_invocations: 0, provider_calls: 0 },
-          effect_state: { external_tool_dispatches: 0, next_effect_index: 1 },
-          next_call_index: 1,
-          active_agent_ref: null,
-          active_caller_ref: null,
-          trace_prefix_digest: `sha256:${"b".repeat(64)}`,
-        },
-        paused_result: {
-          schema_version: "touba-sandbox-run-result-v0.1",
-          run_id: "run_legacy",
-          execution_kind: "entrypoint",
-          target_ref: "strategy:demo/Run",
-          status: "stopped",
-          started_at: "2026-09-16T00:00:00.000Z",
-          completed_at: "2026-09-16T00:00:00.000Z",
-          duration_ms: 0,
-          effect_policy: "runtime_only",
-          result: null,
-          trace: { run_id: "run_legacy", entry_ref: "strategy:demo/Run", events: [] },
-          diagnostics: [{ code: "ToubaSandboxRunAwaitingHumanDecision" }],
-        },
-      }],
-    })}\n`, "utf8");
-    const migrated = loadSandboxCheckpointStore(path);
-    assert.equal(migrated.schema_version, "touba-sandbox-checkpoints-v0.3");
-    assert.equal(migrated.records[0].record_kind, "human");
-    assert.equal(migrated.records[0].operation_id, "run_legacy");
-    assert.equal(migrated.records[0].effect_scope_id, "run_legacy");
-    assert.equal(migrated.records[0].checkpoint.checkpoint_schema_version, "touba-run-checkpoint-v0.1");
-    assert.equal(migrated.records[0].human_wait.schema_version, "touba-human-wait-v1");
-    assert.equal(migrated.records[0].human_wait.deadline_at, "2026-09-17T00:00:00.000Z");
-    assert.equal(migrated.records[0].human_wait.resolution, null);
-    assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), migrated);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    for (const schema_version of ["touba-sandbox-checkpoints-v0.1", "touba-sandbox-checkpoints-v0.2"]) {
+      const bytes = JSON.stringify({ schema_version, records: [{ record_kind: "execution", status: "completed" }] });
+      writeFileSync(path, bytes, "utf8");
+      assert.throws(() => loadSandboxCheckpointStore(path), { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+      assert.equal(readFileSync(path, "utf8"), bytes);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("execution checkpoint observer replaces one atomic record and recovery only marks it interrupted", () => {
@@ -436,12 +390,12 @@ test("active elapsed time can replace only a dispatch reservation from the curre
   }
 });
 
-test("strict v0.2 checkpoint store refuses unknown record fields", () => {
+test("canonical checkpoint store refuses unknown record fields", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-checkpoint-strict-"));
   const path = join(root, "sandbox-checkpoints.json");
   try {
     writeFileSync(path, JSON.stringify({
-      schema_version: "touba-sandbox-checkpoints-v0.2",
+      schema_version: "touba-sandbox-checkpoints-v1",
       records: [{
         record_kind: "human",
         request_id: "approval:demo/Review:run_invalid",
@@ -554,6 +508,7 @@ test("restart preserves a pre-crash cancellation and refuses durable resurrectio
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+      schema_version: "touba-operation-resume-request-v1",
         operation_id: operation.operation_id,
         checkpoint_revision: durableCheckpoint.revision,
         checkpoint_digest: durableCheckpoint.checkpoint_digest,

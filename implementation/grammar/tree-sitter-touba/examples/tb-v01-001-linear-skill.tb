@@ -19,15 +19,23 @@ skill BuildNote
     uses FetchSource
     do
         FetchSource
-        give SourceNote
+            with request as request
+            into source
+        give record SourceNote { summary as source.content }
 
 agent Researcher
-    responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
+    responsibility "Build a note from the source requested by the caller."
+    takes request as SourceRequest
+    gives SourceNote
     uses BuildNote
     callable_by strategy RunSourcedNote
 
 strategy RunSourcedNote
+    takes request as SourceRequest
+    gives SourceNote
     uses Researcher
     do
         Researcher
-        give SourceNote
+            with request as request
+            into note
+        give note

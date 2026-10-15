@@ -6,6 +6,7 @@ import {
   RuntimeStop,
 } from "./runtime-errors.mjs";
 import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
+import { assertResultHasNoResolvedSecret } from "./secret-redaction.mjs";
 
 /**
  * Execute one public run lifecycle while preserving the runtime error classes
@@ -29,18 +30,25 @@ export async function executeRunLifecycle(context, execute, operations) {
   });
 
   let status = "success";
+  let reason = "completed";
   let result;
   try {
     operations.initializeRunControls(context);
-    result = await execute();
+    const value = await execute();
+    assertResultHasNoResolvedSecret(value, context.secretStore);
+    result = value;
   } catch (error) {
     if (error instanceof RuntimeStop) {
       status = "stopped";
+      reason = typeof error.details.reason === "string" ? error.details.reason : "explicit_stop";
     } else if (error instanceof RuntimeCancelled) {
       status = "cancelled";
+      reason = error.details.authoritySource === "timeout" ? "timeout"
+        : error.details.authoritySource === "kill_switch" ? "kill_switch" : "cancelled";
       operations.traceRunCancelled(context, error.details);
     } else if (error instanceof RuntimeFailure) {
       status = "failure";
+      reason = error.code;
       operations.traceUnhandledRuntimeFailure(context, error);
     } else {
       throw error;
@@ -50,6 +58,7 @@ export async function executeRunLifecycle(context, execute, operations) {
   trace.push("run_completed", {
     payload: {
       status,
+      reason,
       ...(context.compensation
         ? {
           compensation_id: context.compensation.config.envelope.compensation_id,
@@ -70,12 +79,15 @@ export async function executeRunLifecycle(context, execute, operations) {
 
   const traceDocument = trace.document();
   validateTraceMachineContract(traceDocument);
-  /** @type {{status: string, result: unknown, trace: unknown, checkpoint?: unknown}} */
+  /** @type {{status: string, reason: string, result: unknown, messages: any[], pending_interaction?: any, trace: unknown, checkpoint?: unknown}} */
   const response = {
     status,
+    reason,
     result,
+    messages: context.messages,
     trace: traceDocument,
   };
+  if (context.pendingInteraction) response.pending_interaction = context.pendingInteraction;
   if (context.pendingHumanApprovalCheckpoint) {
     response.checkpoint = context.pendingHumanApprovalCheckpoint;
   }

@@ -31,6 +31,7 @@ async function initialize(pool) {
     CREATE TABLE IF NOT EXISTS customer_memory (
       customer_id text PRIMARY KEY,
       stored_note text NOT NULL,
+      write_count bigint NOT NULL DEFAULT 1,
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `);
@@ -66,7 +67,8 @@ async function handleRequest({ request, response, pool, token }) {
       `INSERT INTO customer_memory (customer_id, stored_note, updated_at)
        VALUES ($1, $2, now())
        ON CONFLICT (customer_id)
-       DO UPDATE SET stored_note = excluded.stored_note, updated_at = now()
+       DO UPDATE SET stored_note = excluded.stored_note, updated_at = now(),
+         write_count = customer_memory.write_count + 1
        RETURNING customer_id, stored_note`,
       [customerId, body.note],
     );

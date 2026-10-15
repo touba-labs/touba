@@ -397,6 +397,8 @@ function traceRecorder(events) {
         trace_capability_profile: TRACE_CAPABILITY_PROFILE,
         run: {
           run_id: runId,
+          // Synthetic lifecycle recorder, not evidence from a real execution.
+          air_digest: `sha256:${"0".repeat(64)}`,
           air_schema_version: AIR_SCHEMA_VERSION,
           module_ref: "module:test",
           entry_ref: "skill:test/Review",

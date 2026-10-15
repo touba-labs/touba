@@ -4,6 +4,7 @@ import { callerKindFromRef } from "./authority.mjs";
 import { payloadValueKind } from "./payload-validation.mjs";
 import { RuntimeFailure } from "./runtime-errors.mjs";
 import { compactPayload } from "./trace-builder.mjs";
+import { isDeepStrictEqual } from "node:util";
 
 /**
  * Run the bounded agent decision loop. Provider resolution, target dispatch
@@ -130,6 +131,23 @@ export async function runAgentDecisionLoop(
       );
     }
 
+    const selectedCallArguments = operations.callArgumentsForAgentDecision(decision, context);
+    // Snapshot validated arguments before dispatch; handlers cannot rewrite
+    // the history later used for observations or repetition diagnostics.
+    const observationArguments = operations.argumentsForAgentObservation(
+      decision.targetRef,
+      selectedCallArguments,
+      context,
+    );
+    const identicalInvocations = observations.filter((observation) =>
+      observation.action === "select_capability"
+      && observation.target_ref === decision.targetRef
+      && isDeepStrictEqual(observation.arguments, observationArguments));
+    const repetition = identicalInvocations.length ? {
+      repeated_from_step: identicalInvocations[0].step_index,
+      identical_invocation_number: identicalInvocations.length + 1,
+    } : {};
+
     context.trace.push("agent_capability_selected", {
       payload: compactPayload({
         agent_ref: agent.id,
@@ -138,17 +156,10 @@ export async function runAgentDecisionLoop(
         authority_source: "uses",
         decision_source: decision.source,
         reason: decision.reason,
+        ...repetition,
       }),
     });
 
-    const selectedCallArguments = operations.callArgumentsForAgentDecision(decision, context);
-    // Snapshot the validated invocation before dispatch: a handler may mutate
-    // an argument, and scalar results do not identify the request they answer.
-    const observationArguments = operations.argumentsForAgentObservation(
-      decision.targetRef,
-      selectedCallArguments,
-      context,
-    );
     if (decision.targetRef.startsWith("agent:")) {
       operations.authorizeAgentInvocationByCaller(agent.id, decision.targetRef, context);
     }
@@ -177,6 +188,7 @@ export async function runAgentDecisionLoop(
       arguments: observationArguments,
       result_type: payloadValueKind(result),
       value: result,
+      ...repetition,
     };
     observations.push(observation);
     context.trace.push("agent_capability_result_returned", {
@@ -186,6 +198,7 @@ export async function runAgentDecisionLoop(
         selected_ref: decision.targetRef,
         result_available: true,
         result_type: observation.result_type,
+        ...repetition,
       }),
     });
   }

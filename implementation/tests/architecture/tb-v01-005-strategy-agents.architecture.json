@@ -1,5 +1,5 @@
 {
-  "projection_schema_version": "architecture-projection-v0.1",
+  "projection_schema_version": "architecture-projection-v1",
   "source_air_schema_version": "touba-air-v1",
   "test_only": true,
   "module": {
@@ -86,10 +86,10 @@
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
         "start_byte": 192,
-        "end_byte": 346,
+        "end_byte": 398,
         "start_line": 12,
         "start_column": 0,
-        "end_line": 20,
+        "end_line": 22,
         "end_column": 0
       },
       "memory_scopes": []
@@ -101,11 +101,11 @@
       "origin": "local",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 346,
-        "end_byte": 461,
-        "start_line": 20,
+        "start_byte": 398,
+        "end_byte": 505,
+        "start_line": 22,
         "start_column": 0,
-        "end_line": 26,
+        "end_line": 28,
         "end_column": 0
       },
       "memory_scopes": []
@@ -117,14 +117,14 @@
       "origin": "local",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 461,
-        "end_byte": 634,
-        "start_line": 26,
+        "start_byte": 505,
+        "end_byte": 716,
+        "start_line": 28,
         "start_column": 0,
-        "end_line": 31,
+        "end_line": 35,
         "end_column": 0
       },
-      "responsibility": "Fulfill the declared Engineer responsibility using only authorized capabilities.",
+      "responsibility": "Apply the requested change and return the recorded result.",
       "callable_by": [
         "strategy:examples.strategy_agents/RunChange"
       ],
@@ -137,14 +137,14 @@
       "origin": "local",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 634,
-        "end_byte": 809,
-        "start_line": 31,
+        "start_byte": 716,
+        "end_byte": 921,
+        "start_line": 35,
         "start_column": 0,
-        "end_line": 36,
+        "end_line": 42,
         "end_column": 0
       },
-      "responsibility": "Fulfill the declared Reviewer responsibility using only authorized capabilities.",
+      "responsibility": "Review the recorded change supplied by the caller.",
       "callable_by": [
         "strategy:examples.strategy_agents/RunChange"
       ],
@@ -157,11 +157,11 @@
       "origin": "local",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 809,
-        "end_byte": 933,
-        "start_line": 36,
+        "start_byte": 921,
+        "end_byte": 1219,
+        "start_line": 42,
         "start_column": 0,
-        "end_line": 43,
+        "end_line": 55,
         "end_column": 0
       },
       "memory_scopes": []
@@ -174,10 +174,10 @@
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
         "start_byte": 294,
-        "end_byte": 346,
+        "end_byte": 398,
         "start_line": 16,
         "start_column": 4,
-        "end_line": 20,
+        "end_line": 22,
         "end_column": 0
       }
     },
@@ -187,15 +187,18 @@
       "graph_ref": "graph:skill:examples.strategy_agents/MakeChange",
       "flow_node_kind": "call_tool",
       "target_ref": "tool:examples.strategy_agents/ApplyChange",
-      "arguments": [],
+      "arguments": [
+        "value:request"
+      ],
+      "result_binding": "change",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
         "start_byte": 305,
-        "end_byte": 316,
+        "end_byte": 385,
         "start_line": 17,
         "start_column": 8,
-        "end_line": 17,
-        "end_column": 19
+        "end_line": 20,
+        "end_column": 8
       }
     },
     {
@@ -204,16 +207,16 @@
       "graph_ref": "graph:skill:examples.strategy_agents/MakeChange",
       "flow_node_kind": "give",
       "arguments": [
-        "symbol:ReviewedChange"
+        "value:change"
       ],
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 325,
-        "end_byte": 344,
-        "start_line": 18,
+        "start_byte": 385,
+        "end_byte": 396,
+        "start_line": 20,
         "start_column": 8,
-        "end_line": 18,
-        "end_column": 27
+        "end_line": 20,
+        "end_column": 19
       }
     },
     {
@@ -223,11 +226,11 @@
       "entry_node_id": "node:graph:skill:examples.strategy_agents/ReviewChange:1",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 429,
-        "end_byte": 461,
-        "start_line": 23,
+        "start_byte": 481,
+        "end_byte": 505,
+        "start_line": 25,
         "start_column": 4,
-        "end_line": 26,
+        "end_line": 28,
         "end_column": 0
       }
     },
@@ -237,16 +240,16 @@
       "graph_ref": "graph:skill:examples.strategy_agents/ReviewChange",
       "flow_node_kind": "give",
       "arguments": [
-        "symbol:ReviewedChange"
+        "value:change"
       ],
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 440,
-        "end_byte": 459,
-        "start_line": 24,
+        "start_byte": 492,
+        "end_byte": 503,
+        "start_line": 26,
         "start_column": 8,
-        "end_line": 24,
-        "end_column": 27
+        "end_line": 26,
+        "end_column": 19
       }
     },
     {
@@ -256,11 +259,11 @@
       "entry_node_id": "node:graph:strategy:examples.strategy_agents/RunChange:1",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 868,
-        "end_byte": 933,
-        "start_line": 39,
+        "start_byte": 1040,
+        "end_byte": 1219,
+        "start_line": 47,
         "start_column": 4,
-        "end_line": 43,
+        "end_line": 55,
         "end_column": 0
       }
     },
@@ -270,15 +273,18 @@
       "graph_ref": "graph:strategy:examples.strategy_agents/RunChange",
       "flow_node_kind": "call_agent",
       "target_ref": "agent:examples.strategy_agents/Engineer",
-      "arguments": [],
+      "arguments": [
+        "value:request"
+      ],
+      "result_binding": "change",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 879,
-        "end_byte": 887,
-        "start_line": 40,
+        "start_byte": 1051,
+        "end_byte": 1128,
+        "start_line": 48,
         "start_column": 8,
-        "end_line": 40,
-        "end_column": 16
+        "end_line": 51,
+        "end_column": 8
       }
     },
     {
@@ -287,15 +293,18 @@
       "graph_ref": "graph:strategy:examples.strategy_agents/RunChange",
       "flow_node_kind": "call_agent",
       "target_ref": "agent:examples.strategy_agents/Reviewer",
-      "arguments": [],
+      "arguments": [
+        "value:change"
+      ],
+      "result_binding": "reviewed",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 896,
-        "end_byte": 904,
-        "start_line": 41,
+        "start_byte": 1128,
+        "end_byte": 1205,
+        "start_line": 51,
         "start_column": 8,
-        "end_line": 41,
-        "end_column": 16
+        "end_line": 54,
+        "end_column": 8
       }
     },
     {
@@ -304,16 +313,16 @@
       "graph_ref": "graph:strategy:examples.strategy_agents/RunChange",
       "flow_node_kind": "give",
       "arguments": [
-        "symbol:ReviewedChange"
+        "value:reviewed"
       ],
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 913,
-        "end_byte": 932,
-        "start_line": 42,
+        "start_byte": 1205,
+        "end_byte": 1218,
+        "start_line": 54,
         "start_column": 8,
-        "end_line": 42,
-        "end_column": 27
+        "end_line": 54,
+        "end_column": 21
       }
     },
     {
@@ -337,11 +346,11 @@
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
         "start_byte": 305,
-        "end_byte": 316,
+        "end_byte": 385,
         "start_line": 17,
         "start_column": 8,
-        "end_line": 17,
-        "end_column": 19
+        "end_line": 20,
+        "end_column": 8
       }
     },
     {
@@ -352,12 +361,12 @@
       "node_id": "node:graph:skill:examples.strategy_agents/MakeChange:2",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 325,
-        "end_byte": 344,
-        "start_line": 18,
+        "start_byte": 385,
+        "end_byte": 396,
+        "start_line": 20,
         "start_column": 8,
-        "end_line": 18,
-        "end_column": 27
+        "end_line": 20,
+        "end_column": 19
       }
     },
     {
@@ -380,12 +389,12 @@
       "node_id": "node:graph:skill:examples.strategy_agents/ReviewChange:1",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 440,
-        "end_byte": 459,
-        "start_line": 24,
+        "start_byte": 492,
+        "end_byte": 503,
+        "start_line": 26,
         "start_column": 8,
-        "end_line": 24,
-        "end_column": 27
+        "end_line": 26,
+        "end_column": 19
       }
     },
     {
@@ -408,12 +417,12 @@
       "node_id": "node:graph:strategy:examples.strategy_agents/RunChange:1",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 879,
-        "end_byte": 887,
-        "start_line": 40,
+        "start_byte": 1051,
+        "end_byte": 1128,
+        "start_line": 48,
         "start_column": 8,
-        "end_line": 40,
-        "end_column": 16
+        "end_line": 51,
+        "end_column": 8
       }
     },
     {
@@ -424,12 +433,12 @@
       "node_id": "node:graph:strategy:examples.strategy_agents/RunChange:2",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 896,
-        "end_byte": 904,
-        "start_line": 41,
+        "start_byte": 1128,
+        "end_byte": 1205,
+        "start_line": 51,
         "start_column": 8,
-        "end_line": 41,
-        "end_column": 16
+        "end_line": 54,
+        "end_column": 8
       }
     },
     {
@@ -440,12 +449,12 @@
       "node_id": "node:graph:strategy:examples.strategy_agents/RunChange:3",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 913,
-        "end_byte": 932,
-        "start_line": 42,
+        "start_byte": 1205,
+        "end_byte": 1218,
+        "start_line": 54,
         "start_column": 8,
-        "end_line": 42,
-        "end_column": 27
+        "end_line": 54,
+        "end_column": 21
       }
     }
   ],
@@ -507,11 +516,11 @@
       "caller_kind": "strategy",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 602,
-        "end_byte": 632,
-        "start_line": 29,
+        "start_byte": 684,
+        "end_byte": 714,
+        "start_line": 33,
         "start_column": 4,
-        "end_line": 29,
+        "end_line": 33,
         "end_column": 34
       }
     },
@@ -532,11 +541,11 @@
       "caller_kind": "strategy",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 777,
-        "end_byte": 807,
-        "start_line": 34,
+        "start_byte": 889,
+        "end_byte": 919,
+        "start_line": 40,
         "start_column": 4,
-        "end_line": 34,
+        "end_line": 40,
         "end_column": 34
       }
     },
@@ -598,12 +607,12 @@
       "role": "next",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 325,
-        "end_byte": 344,
-        "start_line": 18,
+        "start_byte": 385,
+        "end_byte": 396,
+        "start_line": 20,
         "start_column": 8,
-        "end_line": 18,
-        "end_column": 27
+        "end_line": 20,
+        "end_column": 19
       }
     },
     {
@@ -674,12 +683,12 @@
       "role": "next",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 896,
-        "end_byte": 904,
-        "start_line": 41,
+        "start_byte": 1128,
+        "end_byte": 1205,
+        "start_line": 51,
         "start_column": 8,
-        "end_line": 41,
-        "end_column": 16
+        "end_line": 54,
+        "end_column": 8
       }
     },
     {
@@ -690,12 +699,12 @@
       "role": "next",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-005-strategy-agents.tb",
-        "start_byte": 913,
-        "end_byte": 932,
-        "start_line": 42,
+        "start_byte": 1205,
+        "end_byte": 1218,
+        "start_line": 54,
         "start_column": 8,
-        "end_line": 42,
-        "end_column": 27
+        "end_line": 54,
+        "end_column": 21
       }
     }
   ],

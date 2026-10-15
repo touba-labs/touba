@@ -10,19 +10,17 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
 
 import {
   generateHandlerContractTestFromAirTool,
   generateHandlerStubFromAirTool,
 } from "../../touba-manifest/src/stub.mjs";
-import { toolNameToHandlerFile } from "../../touba-manifest/src/generate.mjs";
+import { buildManifestRequirements, handlerRelativePathForTool, unapprovedManifest } from "../../touba-manifest/src/requirements.mjs";
+import { inspectSdkDependency } from "../../touba-manifest/src/sdk-dependency.mjs";
 import {
-  manifestVersionForExplicitEffectContracts,
   normalizeEffectContract,
   TOUBA_MANIFEST_V1,
-  TOUBA_MANIFEST_V2,
-  TOUBA_MANIFEST_V3,
-  validateManifestEffectContracts,
 } from "../../touba-manifest/src/effect-contract.mjs";
 import {
   assertEffectiveProjectSafe,
@@ -33,13 +31,11 @@ export const PROJECT_MANIFEST_VERSION = "touba-project-workflow-v1";
 export const TOUBA_MANIFEST_VERSION = TOUBA_MANIFEST_V1;
 export const DEFAULT_SOURCE_ROOT = "src";
 export const DEFAULT_HANDLER_ROOT = "handlers";
-export const DEFAULT_AIR_ROOT = ".touba/air";
 export const DEFAULT_BUILD_ROOT = ".touba/build";
 export const DEFAULT_STATE_ROOT = ".touba/state";
 export const DEFAULT_EVIDENCE_ROOT = ".touba/evidence";
 export const DEFAULT_PROJECT_CONFIG_PATH = "touba.project.json";
 export const DEFAULT_SECRET_STORE_PATH = ".touba/state/secrets.local.json";
-export const LEGACY_SECRET_STORE_PATH = ".touba/secrets.local.json";
 export const DEFAULT_DOTENV_PATH = ".env";
 export const DEFAULT_DEV_SECRETS_PROFILE = "touba.secrets.dev.json";
 export const DEFAULT_PROD_SECRETS_PROFILE = "touba.secrets.prod.json";
@@ -51,12 +47,12 @@ export const TOUBA_PROJECT_CONFIG_VERSION = "touba-project-v1";
 export const TOUBA_LOCAL_SECRET_STORE_VERSION = "touba-secret-store-local-v1";
 export const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
 export const DEFAULT_SUPPLY_CHAIN_LOCK_PATH = "touba.lock.json";
-export const TOUBA_PACKAGE_SCHEMA_VERSION = "touba-package-v0.1";
+export const TOUBA_PACKAGE_SCHEMA_VERSION = "touba-package-v1";
 export const TOUBA_AIR_JSON_PROFILE = "touba-air-json-canonical-v1";
-export const TOUBA_RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v0.1";
-export const TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v0.1";
-export const TOUBA_RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v0.1";
-export const TOUBA_OWNERSHIP_SCHEMA_VERSION = "touba-ownership-v0.1";
+export const TOUBA_RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v1";
+export const TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v1";
+export const TOUBA_RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v1";
+export const TOUBA_OWNERSHIP_SCHEMA_VERSION = "touba-ownership-v1";
 export const DEFAULT_RUN_PLAN_PATH = "touba.run-plan.json";
 export const PROJECT_ARTIFACT_LAYOUT_VERSION = "touba-artifacts-v1";
 
@@ -284,6 +280,7 @@ export function initProject(options = {}) {
     created,
     preserved,
     notes: [
+      "Install @touba/sdk explicitly in the JavaScript project before running generated handlers. touba version --json reports distribution.sdk_archive; use npm install --offline --ignore-scripts --save-exact <archive.tgz>. No dependency or package.json was modified.",
       "No manifest is created until a project declares at least one tool.",
       "JavaScript is the only project language available in this V1; Python and TypeScript are reserved for future work.",
       "The runtime still receives manifests explicitly; project tooling only prepares artifacts.",
@@ -369,98 +366,6 @@ export function removeProjectSecret(handle, options = {}) {
   });
 }
 
-export function migrateProjectArtifacts(options = {}) {
-  const root = resolve(options.root ?? process.cwd());
-  const mode = options.mode ?? "plan";
-  if (!["plan", "check", "write"].includes(mode)) {
-    throw new Error(`unsupported project migration mode: ${mode}`);
-  }
-  const projectConfigPath = resolve(root, DEFAULT_PROJECT_CONFIG_PATH);
-  if (!existsSync(projectConfigPath)) {
-    throw new Error(`project migration requires ${DEFAULT_PROJECT_CONFIG_PATH} in ${root}`);
-  }
-  let raw;
-  try {
-    raw = JSON.parse(readFileSync(projectConfigPath, "utf8"));
-  } catch (error) {
-    throw new Error(`cannot read project config ${projectConfigPath}: ${error.message}`);
-  }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error(`project config must be an object: ${projectConfigPath}`);
-  }
-  if (raw.artifact_layout !== undefined && raw.artifact_layout !== PROJECT_ARTIFACT_LAYOUT_VERSION) {
-    throw new Error(`project config artifact_layout must be ${PROJECT_ARTIFACT_LAYOUT_VERSION}`);
-  }
-
-  const legacyArtifacts = [
-    DEFAULT_AIR_ROOT,
-    "touba.manifest.json",
-    DEFAULT_RUN_PLAN_PATH,
-    LEGACY_SECRET_STORE_PATH,
-  ].filter((path) => existsSync(resolve(root, path)));
-  const targetProfiles = Object.keys(normalizeRunProfiles(raw.run_profiles));
-  const occupiedTargets = targetProfiles
-    .map((profile) => join(DEFAULT_BUILD_ROOT, profile))
-    .filter((path) => directoryHasEntries(resolve(root, path)));
-  const diagnostics = [];
-  const actions = [];
-  if (raw.artifact_layout === PROJECT_ARTIFACT_LAYOUT_VERSION) {
-    return {
-      workflow_version: PROJECT_MANIFEST_VERSION,
-      command: "project migrate",
-      mode,
-      status: "success",
-      root,
-      project_config_path: projectConfigPath,
-      artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
-      legacy_artifacts: legacyArtifacts,
-      preserved: legacyArtifacts,
-      actions,
-      diagnostics,
-    };
-  }
-  if (occupiedTargets.length > 0) {
-    diagnostics.push(errorDiagnostic(
-      "ProjectArtifactMigrationTargetOccupied",
-      "converged build targets already contain files; refusing to adopt them without a clean regeneration",
-      { targets: occupiedTargets },
-    ));
-  } else {
-    actions.push(action(mode === "write" ? "adopt_artifact_layout" : "would_adopt_artifact_layout", projectConfigPath, {
-      artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
-    }));
-    if (mode === "check") {
-      diagnostics.push(errorDiagnostic(
-        "ProjectArtifactMigrationRequired",
-        `project config does not declare ${PROJECT_ARTIFACT_LAYOUT_VERSION}`,
-        { project_config_path: projectConfigPath },
-      ));
-    }
-  }
-  if (mode === "write" && diagnostics.length === 0) {
-    const next = cloneJson(raw);
-    next.artifact_layout = PROJECT_ARTIFACT_LAYOUT_VERSION;
-    next.run_profiles = {
-      pure: { require_supply_chain_lock: false },
-      ...(next.run_profiles ?? {}),
-    };
-    writeProjectConfig(projectConfigPath, next);
-  }
-  return {
-    workflow_version: PROJECT_MANIFEST_VERSION,
-    command: "project migrate",
-    mode,
-    status: diagnostics.length > 0 ? "error" : mode === "plan" ? "changes_required" : "success",
-    root,
-    project_config_path: projectConfigPath,
-    artifact_layout: raw.artifact_layout ?? "legacy-v1",
-    target_artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
-    legacy_artifacts: legacyArtifacts,
-    preserved: legacyArtifacts,
-    actions,
-    diagnostics,
-  };
-}
 
 export function resolveProjectRunArgs(rawArgs, options = {}) {
   const positionalAirPath = rawArgs[0] !== undefined && !rawArgs[0].startsWith("--");
@@ -498,7 +403,7 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
     throw new Error(`--project requires ${DEFAULT_PROJECT_CONFIG_PATH} in ${projectRoot}`);
   }
   if (projectConfig.artifact_layout !== PROJECT_ARTIFACT_LAYOUT_VERSION) {
-    throw new Error("project must be migrated with `touba project migrate --mode write` before project-based run");
+    throw new Error(`project config artifact_layout must be ${PROJECT_ARTIFACT_LAYOUT_VERSION}; old layouts are not read or converted`);
   }
   const profileName = profile ?? "dev";
   if (projectConfig.run_profiles[profileName] === undefined) {
@@ -506,7 +411,7 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
   }
   const runPlanPath = resolve(projectRoot, DEFAULT_BUILD_ROOT, profileName, "touba.run-plan.json");
   if (!existsSync(runPlanPath)) {
-    throw new Error(`prepared run plan is missing: ${runPlanPath}; run touba prepare --mode write --profile ${profileName}`);
+    throw new Error(`prepared run plan is missing: ${runPlanPath}; run touba prepare --root ${JSON.stringify(projectRoot)} --mode write --profile ${profileName}, with --entry <air-ref> if the project has several entry points`);
   }
   const runPlan = JSON.parse(readFileSync(runPlanPath, "utf8"));
   const expectedEntry = entryRef ?? projectConfig.entry;
@@ -546,18 +451,11 @@ export async function prepareProject(options = {}) {
       project_config_path: projectConfigPath,
     }));
   }
-  const convergedLayout = projectConfigResolution.document?.artifact_layout === PROJECT_ARTIFACT_LAYOUT_VERSION;
-  const buildRoot = convergedLayout
-    ? resolve(root, DEFAULT_BUILD_ROOT, runProfile)
-    : root;
-  const airRoot = convergedLayout
-    ? join(buildRoot, "air")
-    : resolve(root, DEFAULT_AIR_ROOT);
+  const buildRoot = resolve(root, DEFAULT_BUILD_ROOT, runProfile);
+  const airRoot = join(buildRoot, "air");
   const manifestPath = resolve(
     root,
-    options.manifestPath ?? (convergedLayout
-      ? relative(root, join(buildRoot, "touba.manifest.json"))
-      : "touba.manifest.json"),
+    options.manifestPath ?? relative(root, join(buildRoot, "touba.manifest.json")),
   );
   const configured = projectConfigResolution.document?.configuration;
   const configuredBindingFragments = options.bindingFragmentPaths?.length > 0
@@ -568,13 +466,29 @@ export async function prepareProject(options = {}) {
     : configured?.resource_bindings ?? [];
   const configuredOwnershipPath = options.ownershipPath
     ?? configured?.ownership;
-  const entryRef = options.entryRef ?? projectConfigResolution.document?.entry;
+  let entryRef = options.entryRef ?? projectConfigResolution.document?.entry;
+  const packageInputs = collectPackageInputs({
+    root,
+    projectPackageRecords: projectConfigResolution.document?.packages ?? [],
+    optionPackagePaths: options.packagePaths ?? [],
+    diagnostics,
+  });
+  const compileOptions = {
+    ...options,
+    moduleSourcePaths: [
+      ...sourcePaths,
+      ...packageInputs.flatMap(({ metadata }) => packageExportModuleNames(metadata.exports)
+        .map(moduleName => moduleNameToSourcePath(metadata.root, moduleName))
+        .filter(sourcePath => existsSync(sourcePath))),
+    ],
+    sourceRoots: packageInputs.map(({ metadata }) => join(metadata.root, DEFAULT_SOURCE_ROOT)),
+  };
 
   for (const sourcePath of sourcePaths) {
     const expectedModuleName = expectedModuleNameForSource(root, sourcePath);
     let airDocument;
     try {
-      airDocument = await compileSource(sourcePath, options);
+      airDocument = await compileSource(sourcePath, compileOptions);
     } catch (error) {
       diagnostics.push(errorDiagnostic("SourceCompileFailed", error.message, { source_path: sourcePath }));
       continue;
@@ -642,10 +556,9 @@ export async function prepareProject(options = {}) {
     .filter((moduleName) => typeof moduleName === "string" && moduleName.length > 0);
   const packageResolution = await loadLocalPackages({
     root,
-    projectPackageRecords: projectConfigResolution.document?.packages ?? [],
-    optionPackagePaths: options.packagePaths ?? [],
+    packageInputs,
     projectModuleNames,
-    compileOptions: options,
+    compileOptions,
   });
   diagnostics.push(...packageResolution.diagnostics);
 
@@ -656,8 +569,15 @@ export async function prepareProject(options = {}) {
   });
   diagnostics.push(...assembly.diagnostics);
   const preparedAirDocuments = assembly.entries;
+  if (entryRef === undefined) {
+    const inferred = resolveRunPlanEntry(preparedAirDocuments, undefined, [], null);
+    if (inferred) entryRef = inferred.ref;
+    else if (preparedAirDocuments.some(({ document }) => entryRefsForDocument(document).length > 0)) {
+      actions.push(action("select_entry", projectConfigPath, { instruction: "Set entry in touba.project.json or pass --entry <air-ref> to prepare; no run plan was created." }));
+    }
+  }
 
-  let expectedManifest = buildExpectedManifest(preparedAirDocuments.map((entry) => entry.document), {
+  let expectedManifest = buildManifestRequirements(preparedAirDocuments.map((entry) => entry.document), {
     handlerRoot: options.handlerRoot ?? DEFAULT_HANDLER_ROOT,
     handlerCommand: options.handlerCommand ?? languageProfile.handlerCommand,
     handlerExtension: options.handlerExtension ?? languageProfile.handlerExtension,
@@ -666,6 +586,7 @@ export async function prepareProject(options = {}) {
     handlerCwd: toPosixPath(relative(dirname(manifestPath), root) || "."),
   });
   const bindingFragmentPaths = normalizeBindingFragmentPaths(root, configuredBindingFragments);
+  const manifestRequirements = structuredClone(expectedManifest);
   const bindingFragmentComposition = composeBindingFragments({
     fragmentPaths: bindingFragmentPaths,
     expectedManifest,
@@ -684,6 +605,9 @@ export async function prepareProject(options = {}) {
     requireAll: options.requireResourceBindings === true,
   });
   const expectedToolRefs = Object.keys(expectedManifest.bindings);
+  const sdkDependency = expectedToolRefs.length > 0
+    ? inspectSdkDependency(root, JSON.parse(readFileSync(new URL("../../../runtime/touba-handler-sdk/package.json", import.meta.url), "utf8")).version)
+    : null;
   const expectedSecretHandles = collectRequiredSecretHandles(preparedAirDocuments.map((entry) => entry.document));
   const stubs = expectedStubs(preparedAirDocuments.map((entry) => entry.document), {
     root,
@@ -692,11 +616,11 @@ export async function prepareProject(options = {}) {
     sdkImport: languageProfile.sdk,
   });
   const secretProfiles = expectedSecretProfiles(root, expectedSecretHandles, {
-    secretStorePath: convergedLayout ? DEFAULT_SECRET_STORE_PATH : LEGACY_SECRET_STORE_PATH,
+    secretStorePath: DEFAULT_SECRET_STORE_PATH,
   });
   const runPlanPath = options.runPlanPath !== undefined
     ? resolve(root, options.runPlanPath)
-    : convergedLayout && entryRef !== undefined
+    : entryRef !== undefined
       ? join(buildRoot, "touba.run-plan.json")
       : null;
   const expectedRunPlan = runPlanPath === null
@@ -731,29 +655,7 @@ export async function prepareProject(options = {}) {
     actions,
     mode,
   });
-  const effectiveProjectPath = convergedLayout
-    ? join(buildRoot, "touba.effective-project.json")
-    : null;
-  const expectedEffectiveProject = convergedLayout
-    ? assertEffectiveProjectSafe(buildEffectiveProjectDocument({
-      root,
-      profile: runProfile,
-      projectConfigPath,
-      projectConfig: projectConfigResolution.document,
-      preparedAirDocuments,
-      sources,
-      airRoot,
-      manifestPath,
-      expectedManifest,
-      bindingFragmentPaths,
-      resourceBindingsPaths,
-      ownershipPath,
-      runPlanPath,
-      expectedRunPlan,
-      expectedSecretHandles,
-      evidenceRoot: resolve(root, DEFAULT_EVIDENCE_ROOT),
-    }))
-    : null;
+  const effectiveProjectPath = join(buildRoot, "touba.effective-project.json");
 
   let currentManifest = null;
   if (existsSync(manifestPath)) {
@@ -781,17 +683,33 @@ export async function prepareProject(options = {}) {
     actions,
     mode,
   });
-  if (
-    convergedLayout
-    && mode === "check"
-    && currentManifest !== null
-    && JSON.stringify(currentManifest) !== JSON.stringify(expectedManifest)
-  ) {
-    diagnostics.push(errorDiagnostic(
-      "ManifestDerivedDrift",
-      "derived manifest differs from the explicit project inputs",
-      { manifest_path: manifestPath },
-    ));
+  const proposedManifest = mergeManifest(currentManifest, expectedManifest, diagnostics, manifestPath);
+  const expectedEffectiveProject = hasErrorDiagnostics(diagnostics) ? null : assertEffectiveProjectSafe(buildEffectiveProjectDocument({
+      root,
+      profile: runProfile,
+      projectConfigPath,
+      projectConfig: projectConfigResolution.document ?? expectedProjectConfigDocument(languageProfile),
+      preparedAirDocuments,
+      sources,
+      airRoot,
+      manifestPath,
+      expectedManifest: proposedManifest,
+      bindingFragmentPaths,
+      resourceBindingsPaths,
+      ownershipPath,
+      runPlanPath,
+      expectedRunPlan,
+      expectedSecretHandles,
+      evidenceRoot: resolve(root, DEFAULT_EVIDENCE_ROOT),
+    }));
+  const permissionDiagnostics = [];
+  for (const [toolRef, required] of Object.entries(manifestRequirements.bindings)) {
+    validateBindingCoverage(proposedManifest.bindings?.[toolRef], required, permissionDiagnostics, manifestPath, toolRef, { reviewEffects: true });
+  }
+  validateAgentSecretScopes(proposedManifest, manifestRequirements, permissionDiagnostics, actions, mode, manifestPath);
+  for (const diagnostic of permissionDiagnostics) {
+    diagnostics.push({ ...diagnostic, severity: mode === "check" ? "error" : "warning" });
+    actions.push(action("review_required_permission", manifestPath, { code: diagnostic.code, tool_ref: diagnostic.tool_ref, agent_ref: diagnostic.agent_ref }));
   }
   inspectStubs({ stubs, diagnostics, actions, mode });
   inspectSecretProfiles({ secretProfiles, diagnostics, actions, mode });
@@ -816,7 +734,7 @@ export async function prepareProject(options = {}) {
   }
 
   if (mode === "write" && !hasErrorDiagnostics(diagnostics)) {
-    if (expectedToolRefs.length > 0 && projectConfigResolution.document === null) {
+    if (projectConfigResolution.document === null) {
       writeProjectConfig(projectConfigPath, expectedProjectConfigDocument(languageProfile));
     }
     for (const { document, sourcePath } of preparedAirDocuments) {
@@ -828,10 +746,8 @@ export async function prepareProject(options = {}) {
       writeFileSync(outputPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
     }
     if (expectedToolRefs.length > 0) {
-      const mergedManifest = convergedLayout
-        ? expectedManifest
-        : mergeManifest(currentManifest, expectedManifest, diagnostics, manifestPath);
-      if (!hasErrorDiagnostics(diagnostics)) {
+      const mergedManifest = proposedManifest;
+      if (!hasErrorDiagnostics(diagnostics) && JSON.stringify(mergedManifest) !== JSON.stringify(currentManifest)) {
         mkdirSync(dirname(manifestPath), { recursive: true });
         writeFileSync(manifestPath, `${JSON.stringify(mergedManifest, null, 2)}\n`, "utf8");
       }
@@ -870,13 +786,14 @@ export async function prepareProject(options = {}) {
     status,
     root,
     project_config_path: projectConfigPath,
-    artifact_layout: convergedLayout ? PROJECT_ARTIFACT_LAYOUT_VERSION : "legacy-v1",
+    artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
     build_root: buildRoot,
     air_root: airRoot,
     profile: runProfile,
     entry_ref: entryRef ?? null,
     language: languageProfile.language,
     sdk: languageProfile.sdk,
+    sdk_dependency: sdkDependency,
     manifest_path: manifestPath,
     binding_fragments: bindingFragmentComposition.fragments,
     resource_bindings: resourceBindingsValidation.documents,
@@ -890,6 +807,7 @@ export async function prepareProject(options = {}) {
     modules: preparedAirDocuments.map((entry) => entry.document.module.name),
     imports: assembly.imports,
     tools: expectedToolRefs,
+    manifest_requirements: manifestRequirements,
     actions,
     diagnostics,
   };
@@ -897,7 +815,7 @@ export async function prepareProject(options = {}) {
 
 export function renderReport(report) {
   const lines = [];
-  lines.push(`Touba project ${report.command} (${report.mode ?? "ok"})`);
+  lines.push(`Touba project ${report.command} (${report.mode ?? report.status ?? "success"})`);
   lines.push(`Status: ${report.status ?? "success"}`);
   lines.push(`Root: ${report.root}`);
   if (report.manifest_path) {
@@ -926,6 +844,9 @@ export function renderReport(report) {
   }
   if (report.sdk) {
     lines.push(`SDK: ${report.sdk}`);
+  }
+  if (report.sdk_dependency?.status === "unavailable") {
+    lines.push(`SDK not ready [${report.sdk_dependency.code}]: ${report.sdk_dependency.message}`);
   }
   if (report.store_path) {
     lines.push(`Secret store: ${report.store_path}`);
@@ -1037,8 +958,7 @@ function normalizeResourceBindingsPaths(root, resourceBindingsPaths) {
 
 async function loadLocalPackages({
   root,
-  projectPackageRecords,
-  optionPackagePaths,
+  packageInputs,
   projectModuleNames,
   compileOptions,
 }) {
@@ -1050,34 +970,11 @@ async function loadLocalPackages({
   const projectModuleSet = new Set(projectModuleNames);
   const loadedModuleSet = new Set();
   const loadedPackageNames = new Set();
-  const loadedManifestPaths = new Set();
-  const records = [
-    ...projectPackageRecords.map((record, index) => ({
-      origin: "project_config",
-      index,
-      record,
-    })),
-    ...(optionPackagePaths ?? []).map((manifest, index) => ({
-      origin: "cli",
-      index,
-      record: { manifest },
-    })),
-  ];
-
-  for (const entry of records) {
-    const manifestPath = packageManifestPath(root, entry.record, entry, diagnostics);
-    if (manifestPath === null) {
-      continue;
-    }
-    if (loadedManifestPaths.has(manifestPath)) {
-      continue;
-    }
-    loadedManifestPaths.add(manifestPath);
-
+  for (const { manifestPath, metadata } of packageInputs) {
     const loaded = await loadOneLocalPackage({
       root,
       manifestPath,
-      record: entry.record,
+      metadata,
       diagnostics,
       compileOptions,
     });
@@ -1130,6 +1027,65 @@ async function loadLocalPackages({
   };
 }
 
+// Editor hosts use the same package metadata validation as prepare; this only
+// discovers source files and never grants runtime authority or loads secrets.
+export function compilerInputsForFile(sourcePath) {
+  let root = dirname(resolve(sourcePath));
+  while (!existsSync(join(root, DEFAULT_PROJECT_CONFIG_PATH))) {
+    const parent = dirname(root);
+    if (parent === root) return { sourceRoots: [], moduleSourcePaths: [], diagnostics: [] };
+    root = parent;
+  }
+  const diagnostics = [];
+  const config = resolveProjectConfigForPrepare(root, diagnostics);
+  const packages = collectPackageInputs({ root, projectPackageRecords: config.document?.packages ?? [], optionPackagePaths: [], diagnostics });
+  return {
+    sourceRoots: [join(root, DEFAULT_SOURCE_ROOT), ...packages.map(({ metadata }) => join(metadata.root, DEFAULT_SOURCE_ROOT))],
+    moduleSourcePaths: packages.flatMap(({ metadata }) => packageExportModuleNames(metadata.exports)
+      .map(moduleName => moduleNameToSourcePath(metadata.root, moduleName)).filter(path => existsSync(path))),
+    diagnostics,
+  };
+}
+
+function collectPackageInputs({ root, projectPackageRecords, optionPackagePaths, diagnostics }) {
+  const inputs = [];
+  const loadedManifestPaths = new Set();
+  const records = [
+    ...projectPackageRecords.map((record, index) => ({
+      origin: "project_config",
+      index,
+      record,
+    })),
+    ...(optionPackagePaths ?? []).map((manifest, index) => ({
+      origin: "cli",
+      index,
+      record: { manifest },
+    })),
+  ];
+
+  for (const entry of records) {
+    const manifestPath = packageManifestPath(root, entry.record, entry, diagnostics);
+    if (manifestPath === null) {
+      continue;
+    }
+    if (loadedManifestPaths.has(manifestPath)) {
+      continue;
+    }
+    loadedManifestPaths.add(manifestPath);
+
+    let document;
+    try { document = JSON.parse(readFileSync(manifestPath, "utf8")); }
+    catch (error) {
+      diagnostics.push(errorDiagnostic("PackageSchemaMismatch", `cannot read package manifest: ${error.message}`, { manifest_path: manifestPath }));
+      continue;
+    }
+    const metadata = validatePackageManifest(document, { manifestPath, record: entry.record, diagnostics });
+    if (metadata !== null) inputs.push({ manifestPath, metadata });
+  }
+
+  return inputs;
+}
+
 function packageManifestPath(root, record, entry, diagnostics) {
   if (!record || typeof record !== "object" || Array.isArray(record)) {
     diagnostics.push(errorDiagnostic("PackageSchemaMismatch", "project package entries must be objects", {
@@ -1157,29 +1113,10 @@ function packageManifestPath(root, record, entry, diagnostics) {
 async function loadOneLocalPackage({
   root,
   manifestPath,
-  record,
+  metadata,
   diagnostics,
   compileOptions,
 }) {
-  let document;
-  try {
-    document = JSON.parse(readFileSync(manifestPath, "utf8"));
-  } catch (error) {
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", `cannot read package manifest: ${error.message}`, {
-      manifest_path: manifestPath,
-    }));
-    return null;
-  }
-
-  const metadata = validatePackageManifest(document, {
-    manifestPath,
-    record,
-    diagnostics,
-  });
-  if (metadata === null) {
-    return null;
-  }
-
   const moduleNames = packageExportModuleNames(metadata.exports);
   const packageEntries = [];
   for (const moduleName of moduleNames) {
@@ -1548,12 +1485,7 @@ function secretStorePath(root, storePath) {
   if (storePath !== undefined) {
     return resolve(root, storePath);
   }
-  const current = resolve(root, DEFAULT_SECRET_STORE_PATH);
-  const legacy = resolve(root, LEGACY_SECRET_STORE_PATH);
-  if (existsSync(current) || usesConvergedArtifactLayoutAtRoot(root)) {
-    return current;
-  }
-  return legacy;
+  return resolve(root, DEFAULT_SECRET_STORE_PATH);
 }
 
 function ensureProjectGitignore(root, created, preserved) {
@@ -1680,7 +1612,7 @@ function resolveProjectConfigForInit(root, requestedLanguage) {
   const profile = projectLanguageProfile(requestedLanguage ?? DEFAULT_PROJECT_LANGUAGE);
   return {
     path,
-    document: expectedProjectConfigDocument(profile, { converged: true }),
+    document: expectedProjectConfigDocument(profile),
   };
 }
 
@@ -1726,16 +1658,14 @@ function projectLanguageProfile(language) {
   throw new Error(`unsupported project language ${normalized}; supported language: javascript`);
 }
 
-function expectedProjectConfigDocument(profile, options = {}) {
+function expectedProjectConfigDocument(profile) {
   const document = {
     project_version: TOUBA_PROJECT_CONFIG_VERSION,
     language: profile.language,
     sdk: profile.sdk,
+    artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
     run_profiles: cloneJson(DEFAULT_RUN_PROFILES),
   };
-  if (options.converged === true) {
-    document.artifact_layout = PROJECT_ARTIFACT_LAYOUT_VERSION;
-  }
   return document;
 }
 
@@ -1775,7 +1705,6 @@ function readProjectConfig(path) {
 }
 
 function normalizeArtifactLayout(value) {
-  if (value === undefined) return undefined;
   if (value !== PROJECT_ARTIFACT_LAYOUT_VERSION) {
     throw new Error(`project config artifact_layout must be ${PROJECT_ARTIFACT_LAYOUT_VERSION}`);
   }
@@ -1815,20 +1744,6 @@ function normalizeProjectPathList(value, field) {
   return value.map((item) => item.trim());
 }
 
-function usesConvergedArtifactLayoutAtRoot(root) {
-  const path = resolve(root, DEFAULT_PROJECT_CONFIG_PATH);
-  if (!existsSync(path)) return false;
-  try {
-    const document = JSON.parse(readFileSync(path, "utf8"));
-    return document?.artifact_layout === PROJECT_ARTIFACT_LAYOUT_VERSION;
-  } catch {
-    return false;
-  }
-}
-
-function directoryHasEntries(path) {
-  return existsSync(path) && statSync(path).isDirectory() && readdirSync(path).length > 0;
-}
 
 function normalizeProjectPackages(packages) {
   if (packages === undefined) {
@@ -1872,12 +1787,6 @@ export function applyRunProfileToArgs(rawArgs, options = {}) {
   }
   if (typeof profile.hardened_profile === "string" && !hasLongOption(nextArgs, "--hardened-profile")) {
     nextArgs.push("--hardened-profile", resolve(root, profile.hardened_profile));
-  }
-  if (
-    profileName === "prod"
-    && !hasLongOption(nextArgs, "--agent-decision-provider-initial-mode")
-  ) {
-    nextArgs.push("--agent-decision-provider-initial-mode", "capabilities");
   }
   return nextArgs;
 }
@@ -2002,20 +1911,25 @@ async function compileSource(sourcePath, options) {
 
 function compileSourceWithCargo(sourcePath, options = {}) {
   const implementationRoot = options.implementationRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const sourceArgs = ["--module", ...[...new Set(options.moduleSourcePaths ?? [])]
+    .flatMap(path => ["--module-source", path])];
+  for (const root of new Set(options.sourceRoots ?? [])) sourceArgs.push("--source-root", root);
+  sourceArgs.push(sourcePath);
   const configuredCompiler = options.compileCommand ?? process.env.TOUBA_COMPILE_BIN;
   if (configuredCompiler) {
-    return compileSourceWithCommand(configuredCompiler, [sourcePath], {
+    return compileSourceWithCommand(configuredCompiler, sourceArgs, {
       cwd: options.cwd ?? process.cwd(),
     });
   }
 
   const executableName = process.platform === "win32" ? "touba-compile.exe" : "touba-compile";
   const localCompiler = newestExistingCompiler([
+    join(implementationRoot, "..", "bin", executableName),
     join(implementationRoot, "target", "release", executableName),
     join(implementationRoot, "target", "debug", executableName),
   ]);
   if (existsSync(localCompiler)) {
-    return compileSourceWithCommand(localCompiler, [sourcePath], {
+    return compileSourceWithCommand(localCompiler, sourceArgs, {
       cwd: implementationRoot,
     });
   }
@@ -2029,7 +1943,7 @@ function compileSourceWithCargo(sourcePath, options = {}) {
     "touba-compile",
     "--quiet",
     "--",
-    sourcePath,
+    ...sourceArgs,
   ], {
     cwd: implementationRoot,
   });
@@ -2067,7 +1981,7 @@ function compileSourceWithCommand(command, args, options = {}) {
   return JSON.parse(result.stdout);
 }
 
-function airOutputPath(root, moduleName, airRoot = resolve(root, DEFAULT_AIR_ROOT)) {
+function airOutputPath(root, moduleName, airRoot) {
   const segments = String(moduleName).split(".");
   const fileName = `${segments.pop()}.air.json`;
   return join(airRoot, ...segments, fileName);
@@ -2859,100 +2773,9 @@ function isNonNegativeInteger(value) {
   return Number.isInteger(value) && value >= 0 && NON_NEGATIVE_INTEGER_PATTERN.test(String(value));
 }
 
-function buildExpectedManifest(airDocuments, options) {
-  const bindings = {};
-  for (const document of airDocuments) {
-    for (const tool of document.definitions.tools) {
-      bindings[tool.id] = expectedBindingForTool(tool, options);
-    }
-  }
-  const manifest = {
-    manifest_version: TOUBA_MANIFEST_VERSION,
-    bindings: Object.fromEntries(Object.entries(bindings).sort(([a], [b]) => a.localeCompare(b))),
-  };
-  const agentSecretScopes = inferAgentSecretScopes(airDocuments);
-  if (Object.keys(agentSecretScopes).length > 0) {
-    manifest.agent_secret_scopes = agentSecretScopes;
-  }
-  return manifest;
-}
-
-function inferAgentSecretScopes(airDocuments) {
-  const toolSecrets = new Map();
-  const usesByRef = new Map();
-  const agents = [];
-
-  for (const document of airDocuments) {
-    for (const tool of document.definitions.tools ?? []) {
-      const secrets = normalizeStringArray(tool.required_secrets);
-      toolSecrets.set(tool.id, secrets);
-    }
-    for (const collection of ["functions", "tools", "skills", "strategies", "agents"]) {
-      for (const definition of document.definitions?.[collection] ?? []) {
-        if (typeof definition.id === "string") {
-          usesByRef.set(definition.id, normalizeUseRefs(definition));
-        }
-      }
-    }
-    for (const agent of document.definitions?.agents ?? []) {
-      if (typeof agent.id === "string") {
-        agents.push(agent);
-      }
-    }
-  }
-
-  const scopes = {};
-  for (const agent of agents) {
-    const secrets = collectReachableToolSecrets(agent.id, usesByRef, toolSecrets);
-    if (secrets.length > 0) {
-      scopes[agent.id] = secrets;
-    }
-  }
-  return Object.fromEntries(Object.entries(scopes).sort(([a], [b]) => a.localeCompare(b)));
-}
-
-function normalizeUseRefs(definition) {
-  const refs = [];
-  for (const ref of normalizeStringArray(definition.uses)) {
-    refs.push(ref);
-  }
-  if (Array.isArray(definition.use_refs)) {
-    for (const record of definition.use_refs) {
-      if (record && typeof record === "object" && typeof record.target_ref === "string") {
-        refs.push(record.target_ref);
-      }
-    }
-  }
-  return [...new Set(refs)].sort();
-}
-
-function collectReachableToolSecrets(rootRef, usesByRef, toolSecrets) {
-  const pending = [...(usesByRef.get(rootRef) ?? [])];
-  const visited = new Set([rootRef]);
-  const secrets = new Set();
-
-  while (pending.length > 0) {
-    const ref = pending.shift();
-    if (typeof ref !== "string" || visited.has(ref)) {
-      continue;
-    }
-    visited.add(ref);
-
-    for (const secret of toolSecrets.get(ref) ?? []) {
-      secrets.add(secret);
-    }
-    for (const nextRef of usesByRef.get(ref) ?? []) {
-      if (!visited.has(nextRef)) {
-        pending.push(nextRef);
-      }
-    }
-  }
-
-  return [...secrets].sort();
-}
 
 function composeBindingFragments({ fragmentPaths, expectedManifest, diagnostics, actions, mode }) {
-  const manifest = cloneJson(expectedManifest);
+  const manifest = unapprovedManifest(expectedManifest);
   const knownToolRefs = new Set(Object.keys(expectedManifest.bindings));
   const seenBindings = new Map();
   const fragments = [];
@@ -3001,18 +2824,6 @@ function composeBindingFragments({ fragmentPaths, expectedManifest, diagnostics,
     }
   }
 
-  try {
-    manifest.manifest_version = manifestVersionForExplicitEffectContracts(manifest.bindings);
-  } catch (error) {
-    pushEffectContractDiagnostic(diagnostics, error, {
-      artifact: "binding_fragment",
-    });
-    if (Object.values(manifest.bindings).some((binding) => Object.hasOwn(binding ?? {}, "effect_contract"))) {
-      manifest.manifest_version = Object.values(manifest.bindings).some(
-        (binding) => Object.hasOwn(binding?.effect_contract ?? {}, "compensation"),
-      ) ? TOUBA_MANIFEST_V3 : TOUBA_MANIFEST_V2;
-    }
-  }
 
   return {
     manifest: {
@@ -3388,12 +3199,19 @@ function validateResourceBindingsForAir({ resourceBindingsPaths, airDocuments, d
   const inventory = buildResourceInventory(airDocuments);
   const documents = [];
   const boundResources = new Set();
+  const explicitlyRequired = new Set();
 
   for (const resourceBindingsPath of resourceBindingsPaths) {
     const document = readResourceBindingsDocument(resourceBindingsPath, diagnostics);
     if (document === null) {
       continue;
     }
+    try {
+      for (const ref of requiredResourceReferences(document)) {
+        explicitlyRequired.add(ref);
+        if (!inventory.knownResourceRefs.has(ref)) diagnostics.push(errorDiagnostic("ResourceBindingUnknownResource", `required resource ${ref} is absent from AIR`));
+      }
+    } catch (error) { diagnostics.push(errorDiagnostic(error.code, error.message)); }
 
     const entries = Object.entries(document.resources);
     documents.push({
@@ -3414,8 +3232,8 @@ function validateResourceBindingsForAir({ resourceBindingsPaths, airDocuments, d
 
   validateRequiredMemoryScopes(inventory, diagnostics, resourceBindingsPaths);
 
-  if (requireAll) {
-    for (const resourceRef of inventory.requiredResourceRefs) {
+  {
+    for (const resourceRef of new Set([...explicitlyRequired, ...(requireAll ? inventory.requiredResourceRefs : [])])) {
       if (!boundResources.has(resourceRef)) {
         diagnostics.push(errorDiagnostic("ResourceBindingMissing", `resource ${resourceRef} requires an active resource binding`, {
           resource_ref: resourceRef,
@@ -4328,11 +4146,13 @@ function resolveRunPlanEntry(entries, entryRef, diagnostics, runPlanPath) {
     }
   }
 
-  if (strategyCandidates.length === 1) {
-    return strategyCandidates[0];
+  const uniqueStrategies = [...new Map(strategyCandidates.map(candidate => [candidate.ref, candidate])).values()];
+  const uniqueExecutables = [...new Map(executableCandidates.map(candidate => [candidate.ref, candidate])).values()];
+  if (uniqueStrategies.length === 1) {
+    return uniqueStrategies[0];
   }
-  if (executableCandidates.length === 1) {
-    return executableCandidates[0];
+  if (uniqueExecutables.length === 1) {
+    return uniqueExecutables[0];
   }
 
   diagnostics.push(errorDiagnostic("RunPlanEntryUnknown", "run plan entry_ref must be explicit when prepare cannot infer a single executable entry", {
@@ -4369,29 +4189,6 @@ function relativeRunPlanPath(runPlanPath, targetPath) {
   return toPosixPath(path === "" ? "." : path);
 }
 
-function expectedBindingForTool(tool, options) {
-  const handlerPath = handlerRelativePathForTool(tool, options);
-  const binding = {
-    handler: {
-      kind: "process",
-      command: options.handlerCommand,
-      args: [handlerPath],
-      cwd: options.handlerCwd ?? ".",
-    },
-    grants: normalizeStringArray(tool.required_capabilities),
-    timeout_ms: options.timeoutMs,
-    max_payload_bytes: options.maxPayloadBytes,
-  };
-  const secrets = normalizeStringArray(tool.required_secrets);
-  if (secrets.length > 0) {
-    binding.secrets = secrets;
-  }
-  const memories = normalizeMemoryAccesses(tool.memory_accesses);
-  if (memories.length > 0) {
-    binding.memories = memories;
-  }
-  return binding;
-}
 
 function expectedStubs(airDocuments, options) {
   const stubs = [];
@@ -4432,24 +4229,6 @@ function handlerContractTestRelativePath(handlerPath) {
   return handlerPath.replace(/\.handler\.([^.]+)$/u, ".handler.contract.test.$1");
 }
 
-function handlerRelativePathForTool(tool, options) {
-  const { moduleName, toolName } = parseToolRef(tool.id);
-  const handlerRoot = options.handlerRoot ?? DEFAULT_HANDLER_ROOT;
-  const extension = options.handlerExtension ?? DEFAULT_HANDLER_EXTENSION;
-  return toPosixPath(join(
-    handlerRoot,
-    ...moduleName.split("."),
-    toolNameToHandlerFile(tool.name ?? toolName, extension),
-  ));
-}
-
-function parseToolRef(toolRef) {
-  const match = /^tool:([^/]+)\/(.+)$/.exec(toolRef);
-  if (!match) {
-    throw new Error(`invalid tool ref: ${toolRef}`);
-  }
-  return { moduleName: match[1], toolName: match[2] };
-}
 
 function inspectEffectiveProject({ path, expected, diagnostics, actions, mode }) {
   let current = null;
@@ -4498,8 +4277,8 @@ function inspectManifest({ currentManifest, expectedManifest, manifestPath, diag
     return;
   }
 
-  if (![TOUBA_MANIFEST_V1, TOUBA_MANIFEST_V2, TOUBA_MANIFEST_V3].includes(currentManifest.manifest_version)) {
-    diagnostics.push(errorDiagnostic("ManifestVersionInvalid", `manifest_version must be ${TOUBA_MANIFEST_V1}, ${TOUBA_MANIFEST_V2} or ${TOUBA_MANIFEST_V3}`, {
+  if (currentManifest.manifest_version !== TOUBA_MANIFEST_V1) {
+    diagnostics.push(errorDiagnostic("ManifestVersionInvalid", `manifest_version must be ${TOUBA_MANIFEST_V1}`, {
       manifest_path: manifestPath,
       actual: currentManifest.manifest_version,
     }));
@@ -4510,23 +4289,9 @@ function inspectManifest({ currentManifest, expectedManifest, manifestPath, diag
     return;
   }
   try {
-    validateManifestEffectContracts(currentManifest);
+    validateDraftManifestEffects(currentManifest);
   } catch (error) {
     pushEffectContractDiagnostic(diagnostics, error, { manifest_path: manifestPath });
-  }
-  if (
-    manifestVersionRank(currentManifest.manifest_version)
-      < manifestVersionRank(expectedManifest.manifest_version)
-  ) {
-    diagnostics.push(errorDiagnostic(
-      "ManifestEffectContractVersionMismatch",
-      `effect contracts require ${expectedManifest.manifest_version}`,
-      {
-        manifest_path: manifestPath,
-        expected: expectedManifest.manifest_version,
-        actual: currentManifest.manifest_version,
-      },
-    ));
   }
 
   const expectedSet = new Set(expectedToolRefs);
@@ -4557,21 +4322,21 @@ function inspectManifest({ currentManifest, expectedManifest, manifestPath, diag
   validateAgentSecretScopes(currentManifest, expectedManifest, diagnostics, actions, mode, manifestPath);
 }
 
-function validateBindingCoverage(actual, expected, diagnostics, manifestPath, toolRef) {
+function validateDraftManifestEffects(manifest) {
+  for (const [toolRef, binding] of Object.entries(manifest.bindings)) {
+    // null is an explicit, non-executable draft awaiting a host decision.
+    if (binding.effect_contract !== null) normalizeEffectContract(binding.effect_contract, { label: toolRef });
+  }
+}
+
+function validateBindingCoverage(actual, expected, diagnostics, manifestPath, toolRef, { reviewEffects = false } = {}) {
+  if (reviewEffects && actual?.effect_contract === null) diagnostics.push(errorDiagnostic("ManifestEffectReviewRequired", "host must declare the handler effect contract before execution", { manifest_path: manifestPath, tool_ref: toolRef }));
   if (!actual?.handler || actual.handler.kind !== "process") {
     diagnostics.push(errorDiagnostic("ManifestHandlerInvalid", `binding ${toolRef} must declare a process handler`, {
       manifest_path: manifestPath,
       tool_ref: toolRef,
     }));
     return;
-  }
-  if (!Array.isArray(actual.handler.args) || actual.handler.args[0] !== expected.handler.args[0]) {
-    diagnostics.push(errorDiagnostic("ManifestHandlerPathMismatch", `binding ${toolRef} handler path does not follow project convention`, {
-      manifest_path: manifestPath,
-      tool_ref: toolRef,
-      expected: expected.handler.args[0],
-      actual: actual.handler.args?.[0],
-    }));
   }
   for (const grant of expected.grants) {
     if (!actual.grants?.includes(grant)) {
@@ -4608,33 +4373,10 @@ function validateAgentSecretScopes(actualManifest, expectedManifest, diagnostics
   for (const [agentRef, secrets] of Object.entries(expectedManifest.agent_secret_scopes ?? {})) {
     const actualSecrets = actualManifest.agent_secret_scopes?.[agentRef];
     if (!Array.isArray(actualSecrets)) {
-      actions.push(action(mode === "write" ? "add_agent_secret_scope" : "would_add_agent_secret_scope", manifestPath, {
-        agent_ref: agentRef,
-        secrets,
-      }));
-      if (mode === "check") {
-        diagnostics.push(errorDiagnostic("ManifestAgentSecretScopeMissing", `manifest does not grant secret handles to ${agentRef}`, {
-          manifest_path: manifestPath,
-          agent_ref: agentRef,
-        }));
-      }
+      diagnostics.push(errorDiagnostic("ManifestAgentSecretScopeMissing", `manifest does not grant secret handles to ${agentRef}; host approval is required`, { manifest_path: manifestPath, agent_ref: agentRef }));
       continue;
     }
-    for (const secret of secrets) {
-      if (!actualSecrets.includes(secret)) {
-        actions.push(action(mode === "write" ? "add_agent_secret_scope_secret" : "would_add_agent_secret_scope_secret", manifestPath, {
-          agent_ref: agentRef,
-          secret,
-        }));
-        if (mode === "check") {
-          diagnostics.push(errorDiagnostic("ManifestAgentSecretScopeSecretMissing", `manifest does not grant ${secret} to ${agentRef}`, {
-            manifest_path: manifestPath,
-            agent_ref: agentRef,
-            secret,
-          }));
-        }
-      }
-    }
+    for (const secret of secrets) if (!actualSecrets.includes(secret)) diagnostics.push(errorDiagnostic("ManifestAgentSecretScopeSecretMissing", `manifest does not grant ${secret} to ${agentRef}; host approval is required`, { manifest_path: manifestPath, agent_ref: agentRef, secret }));
   }
 }
 
@@ -4906,8 +4648,8 @@ function validateRunPlanOutputsShape(outputs, runPlanPath, diagnostics) {
     diagnostics.push(errorDiagnostic("RunPlanSchemaMismatch", "run plan outputs must be an object", { run_plan_path: runPlanPath }));
     return false;
   }
-  if (outputs.mode !== undefined && !["show", "result", "trace", "all", "run-summary"].includes(outputs.mode)) {
-    diagnostics.push(errorDiagnostic("RunPlanSchemaMismatch", "run plan outputs.mode must be one of show, result, trace, all, run-summary", {
+  if (outputs.mode !== undefined && !["show", "result", "trace", "all", "run-summary", "json"].includes(outputs.mode)) {
+    diagnostics.push(errorDiagnostic("RunPlanSchemaMismatch", "run plan outputs.mode must be one of show, result, trace, all, run-summary, json", {
       run_plan_path: runPlanPath,
     }));
     return false;
@@ -4988,7 +4730,7 @@ function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestP
   if (currentManifest === null) {
     return expectedManifest;
   }
-  if (![TOUBA_MANIFEST_V1, TOUBA_MANIFEST_V2, TOUBA_MANIFEST_V3].includes(currentManifest.manifest_version) || !currentManifest.bindings) {
+  if (currentManifest.manifest_version !== TOUBA_MANIFEST_V1 || !currentManifest.bindings) {
     diagnostics.push(errorDiagnostic("ManifestCannotMerge", "existing manifest is invalid and cannot be updated safely", {
       manifest_path: manifestPath,
     }));
@@ -4996,45 +4738,22 @@ function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestP
   }
   const merged = {
     ...currentManifest,
-    manifest_version: manifestVersionRank(expectedManifest.manifest_version)
-      > manifestVersionRank(currentManifest.manifest_version)
-      ? expectedManifest.manifest_version
-      : currentManifest.manifest_version,
+    manifest_version: TOUBA_MANIFEST_V1,
     bindings: { ...currentManifest.bindings },
   };
   for (const [toolRef, expectedBinding] of Object.entries(expectedManifest.bindings)) {
-    if (merged.bindings[toolRef] === undefined) {
-      merged.bindings[toolRef] = expectedBinding;
-    } else if (expectedManifest.manifest_version !== TOUBA_MANIFEST_V1) {
-      merged.bindings[toolRef] = {
-        ...merged.bindings[toolRef],
-        effect_contract: cloneJson(expectedBinding.effect_contract),
-      };
-    }
+    if (merged.bindings[toolRef] === undefined) merged.bindings[toolRef] = structuredClone(expectedBinding);
   }
-  for (const [agentRef, secrets] of Object.entries(expectedManifest.agent_secret_scopes ?? {})) {
-    if (merged.agent_secret_scopes === undefined) {
-      merged.agent_secret_scopes = {};
-    }
-    const currentSecrets = Array.isArray(merged.agent_secret_scopes[agentRef])
-      ? merged.agent_secret_scopes[agentRef]
-      : [];
-    merged.agent_secret_scopes[agentRef] = [...new Set([...currentSecrets, ...secrets])].sort();
-  }
+  // Existing host grants, handlers, scopes and effect contracts are authoritative.
+  // Source requirements never authorize an expansion or replace a host decision.
   try {
-    validateManifestEffectContracts(merged);
+    validateDraftManifestEffects(merged);
   } catch (error) {
     pushEffectContractDiagnostic(diagnostics, error, { manifest_path: manifestPath });
   }
   return merged;
 }
 
-function manifestVersionRank(version) {
-  if (version === TOUBA_MANIFEST_V3) return 3;
-  if (version === TOUBA_MANIFEST_V2) return 2;
-  if (version === TOUBA_MANIFEST_V1) return 1;
-  return 0;
-}
 
 function mergeSecretProfile(currentProfile, expectedProfile) {
   if (currentProfile === null) {
@@ -5059,6 +4778,7 @@ function computeStatus(mode, diagnostics, actions) {
   if (mode === "plan" && actions.length > 0) {
     return "needs_changes";
   }
+  if (actions.some((item) => ["review_required_permission", "select_entry"].includes(item.kind))) return "needs_changes";
   return "success";
 }
 

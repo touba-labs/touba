@@ -97,9 +97,44 @@ export function modelInputForDecision(request, { allowHumanReview = true } = {})
   });
 }
 
-/** Prepare transport instructions explicitly. The default structured prompt
- * remains byte-compatible; native tools apply only to the executable catalogue.
- * Neither wording grants authority or dispatches a capability. */
+// Keep source/runtime contracts in the instruction channel, and business data
+// in the data channel. In particular, never copy observations, input values or
+// skill-pack prose into the system context. The public custom-provider request
+// is unchanged; this is the SDK's provider-facing representation.
+export function structuredDecisionInput(request, policy = {}) {
+  const input = modelInputForDecision(request, policy);
+  const state = input.agent_state;
+  return {
+    context: compactObject({
+      protocol: input.protocol, mode: input.mode, agent: input.agent,
+      developer_instruction: input.developer_instruction,
+      content_boundary: input.content_boundary,
+      agent_state: state && compactObject({
+        step_index: state.step_index, phase: state.phase,
+        execution_budget_exhausted: state.execution_budget_exhausted,
+        observation_count: state.observation_count,
+        used_capability_refs: state.used_capability_refs,
+        available_capability_refs: state.available_capability_refs,
+        observation_budget: state.observation_budget,
+      }),
+      external_content_access: input.external_content_access,
+      resources_hint: input.resources_hint, resource_interface: input.resource_interface,
+      skill_pack_budgets: input.skill_pack_budgets,
+      decision_policy: input.decision_policy, human_interaction: input.human_interaction,
+      allowed_actions: input.allowed_actions, output_contract: input.output_contract,
+      capabilities: input.capabilities, runtime_contract: input.runtime_contract,
+    }),
+    data: compactObject({
+      user_input: input.user_input,
+      observations: state?.observations,
+      skill_pack_hints: input.skill_pack_hints,
+      active_skill_packs: input.active_skill_packs,
+    }),
+  };
+}
+
+/** Prepare transport instructions explicitly. Native tools apply only to the
+ * executable catalogue. Neither wording grants authority nor dispatches. */
 export function defaultDecisionSystemPrompt(request, { allowHumanReview = true, transport = "json_schema" } = {}) {
   if (transport !== "json_schema" && transport !== "native_tools") {
     throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", `unsupported decision prompt transport ${transport}`);
@@ -144,54 +179,31 @@ export function defaultDecisionSystemPrompt(request, { allowHumanReview = true, 
       base.push("Dynamic human review is not authorized for this execution; this mode accepts only an authorized capability selection.");
     }
   }
+  if (request.mode !== "capabilities") base.push("Return the action, source, reason and result inside the schema\'s decision object.");
   return base.join(" ");
 }
 
 export function decisionSchemaForRequest(request, options, { allowHumanReview = true } = {}) {
-  if (request.mode === "finalization") {
-    return {
-      title: "touba_agent_finalization_decision",
-      description: "Terminal decision without another capability execution.",
+  if (request.mode === "summary" || request.mode === "finalization") {
+    const terminal = request.mode === "finalization";
+    const emptyAction = terminal ? "cannot_complete" : "request_capabilities";
+    const branch = (action, result) => ({
       type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["answer_directly", "cannot_complete"],
-        },
-        source: {
-          type: "string",
-          enum: [options.source],
-        },
-        reason: {
-          type: "string",
-        },
-        result: decisionResultSchema(request, "cannot_complete"),
-      },
-      required: ["action", "source", "reason", "result"],
-      additionalProperties: false,
-    };
-  }
-  if (request.mode === "summary") {
+      properties: { action: { type: "string", enum: [action] },
+        source: { type: "string", enum: [options.source] }, reason: { type: "string" }, result },
+      required: ["action", "source", "reason", "result"], additionalProperties: false,
+    });
+    // Couple the action and its result inside a nested union. A root anyOf is
+    // not accepted by strict structured-output providers. Independent action
+    // and result unions would admit answer_directly with a non-result sentinel.
     return {
-      title: "touba_agent_orientation_decision",
-      description: "Short decision before the capability catalogue is presented.",
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["answer_directly", "request_capabilities"],
-        },
-        source: {
-          type: "string",
-          enum: [options.source],
-        },
-        reason: {
-          type: "string",
-        },
-        result: decisionResultSchema(request, "request_capabilities"),
-      },
-      required: ["action", "source", "reason", "result"],
-      additionalProperties: false,
+      title: terminal ? "touba_agent_finalization_decision" : "touba_agent_orientation_decision",
+      description: terminal ? "Terminal decision without another capability execution."
+        : "Short decision before the capability catalogue is presented.",
+      type: "object", properties: { decision: { anyOf: [
+        branch("answer_directly", agentResultSchema(request)),
+        branch(emptyAction, { type: "string", enum: [""] }),
+      ] } }, required: ["decision"], additionalProperties: false,
     };
   }
 
@@ -265,20 +277,10 @@ function argumentsSchemaForCapabilities(capabilities, { allowHumanReview }) {
 
 export function agentResultSchema(request) {
   const signature = request.agent_signature ?? request.model_input?.agent?.signature;
-  // Legacy agents without a declared gives contract keep the SDK's Text default.
+  // An agent without an explicit gives contract uses the language Text default.
   return signature?.output_type
     ? schemaForDescriptor({ type_ref: signature.output_type, fields: signature.output_fields })
     : { type: "string" };
-}
-
-function decisionResultSchema(request, emptyAction) {
-  const resultSchema = agentResultSchema(request);
-  return {
-    ...(resultSchema.type === "string" ? resultSchema : {
-      anyOf: [resultSchema, { type: "string", enum: [""] }],
-    }),
-    description: `Result matching the declared type when action=answer_directly; empty string when action=${emptyAction}.`,
-  };
 }
 
 function schemaForDescriptor(descriptor) {
@@ -326,6 +328,15 @@ function schemaForTypeRef(typeRef) {
     "UnsupportedDecisionTypeDescriptor",
     `missing or recursive type descriptor for ${typeRef ?? "unknown"}`,
   );
+}
+
+export function normalizeStructuredDecisionObject(request, object, defaultSource, policy) {
+  if (request.mode === "capabilities") return normalizeAiSdkDecisionObject(request, object, defaultSource, policy);
+  if (!object || typeof object !== "object" || Array.isArray(object)
+      || Object.keys(object).length !== 1 || !Object.hasOwn(object, "decision")) {
+    throw new ToubaAgentDecisionProviderError("InvalidModelDecision", "structured orientation/finalization requires exactly one decision object");
+  }
+  return normalizeAiSdkDecisionObject(request, object.decision, defaultSource, policy);
 }
 
 export function normalizeAiSdkDecisionObject(

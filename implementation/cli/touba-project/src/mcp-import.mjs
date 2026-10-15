@@ -7,11 +7,11 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-export const TOUBA_MCP_IMPORT_CONFIG_VERSION = "touba-mcp-import-config-v0.1";
-export const TOUBA_MCP_IMPORT_REPORT_VERSION = "touba-mcp-import-report-v0.1";
-export const TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v0.1";
+export const TOUBA_MCP_IMPORT_CONFIG_VERSION = "touba-mcp-import-config-v1";
+export const TOUBA_MCP_IMPORT_REPORT_VERSION = "touba-mcp-import-report-v1";
+export const TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v1";
 export const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
-export const TOUBA_MCP_BRIDGE_CONFIG_VERSION = "touba-mcp-bridge-config-v0.1";
+export const TOUBA_MCP_BRIDGE_CONFIG_VERSION = "touba-mcp-bridge-config-v1";
 
 const MODULE_NAME_PATTERN = /^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -417,7 +417,7 @@ function renderManifestFragment(server, tools, handlerFiles, outputRoot) {
       handler_package: {
         name: `touba-mcp-bridge-${server.name}`,
         version: "0.1.0",
-        protocol: "tool-handler-v1",
+        protocol: "touba-tool-handler-v1",
       },
       grants: tool.secretHandles.length > 0 ? ["network", "secret_read"] : ["network"],
       secrets: tool.secretHandles,

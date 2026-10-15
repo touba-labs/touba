@@ -4,11 +4,250 @@
   "title": "touba-trace-v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["trace_protocol_version", "trace_capability_profile", "run", "events"],
+  "required": [
+    "trace_protocol_version",
+    "trace_capability_profile",
+    "run",
+    "events"
+  ],
   "properties": {
-    "trace_protocol_version": { "const": "touba-trace-v1" },
-    "trace_capability_profile": { "const": "touba-trace-capabilities-v1" },
-    "run": { "type": "object", "additionalProperties": false, "required": ["run_id", "air_schema_version", "module_ref", "entry_ref"], "properties": { "run_id": { "type": "string", "minLength": 1 }, "air_schema_version": { "const": "touba-air-v1" }, "module_ref": { "type": "string", "minLength": 1 }, "entry_ref": { "type": "string", "minLength": 1 } } },
-    "events": { "type": "array", "minItems": 2, "items": { "type": "object", "additionalProperties": false, "required": ["event_id", "run_id", "sequence_index", "kind"], "properties": { "event_id": { "type": "string" }, "run_id": { "type": "string" }, "sequence_index": { "type": "integer", "minimum": 0 }, "kind": { "type": "string" }, "air_ref": { "type": "object" }, "payload": { "type": "object" }, "message": { "type": "string" } } } }
+    "trace_protocol_version": {
+      "const": "touba-trace-v1"
+    },
+    "trace_capability_profile": {
+      "const": "touba-trace-capabilities-v1"
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "air_schema_version",
+        "air_digest",
+        "module_ref",
+        "entry_ref"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "admission": {
+          "const": "refused"
+        },
+        "air_schema_version": {
+          "enum": [
+            "touba-air-v1",
+            null
+          ]
+        },
+        "air_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "module_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "entry_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "run_id",
+          "sequence_index",
+          "kind"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "sequence_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string"
+          },
+          "air_ref": {
+            "type": "object"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "run_completed"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "payload"
+              ],
+              "properties": {
+                "payload": {
+                  "required": [
+                    "status",
+                    "reason"
+                  ],
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "success",
+                        "failure",
+                        "stopped",
+                        "cancelled"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "run": {
+        "required": [
+          "admission"
+        ]
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "run": {
+        "properties": {
+          "air_schema_version": {
+            "type": "null"
+          },
+          "air_digest": {
+            "type": "null"
+          },
+          "module_ref": {
+            "type": "null"
+          },
+          "entry_ref": {
+            "type": "null"
+          }
+        }
+      },
+      "events": {
+        "maxItems": 1,
+        "items": {
+          "required": [
+            "payload"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "air_ref"
+                ]
+              },
+              {
+                "required": [
+                  "message"
+                ]
+              }
+            ]
+          },
+          "properties": {
+            "kind": {
+              "const": "admission_refused"
+            },
+            "sequence_index": {
+              "const": 0
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "code",
+                "stage"
+              ],
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,79}$"
+                },
+                "stage": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,79}$"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "run": {
+        "properties": {
+          "air_schema_version": {
+            "const": "touba-air-v1"
+          },
+          "air_digest": {
+            "type": "string"
+          },
+          "module_ref": {
+            "type": "string"
+          },
+          "entry_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "events": {
+        "minItems": 2,
+        "items": {
+          "properties": {
+            "kind": {
+              "not": {
+                "const": "admission_refused"
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }

@@ -7,25 +7,24 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   ToubaAgentDecisionProviderError,
   validateAgentDecisionRequest,
-  modelInputForDecision,
+  structuredDecisionInput,
   defaultDecisionSystemPrompt,
   decisionSchemaForRequest,
-  normalizeAiSdkDecisionObject,
+  normalizeStructuredDecisionObject,
   assertCompleteProviderResponse,
 } from "./decision-contract.mjs";
 import { decideNativeCapability } from "./native-decision.mjs";
 import { providerBudgetFetch, validateProviderRequestBudget } from "./provider-request-budget.mjs";
 
 export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
-export const EFFECT_TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v2";
-export const COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v3";
 const PROTOCOL = TOOL_HANDLER_PROTOCOL_VERSION;
 const EFFECT_OUTCOMES = new Set(["applied", "not_applied", "unknown"]);
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const EFFECT_ID_PATTERN = /^effect:sha256:[0-9a-f]{64}$/u;
 const COMPENSATION_ID_PATTERN = /^compensation:sha256:[0-9a-f]{64}$/u;
 const MAX_EFFECT_RECEIPT_REF_LENGTH = 512;
-export const MCP_BRIDGE_CONFIG_VERSION = "touba-mcp-bridge-config-v0.1";
+const TOOL_RESULT = Symbol("ToubaToolResult");
+export const MCP_BRIDGE_CONFIG_VERSION = "touba-mcp-bridge-config-v1";
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const SECRET_ENV_NAME_PATTERN = /(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)/iu;
 const DEFAULT_MCP_BRIDGE_TIMEOUT_MS = 5000;
@@ -35,11 +34,6 @@ export const TOUBA_SDK_METADATA = Object.freeze({
   name: "@touba/sdk",
   version: "0.1.0",
   protocol: PROTOCOL,
-  protocols: Object.freeze([
-    PROTOCOL,
-    EFFECT_TOOL_HANDLER_PROTOCOL_VERSION,
-    COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
-  ]),
   status: "ok",
 });
 
@@ -66,7 +60,6 @@ export { ToubaAgentDecisionProviderError } from "./decision-contract.mjs";
 export function toubaSdkMetadata() {
   return {
     ...TOUBA_SDK_METADATA,
-    protocols: [...TOUBA_SDK_METADATA.protocols],
   };
 }
 
@@ -109,15 +102,42 @@ export class ToubaEngine {
       const tracePath = options.traceOut
         ? resolvePath(this.projectRoot, options.traceOut)
         : join(tempRoot, "run.trace.json");
-      const args = ["run", airPath, "--output", "result", "--trace-out", tracePath];
+      const args = ["run", airPath, "--output", "json", "--trace-out", tracePath];
 
       appendOptionalPath(args, "--manifest", options.manifest, this.projectRoot);
       appendOptionalPath(args, "--secrets", options.secrets, this.projectRoot);
       appendOptionalPath(args, "--resource-bindings", options.resourceBindings, this.projectRoot);
+      appendOptionalPath(args, "--effect-journal", options.effectJournal, this.projectRoot);
+      appendOptionalPath(args, "--human-checkpoint-out", options.humanCheckpointOut, this.projectRoot);
+      appendOptionalPath(args, "--human-resume-checkpoint", options.humanResumeCheckpoint, this.projectRoot);
+      appendOptionalPath(args, "--supply-chain-lock", options.supplyChainLock, this.projectRoot);
+      appendOptionalJson(args, "--run-limits-json", options.runLimits, "runLimits");
+      for (const [key, flag] of [
+        ["requireSupplyChainLock", "--require-supply-chain-lock"],
+        ["cancelBeforeDispatch", "--cancel-before-dispatch"],
+        ["cancelOnPause", "--cancel-on-pause"],
+      ]) {
+        if (options[key] === true) args.push(flag);
+      }
       appendOptionalJson(args, "--inputs-json", options.inputs, "inputs");
       appendOptionalJson(args, "--human-decisions-json", options.humanDecisions, "humanDecisions");
       appendOptionalJson(args, "--user-inputs-json", options.userInputs, "userInputs");
       appendOptionalJson(args, "--agent-decisions-json", options.agentDecisions, "agentDecisions");
+      for (const [key, flag] of [["skillPacks", "--skill-pack"], ["activeSkillPackRefs", "--activate-skill-pack"]]) {
+        if (options[key] === undefined) continue;
+        if (!Array.isArray(options[key])) throw new ToubaEngineError("options", `run.${key} must be an array`);
+        for (const value of options[key]) {
+          const entry = requireString(value, `run.${key}[]`);
+          args.push(flag, key === "skillPacks" ? resolve(this.projectRoot, entry) : entry);
+        }
+      }
+      for (const [key, flag] of [
+        ["skillPackDiscoveryMaxBytes", "--skill-pack-discovery-max-bytes"],
+        ["skillPackActivationMaxBytes", "--skill-pack-activation-max-bytes"],
+        ["agentModelInputMaxBytes", "--agent-model-input-max-bytes"],
+      ]) {
+        if (options[key] !== undefined) args.push(flag, String(requirePositiveInteger(options[key], `run.${key}`)));
+      }
       appendOptionalPath(
         args,
         "--agent-decision-provider",
@@ -169,9 +189,26 @@ export class ToubaEngine {
 
       const result = await this.#runCommand("run", args, { allowFailure: true });
       const trace = await readOptionalJson(tracePath);
-      if (result.status !== 0) {
+      let envelope;
+      try { envelope = JSON.parse(result.stdout); } catch { /* Admission and launch failures may have no result. */ }
+      const terminal = envelope?.trace?.events?.at(-1);
+      const admissionRefused = envelope?.trace?.run?.admission === "refused"
+        && envelope.trace.events.length === 1 && terminal?.kind === "admission_refused"
+        && terminal.payload?.code === envelope.reason && envelope.status === "failure"
+        && envelope.result === null && envelope.messages?.length === 0 && envelope.pending_interaction === undefined;
+      const validEnvelope = envelope?.schema_version === "touba-run-result-v1"
+        && ["success", "stopped", "cancelled", "failure"].includes(envelope.status)
+        && typeof envelope.reason === "string" && Array.isArray(envelope.messages)
+        && envelope.messages.every(message => typeof message?.interaction_ref === "string" && typeof message.text === "string")
+        && (admissionRefused || (terminal?.kind === "run_completed"
+          && terminal.payload?.status === envelope.status && terminal.payload?.reason === envelope.reason));
+      const expectedExit = envelope?.status === "success" ? 0
+        : envelope?.status === "cancelled" || envelope?.reason === "human_approval_cancelled" ? 5
+          : envelope?.status === "stopped" ? (["human_approval_pending", "user_input_pending"].includes(envelope.reason) ? 3 : 4) : 1;
+      if (!validEnvelope || result.status !== expectedExit || envelope.status === "failure") {
         throw new ToubaEngineError("run", "touba run failed", {
           exitCode: result.status,
+          ...(validEnvelope ? { status: envelope.status, reason: envelope.reason, messages: envelope.messages } : {}),
           stdout: redactText(result.stdout, this.redactValues),
           stderr: redactText(result.stderr, this.redactValues),
           trace,
@@ -179,9 +216,12 @@ export class ToubaEngine {
       }
 
       return {
-        status: trace?.events?.at?.(-1)?.payload?.status ?? "success",
-        result: parseJsonOutput(result.stdout, "run result"),
-        trace,
+        status: envelope.status,
+        reason: envelope.reason,
+        result: envelope.result,
+        messages: envelope.messages,
+        ...(envelope.pending_interaction ? { pendingInteraction: envelope.pending_interaction } : {}),
+        trace: envelope.trace,
       };
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
@@ -217,10 +257,17 @@ export class ToubaEngine {
   }
 
   async #runCommand(phase, args, options = {}) {
-    const result = await runProcess(this.command, [...this.commandArgs, ...args], {
-      cwd: this.projectRoot,
-      env: this.env,
-    });
+    let result;
+    try {
+      result = await runProcess(this.command, [...this.commandArgs, ...args], {
+        cwd: this.projectRoot,
+        env: this.env,
+      });
+    } catch (error) {
+      throw new ToubaEngineError(phase, "Touba command could not be launched", {
+        code: typeof error.code === "string" ? error.code : "LaunchFailed",
+      });
+    }
     if (!options.allowFailure && result.status !== 0) {
       throw new ToubaEngineError(phase, `touba ${phase} failed`, {
         exitCode: result.status,
@@ -259,13 +306,14 @@ export function createAiSdkDecisionProvider(options = {}) {
     const generateObject = await aiSdkGenerateObject(normalized);
     const schema = decisionSchemaForRequest(request, normalized, { allowHumanReview });
     const aiSchema = await aiSdkJsonSchema(schema, normalized);
-    const prompt = JSON.stringify(modelInputForDecision(request, { allowHumanReview }), null, 2);
+    const { context: runtimeContext, data } = structuredDecisionInput(request, { allowHumanReview });
+    const prompt = JSON.stringify(data);
     const result = await generateObject(compactObject({
       model,
       schema: aiSchema,
       schemaName: schema.title,
       schemaDescription: schema.description,
-      system: effectiveSystem,
+      system: `${effectiveSystem}\n\nRuntime context: ${JSON.stringify(runtimeContext)}`,
       prompt,
       temperature: normalized.temperature,
       maxRetries: normalized.maxRetries,
@@ -273,13 +321,9 @@ export function createAiSdkDecisionProvider(options = {}) {
       providerOptions,
     }));
 
-    // Legacy injected generators may expose only { object }. Real AI SDK
-    // responses include completion metadata and must not hide failed output.
-    if (result?.finishReason !== undefined || result?.response !== undefined) {
-      assertCompleteProviderResponse(result, normalized);
-    }
+    assertCompleteProviderResponse(result, normalized);
 
-    return normalizeAiSdkDecisionObject(request, result?.object, normalized.source, {
+    return normalizeStructuredDecisionObject(request, result?.object, normalized.source, {
       allowHumanReview,
     });
   };
@@ -967,14 +1011,36 @@ export function createToolHandler(definition) {
   };
 }
 
+// Explicit result envelope, never inferred from business object field names.
+export function createToolResult(value, options = {}) {
+  if (!isPlainObject(options) || Object.keys(options).some(key => !["memoryMetadata", "effectReceipt", "compensationReceipt"].includes(key))) {
+    throw new ToubaHandlerError("InvalidToolResult", "tool result options are invalid");
+  }
+  if (options.memoryMetadata !== undefined) validateSdkMemoryMetadata(options.memoryMetadata);
+  return Object.freeze({ [TOOL_RESULT]: true, value,
+    ...(options.memoryMetadata === undefined ? {} : { memory_metadata: structuredClone(options.memoryMetadata) }),
+    ...(options.effectReceipt === undefined ? {} : { effect_receipt: structuredClone(options.effectReceipt) }),
+    ...(options.compensationReceipt === undefined ? {} : { compensation_receipt: structuredClone(options.compensationReceipt) }),
+  });
+}
+
+function validateSdkMemoryMetadata(entries) {
+  const fields = new Set(["memory_ref", "operation", "source_kind", "source_ref", "integrity_evidence", "writer_ref", "written_at", "digest_kind", "digest", "schema_ref", "version_ref"]);
+  if (!Array.isArray(entries) || entries.some(entry => !isPlainObject(entry)
+    || Object.keys(entry).some(key => !fields.has(key))
+    || Object.values(entry).some(value => typeof value !== "string")
+    || !entry.memory_ref?.startsWith("memory:") || !["read", "write"].includes(entry.operation))) {
+    throw new ToubaHandlerError("MemoryMetadataInvalid", "memory metadata must contain bounded provenance records, without content or authority fields");
+  }
+}
+
 export async function handleToolRequest(rawInput, expectedToolRef, handler, options = {}) {
   let effect;
   let compensation;
-  let protocol;
   try {
     const request = parseRequest(rawInput);
     const envelope = validateEnvelope(request, expectedToolRef, options);
-    ({ effect, compensation, protocol } = envelope);
+    ({ effect, compensation } = envelope);
     const value = await handler({
       request,
       rawInput,
@@ -994,16 +1060,22 @@ export async function handleToolRequest(rawInput, expectedToolRef, handler, opti
         ? undefined
         : (receipt) => createCompensationReceipt(compensation, effect, receipt),
     });
-    if (protocol === COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION) {
+    if (compensation !== undefined) {
       return encodeCompensationSuccess(value, effect, compensation);
     }
-    if (protocol === EFFECT_TOOL_HANDLER_PROTOCOL_VERSION) {
+    if (effect !== undefined) {
       return encodeEffectfulSuccess(value, effect);
+    }
+    if (value?.[TOOL_RESULT] === true) {
+      if (value.effect_receipt !== undefined || value.compensation_receipt !== undefined) {
+        throw new ToubaHandlerError("InvalidToolResult", "receipts require a governed effect request");
+      }
+      return { ok: true, value: value.value, ...(value.memory_metadata === undefined ? {} : { memory_metadata: value.memory_metadata }) };
     }
     return { ok: true, value };
   } catch (error) {
     const normalized = normalizeError(error, effect, {
-      compensation: protocol === COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION,
+      compensation: compensation !== undefined,
     });
     const response = {
       ok: false,
@@ -1021,7 +1093,7 @@ export async function handleToolRequest(rawInput, expectedToolRef, handler, opti
 
 /**
  * Create the bounded wire receipt for the exact effect request received by a
- * V2 handler. This helper grants no retry or idempotence capability.
+ * handler. This helper grants no retry or idempotence capability.
  */
 export function createEffectReceipt(effect, receipt) {
   const normalizedEffect = validateEffectEnvelope(effect);
@@ -1109,6 +1181,9 @@ function normalizeToolDefinition(definition) {
   if (typeof definition.run !== "function") {
     throw new ToubaHandlerError("InvalidToolDefinition", "run must be a function");
   }
+  if (definition.outputType !== undefined && definition.outputType !== null && (typeof definition.outputType !== "string" || definition.outputType.trim() === "")) {
+    throw new ToubaHandlerError("InvalidToolDefinition", "outputType must be a non-empty type reference when present");
+  }
   return {
     toolRef: definition.toolRef,
     run: definition.run,
@@ -1144,6 +1219,7 @@ function normalizeInputSignature(value) {
   if (!Array.isArray(value)) {
     throw new ToubaHandlerError("InvalidToolDefinition", "inputSignature must be an array");
   }
+  const names = new Set();
   return value.map((input) => {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw new ToubaHandlerError("InvalidToolDefinition", "inputSignature entries must be objects");
@@ -1154,6 +1230,10 @@ function normalizeInputSignature(value) {
     if (typeof input.type_ref !== "string" || input.type_ref.trim() === "") {
       throw new ToubaHandlerError("InvalidToolDefinition", "inputSignature entries must declare type_ref");
     }
+    if (names.has(input.name) || Object.keys(input).some(key => !["name", "type_ref"].includes(key))) {
+      throw new ToubaHandlerError("InvalidToolDefinition", "inputSignature must contain unique names and only name/type_ref fields");
+    }
+    names.add(input.name);
     return {
       name: input.name,
       type_ref: input.type_ref,
@@ -1183,12 +1263,11 @@ function validateEnvelope(request, expectedToolRef, options) {
   if (!request || typeof request !== "object" || Array.isArray(request)) {
     throw new ToubaHandlerError("InvalidHandlerRequest", "handler request must be an object");
   }
-  if (
-    request.protocol !== PROTOCOL
-    && request.protocol !== EFFECT_TOOL_HANDLER_PROTOCOL_VERSION
-    && request.protocol !== COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION
-  ) {
+  if (request.protocol !== PROTOCOL) {
     throw new ToubaHandlerError("InvalidProtocol", "unsupported handler protocol");
+  }
+  if (request.operation !== "invoke" && request.operation !== "compensate") {
+    throw new ToubaHandlerError("InvalidHandlerOperation", "operation must be invoke or compensate");
   }
   if (request.tool_ref !== expectedToolRef) {
     throw new ToubaHandlerError("InvalidToolRef", "unexpected tool ref");
@@ -1218,34 +1297,35 @@ function validateEnvelope(request, expectedToolRef, options) {
     }
   }
 
-  if (request.protocol === COMPENSATION_TOOL_HANDLER_PROTOCOL_VERSION) {
-    const allowed = new Set([
-      "protocol",
-      "tool_ref",
-      "call_id",
-      "arguments",
-      "grants",
-      "memory_accesses",
-      "resource_bindings",
-      "secret_handles",
-      "limits",
-      "effect",
-      "compensation",
-    ]);
-    if (Object.keys(request).some((key) => !allowed.has(key))) {
-      throw new ToubaHandlerError("InvalidCompensation", "V3 handler request contains unknown fields");
-    }
+  const allowed = new Set([
+    "protocol",
+    "operation",
+    "tool_ref",
+    "call_id",
+    "arguments",
+    "grants",
+    "memory_accesses",
+    "resource_bindings",
+    "secret_handles",
+    "limits",
+    "effect",
+    "compensation",
+  ]);
+  if (Object.keys(request).some((key) => !allowed.has(key))) {
+    throw new ToubaHandlerError(request.operation === "compensate" ? "InvalidCompensation" : "InvalidHandlerRequest", "handler request contains unknown fields");
+  }
+  if (request.operation === "compensate") {
     return Object.freeze({
       protocol: request.protocol,
       effect: validateEffectEnvelope(request.effect),
       compensation: validateCompensationEnvelope(request.compensation),
     });
   }
-  if (request.protocol === EFFECT_TOOL_HANDLER_PROTOCOL_VERSION) {
+  if (request.effect !== undefined) {
     if (request.compensation !== undefined) {
       throw new ToubaHandlerError(
         "InvalidCompensation",
-        "touba-tool-handler-v2 cannot carry a compensation envelope",
+        "invoke cannot carry a compensation envelope",
       );
     }
     return Object.freeze({
@@ -1254,16 +1334,10 @@ function validateEnvelope(request, expectedToolRef, options) {
       compensation: undefined,
     });
   }
-  if (request.effect !== undefined) {
-    throw new ToubaHandlerError(
-      "InvalidEffect",
-      "touba-tool-handler-v1 cannot carry an effect envelope",
-    );
-  }
   if (request.compensation !== undefined) {
     throw new ToubaHandlerError(
       "InvalidCompensation",
-      "touba-tool-handler-v1 cannot carry a compensation envelope",
+      "invoke cannot carry a compensation envelope",
     );
   }
   return Object.freeze({
@@ -1439,7 +1513,7 @@ function encodeCompensationSuccess(value, effect, compensation) {
   if (!isPlainObject(value)) {
     throw new ToubaHandlerError(
       "CompensationReceiptRequired",
-      "V3 handlers must return { value, effect_receipt, compensation_receipt }",
+      "V1 handlers must return { value, effect_receipt, compensation_receipt }",
     );
   }
   const allowed = new Set([
@@ -1451,14 +1525,14 @@ function encodeCompensationSuccess(value, effect, compensation) {
   if (Object.keys(value).some((key) => !allowed.has(key)) || !Object.hasOwn(value, "value")) {
     throw new ToubaHandlerError(
       "CompensationReceiptRequired",
-      "V3 handler success contains invalid fields",
+      "V1 handler success contains invalid fields",
     );
   }
   const effectReceipt = validateSdkEffectReceipt(value.effect_receipt, effect);
   if (effectReceipt.outcome !== "applied") {
     throw new ToubaHandlerError(
       "CompensationReceiptInvalid",
-      "V3 handler success requires an applied effect receipt",
+      "V1 handler success requires an applied effect receipt",
     );
   }
   const compensationReceipt = validateSdkCompensationReceipt(
@@ -1563,7 +1637,7 @@ function normalizeError(error, effect = undefined, options = {}) {
         ) {
           return {
             code: "CompensationReceiptInvalid",
-            message: "V3 handler errors require not_applied or unknown effect outcome",
+            message: "V1 handler errors require not_applied or unknown effect outcome",
           };
         }
       } catch (receiptError) {
@@ -1669,16 +1743,6 @@ function normalizeJsonObject(value, label) {
     throw new ToubaEngineError("options", `${label} must be an object`);
   }
   return value;
-}
-
-function parseJsonOutput(raw, label) {
-  try {
-    return JSON.parse(raw.trim() === "" ? "null" : raw);
-  } catch (error) {
-    throw new ToubaEngineError("run", `touba ${label} is not valid JSON`, {
-      cause: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 async function readOptionalJson(path) {

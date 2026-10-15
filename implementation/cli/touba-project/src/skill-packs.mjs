@@ -10,8 +10,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 
-export const TOUBA_SKILL_PACK_SCHEMA_VERSION = "touba-skill-pack-v0.1";
+export const TOUBA_SKILL_PACK_SCHEMA_VERSION = "touba-skill-pack-v1";
 export const DEFAULT_SKILLS_ROOT = "skills";
 
 const SKILL_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -80,19 +81,7 @@ export function newSkillPack(skillId, options = {}) {
 
   const created = [];
   const preserved = [];
-  for (const dir of [
-    packPath,
-    join(packPath, "resources"),
-    join(packPath, "resources", "references"),
-    join(packPath, "resources", "examples"),
-    join(packPath, "resources", "templates"),
-    join(packPath, "resources", "samples"),
-    join(packPath, "scripts"),
-    join(packPath, "tests"),
-    join(packPath, "tests", "fixtures"),
-  ]) {
-    ensureDirectory(dir, created, preserved);
-  }
+  ensureDirectory(packPath, created, preserved);
 
   const skillMdPath = join(packPath, "SKILL.md");
   const skillMd = defaultSkillMarkdown(skillId);
@@ -121,12 +110,14 @@ export function newSkillPack(skillId, options = {}) {
 
 export function validateSkillPacks(options = {}) {
   const root = resolve(options.root ?? process.cwd());
+  const air = options.air === undefined ? undefined
+    : validateAirMachineContract(JSON.parse(readFileSync(resolve(root, options.air), "utf8")));
   const packPaths = resolveSkillPackTargets(root, options.target);
   const diagnostics = [];
   const skillPacks = [];
 
   for (const packPath of packPaths) {
-    const result = validateSkillPack(packPath);
+    const result = validateSkillPack(packPath, air);
     diagnostics.push(...result.diagnostics);
     if (result.skill_pack !== null) {
       skillPacks.push(result.skill_pack);
@@ -134,6 +125,9 @@ export function validateSkillPacks(options = {}) {
   }
 
   const notes = [];
+  if (air === undefined && skillPacks.some(pack => pack.execution_link_count > 0)) {
+    notes.push("Execution link targets were not checked against AIR. Use --air <program.air.json>; agent uses and runtime grants remain separately enforced.");
+  }
   if (packPaths.length === 0) {
     notes.push("No skill pack directory found under skills/.");
   }
@@ -149,16 +143,28 @@ export function validateSkillPacks(options = {}) {
   };
 }
 
-export function loadSkillPack(packPath) {
-  const result = validateSkillPack(packPath);
+export function loadSkillPack(packPath, air) {
+  const result = validateSkillPack(packPath, air);
   if (result.diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
     const first = result.diagnostics.find((diagnostic) => diagnostic.severity === "error");
-    throw new Error(`${first.code}: ${first.message}`);
+    throw Object.assign(new Error(first.message), { code: first.code });
   }
-  return result.skill_pack;
+  const descriptor = result.descriptor;
+  const resources = descriptor.resources.map(resource => {
+    const diagnostics = [];
+    if (!validateResourcePath(resource.path, resolve(packPath), diagnostics, result.skill_pack.descriptor_path, "resource")) {
+      throw Object.assign(new Error("Resource path changed during loading"), { code: "SkillPackResourcePathInvalid" });
+    }
+    const bytes = readFileSync(resolve(packPath, resource.path));
+    if (`sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}` !== resource.digest) {
+      throw Object.assign(new Error("Resource content changed during loading"), { code: "SkillPackDigestMismatch" });
+    }
+    return { ...resource, ...(resource.loadable_as_context && resource.kind !== "script" ? { content: bytes.toString("utf8") } : {}) };
+  });
+  return { ...descriptor, resources };
 }
 
-function validateSkillPack(packPath) {
+function validateSkillPack(packPath, air) {
   const diagnostics = [];
   const resolvedPackPath = resolve(packPath);
   const descriptorPath = join(resolvedPackPath, "skill.json");
@@ -178,8 +184,6 @@ function validateSkillPack(packPath) {
     return { skill_pack: null, diagnostics };
   }
 
-  validateStandardLayout(resolvedPackPath, diagnostics);
-
   if (!existsSync(descriptorPath)) {
     diagnostics.push(errorDiagnostic("SkillPackDescriptorMissing", "skill pack must contain skill.json", {
       skill_pack_path: resolvedPackPath,
@@ -188,6 +192,9 @@ function validateSkillPack(packPath) {
     return { skill_pack: null, diagnostics };
   }
 
+  if (!validateResourcePath("skill.json", resolvedPackPath, diagnostics, descriptorPath, "descriptor")) {
+    return { skill_pack: null, diagnostics };
+  }
   let descriptor;
   try {
     descriptor = JSON.parse(readFileSync(descriptorPath, "utf8"));
@@ -248,7 +255,7 @@ function validateSkillPack(packPath) {
 
   validateActivation(descriptor.activation, diagnostics, descriptorPath);
   const resources = validateResources(descriptor.resources, resolvedPackPath, diagnostics, descriptorPath);
-  validateExecutionLinks(descriptor.execution_links, diagnostics, descriptorPath);
+  validateExecutionLinks(descriptor.execution_links, diagnostics, descriptorPath, air);
   validateDeclaredResourceFiles(resources, resolvedPackPath, diagnostics, descriptorPath);
 
   if (!resources.some((resource) => resource.path === "SKILL.md" && resource.kind === "procedure")) {
@@ -259,6 +266,7 @@ function validateSkillPack(packPath) {
   }
 
   return {
+    descriptor,
     skill_pack: {
       ref: typeof descriptor.ref === "string" ? descriptor.ref : null,
       name: typeof descriptor.name === "string" ? descriptor.name : null,
@@ -267,30 +275,10 @@ function validateSkillPack(packPath) {
       descriptor_path: descriptorPath,
       resource_count: resources.length,
       execution_link_count: Array.isArray(descriptor.execution_links) ? descriptor.execution_links.length : 0,
+      execution_links_check: air === undefined ? "not_checked_without_air" : "checked_against_air",
     },
     diagnostics,
   };
-}
-
-function validateStandardLayout(packPath, diagnostics) {
-  for (const relativePath of [
-    "resources",
-    "resources/references",
-    "resources/examples",
-    "resources/templates",
-    "resources/samples",
-    "scripts",
-    "tests",
-    "tests/fixtures",
-  ]) {
-    const path = join(packPath, relativePath);
-    if (!existsSync(path) || !statSync(path).isDirectory()) {
-      diagnostics.push(errorDiagnostic("SkillPackLayoutInvalid", `skill pack must contain ${relativePath}/`, {
-        skill_pack_path: packPath,
-        path,
-      }));
-    }
-  }
 }
 
 function validateActivation(activation, diagnostics, descriptorPath) {
@@ -368,6 +356,11 @@ function validateResources(resources, packPath, diagnostics, descriptorPath) {
         field: `${profile}.executable_by_pack`,
       }));
     }
+    if (resource.kind === "script" && resource.loadable_as_context === true) {
+      diagnostics.push(errorDiagnostic("SkillPackScriptExecutionForbidden", "scripts cannot be loaded as procedural context", {
+        descriptor_path: descriptorPath, field: `${profile}.loadable_as_context`,
+      }));
+    }
 
     const pathOk = validateResourcePath(resource.path, packPath, diagnostics, descriptorPath, profile);
     if (pathOk) {
@@ -411,6 +404,10 @@ function discoverResourceFiles(packPath) {
 
 function collectFiles(packPath, relativeDir, files) {
   const dir = join(packPath, relativeDir);
+  if (existsSync(dir) && lstatSync(dir).isSymbolicLink()) {
+    files.push(relativeDir);
+    return;
+  }
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
     return;
   }
@@ -461,8 +458,7 @@ function validateResourcePath(resourcePath, packPath, diagnostics, descriptorPat
     }));
     return false;
   }
-  const stat = lstatSync(resolvedPath);
-  if (stat.isSymbolicLink()) {
+  {
     const realPack = realpathSync(packPath);
     const realResource = realpathSync(resolvedPath);
     const realRelative = relative(realPack, realResource);
@@ -506,7 +502,7 @@ function validateResourceDigest(resource, packPath, diagnostics, descriptorPath,
   }
 }
 
-function validateExecutionLinks(links, diagnostics, descriptorPath) {
+function validateExecutionLinks(links, diagnostics, descriptorPath, air) {
   if (links === undefined) {
     return;
   }
@@ -544,6 +540,11 @@ function validateExecutionLinks(links, diagnostics, descriptorPath) {
       }));
     } else {
       targets.add(link.target_ref);
+    }
+    if (air && ![...(air.definitions.tools ?? []), ...(air.definitions.skills ?? [])].some(definition => definition.id === link.target_ref)) {
+      diagnostics.push(errorDiagnostic("SkillPackExecutionLinkUnauthorized", "execution link target is absent from the supplied AIR", {
+        descriptor_path: descriptorPath, target_ref: link.target_ref,
+      }));
     }
   }
 }

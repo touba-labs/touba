@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:7af7c451c9fef53b30c88931ddcba425e266742c90dcffe3a3514aa74f0e4f91",
     "module_ref": "module:test",
     "entry_ref": "trigger:test/DailyRun"
   },
@@ -81,7 +82,8 @@
       "sequence_index": 6,
       "kind": "run_completed",
       "payload": {
-        "status": "cancelled"
+        "status": "cancelled",
+        "reason": "kill_switch"
       }
     }
   ]

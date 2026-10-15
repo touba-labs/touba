@@ -283,6 +283,7 @@ function toolBindingEntry({
   maxPayloadBytes = 1048576,
 } = {}) {
   return {
+    effect_contract: { kind: "none" },
     handler: {
       kind: "process",
       command,

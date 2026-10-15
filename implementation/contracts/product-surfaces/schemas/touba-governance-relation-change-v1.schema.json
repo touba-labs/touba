@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-governance-relation-change-v1.schema.json",
+  "title": "touba-governance-relation-change-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "proposal_id", "operation", "relation", "requested_by", "reason"],
+  "properties": {
+    "schema_version": { "const": "touba-governance-relation-change-v1" },
+    "proposal_id": { "type": "string", "minLength": 1 },
+    "operation": { "enum": ["add", "remove", "replace"] },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source_ref", "target_ref"],
+      "properties": {
+        "kind": { "enum": ["uses", "callable_by", "invokes_agent", "memory_access", "dispatches"] },
+        "source_ref": { "type": "string", "minLength": 1 },
+        "target_ref": { "type": "string", "minLength": 1 },
+        "access": { "enum": ["read", "write"] }
+      }
+    },
+    "requested_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["studio", "user", "service"] },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "reason": { "type": "string", "minLength": 1 }
+  }
+}

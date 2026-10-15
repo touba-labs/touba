@@ -107,6 +107,21 @@ test("extractSymbols exposes IM-1 import declarations separately from local decl
   assert.deepEqual(importedToolSymbol.location.range.start, { line: 37, character: 0 });
 });
 
+test("toLspDiagnostic converts UTF-8 compiler columns to UTF-16 editor columns", () => {
+  const text = '        bind text as Text = "é😀" ++ 42';
+  const before = text.slice(0, text.indexOf("42"));
+  const diagnostic = toLspDiagnostic({
+    code: "InvalidExpressionOperandType", message: "Text expected",
+    source_ref: {
+      start_line: 0, end_line: 0,
+      start_column: Buffer.byteLength(before), end_column: Buffer.byteLength(before + "42"),
+    },
+  }, text);
+  assert.deepEqual(diagnostic.range, {
+    start: { line: 0, character: before.length }, end: { line: 0, character: before.length + 2 },
+  });
+});
+
 test("toLspDiagnostic preserves compiler source ranges", () => {
   const diagnostic = toLspDiagnostic({
     code: "MissingSignatureOutput",

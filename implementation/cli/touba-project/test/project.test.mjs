@@ -6,16 +6,17 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { generateSupplyChainLock } from "../../touba-supply-chain/src/generate.mjs";
 
 import {
   applyRunProfileToArgs,
   checkProjectSecret,
   initProject,
   listProjectSecrets,
-  migrateProjectArtifacts,
   newModule,
   prepareProject,
   removeProjectSecret,
+  renderReport,
   resolveProjectRunArgs,
   setProjectSecret,
 } from "../src/project.mjs";
@@ -140,15 +141,12 @@ test("skill new scaffolds a standard skill pack and validate accepts it", () => 
     assert.equal(report.skill_pack_ref, "skill_pack:project/research-review");
     assert.equal(existsSync(join(packPath, "skill.json")), true);
     assert.equal(existsSync(join(packPath, "SKILL.md")), true);
-    assert.equal(existsSync(join(packPath, "resources/references")), true);
-    assert.equal(existsSync(join(packPath, "resources/examples")), true);
-    assert.equal(existsSync(join(packPath, "resources/templates")), true);
-    assert.equal(existsSync(join(packPath, "resources/samples")), true);
-    assert.equal(existsSync(join(packPath, "scripts")), true);
-    assert.equal(existsSync(join(packPath, "tests/fixtures")), true);
+    assert.equal(existsSync(join(packPath, "resources")), false, "empty optional directories are not required");
+    assert.equal(existsSync(join(packPath, "scripts")), false);
+    assert.equal(existsSync(join(packPath, "tests")), false);
 
     const descriptor = JSON.parse(readFileSync(join(packPath, "skill.json"), "utf8"));
-    assert.equal(descriptor.skill_pack_schema_version, "touba-skill-pack-v0.1");
+    assert.equal(descriptor.skill_pack_schema_version, "touba-skill-pack-v1");
     assert.equal(descriptor.resources[0].path, "SKILL.md");
     assert.match(descriptor.resources[0].digest, /^sha256:[0-9a-f]{64}$/);
 
@@ -245,6 +243,8 @@ test("CLI skill commands expose scaffold and validation reports", () => {
     assert.equal(refusedResult.status, 1);
     const refusedReport = JSON.parse(refusedResult.stdout);
     assert.equal(refusedReport.diagnostics.some((item) => item.code === "SkillPackAuthorityFieldForbidden"), true);
+    assert.match(renderReport(refusedReport), /skill validate \(error\)/);
+    assert.doesNotMatch(renderReport(refusedReport), /\(ok\)/);
   } finally {
     cleanup(root);
   }
@@ -254,7 +254,7 @@ test("secret store commands manage handles without printing values", () => {
   const root = tempRoot();
   try {
     const setReport = setProjectSecret("OPENAI_API_KEY", "local-secret-value", { root });
-    const storePath = join(root, ".touba/secrets.local.json");
+    const storePath = join(root, ".touba/state/secrets.local.json");
     assert.equal(setReport.store_path, storePath);
     assert.deepEqual(setReport.handles, ["OPENAI_API_KEY"]);
     const store = JSON.parse(readFileSync(storePath, "utf8"));
@@ -334,6 +334,7 @@ test("CLI deploy exposes revision operations and stable content-bound plans", ()
     writeFileSync(join(root, "src", "main.tb"), "module demo.deployment\n", "utf8");
     writeJson(join(root, "touba.project.json"), {
       project_version: "touba-project-v1",
+      artifact_layout: "touba-artifacts-v1",
       language: "javascript",
       run_profiles: {
         dev: { require_supply_chain_lock: false },
@@ -346,7 +347,7 @@ test("CLI deploy exposes revision operations and stable content-bound plans", ()
       triggers: {},
     });
     writeJson(join(root, "touba.lock.json"), {
-      lock_version: "touba-lock-v0.1",
+      lock_version: "touba-lock-v1",
       artifacts: [],
     });
 
@@ -381,7 +382,7 @@ test("CLI deploy exposes revision operations and stable content-bound plans", ()
     assert.equal(firstPlan.bundle_sha256, secondPlan.bundle_sha256);
     const deploymentPlanSchema = JSON.parse(readFileSync(projectInspectionSchema.replace(
       "touba-project-inspection-v1.schema.json",
-      "touba-deployment-plan-v0.1.schema.json",
+      "touba-deployment-plan-v1.schema.json",
     ), "utf8"));
     assert.deepEqual(validateObject(deploymentPlanSchema, firstPlan), []);
   } finally {
@@ -396,10 +397,11 @@ test("CLI deployment refuses a dirty production source before contacting its tar
     writeFileSync(join(root, "src", "main.tb"), "module demo.deployment\n", "utf8");
     writeJson(join(root, "touba.project.json"), {
       project_version: "touba-project-v1",
+      artifact_layout: "touba-artifacts-v1",
       language: "javascript",
     });
     writeJson(join(root, "touba.lock.json"), {
-      lock_version: "touba-lock-v0.1",
+      lock_version: "touba-lock-v1",
       artifacts: [],
     });
     const result = spawnSync(process.execPath, [
@@ -456,7 +458,7 @@ test("CLI refresh signals an existing Touba project server", async () => {
 
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(result.stdout);
-    assert.equal(report.schema_version, "touba-project-refresh-v0.1");
+    assert.equal(report.schema_version, "touba-project-refresh-v1");
     assert.equal(report.status, "refreshed");
     assert.deepEqual(report.changes.changed_artifacts.map((item) => item.relative_path), ["main.tb"]);
   } finally {
@@ -516,14 +518,14 @@ test("prepare write creates one project manifest and module-scoped handler stubs
       airPaths: ["input.air.json"],
       handlerCommand: "/usr/bin/node",
     });
-    assert.equal(report.status, "success");
-    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
+    assert.equal(report.status, "needs_changes");
+    const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
     const binding = manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
     assert.equal(binding.handler.command, "/usr/bin/node");
     assert.deepEqual(binding.handler.args, ["handlers/donnees_quebec/live_search/search_datasets.handler.mjs"]);
-    assert.equal(binding.handler.cwd, ".");
-    assert.deepEqual(binding.grants, ["network"]);
-    assert.deepEqual(binding.secrets, ["API_TOKEN"]);
+    assert.equal(binding.handler.cwd, "../../..");
+    assert.deepEqual(binding.grants, []);
+    assert.deepEqual(binding.secrets, []);
     assert.equal(existsSync(join(root, "handlers/donnees_quebec/live_search/search_datasets.handler.mjs")), true);
     assert.match(
       readFileSync(join(root, "handlers/donnees_quebec/live_search/search_datasets.handler.mjs"), "utf8"),
@@ -544,13 +546,13 @@ test("prepare write creates one project manifest and module-scoped handler stubs
     const projectConfig = JSON.parse(readFileSync(join(root, "touba.project.json"), "utf8"));
     assert.equal(projectConfig.language, "javascript");
     assert.equal(projectConfig.sdk, "@touba/sdk");
-    assert.equal(existsSync(join(root, ".touba/secrets.local.json")), true);
+    assert.equal(existsSync(join(root, ".touba/state/secrets.local.json")), true);
     assert.equal(existsSync(join(root, ".env")), true);
     const devSecrets = JSON.parse(readFileSync(join(root, "touba.secrets.dev.json"), "utf8"));
     assert.equal(devSecrets.secrets_version, "touba-secrets-v1");
     assert.deepEqual(devSecrets.secrets.API_TOKEN, {
       source: "touba_store",
-      path: ".touba/secrets.local.json",
+      path: ".touba/state/secrets.local.json",
       name: "API_TOKEN",
     });
     const prodSecrets = JSON.parse(readFileSync(join(root, "touba.secrets.prod.json"), "utf8"));
@@ -606,7 +608,7 @@ test("prepare write preserves existing secret profile entries and adds missing h
       mode: "write",
       airPaths: ["input.air.json"],
     });
-    assert.equal(report.status, "success");
+    assert.equal(report.status, "needs_changes");
     const devSecrets = JSON.parse(readFileSync(join(root, "touba.secrets.dev.json"), "utf8"));
     assert.deepEqual(devSecrets.secrets.API_TOKEN, {
       source: "dotenv",
@@ -665,9 +667,9 @@ test("prepare composes explicit binding fragments into the project manifest", as
     assert.equal(report.status, "success");
     assert.equal(report.binding_fragments.length, 1);
     assert.equal(report.actions.some((item) => item.kind === "compose_binding_fragment"), true);
-    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
     const binding = manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
-    assert.equal(manifest.manifest_version, "touba-manifest-v2");
+    assert.equal(manifest.manifest_version, "touba-manifest-v1");
     assert.equal(binding.handler.args[0], "custom/search.handler.mjs");
     assert.equal(binding.timeout_ms, 12000);
     assert.equal(binding.max_payload_bytes, 2048);
@@ -683,7 +685,7 @@ test("prepare composes explicit binding fragments into the project manifest", as
   }
 });
 
-test("prepare preserves V3 compensation declarations from explicit binding fragments", async () => {
+test("prepare preserves compensation declarations from explicit binding fragments", async () => {
   const root = tempRoot();
   try {
     writeJson(join(root, "input.air.json"), airDocumentWithTool());
@@ -713,8 +715,8 @@ test("prepare preserves V3 compensation declarations from explicit binding fragm
       bindingFragmentPaths: ["bindings.compensation.json"],
     });
     assert.equal(report.status, "success", JSON.stringify(report.diagnostics));
-    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
-    assert.equal(manifest.manifest_version, "touba-manifest-v3");
+    const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
+    assert.equal(manifest.manifest_version, "touba-manifest-v1");
     assert.deepEqual(
       manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"].effect_contract.compensation,
       { entry_ref: "strategy:donnees_quebec.live_search/CancelSearch" },
@@ -724,21 +726,22 @@ test("prepare preserves V3 compensation declarations from explicit binding fragm
   }
 });
 
-test("prepare refuses effect contracts smuggled into a legacy V1 manifest", async () => {
+test("prepare refuses an old manifest even when its effect contract is present", async () => {
   const root = tempRoot();
   try {
     writeFileSync(join(root, "input.air.json"), JSON.stringify(airDocumentWithTool(), null, 2), "utf8");
     const initial = await prepareProject({ root, mode: "write", airPaths: ["input.air.json"] });
-    assert.equal(initial.status, "success");
-    const manifestPath = join(root, "touba.manifest.json");
+    assert.equal(initial.status, "needs_changes");
+    const manifestPath = join(root, ".touba/build/dev/touba.manifest.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"].effect_contract = { kind: "none" };
+    manifest.manifest_version = "touba-manifest-v2";
     writeJson(manifestPath, manifest);
 
     const report = await prepareProject({ root, mode: "check", airPaths: ["input.air.json"] });
     assert.equal(report.status, "error");
     assert.equal(
-      report.diagnostics.some((item) => item.code === "EffectContractForbiddenInManifestV1"),
+      report.diagnostics.some((item) => item.code === "ManifestVersionInvalid"),
       true,
     );
   } finally {
@@ -746,7 +749,7 @@ test("prepare refuses effect contracts smuggled into a legacy V1 manifest", asyn
   }
 });
 
-test("prepare refuses a partial V2 upgrade when one binding has no effect contract", async () => {
+test("prepare requires host review for each unresolved effect contract", async () => {
   const root = tempRoot();
   try {
     const air = airDocumentWithTool();
@@ -776,6 +779,10 @@ test("prepare refuses a partial V2 upgrade when one binding has no effect contra
       },
     }));
 
+    const fragmentPath = join(root, "bindings.search.json");
+    const fragment = JSON.parse(readFileSync(fragmentPath, "utf8"));
+    delete fragment.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
+    writeJson(fragmentPath, fragment);
     const report = await prepareProject({
       root,
       mode: "check",
@@ -783,8 +790,9 @@ test("prepare refuses a partial V2 upgrade when one binding has no effect contra
       bindingFragmentPaths: ["bindings.search.json"],
     });
     assert.equal(report.status, "error");
-    const diagnostic = report.diagnostics.find((item) => item.code === "EffectContractMissing");
-    assert.deepEqual(diagnostic.tool_refs, ["tool:donnees_quebec.live_search/SearchDatasets"]);
+    const diagnostic = report.diagnostics.find((item) => item.code === "ManifestEffectReviewRequired");
+    assert.ok(diagnostic, JSON.stringify({ diagnostics: report.diagnostics, requirements: report.manifest_requirements, actions: report.actions }));
+    assert.equal(diagnostic.tool_ref, "tool:donnees_quebec.live_search/SearchDatasets");
   } finally {
     cleanup(root);
   }
@@ -797,7 +805,7 @@ test("prepare rejects invalid binding fragments without assembling authority", a
     writeJson(join(root, "missing-grant.json"), bindingFragmentDocument({
       bindings: {
         "tool:donnees_quebec.live_search/SearchDatasets": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "node",
             args: ["custom/search.handler.mjs"],
@@ -814,7 +822,7 @@ test("prepare rejects invalid binding fragments without assembling authority", a
     writeJson(join(root, "conflict.json"), bindingFragmentDocument({
       bindings: {
         "tool:donnees_quebec.live_search/SearchDatasets": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "node",
             args: ["other/search.handler.mjs"],
@@ -830,7 +838,7 @@ test("prepare rejects invalid binding fragments without assembling authority", a
     writeJson(join(root, "unknown-tool.json"), bindingFragmentDocument({
       bindings: {
         "tool:donnees_quebec.live_search/Unknown": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "node",
             args: ["custom/unknown.handler.mjs"],
@@ -846,7 +854,7 @@ test("prepare rejects invalid binding fragments without assembling authority", a
     writeJson(join(root, "bad-constraint.json"), bindingFragmentDocument({
       bindings: {
         "tool:donnees_quebec.live_search/SearchDatasets": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "node",
             args: ["custom/search.handler.mjs"],
@@ -867,7 +875,7 @@ test("prepare rejects invalid binding fragments without assembling authority", a
     writeJson(join(root, "bad-list-constraint.json"), bindingFragmentDocument({
       bindings: {
         "tool:donnees_quebec.live_search/SearchDatasets": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "node",
             args: ["custom/search.handler.mjs"],
@@ -888,7 +896,7 @@ test("prepare rejects invalid binding fragments without assembling authority", a
     writeJson(join(root, "bad-list-constraint-type.json"), bindingFragmentDocument({
       bindings: {
         "tool:donnees_quebec.live_search/SearchDatasets": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "node",
             args: ["custom/search.handler.mjs"],
@@ -907,7 +915,7 @@ test("prepare rejects invalid binding fragments without assembling authority", a
       },
     }));
     writeJson(join(root, "authority.json"), {
-      fragment_schema_version: "touba-binding-fragment-v0.1",
+      fragment_schema_version: "touba-binding-fragment-v1",
       source: { kind: "module", module: "donnees_quebec.live_search" },
       callable_by: ["strategy:examples/Run"],
       bindings: {},
@@ -965,7 +973,7 @@ test("prepare write uses the current node executable by default", async () => {
       mode: "write",
       airPaths: ["input.air.json"],
     });
-    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
     const binding = manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
     assert.equal(binding.handler.command, process.execPath);
   } finally {
@@ -973,7 +981,7 @@ test("prepare write uses the current node executable by default", async () => {
   }
 });
 
-test("prepare write grants agent secret scopes for reachable secret tools", async () => {
+test("prepare reports required agent secret scopes without granting them", async () => {
   const root = tempRoot();
   try {
     const air = airDocumentWithToolStrategy();
@@ -986,13 +994,14 @@ test("prepare write grants agent secret scopes for reachable secret tools", asyn
       },
     ];
     writeFileSync(join(root, "input.air.json"), JSON.stringify(air, null, 2), "utf8");
-    await prepareProject({
+    const report = await prepareProject({
       root,
       mode: "write",
       airPaths: ["input.air.json"],
     });
-    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
-    assert.deepEqual(manifest.agent_secret_scopes, {
+    const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
+    assert.deepEqual(manifest.agent_secret_scopes, {});
+    assert.deepEqual(report.manifest_requirements.agent_secret_scopes, {
       "agent:examples.data_app/Researcher": ["DATA_API_TOKEN"],
     });
   } finally {
@@ -1000,11 +1009,45 @@ test("prepare write grants agent secret scopes for reachable secret tools", asyn
   }
 });
 
+test("source changes never expand existing host permissions or overwrite a business handler", async () => {
+  const root = tempRoot();
+  try {
+    const air = airDocumentWithToolStrategy();
+    writeJson(join(root, "input.air.json"), air);
+    const options = { root, mode: "write", airPaths: ["input.air.json"] };
+    const draft = await prepareProject(options);
+    assert.equal(draft.status, "needs_changes");
+    assert.deepEqual(JSON.parse(readFileSync(draft.manifest_path, "utf8")).bindings["tool:examples.data_app/Search"].grants, []);
+    // A deliberate host decision in the fixture, never an action of prepare.
+    draft.manifest_requirements.bindings["tool:examples.data_app/Search"].effect_contract = { kind: "none" };
+    writeFileSync(draft.manifest_path, JSON.stringify(draft.manifest_requirements));
+    const originalManifest = readFileSync(draft.manifest_path, "utf8");
+    const handlerPath = join(root, "handlers/examples/data_app/search.handler.mjs");
+    const businessHandler = "// user-owned implementation, unchanged by prepare\n";
+    writeFileSync(handlerPath, businessHandler);
+    const authorized = await prepareProject(options);
+    assert.equal(authorized.status, "success", JSON.stringify(authorized.diagnostics));
+    assert.equal(readFileSync(draft.manifest_path, "utf8"), originalManifest);
+    air.definitions.tools[0].required_capabilities.push("filesystem_write");
+    air.definitions.tools[0].required_secrets.push("NEW_TOKEN");
+    writeJson(join(root, "input.air.json"), air);
+    for (const mode of ["plan", "check", "write"]) {
+      const report = await prepareProject({ ...options, mode });
+      assert.equal(report.status, mode === "check" ? "error" : "needs_changes");
+      assert.ok(report.diagnostics.some(item => item.code === "ManifestGrantMissing"));
+      assert.ok(report.diagnostics.some(item => item.code === "ManifestSecretMissing"));
+      assert.equal(readFileSync(draft.manifest_path, "utf8"), originalManifest);
+      assert.equal(readFileSync(handlerPath, "utf8"), businessHandler);
+    }
+  } finally { cleanup(root); }
+});
+
 test("prepare refuses unavailable project SDK languages from project config", async () => {
   const root = tempRoot();
   try {
     writeFileSync(join(root, "touba.project.json"), JSON.stringify({
       project_version: "touba-project-v1",
+      artifact_layout: "touba-artifacts-v1",
       language: "python",
       sdk: "touba",
     }, null, 2), "utf8");
@@ -1035,7 +1078,7 @@ test("prepare write keeps a pure Touba source manifest-free when no tool is decl
     });
     assert.equal(report.status, "success");
     assert.deepEqual(report.tools, []);
-    assert.equal(existsSync(join(root, ".touba/air/local/simple.air.json")), true);
+    assert.equal(existsSync(join(root, ".touba/build/dev/air/local/simple.air.json")), true);
     assert.equal(existsSync(join(root, "touba.manifest.json")), false);
     assert.equal(existsSync(join(root, "touba.secrets.dev.json")), false);
     assert.equal(existsSync(join(root, "touba.secrets.prod.json")), false);
@@ -1062,15 +1105,15 @@ test("prepare write creates an explicit RP-1 run plan for a pure Touba entry", a
     assert.equal(report.run_plan_path, join(root, "touba.run-plan.json"));
     const plan = JSON.parse(readFileSync(join(root, "touba.run-plan.json"), "utf8"));
     assert.deepEqual(plan, {
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:local.run/Run",
-      air: ".touba/air/local/run.air.json",
+      air: ".touba/build/dev/air/local/run.air.json",
       profile: "dev",
       outputs: {
         mode: "show",
       },
     });
-    assert.equal(existsSync(join(root, ".touba/air/local/run.air.json")), true);
+    assert.equal(existsSync(join(root, ".touba/build/dev/air/local/run.air.json")), true);
     assert.equal(existsSync(join(root, "touba.manifest.json")), false);
   } finally {
     cleanup(root);
@@ -1151,7 +1194,7 @@ test("effective project projection is deterministic, detects drift and never exp
     assert.deepEqual(document.contract.secrets.handles, ["DATA_API_TOKEN"]);
     assert.equal(document.contract.secrets.provenance.status, "declared");
     assert.equal(document.contract.handlers.provenance.status, "effective");
-    assert.deepEqual(document.contract.grants.bindings[0].capabilities, ["network", "secret_read"]);
+    assert.deepEqual(document.contract.grants.bindings[0].capabilities, []);
 
     await prepareProject({
       root,
@@ -1193,13 +1236,13 @@ test("converged dev preparation keeps tool authority explicit and detects derive
       runProfile: "dev",
       compileSource: () => airDocumentWithToolStrategy(),
     });
-    assert.equal(report.status, "success");
+    assert.equal(report.status, "needs_changes");
     const manifestPath = join(root, ".touba/build/dev/touba.manifest.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     const binding = manifest.bindings["tool:examples.data_app/Search"];
     assert.equal(binding.handler.cwd, "../../..");
-    assert.deepEqual(binding.grants, ["network", "secret_read"]);
-    assert.deepEqual(binding.secrets, ["DATA_API_TOKEN"]);
+    assert.deepEqual(binding.grants, []);
+    assert.deepEqual(binding.secrets, []);
     assert.equal(existsSync(join(root, "touba.manifest.json")), false);
     assert.equal(existsSync(join(root, ".touba/state/secrets.local.json")), true);
     const devSecrets = JSON.parse(readFileSync(join(root, "touba.secrets.dev.json"), "utf8"));
@@ -1229,7 +1272,7 @@ test("converged dev preparation keeps tool authority explicit and detects derive
       compileSource: () => airDocumentWithToolStrategy(),
     });
     assert.equal(widened.status, "error");
-    assert.equal(widened.diagnostics.some((item) => item.code === "ManifestDerivedDrift"), true);
+    assert.equal(widened.diagnostics.some((item) => item.code === "ManifestSecretMissing"), true);
   } finally {
     cleanup(root);
   }
@@ -1271,7 +1314,7 @@ test("converged preparation reads only configuration paths explicitly referenced
     assert.deepEqual(report.binding_fragments.map((item) => item.path), [join(root, "bindings.search.json")]);
     const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
     const binding = manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
-    assert.equal(manifest.manifest_version, "touba-manifest-v2");
+    assert.equal(manifest.manifest_version, "touba-manifest-v1");
     assert.deepEqual(binding.grants, ["network"]);
     assert.equal(binding.handler.args[0], "custom/search.handler.mjs");
     assert.deepEqual(binding.effect_contract, { kind: "external_write", retry_mode: "reconcile" });
@@ -1286,76 +1329,21 @@ test("converged preparation reads only configuration paths explicitly referenced
   }
 });
 
-test("project artifact migration is explicit, non-destructive and refuses occupied targets", () => {
+test("old project layouts are refused without rewriting user files or exposing migration", async () => {
   const root = tempRoot();
   try {
-    writeJson(join(root, "touba.project.json"), {
-      project_version: "touba-project-v1",
-      language: "javascript",
-      sdk: "@touba/sdk",
-      run_profiles: {
-        dev: { require_supply_chain_lock: false },
-        prod: { require_supply_chain_lock: true, supply_chain_lock: "touba.lock.json" },
-      },
-    });
-    mkdirSync(join(root, ".touba/air"), { recursive: true });
-    writeJson(join(root, ".touba/air/legacy.air.json"), { legacy: true });
-
-    const plan = migrateProjectArtifacts({ root, mode: "plan" });
-    assert.equal(plan.status, "changes_required");
-    assert.deepEqual(plan.preserved, [".touba/air"]);
-    assert.equal(JSON.parse(readFileSync(join(root, "touba.project.json"), "utf8")).artifact_layout, undefined);
-
-    const check = migrateProjectArtifacts({ root, mode: "check" });
-    assert.equal(check.status, "error");
-    assert.equal(check.diagnostics[0].code, "ProjectArtifactMigrationRequired");
-
-    const written = migrateProjectArtifacts({ root, mode: "write" });
-    assert.equal(written.status, "success");
-    const migrated = JSON.parse(readFileSync(join(root, "touba.project.json"), "utf8"));
-    assert.equal(migrated.artifact_layout, "touba-artifacts-v1");
-    assert.equal(migrated.run_profiles.pure.require_supply_chain_lock, false);
-    assert.equal(existsSync(join(root, ".touba/air/legacy.air.json")), true);
-
-    delete migrated.artifact_layout;
-    writeJson(join(root, "touba.project.json"), migrated);
-    mkdirSync(join(root, ".touba/build/dev"), { recursive: true });
-    writeJson(join(root, ".touba/build/dev/touba.manifest.json"), { occupied: true });
-    const conflict = migrateProjectArtifacts({ root, mode: "write" });
-    assert.equal(conflict.status, "error");
-    assert.equal(conflict.diagnostics[0].code, "ProjectArtifactMigrationTargetOccupied");
-    assert.equal(JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8")).occupied, true);
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("CLI project migrate exposes the non-destructive migration report", () => {
-  const root = tempRoot();
-  try {
-    writeJson(join(root, "touba.project.json"), {
-      project_version: "touba-project-v1",
-      language: "javascript",
-      sdk: "@touba/sdk",
-      run_profiles: { dev: { require_supply_chain_lock: false } },
-    });
-    const result = spawnSync(process.execPath, [
-      cliPath,
-      "project",
-      "migrate",
-      "--root",
-      root,
-      "--mode",
-      "plan",
-      "--json",
-    ], { encoding: "utf8" });
-    assert.equal(result.status, 0, result.stderr);
-    const report = JSON.parse(result.stdout);
-    assert.equal(report.status, "changes_required");
-    assert.equal(report.target_artifact_layout, "touba-artifacts-v1");
-  } finally {
-    cleanup(root);
-  }
+    const config = { project_version: "touba-project-v1", language: "javascript", sdk: "@touba/sdk" };
+    const configPath = join(root, "touba.project.json");
+    writeJson(configPath, config);
+    const before = readFileSync(configPath, "utf8");
+    const report = await prepareProject({ root, mode: "write" });
+    assert.equal(report.status, "error");
+    assert.equal(report.diagnostics.some(item => item.code === "ProjectConfigInvalid" && /artifact_layout/.test(item.message)), true);
+    assert.equal(readFileSync(configPath, "utf8"), before);
+    const result = spawnSync(process.execPath, [cliPath, "project", "migrate", "--root", root], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.equal(readFileSync(configPath, "utf8"), before);
+  } finally { cleanup(root); }
 });
 
 test("project run resolution passes an explicit prepared run plan to the low-level runtime", async () => {
@@ -1423,9 +1411,9 @@ test("prepare run plan check reports missing, drift and sensitive payloads", asy
     assert.equal(report.diagnostics.some((item) => item.code === "RunPlanMissing"), true);
 
     writeJson(join(root, "touba.run-plan.json"), {
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:local.run/Run",
-      air: ".touba/air/local/run.air.json",
+      air: ".touba/build/dev/air/local/run.air.json",
       profile: "dev",
       outputs: {
         mode: "trace",
@@ -1441,9 +1429,9 @@ test("prepare run plan check reports missing, drift and sensitive payloads", asy
     assert.equal(report.diagnostics.some((item) => item.code === "RunPlanDrift"), true);
 
     writeJson(join(root, "touba.run-plan.json"), {
-      run_plan_schema_version: "touba-run-plan-v0.1",
+      run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:local.run/Run",
-      air: ".touba/air/local/run.air.json",
+      air: ".touba/build/dev/air/local/run.air.json",
       profile: "dev",
       inputs: {
         request: "forbidden",
@@ -1475,11 +1463,11 @@ test("prepare run plan includes manifest, secrets profile and required prod lock
       compileSource: () => airDocumentWithToolStrategy(),
     });
 
-    assert.equal(report.status, "success");
+    assert.equal(report.status, "needs_changes");
     const plan = JSON.parse(readFileSync(join(root, "touba.run-plan.json"), "utf8"));
     assert.equal(plan.entry_ref, "strategy:examples.data_app/RunSearch");
-    assert.equal(plan.air, ".touba/air/examples/data_app.air.json");
-    assert.equal(plan.manifest, "touba.manifest.json");
+    assert.equal(plan.air, ".touba/build/prod/air/examples/data_app.air.json");
+    assert.equal(plan.manifest, ".touba/build/prod/touba.manifest.json");
     assert.equal(plan.secrets_profile, "touba.secrets.prod.json");
     assert.equal(plan.profile, "prod");
     assert.equal(plan.supply_chain_lock, "touba.lock.json");
@@ -1583,7 +1571,7 @@ test("prepare ownership refuses absent ownership and authority-shaped fields", a
     assert.equal(report.diagnostics.some((item) => item.code === "OwnershipMissing"), true);
 
     writeJson(join(root, "touba.ownership.json"), {
-      ownership_schema_version: "touba-ownership-v0.1",
+      ownership_schema_version: "touba-ownership-v1",
       teams: {
         "team:security": {
           display_name: "Security",
@@ -1657,6 +1645,44 @@ test("CLI prepare accepts explicit ownership validation options", () => {
   }
 });
 
+test("real prepare resolves imported fields and signatures before expression typing", async () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    mkdirSync(join(root, "src/examples"), { recursive: true });
+    writeFileSync(join(root, "src/examples/common.tb"), 'module examples.common\ntype Request\n    query is Text\nfunction Normalize\n    takes query as Text\n    gives Text\n    do\n        give query ++ "!"\n');
+    writeFileSync(join(root, "src/examples/search.tb"), 'module examples.search\nimport type Request from examples.common\nimport function Normalize from examples.common\nfunction Label\n    takes request as Request\n    gives Text\n    do\n        Normalize\n            with query as request.query\n            into normalized\n        give normalized ++ " done"\n');
+    const report = await prepareProject({ root, mode: "write", entryRef: "function:examples.search/Label" });
+    assert.equal(report.status, "success", JSON.stringify(report.diagnostics));
+    const air = JSON.parse(readFileSync(join(root, ".touba/build/dev/air/examples/search.air.json"), "utf8"));
+    assert.ok(air.definitions.functions.some(f => f.id === "function:examples.common/Normalize"));
+    assert.ok(air.definitions.types.some(f => f.id === "type:examples.common/Request"));
+  } finally { cleanup(root); }
+});
+
+test("real prepare checks package signatures without granting private exports", async () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    writeLocalPackageFixture(root, { exports: { functions: ["function:org.example.research/Public"] } });
+    writeFileSync(join(root, "packages/research/src/org/example/research.tb"), 'module org.example.research\nfunction Public\n    gives Text\n    do\n        give "public"\nfunction Private\n    gives Text\n    do\n        give "private"\n');
+    const configPath = join(root, "touba.project.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.packages = [{ manifest: "packages/research/touba.package.json" }];
+    writeFileSync(configPath, JSON.stringify(config));
+    mkdirSync(join(root, "src/examples"), { recursive: true });
+    const sourcePath = join(root, "src/examples/search.tb");
+    const source = 'module examples.search\nimport function Public from org.example.research\nfunction Label\n    gives Text\n    do\n        Public\n            into value\n        give value ++ " done"\n';
+    writeFileSync(sourcePath, source);
+    let report = await prepareProject({ root, mode: "write", entryRef: "function:examples.search/Label" });
+    assert.equal(report.status, "success", JSON.stringify(report.diagnostics));
+    writeFileSync(sourcePath, source.replaceAll("Public", "Private"));
+    report = await prepareProject({ root, mode: "plan" });
+    assert.equal(report.status, "error");
+    assert.ok(report.diagnostics.some(d => d.code === "PackageExportMissing"), JSON.stringify(report.diagnostics));
+  } finally { cleanup(root); }
+});
+
 test("prepare write assembles IM-1 imports without creating a manifest for pure modules", async () => {
   const root = tempRoot();
   try {
@@ -1679,7 +1705,7 @@ test("prepare write assembles IM-1 imports without creating a manifest for pure 
     assert.equal(report.imports.length, 3);
     assert.equal(report.imports.some((item) => item.target_ref === "type:examples.common/SearchRequest"), true);
     assert.equal(existsSync(join(root, "touba.manifest.json")), false);
-    const assembledSearch = JSON.parse(readFileSync(join(root, ".touba/air/examples/search.air.json"), "utf8"));
+    const assembledSearch = JSON.parse(readFileSync(join(root, ".touba/build/dev/air/examples/search.air.json"), "utf8"));
     assert.equal(
       assembledSearch.definitions.types.some((item) => item.id === "type:examples.common/SearchRequest"),
       true,
@@ -1718,14 +1744,14 @@ test("prepare write assembles imported tools with declaring-module handler stubs
         : airDocumentImportToolResearchApp(),
     });
 
-    assert.equal(report.status, "success");
+    assert.equal(report.status, "needs_changes");
     assert.deepEqual(report.tools, ["tool:examples.data_tools/SearchDatasets"]);
     assert.equal(report.imports.some((item) => item.target_ref === "tool:examples.data_tools/SearchDatasets"), true);
 
-    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
     const binding = manifest.bindings["tool:examples.data_tools/SearchDatasets"];
-    assert.deepEqual(binding.grants, ["network", "secret_read"]);
-    assert.deepEqual(binding.secrets, ["DATA_API_TOKEN"]);
+    assert.deepEqual(binding.grants, []);
+    assert.deepEqual(binding.secrets, []);
     assert.deepEqual(binding.handler.args, ["handlers/examples/data_tools/search_datasets.handler.mjs"]);
 
     assert.equal(
@@ -1737,7 +1763,7 @@ test("prepare write assembles imported tools with declaring-module handler stubs
       false,
     );
 
-    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/air/examples/research_app.air.json"), "utf8"));
+    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/build/dev/air/examples/research_app.air.json"), "utf8"));
     assert.equal(
       assembledApp.definitions.tools.some((item) => item.id === "tool:examples.data_tools/SearchDatasets"),
       true,
@@ -1762,13 +1788,14 @@ test("prepare write assembles imported skills and strategies without creating ha
         : airDocumentImportFlowApp(),
     });
 
-    assert.equal(report.status, "success");
+    assert.equal(report.status, "needs_changes");
+    assert.equal(report.actions.some(item => item.kind === "select_entry"), true);
     assert.deepEqual(report.tools, []);
     assert.equal(report.imports.some((item) => item.target_ref === "skill:examples.shared_flow/NormalizeTopic"), true);
     assert.equal(report.imports.some((item) => item.target_ref === "strategy:examples.shared_flow/SharedTopicRun"), true);
     assert.equal(existsSync(join(root, "touba.manifest.json")), false);
 
-    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/air/examples/flow_app.air.json"), "utf8"));
+    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/build/dev/air/examples/flow_app.air.json"), "utf8"));
     assert.equal(
       assembledApp.definitions.skills.some((item) => item.id === "skill:examples.shared_flow/NormalizeTopic"),
       true,
@@ -1802,7 +1829,7 @@ test("prepare validates imported agent callable_by across modules", async () => 
     });
 
     assert.equal(report.status, "success");
-    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/air/examples/agent_app.air.json"), "utf8"));
+    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/build/dev/air/examples/agent_app.air.json"), "utf8"));
     assert.equal(
       assembledApp.definitions.agents.some((item) => item.id === "agent:examples.agent_pool/Reviewer"),
       true,
@@ -1851,9 +1878,9 @@ test("prepare assembles imported logical memory and refuses missing owner scope"
       },
     });
 
-    assert.equal(report.status, "success");
+    assert.equal(report.status, "needs_changes");
     assert.deepEqual(report.tools, ["tool:examples.memory_tools/ReadKnowledge"]);
-    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/air/examples/memory_app.air.json"), "utf8"));
+    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/build/dev/air/examples/memory_app.air.json"), "utf8"));
     assert.equal(
       assembledApp.definitions.memories.some((item) => item.id === "memory:examples.shared_memory/ProjectKnowledge"),
       true,
@@ -1901,7 +1928,7 @@ test("prepare validates RB-1 resource bindings for memory resources", async () =
       requireResourceBindings: true,
     });
 
-    assert.equal(report.status, "success");
+    assert.equal(report.status, "needs_changes");
     assert.equal(report.resource_bindings.length, 1);
   } finally {
     cleanup(root);
@@ -2040,6 +2067,7 @@ test("prepare assembles explicitly configured local package exports without pack
     writeFileSync(join(root, "src/examples/package_app.tb"), "module examples.package_app\n", "utf8");
     writeFileSync(join(root, "touba.project.json"), JSON.stringify({
       project_version: "touba-project-v1",
+      artifact_layout: "touba-artifacts-v1",
       language: "javascript",
       sdk: "@touba/sdk",
       packages: [
@@ -2065,20 +2093,20 @@ test("prepare assembles explicitly configured local package exports without pack
         : airDocumentPackageResearchApp(),
     });
 
-    assert.equal(report.status, "success");
+    assert.equal(report.status, "needs_changes");
     assert.equal(report.packages[0].name, "org.example.research");
     assert.deepEqual(report.packages[0].modules, ["org.example.research"]);
     assert.equal(report.imports.some((item) => item.target_ref === "tool:org.example.research/SearchDatasets"), true);
     assert.deepEqual(report.tools, ["tool:org.example.research/SearchDatasets"]);
 
-    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
     const binding = manifest.bindings["tool:org.example.research/SearchDatasets"];
-    assert.deepEqual(binding.grants, ["network"]);
+    assert.deepEqual(binding.grants, []);
     assert.deepEqual(binding.handler.args, ["handlers/org/example/research/search_datasets.handler.mjs"]);
     assert.equal(existsSync(join(root, "handlers/org/example/research/search_datasets.handler.mjs")), true);
     assert.equal(existsSync(join(root, ".touba/air/org/example/research.air.json")), false);
 
-    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/air/examples/package_app.air.json"), "utf8"));
+    const assembledApp = JSON.parse(readFileSync(join(root, ".touba/build/dev/air/examples/package_app.air.json"), "utf8"));
     assert.equal(
       assembledApp.definitions.tools.some((item) => item.id === "tool:org.example.research/SearchDatasets"),
       true,
@@ -2103,6 +2131,7 @@ test("prepare refuses package declarations that are not explicitly exported", as
     writeFileSync(join(root, "src/examples/package_app.tb"), "module examples.package_app\n", "utf8");
     writeFileSync(join(root, "touba.project.json"), JSON.stringify({
       project_version: "touba-project-v1",
+      artifact_layout: "touba-artifacts-v1",
       language: "javascript",
       sdk: "@touba/sdk",
       packages: [{ manifest: "packages/research/touba.package.json" }],
@@ -2148,6 +2177,7 @@ test("prepare reports local package export and compatibility diagnostics", async
     writeFileSync(join(root, "src/examples/package_app.tb"), "module examples.package_app\n", "utf8");
     writeFileSync(join(root, "touba.project.json"), JSON.stringify({
       project_version: "touba-project-v1",
+      artifact_layout: "touba-artifacts-v1",
       language: "javascript",
       sdk: "@touba/sdk",
       packages: [
@@ -2195,6 +2225,7 @@ test("prepare reports package exports that do not exist in package sources", asy
     writeFileSync(join(root, "src/examples/package_app.tb"), "module examples.package_app\n", "utf8");
     writeFileSync(join(root, "touba.project.json"), JSON.stringify({
       project_version: "touba-project-v1",
+      artifact_layout: "touba-artifacts-v1",
       language: "javascript",
       sdk: "@touba/sdk",
       packages: [{ manifest: "packages/research/touba.package.json" }],
@@ -2280,7 +2311,7 @@ test("prepare source compilation uses TOUBA_COMPILE_BIN before Cargo", async () 
     });
     assert.equal(report.status, "success");
     assert.deepEqual(report.modules, ["local.simple"]);
-    assert.equal(existsSync(join(root, ".touba/air/local/simple.air.json")), true);
+    assert.equal(existsSync(join(root, ".touba/build/dev/air/local/simple.air.json")), true);
   } finally {
     if (previousCompiler === undefined) {
       delete process.env.TOUBA_COMPILE_BIN;
@@ -2315,11 +2346,12 @@ test("prepare check reports manifest drift without adding grants silently", asyn
   const root = tempRoot();
   try {
     writeFileSync(join(root, "input.air.json"), JSON.stringify(airDocumentWithTool(), null, 2), "utf8");
-    writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
+    mkdirSync(join(root, ".touba/build/dev"), { recursive: true });
+    writeFileSync(join(root, ".touba/build/dev/touba.manifest.json"), JSON.stringify({
       manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:donnees_quebec.live_search/SearchDatasets": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "/usr/bin/node",
             args: ["handlers/donnees_quebec/live_search/search_datasets.handler.mjs"],
@@ -2339,7 +2371,7 @@ test("prepare check reports manifest drift without adding grants silently", asyn
     assert.equal(report.status, "error");
     assert.equal(report.diagnostics.some((item) => item.code === "ManifestGrantMissing"), true);
     assert.equal(report.diagnostics.some((item) => item.code === "ManifestSecretMissing"), true);
-    const manifest = JSON.parse(readFileSync(join(root, "touba.manifest.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.manifest.json"), "utf8"));
     assert.deepEqual(manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"].grants, []);
   } finally {
     cleanup(root);
@@ -2392,11 +2424,12 @@ test("prepare reports stale manifest bindings when no project tool remains", asy
   const root = tempRoot();
   try {
     writeFileSync(join(root, "input.air.json"), JSON.stringify(airDocumentWithoutTools(), null, 2), "utf8");
-    writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
+    mkdirSync(join(root, ".touba/build/dev"), { recursive: true });
+    writeFileSync(join(root, ".touba/build/dev/touba.manifest.json"), JSON.stringify({
       manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:local.simple/OldTool": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "/usr/bin/node",
             args: ["handlers/local/simple/old_tool.handler.mjs"],
@@ -2424,6 +2457,8 @@ test("CLI supports air-only prepare without scanning src", () => {
   const root = tempRoot();
   try {
     writeFileSync(join(root, "input.air.json"), JSON.stringify(airDocumentWithoutTools(), null, 2), "utf8");
+    const prepared = spawnSync(process.execPath, [cliPath, "prepare", "--root", root, "--air", "input.air.json", "--mode", "write"], { encoding: "utf8" });
+    assert.equal(prepared.status, 0, prepared.stderr);
     const result = spawnSync(process.execPath, [
       cliPath,
       "prepare",
@@ -2542,16 +2577,16 @@ test("CLI version reports public command and schema versions", () => {
   assert.equal(report.schemas.air, "touba-air-v1");
   assert.equal(report.schemas.trace, "touba-trace-v1");
   assert.equal(report.schemas.manifest, "touba-manifest-v1");
-  assert.equal(report.schemas.ownership, "touba-ownership-v0.1");
-  assert.equal(report.schemas.trace_audit, "trace-audit-v0.1");
-  assert.equal(report.schemas.trace_audit_validation, "trace-audit-validation-v0.1");
-  assert.equal(report.schemas.trace_audit_export, "trace-audit-export-v0.1-local");
-  assert.equal(report.schemas.supply_chain_lock, "touba-lock-v0.1");
-  assert.equal(report.schemas.supply_chain_validation, "touba-supply-chain-validation-v0.1");
-  assert.equal(report.features.run_profiles, "touba-run-profile-v0.1");
-  assert.equal(report.features.human_checkpoints, "touba-run-checkpoint-v0.1");
-  assert.equal(report.features.registry_static_resolve, "touba-static-registry-lock-v0.1");
-  assert.equal(report.features.project_refresh, "touba-project-refresh-v0.1");
+  assert.equal(report.schemas.ownership, "touba-ownership-v1");
+  assert.equal(report.schemas.trace_audit, "trace-audit-v1");
+  assert.equal(report.schemas.trace_audit_validation, "trace-audit-validation-v1");
+  assert.equal(report.schemas.trace_audit_export, "trace-audit-export-v1-local");
+  assert.equal(report.schemas.supply_chain_lock, "touba-lock-v1");
+  assert.equal(report.schemas.supply_chain_validation, "touba-supply-chain-validation-v1");
+  assert.equal(report.features.run_profiles, "touba-run-profile-v1");
+  assert.equal(report.features.human_checkpoints, "touba-human-approval-checkpoint-v1");
+  assert.equal(report.features.registry_static_resolve, "touba-static-registry-lock-v1");
+  assert.equal(report.features.project_refresh, "touba-project-refresh-v1");
   assert.equal(report.commands.run_profile, true);
   assert.equal(report.commands.refresh, true);
   assert.equal(report.commands.doctor, true);
@@ -2568,7 +2603,7 @@ test("CLI doctor reports installation health and public feature surface", () => 
   const result = spawnSync(process.execPath, [cliPath, "doctor", "--json"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
-  assert.equal(report.doctor_schema_version, "touba-doctor-v0.1");
+  assert.equal(report.doctor_schema_version, "touba-doctor-v1");
   assert.equal(report.status, "ok");
   assert.equal(report.version.cli, "0.1.0");
   assert.equal(report.version.commands.supply_chain_validate, true);
@@ -2595,7 +2630,7 @@ test("CLI update can render a machine-readable reinstall policy", () => {
   const result = spawnSync(process.execPath, [cliPath, "update", "--json"], { encoding: "utf8" });
   assert.equal(result.status, 1);
   const report = JSON.parse(result.stdout);
-  assert.equal(report.update_schema_version, "touba-update-policy-v0.1");
+  assert.equal(report.update_schema_version, "touba-update-policy-v1");
   assert.equal(report.status, "manual_reinstall_required");
   assert.equal(report.automatic_update, false);
   assert.equal(report.installed_version, "0.1.0");
@@ -2757,7 +2792,7 @@ test("CLI inspect delegates to Touba Inspect for AIR artifacts", () => {
     writeFileSync(airPath, JSON.stringify(airDocumentWithoutTools(), null, 2), "utf8");
     const result = spawnSync(process.execPath, [cliPath, "inspect", airPath], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /Touba Inspect touba-inspect-v0\.1/);
+    assert.match(result.stdout, /Touba Inspect touba-inspect-v1/);
     assert.match(result.stdout, /AIR touba-air-v1/);
   } finally {
     cleanup(root);
@@ -2793,8 +2828,11 @@ test("CLI audit delegates to Touba Audit for trace artifacts", () => {
     const tracePath = join(root, "run.trace.json");
     writeFileSync(tracePath, JSON.stringify({
       trace_protocol_version: "touba-trace-v1",
+      trace_capability_profile: "touba-trace-capabilities-v1",
       run: {
         run_id: "run-project-audit",
+        air_schema_version: "touba-air-v1",
+        air_digest: `sha256:${"0".repeat(64)}`, // Synthetic CLI routing fixture, no AIR identity assertion.
         module_ref: "module:examples.audit",
         entry_ref: "strategy:examples.audit/Run",
       },
@@ -2811,7 +2849,7 @@ test("CLI audit delegates to Touba Audit for trace artifacts", () => {
           run_id: "run-project-audit",
           sequence_index: 1,
           kind: "run_completed",
-          payload: { status: "success" },
+          payload: { status: "success", reason: "completed" },
         },
       ],
     }, null, 2), "utf8");
@@ -2849,7 +2887,7 @@ test("CLI supply-chain delegates to Touba Supply Chain validation", () => {
       manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:donnees_quebec.live_search/SearchDatasets": {
-          handler: {
+          effect_contract: { kind: "none" }, handler: {
             kind: "process",
             command: "node",
             cwd: ".",
@@ -2866,7 +2904,7 @@ test("CLI supply-chain delegates to Touba Supply Chain validation", () => {
     const handlerText = "export function run() { return { ok: true }; }\n";
     writeFileSync(handlerPath, handlerText, "utf8");
     writeJson(lockPath, {
-      lock_schema_version: "touba-lock-v0.1",
+      lock_schema_version: "touba-lock-v1",
       lock_kind: "supply_chain",
       generated_at: "2026-06-05T12:00:00Z",
       generated_by: {
@@ -2908,7 +2946,9 @@ test("CLI supply-chain delegates to Touba Supply Chain validation", () => {
             kind: "local",
             name: "donnees_quebec.live_search.handlers",
             version: "0.1.0",
+            package_root: ".",
             entrypoint: "handlers/search_datasets.handler.mjs",
+            files: [{ path: "handlers/search_datasets.handler.mjs", digest: { kind: "sha256", value: sha256(handlerText) } }],
           },
         },
       ],
@@ -2958,7 +2998,7 @@ test("CLI manifest and handler commands delegate to manifest tools", () => {
     const manifest = JSON.parse(manifestResult.stdout);
     const binding = manifest.bindings["tool:donnees_quebec.live_search/SearchDatasets"];
     assert.equal(binding.handler.command, "node");
-    assert.deepEqual(binding.grants, ["network"]);
+    assert.deepEqual(binding.grants, []);
 
     const stubResult = spawnSync(process.execPath, [
       cliPath,
@@ -2969,89 +3009,69 @@ test("CLI manifest and handler commands delegate to manifest tools", () => {
       "handlers",
     ], { cwd: root, encoding: "utf8" });
     assert.equal(stubResult.status, 0, stubResult.stderr);
-    assert.equal(existsSync(join(root, "handlers/search_datasets.handler.mjs")), true);
+    assert.equal(existsSync(join(root, "handlers/donnees_quebec/live_search/search_datasets.handler.mjs")), true);
   } finally {
     cleanup(root);
   }
 });
 
-test("CLI run delegates to the runtime", () => {
-  const result = spawnSync(process.execPath, [
-    cliPath,
-    "run",
-    linearAirFixture,
-    "--inputs-json",
-    JSON.stringify({ request: { topic: "project-cli" } }),
-    "--local-fetch-source-text",
-    "project CLI source",
-    "--output",
-    "trace",
-  ], { encoding: "utf8" });
-  assert.equal(result.status, 0, result.stderr);
-  const trace = JSON.parse(result.stdout);
-  assert.equal(trace.trace_protocol_version, "touba-trace-v1");
-  assert.equal(trace.events.at(-1).payload.status, "success");
+function processRunFixture(root) {
+  const airPath = join(root, "linear.air.json");
+  writeFileSync(airPath, readFileSync(linearAirFixture));
+  const handlerPath = join(root, "read.handler.mjs");
+  writeFileSync(handlerPath, "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ok:true,value:{content:'project CLI source'}})));\n");
+  const manifest = join(root, "touba.manifest.json");
+  writeJson(manifest, { manifest_version: "touba-manifest-v1", bindings: {
+    "tool:examples.linear_skill/FetchSource": {
+      effect_contract: { kind: "none" }, grants: ["network"],
+      handler: { kind: "process", command: process.execPath, args: ["read.handler.mjs"], cwd: "." },
+      timeout_ms: 5000, max_payload_bytes: 65536,
+    },
+  }});
+  const lockPath = join(root, "touba.lock.json");
+  writeJson(join(root, "package.json"), { name: "project-cli-test", version: "0.1.0" });
+  generateSupplyChainLock({ air: airPath, manifest, out: lockPath, sdkMetadataJson: JSON.stringify({
+    name: "@touba/sdk", version: "0.1.0", protocol: "touba-tool-handler-v1", status: "ok",
+  }) });
+  // Test-host review is explicit and separate from lock generation.
+  const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+  lock.review = { status: "approved", reviewed_at: "2026-10-15T12:00:00Z", reviewers: [{ kind: "human", id: "fixture:reviewer" }] };
+  writeJson(lockPath, lock);
+  return { airPath, manifest, handlerPath };
+}
+
+test("CLI run delegates to the runtime with a process handler", () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    const fixture = processRunFixture(root);
+    const result = spawnSync(process.execPath, [cliPath, "run", fixture.airPath,
+      "--manifest", fixture.manifest, "--inputs-json", JSON.stringify({ request: { topic: "project-cli" } }),
+      "--output", "trace"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    const trace = JSON.parse(result.stdout);
+    assert.equal(trace.trace_protocol_version, "touba-trace-v1");
+    assert.equal(trace.events.at(-1).payload.status, "success");
+  } finally { cleanup(root); }
 });
 
 test("CLI run applies project dev and prod supply-chain profiles", () => {
   const root = tempRoot();
   try {
     initProject({ root });
-    const devResult = spawnSync(process.execPath, [
-      cliPath,
-      "run",
-      linearAirFixture,
-      "--profile",
-      "dev",
-      "--inputs-json",
-      JSON.stringify({ request: { topic: "profile-dev" } }),
-      "--local-fetch-source-text",
-      "profile dev source",
-      "--output",
-      "trace",
-    ], { cwd: root, encoding: "utf8" });
-    assert.equal(devResult.status, 0, devResult.stderr);
-
-    const airText = readFileSync(linearAirFixture, "utf8");
-    writeJson(join(root, "touba.lock.json"), {
-      lock_schema_version: "touba-lock-v0.1",
-      lock_kind: "supply_chain",
-      generated_at: "2026-06-05T12:00:00Z",
-      generated_by: {
-        tool: "touba test",
-        version: "0.1.0",
-      },
-      air: {
-        path: "linear.air.json",
-        digest: {
-          kind: "sha256",
-          value: sha256(airText),
-        },
-      },
-      handlers: [],
-    });
-
-    const prodResult = spawnSync(process.execPath, [
-      cliPath,
-      "run",
-      linearAirFixture,
-      "--profile=prod",
-      "--inputs-json",
-      JSON.stringify({ request: { topic: "profile-prod" } }),
-      "--local-fetch-source-text",
-      "profile prod source",
-      "--output",
-      "trace",
-    ], { cwd: root, encoding: "utf8" });
-    assert.equal(prodResult.status, 0, prodResult.stderr);
-    const trace = JSON.parse(prodResult.stdout);
-    assert.equal(trace.events.at(-1).payload.status, "success");
-  } finally {
-    cleanup(root);
-  }
+    const fixture = processRunFixture(root);
+    for (const profile of ["dev", "prod"]) {
+      const result = spawnSync(process.execPath, [cliPath, "run", fixture.airPath,
+        "--manifest", fixture.manifest, "--profile", profile,
+        "--inputs-json", JSON.stringify({ request: { topic: "profile-" + profile } }),
+        "--output", "trace"], { cwd: root, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).events.at(-1).payload.status, "success");
+    }
+  } finally { cleanup(root); }
 });
 
-test("CLI run prod profile adds direct catalog provider mode by default", () => {
+test("CLI run prod profile preserves orientation instead of forcing an operation", () => {
   const root = tempRoot();
   try {
     initProject({ root });
@@ -3064,7 +3084,7 @@ test("CLI run prod profile adds direct catalog provider mode by default", () => 
     ], { root });
 
     assert.equal(args.includes("--require-supply-chain-lock"), true);
-    assert.deepEqual(args.slice(-2), ["--agent-decision-provider-initial-mode", "capabilities"]);
+    assert.equal(args.includes("--agent-decision-provider-initial-mode"), false);
   } finally {
     cleanup(root);
   }
@@ -3094,44 +3114,16 @@ test("CLI run prod profile refuses before runtime when project lock drifts", () 
   const root = tempRoot();
   try {
     initProject({ root });
-    writeJson(join(root, "touba.lock.json"), {
-      lock_schema_version: "touba-lock-v0.1",
-      lock_kind: "supply_chain",
-      generated_at: "2026-06-05T12:00:00Z",
-      generated_by: {
-        tool: "touba test",
-        version: "0.1.0",
-      },
-      air: {
-        path: "linear.air.json",
-        digest: {
-          kind: "sha256",
-          value: "0".repeat(64),
-        },
-      },
-      handlers: [],
-    });
-
-    const result = spawnSync(process.execPath, [
-      cliPath,
-      "run",
-      linearAirFixture,
-      "--profile",
-      "prod",
-      "--inputs-json",
-      JSON.stringify({ request: { topic: "profile-prod-drift" } }),
-      "--local-fetch-source-text",
-      "should not matter",
-      "--output",
-      "trace",
-    ], { cwd: root, encoding: "utf8" });
-
-    assert.equal(result.status, 1);
+    const fixture = processRunFixture(root);
+    const air = JSON.parse(readFileSync(fixture.airPath, "utf8"));
+    air.module.name = "changed";
+    writeJson(fixture.airPath, air);
+    const result = spawnSync(process.execPath, [cliPath, "run", fixture.airPath,
+      "--manifest", fixture.manifest, "--profile", "prod", "--output", "trace"], { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /SupplyChainLockInvalid/);
     assert.match(result.stderr, /AirChanged|SupplyChainDigestMismatch/);
-  } finally {
-    cleanup(root);
-  }
+  } finally { cleanup(root); }
 });
 
 test("CLI run profile requires an explicit project config", () => {
@@ -3143,8 +3135,6 @@ test("CLI run profile requires an explicit project config", () => {
       linearAirFixture,
       "--profile",
       "prod",
-      "--local-fetch-source-text",
-      "source",
     ], { cwd: root, encoding: "utf8" });
 
     assert.equal(result.status, 2);
@@ -4219,14 +4209,14 @@ function airDocumentWithoutTools() {
 
 function bindingFragmentDocument(options = {}) {
   return {
-    fragment_schema_version: "touba-binding-fragment-v0.1",
+    fragment_schema_version: "touba-binding-fragment-v1",
     source: {
       kind: "module",
       module: "donnees_quebec.live_search",
     },
     bindings: {
       "tool:donnees_quebec.live_search/SearchDatasets": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: "node",
           args: ["handlers/donnees_quebec/live_search/search_datasets.handler.mjs"],
@@ -4245,7 +4235,7 @@ function bindingFragmentDocument(options = {}) {
 
 function resourceBindingsDocument(options = {}) {
   return {
-    resource_bindings_schema_version: "touba-resource-bindings-v0.1",
+    resource_bindings_schema_version: "touba-resource-bindings-v1",
     resources: {
       "memory:examples.memory/Notes": {
         kind: "memory_backend",
@@ -4264,7 +4254,7 @@ function resourceBindingsDocument(options = {}) {
 
 function ownershipDocument(options = {}) {
   return {
-    ownership_schema_version: "touba-ownership-v0.1",
+    ownership_schema_version: "touba-ownership-v1",
     teams: {
       "team:platform": {
         display_name: "Platform",
@@ -4413,7 +4403,7 @@ function writeLocalPackageFixture(root, options = {}) {
 
 function packageManifestDocument(options = {}) {
   return {
-    package_schema_version: "touba-package-v0.1",
+    package_schema_version: "touba-package-v1",
     name: "org.example.research",
     version: "0.1.0",
     root: ".",

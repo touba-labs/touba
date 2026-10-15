@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:c1c705acbfbf5756a7b6aa83b9a357d44a5aab496c0aba1019b490759384c66d",
     "module_ref": "module:test",
     "entry_ref": "strategy:test/RunBuild"
   },
@@ -114,7 +115,8 @@
       "sequence_index": 5,
       "kind": "run_completed",
       "payload": {
-        "status": "failure"
+        "status": "failure",
+        "reason": "UnauthorizedAgentInvocation"
       }
     }
   ]

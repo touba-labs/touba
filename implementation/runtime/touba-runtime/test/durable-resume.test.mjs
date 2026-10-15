@@ -71,7 +71,9 @@ test("refuses non-empty runtime inputs before the first checkpoint or handler", 
     const rawInput = "raw prompt with bearer-token-never-persisted";
     const journal = journalAdapter();
     let observerCalls = 0;
-    const result = await executeAirDocument(effectDocument(), {
+    const document = effectDocument();
+    document.definitions.skills[0].signature.inputs = [{ name: "prompt", type_ref: "builtin:Text" }];
+    const result = await executeAirDocument(document, {
       ...durableOptions({
         manifest: effectManifest(successHandlerScript(callsPath)),
         journal,
@@ -1017,12 +1019,12 @@ test("refuses a removed or changed consumed human decision as current authority"
   }
 });
 
-test("refuses unsupported closure and manifest V1 before any handler", async () => {
+test("refuses unsupported closure and missing bindings before any handler", async () => {
   const branched = effectDocument();
   branched.execution_graphs[0].edges.push({ from_node_id: "call", to_node_id: "give", role: "next" });
   for (const [document, manifest] of [
     [branched, effectManifest(successHandlerScript())],
-    [effectDocument(), legacyManifest(successHandlerScript())],
+    [effectDocument(), emptyEffectManifest()],
   ]) {
     const result = await executeAirDocument(document, durableOptions({
       manifest,
@@ -1526,7 +1528,7 @@ test("rejects altered, legacy, and unknown checkpoint envelopes before execution
     );
   }
   for (const [checkpoint, code] of [
-    [{ checkpoint_schema_version: "touba-run-checkpoint-v0.1" }, "DurableResumeCheckpointMigrationRequired"],
+    [{ checkpoint_schema_version: "touba-human-approval-checkpoint-v1" }, "DurableResumeCheckpointMigrationRequired"],
     [{ checkpoint_schema_version: "future-checkpoint" }, "DurableResumeCheckpointInvalid"],
   ]) {
     await assert.rejects(
@@ -1747,7 +1749,7 @@ function effectManifest(script, {
   secrets = [],
 } = {}) {
   return loadToolBindingManifestFromJson(JSON.stringify({
-    manifest_version: "touba-manifest-v2",
+    manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:test/Create": {
         handler: { kind: "process", command: process.execPath, args: ["-e", script] },
@@ -1765,23 +1767,8 @@ function effectManifest(script, {
 
 function emptyEffectManifest() {
   return loadToolBindingManifestFromJson(JSON.stringify({
-    manifest_version: "touba-manifest-v2",
-    bindings: {},
-  }));
-}
-
-function legacyManifest(script) {
-  return loadToolBindingManifestFromJson(JSON.stringify({
     manifest_version: "touba-manifest-v1",
-    bindings: {
-      "tool:test/Create": {
-        handler: { kind: "process", command: process.execPath, args: ["-e", script] },
-        grants: [],
-        secrets: [],
-        timeout_ms: 250,
-        max_payload_bytes: 16384,
-      },
-    },
+    bindings: {},
   }));
 }
 

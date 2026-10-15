@@ -1,5 +1,5 @@
 {
-  "package_schema_version": "touba-package-v0.1",
+  "package_schema_version": "touba-package-v1",
   "name": "org.example.research",
   "version": "0.1.0",
   "root": ".",

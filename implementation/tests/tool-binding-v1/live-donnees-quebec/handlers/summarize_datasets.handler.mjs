@@ -58,7 +58,7 @@ async function summarizeWithOpenAI(search, apiKey) {
   const body = {
     model: search.llm_model,
     instructions: [
-      "You are a summarization assistant for a Touba test.",
+      "Summarize the supplied public dataset search results.",
       "Answer in one short French sentence.",
       "Do not invent data that is absent from the payload.",
     ].join(" "),
@@ -97,6 +97,9 @@ async function summarizeWithOpenAI(search, apiKey) {
     throw new ToubaHandlerError("OpenAIInvalidJson", `OpenAI returned invalid JSON: ${error.message}`);
   }
 
+  if (payload.status !== "completed" || payload.error != null || payload.incomplete_details != null) {
+    throw new ToubaHandlerError("OpenAIIncompleteOutput", "OpenAI did not complete the summary");
+  }
   const outputText = extractOutputText(payload).trim();
   if (outputText === "") {
     throw new ToubaHandlerError("OpenAIEmptyOutput", "OpenAI response did not contain output text");

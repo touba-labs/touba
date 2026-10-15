@@ -1,6 +1,7 @@
 import {
   ToubaHandlerError,
   defineTool,
+  createToolResult,
 } from "@touba/sdk";
 
 const TOOL_REF = "tool:examples.memory_backend_host/WriteMemoryNote";
@@ -14,6 +15,7 @@ await defineTool({
   inputSignature: [{ name: "request", type_ref: "type:examples.memory_backend_host/MemoryRequest" }],
   outputType: "type:examples.memory_backend_host/MemoryResult",
   run: async ({ request, context }) => {
+    if (!context.effect) throw new ToubaHandlerError("EffectContextRequired", "memory writes require a governed effect");
     const binding = memoryBinding(context);
     const endpointUrl = endpointFromBinding(binding);
     const response = await fetch(`${endpointUrl}/notes/${encodeURIComponent(request.customer_id)}`, {
@@ -30,7 +32,7 @@ await defineTool({
     }
 
     const body = await response.json();
-    return normalizeResult(body);
+    return createToolResult(normalizeResult(body), { effectReceipt: context.createEffectReceipt({ outcome: "applied" }) });
   },
 });
 

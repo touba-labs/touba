@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:60eecdffbe46ee3035fbea0b1ea0e4e281b5943f8ab8099b1ec938c5d4a161a8",
     "module_ref": "module:test",
     "entry_ref": "skill:test/TwoTools"
   },
@@ -144,7 +145,8 @@
       "sequence_index": 8,
       "kind": "run_completed",
       "payload": {
-        "status": "cancelled"
+        "status": "cancelled",
+        "reason": "timeout"
       }
     }
   ]

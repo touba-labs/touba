@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-interaction-asset-v1.schema.json",
+  "title": "touba-interaction-asset-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "handle", "name", "media_type", "content_kind", "size_bytes", "digest", "created_at"],
+  "properties": {
+    "schema_version": { "const": "touba-interaction-asset-v1" },
+    "handle": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "media_type": { "type": "string", "minLength": 1 },
+    "content_kind": { "enum": ["audio", "document", "file", "image"] },
+    "size_bytes": { "type": "integer" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "created_at": { "type": "string", "minLength": 1 }
+  }
+}

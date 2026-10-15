@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-event-stream-v1.schema.json",
+  "title": "touba-project-event-stream-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "endpoint", "transport", "event_schema_version", "replay"],
+  "properties": {
+    "schema_version": { "const": "touba-project-event-stream-v1" },
+    "endpoint": { "type": "string" },
+    "transport": { "enum": ["server_sent_events"] },
+    "event_schema_version": { "const": "touba-project-event-v1" },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_header", "event_id_field", "retention"],
+      "properties": {
+        "request_header": { "const": "Last-Event-ID" },
+        "event_id_field": { "const": "event_id" },
+        "retention": { "const": "bounded_journal" }
+      }
+    }
+  }
+}

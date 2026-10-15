@@ -7,9 +7,9 @@ import {
 import { join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const RELEASE_VERSIONING_SCHEMA_VERSION = "touba-release-versioning-report-v0.1";
+export const RELEASE_VERSIONING_SCHEMA_VERSION = "touba-release-versioning-report-v1";
 
-const RELEASE_INDEX_SCHEMA_VERSION = "touba-release-index-v0.1";
+const RELEASE_INDEX_SCHEMA_VERSION = "touba-release-index-v1";
 const RELEASE_STATUSES = new Set(["planned", "candidate", "published", "retired", "yanked"]);
 const CHANNELS = new Set(["github_release", "touba_hub"]);
 const PUBLIC_PLATFORMS = Object.freeze(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]);
@@ -262,6 +262,9 @@ function validateExpectedVersion({ expectedVersion, rootPackage, releaseIndex, d
 
 function validatePackageVersions({ packageVersions, currentVersion, diagnostics }) {
   for (const item of packageVersions) {
+    // This standalone package is released independently of the CLI workspace.
+    // Its version still passes the semver validation in collectPackageVersions.
+    if (item.relative_path === "contracts/package.json" && item.name === "@touba/machine-conformance") continue;
     if (item.version !== currentVersion) {
       diagnostics.push(error("PackageVersionMismatch", `${item.relative_path} version ${item.version} must match ${currentVersion}`, item.relative_path));
     }
@@ -287,10 +290,13 @@ function validateWorkflow({ repoRoot, diagnostics }) {
     return;
   }
   const source = readFileSync(releaseWorkflow, "utf8");
-  for (const term of ["workflow_dispatch", "gh release", "assemble-release-assets", "package:release --public"]) {
+  for (const term of ["workflow_dispatch", "gh release", "assemble-release-assets", "package:release --public", "GITHUB_REF_TYPE", "refs/tags/", "--verify-tag", "--draft", "Release already exists"]) {
     if (!source.includes(term)) {
       diagnostics.push(error("ReleaseWorkflowIncomplete", `.github/workflows/release.yml must include ${term}`, ".github/workflows/release.yml"));
     }
+  }
+  if (source.includes("--clobber") || /gh\s+release\s+upload/.test(source)) {
+    diagnostics.push(error("MutableReleaseWorkflow", "Release workflow must never replace existing assets", ".github/workflows/release.yml"));
   }
 }
 

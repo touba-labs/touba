@@ -75,7 +75,7 @@ const contractsRoot = new URL("../../../contracts/product-surfaces/", import.met
 test("contract index lists product-surface contracts without filesystem paths", () => {
   const index = buildContractIndex({ contractsRoot, generatedAt: "2026-06-22T00:00:00Z" });
 
-  assert.equal(index.schema_version, "touba-project-server-contract-index-v0.1");
+  assert.equal(index.schema_version, "touba-project-server-contract-index-v1");
   assert.equal(index.contracts.some((item) => item.schema_version === "touba-run-summary-v1"), true);
   assert.equal(index.contracts.every((item) => item.status === "available"), true);
   assert.equal(JSON.stringify(index).includes(contractsRoot), false);
@@ -92,7 +92,7 @@ test("element authoring preview renders and validates changes without mutating t
       projectRoot: root,
       generatedAt: "2026-09-22T20:00:00.000Z",
       request: {
-        schema_version: "touba-element-authoring-request-v0.1",
+        schema_version: "touba-element-authoring-request-v1",
         proposal_id: "preview_memory_001",
         module_ref: "demo.preview",
         element: { kind: "memory", name: "ReviewMemory", description: "" },
@@ -100,7 +100,7 @@ test("element authoring preview renders and validates changes without mutating t
         reason: "Preview a governed memory.",
       },
     });
-    assertMatchesSchema("touba-element-authoring-preview-v0.1", preview);
+    assertMatchesSchema("touba-element-authoring-preview-v1", preview);
     assert.equal(preview.impact.file_count, 1);
     assert.equal(preview.impact.update_count, 1);
     assert.match(preview.changes[0].diff, /\+memory ReviewMemory/u);
@@ -113,7 +113,7 @@ test("element authoring preview renders and validates changes without mutating t
 
 test("project server contracts keep product presentation outside the Touba project", () => {
   const inputPresentationSchema = new URL(
-    "../../../contracts/product-surfaces/schemas/touba-input-presentation-v0.1.schema.json",
+    "../../../contracts/product-surfaces/schemas/touba-input-presentation-v1.schema.json",
     import.meta.url,
   );
   const interactionContracts = readFileSync(
@@ -146,7 +146,7 @@ test("preflight rejects invalid contracts root and decision store path", () => {
   );
 });
 
-test("project server migrates the legacy client change store without replay", async () => {
+test("project server ignores obsolete client change stores without modifying them", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-change-migration-"));
   const dataRoot = join(root, ".touba");
   mkdirSync(dataRoot, { recursive: true });
@@ -167,14 +167,10 @@ test("project server migrates the legacy client change store without replay", as
   });
   try {
     await service.start();
-    const migrated = JSON.parse(readFileSync(currentPath, "utf8"));
-    assert.equal(migrated.schema_version, "touba-project-change-proposals-v0.1");
-    assert.deepEqual(migrated.proposals, [{
-      proposal_id: "legacy-proposal",
-      status: "applied",
-    }]);
-    assert.equal(existsSync(`${legacyPath}.migrated`), true);
-    assert.equal(existsSync(legacyPath), false);
+    assert.equal(existsSync(currentPath), false);
+    assert.equal(existsSync(legacyPath), true);
+    assert.equal(existsSync(legacyPath + ".migrated"), false);
+    assert.equal(JSON.parse(readFileSync(legacyPath, "utf8")).proposals[0].proposal_id, "legacy-proposal");
   } finally {
     await service.stop();
     rmSync(root, { recursive: true, force: true });
@@ -363,7 +359,7 @@ test("HTTP project server enforces human sessions and permissions", async () => 
         "x-touba-identity-token": "viewer-token",
       },
       body: JSON.stringify({
-        schema_version: "touba-project-refresh-request-v0.1",
+        schema_version: "touba-project-refresh-request-v1",
         reason: "identity-test",
         requested_by: { kind: "studio", id: "identity-test" },
       }),
@@ -378,7 +374,7 @@ test("HTTP project server enforces human sessions and permissions", async () => 
         "x-touba-identity-token": "operator-token",
       },
       body: JSON.stringify({
-        schema_version: "touba-project-refresh-request-v0.1",
+        schema_version: "touba-project-refresh-request-v1",
         reason: "identity-test",
         requested_by: { kind: "studio", id: "identity-test" },
       }),
@@ -392,7 +388,7 @@ test("HTTP project server enforces human sessions and permissions", async () => 
         "x-touba-identity-token": "governor-token",
       },
       body: JSON.stringify({
-        schema_version: "touba-project-change-proposal-v0.1",
+        schema_version: "touba-project-change-proposal-v1",
         proposal_id: "identity_actor_binding",
         action: "write_text_file",
         target: { path: "src/identity-note.tb" },
@@ -416,26 +412,26 @@ test("HTTP project server enforces human sessions and permissions", async () => 
 test("live state composes project, run, trigger, decision and event surfaces", () => {
   const state = buildLiveState({ contractsRoot, generatedAt: "2026-06-22T00:00:00Z" });
 
-  assert.equal(state.schema_version, "touba-project-live-state-v0.1");
+  assert.equal(state.schema_version, "touba-project-live-state-v1");
   assert.equal(state.project.schema_version, "touba-project-inspection-v1");
-  assert.equal(state.authority_graph.schema_version, "touba-authority-graph-v0.1");
-  assert.equal(state.identity.schema_version, "touba-product-identity-v0.1");
+  assert.equal(state.authority_graph.schema_version, "touba-authority-graph-v1");
+  assert.equal(state.identity.schema_version, "touba-product-identity-v1");
   assert.equal(state.current_run.schema_version, "touba-run-summary-v1");
-  assert.equal(state.trigger_queue_health.schema_version, "touba-trigger-queue-health-v0.1");
-  assert.equal(state.supply_chain_status.schema_version, "touba-supply-chain-status-v0.1");
-  assert.equal(state.governance_readiness.schema_version, "touba-governance-readiness-v0.1");
-  assert.equal(state.cost_observatory.schema_version, "touba-cost-observatory-v0.1");
-  assert.equal(state.handler_sandbox_status.schema_version, "touba-handler-sandbox-status-v0.1");
-  assert.equal(state.mobile_notifications.schema_version, "touba-mobile-notification-v0.1");
-  assert.equal(state.mobile_quick_approval_policy.schema_version, "touba-mobile-quick-approval-policy-v0.1");
-  assert.equal(state.mobile_escalation.schema_version, "touba-mobile-escalation-v0.1");
+  assert.equal(state.trigger_queue_health.schema_version, "touba-trigger-queue-health-v1");
+  assert.equal(state.supply_chain_status.schema_version, "touba-supply-chain-status-v1");
+  assert.equal(state.governance_readiness.schema_version, "touba-governance-readiness-v1");
+  assert.equal(state.cost_observatory.schema_version, "touba-cost-observatory-v1");
+  assert.equal(state.handler_sandbox_status.schema_version, "touba-handler-sandbox-status-v1");
+  assert.equal(state.mobile_notifications.schema_version, "touba-mobile-notification-v1");
+  assert.equal(state.mobile_quick_approval_policy.schema_version, "touba-mobile-quick-approval-policy-v1");
+  assert.equal(state.mobile_escalation.schema_version, "touba-mobile-escalation-v1");
   assert.equal(state.pending_approval, null);
   assert.equal(state.pending_review, null);
   assert.equal(state.featured_resource, null);
   assert.equal(state.alert, null);
   assert.equal(state.events.transport, "server_sent_events");
-  assert.equal(state.events.event_schema_version, "touba-project-event-v0.1");
-  assert.equal(state.project_server.refresh.schema_version, "touba-project-refresh-v0.1");
+  assert.equal(state.events.event_schema_version, "touba-project-event-v1");
+  assert.equal(state.project_server.refresh.schema_version, "touba-project-refresh-v1");
 });
 
 test("project events use a stable envelope contract", () => {
@@ -444,15 +440,15 @@ test("project events use a stable envelope contract", () => {
     sequence: 7,
     emittedAt: "2026-06-23T00:00:00.000Z",
     payload: {
-      schema_version: "touba-project-refresh-v0.1",
+      schema_version: "touba-project-refresh-v1",
       status: "refreshed",
     },
   });
 
-  assert.equal(event.schema_version, "touba-project-event-v0.1");
+  assert.equal(event.schema_version, "touba-project-event-v1");
   assert.equal(event.event_id, "evt_000007");
   assert.equal(event.sequence, 7);
-  assertMatchesSchema("touba-project-event-v0.1", event);
+  assertMatchesSchema("touba-project-event-v1", event);
 });
 
 test("event journal keeps a bounded replay window", () => {
@@ -602,8 +598,8 @@ test("authority graph extracts source, AIR and manifest authority", () => {
       projectRoot: root,
       generatedAt: "2026-06-23T00:00:00.000Z",
     });
-    assertMatchesSchema("touba-authority-graph-v0.1", graph);
-    assert.equal(graph.schema_version, "touba-authority-graph-v0.1");
+    assertMatchesSchema("touba-authority-graph-v1", graph);
+    assert.equal(graph.schema_version, "touba-authority-graph-v1");
     assert.equal(graph.nodes.some((node) => node.ref === "agent:examples.strategy_agents/Reviewer"), true);
     assert.equal(graph.nodes.some((node) => node.ref === "memory:demo.authority/ProjectKnowledge"), true);
     assert.equal(graph.nodes.some((node) => node.ref === "trigger:demo.authority/ReviewWebhook"), true);
@@ -661,7 +657,7 @@ test("authority graph ignores legacy client governance overlays", () => {
     ), true);
 
     writeFileSync(join(root, "touba.governance-actions.json"), JSON.stringify({
-      governance_action_schema_version: "touba-governance-action-v0.1",
+      governance_action_schema_version: "touba-governance-action-v1",
       action_id: "studio-governance-revoke-read",
       operation: "revoke_authority",
       relation: {
@@ -688,7 +684,7 @@ test("authority graph ignores legacy client governance overlays", () => {
     ), true);
 
     writeFileSync(join(root, "touba.governance-actions.json"), JSON.stringify({
-      governance_action_schema_version: "touba-governance-action-v0.1",
+      governance_action_schema_version: "touba-governance-action-v1",
       action_id: "studio-governance-grant-payment",
       operation: "grant_authority",
       relation: {
@@ -780,7 +776,7 @@ test("operational project surfaces report supply chain, governance readiness and
       },
     }, null, 2), "utf8");
     writeFileSync(join(root, "touba.lock.json"), JSON.stringify({
-      lock_schema_version: "touba-lock-v0.1",
+      lock_schema_version: "touba-lock-v1",
       handlers: [
         {
           tool_ref: "tool:demo.governance/ReadInvoice",
@@ -803,14 +799,14 @@ test("operational project surfaces report supply chain, governance readiness and
     }, null, 2), "utf8");
     writeFileSync(
       join(root, ".touba", "product-identity.json"),
-      JSON.stringify(readJson("fixtures/valid/touba-product-identity-v0.1.json")),
+      JSON.stringify(readJson("fixtures/valid/touba-product-identity-v1.json")),
       "utf8",
     );
     writeFileSync(join(root, ".touba", "project-change-proposals.json"), JSON.stringify({
-      schema_version: "touba-project-change-proposals-v0.1",
+      schema_version: "touba-project-change-proposals-v1",
       proposals: [
         {
-          schema_version: "touba-project-change-proposal-v0.1",
+          schema_version: "touba-project-change-proposal-v1",
           proposal_id: "change_ops_1",
           status: "proposed",
           action: "write_text_file",
@@ -856,7 +852,7 @@ test("operational project surfaces report supply chain, governance readiness and
       projectRoot: root,
       generatedAt: "2026-06-23T00:00:02.000Z",
     });
-    assertMatchesSchema("touba-supply-chain-status-v0.1", supplyChain);
+    assertMatchesSchema("touba-supply-chain-status-v1", supplyChain);
     assert.equal(supplyChain.entries.find((entry) => entry.ref === "tool:demo.governance/ReadInvoice").status, "ok");
 
     const readiness = buildGovernanceReadiness({
@@ -866,7 +862,7 @@ test("operational project surfaces report supply chain, governance readiness and
       changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
       generatedAt: "2026-06-23T00:00:02.000Z",
     });
-    assertMatchesSchema("touba-governance-readiness-v0.1", readiness);
+    assertMatchesSchema("touba-governance-readiness-v1", readiness);
     assert.equal(readiness.artifacts.some((artifact) => artifact.kind === "trigger"), true);
     assert.equal(readiness.summary.pending_review > 0, true);
 
@@ -877,7 +873,7 @@ test("operational project surfaces report supply chain, governance readiness and
       eventJournalPath: join(root, ".touba", "project-events.jsonl"),
       generatedAt: "2026-06-23T00:00:02.000Z",
     });
-    assertMatchesSchema("touba-trigger-queue-health-v0.1", queueHealth);
+    assertMatchesSchema("touba-trigger-queue-health-v1", queueHealth);
     assert.equal(queueHealth.triggers[0].status, "watch");
     assert.equal(queueHealth.triggers[0].replay_rejected, 1);
 
@@ -887,7 +883,7 @@ test("operational project surfaces report supply chain, governance readiness and
       platform: "darwin",
       generatedAt: "2026-06-23T00:00:02.000Z",
     });
-    assertMatchesSchema("touba-handler-sandbox-status-v0.1", sandbox);
+    assertMatchesSchema("touba-handler-sandbox-status-v1", sandbox);
     assert.equal(sandbox.handlers[0].tool_ref, "tool:demo.governance/ReadInvoice");
     assert.equal(sandbox.handlers[0].status, "isolated");
     assert.equal(sandbox.handlers[0].mechanism, "sandbox-exec");
@@ -901,12 +897,12 @@ test("product identity surface is empty until a project identity store exists", 
   try {
     const productIdentityPath = join(root, ".touba", "product-identity.json");
     const empty = readProductIdentity({ contractsRoot, productIdentityPath });
-    assertMatchesSchema("touba-product-identity-v0.1", empty);
+    assertMatchesSchema("touba-product-identity-v1", empty);
     assert.equal(empty.summary.user_count, 0);
     assert.deepEqual(empty.assignments, []);
 
     mkdirSync(join(root, ".touba"), { recursive: true });
-    const fixture = readJson("fixtures/valid/touba-product-identity-v0.1.json");
+    const fixture = readJson("fixtures/valid/touba-product-identity-v1.json");
     const stored = {
       ...fixture,
       generated_at: "2026-06-23T01:00:00.000Z",
@@ -918,7 +914,7 @@ test("product identity surface is empty until a project identity store exists", 
     };
     writeFileSync(productIdentityPath, JSON.stringify(stored), "utf8");
     const identity = readProductIdentity({ contractsRoot, productIdentityPath });
-    assertMatchesSchema("touba-product-identity-v0.1", identity);
+    assertMatchesSchema("touba-product-identity-v1", identity);
     assert.equal(identity.summary.user_count, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -943,10 +939,10 @@ test("observability and mobile product surfaces return valid empty states withou
     mobileEscalationPath: join(tmpdir(), "missing-mobile-escalation.json"),
   });
 
-  assertMatchesSchema("touba-cost-observatory-v0.1", costs);
-  assertMatchesSchema("touba-mobile-notification-v0.1", notifications);
-  assertMatchesSchema("touba-mobile-quick-approval-policy-v0.1", quickApproval);
-  assertMatchesSchema("touba-mobile-escalation-v0.1", escalation);
+  assertMatchesSchema("touba-cost-observatory-v1", costs);
+  assertMatchesSchema("touba-mobile-notification-v1", notifications);
+  assertMatchesSchema("touba-mobile-quick-approval-policy-v1", quickApproval);
+  assertMatchesSchema("touba-mobile-escalation-v1", escalation);
   assert.equal(costs.summary.run_count, 0);
   assert.equal(costs.summary.estimated_cost, 0);
   assert.deepEqual(notifications.notifications, []);
@@ -973,7 +969,7 @@ test("mobile pairing requests are bounded, accepted once and revocable without p
       },
     });
 
-    assertMatchesSchema("touba-mobile-pairing-request-v0.1", issued);
+    assertMatchesSchema("touba-mobile-pairing-request-v1", issued);
     assert.match(issued.deep_link, /^touba-mobile:\/\/pair\?/u);
     const storeText = readFileSync(mobilePairingsPath, "utf8");
     assert.equal(storeText.includes(issued.bearer_token), false);
@@ -1054,7 +1050,7 @@ test("pending human request store filters decisions already accepted", () => {
     writeFileSync(
       humanRequestsPath,
       JSON.stringify({
-        schema_version: "touba-human-requests-v0.1",
+        schema_version: "touba-human-requests-v1",
         approvals: [approval],
         reviews: [],
       }),
@@ -1110,7 +1106,7 @@ test("pending requests select the requested run without consuming another queue 
     ]) {
       const first = readJson(`fixtures/valid/${schema}.json`);
       const second = { ...first, request_id: `${first.request_id}-second`, run_id: `${first.run_id}-second` };
-      writeFileSync(humanRequestsPath, JSON.stringify({ schema_version: "touba-human-requests-v0.1", approvals: [], reviews: [], [key]: [first, second] }));
+      writeFileSync(humanRequestsPath, JSON.stringify({ schema_version: "touba-human-requests-v1", approvals: [], reviews: [], [key]: [first, second] }));
       const options = { contractsRoot, humanRequestsPath, humanDecisionsPath, kind };
       assert.equal(readPendingHumanRequest(options).request_id, first.request_id);
       assert.equal(readPendingHumanRequest({ ...options, runId: second.run_id }).request_id, second.request_id);
@@ -1132,9 +1128,9 @@ test("refresh project reports artifacts, stale state and changed files", () => {
     const first = refreshProject({
       projectRoot: root,
       refreshedAt: "2026-06-22T00:00:00Z",
-      request: { schema_version: "touba-project-refresh-request-v0.1" },
+      request: { schema_version: "touba-project-refresh-request-v1" },
     });
-    assert.equal(first.report.schema_version, "touba-project-refresh-v0.1");
+    assert.equal(first.report.schema_version, "touba-project-refresh-v1");
     assert.equal(first.report.summary.artifact_count, 1);
     assert.equal(first.report.changes.changed_artifacts.length, 1);
     assert.equal(first.report.diagnostics.some((item) => item.code === "ToubaServeProjectAirStale"), true);
@@ -1144,7 +1140,7 @@ test("refresh project reports artifacts, stale state and changed files", () => {
       projectRoot: root,
       previousSnapshot: first.snapshot,
       refreshedAt: "2026-06-22T00:00:01Z",
-      request: { schema_version: "touba-project-refresh-request-v0.1" },
+      request: { schema_version: "touba-project-refresh-request-v1" },
     });
     assert.deepEqual(second.report.changes.changed_artifacts.map((item) => item.relative_path), ["src/main.tb"]);
   } finally {
@@ -1161,7 +1157,7 @@ test("change proposals are stored, applied atomically and cannot be replayed", (
       changeProposalsPath,
       proposedAt: "2026-06-22T00:00:00Z",
       proposal: {
-        schema_version: "touba-project-change-proposal-v0.1",
+        schema_version: "touba-project-change-proposal-v1",
         proposal_id: "change_001",
         action: "write_text_file",
         target: { path: "src/main.tb" },
@@ -1177,7 +1173,7 @@ test("change proposals are stored, applied atomically and cannot be replayed", (
       changeProposalsPath,
       decidedAt: "2026-06-22T00:00:01Z",
       applyRequest: {
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "change_001",
         decision: "apply",
         decided_by: { kind: "user", id: "khadim" },
@@ -1190,7 +1186,7 @@ test("change proposals are stored, applied atomically and cannot be replayed", (
         projectRoot: root,
         changeProposalsPath,
         applyRequest: {
-          schema_version: "touba-project-change-apply-v0.1",
+          schema_version: "touba-project-change-apply-v1",
           proposal_id: "change_001",
           decision: "apply",
         },
@@ -1253,7 +1249,7 @@ test("multi-file change sets apply through a recoverable transaction", () => {
       changeProposalsPath,
       decidedAt: "2026-07-23T00:00:01Z",
       applyRequest: {
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "change_set_001",
         decision: "apply",
         decided_by: { kind: "user", id: "reviewer" },
@@ -1307,7 +1303,7 @@ test("multi-file change sets restore already written targets when commit fails",
         projectRoot: root,
         changeProposalsPath,
         applyRequest: {
-          schema_version: "touba-project-change-apply-v0.1",
+          schema_version: "touba-project-change-apply-v1",
           proposal_id: "change_set_rollback",
           decision: "apply",
           decided_by: { kind: "user", id: "reviewer" },
@@ -1335,7 +1331,7 @@ test("interrupted multi-file changes recover from their journal before the next 
     writeFileSync(join(root, "src", "main.tb"), interrupted, "utf8");
     writeFileSync(join(transactionRoot, "backup", "0.previous"), original, "utf8");
     writeFileSync(join(transactionRoot, "journal.json"), `${JSON.stringify({
-      schema_version: "touba-project-change-transaction-v0.1",
+      schema_version: "touba-project-change-transaction-v1",
       transaction_id: "interrupted-001",
       proposal_id: "proposal-interrupted",
       status: "committing",
@@ -1380,7 +1376,7 @@ test("deployment plans verify immutable project bundles and block dirty prod sou
       triggers: {},
     })}\n`, "utf8");
     writeFileSync(join(root, "touba.lock.json"), `${JSON.stringify({
-      lock_version: "touba-lock-v0.1",
+      lock_version: "touba-lock-v1",
       artifacts: [],
     })}\n`, "utf8");
     const ready = buildProjectDeploymentPlan({
@@ -1391,7 +1387,7 @@ test("deployment plans verify immutable project bundles and block dirty prod sou
       sourceRevision: { commit: "clean-revision", dirty: false },
     });
     assert.equal(ready.status, "ready");
-    assertMatchesSchema("touba-deployment-plan-v0.1", ready);
+    assertMatchesSchema("touba-deployment-plan-v1", ready);
 
     const blocked = buildProjectDeploymentPlan({
       projectRoot: root,
@@ -1450,7 +1446,7 @@ test("governance relation changes edit compiled Touba source through review", ()
       changeProposalsPath,
       proposedAt: "2026-07-22T00:00:00Z",
       request: {
-        schema_version: "touba-governance-relation-change-v0.1",
+        schema_version: "touba-governance-relation-change-v1",
         proposal_id: "governance_add_uses",
         operation: "add",
         relation: {
@@ -1469,7 +1465,7 @@ test("governance relation changes edit compiled Touba source through review", ()
       projectRoot: root,
       changeProposalsPath,
       applyRequest: {
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "governance_add_uses",
         decision: "apply",
         decided_by: { kind: "user", id: "reviewer" },
@@ -1489,7 +1485,7 @@ test("governance relation changes edit compiled Touba source through review", ()
       projectRoot: root,
       changeProposalsPath,
       request: {
-        schema_version: "touba-governance-relation-change-v0.1",
+        schema_version: "touba-governance-relation-change-v1",
         proposal_id: "governance_remove_uses",
         operation: "remove",
         relation: {
@@ -1505,7 +1501,7 @@ test("governance relation changes edit compiled Touba source through review", ()
       projectRoot: root,
       changeProposalsPath,
       applyRequest: {
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "governance_remove_uses",
         decision: "apply",
         decided_by: { kind: "user", id: "reviewer" },
@@ -1541,7 +1537,7 @@ test("multi-agent governance edits uses and callable_by as one reviewed change",
       projectRoot: root,
       changeProposalsPath,
       request: {
-        schema_version: "touba-governance-relation-change-v0.1",
+        schema_version: "touba-governance-relation-change-v1",
         proposal_id: "authorize_supervisor_worker",
         operation: "add",
         relation: {
@@ -1557,7 +1553,7 @@ test("multi-agent governance edits uses and callable_by as one reviewed change",
       projectRoot: root,
       changeProposalsPath,
       applyRequest: {
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "authorize_supervisor_worker",
         decision: "apply",
         decided_by: { kind: "user", id: "reviewer" },
@@ -1629,7 +1625,7 @@ test("governance relation changes edit memory access and replace trigger targets
       projectRoot: root,
       changeProposalsPath,
       request: {
-        schema_version: "touba-governance-relation-change-v0.1",
+        schema_version: "touba-governance-relation-change-v1",
         proposal_id: "add_strategy_memory_read",
         operation: "add",
         relation: {
@@ -1646,7 +1642,7 @@ test("governance relation changes edit memory access and replace trigger targets
       projectRoot: root,
       changeProposalsPath,
       applyRequest: {
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "add_strategy_memory_read",
         decision: "apply",
         decided_by: { kind: "user", id: "reviewer" },
@@ -1666,7 +1662,7 @@ test("governance relation changes edit memory access and replace trigger targets
       projectRoot: root,
       changeProposalsPath,
       request: {
-        schema_version: "touba-governance-relation-change-v0.1",
+        schema_version: "touba-governance-relation-change-v1",
         proposal_id: "replace_trigger_target",
         operation: "replace",
         relation: {
@@ -1682,7 +1678,7 @@ test("governance relation changes edit memory access and replace trigger targets
       projectRoot: root,
       changeProposalsPath,
       applyRequest: {
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "replace_trigger_target",
         decision: "apply",
         decided_by: { kind: "user", id: "reviewer" },
@@ -1725,7 +1721,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
     ].join("\n"), "utf8");
     const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
     const request = {
-      schema_version: "touba-governance-relation-change-v0.1",
+      schema_version: "touba-governance-relation-change-v1",
       proposal_id: "guard_relation",
       operation: "add",
       relation: {
@@ -1762,7 +1758,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
       projectRoot: root,
       changeProposalsPath,
       proposal: {
-        schema_version: "touba-project-change-proposal-v0.1",
+        schema_version: "touba-project-change-proposal-v1",
         proposal_id: "stale_change",
         action: "write_text_file",
         target: { path: "src/main.tb" },
@@ -1777,7 +1773,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
         projectRoot: root,
         changeProposalsPath,
         applyRequest: {
-          schema_version: "touba-project-change-apply-v0.1",
+          schema_version: "touba-project-change-apply-v1",
           proposal_id: "stale_change",
           decision: "apply",
           decided_by: { kind: "user", id: "reviewer" },
@@ -1800,7 +1796,7 @@ test("change history reports pending, applied and refused proposals without raw 
       changeProposalsPath,
       proposedAt: "2026-06-23T00:00:00.000Z",
       proposal: {
-        schema_version: "touba-project-change-proposal-v0.1",
+        schema_version: "touba-project-change-proposal-v1",
         proposal_id: "pending_change",
         action: "write_text_file",
         target: { path: "src/pending.tb" },
@@ -1814,7 +1810,7 @@ test("change history reports pending, applied and refused proposals without raw 
       changeProposalsPath,
       proposedAt: "2026-06-23T00:00:01.000Z",
       proposal: {
-        schema_version: "touba-project-change-proposal-v0.1",
+        schema_version: "touba-project-change-proposal-v1",
         proposal_id: "applied_change",
         action: "write_text_file",
         target: { path: "src/applied.tb" },
@@ -1828,7 +1824,7 @@ test("change history reports pending, applied and refused proposals without raw 
       changeProposalsPath,
       decidedAt: "2026-06-23T00:00:02.000Z",
       applyRequest: {
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "applied_change",
         decision: "apply",
         decided_by: { kind: "user", id: "khadim" },
@@ -1840,7 +1836,7 @@ test("change history reports pending, applied and refused proposals without raw 
       changeProposalsPath,
       proposedAt: "2026-06-23T00:00:03.000Z",
       proposal: {
-        schema_version: "touba-project-change-proposal-v0.1",
+        schema_version: "touba-project-change-proposal-v1",
         proposal_id: "refused_change",
         action: "write_text_file",
         target: { path: "src/refused.tb" },
@@ -1854,7 +1850,7 @@ test("change history reports pending, applied and refused proposals without raw 
       changeProposalsPath,
       decidedAt: "2026-06-23T00:00:04.000Z",
       applyRequest: {
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "refused_change",
         decision: "refuse",
         decided_by: { kind: "user", id: "khadim" },
@@ -1867,7 +1863,7 @@ test("change history reports pending, applied and refused proposals without raw 
       changeProposalsPath,
       generatedAt: "2026-06-23T00:00:05.000Z",
     });
-    assertMatchesSchema("touba-project-change-history-v0.1", history);
+    assertMatchesSchema("touba-project-change-history-v1", history);
     assert.deepEqual(history.summary, { total: 3, pending: 1, applied: 1, refused: 1 });
     assert.equal(JSON.stringify(history).includes("module demo"), false);
     assert.deepEqual(new Set(history.changes.map((item) => item.status)), new Set(["pending", "applied", "refused"]));
@@ -1878,7 +1874,7 @@ test("change history reports pending, applied and refused proposals without raw 
       proposalId: "applied_change",
       generatedAt: "2026-06-23T00:00:06.000Z",
     });
-    assertMatchesSchema("touba-project-change-detail-v0.1", detail);
+    assertMatchesSchema("touba-project-change-detail-v1", detail);
     assert.equal(detail.change.status, "applied");
     assert.equal(detail.change.evidence.write_mode, "atomic_rename");
     assert.equal(detail.change.decision_reason, "approved");
@@ -1913,7 +1909,7 @@ test("change proposals reject unsafe paths and invalid Touba JSON metadata", () 
         projectRoot: root,
         changeProposalsPath,
         proposal: {
-          schema_version: "touba-project-change-proposal-v0.1",
+          schema_version: "touba-project-change-proposal-v1",
           proposal_id: "escape",
           action: "write_text_file",
           target: { path: "../outside.tb" },
@@ -1927,7 +1923,7 @@ test("change proposals reject unsafe paths and invalid Touba JSON metadata", () 
         projectRoot: root,
         changeProposalsPath,
         proposal: {
-          schema_version: "touba-project-change-proposal-v0.1",
+          schema_version: "touba-project-change-proposal-v1",
           proposal_id: "bad_json",
           action: "write_text_file",
           target: { path: "touba.manifest.json" },
@@ -1950,7 +1946,7 @@ test("change proposals validate Touba project metadata schemas before review", (
         projectRoot: root,
         changeProposalsPath,
         proposal: {
-          schema_version: "touba-project-change-proposal-v0.1",
+          schema_version: "touba-project-change-proposal-v1",
           proposal_id: "bad_manifest",
           action: "write_text_file",
           target: { path: "touba.manifest.json" },
@@ -1965,13 +1961,13 @@ test("change proposals validate Touba project metadata schemas before review", (
         projectRoot: root,
         changeProposalsPath,
         proposal: {
-          schema_version: "touba-project-change-proposal-v0.1",
+          schema_version: "touba-project-change-proposal-v1",
           proposal_id: "bad_ownership",
           action: "write_text_file",
           target: { path: "touba.ownership.json" },
           requested_by: { kind: "studio", id: "touba-studio" },
           content: JSON.stringify({
-            ownership_schema_version: "touba-ownership-v0.1",
+            ownership_schema_version: "touba-ownership-v1",
             grants: ["network"],
           }),
         },
@@ -1983,13 +1979,13 @@ test("change proposals validate Touba project metadata schemas before review", (
         projectRoot: root,
         changeProposalsPath,
         proposal: {
-          schema_version: "touba-project-change-proposal-v0.1",
+          schema_version: "touba-project-change-proposal-v1",
           proposal_id: "bad_resources",
           action: "write_text_file",
           target: { path: "touba.resources.json" },
           requested_by: { kind: "studio", id: "touba-studio" },
           content: JSON.stringify({
-            resource_bindings_schema_version: "touba-resource-bindings-v0.1",
+            resource_bindings_schema_version: "touba-resource-bindings-v1",
           }),
         },
       }),
@@ -2001,7 +1997,7 @@ test("change proposals validate Touba project metadata schemas before review", (
         projectRoot: root,
         changeProposalsPath,
         proposal: {
-          schema_version: "touba-project-change-proposal-v0.1",
+          schema_version: "touba-project-change-proposal-v1",
           proposal_id: "legacy_governance_overlay",
           action: "write_text_file",
           target: { path: "touba.governance-actions.json" },
@@ -2016,13 +2012,13 @@ test("change proposals validate Touba project metadata schemas before review", (
       projectRoot: root,
       changeProposalsPath,
       proposal: {
-        schema_version: "touba-project-change-proposal-v0.1",
+        schema_version: "touba-project-change-proposal-v1",
         proposal_id: "package_ok",
         action: "write_text_file",
         target: { path: "touba.package.json" },
         requested_by: { kind: "studio", id: "touba-studio" },
         content: JSON.stringify({
-          package_schema_version: "touba-package-v0.1",
+          package_schema_version: "touba-package-v1",
           name: "org.example.demo",
           version: "0.1.0",
           exports: {
@@ -2048,7 +2044,7 @@ test("change proposals allow guarded handler stubs but reject arbitrary handler 
       projectRoot: root,
       changeProposalsPath,
       proposal: {
-        schema_version: "touba-project-change-proposal-v0.1",
+        schema_version: "touba-project-change-proposal-v1",
         proposal_id: "handler_stub_ok",
         action: "write_text_file",
         target: { path: "handlers/studio/studio_draft_tool.handler.mjs" },
@@ -2078,7 +2074,7 @@ test("change proposals allow guarded handler stubs but reject arbitrary handler 
         projectRoot: root,
         changeProposalsPath,
         proposal: {
-          schema_version: "touba-project-change-proposal-v0.1",
+          schema_version: "touba-project-change-proposal-v1",
           proposal_id: "handler_arbitrary",
           action: "write_text_file",
           target: { path: "handlers/studio/arbitrary.handler.mjs" },
@@ -2112,7 +2108,7 @@ test("accepts valid decisions and rejects replay", () => {
 
     assert.equal(accepted.status, "accepted");
     const store = JSON.parse(readFileSync(humanDecisionsPath, "utf8"));
-    assert.equal(store.schema_version, "touba-human-decisions-v0.1");
+    assert.equal(store.schema_version, "touba-human-decisions-v1");
     assert.equal(store.decisions.length, 1);
     assert.throws(
       () => acceptDecision({ contractsRoot, humanDecisionsPath, decision }),
@@ -2146,7 +2142,7 @@ test("human decision history reports approval and review decisions", () => {
       humanDecisionsPath,
       generatedAt: "2026-06-23T00:00:02.000Z",
     });
-    assertMatchesSchema("touba-human-decision-history-v0.1", history);
+    assertMatchesSchema("touba-human-decision-history-v1", history);
     assert.deepEqual(history.summary, { total: 2, approvals: 1, reviews: 1 });
     assert.deepEqual(new Set(history.decisions.map((item) => item.decision_kind)), new Set(["approval", "human_review"]));
 
@@ -2156,7 +2152,7 @@ test("human decision history reports approval and review decisions", () => {
       requestId: review.request_id,
       generatedAt: "2026-06-23T00:00:03.000Z",
     });
-    assertMatchesSchema("touba-human-decision-detail-v0.1", detail);
+    assertMatchesSchema("touba-human-decision-detail-v1", detail);
     assert.equal(detail.decision.decision_kind, "human_review");
     assert.equal(detail.decision.result, review.outcome);
   } finally {
@@ -2186,7 +2182,7 @@ test("HTTP project server rejects invalid client and Mobile contract payloads", 
   writeFileSync(join(root, "src", "main.tb"), "module demo.contracts\n", "utf8");
   mkdirSync(join(root, ".touba"), { recursive: true });
   writeFileSync(join(root, ".touba", "human-requests.json"), JSON.stringify({
-    schema_version: "touba-human-requests-v0.1",
+    schema_version: "touba-human-requests-v1",
     approvals: [{
       ...readJson("fixtures/valid/touba-approval-request-v1.json"),
       expires_at: "2099-01-01T00:00:00.000Z",
@@ -2233,7 +2229,7 @@ test("HTTP project server rejects invalid client and Mobile contract payloads", 
     assert.equal((await replayDecision.json()).code, "ToubaServeDecisionReplayRejected");
 
     const proposal = {
-      schema_version: "touba-project-change-proposal-v0.1",
+      schema_version: "touba-project-change-proposal-v1",
       proposal_id: "contract_change_001",
       action: "write_text_file",
       target: { path: "src/main.tb" },
@@ -2255,7 +2251,7 @@ test("HTTP project server rejects invalid client and Mobile contract payloads", 
     assert.equal((await duplicateProposal.json()).code, "ToubaServeChangeProposalDuplicate");
 
     const invalidApply = await postJson(`${baseUrl}/changes/apply`, {
-      schema_version: "touba-project-change-apply-v0.1",
+      schema_version: "touba-project-change-apply-v1",
       proposal_id: proposal.proposal_id,
       decision: "apply",
       decided_by: { kind: "studio", id: "touba-studio" },
@@ -2280,7 +2276,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     expires_at: "2099-01-01T00:00:00.000Z",
   };
   writeFileSync(join(root, ".touba", "human-requests.json"), JSON.stringify({
-    schema_version: "touba-human-requests-v0.1",
+    schema_version: "touba-human-requests-v1",
     approvals: [],
     reviews: [pendingReview],
   }), "utf8");
@@ -2393,7 +2389,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
   }, null, 2), "utf8");
   mkdirSync(join(root, "packages", "review"), { recursive: true });
   writeFileSync(join(root, "packages", "review", "touba.package.json"), JSON.stringify({
-    package_schema_version: "touba-package-v0.1",
+    package_schema_version: "touba-package-v1",
     name: "org.example.review",
     version: "1.2.3",
     description: "Review capabilities installed in the served project.",
@@ -2425,7 +2421,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.equal(health.endpoints.governance_readiness, "/governance/readiness");
 
     const state = await getJson(`${baseUrl}/state`);
-    assert.equal(state.schema_version, "touba-project-live-state-v0.1");
+    assert.equal(state.schema_version, "touba-project-live-state-v1");
     assert.equal(state.project_server.refresh.summary.artifact_count, 3);
     assert.equal(state.project.project.name, basename(root));
     assert.equal(state.project.entrypoints.some((entrypoint) => entrypoint.kind === "strategy"), true);
@@ -2481,7 +2477,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assertMatchesSchema("touba-project-inspection-v1", project);
 
     const authorityGraph = await getJson(`${baseUrl}/authority/graph`);
-    assertMatchesSchema("touba-authority-graph-v0.1", authorityGraph);
+    assertMatchesSchema("touba-authority-graph-v1", authorityGraph);
     assert.equal(
       authorityGraph.nodes.some((node) => (
         node.kind === "function" && node.ref === "function:demo.main/FormatReview"
@@ -2506,25 +2502,25 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.equal(health.endpoints.authority_graph, "/authority/graph");
 
     const identity = await getJson(`${baseUrl}/identity`);
-    assertMatchesSchema("touba-product-identity-v0.1", identity);
+    assertMatchesSchema("touba-product-identity-v1", identity);
     assert.equal(health.endpoints.identity, "/identity");
 
     const runSummary = await getJson(`${baseUrl}/runs/current`);
     assert.equal(runSummary.schema_version, "touba-run-summary-v1");
 
     const triggerQueueHealth = await getJson(`${baseUrl}/triggers/queue-health`);
-    assertMatchesSchema("touba-trigger-queue-health-v0.1", triggerQueueHealth);
+    assertMatchesSchema("touba-trigger-queue-health-v1", triggerQueueHealth);
     const supplyChainStatus = await getJson(`${baseUrl}/supply-chain/status`);
-    assertMatchesSchema("touba-supply-chain-status-v0.1", supplyChainStatus);
+    assertMatchesSchema("touba-supply-chain-status-v1", supplyChainStatus);
     const governanceReadiness = await getJson(`${baseUrl}/governance/readiness`);
-    assertMatchesSchema("touba-governance-readiness-v0.1", governanceReadiness);
+    assertMatchesSchema("touba-governance-readiness-v1", governanceReadiness);
 
     const eventStream = await fetch(`${baseUrl}/events`);
     assert.equal(eventStream.status, 200);
     assert.match(eventStream.headers.get("content-type"), /text\/event-stream/);
     const { text: readyText, reader } = await readNextEvent(eventStream);
     const readyEvent = parseSseEvent(readyText);
-    assertMatchesSchema("touba-project-event-v0.1", readyEvent);
+    assertMatchesSchema("touba-project-event-v1", readyEvent);
     assert.equal(readyEvent.type, "touba.server.ready");
     assert.match(readyText, /^id: evt_000001/m);
 
@@ -2550,21 +2546,21 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     assert.equal(replayStream.status, 200);
     const { text: replayText, reader: replayReader } = await readNextEvent(replayStream);
     const replayedEvent = parseSseEvent(replayText);
-    assertMatchesSchema("touba-project-event-v0.1", replayedEvent);
+    assertMatchesSchema("touba-project-event-v1", replayedEvent);
     assert.equal(replayedEvent.type, "human_decision.accepted");
     await replayReader.cancel();
 
     const decisionHistory = await getJson(`${baseUrl}/decisions`);
-    assertMatchesSchema("touba-human-decision-history-v0.1", decisionHistory);
+    assertMatchesSchema("touba-human-decision-history-v1", decisionHistory);
     assert.equal(decisionHistory.summary.reviews, 1);
 
     const decisionDetail = await getJson(`${baseUrl}/decisions/${encodeURIComponent(decision.schema_version)}/${encodeURIComponent(decision.request_id)}`);
-    assertMatchesSchema("touba-human-decision-detail-v0.1", decisionDetail);
+    assertMatchesSchema("touba-human-decision-detail-v1", decisionDetail);
     assert.equal(decisionDetail.decision.request_id, decision.request_id);
     assert.equal(decisionDetail.decision.decision_kind, "human_review");
 
     const functionSessionResponse = await postJson(`${baseUrl}/interactions/sessions`, {
-      schema_version: "touba-interaction-session-create-v0.1",
+      schema_version: "touba-interaction-session-create-v1",
       target_ref: functionEntrypoint.ref,
       target_kind: "function",
       presentation: functionEntrypoint.interaction_contract.presentation,
@@ -2579,21 +2575,21 @@ test("HTTP project server exposes live state, events and decisions", async () =>
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        schema_version: "touba-project-refresh-request-v0.1",
+        schema_version: "touba-project-refresh-request-v1",
         requested_by: { kind: "studio", id: "test-suite" },
         reason: "http-test-refresh",
       }),
     });
     assert.equal(refreshResponse.status, 202);
     const refresh = await refreshResponse.json();
-    assertMatchesSchema("touba-project-refresh-v0.1", refresh);
+    assertMatchesSchema("touba-project-refresh-v1", refresh);
     assert.deepEqual(refresh.changes.changed_artifacts.map((item) => item.relative_path), ["src/main.tb"]);
 
     const proposedResponse = await fetch(`${baseUrl}/changes/propose`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        schema_version: "touba-project-change-proposal-v0.1",
+        schema_version: "touba-project-change-proposal-v1",
         proposal_id: "http_change_001",
         action: "write_text_file",
         target: { path: "touba.project.json" },
@@ -2604,15 +2600,15 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     });
     assert.equal(proposedResponse.status, 202);
     const proposed = await proposedResponse.json();
-    assertMatchesSchema("touba-project-change-proposed-v0.1", proposed);
+    assertMatchesSchema("touba-project-change-proposed-v1", proposed);
     assert.equal(proposed.status, "proposed");
 
     const pendingHistory = await getJson(`${baseUrl}/changes`);
-    assertMatchesSchema("touba-project-change-history-v0.1", pendingHistory);
+    assertMatchesSchema("touba-project-change-history-v1", pendingHistory);
     assert.equal(pendingHistory.summary.pending, 1);
 
     const pendingDetail = await getJson(`${baseUrl}/changes/http_change_001`);
-    assertMatchesSchema("touba-project-change-detail-v0.1", pendingDetail);
+    assertMatchesSchema("touba-project-change-detail-v1", pendingDetail);
     assert.equal(pendingDetail.change.status, "pending");
     assert.equal(JSON.stringify(pendingDetail).includes("project_version"), false);
 
@@ -2620,7 +2616,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        schema_version: "touba-project-change-apply-v0.1",
+        schema_version: "touba-project-change-apply-v1",
         proposal_id: "http_change_001",
         decision: "apply",
         decided_by: { kind: "user", id: "khadim" },
@@ -2629,22 +2625,22 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     });
     assert.equal(applyResponse.status, 202);
     const applied = await applyResponse.json();
-    assertMatchesSchema("touba-project-change-result-v0.1", applied);
+    assertMatchesSchema("touba-project-change-result-v1", applied);
     assert.equal(applied.status, "applied");
     assert.equal(existsSync(join(root, "touba.project.json")), true);
 
     const appliedHistory = await getJson(`${baseUrl}/changes`);
-    assertMatchesSchema("touba-project-change-history-v0.1", appliedHistory);
+    assertMatchesSchema("touba-project-change-history-v1", appliedHistory);
     assert.equal(appliedHistory.summary.applied, 1);
 
     const appliedDetail = await getJson(`${baseUrl}/changes/http_change_001`);
-    assertMatchesSchema("touba-project-change-detail-v0.1", appliedDetail);
+    assertMatchesSchema("touba-project-change-detail-v1", appliedDetail);
     assert.equal(appliedDetail.change.status, "applied");
     assert.equal(appliedDetail.change.evidence.write_mode, "atomic_rename");
 
     const { text: eventText } = await readNextEventFromReader(reader);
     const emittedEvent = parseSseEvent(eventText);
-    assertMatchesSchema("touba-project-event-v0.1", emittedEvent);
+    assertMatchesSchema("touba-project-event-v1", emittedEvent);
     assert.match(eventText, /touba\.server\.ready|human_decision\.accepted|project\.changed|change\.proposed|change\.applied/);
     await reader.cancel();
   } finally {
@@ -2690,7 +2686,7 @@ test("HTTP project server validates, reviews and applies semantic governance edi
     await service.start();
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const proposalResponse = await postJson(`${baseUrl}/governance/relations/propose`, {
-      schema_version: "touba-governance-relation-change-v0.1",
+      schema_version: "touba-governance-relation-change-v1",
       proposal_id: "http_governance_001",
       operation: "add",
       relation: {
@@ -2702,10 +2698,10 @@ test("HTTP project server validates, reviews and applies semantic governance edi
       reason: "Authorize Reviewer to use SummarizeRecord.",
     });
     assert.equal(proposalResponse.status, 202);
-    assertMatchesSchema("touba-project-change-proposed-v0.1", await proposalResponse.json());
+    assertMatchesSchema("touba-project-change-proposed-v1", await proposalResponse.json());
 
     const applyResponse = await postJson(`${baseUrl}/changes/apply`, {
-      schema_version: "touba-project-change-apply-v0.1",
+      schema_version: "touba-project-change-apply-v1",
       proposal_id: "http_governance_001",
       decision: "apply",
       decided_by: { kind: "user", id: "reviewer" },
@@ -2747,7 +2743,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     assert.equal(health.endpoints.trigger_fire, "/triggers/fire");
 
     const runResponse = await postJson(`${baseUrl}/runs/sandbox`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "entrypoint",
       target_ref: "strategy:demo.sandbox/RunReady",
       effect_policy: "runtime_only",
@@ -2757,7 +2753,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     });
     assert.equal(runResponse.status, 200);
     const run = await runResponse.json();
-    assertMatchesSchema("touba-sandbox-run-result-v0.1", run);
+    assertMatchesSchema("touba-sandbox-run-result-v1", run);
     assert.equal(run.status, "success");
     assert.equal(run.result, "ready");
     assert.equal(run.trace.entry_ref, "strategy:demo.sandbox/RunReady");
@@ -2773,7 +2769,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     assert.equal(currentTrace.events.every((event) => event.redaction !== "none"), true);
 
     const functionResponse = await postJson(`${baseUrl}/runs/sandbox`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "entrypoint",
       target_ref: "function:demo.sandbox/FormatReady",
       effect_policy: "runtime_only",
@@ -2788,7 +2784,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     assert.equal(functionRun.trace.entry_ref, "function:demo.sandbox/FormatReady");
 
     const inputResponse = await postJson(`${baseUrl}/runs/sandbox`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "entrypoint",
       target_ref: "strategy:demo.sandbox/EchoInput",
       effect_policy: "runtime_only",
@@ -2803,7 +2799,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     assert.equal(inputRun.trace.entry_ref, "strategy:demo.sandbox/EchoInput");
 
     const triggerResponse = await postJson(`${baseUrl}/triggers/fire`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "trigger",
       target_ref: "trigger:demo.sandbox/ManualCheck",
       effect_policy: "runtime_only",
@@ -2815,7 +2811,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     });
     assert.equal(triggerResponse.status, 200);
     const triggerRun = await triggerResponse.json();
-    assertMatchesSchema("touba-sandbox-run-result-v0.1", triggerRun);
+    assertMatchesSchema("touba-sandbox-run-result-v1", triggerRun);
     assert.equal(triggerRun.status, "success");
     assert.equal(triggerRun.result, "triggered");
     assert.equal(triggerRun.trace.entry_ref, "trigger:demo.sandbox/ManualCheck");
@@ -2902,7 +2898,7 @@ for (const surface of ["sandbox", "interaction"]) {
         });
       `, "utf8");
       writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
-        manifest_version: "touba-manifest-v2",
+        manifest_version: "touba-manifest-v1",
         bindings: {
           "tool:demo.sandbox/ReadExternal": {
             handler: { kind: "process", command: process.execPath, args: [handlerPath], cwd: root },
@@ -2948,7 +2944,7 @@ for (const surface of ["sandbox", "interaction"]) {
             "x-touba-identity-token": accessToken,
           },
           body: JSON.stringify({
-            schema_version: "touba-sandbox-run-request-v0.1",
+            schema_version: "touba-sandbox-run-request-v1",
             execution_kind: "entrypoint",
             target_ref: "strategy:demo.sandbox/RunTool",
             effect_policy: "allow_declared_external_effects",
@@ -2965,7 +2961,7 @@ for (const surface of ["sandbox", "interaction"]) {
             "x-touba-identity-token": accessToken,
           },
           body: JSON.stringify({
-            schema_version: "touba-interaction-message-request-v0.1",
+            schema_version: "touba-interaction-message-request-v1",
             message_id: "message:initial-authority",
             display_text: "Run only while my authority remains active.",
             inputs: {},
@@ -3031,7 +3027,7 @@ test("HTTP durable resume reconstructs the terminal result and coalesces one cla
     await service.start();
     let baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const initialResponse = await postJson(`${baseUrl}/runs/sandbox`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "entrypoint",
       target_ref: "strategy:demo.sandbox/RunReady",
       effect_policy: "runtime_only",
@@ -3175,7 +3171,7 @@ test("SIGKILL after an applied effect resumes explicitly without redispatching t
       });
     `, "utf8");
     writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
-      manifest_version: "touba-manifest-v2",
+      manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:demo.sandbox/ReadExternal": {
           handler: { kind: "process", command: process.execPath, args: [handlerPath], cwd: root },
@@ -3220,7 +3216,7 @@ test("SIGKILL after an applied effect resumes explicitly without redispatching t
         operationId: "operation:sigkill-applied",
         projectRoot: ${JSON.stringify(root)},
         request: {
-          schema_version: "touba-sandbox-run-request-v0.1",
+          schema_version: "touba-sandbox-run-request-v1",
           execution_kind: "entrypoint",
           target_ref: "strategy:demo.sandbox/RunTool",
           effect_policy: "allow_declared_external_effects",
@@ -3257,6 +3253,7 @@ test("SIGKILL after an applied effect resumes explicitly without redispatching t
     const interrupted = JSON.parse(readFileSync(checkpointPath, "utf8")).records[0];
     assert.equal(interrupted.status, "interrupted");
     const resumeRequest = {
+      schema_version: "touba-operation-resume-request-v1",
       operation_id: interrupted.operation_id,
       checkpoint_revision: interrupted.checkpoint.revision,
       checkpoint_digest: interrupted.checkpoint.checkpoint_digest,
@@ -3357,7 +3354,7 @@ test("SIGKILL after the external mutation but before its receipt retries one log
       });
     `, "utf8");
     writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
-      manifest_version: "touba-manifest-v2",
+      manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:demo.sandbox/ReadExternal": {
           handler: { kind: "process", command: process.execPath, args: [handlerPath], cwd: root },
@@ -3384,7 +3381,7 @@ test("SIGKILL after the external mutation but before its receipt retries one log
         operationId: "operation:sigkill-unknown",
         projectRoot: ${JSON.stringify(root)},
         request: {
-          schema_version: "touba-sandbox-run-request-v0.1",
+          schema_version: "touba-sandbox-run-request-v1",
           execution_kind: "entrypoint",
           target_ref: "strategy:demo.sandbox/RunTool",
           effect_policy: "allow_declared_external_effects",
@@ -3427,6 +3424,7 @@ test("SIGKILL after the external mutation but before its receipt retries one log
     const interrupted = JSON.parse(readFileSync(checkpointPath, "utf8")).records[0];
     assert.equal(interrupted.status, "interrupted");
     const resumeRequest = {
+      schema_version: "touba-operation-resume-request-v1",
       operation_id: interrupted.operation_id,
       checkpoint_revision: interrupted.checkpoint.revision,
       checkpoint_digest: interrupted.checkpoint.checkpoint_digest,
@@ -3611,7 +3609,7 @@ for (const crashWindow of [
         });
       `, "utf8");
       writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({
-        manifest_version: "touba-manifest-v2",
+        manifest_version: "touba-manifest-v1",
         bindings: {
           "tool:demo.sandbox/ReadExternal": {
             handler: { kind: "process", command: process.execPath, args: [handlerPath], cwd: root },
@@ -3712,7 +3710,7 @@ for (const crashWindow of [
           operationId: ${JSON.stringify(durableOperationId)},
           projectRoot: ${JSON.stringify(root)},
           request: {
-            schema_version: "touba-sandbox-run-request-v0.1",
+            schema_version: "touba-sandbox-run-request-v1",
             execution_kind: "entrypoint",
             target_ref: "strategy:demo.sandbox/RunTool",
             effect_policy: "allow_declared_external_effects",
@@ -3788,6 +3786,7 @@ for (const crashWindow of [
       const interrupted = JSON.parse(readFileSync(checkpointPath, "utf8")).records[0];
       assert.equal(interrupted.status, "interrupted");
       const resumeRequest = {
+      schema_version: "touba-operation-resume-request-v1",
         operation_id: interrupted.operation_id,
         checkpoint_revision: interrupted.checkpoint.revision,
         checkpoint_digest: interrupted.checkpoint.checkpoint_digest,
@@ -3996,7 +3995,7 @@ test("HTTP project server persists adaptive interaction sessions and governed as
     assert.deepEqual(strategy.interaction_contract.accepted_content_kinds, []);
 
     const createdResponse = await postJson(`${baseUrl}/interactions/sessions`, {
-      schema_version: "touba-interaction-session-create-v0.1",
+      schema_version: "touba-interaction-session-create-v1",
       target_ref: strategy.ref,
       target_kind: "strategy",
       presentation: "workflow",
@@ -4005,10 +4004,10 @@ test("HTTP project server persists adaptive interaction sessions and governed as
     });
     assert.equal(createdResponse.status, 201);
     const created = await createdResponse.json();
-    assertMatchesSchema("touba-interaction-session-v0.2", created);
+    assertMatchesSchema("touba-interaction-session-v1", created);
 
     const message = {
-      schema_version: "touba-interaction-message-request-v0.1",
+      schema_version: "touba-interaction-message-request-v1",
       message_id: "message_001",
       display_text: "Run the ready workflow.",
       inputs: {},
@@ -4020,7 +4019,7 @@ test("HTTP project server persists adaptive interaction sessions and governed as
     );
     assert.equal(messageResponse.status, 202);
     const accepted = await messageResponse.json();
-    assertMatchesSchema("touba-interaction-operation-v0.1", accepted);
+    assertMatchesSchema("touba-interaction-operation-v1", accepted);
     const terminal = await waitForInteractionOperation(baseUrl, created.session_id, accepted.operation_id);
     assert.equal(terminal.status, "succeeded");
     assert.ok(terminal.event_count > 0);
@@ -4035,7 +4034,7 @@ test("HTTP project server persists adaptive interaction sessions and governed as
     assert.equal(idempotentResponse.status, 200);
     assert.equal((await idempotentResponse.json()).operation_id, accepted.operation_id);
     const sessions = await getJson(`${baseUrl}/interactions/sessions`);
-    assertMatchesSchema("touba-interaction-session-list-v0.2", sessions);
+    assertMatchesSchema("touba-interaction-session-list-v1", sessions);
     assert.equal(sessions.sessions[0].message_count, 2);
 
     const content = Buffer.from("incident evidence", "utf8");
@@ -4050,7 +4049,7 @@ test("HTTP project server persists adaptive interaction sessions and governed as
     );
     assert.equal(assetResponse.status, 201);
     const asset = await assetResponse.json();
-    assertMatchesSchema("touba-interaction-asset-v0.1", asset);
+    assertMatchesSchema("touba-interaction-asset-v1", asset);
     assert.equal(asset.digest, digest);
     assert.equal(JSON.stringify(asset).includes(root), false);
 
@@ -4091,7 +4090,7 @@ test("HTTP project server refuses sandbox runtime-only runs that may dispatch to
     await service.start();
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const response = await postJson(`${baseUrl}/runs/sandbox`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "entrypoint",
       target_ref: "strategy:demo.sandbox/RunTool",
       effect_policy: "runtime_only",
@@ -4103,7 +4102,7 @@ test("HTTP project server refuses sandbox runtime-only runs that may dispatch to
     assert.equal((await response.json()).code, "ToubaServeSandboxExternalEffectsRejected");
 
     const directToolResponse = await postJson(`${baseUrl}/runs/sandbox`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "entrypoint",
       target_ref: "tool:demo.sandbox/ReadExternal",
       effect_policy: "runtime_only",
@@ -4153,7 +4152,7 @@ test("HTTP project server runs sandbox agents through a configured decision prov
     await service.start();
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const response = await postJson(`${baseUrl}/runs/sandbox`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "entrypoint",
       target_ref: "strategy:demo.agent/RunAgent",
       effect_policy: "runtime_only",
@@ -4163,7 +4162,7 @@ test("HTTP project server runs sandbox agents through a configured decision prov
     });
     assert.equal(response.status, 200);
     const run = await response.json();
-    assertMatchesSchema("touba-sandbox-run-result-v0.1", run);
+    assertMatchesSchema("touba-sandbox-run-result-v1", run);
     assert.equal(run.status, "success");
     assert.equal(run.result, "overview");
     assert.equal(providerCalls.length, 2);
@@ -4213,7 +4212,7 @@ test("HTTP interaction cancellation stops an active agent before capability disp
     await service.start();
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const sessionResponse = await postJson(`${baseUrl}/interactions/sessions`, {
-      schema_version: "touba-interaction-session-create-v0.1",
+      schema_version: "touba-interaction-session-create-v1",
       target_ref: "agent:demo.agent/StudioAgent",
       target_kind: "agent",
       presentation: "conversation",
@@ -4225,7 +4224,7 @@ test("HTTP interaction cancellation stops an active agent before capability disp
     const messageResponse = await postJson(
       `${baseUrl}/interactions/sessions/${session.session_id}/messages`,
       {
-        schema_version: "touba-interaction-message-request-v0.1",
+        schema_version: "touba-interaction-message-request-v1",
         message_id: "message_cancel_001",
         display_text: "Start and then cancel the governed agent.",
         inputs: {},
@@ -4297,7 +4296,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
     await service.start();
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const sessionResponse = await postJson(`${baseUrl}/interactions/sessions`, {
-      schema_version: "touba-interaction-session-create-v0.1",
+      schema_version: "touba-interaction-session-create-v1",
       target_ref: "strategy:demo.approval/RunApproval",
       target_kind: "strategy",
       presentation: "workflow",
@@ -4307,7 +4306,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
     assert.equal(sessionResponse.status, 201);
     const session = await sessionResponse.json();
     const pausedResponse = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/messages`, {
-      schema_version: "touba-interaction-message-request-v0.1",
+      schema_version: "touba-interaction-message-request-v1",
       message_id: "message_approval_001",
       display_text: "Run the approval workflow.",
       inputs: {},
@@ -4370,7 +4369,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
     assert.equal(decisionResponse.status, 202);
 
     const unrelatedSessionResponse = await postJson(`${baseUrl}/interactions/sessions`, {
-      schema_version: "touba-interaction-session-create-v0.1",
+      schema_version: "touba-interaction-session-create-v1",
       target_ref: "strategy:demo.approval/RunApproval",
       target_kind: "strategy",
       presentation: "workflow",
@@ -4382,7 +4381,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
     const mismatchedResume = await postJson(
       `${baseUrl}/interactions/sessions/${unrelatedSession.session_id}/resume`,
       {
-        schema_version: "touba-interaction-resume-request-v0.1",
+        schema_version: "touba-interaction-resume-request-v1",
         request_id: pending.request_id,
       },
     );
@@ -4390,7 +4389,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
     assert.equal((await mismatchedResume.json()).code, "ToubaServeInteractionResumeMismatch");
 
     const resumedResponse = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/resume`, {
-      schema_version: "touba-interaction-resume-request-v0.1",
+      schema_version: "touba-interaction-resume-request-v1",
       request_id: pending.request_id,
     });
     assert.equal(resumedResponse.status, 202);
@@ -4429,7 +4428,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
     }
 
     const idempotentResponse = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/resume`, {
-      schema_version: "touba-interaction-resume-request-v0.1",
+      schema_version: "touba-interaction-resume-request-v1",
       request_id: pending.request_id,
     });
     assert.equal(idempotentResponse.status, 200);
@@ -4446,7 +4445,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
         legacySession.messages = legacySession.messages.slice(0, 2);
         legacySession.operations[0].status = "awaiting_human";
         legacySession.operations[0].error = null;
-        writeFileSync(sessionsPath, JSON.stringify({ schema_version: "touba-interaction-sessions-v0.2", sessions: [legacySession] }));
+        writeFileSync(sessionsPath, JSON.stringify({ schema_version: "touba-interaction-sessions-v1", sessions: [legacySession] }));
         const checkpoints = JSON.parse(readFileSync(join(root, ".touba", "sandbox-checkpoints.json"), "utf8"));
         checkpoints.records[0].result.diagnostics = [{ severity: "warning", code: "ToubaSandboxRunFinishedWithStatus", message: "sandbox entrypoint run finished with status stopped" }];
         checkpoints.records[0].human_wait.projections = {
@@ -4469,7 +4468,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
         for (const [field, value] of [["run_id", "run_foreign"], ["entry_ref", "strategy:foreign/Unrelated"]]) {
           const foreignTrace = structuredClone(checkpoints);
           foreignTrace.records[0].result.trace[field] = value;
-          assertMatchesSchema("touba-sandbox-run-result-v0.1", foreignTrace.records[0].result);
+          assertMatchesSchema("touba-sandbox-run-result-v1", foreignTrace.records[0].result);
           const foreignBytes = JSON.stringify(foreignTrace);
           writeFileSync(checkpointPath, foreignBytes);
           assert.throws(
@@ -4528,7 +4527,7 @@ test("HTTP successive checkpoints retain both pauses and never replay a supersed
     await service.start();
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const createResponse = await postJson(`${baseUrl}/interactions/sessions`, {
-      schema_version: "touba-interaction-session-create-v0.1",
+      schema_version: "touba-interaction-session-create-v1",
       target_ref: "strategy:demo.approval/RunApproval",
       target_kind: "strategy",
       presentation: "workflow",
@@ -4539,7 +4538,7 @@ test("HTTP successive checkpoints retain both pauses and never replay a supersed
     const session = await createResponse.json();
     const sessionUrl = `${baseUrl}/interactions/sessions/${session.session_id}`;
     const operationResponse = await postJson(`${sessionUrl}/messages`, {
-      schema_version: "touba-interaction-message-request-v0.1",
+      schema_version: "touba-interaction-message-request-v1",
       message_id: "two_checkpoints",
       display_text: "Verify both human boundaries.",
       inputs: {},
@@ -4567,7 +4566,7 @@ test("HTTP successive checkpoints retain both pauses and never replay a supersed
       });
       assert.equal(accepted.status, 202);
       assert.equal((await postJson(`${sessionUrl}/resume`, {
-        schema_version: "touba-interaction-resume-request-v0.1",
+        schema_version: "touba-interaction-resume-request-v1",
         request_id: pending.request_id,
       })).status, 202);
       await waitForInteractionOperation(baseUrl, session.session_id, operation.operation_id);
@@ -4575,7 +4574,7 @@ test("HTTP successive checkpoints retain both pauses and never replay a supersed
       assert.equal(stored.messages.length, decision === "approve" ? 3 : 4);
       assert.equal(stored.operations[0].status, decision === "approve" ? "awaiting_human" : "failed");
       const staleResume = await postJson(`${sessionUrl}/resume`, {
-        schema_version: "touba-interaction-resume-request-v0.1",
+        schema_version: "touba-interaction-resume-request-v1",
         request_id: firstRequest.request_id,
       });
       assert.equal(staleResume.status, 200);
@@ -4648,10 +4647,10 @@ test(`real runtime ${decision} projects a terminal interaction and retains both 
     assert.equal(terminal.trace.events.some((event) => event.kind === `human_approval_${decision}`), true);
     assert.equal(terminal.trace.events.some((event) => event.kind === "human_approval_resumed"), false);
     const terminalResult = projectResult(terminal);
-    assertMatchesSchema("touba-sandbox-run-result-v0.1", terminalResult);
+    assertMatchesSchema("touba-sandbox-run-result-v1", terminalResult);
     const completed = completeInteractionOperation({ ...operationArgs, result: terminalResult });
     assert.equal(completed.status, decision === "cancelled" ? "cancelled" : "failed");
-    assertMatchesSchema("touba-interaction-operation-v0.1", completed);
+    assertMatchesSchema("touba-interaction-operation-v1", completed);
     completeInteractionOperation({ ...operationArgs, result: terminalResult });
     const stored = getInteractionSession({ sessionId: session.session_id, sessionsPath });
     assert.equal(stored.messages.length, 3, "a repeated terminal result must not duplicate history");
@@ -4724,7 +4723,7 @@ test("HTTP project server requires bearer auth when configured", async () => {
     assert.equal(authorized.status, 200);
     assert.equal(authorized.headers.get("access-control-allow-origin"), "http://127.0.0.1:5175");
     const state = await authorized.json();
-    assert.equal(state.schema_version, "touba-project-live-state-v0.1");
+    assert.equal(state.schema_version, "touba-project-live-state-v1");
 
     const unauthorizedPairingIssue = await fetch(`${baseUrl}/mobile/pairings/request`, {
       method: "POST",
@@ -4748,7 +4747,7 @@ test("HTTP project server requires bearer auth when configured", async () => {
     });
     assert.equal(issuedResponse.status, 201);
     const issued = await issuedResponse.json();
-    assertMatchesSchema("touba-mobile-pairing-request-v0.1", issued);
+    assertMatchesSchema("touba-mobile-pairing-request-v1", issued);
 
     const acceptedResponse = await fetch(`${baseUrl}/mobile/pairings/accept`, {
       method: "POST",
@@ -4783,6 +4782,7 @@ test("HTTP project server requires bearer auth when configured", async () => {
         "content-type": "application/json",
       },
       body: JSON.stringify({
+      schema_version: "touba-operation-resume-request-v1",
         operation_id: "op_mobile_must_not_claim",
         checkpoint_revision: 1,
         checkpoint_digest: "a".repeat(64),
@@ -4825,7 +4825,7 @@ test("HTTP project server requires bearer auth when configured", async () => {
     });
     assert.equal(eventStream.status, 200);
     const { text, reader } = await readNextEvent(eventStream);
-    assert.equal(parseSseEvent(text).schema_version, "touba-project-event-v0.1");
+    assert.equal(parseSseEvent(text).schema_version, "touba-project-event-v1");
     await reader.cancel();
   } finally {
     await service.stop();
@@ -4857,6 +4857,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
   writeFileSync(join(root, "touba.project.json"), `${JSON.stringify({
     project_version: "touba-project-v1",
     language: "javascript",
+    artifact_layout: "touba-artifacts-v1",
     run_profiles: {
       dev: { require_supply_chain_lock: false },
       prod: { require_supply_chain_lock: true, supply_chain_lock: "touba.lock.json" },
@@ -4868,7 +4869,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     triggers: {},
   }, null, 2)}\n`, "utf8");
   writeFileSync(join(root, "touba.lock.json"), `${JSON.stringify({
-    lock_version: "touba-lock-v0.1",
+    lock_version: "touba-lock-v1",
     artifacts: [],
   }, null, 2)}\n`, "utf8");
 
@@ -4894,7 +4895,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     const baseUrl = `http://127.0.0.1:${projectServer.server.address().port}`;
 
     const memoryRequest = {
-      schema_version: "touba-element-authoring-request-v0.1",
+      schema_version: "touba-element-authoring-request-v1",
       proposal_id: "author_memory_lifecycle",
       module_ref: "demo.lifecycle",
       element: {
@@ -4908,7 +4909,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     const memoryPreviewResponse = await postJson(`${baseUrl}/elements/preview`, memoryRequest);
     assert.equal(memoryPreviewResponse.status, 200);
     const memoryPreview = await memoryPreviewResponse.json();
-    assertMatchesSchema("touba-element-authoring-preview-v0.1", memoryPreview);
+    assertMatchesSchema("touba-element-authoring-preview-v1", memoryPreview);
     assert.match(memoryPreview.changes[0].diff, /\+memory LifecycleEvidence/u);
     assert.equal((await getJson(`${baseUrl}/changes`)).summary.pending, 0);
 
@@ -4919,7 +4920,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(memoryProposal.status, 202);
     assert.equal((await memoryProposal.json()).target_count, undefined);
     const memoryApply = await postJson(`${baseUrl}/changes/apply`, {
-      schema_version: "touba-project-change-apply-v0.1",
+      schema_version: "touba-project-change-apply-v1",
       proposal_id: "author_memory_lifecycle",
       decision: "apply",
       decided_by: { kind: "user", id: "reviewer" },
@@ -4929,7 +4930,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.match(readFileSync(join(root, "src", "main.tb"), "utf8"), /memory LifecycleEvidence/u);
 
     const toolRequest = {
-      schema_version: "touba-element-authoring-request-v0.1",
+      schema_version: "touba-element-authoring-request-v1",
       proposal_id: "author_tool_lifecycle",
       module_ref: "demo.lifecycle",
       element: {
@@ -4941,6 +4942,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
         requirements: ["network", "secret_read"],
         secrets: ["LIFECYCLE_API_TOKEN"],
         handler: {
+          effect_contract: { kind: "none" },
           timeout_ms: 5000,
           max_payload_bytes: 65536,
           sandbox_required: true,
@@ -4950,9 +4952,9 @@ test("client authoring and deployment routes complete a governed project lifecyc
       reason: "Add the governed lifecycle integration.",
     };
     const toolPreviewResponse = await postJson(`${baseUrl}/elements/preview`, toolRequest);
-    assert.equal(toolPreviewResponse.status, 200);
+    assert.equal(toolPreviewResponse.status, 200, await toolPreviewResponse.clone().text());
     const toolPreview = await toolPreviewResponse.json();
-    assertMatchesSchema("touba-element-authoring-preview-v0.1", toolPreview);
+    assertMatchesSchema("touba-element-authoring-preview-v1", toolPreview);
     assert.equal(toolPreview.impact.file_count, 3);
     assert.equal(toolPreview.impact.handler_stub_count, 1);
     assert.equal(toolPreview.changes.some((change) => change.path === "touba.manifest.json"), true);
@@ -4966,7 +4968,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(toolDraft.target_count, 3);
     assert.equal(JSON.stringify(toolDraft).includes("LIFECYCLE_API_TOKEN"), false);
     const toolApply = await postJson(`${baseUrl}/changes/apply`, {
-      schema_version: "touba-project-change-apply-v0.1",
+      schema_version: "touba-project-change-apply-v1",
       proposal_id: "author_tool_lifecycle",
       decision: "apply",
       decided_by: { kind: "user", id: "reviewer" },
@@ -4978,7 +4980,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(graph.nodes.some((node) => node.ref === "tool:demo.lifecycle/FetchLifecycleRecord"), true);
 
     const staleRequest = {
-      schema_version: "touba-element-authoring-request-v0.1",
+      schema_version: "touba-element-authoring-request-v1",
       proposal_id: "author_stale_lifecycle",
       module_ref: "demo.lifecycle",
       element: { kind: "memory", name: "StaleEvidence", description: "" },
@@ -4995,7 +4997,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal((await staleProposal.json()).code, "ToubaServeElementPreviewStale");
 
     const planResponse = await postJson(`${baseUrl}/deployments/plan`, {
-      schema_version: "touba-deployment-action-v0.1",
+      schema_version: "touba-deployment-action-v1",
       action: "plan",
       profile: "dev",
       actor: "user:reviewer",
@@ -5003,10 +5005,10 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(planResponse.status, 200);
     const plan = await planResponse.json();
     assert.equal(plan.status, "ready");
-    assertMatchesSchema("touba-deployment-plan-v0.1", plan);
+    assertMatchesSchema("touba-deployment-plan-v1", plan);
 
     const firstPublish = await postJson(`${baseUrl}/deployments/publish`, {
-      schema_version: "touba-deployment-action-v0.1",
+      schema_version: "touba-deployment-action-v1",
       action: "publish",
       profile: "dev",
       actor: "user:reviewer",
@@ -5016,7 +5018,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     const firstRevision = firstStatus.revision.revision_id;
     assert.equal(JSON.stringify(firstStatus).includes(token), false);
     const firstActivation = await postJson(`${baseUrl}/deployments/activate`, {
-      schema_version: "touba-deployment-action-v0.1",
+      schema_version: "touba-deployment-action-v1",
       action: "activate",
       revision_id: firstRevision,
       actor: "user:reviewer",
@@ -5024,7 +5026,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(firstActivation.status, 202);
 
     const secondProposal = await postJson(`${baseUrl}/elements/propose`, {
-      schema_version: "touba-element-authoring-request-v0.1",
+      schema_version: "touba-element-authoring-request-v1",
       proposal_id: "author_memory_second_revision",
       module_ref: "demo.lifecycle",
       element: {
@@ -5037,7 +5039,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     });
     assert.equal(secondProposal.status, 202);
     const secondApply = await postJson(`${baseUrl}/changes/apply`, {
-      schema_version: "touba-project-change-apply-v0.1",
+      schema_version: "touba-project-change-apply-v1",
       proposal_id: "author_memory_second_revision",
       decision: "apply",
       decided_by: { kind: "user", id: "reviewer" },
@@ -5045,7 +5047,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     });
     assert.equal(secondApply.status, 202);
     const secondPublish = await postJson(`${baseUrl}/deployments/publish`, {
-      schema_version: "touba-deployment-action-v0.1",
+      schema_version: "touba-deployment-action-v1",
       action: "publish",
       profile: "dev",
       actor: "user:reviewer",
@@ -5054,7 +5056,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     const secondRevision = (await secondPublish.json()).revision.revision_id;
     assert.notEqual(secondRevision, firstRevision);
     const secondActivation = await postJson(`${baseUrl}/deployments/activate`, {
-      schema_version: "touba-deployment-action-v0.1",
+      schema_version: "touba-deployment-action-v1",
       action: "activate",
       revision_id: secondRevision,
       actor: "user:reviewer",
@@ -5062,7 +5064,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(secondActivation.status, 202);
 
     const rollback = await postJson(`${baseUrl}/deployments/rollback`, {
-      schema_version: "touba-deployment-action-v0.1",
+      schema_version: "touba-deployment-action-v1",
       action: "rollback",
       actor: "user:reviewer",
     });
@@ -5588,7 +5590,7 @@ function sourceRef() {
 function writeTestDecisionIdentity(root, { userRef, deviceRef }) {
   mkdirSync(join(root, ".touba"), { recursive: true });
   writeFileSync(join(root, ".touba", "product-identity.json"), JSON.stringify({
-    schema_version: "touba-product-identity-v0.1",
+    schema_version: "touba-product-identity-v1",
     generated_at: new Date().toISOString(),
     summary: {
       user_count: 1,

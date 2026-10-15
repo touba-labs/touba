@@ -1,5 +1,5 @@
 {
-  "projection_schema_version": "architecture-projection-v0.1",
+  "projection_schema_version": "architecture-projection-v1",
   "source_air_schema_version": "touba-air-v1",
   "test_only": true,
   "module": {

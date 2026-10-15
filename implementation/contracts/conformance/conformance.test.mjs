@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { runConformance } from "./runner.mjs";
 import principalAdapter from "./principal-runtime-adapter.mjs";
 import { baseAir, baseTrace } from "./corpus.mjs";
-import { migrateMachineArtifact } from "./migrate.mjs";
+import { validateAirMachineContract, validateTraceMachineContract } from "../machine/contracts.mjs";
 
 test("runs the public corpus in contract-only mode", async () => {
   const report = await runConformance();
@@ -22,39 +22,18 @@ test("runs accepted AIR through the principal runtime", async () => {
   assert.equal(report.adapter, "touba-runtime-principal-v1");
 });
 
-test("migrates legacy AIR deterministically and idempotently", () => {
-  const legacy = baseAir();
-  legacy.air_schema_version = "air-minimal-v0.1";
-  delete legacy.air_capability_profile;
-  delete legacy.air_json_profile;
-  const first = migrateMachineArtifact(legacy);
-  const second = migrateMachineArtifact(first.artifact);
-  assert.deepEqual(second.artifact, first.artifact);
-  assert.deepEqual(second.changes, []);
-  assert.equal(migrateMachineArtifact(legacy).artifact.air_schema_version, "touba-air-v1");
+test("refuses obsolete AIR and traces without inferring or rewriting their content", () => {
+  const air = baseAir(); air.air_schema_version = "air-minimal-v0.1";
+  const trace = baseTrace(); trace.trace_protocol_version = "trace-minimal-v0.1";
+  const originals = structuredClone([air, trace]);
+  assert.throws(() => validateAirMachineContract(air), { code: "MachineVersionUnsupported" });
+  assert.throws(() => validateTraceMachineContract(trace), { code: "MachineVersionUnsupported" });
+  assert.deepEqual([air, trace], originals);
 });
 
-test("migrates legacy traces and signals inferred failure classification", () => {
-  const legacy = baseTrace();
-  legacy.trace_protocol_version = "trace-minimal-v0.1";
-  delete legacy.trace_capability_profile;
-  legacy.events.splice(1, 0, {
-    event_id: "event:run-conformance:legacy", run_id: "run-conformance", sequence_index: 1,
-    kind: "failure_detected", payload: { runtime_error_code: "UnauthorizedAgentInvocation" },
-  });
-  legacy.events[2].sequence_index = 2;
-  const result = migrateMachineArtifact(legacy);
-  assert.equal(result.semantic_review_required, true);
-  assert.equal(result.artifact.events[1].payload.failure_family, "authority");
-});
-
-test("refuses unknown source versions and mandatory legacy extensions", () => {
-  const unknown = baseAir(); unknown.air_schema_version = "touba-air-v99";
-  assert.throws(() => migrateMachineArtifact(unknown), { code: "MigrationSourceVersionUnsupported" });
-  const extended = baseAir(); extended.air_schema_version = "air-minimal-v0.1";
-  delete extended.air_capability_profile; delete extended.air_json_profile;
-  extended.required_extensions = ["vendor:x"];
-  assert.throws(() => migrateMachineArtifact(extended), { code: "MigrationMandatoryExtensionUnsupported" });
+test("requires a terminal reason instead of inferring one from status", () => {
+  const trace = baseTrace(); delete trace.events.at(-1).payload.reason;
+  assert.throws(() => validateTraceMachineContract(trace), error => error.path.endsWith(".reason"));
 });
 
 test("package runs outside the workspace without dependencies", async () => {

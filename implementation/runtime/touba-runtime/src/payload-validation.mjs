@@ -8,6 +8,31 @@ const BUILTIN_INT = "builtin:Int";
 const BUILTIN_FLOAT = "builtin:Float";
 
 /**
+ * @param {AirTool} entry
+ * @param {Map<string, unknown>} values
+ * @param {PayloadValidationContext} context
+ */
+export function validateEntryInputPayload(entry, values, context) {
+  const inputs = entry.signature?.inputs ?? [];
+  const expected = new Set(inputs.map(input => `value:${input.name}`));
+  const missing = inputs.filter(input => !values.has(`value:${input.name}`));
+  const unknown = [...values.keys()].filter(key => !expected.has(key));
+  if (missing.length || unknown.length) {
+    throw new RuntimeFailure("entry inputs must match the declared takes parameters", {
+      entryRef: entry.id,
+      missingFields: missing.map(input => input.name),
+      unknownFieldCount: unknown.length,
+    }, "EntryInputSchemaInvalid");
+  }
+  for (const input of inputs) {
+    validatePayloadValue(values.get(`value:${input.name}`), input.type_ref, context, {
+      toolRef: entry.id, direction: "input", path: `inputs.${input.name}`,
+      errorCode: "EntryInputSchemaInvalid",
+    });
+  }
+}
+
+/**
  * @typedef {"input" | "output"} PayloadDirection
  * @typedef {"string" | "boolean" | "number" | "integer" | "object" | "array" | "null" | "undefined" | "bigint" | "symbol" | "function"} PayloadValueKind
  * @typedef {string | boolean | number} PortablePayloadConstraintScalar
@@ -331,7 +356,7 @@ function validatePayloadValue(value, typeRef, context, details) {
 
   const localType = context.indexes.types.get(typeRef);
   if (!localType) {
-    return;
+    throwToolSchemaFailure("unresolved payload type", value, typeRef, details);
   }
 
   if (!isPlainRecord(value)) {
@@ -377,16 +402,17 @@ function validatePayloadValue(value, typeRef, context, details) {
  * @returns {never}
  */
 function throwToolSchemaFailure(reason, value, expectedTypeRef, details) {
+  const entry = details.errorCode === "EntryInputSchemaInvalid";
   throw new RuntimeFailure(
-    `tool ${details.direction} payload schema invalid for ${details.toolRef} at ${details.path}: ${reason}`,
+    `${entry ? "entry" : "tool"} ${details.direction} payload schema invalid for ${details.toolRef} at ${details.path}: ${reason}`,
     {
-      toolRef: details.toolRef,
+      ...(entry ? { entryRef: details.toolRef } : { toolRef: details.toolRef }),
       direction: details.direction,
       schemaPath: details.path,
       expectedTypeRef,
       actualType: payloadValueKind(value),
       missingFields: details.missingFields,
-      unknownFields: details.unknownFields,
+      unknownFieldCount: details.unknownFields?.length,
     },
     details.errorCode,
   );

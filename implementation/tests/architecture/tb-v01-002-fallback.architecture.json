@@ -1,5 +1,5 @@
 {
-  "projection_schema_version": "architecture-projection-v0.1",
+  "projection_schema_version": "architecture-projection-v1",
   "source_air_schema_version": "touba-air-v1",
   "test_only": true,
   "module": {
@@ -102,10 +102,10 @@
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
         "start_byte": 285,
-        "end_byte": 535,
+        "end_byte": 591,
         "start_line": 18,
         "start_column": 0,
-        "end_line": 29,
+        "end_line": 31,
         "end_column": 0
       },
       "memory_scopes": []
@@ -117,14 +117,14 @@
       "origin": "local",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 535,
-        "end_byte": 719,
-        "start_line": 29,
+        "start_byte": 591,
+        "end_byte": 836,
+        "start_line": 31,
         "start_column": 0,
-        "end_line": 34,
+        "end_line": 38,
         "end_column": 0
       },
-      "responsibility": "Fulfill the declared Researcher responsibility using only authorized capabilities.",
+      "responsibility": "Retrieve the requested source, using the fallback if the primary source is unavailable.",
       "callable_by": [
         "strategy:examples.fallback/RunSourceLookup"
       ],
@@ -137,11 +137,11 @@
       "origin": "local",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 719,
-        "end_byte": 814,
-        "start_line": 34,
+        "start_byte": 836,
+        "end_byte": 1043,
+        "start_line": 38,
         "start_column": 0,
-        "end_line": 39,
+        "end_line": 47,
         "end_column": 0
       },
       "memory_scopes": []
@@ -185,10 +185,10 @@
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
         "start_byte": 420,
-        "end_byte": 478,
+        "end_byte": 534,
         "start_line": 23,
         "start_column": 4,
-        "end_line": 26,
+        "end_line": 28,
         "end_column": 4
       }
     },
@@ -198,15 +198,18 @@
       "graph_ref": "graph:skill:examples.fallback/BuildSource",
       "flow_node_kind": "call_tool",
       "target_ref": "tool:examples.fallback/FetchPrimarySource",
-      "arguments": [],
+      "arguments": [
+        "value:request"
+      ],
+      "result_binding": "source",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
         "start_byte": 431,
-        "end_byte": 449,
+        "end_byte": 518,
         "start_line": 24,
         "start_column": 8,
-        "end_line": 24,
-        "end_column": 26
+        "end_line": 27,
+        "end_column": 8
       }
     },
     {
@@ -215,16 +218,16 @@
       "graph_ref": "graph:skill:examples.fallback/BuildSource",
       "flow_node_kind": "give",
       "arguments": [
-        "symbol:SourceText"
+        "value:source"
       ],
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 458,
-        "end_byte": 473,
-        "start_line": 25,
+        "start_byte": 518,
+        "end_byte": 529,
+        "start_line": 27,
         "start_column": 8,
-        "end_line": 25,
-        "end_column": 23
+        "end_line": 27,
+        "end_column": 19
       }
     },
     {
@@ -236,11 +239,11 @@
       "arguments": [],
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 505,
-        "end_byte": 533,
-        "start_line": 27,
+        "start_byte": 561,
+        "end_byte": 589,
+        "start_line": 29,
         "start_column": 8,
-        "end_line": 27,
+        "end_line": 29,
         "end_column": 36
       }
     },
@@ -254,11 +257,11 @@
       "mode": "fallback",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 505,
-        "end_byte": 533,
-        "start_line": 27,
+        "start_byte": 561,
+        "end_byte": 589,
+        "start_line": 29,
         "start_column": 8,
-        "end_line": 27,
+        "end_line": 29,
         "end_column": 36
       }
     },
@@ -269,11 +272,11 @@
       "entry_node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 768,
-        "end_byte": 814,
-        "start_line": 36,
+        "start_byte": 941,
+        "end_byte": 1043,
+        "start_line": 42,
         "start_column": 4,
-        "end_line": 39,
+        "end_line": 47,
         "end_column": 0
       }
     },
@@ -283,15 +286,18 @@
       "graph_ref": "graph:strategy:examples.fallback/RunSourceLookup",
       "flow_node_kind": "call_agent",
       "target_ref": "agent:examples.fallback/Researcher",
-      "arguments": [],
+      "arguments": [
+        "value:request"
+      ],
+      "result_binding": "source",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 779,
-        "end_byte": 789,
-        "start_line": 37,
+        "start_byte": 952,
+        "end_byte": 1031,
+        "start_line": 43,
         "start_column": 8,
-        "end_line": 37,
-        "end_column": 18
+        "end_line": 46,
+        "end_column": 8
       }
     },
     {
@@ -300,16 +306,16 @@
       "graph_ref": "graph:strategy:examples.fallback/RunSourceLookup",
       "flow_node_kind": "give",
       "arguments": [
-        "symbol:SourceText"
+        "value:source"
       ],
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 798,
-        "end_byte": 813,
-        "start_line": 38,
+        "start_byte": 1031,
+        "end_byte": 1042,
+        "start_line": 46,
         "start_column": 8,
-        "end_line": 38,
-        "end_column": 23
+        "end_line": 46,
+        "end_column": 19
       }
     },
     {
@@ -361,11 +367,11 @@
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
         "start_byte": 431,
-        "end_byte": 449,
+        "end_byte": 518,
         "start_line": 24,
         "start_column": 8,
-        "end_line": 24,
-        "end_column": 26
+        "end_line": 27,
+        "end_column": 8
       }
     },
     {
@@ -376,12 +382,12 @@
       "node_id": "node:graph:skill:examples.fallback/BuildSource:2",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 458,
-        "end_byte": 473,
-        "start_line": 25,
+        "start_byte": 518,
+        "end_byte": 529,
+        "start_line": 27,
         "start_column": 8,
-        "end_line": 25,
-        "end_column": 23
+        "end_line": 27,
+        "end_column": 19
       }
     },
     {
@@ -392,11 +398,11 @@
       "node_id": "node:graph:skill:examples.fallback/BuildSource:1",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 505,
-        "end_byte": 533,
-        "start_line": 27,
+        "start_byte": 561,
+        "end_byte": 589,
+        "start_line": 29,
         "start_column": 8,
-        "end_line": 27,
+        "end_line": 29,
         "end_column": 36
       }
     },
@@ -408,11 +414,11 @@
       "node_id": "node:graph:skill:examples.fallback/BuildSource:3",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 505,
-        "end_byte": 533,
-        "start_line": 27,
+        "start_byte": 561,
+        "end_byte": 589,
+        "start_line": 29,
         "start_column": 8,
-        "end_line": 27,
+        "end_line": 29,
         "end_column": 36
       }
     },
@@ -436,12 +442,12 @@
       "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 779,
-        "end_byte": 789,
-        "start_line": 37,
+        "start_byte": 952,
+        "end_byte": 1031,
+        "start_line": 43,
         "start_column": 8,
-        "end_line": 37,
-        "end_column": 18
+        "end_line": 46,
+        "end_column": 8
       }
     },
     {
@@ -452,12 +458,12 @@
       "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:2",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 798,
-        "end_byte": 813,
-        "start_line": 38,
+        "start_byte": 1031,
+        "end_byte": 1042,
+        "start_line": 46,
         "start_column": 8,
-        "end_line": 38,
-        "end_column": 23
+        "end_line": 46,
+        "end_column": 19
       }
     }
   ],
@@ -524,11 +530,11 @@
       "caller_kind": "strategy",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 681,
-        "end_byte": 717,
-        "start_line": 32,
+        "start_byte": 798,
+        "end_byte": 834,
+        "start_line": 36,
         "start_column": 4,
-        "end_line": 32,
+        "end_line": 36,
         "end_column": 40
       }
     },
@@ -620,12 +626,12 @@
       "role": "next",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 458,
-        "end_byte": 473,
-        "start_line": 25,
+        "start_byte": 518,
+        "end_byte": 529,
+        "start_line": 27,
         "start_column": 8,
-        "end_line": 25,
-        "end_column": 23
+        "end_line": 27,
+        "end_column": 19
       }
     },
     {
@@ -636,11 +642,11 @@
       "role": "failure",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 505,
-        "end_byte": 533,
-        "start_line": 27,
+        "start_byte": 561,
+        "end_byte": 589,
+        "start_line": 29,
         "start_column": 8,
-        "end_line": 27,
+        "end_line": 29,
         "end_column": 36
       }
     },
@@ -652,11 +658,11 @@
       "role": "fallback",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 505,
-        "end_byte": 533,
-        "start_line": 27,
+        "start_byte": 561,
+        "end_byte": 589,
+        "start_line": 29,
         "start_column": 8,
-        "end_line": 27,
+        "end_line": 29,
         "end_column": 36
       }
     },
@@ -718,12 +724,12 @@
       "role": "next",
       "source_ref": {
         "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-        "start_byte": 798,
-        "end_byte": 813,
-        "start_line": 38,
+        "start_byte": 1031,
+        "end_byte": 1042,
+        "start_line": 46,
         "start_column": 8,
-        "end_line": 38,
-        "end_column": 23
+        "end_line": 46,
+        "end_column": 19
       }
     }
   ],

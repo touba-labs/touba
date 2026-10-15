@@ -16,28 +16,40 @@ skill MakeChange
     uses ApplyChange
     do
         ApplyChange
-        give ReviewedChange
+            with request as request
+            into change
+        give change
 
 skill ReviewChange
     takes change as ReviewedChange
     gives ReviewedChange
     do
-        give ReviewedChange
+        give change
 
 agent Engineer
-    responsibility "Fulfill the declared Engineer responsibility using only authorized capabilities."
+    responsibility "Apply the requested change and return the recorded result."
+    takes request as ChangeRequest
+    gives ReviewedChange
     uses MakeChange
     callable_by strategy RunChange
 
 agent Reviewer
-    responsibility "Fulfill the declared Reviewer responsibility using only authorized capabilities."
+    responsibility "Review the recorded change supplied by the caller."
+    takes change as ReviewedChange
+    gives ReviewedChange
     uses ReviewChange
     callable_by strategy RunChange
 
 strategy RunChange
+    takes request as ChangeRequest
+    gives ReviewedChange
     uses Engineer
     uses Reviewer
     do
         Engineer
+            with request as request
+            into change
         Reviewer
-        give ReviewedChange
+            with change as change
+            into reviewed
+        give reviewed

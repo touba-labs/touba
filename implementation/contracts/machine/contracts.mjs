@@ -22,6 +22,7 @@ export const TRACE_FAILURE_FAMILIES = Object.freeze([
   ...FAILURE_FAMILIES, "cancelled", "human_stop",
 ]);
 export const TRACE_EVENT_KINDS = Object.freeze([
+  "admission_refused",
   "agent_capabilities_listed", "agent_capability_descriptions_diagnosed",
   "agent_capability_refused", "agent_capability_result_returned", "agent_capability_selected",
   "agent_decision_catalog_requested", "agent_decision_provider_call_attempted",
@@ -46,6 +47,7 @@ export const TRACE_EVENT_KINDS = Object.freeze([
   "skill_pack_resource_loaded", "skill_pack_resource_refused", "tool_binding_authorized",
   "trigger_event_accepted", "trigger_event_received", "trigger_event_refused",
   "trigger_execution_completed", "trigger_execution_failed", "trigger_execution_started",
+  "trigger_runner_run_started", "trigger_runner_run_completed",
   "trigger_rate_limited", "user_interaction_answered", "user_interaction_paused",
   "user_interaction_requested", "user_interaction_shown",
 ]);
@@ -62,7 +64,7 @@ const TRACE_ROOT_FIELDS = new Set([
   "trace_protocol_version", "trace_capability_profile", "run", "events",
 ]);
 const TRACE_RUN_FIELDS = new Set([
-  "run_id", "air_schema_version", "module_ref", "entry_ref",
+  "run_id", "air_schema_version", "air_digest", "module_ref", "entry_ref", "admission",
 ]);
 const TRACE_EVENT_FIELDS = new Set([
   "event_id", "run_id", "sequence_index", "kind", "air_ref", "payload", "message",
@@ -202,6 +204,32 @@ export function validateTraceMachineContract(value) {
   const run = requireObject(trace.run, "$.run", "trace run");
   rejectUnknownFields(run, TRACE_RUN_FIELDS, "$.run");
   const runId = requireString(run.run_id, "$.run.run_id");
+  if (run.admission !== undefined) {
+    requireExact(run.admission, "refused", "$.run.admission");
+    // An admission refusal is evidence of non-execution, never a synthetic run.
+    for (const key of ["air_schema_version", "air_digest", "module_ref", "entry_ref"]) {
+      requireExact(run[key], null, `$.run.${key}`);
+    }
+    const events = requireArray(trace.events, "$.events");
+    if (events.length !== 1) fail("TraceAdmissionInvalid", "admission refusal requires exactly one event", "$.events");
+    const event = requireObject(events[0], "$.events[0]", "admission event");
+    rejectUnknownFields(event, new Set(["event_id", "run_id", "sequence_index", "kind", "payload"]), "$.events[0]");
+    requireString(event.event_id, "$.events[0].event_id");
+    requireExact(event.run_id, runId, "$.events[0].run_id");
+    requireExact(event.sequence_index, 0, "$.events[0].sequence_index");
+    requireExact(event.kind, "admission_refused", "$.events[0].kind");
+    const payload = requireObject(event.payload, "$.events[0].payload", "admission diagnostic");
+    rejectUnknownFields(payload, new Set(["code", "stage"]), "$.events[0].payload");
+    for (const key of ["code", "stage"]) {
+      if (typeof payload[key] !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,79}$/u.test(payload[key])) {
+        fail("TraceAdmissionInvalid", "admission diagnostic must be a bounded identifier", `$.events[0].payload.${key}`);
+      }
+    }
+    return trace;
+  }
+  if (typeof run.air_digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(run.air_digest)) {
+    fail("TraceAirCommitmentInvalid", "trace requires the execution-time canonical AIR digest", "$.run.air_digest");
+  }
   requireExact(run.air_schema_version, AIR_SCHEMA_VERSION, "$.run.air_schema_version");
   requireString(run.module_ref, "$.run.module_ref");
   requireString(run.entry_ref, "$.run.entry_ref");
@@ -232,6 +260,7 @@ export function validateTraceMachineContract(value) {
       );
     }
     requireEnum(event.kind, TRACE_EVENT_KINDS, `$.events[${index}].kind`);
+    if (event.kind === "admission_refused") fail("TraceAdmissionInvalid", "admission refusal cannot appear in an executed run", `$.events[${index}].kind`);
     rejectForbiddenTraceFields(event.payload, `$.events[${index}].payload`);
     if (event.kind === "failure_detected") {
       requireString(event.payload?.runtime_error_code, `$.events[${index}].payload.runtime_error_code`);
@@ -242,6 +271,7 @@ export function validateTraceMachineContract(value) {
   const terminal = events.at(-1);
   if (terminal.kind !== "run_completed") fail("TraceTerminalInvalid", "last event must be run_completed", `$.events[${events.length - 1}].kind`);
   requireEnum(terminal.payload?.status, TERMINAL_STATUSES, `$.events[${events.length - 1}].payload.status`);
+  requireString(terminal.payload?.reason, `$.events[${events.length - 1}].payload.reason`);
   if (events.slice(0, -1).some((event) => event.kind === "run_completed")) {
     fail("TraceTerminalInvalid", "run_completed must be unique and final", "$.events");
   }
@@ -260,11 +290,11 @@ export function failureFamilyForRuntimeCode(codeValue, failureMode = undefined) 
   if (code === "RuntimeStopped" || /human_approval|human_review/u.test(String(failureMode ?? ""))) {
     return "human_stop";
   }
-  if (/Provider/u.test(code)) return "provider";
-  if (/Handler|ToolBinding|ProcessProtocol/u.test(code)) return "handler";
-  if (/Unauthorized|NotGranted|Grant|Secret|Memory.*(?:Scope|Access|Grant)|Budget|LimitExceeded|KillSwitch|Authority|Permission|Caller/u.test(code)) {
+  if (/Unauthorized|NotAllowed|NotGranted|Grant|Secret|Memory.*(?:Scope|Access|Grant)|Budget|LimitExceeded|KillSwitch|Authority|Permission|Caller/u.test(code)) {
     return "authority";
   }
+  if (/Provider/u.test(code)) return "provider";
+  if (/Handler|ToolBinding|ProcessProtocol/u.test(code)) return "handler";
   return "business";
 }
 

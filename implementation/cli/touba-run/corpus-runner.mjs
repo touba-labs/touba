@@ -41,8 +41,7 @@ export const FIXTURES = [
   {
     id: "tb-v01-005-strategy-agents",
     file: "tb-v01-005-strategy-agents.tb",
-    // Legacy untyped agents do not implicitly pass one agent's output to another.
-    inputs: { request: { summary: "change" }, change: { summary: "review input" } },
+    inputs: { request: { summary: "change" } },
     expectStatus: "success",
   },
 ];
@@ -87,7 +86,7 @@ export const ANNEAU1_POSITIVE_FIXTURES = [
   {
     id: "tb-a1-p07-simple-agent-calls-no-enriched-dispatch",
     file: "positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-    inputs: { request: { summary: "change" }, change: { summary: "review input" } },
+    inputs: { request: { summary: "change" } },
     expectStatus: "success",
   },
 ];

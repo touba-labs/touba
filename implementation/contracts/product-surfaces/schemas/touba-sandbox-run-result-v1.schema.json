@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-sandbox-run-result-v1.schema.json",
+  "title": "touba-sandbox-run-result-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "execution_kind", "target_ref", "status", "reason", "started_at", "completed_at", "duration_ms", "effect_policy", "result", "trace", "diagnostics"],
+  "properties": {
+    "schema_version": { "const": "touba-sandbox-run-result-v1" },
+    "run_id": { "type": "string" },
+    "execution_kind": { "enum": ["entrypoint", "trigger"] },
+    "target_ref": { "type": "string" },
+    "status": { "enum": ["success", "failure", "stopped", "cancelled"] },
+    "reason": { "type": "string", "minLength": 1 },
+    "started_at": { "type": "string" },
+    "completed_at": { "type": "string" },
+    "duration_ms": { "type": "integer" },
+    "effect_policy": { "enum": ["runtime_only", "allow_declared_external_effects"] },
+    "result": {},
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "entry_ref", "event_count", "events"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "entry_ref": { "type": "string" },
+        "event_count": { "type": "integer" },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "type", "summary"],
+            "properties": {
+              "index": { "type": "integer" },
+              "type": { "type": "string" },
+              "summary": { "type": "string" },
+              "authority_ref": { "type": "string" },
+              "related_ref": { "type": "string" },
+              "severity": { "enum": ["info", "warning", "error"] },
+              "redaction": { "enum": ["none", "secrets_redacted", "payload_minimized"] }
+            }
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "enum": ["info", "warning", "error"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:ee66126018bc56e57c3b4e89d6be0d0cadc0e5998797b8b51825a9ef3e30fe57",
     "module_ref": "module:test",
     "entry_ref": "skill:test/BindThenGive"
   },
@@ -74,7 +75,8 @@
       "sequence_index": 4,
       "kind": "run_completed",
       "payload": {
-        "status": "failure"
+        "status": "failure",
+        "reason": "BudgetExceeded"
       }
     }
   ]

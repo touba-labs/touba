@@ -3,7 +3,17 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { compilerCommandSpec, runToubaCompileJson } from "../src/server.mjs";
+import { compilerCommandSpec, parseCompilerEnvelope, runToubaCompileJson } from "../src/server.mjs";
+
+test("an incomplete compiler envelope cannot clear diagnostics", () => {
+  for (const response of [
+    null, {}, { ok: false, air: null, diagnostics: [] },
+    { ok: true, air: null, diagnostics: [] }, { ok: true, air: {}, diagnostics: [] },
+    { ok: false, air: null, diagnostics: [null] },
+  ]) {
+    assert.throws(() => parseCompilerEnvelope(JSON.stringify(response)), /Invalid Touba compiler response/);
+  }
+});
 
 function implementationFixture(t, files = []) {
   const directory = mkdtempSync(join(tmpdir(), "touba-lsp-compiler-test-"));

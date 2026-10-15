@@ -3,20 +3,18 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const INDEX_SCHEMA_VERSION = "touba-registry-index-v0.1";
-const PACKAGE_SCHEMA_VERSION = "touba-registry-package-v0.1";
-const LOCK_SCHEMA_VERSION = "touba-static-registry-lock-v0.1";
+const INDEX_SCHEMA_VERSION = "touba-registry-index-v1";
+const PACKAGE_SCHEMA_VERSION = "touba-registry-package-v1";
+const LOCK_SCHEMA_VERSION = "touba-static-registry-lock-v1";
 
 const STATUSES = new Set(["draft", "reviewed", "validated", "deprecated", "yanked"]);
 const PACKAGE_KINDS = new Set(["skill_pack", "touba_package", "tool_handler", "manifest", "lock", "protocol_schema"]);
 const SUPPORTED_PROTOCOLS = new Set([
-  "touba-skill-pack-v0.1",
-  "touba-package-v0.1",
-  "budget-bq1-v0.1",
-  "memory-pi1-v0.1",
-  "tool-handler-v1",
-  "agent-decision-v1",
-  "model-input-v1",
+  "touba-skill-pack-v1",
+  "touba-package-v1",
+  "budget-bq1-v1",
+  "memory-pi1-v1",
+  "touba-tool-handler-v1",
   "touba-agent-decision-v1",
   "touba-agent-model-input-v1",
 ]);

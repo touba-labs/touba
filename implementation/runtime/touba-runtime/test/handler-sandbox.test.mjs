@@ -96,6 +96,7 @@ test("manifest sandbox contract is normalized and rejects unknown fields", () =>
     manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:demo/Read": {
+        effect_contract: { kind: "none" },
         handler: {
           kind: "process",
           command: "node",
@@ -118,6 +119,7 @@ test("manifest sandbox contract is normalized and rejects unknown fields", () =>
       manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:demo/Read": {
+          effect_contract: { kind: "none" },
           handler: {
             kind: "process",
             command: "node",

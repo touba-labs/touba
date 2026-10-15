@@ -88,8 +88,6 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `ModulePathNotCanonical` | Fichier source hors convention projet | Utiliser `src/<domaine>/<module>.tb` avec `module domaine.module` |
 | `ModulePathMismatch` | Nom de module différent du chemin source | Aligner le chemin et la ligne `module` |
 | `ProjectRunProfileUnknown` | Profil demandé absent de `touba.project.json` | Déclarer le profil ou utiliser `pure`, `dev` ou `prod` disponible |
-| `ProjectArtifactMigrationRequired` | Projet encore sur le layout historique | Exécuter `touba project migrate --mode plan`, puis `--mode write` après revue |
-| `ProjectArtifactMigrationTargetOccupied` | Cible `.touba/build/<profil>` déjà occupée avant migration | Archiver ou nettoyer explicitement la cible ; Touba refuse de l’écraser |
 | `EffectiveProjectMissing` | Projection effective absente en mode `check` | Relancer `touba prepare --mode write --profile <profil>` |
 | `EffectiveProjectDrift` | Projection effective différente de ses entrées déclarées | Examiner les changements puis régénérer avec `prepare --mode write` |
 | `EffectiveProjectReadFailed` | Projection effective illisible ou non JSON | Retirer l’artefact dérivé invalide puis le régénérer |
@@ -121,7 +119,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `RunPlanLimitInvalid` | Limite de run invalide | Utiliser une limite positive supportée |
 | `RunPlanSensitivePayloadForbidden` | Payload, prompt ou secret placé dans le run plan | Retirer ces données du plan et les fournir par le canal prévu |
 | `BindingFragmentReadFailed` | Fragment de binding illisible | Corriger le chemin ou le JSON |
-| `BindingFragmentSchemaMismatch` | Fragment hors schéma `touba-binding-fragment-v0.1` | Corriger le schéma ou régénérer le fragment |
+| `BindingFragmentSchemaMismatch` | Fragment hors schéma `touba-binding-fragment-v1` | Corriger le schéma ou régénérer le fragment |
 | `BindingFragmentUnknownTool` | Fragment cible un tool absent de l’AIR préparé | Corriger le tool, l’import ou le package local |
 | `BindingFragmentDuplicateBinding` | Même binding répété par fragment | Garder une seule source de binding |
 | `BindingFragmentConflictingBinding` | Deux fragments divergent pour le même tool | Arbitrer explicitement avant composition |
@@ -132,7 +130,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `BindingFragmentAuthorityFieldForbidden` | Fragment tente d’accorder caller, scope, policy ou statut de sécurité | Retirer l’autorité du fragment |
 | `BindingFragmentNotAssembled` | `touba run` reçoit un fragment au lieu d’un manifest assemblé | Lancer `touba prepare --binding-fragment ...` et fournir `touba.manifest.json` |
 | `ResourceBindingsReadFailed` | Fichier de resource bindings illisible | Corriger le chemin ou le JSON |
-| `ResourceBindingsSchemaMismatch` | Resource bindings hors schéma `touba-resource-bindings-v0.1` | Corriger ou régénérer l’artefact |
+| `ResourceBindingsSchemaMismatch` | Resource bindings hors schéma `touba-resource-bindings-v1` | Corriger ou régénérer l’artefact |
 | `ResourceBindingUnknownResource` | Binding cible une ressource absente de l’AIR préparé | Corriger la référence ou l’import |
 | `ResourceBindingUnsupportedKind` | Famille non supportée par les resource bindings | Utiliser `memory_backend`, `event_source` ou `decision_provider` |
 | `ResourceBindingMissing` | Ressource logique requise sans binding actif | Fournir un binding ou désactiver l’exigence |
@@ -147,7 +145,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | Code | Cause probable | Action |
 | --- | --- | --- |
 | `SkillPackDescriptorMissing` | Pack sans `skill.json` | Créer ou restaurer le descripteur |
-| `SkillPackSchemaMismatch` | Schéma, champ ou type de champ invalide | Corriger `skill.json` selon `touba-skill-pack-v0.1` |
+| `SkillPackSchemaMismatch` | Schéma, champ ou type de champ invalide | Corriger `skill.json` selon `touba-skill-pack-v1` |
 | `SkillPackRefInvalid` | Ref de pack ou de ressource invalide | Utiliser `skill_pack:<namespace>/<skill-id>` ou `resource:<skill-id>/<name>` |
 | `SkillPackLayoutInvalid` | Organisation du dossier incomplète | Recréer le layout avec `touba skill new` ou ajouter les dossiers attendus |
 | `SkillPackResourceKindInvalid` | Type de ressource non supporté | Utiliser `procedure`, `reference`, `example`, `template`, `sample` ou `script` |

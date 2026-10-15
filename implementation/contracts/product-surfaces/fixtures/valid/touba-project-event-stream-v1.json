@@ -1,0 +1,11 @@
+{
+  "schema_version": "touba-project-event-stream-v1",
+  "endpoint": "/events",
+  "transport": "server_sent_events",
+  "event_schema_version": "touba-project-event-v1",
+  "replay": {
+    "request_header": "Last-Event-ID",
+    "event_id_field": "event_id",
+    "retention": "bounded_journal"
+  }
+}

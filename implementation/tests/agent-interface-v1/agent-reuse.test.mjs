@@ -88,6 +88,12 @@ test("compiled source reuses one skill with changed and identical arguments", as
   assert.equal(result.result, 20);
   assert.deepEqual(handlerInputs, [2, 4, 4]);
   assert.deepEqual(selectedRefs(result), [skillRef, skillRef, skillRef]);
+  const selections = events(result, "agent_capability_selected");
+  assert.equal(selections[0].payload.repeated_from_step, undefined);
+  assert.equal(selections[1].payload.repeated_from_step, undefined);
+  assert.equal(selections[2].payload.repeated_from_step, 1);
+  assert.equal(selections[2].payload.identical_invocation_number, 2);
+  assert.equal(Object.hasOwn(selections[2].payload, "arguments"), false);
   assert.equal(events(result, "agent_direct_answer_returned")[0].payload.decision_phase, "finalization");
   assert.equal(events(result, "agent_interface_result_returned")[0].payload.output_type, "builtin:Int");
   assert.deepEqual(
@@ -96,6 +102,26 @@ test("compiled source reuses one skill with changed and identical arguments", as
       .map((event) => event.payload.consumed_value),
     [1, 2, 3],
   );
+});
+
+test("a provider without a terminal branch repeats honestly until refusal, not fake completion", async () => {
+  const effects = [];
+  const observed = [];
+  const result = await executeAirDocument(document, {
+    inputs: { start: 2 }, maxAgentSteps: 3,
+    toolHandlers: { [toolRef]: ({ arguments: args }) => { effects.push(structuredClone(args)); return args.item * 2; } },
+    agentDecisionProvider: (request) => {
+      observed.push(structuredClone(request.observations));
+      if (request.mode === "summary") return { action: "request_capabilities" };
+      return { target_ref: skillRef, arguments: { item: 2 } };
+    },
+  });
+  assert.equal(result.status, "failure");
+  assert.ok(errorCodes(result).includes("AgentStepLimitExceeded"));
+  assert.deepEqual(effects, [{ item: 2 }, { item: 2 }, { item: 2 }]);
+  assert.deepEqual(observed.at(-1).map((item) => item.value), [4, 4, 4]);
+  assert.deepEqual(observed.at(-1).slice(1).map((item) => [item.repeated_from_step, item.identical_invocation_number]), [[0, 2], [0, 3]]);
+  assert.equal(events(result, "agent_direct_answer_returned").length, 0);
 });
 
 test("compiled agent signature and repeated calls cross the real SDK schema adapter", async () => {
@@ -114,14 +140,16 @@ test("compiled agent signature and repeated calls cross the real SDK schema adap
     // Keep the SDK's actual jsonSchema adapter; only generation is scripted.
     // No provider model is invoked and this is not a model-quality evaluation.
     generateObject: async (call) => {
-      const prompt = JSON.parse(call.prompt);
+      const context = JSON.parse(call.system.split("\n\nRuntime context: ").at(-1));
+      const data = JSON.parse(call.prompt);
+      const prompt = { ...context, agent_state: { ...context.agent_state, observations: data.observations } };
       const schema = call.schema.jsonSchema ?? call.schema;
       const mode = prompt.runtime_contract.mode;
       const state = prompt.agent_state;
       providerModes.push(mode);
       assert.equal(prompt.agent.signature.output_type, "builtin:Int");
       assert.equal(call.model, "scripted-no-network-model");
-      assert.deepEqual(schema.properties.source.enum, [providerSource]);
+      assert.deepEqual((mode === "capabilities" ? schema : schema.properties.decision.anyOf[0]).properties.source.enum, [providerSource]);
       assert.deepEqual(state.used_capability_refs, state.step_index === 0 ? [] : [skillRef]);
 
       if (mode === "capabilities") {
@@ -129,7 +157,7 @@ test("compiled agent signature and repeated calls cross the real SDK schema adap
         assert.deepEqual(schema.properties.target_ref.enum, [skillRef]);
         assert.deepEqual(schema.properties.arguments.properties.item, { type: "integer" });
         assert.deepEqual(schema.properties.arguments.required, ["item"]);
-        return { object: {
+        return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: {
           action: "select_capability",
           target_ref: skillRef,
           arguments: { item: values[state.step_index] },
@@ -139,31 +167,31 @@ test("compiled agent signature and repeated calls cross the real SDK schema adap
         } };
       }
 
-      assert.deepEqual(schema.properties.result.anyOf, [
+      assert.deepEqual(schema.properties.decision.anyOf.map(branch => branch.properties.result), [
         { type: "integer" },
         { type: "string", enum: [""] },
       ]);
       if (mode === "summary") {
         assert.deepEqual(state.available_capability_refs, [skillRef]);
-        assert.ok(schema.properties.action.enum.includes("request_capabilities"));
-        return { object: {
+        assert.ok(schema.properties.decision.anyOf.some(branch => branch.properties.action.enum.includes("request_capabilities")));
+        return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: { decision: {
           action: "request_capabilities",
           source: providerSource,
           reason: "Another invocation is needed, including a previously used capability.",
           result: "",
-        } };
+        } } };
       }
 
       assert.equal(mode, "finalization");
       assert.deepEqual(state.available_capability_refs, []);
-      assert.deepEqual(schema.properties.action.enum, ["answer_directly", "cannot_complete"]);
+      assert.deepEqual(schema.properties.decision.anyOf.map(branch => branch.properties.action.enum[0]), ["answer_directly", "cannot_complete"]);
       assert.deepEqual(state.observations.map((observation) => observation.value), [4, 8, 8]);
-      return { object: {
+      return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: { decision: {
         action: "answer_directly",
         source: providerSource,
         reason: "Return the integer sum computed from the three runtime observations.",
         result: state.observations.reduce((sum, observation) => sum + observation.value, 0),
-      } };
+      } } };
     },
   });
 
@@ -233,43 +261,29 @@ test("provider values must match a compiled skill input before its graph execute
   assert.equal(result.trace.events.some((event) => event.air_ref?.owner_ref === skillRef), false);
 });
 
-for (const inputs of [{ start: 2 }, { start: 2, item: "not-an-integer" }]) {
-  test(`legacy omitted arguments validate ambient inputs before skill entry: ${JSON.stringify(inputs)}`, async () => {
+for (const inputs of [{ start: 2 }, { start: 2, item: "not-an-integer" }, { start: 2, item: 3 }]) {
+  test(`omitted capability arguments cannot capture undeclared caller inputs: ${JSON.stringify(inputs)}`, async () => {
     const handlerInputs = [];
+    let providerCalls = 0;
     const result = await executeAirDocument(document, {
       inputs,
       toolHandlers: { [toolRef]: localDoubleHandler(handlerInputs) },
-      agentDecisionProvider: (request) => request.mode === "summary"
-        ? { action: "request_capabilities" }
-        : { action: "select_capability", target_ref: skillRef },
+      agentDecisionProvider: (request) => {
+        providerCalls++;
+        assert.deepEqual(request.inputs, { start: 2 });
+        return request.mode === "summary"
+          ? { action: "request_capabilities" }
+          : { action: "select_capability", target_ref: skillRef };
+      },
     });
 
     assert.equal(result.status, "failure");
     assert.deepEqual(handlerInputs, []);
-    assert.ok(errorCodes(result).includes("AgentCapabilityArgumentsInvalid"));
+    assert.ok(errorCodes(result).includes(Object.hasOwn(inputs, "item") ? "EntryInputSchemaInvalid" : "AgentCapabilityArgumentsInvalid"));
+    if (Object.hasOwn(inputs, "item")) assert.equal(providerCalls, 0, "undeclared entry fields are refused before the provider");
     assert.equal(result.trace.events.some((event) => event.air_ref?.owner_ref === skillRef), false);
   });
 }
-
-test("legacy omitted arguments retain a valid explicitly provided ambient input", async () => {
-  const handlerInputs = [];
-  const result = await executeAirDocument(document, {
-    inputs: { start: 2, item: 3 },
-    toolHandlers: { [toolRef]: localDoubleHandler(handlerInputs) },
-    agentDecisionProvider: (request) => {
-      if (request.observations.length > 0) {
-        return { action: "answer_directly", result: request.observations[0].value };
-      }
-      return request.mode === "summary"
-        ? { action: "request_capabilities" }
-        : { action: "select_capability", target_ref: skillRef };
-    },
-  });
-
-  assert.equal(result.status, "success");
-  assert.equal(result.result, 6);
-  assert.deepEqual(handlerInputs, [3]);
-});
 
 test("compiled agent List of Text accepts a correctly typed direct answer", async () => {
   const agent = listDocument.definitions.agents[0];
@@ -294,7 +308,7 @@ for (const invalidValue of ["not-a-list", [1], ["valid", false]]) {
     });
     assert.equal(result.status, "failure");
     assert.equal(providerCalls, 0);
-    assert.ok(errorCodes(result).includes("AgentInterfaceInputTypeMismatch"));
+    assert.ok(errorCodes(result).includes("EntryInputSchemaInvalid"));
   });
 
   test(`compiled agent rejects an invalid List of Text answer: ${JSON.stringify(invalidValue)}`, async () => {

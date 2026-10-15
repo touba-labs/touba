@@ -52,6 +52,81 @@ Les packages externes, aliases, wildcard et re-export ne sont pas documentés co
 Les imports sont résolus par l’assemblage AIR du projet, pas par le runtime.
 :::
 
+<details>
+<summary>Modules complets requis par cet exemple d’imports</summary>
+
+Enregistrez ces fichiers avec le module importeur. Un import résout un contrat source, pas une permission runtime.
+
+<!-- touba-example: compile -->
+```touba title="src/examples/common.tb"
+module examples.common
+
+type SearchRequest
+    query is Text
+    rows is Int
+
+define DefaultRows as Int = 5
+
+function NormalizeQuery
+    takes query as Text
+    gives Text
+    do
+        give query
+```
+
+<!-- touba-example: compile -->
+```touba title="src/examples/data_tools.tb"
+module examples.data_tools
+
+import type SearchRequest from examples.common
+
+tool SearchDatasets
+    description "Find public datasets matching the request."
+    takes request as SearchRequest
+    gives Text
+    requires network
+```
+
+<!-- touba-example: compile -->
+```touba title="src/examples/shared_flow.tb"
+module examples.shared_flow
+
+skill BuildBrief
+    description "Return a typed brief supplied by the caller."
+    takes brief as Text
+    gives Text
+    do
+        give brief
+
+strategy SharedRun
+    takes brief as Text
+    gives Text
+    uses BuildBrief
+    do
+        BuildBrief
+            with brief as brief
+            into result
+        give result
+```
+
+<!-- touba-example: compile -->
+```touba title="src/examples/agent_pool.tb"
+module examples.agent_pool
+
+agent Reviewer
+    responsibility "Review the supplied brief for completeness using only authorized capabilities."
+    callable_by strategy examples.shared_flow.SharedRun
+```
+
+<!-- touba-example: compile -->
+```touba title="src/examples/shared_memory.tb"
+module examples.shared_memory
+
+memory ProjectKnowledge
+```
+
+</details>
+
 ## Types
 
 <!-- touba-example: fragment -->

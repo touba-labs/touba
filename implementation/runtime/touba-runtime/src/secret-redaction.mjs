@@ -1,5 +1,22 @@
 // @ts-check
 
+import { containsResolvedSecretValue } from "./execution-checkpoints.mjs";
+import { RuntimeFailure } from "./runtime-errors.mjs";
+
+/** Refuse, never silently rewrite, a business result containing a known secret.
+ * @param {unknown} value
+ * @param {SecretStore | null | undefined} secretStore
+ */
+export function assertResultHasNoResolvedSecret(value, secretStore) {
+  const refused = resolvedSecretEntries(secretStore)
+    .filter(entry => containsResolvedSecretValue(value, [entry.value]))
+    .map(entry => entry.handle);
+  if (refused.length === 0) return;
+  throw new RuntimeFailure("result contains a resolved secret value", {
+    secretHandlesRefused: refused,
+  }, "SecretValueInResult");
+}
+
 /**
  * @typedef {object} ResolvedSecretEntry
  * @property {string} handle

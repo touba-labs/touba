@@ -11,40 +11,7 @@ const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
 const implementationRoot = join(currentDir, "../../..");
 
-const smokeSource = `module examples.linear_skill
-
-type SourceRequest
-    topic is Text
-
-type SourceText
-    content is Text
-
-type SourceNote
-    summary is Text
-
-tool FetchSource
-    takes request as SourceRequest
-    gives SourceText
-
-skill BuildNote
-    takes request as SourceRequest
-    gives SourceNote
-    uses FetchSource
-    do
-        FetchSource
-        give SourceNote
-
-agent Researcher
-    responsibility "Build sourced notes only through the explicitly authorized skill."
-    uses BuildNote
-    callable_by strategy RunSourcedNote
-
-strategy RunSourcedNote
-    uses Researcher
-    do
-        Researcher
-        give SourceNote
-`;
+import { smokeSource, writeSmokeBinding } from "./distribution-smoke.mjs";
 
 try {
   const { toolchainRoot } = packageLocalToolchain();
@@ -83,6 +50,7 @@ function checkToolchain(toolchainRoot) {
     runTouba(["init", "--root", projectRoot], { env });
     assertFile(join(projectRoot, ".touba", "state", "secrets.local.json"));
 
+    const smokeManifest = writeSmokeBinding(projectRoot, join(toolchainRoot, "bin", process.platform === "win32" ? "node.exe" : "node"));
     const sourceDir = join(projectRoot, "src", "examples");
     mkdirSync(sourceDir, { recursive: true });
     const sourcePath = join(sourceDir, "linear_skill.tb");
@@ -94,7 +62,7 @@ function checkToolchain(toolchainRoot) {
     assertEqual(air.air_schema_version, "touba-air-v1", "compiled AIR schema");
 
     const inspect = runTouba(["inspect", airPath], { env });
-    if (!inspect.stdout.includes("Touba Inspect touba-inspect-v0.1")) {
+    if (!inspect.stdout.includes("Touba Inspect touba-inspect-v1")) {
       throw new Error("inspect output did not contain the expected header");
     }
 
@@ -103,8 +71,8 @@ function checkToolchain(toolchainRoot) {
       airPath,
       "--inputs-json",
       JSON.stringify({ request: { topic: "distribution" } }),
-      "--local-fetch-source-text",
-      "distribution smoke source",
+      "--manifest",
+      smokeManifest,
       "--output",
       "trace",
     ], { env });

@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:455cde1f29daa49b7ba5bb620e5ed62ada6d40d3f0607302f5ca07590a911fd2",
     "module_ref": "module:test",
     "entry_ref": "skill:test/TwoTools"
   },
@@ -113,6 +114,7 @@
         "secret_handles_granted": [],
         "secret_handles_used": [],
         "handler_kind": "process",
+        "effect_contract_kind": "none",
         "timeout_ms": 5000,
         "max_payload_bytes": 1048576
       }
@@ -222,7 +224,8 @@
       "sequence_index": 10,
       "kind": "run_completed",
       "payload": {
-        "status": "failure"
+        "status": "failure",
+        "reason": "ToolCallBudgetExceeded"
       }
     }
   ]

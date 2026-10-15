@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  statSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -33,147 +34,52 @@ const REVIEW_TARGET = "strategy:demo.review/RunReview";
 const USER_REF = "user:test-reviewer";
 const DEVICE_REF = "device:test-suite";
 
-test("stored human checkpoints retain optional loop cursors and reject malformed cursor state", () => {
-  const root = mkdtempSync(join(tmpdir(), "touba-wait-loop-state-"));
-  const path = join(root, "sandbox-checkpoints.json");
-  try {
-    const record = legacyHumanRecord({ operationId: undefined, runId: "run_loop",
-      createdAt: "2026-09-16T00:00:00Z" });
-    const key = `${record.checkpoint.graph_ref}:loop`;
-    record.checkpoint.loop_state = { [key]: { index: 1 } };
-    writeJson(path, { schema_version: "touba-sandbox-checkpoints-v0.1", records: [record] });
-    const migrated = loadSandboxCheckpointStore(path);
-    assert.deepEqual(migrated.records[0].checkpoint.loop_state, { [key]: { index: 1 } });
-    for (const state of [[], null, { [key]: { index: -1 } }, { [key]: { index: 0.5 } },
-      { [key]: { index: 1, extra: true } }, { [key]: {} }]) {
-      const invalid = structuredClone(migrated);
-      invalid.records[0].checkpoint.loop_state = state;
-      const bytes = JSON.stringify(invalid);
-      writeFileSync(path, bytes, "utf8");
-      assert.throws(() => loadSandboxCheckpointStore(path), { code: "ToubaServeSandboxCheckpointStoreInvalid" });
-      assert.equal(readFileSync(path, "utf8"), bytes);
-    }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("WAIT migration is deterministic, UTC-normalized, preserves historical terminals, and fails closed", () => {
-  const root = mkdtempSync(join(tmpdir(), "touba-wait-migration-"));
-  const path = join(root, "sandbox-checkpoints.json");
-  try {
-    const legacyV1 = legacyHumanRecord({
-      operationId: undefined,
-      runId: "run_legacy_v1",
-      createdAt: "2026-09-16T02:00:00+02:00",
-    });
-    writeJson(path, {
-      schema_version: "touba-sandbox-checkpoints-v0.1",
-      records: [legacyV1],
-    });
-    const migratedV1 = loadSandboxCheckpointStore(path);
-    assert.equal(migratedV1.schema_version, "touba-sandbox-checkpoints-v0.3");
-    assert.equal(migratedV1.records[0].operation_id, "run_legacy_v1");
-    assert.equal(migratedV1.records[0].effect_scope_id, "run_legacy_v1");
-    assert.equal(migratedV1.records[0].created_at, "2026-09-16T00:00:00.000Z");
-    assert.equal(migratedV1.records[0].human_wait.deadline_at, "2026-09-17T00:00:00.000Z");
-    assert.equal(migratedV1.records[0].human_wait.resolution, null);
-    assert.deepEqual(readJson(path), migratedV1);
-
-    const terminal = legacyHumanRecord({
-      operationId: "operation_legacy_terminal",
-      runId: "run_legacy_terminal",
-      createdAt: "2026-09-16T02:00:00+02:00",
-      status: "completed",
-    });
-    terminal.resumed_at = "2026-09-16T03:30:00+02:00";
-    terminal.result = terminalHumanResult(terminal, "rejected", "2026-09-16T03:30:00+02:00");
-    writeJson(path, {
-      schema_version: "touba-sandbox-checkpoints-v0.2",
-      records: [{ ...terminal, record_kind: "human" }],
-    });
-    const migratedTerminal = loadSandboxCheckpointStore(path).records[0];
-    assert.equal(migratedTerminal.status, "completed");
-    assert.equal(migratedTerminal.resumed_at, "2026-09-16T01:30:00.000Z");
-    assert.equal(migratedTerminal.result.completed_at, "2026-09-16T01:30:00.000Z");
-    assert.equal(migratedTerminal.human_wait.resolution, null);
-
-    const invalid = {
-      schema_version: "touba-sandbox-checkpoints-v0.1",
-      records: [legacyHumanRecord({
-        operationId: undefined,
-        runId: "run_timezone_less",
-        createdAt: "2026-09-16T02:00:00",
-      })],
-    };
-    const invalidBytes = `${JSON.stringify(invalid)}\n`;
-    writeFileSync(path, invalidBytes, "utf8");
-    assert.throws(() => loadSandboxCheckpointStore(path), {
-      code: "ToubaServeSandboxCheckpointStoreInvalid",
-    });
-    assert.equal(readFileSync(path, "utf8"), invalidBytes);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("WAIT v0.1 migration correlates the exact interaction operation and refuses ambiguous runs", async () => {
+test("stored human checkpoints retain loop cursors and refuse missing correlation without rewriting", async () => {
   const root = createTestProject();
-  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
-  const sessionsPath = join(root, ".touba", "interaction-sessions.json");
-  const service = createToubaProjectServer({
-    contractsRoot,
-    projectRoot: root,
-    port: 0,
-    quiet: true,
-  });
+  const path = join(root, ".touba", "sandbox-checkpoints.json");
+  const service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
   try {
     await service.start();
     const baseUrl = serverBaseUrl(service);
     const session = await createInteraction(baseUrl, WAIT_TARGET);
-    const operation = await sendInteractionMessage(baseUrl, session.session_id, "legacy_correlation");
+    const operation = await sendInteractionMessage(baseUrl, session.session_id, "cursor_validation");
     await waitForInteractionStatus(baseUrl, session.session_id, operation.operation_id, "awaiting_human");
     await service.stop();
-
-    const current = loadSandboxCheckpointStore(checkpointPath).records[0];
-    const legacy = structuredClone(current);
-    delete legacy.record_kind;
-    delete legacy.operation_id;
-    delete legacy.effect_scope_id;
-    delete legacy.human_wait;
-    const legacyStore = {
-      schema_version: "touba-sandbox-checkpoints-v0.1",
-      records: [legacy],
-    };
-    writeJson(checkpointPath, legacyStore);
-    const migrated = loadSandboxCheckpointStore(checkpointPath, {
-      interactionSessionsPath: sessionsPath,
-    });
-    assert.equal(migrated.records[0].operation_id, operation.operation_id);
-    assert.equal(migrated.records[0].effect_scope_id, operation.operation_id);
-
-    const sessions = readJson(sessionsPath);
-    const foreignSession = structuredClone(sessions.sessions[0]);
-    foreignSession.session_id = `${foreignSession.session_id}_foreign`;
-    foreignSession.operations[0].session_id = foreignSession.session_id;
-    foreignSession.operations[0].operation_id = `${operation.operation_id}_foreign`;
-    for (const message of foreignSession.messages) {
-      message.operation_id = foreignSession.operations[0].operation_id;
+    if (process.platform !== "win32") assert.equal(statSync(path).mode & 0o777, 0o600);
+    const stored = loadSandboxCheckpointStore(path);
+    const key = stored.records[0].checkpoint.graph_ref + ":loop";
+    stored.records[0].checkpoint.loop_state = { [key]: { index: 1 } };
+    writeJson(path, stored);
+    assert.deepEqual(loadSandboxCheckpointStore(path).records[0].checkpoint.loop_state, { [key]: { index: 1 } });
+    const mutations = [
+      ...[[], null, { [key]: { index: -1 } }, { [key]: { index: 0.5 } }, { [key]: { index: 1, extra: true } }, { [key]: {} }]
+        .map(state => record => { record.checkpoint.loop_state = state; }),
+      record => { delete record.operation_id; },
+      record => { delete record.effect_scope_id; },
+      record => { delete record.human_wait; },
+      record => { record.paused_result.trace.events = []; record.paused_result.trace.event_count = 0; },
+    ];
+    for (const mutate of mutations) {
+      const invalid = structuredClone(stored); mutate(invalid.records[0]);
+      const bytes = JSON.stringify(invalid); writeFileSync(path, bytes, "utf8");
+      assert.throws(() => loadSandboxCheckpointStore(path), { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+      assert.equal(readFileSync(path, "utf8"), bytes);
     }
-    sessions.sessions.push(foreignSession);
-    writeJson(sessionsPath, sessions);
-    const legacyBytes = `${JSON.stringify(legacyStore)}\n`;
-    writeFileSync(checkpointPath, legacyBytes, "utf8");
-    assert.throws(() => loadSandboxCheckpointStore(checkpointPath, {
-      interactionSessionsPath: sessionsPath,
-    }), {
-      code: "ToubaServeSandboxCheckpointStoreInvalid",
-    });
-    assert.equal(readFileSync(checkpointPath, "utf8"), legacyBytes);
-  } finally {
-    await service.stop();
-    rmSync(root, { recursive: true, force: true });
-  }
+  } finally { await service.stop(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("obsolete checkpoint stores are refused unchanged, including empty stores", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-wait-obsolete-"));
+  const path = join(root, "sandbox-checkpoints.json");
+  try {
+    for (const schema_version of ["touba-sandbox-checkpoints-v0.1", "touba-sandbox-checkpoints-v0.2"]) {
+      for (const records of [[], [{ run_id: "historical", status: "completed" }]]) {
+        const bytes = JSON.stringify({ schema_version, records }); writeFileSync(path, bytes, "utf8");
+        assert.throws(() => loadSandboxCheckpointStore(path), { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+        assert.equal(readFileSync(path, "utf8"), bytes);
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("WAIT deadline uses the server clock at D-1, D, and D+1; one timer is armed and stop clears it", async (t) => {
@@ -281,7 +187,7 @@ test("WAIT v0.3 validation and orphan requests fail closed without mutating dura
     assert.equal(readFileSync(checkpointPath, "utf8"), invalidBytes);
 
     const orphanStore = {
-      schema_version: "touba-sandbox-checkpoints-v0.3",
+      schema_version: "touba-sandbox-checkpoints-v1",
       records: [],
     };
     const orphanBytes = `${JSON.stringify(orphanStore)}\n`;
@@ -734,7 +640,7 @@ test("WAIT capacity rejects the 101st human target before execution but permits 
       clonePendingHumanRecord(template, `run_capacity_${String(index).padStart(3, "0")}`)
     ));
     writeJson(checkpointPath, {
-      schema_version: "touba-sandbox-checkpoints-v0.3",
+      schema_version: "touba-sandbox-checkpoints-v1",
       records,
     });
     service = createToubaProjectServer({
@@ -751,7 +657,7 @@ test("WAIT capacity rejects the 101st human target before execution but permits 
       99,
     );
     const concurrentBody = {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "entrypoint",
       target_ref: WAIT_TARGET,
       effect_policy: "runtime_only",
@@ -771,7 +677,7 @@ test("WAIT capacity rejects the 101st human target before execution but permits 
     );
     const bytesBeforeRefusal = readFileSync(checkpointPath, "utf8");
     const refused = await postJson(`${fullBaseUrl}/runs/sandbox`, {
-      schema_version: "touba-sandbox-run-request-v0.1",
+      schema_version: "touba-sandbox-run-request-v1",
       execution_kind: "entrypoint",
       target_ref: WAIT_TARGET,
       effect_policy: "runtime_only",
@@ -822,7 +728,7 @@ test("WAIT successive pauses retain distinct request and result identities in th
     clock.setNow(Date.now());
     assert.equal((await postJson(`${baseUrl}/decisions`, decisionFor(first))).status, 202);
     const firstResume = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/resume`, {
-      schema_version: "touba-interaction-resume-request-v0.1",
+      schema_version: "touba-interaction-resume-request-v1",
       request_id: first.request_id,
     });
     assert.equal(firstResume.status, 202, await firstResume.clone().text());
@@ -833,7 +739,7 @@ test("WAIT successive pauses retain distinct request and result identities in th
       decision: "reject",
     }))).status, 202);
     const secondResume = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/resume`, {
-      schema_version: "touba-interaction-resume-request-v0.1",
+      schema_version: "touba-interaction-resume-request-v1",
       request_id: second.request_id,
     });
     assert.equal(secondResume.status, 202, await secondResume.clone().text());
@@ -1310,7 +1216,7 @@ test("WAIT restart projects a completed decision into a still-running interactio
     clock.setNow(Date.now());
     assert.equal((await postJson(`${baseUrl}/decisions`, decisionFor(pending))).status, 202);
     assert.equal((await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/resume`, {
-      schema_version: "touba-interaction-resume-request-v0.1",
+      schema_version: "touba-interaction-resume-request-v1",
       request_id: pending.request_id,
     })).status, 202);
     await waitForInteractionStatus(
@@ -1504,7 +1410,7 @@ test("WAIT rejects cancellation once a decision owns the paused interaction and 
     )).status, "awaiting_human");
 
     const resume = await postJson(`${baseUrl}/interactions/sessions/${session.session_id}/resume`, {
-      schema_version: "touba-interaction-resume-request-v0.1",
+      schema_version: "touba-interaction-resume-request-v1",
       request_id: pending.request_id,
     });
     assert.equal(resume.status, 202, await resume.clone().text());
@@ -1560,7 +1466,7 @@ test("WAIT interaction resume refuses a same-run session with divergent operatio
     writeJson(sessionsPath, store);
     const arbiterBytes = readFileSync(checkpointPath, "utf8");
     const refused = await postJson(`${baseUrl}/interactions/sessions/${foreign.session_id}/resume`, {
-      schema_version: "touba-interaction-resume-request-v0.1",
+      schema_version: "touba-interaction-resume-request-v1",
       request_id: pending.request_id,
     });
     assert.equal(refused.status, 409, await refused.clone().text());
@@ -1630,7 +1536,7 @@ test("WAIT request and decision projections reject wrong collections and duplica
       const decision = readJson(decisionsPath).decisions[0];
 
       writeJson(decisionsPath, {
-        schema_version: "touba-human-decisions-v0.1",
+        schema_version: "touba-human-decisions-v1",
         decisions: [],
       });
       service = createToubaProjectServer({
@@ -1659,7 +1565,7 @@ test("WAIT request and decision projections reject wrong collections and duplica
         { ...decision, comment: "divergent duplicate" },
       ]) {
         const decisionStore = {
-          schema_version: "touba-human-decisions-v0.1",
+          schema_version: "touba-human-decisions-v1",
           decisions: [decision, duplicate],
         };
         const bytes = `${JSON.stringify(decisionStore)}\n`;
@@ -1710,116 +1616,6 @@ test("WAIT request and decision projections reject wrong collections and duplica
     }
   });
 });
-
-function legacyHumanRecord({ createdAt, operationId, runId, status = "pending" }) {
-  const targetRef = WAIT_TARGET;
-  const approvalRef = "approval:demo/RunApproval";
-  const record = {
-    request_id: `${approvalRef}:${runId}`,
-    approval_ref: approvalRef,
-    run_id: runId,
-    target_ref: targetRef,
-    execution_kind: "entrypoint",
-    effect_policy: "runtime_only",
-    status,
-    created_at: createdAt,
-    checkpoint: {
-      checkpoint_schema_version: "touba-run-checkpoint-v0.1",
-      kind: "human_approval",
-      scope: "entry_graph",
-      run_id: runId,
-      approval_ref: approvalRef,
-      entry_ref: targetRef,
-      caller_ref: targetRef,
-      module_ref: "module:demo.approval",
-      air_schema_version: "touba-air-v0.1",
-      air_digest: `sha256:${"a".repeat(64)}`,
-      mode: "required_approval",
-      graph_ref: "graph:strategy:demo.approval/RunApproval",
-      node_id: "approval",
-      resume_target_ref: "done",
-      decision_binding: "decision",
-      context_refs: [],
-      values: {},
-      input_value_keys: [],
-      value_types: {},
-      budget_counters: { steps: 0, tool_calls: 0, agent_invocations: 0, provider_calls: 0 },
-      effect_state: { external_tool_dispatches: 0, next_effect_index: 1 },
-      next_call_index: 1,
-      active_agent_ref: null,
-      active_caller_ref: null,
-      trace_prefix_digest: `sha256:${"b".repeat(64)}`,
-    },
-    paused_result: {
-      schema_version: "touba-sandbox-run-result-v0.1",
-      run_id: runId,
-      execution_kind: "entrypoint",
-      target_ref: targetRef,
-      status: "stopped",
-      started_at: createdAt,
-      completed_at: createdAt,
-      duration_ms: 0,
-      effect_policy: "runtime_only",
-      result: null,
-      trace: {
-        run_id: runId,
-        entry_ref: targetRef,
-        event_count: 0,
-        events: [],
-      },
-      diagnostics: [{
-        severity: "warning",
-        code: "ToubaSandboxRunAwaitingHumanDecision",
-        message: "paused",
-      }],
-    },
-  };
-  if (operationId !== undefined) {
-    record.operation_id = operationId;
-    record.effect_scope_id = operationId;
-  }
-  return record;
-}
-
-function terminalHumanResult(record, decision, completedAt) {
-  return {
-    schema_version: "touba-sandbox-run-result-v0.1",
-    run_id: record.run_id,
-    execution_kind: record.execution_kind,
-    target_ref: record.target_ref,
-    status: "stopped",
-    started_at: record.created_at,
-    completed_at: completedAt,
-    duration_ms: 0,
-    effect_policy: record.effect_policy,
-    result: null,
-    trace: {
-      run_id: record.run_id,
-      entry_ref: record.target_ref,
-      event_count: 1,
-      events: [{
-        index: 0,
-        type: `human_approval_${decision}`,
-        timestamp: completedAt,
-        scope: "entry_graph",
-        summary: `Human approval ${decision}`,
-        references: {
-          approval_ref: record.approval_ref,
-          graph_ref: record.checkpoint.graph_ref,
-          node_id: record.checkpoint.node_id,
-        },
-        payload: {},
-      }],
-    },
-    diagnostics: [{
-      severity: "warning",
-      code: decision === "rejected"
-        ? "ToubaSandboxHumanDecisionRejected"
-        : "ToubaSandboxRunFinishedWithStatus",
-      message: "terminal",
-    }],
-  };
-}
 
 function createTestProject({ twoApprovals = false, withSentinel = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "touba-durable-human-waits-"));
@@ -2077,7 +1873,7 @@ function sourceRef() {
 
 function writeTestDecisionIdentity(root) {
   writeJson(join(root, ".touba", "product-identity.json"), {
-    schema_version: "touba-product-identity-v0.1",
+    schema_version: "touba-product-identity-v1",
     generated_at: "2026-09-16T00:00:00.000Z",
     summary: {
       user_count: 1,
@@ -2134,7 +1930,7 @@ function configureSentinelHandler(root, markerPath) {
     });
   `, "utf8");
   writeJson(join(root, "touba.manifest.json"), {
-    manifest_version: "touba-manifest-v2",
+    manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:demo.approval/Sentinel": {
         handler: {
@@ -2191,7 +1987,7 @@ function serverBaseUrl(service) {
 
 async function runSandbox(baseUrl, targetRef, effectPolicy = "runtime_only") {
   const response = await postJson(`${baseUrl}/runs/sandbox`, {
-    schema_version: "touba-sandbox-run-request-v0.1",
+    schema_version: "touba-sandbox-run-request-v1",
     execution_kind: "entrypoint",
     target_ref: targetRef,
     effect_policy: effectPolicy,
@@ -2205,7 +2001,7 @@ async function runSandbox(baseUrl, targetRef, effectPolicy = "runtime_only") {
 
 async function createInteraction(baseUrl, targetRef) {
   const response = await postJson(`${baseUrl}/interactions/sessions`, {
-    schema_version: "touba-interaction-session-create-v0.1",
+    schema_version: "touba-interaction-session-create-v1",
     target_ref: targetRef,
     target_kind: "strategy",
     presentation: "workflow",
@@ -2218,7 +2014,7 @@ async function createInteraction(baseUrl, targetRef) {
 
 async function sendInteractionMessage(baseUrl, sessionId, messageId) {
   const response = await postJson(`${baseUrl}/interactions/sessions/${sessionId}/messages`, {
-    schema_version: "touba-interaction-message-request-v0.1",
+    schema_version: "touba-interaction-message-request-v1",
     message_id: messageId,
     display_text: "Exercise a durable human wait.",
     inputs: {},

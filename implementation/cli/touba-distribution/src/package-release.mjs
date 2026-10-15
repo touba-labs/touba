@@ -24,10 +24,10 @@ const releaseRoot = join(packageRoot, "dist", "release");
 export const VALIDATED_RELEASE_PLATFORMS = Object.freeze({
   "darwin-arm64": Object.freeze({
     channel: "macos-local-release",
-    releaseProfile: "touba-local-release-v0.2",
-    installationProfile: "touba-local-release-install-v0.2",
-    validationStatus: "local_verified",
-    platformLimitation: "only darwin-arm64 has a local release smoke validation in this repository",
+    releaseProfile: "touba-local-release-v1",
+    installationProfile: "touba-local-release-install-v1",
+    validationStatus: "pending_validation",
+    platformLimitation: "this build requires its own installed-archive smoke and qualification",
   }),
 });
 
@@ -38,8 +38,8 @@ export const PUBLIC_RELEASE_PLATFORMS = Object.freeze({
   "win32-x64": publicReleasePlatform("Windows x64"),
 });
 
-const EXPERIMENTAL_RELEASE_PROFILE = "touba-local-release-experimental-v0.1";
-const EXPERIMENTAL_INSTALLATION_PROFILE = "touba-local-release-install-experimental-v0.1";
+const EXPERIMENTAL_RELEASE_PROFILE = "touba-local-release-experimental-v1";
+const EXPERIMENTAL_INSTALLATION_PROFILE = "touba-local-release-install-experimental-v1";
 const EXPERIMENTAL_CHANNEL = "local-release-experimental";
 const LOCAL_RELEASE_SCOPE = "local_validation";
 const PUBLIC_RELEASE_SCOPE = "public_distribution";
@@ -47,10 +47,10 @@ const PUBLIC_RELEASE_SCOPE = "public_distribution";
 function publicReleasePlatform(label) {
   return Object.freeze({
     channel: "github-release",
-    releaseProfile: "touba-github-release-v0.1",
-    installationProfile: "touba-github-release-install-v0.1",
-    validationStatus: "ci_verified",
-    platformLimitation: `${label} release archive built and smoke-tested by the GitHub Release workflow`,
+    releaseProfile: "touba-github-release-v1",
+    installationProfile: "touba-github-release-install-v1",
+    validationStatus: "pending_validation",
+    platformLimitation: `${label} archive requires successful smoke tests and reviewed candidate qualification before promotion`,
   });
 }
 
@@ -325,7 +325,7 @@ elif [ -f "$HOME/.profile" ]; then
   SHELL_RC="$HOME/.profile"
 fi
 
-if [ -n "$SHELL_RC" ] && ! grep -q "$PREFIX/bin" "$SHELL_RC" 2>/dev/null; then
+if [ -t 0 ] && [ -n "$SHELL_RC" ] && ! grep -q "$PREFIX/bin" "$SHELL_RC" 2>/dev/null; then
   printf "Add $PREFIX/bin to PATH in %s? [Y/n] " "$SHELL_RC"
   read REPLY
   case "\${REPLY:-Y}" in
@@ -580,7 +580,8 @@ function writeReleaseMetadata(plan, toolchainRoot) {
 function writeChecksums(plan, tarballSha256) {
   writeFileSync(plan.checksumsPath, `${tarballSha256}  ${plan.releaseName}.tar.gz\n`, "utf8");
   writeFileSync(plan.checksumsJsonPath, `${JSON.stringify({
-    checksum_profile: "touba-release-checksums-v0.2",
+    checksum_profile: "touba-release-checksums-v1",
+    touba_version: plan.toubaVersion,
     algorithm: "sha256",
     release_name: plan.releaseName,
     platform: plan.platform,
@@ -656,6 +657,7 @@ function releaseInstallInstructions(plan) {
 function releaseLimitations({ platformLimitation, validationStatus, publicRelease }) {
   if (publicRelease) {
     return [
+      "packaging does not qualify this build; promotion requires current-candidate release-readiness evidence",
       "manual update policy; automatic self-update is not enabled in V1",
       "signing and package-manager channels are separate release hardening tracks",
     ];
@@ -668,7 +670,7 @@ function releaseLimitations({ platformLimitation, validationStatus, publicReleas
     "no Homebrew, Winget, Scoop, npm global or remote installer publication",
     platformLimitation,
   ];
-  if (validationStatus !== "local_verified") {
+  if (validationStatus === "experimental_unvalidated") {
     limitations.unshift("experimental artifact; not a supported platform release");
   }
   return limitations;

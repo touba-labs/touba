@@ -1,5 +1,5 @@
 {
-  "profile": "touba-agentdojo-real-selection-v0.2",
+  "profile": "touba-agentdojo-real-selection-v1",
   "benchmark": "AgentDojo",
   "benchmark_reference": "https://arxiv.org/abs/2406.13352",
   "source_selection": "real-cases.json",

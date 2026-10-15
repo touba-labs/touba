@@ -28,11 +28,11 @@ test("inspects a Touba source by compiling it to AIR without attaching unprovide
   assert.equal(inspection.air.present, true);
   assert.equal(inspection.air.module_ref, "module:examples.linear_skill");
   assert.equal(inspection.trace.present, false);
-  assert.match(rendered, /Touba Inspect touba-inspect-v0\.1/);
+  assert.match(rendered, /Touba Inspect touba-inspect-v1/);
   assert.match(rendered, /Source .*tb-v01-001-linear-skill\.tb/);
   assert.match(rendered, /AIR touba-air-v1/);
-  assert.match(rendered, /Trace absent: trace artifact not provided/);
-  assert.match(rendered, /Architecture absent:/);
+  assert.doesNotMatch(rendered, /Trace absent: trace artifact not provided/);
+  assert.doesNotMatch(rendered, /Architecture absent:/);
   assert.doesNotMatch(rendered, /Artifact scope excludes|Absent data/);
   assert.doesNotMatch(rendered, /cost=/);
   assert.doesNotMatch(rendered, /confidence=/);
@@ -73,11 +73,11 @@ test("projects AIR inspection to touba-project-inspection-v1", () => {
   const agentEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.ref === "agent:examples.strategy_agents/Engineer");
   assert.equal(
     agentEntrypoint.responsibility,
-    "Fulfill the declared Engineer responsibility using only authorized capabilities.",
+    "Apply the requested change and return the recorded result.",
   );
-  assert.equal(agentEntrypoint.input_contract.mode, "open");
-  assert.deepEqual(agentEntrypoint.input_contract.fields, []);
-  assert.deepEqual(agentEntrypoint.input_contract.types, []);
+  assert.equal(agentEntrypoint.input_contract.mode, "declared");
+  assert.equal(agentEntrypoint.input_contract.fields[0].type_ref, "type:examples.strategy_agents/ChangeRequest");
+  assert.equal(agentEntrypoint.input_contract.types[0].name, "ChangeRequest");
   const skillEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.ref === "skill:examples.strategy_agents/MakeChange");
   assert.equal(skillEntrypoint.input_contract.mode, "declared");
   assert.equal(skillEntrypoint.input_contract.fields[0].type_ref, "type:examples.strategy_agents/ChangeRequest");
@@ -389,7 +389,7 @@ test("inspects a trace fixture without inventing AIR context", () => {
   const rendered = renderInspection(inspectPath(tracePath));
 
   assert.match(rendered, /Artifact trace/);
-  assert.match(rendered, /AIR absent: AIR artifact not provided/);
+  assert.doesNotMatch(rendered, /AIR absent: AIR artifact not provided/);
   assert.match(rendered, /Trace touba-trace-v1/);
   assert.match(rendered, /status=stopped/);
 });
@@ -614,6 +614,13 @@ test("inspects BQ-1 budget trace states from events only", () => {
     /budgets checked=1 consumed=1 exceeded=1 dispatch_refused=1 kinds=\[max_tool_calls\]/,
   );
   assert.doesNotMatch(rendered, /cost=|token=|provider budget|secret value|raw payload/i);
+  assert.match(rendered, /Chronology:/);
+  assert.match(rendered, /limit max_tool_calls=1 authority=/);
+  const inspected = inspectPath(tracePath);
+  assert.ok(inspected.trace.chronology.some(event => event.kind === "budget_limit_exceeded"));
+  assert.equal(inspected.trace.chronology.some(event => event.kind === "agent_decision_recorded"), false,
+    "do not invent model decisions for a deterministic trace");
+  assert.doesNotMatch(rendered, /Architecture absent|Trace absent|providers returned=0/);
 });
 
 test("inspects agent invocation trace states from events only", () => {
@@ -656,9 +663,9 @@ test("inspects an architecture projection fixture", () => {
   const rendered = renderInspection(inspectPath(architecturePath));
 
   assert.match(rendered, /Artifact architecture_projection/);
-  assert.match(rendered, /Architecture architecture-projection-v0\.1/);
+  assert.match(rendered, /Architecture architecture-projection-v1/);
   assert.match(rendered, /test_only=true/);
-  assert.match(rendered, /Trace absent: trace artifact not provided/);
+  assert.doesNotMatch(rendered, /Trace absent: trace artifact not provided/);
 });
 
 test("inspects a tool binding manifest without reading handlers or secret values", () => {
@@ -679,12 +686,12 @@ test("inspects a tool binding manifest without reading handlers or secret values
   assert.doesNotMatch(rendered, /process\.env/);
 });
 
-test("inspects V2 effect contracts and rejects incompatible manifest declarations", () => {
+test("inspects effect contracts and rejects incompatible manifest declarations", () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "touba-inspect-effect-contract-"));
   const manifestPath = path.join(tempRoot, "touba.manifest.json");
   try {
     const manifest = {
-      manifest_version: "touba-manifest-v2",
+      manifest_version: "touba-manifest-v1",
       bindings: {
         "tool:examples.effects/CreateOrder": {
           handler: { kind: "process", command: "node", args: ["handlers/create_order.mjs"] },
@@ -705,17 +712,17 @@ test("inspects V2 effect contracts and rejects incompatible manifest declaration
     });
     assert.match(rendered, /effect_contract=external_write:idempotency_key/);
 
-    manifest.manifest_version = "touba-manifest-v3";
+    manifest.manifest_version = "touba-manifest-v1";
     manifest.bindings["tool:examples.effects/CreateOrder"].effect_contract.compensation = {
       entry_ref: "strategy:examples.effects/CancelOrder",
     };
     writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
-    const v3Inspection = inspectPath(manifestPath);
-    const v3Rendered = renderInspection(v3Inspection);
-    assert.deepEqual(v3Inspection.manifest.bindings[0].effect_contract.compensation, {
+    const compensationInspection = inspectPath(manifestPath);
+    const compensationRendered = renderInspection(compensationInspection);
+    assert.deepEqual(compensationInspection.manifest.bindings[0].effect_contract.compensation, {
       entry_ref: "strategy:examples.effects/CancelOrder",
     });
-    assert.match(v3Rendered, /compensation=strategy:examples\.effects\/CancelOrder/);
+    assert.match(compensationRendered, /compensation=strategy:examples\.effects\/CancelOrder/);
 
     manifest.bindings["tool:examples.effects/CreateOrder"].effect_contract.vendor = "example";
     writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
@@ -725,7 +732,9 @@ test("inspects V2 effect contracts and rejects incompatible manifest declaration
     delete manifest.bindings["tool:examples.effects/CreateOrder"].effect_contract.vendor;
     delete manifest.bindings["tool:examples.effects/CreateOrder"].effect_contract.compensation;
     writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
-    assert.throws(() => inspectPath(manifestPath), /cannot declare effect_contract/);
+    delete manifest.bindings["tool:examples.effects/CreateOrder"].effect_contract;
+    writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+    assert.throws(() => inspectPath(manifestPath), /must declare effect_contract/);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -914,7 +923,7 @@ test("inspects TEAM-1 ownership without deriving runtime authority", () => {
     assert.equal(inspection.ownership.owner_count, 1);
     assert.equal(inspection.ownership.review_gate_count, 1);
     assert.equal(inspection.ownership.review_count, 1);
-    assert.match(rendered, /Ownership touba-ownership-v0\.1/);
+    assert.match(rendered, /Ownership touba-ownership-v1/);
     assert.match(rendered, /owner tool:examples\.data_app\/Search teams=\[team:platform\]/);
     assert.match(rendered, /review_gate prod subjects=\[tool_binding,required_capability\] reviewers=\[team:security\]/);
     assert.match(rendered, /Responsibility graph/);
@@ -1207,7 +1216,7 @@ test("CLI writes an explicit inspect report with the canonical suffix", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Artifact air/);
     const report = readFileSync(reportPath, "utf8");
-    assert.match(report, /Touba Inspect touba-inspect-v0\.1/);
+    assert.match(report, /Touba Inspect touba-inspect-v1/);
     assert.match(report, /Artifact air/);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -1304,7 +1313,7 @@ test("CLI accepts explicit ownership option", () => {
 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Artifact multi_artifacts/);
-    assert.match(result.stdout, /Ownership touba-ownership-v0\.1/);
+    assert.match(result.stdout, /Ownership touba-ownership-v1/);
     assert.match(result.stdout, /Responsibility graph/);
     assert.doesNotMatch(result.stdout, /secret value|Verified|Unverified|compliant/i);
   } finally {
@@ -1325,7 +1334,7 @@ test("inspects a TA-1 trace audit manifest without deriving compliance state", (
     assert.equal(inspection.trace_audit.present, true);
     assert.equal(inspection.trace_audit.run_id, "run-ta1");
     assert.deepEqual(inspection.trace_audit.digests, ["trace_digest", "air_digest"]);
-    assert.match(rendered, /Trace audit trace-audit-v0\.1/);
+    assert.match(rendered, /Trace audit trace-audit-v1/);
     assert.match(rendered, /retention=project_audit/);
     assert.match(rendered, /redaction=no_secrets_no_raw_prompts_no_memory_content/);
     assert.match(rendered, /digests=\[trace_digest,air_digest\]/);
@@ -1374,12 +1383,12 @@ test("inspects a TA-1 export and accepts explicit trace-audit option", () => {
     assert.equal(inspection.artifact_kind, "trace_audit_export");
     assert.equal(inspection.trace_audit.status, "ok");
     assert.deepEqual(inspection.trace_audit.export_artifacts, ["trace", "air", "source"]);
-    assert.match(rendered, /Trace audit trace-audit-export-v0\.1-local/);
+    assert.match(rendered, /Trace audit trace-audit-export-v1-local/);
     assert.match(rendered, /export_artifacts=\[trace,air,source\]/);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Artifact multi_artifacts/);
     assert.match(result.stdout, /trace_audit=.*trace-audit\.export\.json/);
-    assert.match(result.stdout, /Trace audit trace-audit-export-v0\.1-local/);
+    assert.match(result.stdout, /Trace audit trace-audit-export-v1-local/);
     assert.doesNotMatch(`${rendered}\n${result.stdout}`, /compliant|Verified|signature/i);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -1436,7 +1445,7 @@ test("inspects a SC-1 supply chain lock without reading handler content", () => 
     assert.equal(inspection.supply_chain.review.status, "approved");
     assert.equal(inspection.supply_chain.review.evidence_status, "declared");
     assert.equal(inspection.supply_chain.review.reviewers, 1);
-    assert.match(rendered, /Supply chain touba-lock-v0\.1/);
+    assert.match(rendered, /Supply chain touba-lock-v1/);
     assert.match(rendered, /kind=supply_chain_lock/);
     assert.match(rendered, /provenance status=declared prepared_by=ci:ci:touba-fixture/);
     assert.match(rendered, /review status=approved evidence=declared required=no/);
@@ -1473,7 +1482,7 @@ test("inspects a SC-1 validation report and accepts explicit supply-chain option
     assert.deepEqual(inspection.supply_chain.diagnostic_codes, ["HandlerSdkUnknown"]);
     assert.equal(explicitInspection.artifact_kind, "multi_artifacts");
     assert.equal(result.status, 0, result.stderr);
-    assert.match(rendered, /Supply chain touba-supply-chain-validation-v0\.1/);
+    assert.match(rendered, /Supply chain touba-supply-chain-validation-v1/);
     assert.match(rendered, /air=ok manifest=changed handlers=1/);
     assert.match(rendered, /provenance status=ok prepared_by=ci:ci:touba-fixture/);
     assert.match(rendered, /review status=pending evidence=ok required=no/);
@@ -1498,11 +1507,11 @@ test("inspects a TD-1 trigger state artifact without inventing daemon state", ()
     const rendered = renderInspection(inspection);
 
     assert.equal(inspection.artifact_kind, "trigger_state");
-    assert.equal(inspection.trigger_state.schema_version, "touba-trigger-state-v0.1");
+    assert.equal(inspection.trigger_state.schema_version, "touba-trigger-state-v1");
     assert.equal(inspection.trigger_state.accepted_count, 1);
     assert.equal(inspection.trigger_state.refused_count, 2);
     assert.equal(inspection.trigger_state.consumed_event_count, 1);
-    assert.match(rendered, /Trigger state touba-trigger-state-v0\.1/);
+    assert.match(rendered, /Trigger state touba-trigger-state-v1/);
     assert.match(rendered, /triggers=1 accepted=1 refused=2 consumed_event_ids=1/);
     assert.match(rendered, /reasons=\[event_replay,max_runs_per_day_reached\]/);
     assert.doesNotMatch(rendered, /raw-secret-payload|scheduler permanent|daemon|payload content|Verified/i);
@@ -1525,7 +1534,7 @@ test("rejects unsupported artifacts", () => {
 
 function triggerStateFixture() {
   return {
-    trigger_state_schema_version: "touba-trigger-state-v0.1",
+    trigger_state_schema_version: "touba-trigger-state-v1",
     created_at: "2026-06-07T10:00:00.000Z",
     updated_at: "2026-06-07T10:02:00.000Z",
     triggers: {
@@ -1568,7 +1577,7 @@ function triggerStateFixture() {
 
 function ownershipFixture(options = {}) {
   return {
-    ownership_schema_version: "touba-ownership-v0.1",
+    ownership_schema_version: "touba-ownership-v1",
     teams: {
       "team:platform": {
         display_name: "Platform",
@@ -1842,6 +1851,7 @@ function importedToolAirFixture() {
 function triggerManifestFixture() {
   return {
     manifest_version: "touba-manifest-v1",
+    bindings: {},
     triggers: {
       "trigger:examples.trigger/DailyRun": {
         enabled: true,
@@ -1984,7 +1994,7 @@ function memoryManifestFixture() {
     manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:examples.memory/ReadProjectKnowledge": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: "node",
           args: ["./handlers/read_project_knowledge.handler.js"],
@@ -2005,7 +2015,7 @@ function memoryManifestFixture() {
 
 function memoryPackageFixture() {
   return {
-    package_schema_version: "touba-package-v0.1",
+    package_schema_version: "touba-package-v1",
     name: "examples.memory",
     version: "0.1.0",
     root: "../packages/memory",
@@ -2028,14 +2038,14 @@ function memoryPackageFixture() {
 
 function memoryBindingFragmentFixture() {
   return {
-    fragment_schema_version: "touba-binding-fragment-v0.1",
+    fragment_schema_version: "touba-binding-fragment-v1",
     source: {
       kind: "module",
       module: "examples.memory",
     },
     bindings: {
       "tool:examples.memory/ReadProjectKnowledge": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: "node",
           args: ["handlers/read_project_knowledge.handler.mjs"],
@@ -2052,7 +2062,7 @@ function memoryBindingFragmentFixture() {
 
 function memoryResourceBindingsFixture() {
   return {
-    resource_bindings_schema_version: "touba-resource-bindings-v0.1",
+    resource_bindings_schema_version: "touba-resource-bindings-v1",
     resources: {
       "memory:examples.memory/ProjectKnowledge": {
         kind: "memory_backend",
@@ -2070,7 +2080,7 @@ function memoryResourceBindingsFixture() {
 
 function memoryRunPlanFixture() {
   return {
-    run_plan_schema_version: "touba-run-plan-v0.1",
+    run_plan_schema_version: "touba-run-plan-v1",
     entry_ref: "skill:examples.memory/ReadKnowledgeFlow",
     air: "build/touba/project.air.json",
     manifest: "build/touba/touba.manifest.json",
@@ -2185,7 +2195,7 @@ function memoryTraceFixture() {
 
 function traceAuditManifestFixture() {
   return {
-    trace_audit_schema_version: "trace-audit-v0.1",
+    trace_audit_schema_version: "trace-audit-v1",
     trace_ref: "trace:run-ta1",
     run_id: "run-ta1",
     created_at: "2026-06-05T00:00:00.000Z",
@@ -2215,8 +2225,8 @@ function traceAuditManifestFixture() {
 
 function traceAuditReportFixture() {
   return {
-    trace_audit_validation_schema_version: "trace-audit-validation-v0.1",
-    trace_audit_schema_version: "trace-audit-v0.1",
+    trace_audit_validation_schema_version: "trace-audit-validation-v1",
+    trace_audit_schema_version: "trace-audit-v1",
     status: "failed",
     checked: {
       trace: true,
@@ -2243,10 +2253,10 @@ function traceAuditReportFixture() {
 
 function traceAuditExportFixture() {
   return {
-    trace_audit_export_schema_version: "trace-audit-export-v0.1-local",
+    trace_audit_export_schema_version: "trace-audit-export-v1-local",
     trace_audit_manifest: traceAuditManifestFixture(),
     validation_report: {
-      trace_audit_validation_schema_version: "trace-audit-validation-v0.1",
+      trace_audit_validation_schema_version: "trace-audit-validation-v1",
       status: "ok",
       diagnostics: [],
     },
@@ -2457,7 +2467,7 @@ function userInteractionTraceFixture() {
 
 function supplyChainLockFixture() {
   return {
-    lock_schema_version: "touba-lock-v0.1",
+    lock_schema_version: "touba-lock-v1",
     lock_kind: "supply_chain",
     generated_at: "2026-06-05T12:00:00Z",
     generated_by: {
@@ -2567,8 +2577,8 @@ function supplyChainLockFixture() {
 
 function supplyChainReportFixture() {
   return {
-    supply_chain_validation_schema_version: "touba-supply-chain-validation-v0.1",
-    lock_schema_version: "touba-lock-v0.1",
+    supply_chain_validation_schema_version: "touba-supply-chain-validation-v1",
+    lock_schema_version: "touba-lock-v1",
     status: "warning",
     checked: {
       air_digest: true,

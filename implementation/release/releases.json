@@ -1,5 +1,5 @@
 {
-  "schema_version": "touba-release-index-v0.1",
+  "schema_version": "touba-release-index-v1",
   "product": "touba",
   "current_version": "0.1.0",
   "policy": {

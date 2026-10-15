@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:d0cd15bd68c79ee030d8884034cc1b65526a2161221c4956f8e16694bf4dc1d0",
     "module_ref": "module:examples.a1_simple_agents",
     "entry_ref": "strategy:examples.a1_simple_agents/RunChange"
   },
@@ -39,18 +40,19 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 880,
-          "end_byte": 888,
-          "start_line": 40,
+          "start_byte": 998,
+          "end_byte": 1075,
+          "start_line": 48,
           "start_column": 8,
-          "end_line": 40,
-          "end_column": 16
+          "end_line": 51,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "agent:examples.a1_simple_agents/Engineer",
         "caller_ref": "strategy:examples.a1_simple_agents/RunChange",
-        "agent_ref": null
+        "agent_ref": null,
+        "argument_count": 1
       }
     },
     {
@@ -64,12 +66,12 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 880,
-          "end_byte": 888,
-          "start_line": 40,
+          "start_byte": 998,
+          "end_byte": 1075,
+          "start_line": 48,
           "start_column": 8,
-          "end_line": 40,
-          "end_column": 16
+          "end_line": 51,
+          "end_column": 8
         }
       },
       "payload": {
@@ -82,6 +84,18 @@
       "event_id": "event:run-1:5",
       "run_id": "run-1",
       "sequence_index": 4,
+      "kind": "agent_interface_entered",
+      "payload": {
+        "agent_ref": "agent:examples.a1_simple_agents/Engineer",
+        "caller_ref": "strategy:examples.a1_simple_agents/RunChange",
+        "input_count": 1,
+        "output_type": "type:examples.a1_simple_agents/ReviewedChange"
+      }
+    },
+    {
+      "event_id": "event:run-1:6",
+      "run_id": "run-1",
+      "sequence_index": 5,
       "kind": "agent_capabilities_listed",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Engineer",
@@ -149,9 +163,9 @@
       }
     },
     {
-      "event_id": "event:run-1:6",
+      "event_id": "event:run-1:7",
       "run_id": "run-1",
-      "sequence_index": 5,
+      "sequence_index": 6,
       "kind": "agent_decision_recorded",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Engineer",
@@ -161,9 +175,9 @@
       }
     },
     {
-      "event_id": "event:run-1:7",
+      "event_id": "event:run-1:8",
       "run_id": "run-1",
-      "sequence_index": 6,
+      "sequence_index": 7,
       "kind": "agent_capability_selected",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Engineer",
@@ -174,9 +188,9 @@
       }
     },
     {
-      "event_id": "event:run-1:8",
+      "event_id": "event:run-1:9",
       "run_id": "run-1",
-      "sequence_index": 7,
+      "sequence_index": 8,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/MakeChange",
@@ -184,9 +198,9 @@
       }
     },
     {
-      "event_id": "event:run-1:9",
+      "event_id": "event:run-1:10",
       "run_id": "run-1",
-      "sequence_index": 8,
+      "sequence_index": 9,
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/MakeChange",
@@ -195,23 +209,24 @@
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 306,
-          "end_byte": 317,
+          "end_byte": 386,
           "start_line": 17,
           "start_column": 8,
-          "end_line": 17,
-          "end_column": 19
+          "end_line": 20,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "tool:examples.a1_simple_agents/ApplyChange",
         "caller_ref": "skill:examples.a1_simple_agents/MakeChange",
-        "agent_ref": "agent:examples.a1_simple_agents/Engineer"
+        "agent_ref": "agent:examples.a1_simple_agents/Engineer",
+        "argument_count": 1
       }
     },
     {
-      "event_id": "event:run-1:10",
+      "event_id": "event:run-1:11",
       "run_id": "run-1",
-      "sequence_index": 9,
+      "sequence_index": 10,
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/MakeChange",
@@ -220,23 +235,24 @@
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
           "start_byte": 306,
-          "end_byte": 317,
+          "end_byte": 386,
           "start_line": 17,
           "start_column": 8,
-          "end_line": 17,
-          "end_column": 19
+          "end_line": 20,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "tool:examples.a1_simple_agents/ApplyChange",
         "caller_ref": "skill:examples.a1_simple_agents/MakeChange",
-        "agent_ref": "agent:examples.a1_simple_agents/Engineer"
+        "agent_ref": "agent:examples.a1_simple_agents/Engineer",
+        "result_binding": "change"
       }
     },
     {
-      "event_id": "event:run-1:11",
+      "event_id": "event:run-1:12",
       "run_id": "run-1",
-      "sequence_index": 10,
+      "sequence_index": 11,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/MakeChange",
@@ -248,9 +264,21 @@
       }
     },
     {
-      "event_id": "event:run-1:12",
+      "event_id": "event:run-1:13",
       "run_id": "run-1",
-      "sequence_index": 11,
+      "sequence_index": 12,
+      "kind": "agent_interface_result_returned",
+      "payload": {
+        "agent_ref": "agent:examples.a1_simple_agents/Engineer",
+        "caller_ref": "strategy:examples.a1_simple_agents/RunChange",
+        "output_type": "type:examples.a1_simple_agents/ReviewedChange",
+        "result_type": "object"
+      }
+    },
+    {
+      "event_id": "event:run-1:14",
+      "run_id": "run-1",
+      "sequence_index": 13,
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -258,23 +286,24 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 880,
-          "end_byte": 888,
-          "start_line": 40,
+          "start_byte": 998,
+          "end_byte": 1075,
+          "start_line": 48,
           "start_column": 8,
-          "end_line": 40,
-          "end_column": 16
+          "end_line": 51,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "agent:examples.a1_simple_agents/Engineer",
-        "caller_ref": "strategy:examples.a1_simple_agents/RunChange"
+        "caller_ref": "strategy:examples.a1_simple_agents/RunChange",
+        "result_binding": "change"
       }
     },
     {
-      "event_id": "event:run-1:13",
+      "event_id": "event:run-1:15",
       "run_id": "run-1",
-      "sequence_index": 12,
+      "sequence_index": 14,
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -282,24 +311,25 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 897,
-          "end_byte": 905,
-          "start_line": 41,
+          "start_byte": 1075,
+          "end_byte": 1152,
+          "start_line": 51,
           "start_column": 8,
-          "end_line": 41,
-          "end_column": 16
+          "end_line": 54,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "agent:examples.a1_simple_agents/Reviewer",
         "caller_ref": "strategy:examples.a1_simple_agents/RunChange",
-        "agent_ref": null
+        "agent_ref": null,
+        "argument_count": 1
       }
     },
     {
-      "event_id": "event:run-1:14",
+      "event_id": "event:run-1:16",
       "run_id": "run-1",
-      "sequence_index": 13,
+      "sequence_index": 15,
       "kind": "agent_invocation_authorized",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -307,12 +337,12 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 897,
-          "end_byte": 905,
-          "start_line": 41,
+          "start_byte": 1075,
+          "end_byte": 1152,
+          "start_line": 51,
           "start_column": 8,
-          "end_line": 41,
-          "end_column": 16
+          "end_line": 54,
+          "end_column": 8
         }
       },
       "payload": {
@@ -322,9 +352,21 @@
       }
     },
     {
-      "event_id": "event:run-1:15",
+      "event_id": "event:run-1:17",
       "run_id": "run-1",
-      "sequence_index": 14,
+      "sequence_index": 16,
+      "kind": "agent_interface_entered",
+      "payload": {
+        "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
+        "caller_ref": "strategy:examples.a1_simple_agents/RunChange",
+        "input_count": 1,
+        "output_type": "type:examples.a1_simple_agents/ReviewedChange"
+      }
+    },
+    {
+      "event_id": "event:run-1:18",
+      "run_id": "run-1",
+      "sequence_index": 17,
       "kind": "agent_capabilities_listed",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
@@ -383,9 +425,9 @@
       }
     },
     {
-      "event_id": "event:run-1:16",
+      "event_id": "event:run-1:19",
       "run_id": "run-1",
-      "sequence_index": 15,
+      "sequence_index": 18,
       "kind": "agent_decision_recorded",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
@@ -395,9 +437,9 @@
       }
     },
     {
-      "event_id": "event:run-1:17",
+      "event_id": "event:run-1:20",
       "run_id": "run-1",
-      "sequence_index": 16,
+      "sequence_index": 19,
       "kind": "agent_capability_selected",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
@@ -408,9 +450,9 @@
       }
     },
     {
-      "event_id": "event:run-1:18",
+      "event_id": "event:run-1:21",
       "run_id": "run-1",
-      "sequence_index": 17,
+      "sequence_index": 20,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/ReviewChange",
@@ -418,9 +460,9 @@
       }
     },
     {
-      "event_id": "event:run-1:19",
+      "event_id": "event:run-1:22",
       "run_id": "run-1",
-      "sequence_index": 18,
+      "sequence_index": 21,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/ReviewChange",
@@ -432,9 +474,21 @@
       }
     },
     {
-      "event_id": "event:run-1:20",
+      "event_id": "event:run-1:23",
       "run_id": "run-1",
-      "sequence_index": 19,
+      "sequence_index": 22,
+      "kind": "agent_interface_result_returned",
+      "payload": {
+        "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
+        "caller_ref": "strategy:examples.a1_simple_agents/RunChange",
+        "output_type": "type:examples.a1_simple_agents/ReviewedChange",
+        "result_type": "object"
+      }
+    },
+    {
+      "event_id": "event:run-1:24",
+      "run_id": "run-1",
+      "sequence_index": 23,
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -442,23 +496,24 @@
         "node_id": "node:graph:strategy:examples.a1_simple_agents/RunChange:2",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p07-simple-agent-calls-no-enriched-dispatch.tb",
-          "start_byte": 897,
-          "end_byte": 905,
-          "start_line": 41,
+          "start_byte": 1075,
+          "end_byte": 1152,
+          "start_line": 51,
           "start_column": 8,
-          "end_line": 41,
-          "end_column": 16
+          "end_line": 54,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "agent:examples.a1_simple_agents/Reviewer",
-        "caller_ref": "strategy:examples.a1_simple_agents/RunChange"
+        "caller_ref": "strategy:examples.a1_simple_agents/RunChange",
+        "result_binding": "reviewed"
       }
     },
     {
-      "event_id": "event:run-1:21",
+      "event_id": "event:run-1:25",
       "run_id": "run-1",
-      "sequence_index": 20,
+      "sequence_index": 24,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -470,12 +525,13 @@
       }
     },
     {
-      "event_id": "event:run-1:22",
+      "event_id": "event:run-1:26",
       "run_id": "run-1",
-      "sequence_index": 21,
+      "sequence_index": 25,
       "kind": "run_completed",
       "payload": {
-        "status": "success"
+        "status": "success",
+        "reason": "completed"
       }
     }
   ]

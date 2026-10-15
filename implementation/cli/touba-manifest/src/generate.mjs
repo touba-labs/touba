@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildManifestRequirements, unapprovedManifest } from "./requirements.mjs";
 
 const MANIFEST_VERSION = "touba-manifest-v1";
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -16,84 +18,26 @@ export function generateManifestFromAirDocument(airDocument, options = {}) {
     throw new Error("AIR document definitions.tools must be an array");
   }
 
-  const manifest = {
-    manifest_version: MANIFEST_VERSION,
-    bindings: {},
-  };
-
-  for (const tool of tools) {
-    if (!tool || typeof tool !== "object" || typeof tool.id !== "string") {
-      throw new Error("AIR tool entries must contain an id");
-    }
-    if (!tool.id.startsWith("tool:")) {
-      throw new Error(`AIR tool id must start with tool: (${tool.id})`);
-    }
-
-    const toolName = typeof tool.name === "string" && tool.name.trim() !== ""
-      ? tool.name
-      : tool.id.slice(tool.id.lastIndexOf("/") + 1);
-
-    const binding = {
-      handler: {
-        kind: "process",
-        command: options.handlerCommand ?? "__TOUBA_HANDLER_COMMAND__",
-        args: [
-          `${options.handlerRoot ?? "handlers"}/${toolNameToHandlerFile(toolName, options.handlerExtension ?? "mjs")}`,
-        ],
-      },
-      grants: normalizeStringArray(tool.required_capabilities),
-      timeout_ms: positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs"),
-      max_payload_bytes: positiveInteger(
-        options.maxPayloadBytes,
-        DEFAULT_MAX_PAYLOAD_BYTES,
-        "maxPayloadBytes",
-      ),
-    };
-
-    if (options.handlerCwd !== undefined) {
-      binding.handler.cwd = options.handlerCwd;
-    }
-
-    const requiredSecrets = normalizeStringArray(tool.required_secrets);
-    if (requiredSecrets.length > 0) {
-      binding.secrets = requiredSecrets;
-    }
-
-    const memoryAccesses = normalizeMemoryAccesses(tool.memory_accesses);
-    if (memoryAccesses.length > 0) {
-      binding.memories = memoryAccesses;
-    }
-
-    manifest.bindings[tool.id] = binding;
-  }
+  const requirements = buildManifestRequirements([airDocument], {
+    handlerCommand: options.handlerCommand ?? process.execPath,
+    handlerRoot: options.handlerRoot ?? "handlers",
+    handlerExtension: options.handlerExtension ?? "mjs",
+    handlerCwd: options.handlerCwd ?? ".",
+    timeoutMs: positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs"),
+    maxPayloadBytes: positiveInteger(options.maxPayloadBytes, DEFAULT_MAX_PAYLOAD_BYTES, "maxPayloadBytes"),
+  });
+  const manifest = unapprovedManifest(requirements);
 
   const triggers = normalizeTriggerEntries(airDocument.definitions?.triggers);
   if (Object.keys(triggers).length > 0) {
     manifest.triggers = triggers;
   }
 
-  if (options.includeAgentSecretScopes === true) {
-    manifest.agent_secret_scopes = {};
-  }
 
   return manifest;
 }
 
-export function toolNameToHandlerFile(toolName, extension = "mjs") {
-  const normalizedExtension = String(extension).replace(/^\./, "");
-  const snake = String(toolName)
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/[^A-Za-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toLowerCase();
-
-  if (snake === "") {
-    throw new Error("tool name cannot be converted to a handler file name");
-  }
-
-  return `${snake}.handler.${normalizedExtension}`;
-}
+export { toolNameToHandlerFile } from "./requirements.mjs";
 
 function normalizeStringArray(values) {
   if (values === undefined) {
@@ -156,7 +100,7 @@ function normalizeTriggerEntries(values) {
     }
 
     const entry = {
-      enabled: true,
+      enabled: false,
       source: {
         kind: sourceKind,
       },
@@ -280,9 +224,6 @@ function parseArgs(argv) {
       case "--max-payload-bytes":
         options.maxPayloadBytes = Number(requiredValue(arg, args));
         break;
-      case "--include-agent-secret-scopes":
-        options.includeAgentSecretScopes = true;
-        break;
       case "--help":
         printUsage();
         process.exit(0);
@@ -335,7 +276,6 @@ Options:
   --handler-cwd <path>              Optional handler cwd.
   --timeout-ms <number>             Binding timeout. Default: ${DEFAULT_TIMEOUT_MS}.
   --max-payload-bytes <number>      Payload limit. Default: ${DEFAULT_MAX_PAYLOAD_BYTES}.
-  --include-agent-secret-scopes     Add an empty agent_secret_scopes object.
 `);
 }
 
@@ -370,14 +310,16 @@ function writeManifestOutput(outPath, manifest) {
   const resolvedPath = assertManifestOutputPath(outPath);
   assertManifestJson(manifest);
   mkdirSync(dirname(resolvedPath), { recursive: true });
-  writeFileSync(resolvedPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  writeFileSync(resolvedPath, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
 }
 
 async function main() {
   try {
     const { airPath, options, output } = parseArgs(process.argv.slice(2));
     const airDocument = JSON.parse(readFileSync(airPath, "utf8"));
+    if (options.handlerCwd === undefined && output.outPath) options.handlerCwd = relative(dirname(resolve(output.outPath)), process.cwd()) || ".";
     const manifest = generateManifestFromAirDocument(airDocument, options);
+    process.stderr.write("Generated a draft manifest without host grants or trigger activation. Review required_capabilities, required_secrets, memory_accesses and agent secret scopes in the AIR before granting them explicitly.\n");
     assertManifestJson(manifest);
     if (output.stdout === true) {
       process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
@@ -390,6 +332,6 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   await main();
 }

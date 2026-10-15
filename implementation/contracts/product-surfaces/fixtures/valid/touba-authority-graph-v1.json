@@ -1,0 +1,136 @@
+{
+  "schema_version": "touba-authority-graph-v1",
+  "generated_at": "2026-06-23T00:00:00.000Z",
+  "project_root": "/workspace/example",
+  "summary": {
+    "node_count": 6,
+    "edge_count": 5,
+    "diagnostic_count": 0
+  },
+  "nodes": [
+    {
+      "id": "trigger:examples.linear_skill/MorningReview",
+      "kind": "trigger",
+      "label": "MorningReview",
+      "ref": "trigger:examples.linear_skill/MorningReview",
+      "evidence": {
+        "source": "source",
+        "path": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:34"
+      }
+    },
+    {
+      "id": "strategy:examples.linear_skill/RunSourcedNote",
+      "kind": "strategy",
+      "label": "RunSourcedNote",
+      "ref": "strategy:examples.linear_skill/RunSourcedNote",
+      "evidence": {
+        "source": "air",
+        "path": "program.air.json",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:28"
+      }
+    },
+    {
+      "id": "agent:examples.linear_skill/Researcher",
+      "kind": "agent",
+      "label": "Researcher",
+      "ref": "agent:examples.linear_skill/Researcher",
+      "evidence": {
+        "source": "air",
+        "path": "program.air.json",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:24"
+      }
+    },
+    {
+      "id": "skill:examples.linear_skill/BuildNote",
+      "kind": "skill",
+      "label": "BuildNote",
+      "ref": "skill:examples.linear_skill/BuildNote",
+      "evidence": {
+        "source": "air",
+        "path": "program.air.json",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:16"
+      }
+    },
+    {
+      "id": "tool:examples.linear_skill/FetchSource",
+      "kind": "tool",
+      "label": "FetchSource",
+      "ref": "tool:examples.linear_skill/FetchSource",
+      "evidence": {
+        "source": "air",
+        "path": "program.air.json",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:12"
+      }
+    },
+    {
+      "id": "capability:network",
+      "kind": "capability",
+      "label": "network",
+      "ref": "capability:network",
+      "evidence": {
+        "source": "manifest",
+        "path": "touba.manifest.json",
+        "source_ref": null
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge:dispatches:trigger:examples.linear_skill/MorningReview->strategy:examples.linear_skill/RunSourcedNote",
+      "kind": "dispatches",
+      "from": "trigger:examples.linear_skill/MorningReview",
+      "to": "strategy:examples.linear_skill/RunSourcedNote",
+      "evidence": {
+        "source": "source",
+        "path": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:36"
+      }
+    },
+    {
+      "id": "edge:uses:strategy:examples.linear_skill/RunSourcedNote->agent:examples.linear_skill/Researcher",
+      "kind": "uses",
+      "from": "strategy:examples.linear_skill/RunSourcedNote",
+      "to": "agent:examples.linear_skill/Researcher",
+      "evidence": {
+        "source": "air",
+        "path": "program.air.json",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:28"
+      }
+    },
+    {
+      "id": "edge:callable_by:strategy:examples.linear_skill/RunSourcedNote->agent:examples.linear_skill/Researcher",
+      "kind": "callable_by",
+      "from": "strategy:examples.linear_skill/RunSourcedNote",
+      "to": "agent:examples.linear_skill/Researcher",
+      "evidence": {
+        "source": "air",
+        "path": "program.air.json",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:25"
+      }
+    },
+    {
+      "id": "edge:uses:agent:examples.linear_skill/Researcher->skill:examples.linear_skill/BuildNote",
+      "kind": "uses",
+      "from": "agent:examples.linear_skill/Researcher",
+      "to": "skill:examples.linear_skill/BuildNote",
+      "evidence": {
+        "source": "air",
+        "path": "program.air.json",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:24"
+      }
+    },
+    {
+      "id": "edge:uses:skill:examples.linear_skill/BuildNote->tool:examples.linear_skill/FetchSource",
+      "kind": "uses",
+      "from": "skill:examples.linear_skill/BuildNote",
+      "to": "tool:examples.linear_skill/FetchSource",
+      "evidence": {
+        "source": "air",
+        "path": "program.air.json",
+        "source_ref": "grammar/tree-sitter-touba/examples/tb-v01-001-linear-skill.tb:18"
+      }
+    }
+  ],
+  "diagnostics": []
+}

@@ -22,7 +22,7 @@ export class RuntimeStop extends ToubaRuntimeError {
    * @param {Record<string, unknown>} [details]
    */
   constructor(message = "execution stopped", details = {}) {
-    super("RuntimeStopped", message, details);
+    super("RuntimeStopped", message, { reason: "explicit_stop", ...details });
   }
 }
 

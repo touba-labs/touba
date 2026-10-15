@@ -8,10 +8,10 @@ import {
 } from "vscode-languageserver/node.js";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { execFileSync } from "node:child_process";
-import { existsSync, realpathSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
-import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { compilerInputsForFile } from "../../../cli/touba-project/src/project.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const implDir = process.env.TOUBA_IMPLEMENTATION_DIR
@@ -21,7 +21,7 @@ const implDir = process.env.TOUBA_IMPLEMENTATION_DIR
 let connection = null;
 let documents = null;
 
-// Keep source URI mappings outside AIR: temporary compilation never rewrites it.
+// Keep editor URI mappings outside AIR; unsaved source is supplied on stdin.
 const airCache = new Map();
 
 export function startServer() {
@@ -81,37 +81,62 @@ export function startServer() {
 }
 
 function validate(document) {
-  const tmpDir = mkdtempSync(join(tmpdir(), "touba-lsp-"));
-  const tmpFile = join(tmpDir, "source.tb");
   try {
-    writeFileSync(tmpFile, document.getText(), "utf8");
-    const result = runToubaCompileJson(tmpFile);
-    publishResult(document.uri, result, new Map([[tmpFile, document.uri]]));
+    const sourcePath = document.uri.startsWith("file:") ? fileURLToPath(document.uri) : document.uri;
+    const context = document.uri.startsWith("file:") ? compilerInputsForFile(sourcePath) : {};
+    const result = context.diagnostics?.length ? { ok: false, air: null, diagnostics: context.diagnostics }
+      : runToubaCompileJson(sourcePath, { ...context, sourceText: document.getText() });
+    const sourceUris = new Map([[resolve(sourcePath), document.uri], [sourcePath, document.uri]]);
+    if (existsSync(sourcePath)) sourceUris.set(realpathSync(sourcePath), document.uri);
+    publishResult(document.uri, result, sourceUris, document.getText());
   } catch (e) {
-    // cargo not available or hard crash: clear diagnostics without crashing the server
+    // A failed compiler is not evidence that a document is valid.
     airCache.delete(document.uri);
-    connection.sendDiagnostics({ uri: document.uri, diagnostics: [] });
-  } finally {
-    rmSync(tmpDir, { recursive: true, force: true });
+    connection.sendDiagnostics({ uri: document.uri, diagnostics: [{
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      severity: DiagnosticSeverity.Error,
+      source: "touba",
+      code: "CompilerUnavailable",
+      message: "Touba could not validate this document. Check the selected toolchain and TOUBA_COMPILE_BIN configuration, then reopen the document.",
+    }] });
   }
 }
 
-function publishResult(uri, result, sourceUris) {
+function publishResult(uri, result, sourceUris, sourceText) {
   if (result.ok && result.air) {
     airCache.set(uri, { air: result.air, sourceUris });
   } else {
     airCache.delete(uri);
   }
-  const diagnostics = (result.diagnostics ?? []).map((diagnostic) => toLspDiagnostic(diagnostic));
+  const diagnostics = (result.diagnostics ?? []).map((diagnostic) => diagnosticForDocument(diagnostic, uri, sourceUris, sourceText));
   connection.sendDiagnostics({ uri, diagnostics });
+}
+
+export function diagnosticForDocument(diagnostic, uri, sourceUris, sourceText) {
+  const ref = diagnostic.source_ref;
+  const location = ref && locationForSourceRef(uri, ref, sourceUris);
+  if (!location || location.uri === uri) return toLspDiagnostic(diagnostic, sourceText);
+  let dependencyText;
+  try { dependencyText = readFileSync(fileURLToPath(location.uri), "utf8"); } catch { /* The source may have been removed. */ }
+  const dependencyDiagnostic = toLspDiagnostic(diagnostic, dependencyText);
+  return {
+    ...toLspDiagnostic({ ...diagnostic, source_ref: undefined }, sourceText),
+    message: `Dependency ${ref.source_id}: ${diagnostic.message}`,
+    relatedInformation: [{ location: { ...location, range: dependencyDiagnostic.range }, message: diagnostic.message }],
+  };
 }
 
 export function compilerCommandSpec(sourcePath, {
   implementationDir = implDir,
   env = process.env,
   platform = process.platform,
+  sourceText,
+  sourceRoots = [],
+  moduleSourcePaths = [],
 } = {}) {
-  const args = ["--json", sourcePath];
+  const args = ["--json", ...(sourceText === undefined ? [] : ["--stdin"]),
+    ...sourceRoots.flatMap(root => ["--source-root", root]),
+    ...moduleSourcePaths.flatMap(path => ["--module-source", path]), sourcePath];
   if (env.TOUBA_COMPILE_BIN) {
     return { command: env.TOUBA_COMPILE_BIN, args };
   }
@@ -140,7 +165,7 @@ export function runToubaCompileJson(sourcePath, options = {}) {
     const raw = execFileSync(
       compiler.command,
       compiler.args,
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: options.env ?? process.env },
+      { encoding: "utf8", input: options.sourceText, stdio: ["pipe", "pipe", "pipe"], env: options.env ?? process.env },
     );
     return parseCompilerEnvelope(raw);
   } catch (error) {
@@ -153,7 +178,16 @@ export function runToubaCompileJson(sourcePath, options = {}) {
 }
 
 export function parseCompilerEnvelope(raw) {
-  return JSON.parse(raw);
+  const result = JSON.parse(raw);
+  if (!result || typeof result.ok !== "boolean" || !Array.isArray(result.diagnostics)
+    || result.diagnostics.some(d => !d || typeof d.code !== "string" || typeof d.message !== "string")
+    || (result.ok ? result.diagnostics.length !== 0 || !result.air
+      || typeof result.air.module?.name !== "string"
+      || !result.air.definitions || !Array.isArray(result.air.execution_graphs)
+      : result.air !== null || result.diagnostics.length === 0)) {
+    throw new Error("Invalid Touba compiler response: expected an AIR document or explicit diagnostics.");
+  }
+  return result;
 }
 
 export function tryParseCompilerEnvelopeFromExecError(error) {
@@ -179,12 +213,19 @@ function normalizeExecOutput(output) {
   return null;
 }
 
-export function toLspDiagnostic(d) {
+export function toLspDiagnostic(d, sourceText) {
+  // Tree-sitter columns are UTF-8 bytes; LSP defaults to UTF-16 code units.
+  const lines = sourceText?.split("\n");
+  const position = (line, byteColumn) => ({
+    line,
+    character: lines?.[line] === undefined ? byteColumn
+      : Buffer.from(lines[line], "utf8").subarray(0, byteColumn).toString("utf8").length,
+  });
   const ref = d.source_ref;
   const range = ref
     ? {
-        start: { line: ref.start_line, character: ref.start_column },
-        end: { line: ref.end_line, character: ref.end_column },
+        start: position(ref.start_line, ref.start_column),
+        end: position(ref.end_line, ref.end_column),
       }
     : { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
   return {

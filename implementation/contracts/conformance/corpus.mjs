@@ -4,7 +4,9 @@ import {
   AIR_SCHEMA_VERSION,
   TRACE_CAPABILITY_PROFILE,
   TRACE_PROTOCOL_VERSION,
+  canonicalizeMachineValue,
 } from "../machine/contracts.mjs";
+import { createHash } from "node:crypto";
 
 export const CONFORMANCE_CORPUS_VERSION = "touba-machine-conformance-v1";
 
@@ -79,11 +81,12 @@ export function baseTrace() {
     trace_capability_profile: TRACE_CAPABILITY_PROFILE,
     run: {
       run_id: runId, air_schema_version: AIR_SCHEMA_VERSION,
+      air_digest: `sha256:${createHash("sha256").update(canonicalizeMachineValue(baseAir())).digest("hex")}`,
       module_ref: "module:conformance", entry_ref: "skill:conformance/Run",
     },
     events: [
       { event_id: `event:${runId}:1`, run_id: runId, sequence_index: 0, kind: "run_started", payload: {} },
-      { event_id: `event:${runId}:2`, run_id: runId, sequence_index: 1, kind: "run_completed", payload: { status: "success" } },
+      { event_id: `event:${runId}:2`, run_id: runId, sequence_index: 1, kind: "run_completed", payload: { status: "success", reason: "completed" } },
     ],
   };
 }

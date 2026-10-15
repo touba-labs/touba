@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/machine/touba-run-result-v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "status", "reason", "result", "messages", "trace"],
+  "properties": {
+    "schema_version": { "const": "touba-run-result-v1" },
+    "status": { "enum": ["success", "stopped", "cancelled", "failure"] },
+    "reason": { "type": "string", "minLength": 1 },
+    "result": {},
+    "messages": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["interaction_ref", "text"],
+      "properties": { "interaction_ref": { "type": "string" }, "text": { "type": "string" } }
+    } },
+    "pending_interaction": {
+      "type": "object", "additionalProperties": false, "required": ["interaction_ref", "prompt"],
+      "properties": { "interaction_ref": { "type": "string" }, "prompt": { "type": "string" } }
+    },
+    "trace": { "type": "object" }
+  }
+}

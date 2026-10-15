@@ -427,6 +427,7 @@ async function runNegativeCases(root) {
 
   await check("SKILL-V1-N08", "skill pack cannot be selected as executable AIR capability", async () => {
     const result = await executeAirDocument(agentSkillDocument(), {
+      inputs: { topic: "governed-topic" },
       skillPacks: [runtimePack("research-review")],
       activeSkillPackRefs: ["skill_pack:project/research-review"],
       agentDecisionProvider: () => ({
@@ -440,6 +441,7 @@ async function runNegativeCases(root) {
 
   await check("SKILL-V1-N09", "pack-guided selection outside agent uses is refused", async () => {
     const result = await executeAirDocument(agentSkillDocument(), {
+      inputs: { topic: "governed-topic" },
       skillPacks: [runtimePack("research-review", { content: "Use Hidden." })],
       activeSkillPackRefs: ["skill_pack:project/research-review"],
       agentDecisionProvider: () => ({
@@ -616,7 +618,7 @@ function createSkillPack(root, skillId, options = {}) {
   }
 
   const descriptor = {
-    skill_pack_schema_version: "touba-skill-pack-v0.1",
+    skill_pack_schema_version: "touba-skill-pack-v1",
     ref: `skill_pack:project/${skillId}`,
     name: titleFromSkillId(skillId),
     description: `Fixture for ${skillId}.`,
@@ -786,8 +788,8 @@ function agentSkillDocument() {
       },
       skill("Hidden", "graph:skill:test/Hidden"),
     ],
-    agents: [researcherAgent(["skill:test/Search", "skill:test/Answer"])],
-    strategies: [runResearchStrategy()],
+    agents: [researcherAgent(["skill:test/Search", "skill:test/Answer"], true)],
+    strategies: [runResearchStrategy(true)],
     graphs: [
       graph("graph:skill:test/Search", "skill:test/Search", [
         node("search", "give", { arguments: ["literal:string:search"] }),
@@ -798,7 +800,7 @@ function agentSkillDocument() {
       graph("graph:skill:test/Hidden", "skill:test/Hidden", [
         node("hidden", "give", { arguments: ["literal:string:hidden"] }),
       ]),
-      runResearchGraph(),
+      runResearchGraph(true),
     ],
   });
 }
@@ -856,11 +858,12 @@ function baseDocument(overrides = {}) {
   };
 }
 
-function researcherAgent(uses) {
+function researcherAgent(uses, withTopic = false) {
   return {
     id: "agent:test/Researcher",
     name: "Researcher",
     responsibility: "Researcher",
+    signature: { inputs: withTopic ? [parameter("topic", "builtin:Text")] : [], output_type: "builtin:Text" },
     uses,
     callable_by: [
       {
@@ -873,19 +876,22 @@ function researcherAgent(uses) {
   };
 }
 
-function runResearchStrategy() {
+function runResearchStrategy(withTopic = false) {
   return {
     id: "strategy:test/RunResearch",
     name: "RunResearch",
+    signature: { inputs: withTopic ? [parameter("topic", "builtin:Text")] : [], output_type: "builtin:Text" },
     uses: ["agent:test/Researcher"],
     flow_graph_ref: "graph:strategy:test/RunResearch",
     source_ref: sourceRef(),
   };
 }
 
-function runResearchGraph() {
+function runResearchGraph(withTopic = false) {
   return graph("graph:strategy:test/RunResearch", "strategy:test/RunResearch", [
-    node("run", "call_agent", { target_ref: "agent:test/Researcher" }),
+    node("run", "call_agent", { target_ref: "agent:test/Researcher",
+      arguments: withTopic ? ["value:topic"] : [],
+    }),
   ]);
 }
 
@@ -968,7 +974,7 @@ function governedToolManifest() {
     manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:test/Search": {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: "node",
           args: ["./handlers/search.handler.js"],

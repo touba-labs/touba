@@ -4,6 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
+    "air_digest": "sha256:e009126d2bb627a3b0878177cbe6bc2b75b7ea71c662c0f71a9a89358d58a4f9",
     "module_ref": "module:examples.fallback",
     "entry_ref": "strategy:examples.fallback/RunSourceLookup"
   },
@@ -39,18 +40,19 @@
         "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-          "start_byte": 779,
-          "end_byte": 789,
-          "start_line": 37,
+          "start_byte": 952,
+          "end_byte": 1031,
+          "start_line": 43,
           "start_column": 8,
-          "end_line": 37,
-          "end_column": 18
+          "end_line": 46,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "agent:examples.fallback/Researcher",
         "caller_ref": "strategy:examples.fallback/RunSourceLookup",
-        "agent_ref": null
+        "agent_ref": null,
+        "argument_count": 1
       }
     },
     {
@@ -64,12 +66,12 @@
         "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
-          "start_byte": 779,
-          "end_byte": 789,
-          "start_line": 37,
+          "start_byte": 952,
+          "end_byte": 1031,
+          "start_line": 43,
           "start_column": 8,
-          "end_line": 37,
-          "end_column": 18
+          "end_line": 46,
+          "end_column": 8
         }
       },
       "payload": {
@@ -82,6 +84,18 @@
       "event_id": "event:run-1:5",
       "run_id": "run-1",
       "sequence_index": 4,
+      "kind": "agent_interface_entered",
+      "payload": {
+        "agent_ref": "agent:examples.fallback/Researcher",
+        "caller_ref": "strategy:examples.fallback/RunSourceLookup",
+        "input_count": 1,
+        "output_type": "type:examples.fallback/SourceText"
+      }
+    },
+    {
+      "event_id": "event:run-1:6",
+      "run_id": "run-1",
+      "sequence_index": 5,
       "kind": "agent_capabilities_listed",
       "payload": {
         "agent_ref": "agent:examples.fallback/Researcher",
@@ -149,9 +163,9 @@
       }
     },
     {
-      "event_id": "event:run-1:6",
+      "event_id": "event:run-1:7",
       "run_id": "run-1",
-      "sequence_index": 5,
+      "sequence_index": 6,
       "kind": "agent_decision_recorded",
       "payload": {
         "agent_ref": "agent:examples.fallback/Researcher",
@@ -161,9 +175,9 @@
       }
     },
     {
-      "event_id": "event:run-1:7",
+      "event_id": "event:run-1:8",
       "run_id": "run-1",
-      "sequence_index": 6,
+      "sequence_index": 7,
       "kind": "agent_capability_selected",
       "payload": {
         "agent_ref": "agent:examples.fallback/Researcher",
@@ -174,9 +188,9 @@
       }
     },
     {
-      "event_id": "event:run-1:8",
+      "event_id": "event:run-1:9",
       "run_id": "run-1",
-      "sequence_index": 7,
+      "sequence_index": 8,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildSource",
@@ -184,9 +198,9 @@
       }
     },
     {
-      "event_id": "event:run-1:9",
+      "event_id": "event:run-1:10",
       "run_id": "run-1",
-      "sequence_index": 8,
+      "sequence_index": 9,
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildSource",
@@ -195,23 +209,24 @@
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
           "start_byte": 431,
-          "end_byte": 449,
+          "end_byte": 518,
           "start_line": 24,
           "start_column": 8,
-          "end_line": 24,
-          "end_column": 26
+          "end_line": 27,
+          "end_column": 8
         }
       },
       "payload": {
         "target_ref": "tool:examples.fallback/FetchPrimarySource",
         "caller_ref": "skill:examples.fallback/BuildSource",
-        "agent_ref": "agent:examples.fallback/Researcher"
+        "agent_ref": "agent:examples.fallback/Researcher",
+        "argument_count": 1
       }
     },
     {
-      "event_id": "event:run-1:10",
+      "event_id": "event:run-1:11",
       "run_id": "run-1",
-      "sequence_index": 9,
+      "sequence_index": 10,
       "kind": "failure_detected",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildSource",
@@ -220,11 +235,11 @@
         "source_ref": {
           "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
           "start_byte": 431,
-          "end_byte": 449,
+          "end_byte": 518,
           "start_line": 24,
           "start_column": 8,
-          "end_line": 24,
-          "end_column": 26
+          "end_line": 27,
+          "end_column": 8
         }
       },
       "payload": {
@@ -241,9 +256,9 @@
       "message": "missing tool binding tool:examples.fallback/FetchPrimarySource"
     },
     {
-      "event_id": "event:run-1:11",
+      "event_id": "event:run-1:12",
       "run_id": "run-1",
-      "sequence_index": 10,
+      "sequence_index": 11,
       "kind": "fallback_selected",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildSource",
@@ -255,9 +270,9 @@
       }
     },
     {
-      "event_id": "event:run-1:12",
+      "event_id": "event:run-1:13",
       "run_id": "run-1",
-      "sequence_index": 11,
+      "sequence_index": 12,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildFallbackSource",
@@ -265,9 +280,9 @@
       }
     },
     {
-      "event_id": "event:run-1:13",
+      "event_id": "event:run-1:14",
       "run_id": "run-1",
-      "sequence_index": 12,
+      "sequence_index": 13,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildFallbackSource",
@@ -279,12 +294,13 @@
       }
     },
     {
-      "event_id": "event:run-1:14",
+      "event_id": "event:run-1:15",
       "run_id": "run-1",
-      "sequence_index": 13,
+      "sequence_index": 14,
       "kind": "run_completed",
       "payload": {
-        "status": "stopped"
+        "status": "stopped",
+        "reason": "explicit_stop"
       }
     }
   ]

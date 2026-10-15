@@ -12,7 +12,7 @@ import {
 import { basename, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const RELEASE_ASSETS_SCHEMA_VERSION = "touba-github-release-assets-v0.1";
+export const RELEASE_ASSETS_SCHEMA_VERSION = "touba-github-release-assets-v1";
 export const PUBLIC_RELEASE_PLATFORMS = Object.freeze([
   "darwin-arm64",
   "darwin-x64",

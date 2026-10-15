@@ -44,6 +44,29 @@ export function extractToubaExamples(content, docPath = "document.md") {
   return examples;
 }
 
+// Dependencies come only from complete blocks on the same published page.
+// No repository fixture or inferred declaration may repair an incomplete recipe.
+export function exampleModuleDependencies(example, examples) {
+  const selected = new Map();
+  const entryModule = example.source.match(/^module\s+(\S+)/m)?.[1];
+  const visit = current => {
+    for (const match of current.source.matchAll(/^import\s+\w+\s+\w+\s+from\s+(\S+)\s*$/gm)) {
+      const module = match[1];
+      if (module === entryModule || selected.has(module)) continue;
+      const candidates = examples.filter(other => other.docPath === example.docPath
+        && other.marker === "compile" && other.source.match(/^module\s+(\S+)/m)?.[1] === module);
+      const sources = [...new Set(candidates.map(other => other.source))];
+      if (sources.length > 1) throw new Error(
+        `${example.docPath}: ambiguous published dependency ${module}; give the example one complete definition`);
+      if (candidates.length === 0) continue; // The real compiler diagnoses the missing import.
+      selected.set(module, candidates[0]);
+      visit(candidates[0]);
+    }
+  };
+  visit(example);
+  return [...selected.values()];
+}
+
 export function validateExampleMetadata(example) {
   const diagnostics = [];
   if (example.marker === undefined) {
@@ -122,9 +145,17 @@ export function runDocumentationValidation(options = {}) {
       if (example.marker !== "compile") continue;
       const sourcePath = join(tempRoot, `${String(index).padStart(4, "0")}-${safeName(basename(example.docPath))}.tb`);
       writeFileSync(sourcePath, example.source, "utf8");
+      let dependencies;
+      try { dependencies = exampleModuleDependencies(example, examples); }
+      catch (error) { diagnostics.push(error.message); continue; }
+      const dependencyArgs = dependencies.flatMap((dependency, dependencyIndex) => {
+        const path = join(tempRoot, `dependency-${index}-${dependencyIndex}.tb`);
+        writeFileSync(path, dependency.source, "utf8");
+        return ["--module-source", path];
+      });
       const result = spawnSync(
         cargo,
-        ["run", "-p", "touba-cli", "--bin", "touba-compile", "--quiet", "--", sourcePath],
+        ["run", "-p", "touba-cli", "--bin", "touba-compile", "--quiet", "--", sourcePath, ...dependencyArgs],
         { cwd: options.implementationRoot ?? resolve(root, "implementation"), encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
       );
       if (result.status !== 0) {

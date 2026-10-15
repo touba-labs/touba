@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   extractToubaExamples,
+  exampleModuleDependencies,
   validateExampleMetadata,
 } from "./validate-doc-examples.mjs";
 
@@ -46,4 +47,14 @@ responsibility "Review the change."
 \`\`\`
 `, "docs/fragment.md");
   assert.deepEqual(validateExampleMetadata(fragment), []);
+});
+
+ test("published module resolution is transitive, local to the document and never fabricated", () => {
+  const block = (source, docPath = "recipe.md") => ({ source, docPath, marker: "compile" });
+  const entry = block("module app\nimport function F from helpers\n");
+  const helper = block("module helpers\nimport type T from types\n");
+  const type = block("module types\ntype T\n    value is Text\n");
+  assert.deepEqual(exampleModuleDependencies(entry, [entry, helper, type]), [helper, type]);
+  assert.deepEqual(exampleModuleDependencies(entry, [entry, { ...helper, docPath: "other.md" }]), []);
+  assert.throws(() => exampleModuleDependencies(entry, [entry, helper, block("module helpers\n")]), /ambiguous/);
 });

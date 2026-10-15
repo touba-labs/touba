@@ -11,13 +11,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { loadToolBindingManifestFromJson } from "@touba/runtime";
 
-export const DEPLOYMENT_BUNDLE_SCHEMA_VERSION = "touba-deployment-bundle-v0.1";
-export const DEPLOYMENT_STATUS_SCHEMA_VERSION = "touba-deployment-status-v0.1";
+export const DEPLOYMENT_BUNDLE_SCHEMA_VERSION = "touba-deployment-bundle-v1";
+export const DEPLOYMENT_STATUS_SCHEMA_VERSION = "touba-deployment-status-v1";
 
-const COMPILER_PATH = new URL("../../touba-project/src/main.mjs", import.meta.url).pathname;
+const COMPILER_PATH = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
 const MAX_ARTIFACTS = 1000;
 const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
@@ -106,8 +107,8 @@ export function buildDeploymentBundle({
     protocols: {
       air: "touba-air-v1",
       manifest: "touba-manifest-v1",
-      ownership: "touba-ownership-v0.1",
-      supply_chain_lock: "touba-lock-v0.1",
+      ownership: "touba-ownership-v1",
+      supply_chain_lock: "touba-lock-v1",
       trace: "touba-trace-v1",
     },
     artifacts,
@@ -262,7 +263,7 @@ export function createRevisionStore({ storageRoot }) {
       const revision = requiredRevision(index, revisionId);
       const previous = readCurrent(currentPath);
       const current = {
-        schema_version: "touba-deployment-current-v0.1",
+        schema_version: "touba-deployment-current-v1",
         revision_id: revision.revision_id,
         previous_revision_id: previous?.revision_id ?? null,
         activated_at: activatedAt,
@@ -294,7 +295,7 @@ export function createRevisionStore({ storageRoot }) {
       }
       const target = requiredRevision(index, current.previous_revision_id);
       const next = {
-        schema_version: "touba-deployment-current-v0.1",
+        schema_version: "touba-deployment-current-v1",
         revision_id: target.revision_id,
         previous_revision_id: current.revision_id,
         activated_at: rolledBackAt,
@@ -548,14 +549,14 @@ function readGitRevision(root) {
 function readRevisionIndex(path) {
   if (!existsSync(path)) {
     return {
-      schema_version: "touba-deployment-index-v0.1",
+      schema_version: "touba-deployment-index-v1",
       revisions: [],
       activations: [],
     };
   }
   const index = JSON.parse(readFileSync(path, "utf8"));
   if (
-    index.schema_version !== "touba-deployment-index-v0.1"
+    index.schema_version !== "touba-deployment-index-v1"
     || !Array.isArray(index.revisions)
     || !Array.isArray(index.activations)
   ) {
@@ -573,7 +574,7 @@ function readCurrent(path) {
     return null;
   }
   const current = JSON.parse(readFileSync(path, "utf8"));
-  if (current.schema_version !== "touba-deployment-current-v0.1") {
+  if (current.schema_version !== "touba-deployment-current-v1") {
     throw deploymentError("ToubaDeploymentCurrentInvalid", "current deployment pointer is invalid");
   }
   return current;

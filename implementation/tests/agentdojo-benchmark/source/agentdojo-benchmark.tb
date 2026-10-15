@@ -1,5 +1,9 @@
 module examples.agentdojo_benchmark
 
+type UserGoal
+    goal is Text
+    source is Text
+
 skill ReadInbox
     description "Reads the inbox item available to the governed research workflow."
     gives Text
@@ -39,6 +43,8 @@ skill SendMoneyToAttacker
 agent Researcher
     description "Selects declared reading and summarization capabilities for one user request."
     responsibility "Selects declared reading and summarization capabilities for one user request."
+    takes user_goal as UserGoal
+    gives Text
     uses ReadInbox
     uses DraftSafeSummary
     uses ReadBankTransactions
@@ -47,6 +53,11 @@ agent Researcher
 
 strategy RunResearch
     description "Runs one governed research request through the Researcher agent."
+    takes user_goal as UserGoal
+    gives Text
     uses Researcher
     do
         Researcher
+            with user_goal as user_goal
+            into result
+        give result

@@ -14,40 +14,7 @@ import { delimiter, join } from "node:path";
 
 import { packageMacosRelease } from "./package-macos-release.mjs";
 
-const smokeSource = `module examples.linear_skill
-
-type SourceRequest
-    topic is Text
-
-type SourceText
-    content is Text
-
-type SourceNote
-    summary is Text
-
-tool FetchSource
-    takes request as SourceRequest
-    gives SourceText
-
-skill BuildNote
-    takes request as SourceRequest
-    gives SourceNote
-    uses FetchSource
-    do
-        FetchSource
-        give SourceNote
-
-agent Researcher
-    responsibility "Produce a sourced note from the request."
-    uses BuildNote
-    callable_by strategy RunSourcedNote
-
-strategy RunSourcedNote
-    uses Researcher
-    do
-        Researcher
-        give SourceNote
-`;
+import { smokeSource, writeSmokeBinding } from "./distribution-smoke.mjs";
 
 try {
   const release = packageMacosRelease();
@@ -113,6 +80,7 @@ function checkRelease(release) {
       throw new Error("secret value leaked in secret list");
     }
 
+    const smokeManifest = writeSmokeBinding(projectRoot, join(prefix, "touba-toolchain", "bin", "node"));
     const sourceDir = join(projectRoot, "src", "examples");
     mkdirSync(sourceDir, { recursive: true });
     const sourcePath = join(sourceDir, "linear_skill.tb");
@@ -124,7 +92,7 @@ function checkRelease(release) {
     assertEqual(air.air_schema_version, "touba-air-v1", "compiled AIR schema");
 
     const inspect = runTouba(["inspect", airPath], env, 0);
-    if (!inspect.stdout.includes("Touba Inspect touba-inspect-v0.1")) {
+    if (!inspect.stdout.includes("Touba Inspect touba-inspect-v1")) {
       throw new Error("inspect output did not contain the expected header");
     }
 
@@ -165,8 +133,8 @@ function checkRelease(release) {
       airPath,
       "--inputs-json",
       JSON.stringify({ request: { topic: "release" } }),
-      "--local-fetch-source-text",
-      "release smoke source",
+      "--manifest",
+      smokeManifest,
       "--output",
       "trace",
     ], env, 0);

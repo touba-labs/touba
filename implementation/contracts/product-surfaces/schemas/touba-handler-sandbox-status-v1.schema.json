@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-handler-sandbox-status-v1.schema.json",
+  "title": "touba-handler-sandbox-status-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "project_root", "platform", "summary", "handlers", "diagnostics"],
+  "properties": {
+    "schema_version": { "const": "touba-handler-sandbox-status-v1" },
+    "generated_at": { "type": "string" },
+    "project_root": { "type": "string" },
+    "platform": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handler_count", "isolated", "not_isolated", "unsupported", "unknown"],
+      "properties": {
+        "handler_count": { "type": "integer" },
+        "isolated": { "type": "integer" },
+        "not_isolated": { "type": "integer" },
+        "unsupported": { "type": "integer" },
+        "unknown": { "type": "integer" }
+      }
+    },
+    "handlers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool_ref", "handler_kind", "command_ref", "status", "mechanism", "grants", "required", "evidence"],
+        "properties": {
+          "tool_ref": { "type": "string" },
+          "handler_kind": { "type": "string" },
+          "command_ref": { "type": "string" },
+          "status": { "enum": ["isolated", "not_isolated", "unsupported", "unknown"] },
+          "mechanism": { "type": ["string", "null"] },
+          "grants": { "type": "array", "items": { "type": "string" } },
+          "required": { "type": "boolean" },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "source_ref", "message"],
+            "properties": {
+              "source": { "type": "string" },
+              "source_ref": { "type": ["string", "null"] },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "enum": ["info", "warning", "error"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

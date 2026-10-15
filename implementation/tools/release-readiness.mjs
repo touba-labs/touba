@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,11 +8,13 @@ import { fileURLToPath } from "node:url";
 const __dir = dirname(fileURLToPath(import.meta.url));
 const defaultImplementationRoot = resolve(__dir, "..");
 
-export const RELEASE_READINESS_SCHEMA_VERSION = "touba-release-readiness-v0.1";
+export const RELEASE_READINESS_SCHEMA_VERSION = "touba-release-readiness-v1";
 
 const REQUIRED_SCRIPTS = Object.freeze([
   ["v1_local_validation_command", "validate:v1-local"],
   ["runtime_tests_command", "test:runtime"],
+  ["installed_sdk_tests_command", "test:distribution-sdk"],
+  ["tutorial_recipes_command", "validate:docs-recipes"],
   ["cli_tests_command", "test:cli"],
   ["release_metadata_tests_command", "test:distribution-release"],
   ["release_versioning_command", "release:versioning"],
@@ -39,102 +43,53 @@ const VERSIONED_PACKAGES = Object.freeze([
   ["distribution", "cli/touba-distribution/package.json"],
 ]);
 
-const CURRENT_RELEASE_GATES = Object.freeze([
-  {
-    id: "fresh_v1_local_validation",
-    status: "satisfied",
-    required: true,
-    evidence: [
-      "implementation/package.json#scripts.validate:v1-local",
-      "implementation/VALIDATION-REPORT.md",
-    ],
-    details: {
-      last_observed_status: "success",
-      last_observed_date: "2026-06-13",
-    },
-  },
-  {
-    id: "multi_os_ci_observation",
-    status: "satisfied",
-    required: true,
-    evidence: [
-      ".github/workflows/source-ci.yml",
-      "https://github.com/pap-touba/touba/actions/runs/27456539602",
-    ],
-    details: {
-      last_observed_status: "success",
-      last_observed_date: "2026-06-13",
-      jobs: {
-        "linux-x64-full": "success",
-        "macos-intel-core": "success",
-        "macos-arm64-core": "success",
-        "windows-x64-core": "success",
-      },
-      release_artifacts: [
-        "touba-release-linux-x64",
-        "touba-release-darwin-x64",
-        "touba-release-darwin-arm64",
-        "touba-release-win32-x64",
-      ],
-    },
-  },
-  {
-    id: "external_user_validation",
-    status: "blocked",
-    required: true,
-    evidence: ["implementation/EXTERNAL-USER-SESSION.md"],
-    reason: "an external user must complete the documented installation and first-run session",
-  },
-  {
-    id: "public_release_artifacts",
-    status: "satisfied",
-    required: true,
-    evidence: [
-      "implementation/package.json#scripts.package:touba-release",
-      "implementation/package.json#scripts.check:touba-release-archive",
-      ".github/workflows/source-ci.yml",
-      "https://github.com/pap-touba/touba/actions/runs/27456539602",
-    ],
-    details: {
-      run_status: "success",
-      run_date: "2026-06-13",
-      artifacts: [
-        "touba-release-linux-x64",
-        "touba-release-darwin-x64",
-        "touba-release-darwin-arm64",
-        "touba-release-win32-x64",
-      ],
-      attached_files: [
-        "*.tar.gz",
-        "SHA256SUMS",
-        "CHECKSUMS.json",
-        "GITHUB_RELEASE_DRAFT.md",
-      ],
-      publication: "manual Go/No-Go only",
-    },
-  },
-  {
-    id: "public_distribution_channel",
-    status: "satisfied",
-    required: true,
-    evidence: [
-      "implementation/release/releases.json",
-      ".github/workflows/release.yml",
-      "implementation/tools/assemble-release-assets.mjs",
-    ],
-    details: {
-      channel: "github-release",
-      publication: "manual workflow_dispatch with preserved GitHub Release assets",
-    },
-  },
-  {
-    id: "public_docs_site_deployment",
-    status: "blocked",
-    required: true,
-    evidence: ["https://pap-touba.github.io/documentation-site/"],
-    reason: "the public documentation site must be deployed and reachable before V1 public release",
-  },
+export const OBSERVED_RELEASE_GATES = Object.freeze([
+  "fresh_v1_local_validation", "installed_sdk_distribution", "published_tutorial_recipes",
+  "p0_delivery", "multi_os_ci_observation", "external_user_validation",
+  "public_release_artifacts", "public_distribution_channel", "public_docs_site_deployment",
 ]);
+const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"];
+const P0_TASKS = ["javascript_sdk_distribution","sdk_project_handlers","sdk_tutorials","lexical_runtime_scopes","compiler_lsp_import_diagnostics","air_trace_admission","runtime_secret_redaction","agent_cycle_finalization","skill_pack_workflows","project_manifest_locks","input_admission_boundaries","cli_sdk_inspection_contracts","unified_v1_workflows"];
+
+// Qualification observations are inputs to this existing report, not a second registry.
+// They must be reviewed; structural validation cannot establish that a human test occurred.
+function observedGates({ qualification, candidate, implementationVersion, now = Date.now() }) {
+  return OBSERVED_RELEASE_GATES.map(id => {
+    const observation = qualification?.observations?.[id];
+    const gate = { id, required: true, evidence: observation?.evidence ?? [] };
+    if (!observation) return { ...gate, status: "blocked", reason: "missing current-candidate observation" };
+    let reason;
+    if (!candidate || !/^[a-f0-9]{64}$/.test(candidate.sha256 ?? "") || !candidate.source_revision
+      || qualification.candidate_sha256 !== candidate.sha256
+      || qualification.source_revision !== candidate.source_revision
+      || qualification.version !== candidate.version || candidate.version !== implementationVersion) reason = "qualification does not identify this candidate and source revision";
+    const time = Date.parse(observation.observed_at);
+    if (!Number.isFinite(time) || time > now || now - time > 7 * 86400000) reason = "observation is missing, future-dated or older than seven days";
+    if (!Array.isArray(gate.evidence) || !gate.evidence.length || gate.evidence.some(item => typeof item !== "string" || !item.trim())) reason = "missing evidence references";
+    if (observation.status !== "satisfied") reason = "observation did not pass";
+    if (id === "p0_delivery" && P0_TASKS.some(task => observation.tasks?.[task] !== "completed")) reason = "a required P0 task is not delivered";
+    if (["multi_os_ci_observation", "public_release_artifacts"].includes(id)
+      && PLATFORMS.some(platform => observation.platforms?.[platform] !== "passed")) reason = "a claimed platform remains unqualified";
+    if (id === "published_tutorial_recipes" && !(observation.total >= 56 && observation.passed === observation.total
+      && observation.failed === 0 && observation.live === true && ["fr", "en"].every(locale => observation.locales?.includes(locale)))) reason = "the complete FR/EN live tutorial campaign is not qualified";
+    return { ...gate, status: reason ? "failed" : "satisfied", ...(reason ? { reason } : {}), details: observation };
+  });
+}
+
+export function identifyReleaseCandidate(path, sourceRevision) {
+  const bytes = readFileSync(path);
+  const manifest = JSON.parse(bytes);
+  const assets = manifest.assets ?? manifest.artifacts;
+  if (!Array.isArray(assets) || assets.length === 0) throw new Error("Candidate checksums contain no artifacts");
+  for (const asset of assets) {
+    const name = asset.name ?? asset.path;
+    if (typeof name !== "string" || !/^[A-Za-z0-9._-]+\.tar\.gz$/.test(name)) throw new Error("Invalid candidate artifact name");
+    const hash = createHash("sha256").update(readFileSync(resolve(dirname(path), name))).digest("hex");
+    if (hash !== asset.sha256) throw new Error("Candidate artifact checksum mismatch: " + name);
+  }
+  return { sha256: createHash("sha256").update(bytes).digest("hex"), source_revision: sourceRevision,
+    version: manifest.version ?? manifest.touba_version };
+}
 
 /**
  * @typedef {"satisfied" | "pending" | "blocked" | "failed"} GateStatus
@@ -156,7 +111,7 @@ export function buildReleaseReadinessReport(options = {}) {
     ...fileGates(pathExists),
     currentReleaseNoteGate(packageJson, pathExists),
     packageVersionGate(readJson),
-    ...CURRENT_RELEASE_GATES,
+    ...observedGates({ ...options, implementationVersion: packageJson.version }),
   ];
   const counts = countGateStatuses(gates);
 
@@ -165,6 +120,7 @@ export function buildReleaseReadinessReport(options = {}) {
     product: "touba",
     release_track: "v1-public",
     implementation_version: packageJson.version ?? "unknown",
+    candidate: options.candidate ?? null,
     overall_status: overallStatus(gates),
     gates,
     counts,
@@ -325,11 +281,16 @@ export function parseReleaseReadinessArgs(rawArgs) {
     allowBlocked: false,
     pretty: true,
   };
-  for (const arg of rawArgs) {
+  for (let index = 0; index < rawArgs.length; index++) {
+    const arg = rawArgs[index];
     if (arg === "--") {
       continue;
     }
-    if (arg === "--allow-blocked") {
+    if (["--candidate", "--qualification", "--source-revision"].includes(arg)) {
+      const value = rawArgs[++index];
+      if (!value || value.startsWith("--")) throw new Error("Missing value for " + arg);
+      options[arg.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
+    } else if (arg === "--allow-blocked") {
       options.allowBlocked = true;
     } else if (arg === "--compact") {
       options.pretty = false;
@@ -354,16 +315,21 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (options.help === true) {
       process.stdout.write(
         [
-          "Usage: node tools/release-readiness.mjs [--allow-blocked] [--pretty|--compact]",
+          "Usage: node tools/release-readiness.mjs [--candidate CHECKSUMS.json --qualification observation.json] [--source-revision SHA] [--allow-blocked] [--pretty|--compact]",
           "",
           "Exits with code 1 unless every required release gate is ready.",
         ].join("\n"),
       );
       process.stdout.write("\n");
     } else {
-      const report = buildReleaseReadinessReport();
+      const sourceRevision = options.sourceRevision ?? process.env.GITHUB_SHA
+        ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: defaultImplementationRoot, encoding: "utf8" }).trim();
+      const candidate = options.candidate ? identifyReleaseCandidate(resolve(options.candidate), sourceRevision) : null;
+      const qualification = options.qualification ? readJsonFile(resolve(options.qualification))
+        : process.env.TOUBA_RELEASE_QUALIFICATION ? JSON.parse(process.env.TOUBA_RELEASE_QUALIFICATION) : null;
+      const report = buildReleaseReadinessReport({ candidate, qualification });
       process.stdout.write(`${renderReleaseReadinessReport(report, options)}\n`);
-      process.exitCode = report.overall_status === "ready" || options.allowBlocked ? 0 : 1;
+      process.exitCode = report.overall_status === "ready" || (options.allowBlocked && report.overall_status === "blocked") ? 0 : 1;
     }
   } catch (error) {
     process.stderr.write(`release-readiness: ${error instanceof Error ? error.message : String(error)}\n`);

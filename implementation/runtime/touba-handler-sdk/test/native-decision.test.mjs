@@ -1,3 +1,4 @@
+import { structuredModelObject } from "./model-output.fixture.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAiSdkDecisionProvider, createOpenAiDecisionProvider, createOllamaDecisionProvider } from "../src/index.mjs";
@@ -68,7 +69,7 @@ test("native finalization preserves typed output and cannot select capabilities 
     const provider = createAiSdkDecisionProvider(nativeOptions({ generateObject: async (options) => {
       assert.equal(options.tools, undefined);
       assert.equal(options.providerOptions?.openai?.parallelToolCalls, undefined);
-      return { object, finishReason };
+      return { object: structuredModelObject(object), finishReason };
     } }));
     if (valid) assert.equal((await provider(input)).action, object.action);
     else await assert.rejects(() => provider(input));
@@ -113,7 +114,7 @@ test("actual AI SDK HTTP serialization preserves executed pairs, native signatur
           bodies.push(body);
           return body.tools?.length
             ? httpResponse([{ type: "function_call", id: "fc_new", call_id: "call_new", name: selection().toolName, arguments: JSON.stringify(selection().input), status: "completed" }])
-            : httpResponse([{ type: "message", id: "msg_new", role: "assistant", status: "completed", content: [{ type: "output_text", text: JSON.stringify({ action: "answer_directly", source: "transport_test", reason: "done", result: "completed" }), annotations: [] }] }]);
+            : httpResponse([{ type: "message", id: "msg_new", role: "assistant", status: "completed", content: [{ type: "output_text", text: JSON.stringify(structuredModelObject({ action: "answer_directly", source: "transport_test", reason: "done", result: "completed" })), annotations: [] }] }]);
         } });
       assert.deepEqual((await provider(input)).arguments, { reference: "A-17" });
       assert.equal(bodies[0].tools[0].strict, true);

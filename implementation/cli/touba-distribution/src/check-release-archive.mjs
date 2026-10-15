@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { npmCommand } from "./npm-command.mjs";
 
 import {
   createReleasePlan,
@@ -76,6 +77,23 @@ function checkReleaseArchive(plan) {
     assertEqual(doctorReport.version.cli, plan.toubaVersion, "doctor CLI version");
     assertEqual(doctorReport.version.commands.supply_chain_validate, true, "doctor supply-chain command manifest");
 
+    const project = join(workspace, "independent SDK project");
+    mkdirSync(project);
+    writeFileSync(join(project, "package.json"), JSON.stringify({ name: "release-sdk-check", private: true }));
+    const sdkArchive = versionReport.distribution.sdk_archive;
+    assertFile(sdkArchive);
+    const sdkEnv = releaseEnv(workspace, installPrefix);
+    sdkEnv.npm_config_cache = join(workspace, "empty npm cache");
+    const npm = npmCommand(["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", sdkArchive]);
+    runCommand(npm.command, npm.args,
+      { cwd: project, env: sdkEnv });
+    writeFileSync(join(project, "sdk-smoke.mjs"), readFileSync(new URL("./sdk-smoke-program.mjs", import.meta.url)));
+    const installedRoot = join(installPrefix, "touba-toolchain");
+    const sdkSmoke = runCommand(join(installedRoot, "bin", process.platform === "win32" ? "node.exe" : "node"),
+      ["sdk-smoke.mjs", join(installedRoot, "lib/cli/touba-project/src/main.mjs")], { cwd: project, env: sdkEnv });
+    if (!sdkSmoke.stdout.includes("SDK_ARCHIVE_OK")) throw new Error("Installed SDK smoke did not complete");
+    process.stdout.write("CHECKED_RELEASE_SDK positive and negative cases\n");
+
     const update = runTouba(cliPath, ["update"], releaseEnv(workspace, installPrefix), 1);
     if (!update.stdout.includes("Status: manual_reinstall_required")) {
       throw new Error("update command did not explain the release update policy");
@@ -140,15 +158,15 @@ function releaseEnv(workspace, installPrefix) {
   if (process.platform !== "win32") {
     pathEntries.push("/usr/bin", "/bin");
   }
-  return {
+  const env = {
     ...process.env,
-    HOME: workspace,
-    USERPROFILE: workspace,
     TMPDIR: workspace,
     TMP: workspace,
     TEMP: workspace,
     PATH: pathEntries.join(delimiter),
   };
+  for (const name of ["NODE_PATH", "TOUBA_IMPLEMENTATION_DIR", "TOUBA_COMPILE_BIN"]) delete env[name];
+  return env;
 }
 
 function runTouba(cliPath, args, env, expectedStatus = 0) {

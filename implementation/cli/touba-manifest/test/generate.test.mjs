@@ -33,23 +33,23 @@ test("generates manifest bindings from AIR tools", () => {
     handlerCwd: ".",
     timeoutMs: 7000,
     maxPayloadBytes: 2048,
-    includeAgentSecretScopes: true,
   });
 
   assert.equal(manifest.manifest_version, "touba-manifest-v1");
-  assert.deepEqual(manifest.agent_secret_scopes, {});
+  assert.equal(manifest.agent_secret_scopes, undefined);
   assert.deepEqual(manifest.bindings["tool:examples.docs/SearchDatasets"], {
+    effect_contract: null,
     handler: {
       kind: "process",
       command: "node",
-      args: ["handlers/search_datasets.handler.mjs"],
+      args: ["handlers/examples/docs/search_datasets.handler.mjs"],
       cwd: ".",
     },
-    grants: ["network", "secret_read", "memory_read"],
+    grants: [],
     timeout_ms: 7000,
     max_payload_bytes: 2048,
-    secrets: ["SEARCH_API_KEY"],
-    memories: [{ ref: "memory:examples.docs/SearchCache", access: "read" }],
+    secrets: [],
+    memories: [],
   });
 });
 
@@ -57,7 +57,7 @@ test("generates request trigger payload contracts from AIR", () => {
   const manifest = generateManifestFromAirDocument(triggerAirDocument());
 
   assert.deepEqual(manifest.triggers["trigger:examples.webhook/WebhookRun"], {
-    enabled: true,
+    enabled: false,
     source: {
       kind: "request",
     },
@@ -132,7 +132,7 @@ test("prints a manifest template from the CLI", () => {
     const manifest = JSON.parse(stdout);
     assert.equal(
       manifest.bindings["tool:examples.docs/SearchDatasets"].handler.args[0],
-      "handlers/search_datasets.handler.mjs",
+      "handlers/examples/docs/search_datasets.handler.mjs",
     );
     assert.equal(manifest.bindings["tool:examples.docs/SearchDatasets"].timeout_ms, 9000);
   } finally {
@@ -241,7 +241,7 @@ test("writes handler stubs without overwriting by default", () => {
     });
 
     assert.equal(written.length, 1);
-    const targetPath = join(workspace, "handlers/search_datasets.handler.mjs");
+    const targetPath = join(workspace, "handlers/examples/docs/search_datasets.handler.mjs");
     const content = readFileSync(targetPath, "utf8");
     assert.match(content, /tool:examples\.docs\/SearchDatasets/);
     assert.throws(

@@ -1,0 +1,7 @@
+{
+  "schema_version": "touba-interaction-message-request-v1",
+  "message_id": "message_01",
+  "display_text": "Review invoice INV-001.",
+  "inputs": { "invoice_id": "INV-001" },
+  "requested_by": { "kind": "studio", "id": "touba-studio" }
+}

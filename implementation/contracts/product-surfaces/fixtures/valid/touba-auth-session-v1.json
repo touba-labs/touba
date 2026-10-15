@@ -1,0 +1,29 @@
+{
+  "schema_version": "touba-auth-session-v1",
+  "user": {
+    "id": "user-01",
+    "email": "owner@example.test",
+    "display_name": "Project Owner",
+    "status": "active",
+    "created_at": "2026-07-23T12:00:00.000Z"
+  },
+  "organization": {
+    "id": "organization-01",
+    "name": "Touba Research",
+    "slug": "touba-research",
+    "status": "active"
+  },
+  "permissions": ["projects.read", "executions.read"],
+  "session": {
+    "id": "session-01",
+    "user_id": "user-01",
+    "device_id": "studio-01",
+    "client": "studio",
+    "platform": "darwin",
+    "created_at": "2026-07-23T12:00:00.000Z",
+    "last_seen_at": "2026-07-23T12:02:00.000Z",
+    "expires_at": "2026-07-23T12:15:00.000Z",
+    "refresh_expires_at": "2026-08-22T12:00:00.000Z",
+    "revoked_at": null
+  }
+}

@@ -6,8 +6,6 @@ import { containsResolvedSecretValue } from "./execution-checkpoints.mjs";
 import { RuntimeFailure } from "./runtime-errors.mjs";
 
 export const EFFECT_JOURNAL_SCHEMA_VERSION = "touba-effect-journal-v1";
-export const EFFECT_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v2";
-export const COMPENSATION_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v3";
 
 export const EFFECT_OUTCOMES = Object.freeze([
   "applied",

@@ -76,6 +76,12 @@ function materializeManifestFromAir() {
     timeoutMs: 10000,
     maxPayloadBytes: 1048576,
   });
+  // Explicit host permissions for this fixture, not inferred authorization.
+  const binding = manifest.bindings["tool:examples.js_sdk_project/BuildGreeting"];
+  binding.handler.args = ["handlers/build_greeting.handler.mjs"];
+  binding.effect_contract = { kind: "none" };
+  binding.grants = ["network", "secret_read"];
+  binding.secrets = ["DEMO_API_KEY"];
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
@@ -112,7 +118,7 @@ function runAir() {
         },
       }),
       "--output",
-      "trace",
+      "json",
     ],
     {
       cwd: implementationRoot,
@@ -127,7 +133,7 @@ function runAir() {
   return runResult.stdout;
 }
 
-function assertTrace(trace) {
+function assertTrace({ trace, messages }) {
   const completed = trace.events?.find((event) => event.kind === "run_completed");
   if (completed?.payload?.status !== "success") {
     throw new Error(`expected trace status success, got ${completed?.payload?.status}`);
@@ -150,9 +156,8 @@ function assertTrace(trace) {
     throw new Error("expected DEMO_API_KEY handle in trace");
   }
 
-  const showEvent = trace.events.find((event) => event.kind === "user_interaction_shown");
-  if (showEvent?.payload?.message !== "Hello Bamba from JavaScript") {
-    throw new Error(`unexpected show message ${showEvent?.payload?.message}`);
+  if (messages[0]?.text !== "Hello Bamba from JavaScript") {
+    throw new Error(`unexpected show message ${messages[0]?.text}`);
   }
 }
 

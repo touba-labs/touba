@@ -99,6 +99,7 @@ test("element authoring produces compilable source drafts for every Touba primit
       requirements: ["network", "secret_read"],
       secrets: ["SERVICE_API_TOKEN"],
       handler: {
+        effect_contract: { kind: "none" },
         timeout_ms: 7000,
         max_payload_bytes: 65536,
         sandbox_required: true,
@@ -163,6 +164,13 @@ test("element authoring produces compilable source drafts for every Touba primit
   }
 });
 
+test("tool authoring refuses an unspecified effect contract", () => {
+  assert.throws(() => normalizeElementAuthoringRequest(requestFor({
+    kind: "tool", name: "ReadRecord", description: "Reads one explicitly authorized record.",
+    takes: [], gives: "Text", requirements: ["network"],
+  })), (error) => error.code === "ToubaServeElementEffectContractRequired");
+});
+
 test("tool authoring creates a disabled-by-code stub and a sandboxed manifest binding", () => {
   const project = createProject();
   try {
@@ -176,6 +184,7 @@ test("tool authoring creates a disabled-by-code stub and a sandboxed manifest bi
         gives: "Text",
         requirements: ["network", "secret_read"],
         secrets: ["SERVICE_API_TOKEN"],
+        handler: { effect_contract: { kind: "none" } },
       }),
     });
     const manifest = JSON.parse(result.changes.find((item) => item.role === "manifest").content);
@@ -183,6 +192,7 @@ test("tool authoring creates a disabled-by-code stub and a sandboxed manifest bi
     assert.deepEqual(binding.grants, ["network", "secret_read"]);
     assert.deepEqual(binding.secrets, ["SERVICE_API_TOKEN"]);
     assert.deepEqual(binding.sandbox, { required: true });
+    assert.deepEqual(binding.effect_contract, { kind: "none" });
     const stub = result.changes.find((item) => item.role === "handler_stub");
     assert.match(stub.content, /HandlerStubNotImplemented/u);
     assert.doesNotMatch(stub.content, /process\.env|fetch\s*\(/u);
@@ -248,7 +258,7 @@ test("element authoring rejects duplicates, cross-module references and missing 
 
 function requestFor(element) {
   return {
-    schema_version: "touba-element-authoring-request-v0.1",
+    schema_version: "touba-element-authoring-request-v1",
     proposal_id: `proposal_${element.kind}_${element.name}`,
     module_ref: MODULE_REF,
     element,
@@ -265,7 +275,7 @@ function createProject() {
     manifest_version: "touba-manifest-v1",
     bindings: {
       [`tool:${MODULE_REF}/ExistingTool`]: {
-        handler: {
+        effect_contract: { kind: "none" }, handler: {
           kind: "process",
           command: "node",
           args: ["handlers/existing.handler.mjs"],

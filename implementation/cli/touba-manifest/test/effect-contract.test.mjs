@@ -3,13 +3,12 @@ import test from "node:test";
 
 import {
   effectContractToJson,
-  manifestVersionForExplicitEffectContracts,
   normalizeEffectContract,
-  TOUBA_MANIFEST_V3,
+  TOUBA_MANIFEST_V1,
   validateManifestEffectContracts,
 } from "../src/effect-contract.mjs";
 
-test("normalizes the bounded V2 effect contract modes", () => {
+test("normalizes the bounded effect contract modes", () => {
   assert.deepEqual(normalizeEffectContract({ kind: "none" }), { kind: "none" });
   assert.deepEqual(
     normalizeEffectContract({ kind: "external_write", retry_mode: "idempotency_key" }),
@@ -38,61 +37,25 @@ test("rejects unknown fields, kinds and retry modes fail closed", () => {
   }
 });
 
-test("keeps V1 legacy and V2 strict without silent migration", () => {
-  const legacy = manifest({ version: "touba-manifest-v1" });
-  assert.equal(validateManifestEffectContracts(legacy).effectContracts.size, 0);
-
-  legacy.bindings["tool:example/Write"].effect_contract = { kind: "none" };
-  assert.throws(
-    () => validateManifestEffectContracts(legacy),
-    (error) => error.code === "EffectContractForbiddenInManifestV1",
-  );
-
-  const v2 = manifest({
-    version: "touba-manifest-v2",
-    effectContract: { kind: "external_write", retry_mode: "reconcile" },
-  });
-  assert.deepEqual(validateManifestEffectContracts(v2).effectContracts.get("tool:example/Write"), {
-    kind: "external_write",
-    retryMode: "reconcile",
-  });
-
-  delete v2.bindings["tool:example/Write"].effect_contract;
-  assert.throws(
-    () => validateManifestEffectContracts(v2),
-    (error) => error.code === "EffectContractMissing",
-  );
-  assert.equal(validateManifestEffectContracts(manifest({
-    version: TOUBA_MANIFEST_V3,
-    effectContract: { kind: "external_write", retry_mode: "reconcile" },
-  })).manifestVersion, TOUBA_MANIFEST_V3);
+test("one manifest contract covers pure calls and governed writes; old formats and drafts refuse", () => {
+  for (const effectContract of [{ kind: "none" }, { kind: "external_write", retry_mode: "reconcile" }]) {
+    const result = validateManifestEffectContracts(manifest({ version: TOUBA_MANIFEST_V1, effectContract }));
+    assert.equal(result.effectContracts.size, 1);
+  }
+  for (const version of ["touba-manifest-v2", "touba-manifest-v3"]) {
+    assert.throws(() => validateManifestEffectContracts(manifest({ version, effectContract: { kind: "none" } })), { code: "ManifestVersionUnsupported" });
+  }
+  assert.throws(() => validateManifestEffectContracts(manifest({ version: TOUBA_MANIFEST_V1 })), { code: "EffectContractMissing" });
+  assert.throws(() => validateManifestEffectContracts(manifest({ version: TOUBA_MANIFEST_V1, effectContract: null })), { code: "EffectContractInvalid" });
 });
 
-test("selects V2 only when every binding declares an explicit effect contract", () => {
-  assert.equal(manifestVersionForExplicitEffectContracts({
-    "tool:example/Read": binding(),
-  }), "touba-manifest-v1");
-  assert.equal(manifestVersionForExplicitEffectContracts({
-    "tool:example/Read": binding({ kind: "none" }),
-    "tool:example/Write": binding({ kind: "external_write", retry_mode: "idempotency_key" }),
-  }), "touba-manifest-v2");
-  assert.throws(
-    () => manifestVersionForExplicitEffectContracts({
-      "tool:example/Read": binding(),
-      "tool:example/Write": binding({ kind: "external_write", retry_mode: "none" }),
-    }),
-    (error) => error.code === "EffectContractMissing"
-      && error.details.tool_refs.includes("tool:example/Read"),
-  );
-});
-
-test("normalizes V3 compensation without weakening V1 or V2", () => {
+test("normalizes compensation in the canonical manifest", () => {
   const compensation = {
     kind: "external_write",
     retry_mode: "idempotency_key",
     compensation: { entry_ref: "strategy:example/UndoWrite" },
   };
-  const v3 = manifest({ version: TOUBA_MANIFEST_V3, effectContract: compensation });
+  const v3 = manifest({ version: TOUBA_MANIFEST_V1, effectContract: compensation });
   const normalized = validateManifestEffectContracts(v3).effectContracts.get("tool:example/Write");
   assert.deepEqual(normalized, {
     kind: "external_write",
@@ -100,19 +63,10 @@ test("normalizes V3 compensation without weakening V1 or V2", () => {
     compensation: { entryRef: "strategy:example/UndoWrite" },
   });
   assert.deepEqual(effectContractToJson(normalized), compensation);
-  assert.equal(manifestVersionForExplicitEffectContracts(v3.bindings), TOUBA_MANIFEST_V3);
 
-  for (const version of ["touba-manifest-v1", "touba-manifest-v2"]) {
-    assert.throws(
-      () => validateManifestEffectContracts(manifest({ version, effectContract: compensation })),
-      (error) => error.code === (version.endsWith("v1")
-        ? "EffectContractForbiddenInManifestV1"
-        : "EffectCompensationRequiresManifestV3"),
-    );
-  }
 });
 
-test("rejects malformed V3 compensation fail closed", () => {
+test("rejects malformed compensation fail closed", () => {
   const cases = [
     [{ kind: "none", compensation: { entry_ref: "strategy:example/Undo" } }, "EffectCompensationForbidden"],
     [{ kind: "external_write", retry_mode: "none", compensation: null }, "EffectCompensationInvalid"],
@@ -122,7 +76,7 @@ test("rejects malformed V3 compensation fail closed", () => {
   ];
   for (const [effectContract, code] of cases) {
     assert.throws(
-      () => validateManifestEffectContracts(manifest({ version: TOUBA_MANIFEST_V3, effectContract })),
+      () => validateManifestEffectContracts(manifest({ version: TOUBA_MANIFEST_V1, effectContract })),
       (error) => error.code === code,
       code,
     );

@@ -57,7 +57,7 @@ test("rest scaffold plans and writes governed Touba artifacts from explicit oper
     );
 
     const handlerConfig = JSON.parse(readFileSync(join(root, "integrations/search/rest.handler.config.json"), "utf8"));
-    assert.equal(handlerConfig.rest_handler_config_version, "touba-rest-handler-config-v0.1");
+    assert.equal(handlerConfig.rest_handler_config_version, "touba-rest-handler-config-v1");
     assert.equal(handlerConfig.operation.method, "GET");
     assert.equal(handlerConfig.operation.body_mode, "query");
     assert.deepEqual(handlerConfig.operation.auth, {
@@ -224,7 +224,7 @@ test("CLI rest scaffold writes JSON report and check detects drift", () => {
 
 function writeRestConfig(root, overrides = {}) {
   const config = {
-    rest_scaffold_config_version: "touba-rest-scaffold-config-v0.1",
+    rest_scaffold_config_version: "touba-rest-scaffold-config-v1",
     service: {
       name: "search",
       base_url: "https://api.example.test",
@@ -264,7 +264,7 @@ function writeRestConfig(root, overrides = {}) {
 
 function writeOpenApiConfig(root) {
   const config = {
-    rest_scaffold_config_version: "touba-rest-scaffold-config-v0.1",
+    rest_scaffold_config_version: "touba-rest-scaffold-config-v1",
     service: {
       name: "weather",
       base_url: "https://weather.example.test",
