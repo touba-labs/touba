@@ -145,6 +145,8 @@ fn compile_sources(entry_source: &str, sources: &[(String, String)], link: bool)
 fn map_ast_diagnostic(diagnostic: AstDiagnostic) -> AirDiagnostic {
     let code = match diagnostic.code {
         AstDiagnosticCode::DuplicateCallArgument => AirDiagnosticCode::DuplicateCallArgument,
+        AstDiagnosticCode::InvalidTextLiteral => AirDiagnosticCode::InvalidTextLiteral,
+        AstDiagnosticCode::InvalidRunLimits => AirDiagnosticCode::InvalidRunLimits,
         _ => AirDiagnosticCode::AstError,
     };
     AirDiagnostic::new(code, diagnostic.message, diagnostic.source_ref)
@@ -154,6 +156,7 @@ struct AirLowerer {
     module_name: String,
     symbols: HashMap<String, SymbolRef>,
     type_fields: HashMap<String, HashMap<String, TypeFieldRef>>,
+    type_variants: HashMap<String, HashSet<String>>,
     agent_authority: HashMap<String, Vec<AirCallableBy>>,
     tool_memory_accesses: HashMap<String, Vec<AirMemoryAccess>>,
     effectful_symbols: HashSet<String>,
@@ -164,6 +167,7 @@ impl AirLowerer {
     fn resolve_import_contracts(&mut self, document: &AstDocument, contexts: &[AirLowerer]) {
         for context in contexts {
             self.type_fields.extend(context.type_fields.clone());
+            self.type_variants.extend(context.type_variants.clone());
             self.agent_authority.extend(context.agent_authority.clone());
             self.tool_memory_accesses
                 .extend(context.tool_memory_accesses.clone());
@@ -219,6 +223,7 @@ impl AirLowerer {
             module_name: document.module.name.clone(),
             symbols: HashMap::new(),
             type_fields: HashMap::new(),
+            type_variants: HashMap::new(),
             agent_authority: HashMap::new(),
             tool_memory_accesses: HashMap::new(),
             effectful_symbols: HashSet::new(),
@@ -245,6 +250,7 @@ impl AirLowerer {
         let mut execution_graphs = Vec::new();
         let mut trace_points = Vec::new();
         let imports = self.lower_imports(&document.imports);
+        let budgets = self.lower_run_limits(&document.run_limits);
 
         for declaration in &document.declarations {
             match declaration {
@@ -312,12 +318,53 @@ impl AirLowerer {
                     air_json_profile: AIR_JSON_PROFILE.to_string(),
                     module,
                     imports,
+                    budgets,
                     definitions,
                     execution_graphs,
                     trace_points,
                 })
             },
             diagnostics: self.diagnostics.clone(),
+        }
+    }
+
+    fn lower_run_limits(&mut self, limits: &[AstRunLimit]) -> Option<AirBudgets> {
+        let mut run = BTreeMap::new();
+        let mut seen = HashSet::new();
+        for limit in limits {
+            let allowed = matches!(
+                limit.name.as_str(),
+                "max_run_ms"
+                    | "max_steps"
+                    | "max_tool_calls"
+                    | "max_agent_invocations"
+                    | "max_provider_calls"
+            );
+            let value = match &limit.value {
+                AstExpression::IntLiteral { value, .. } => value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| (1..=9_007_199_254_740_991).contains(value)),
+                _ => None,
+            };
+            if !allowed || !seen.insert(limit.name.clone()) || value.is_none() {
+                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::InvalidRunLimits,
+                    format!("run limit `{}` must be a unique supported kind with an Int literal in 1..=9007199254740991", limit.name),
+                    Some(limit.source_ref.clone())));
+                continue;
+            }
+            run.insert(
+                limit.name.clone(),
+                AirRunLimit {
+                    value: value.unwrap(),
+                    source_ref: limit.source_ref.clone(),
+                },
+            );
+        }
+        if run.is_empty() {
+            None
+        } else {
+            Some(AirBudgets { run })
         }
     }
 
@@ -554,6 +601,21 @@ impl AirLowerer {
             let AstDeclaration::Type(declaration) = declaration else {
                 continue;
             };
+            if !declaration.variants.is_empty() {
+                let mut variants = HashSet::new();
+                for variant in &declaration.variants {
+                    if !variants.insert(variant.name.clone()) {
+                        self.diagnostics.push(AirDiagnostic::new(
+                            AirDiagnosticCode::DuplicateEnumVariant,
+                            format!("duplicate enum member `{}`", variant.name),
+                            Some(variant.source_ref.clone()),
+                        ));
+                    }
+                }
+                self.type_variants
+                    .insert(type_id(&self.module_name, &declaration.name), variants);
+                continue;
+            }
             let fields = declaration
                 .fields
                 .iter()
@@ -671,6 +733,10 @@ impl AirLowerer {
         effectful: &HashSet<String>,
     ) -> bool {
         match statement {
+            AstStatement::Parallel(parallel) => self
+                .symbols
+                .get(&parallel.call.target)
+                .is_some_and(|symbol| effectful.contains(&symbol.id)),
             AstStatement::Call(call) => self
                 .symbols
                 .get(&call.target)
@@ -795,23 +861,50 @@ impl AirLowerer {
 
     fn lower_constant(&mut self, declaration: &AstConstantDeclaration) -> Option<AirConstant> {
         let type_ref = self.lower_type_ref(&declaration.type_ref);
-        let actual_type = literal_expression_type(&declaration.value);
+        let enum_value = if let AstExpression::FieldAccess {
+            target,
+            field,
+            field_source_ref,
+            ..
+        } = &declaration.value
+            && let AstExpression::Symbol { value, .. } = target.as_ref()
+            && let Some(symbol) = self
+                .symbols
+                .get(value)
+                .filter(|symbol| symbol.kind == SymbolKind::Type)
+            && let Some(variants) = self.type_variants.get(&symbol.id)
+        {
+            if !variants.contains(field) {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::UnknownEnumVariant,
+                    format!("unknown member `{field}` on enum `{value}`"),
+                    Some(field_source_ref.clone()),
+                ));
+            }
+            Some((symbol.id.clone(), field.clone()))
+        } else {
+            None
+        };
+        let actual_type = enum_value
+            .as_ref()
+            .map(|(type_ref, _)| type_ref.clone())
+            .or_else(|| literal_expression_type(&declaration.value).map(str::to_string));
         if actual_type.is_none() {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::UnsupportedModuleConstantExpression,
-                "`define` V1 accepts only Text, Boolean, Int and Float literals",
+                "`define` V1 accepts scalar literals and qualified enum members",
                 Some(expression_source_ref(&declaration.value)),
             ));
         }
         if let Some(actual_type) = actual_type {
-            self.check_constant_type(actual_type, &type_ref, &declaration.value);
+            self.check_constant_type(&actual_type, &type_ref, &declaration.value);
         }
 
         let mut constant = AirConstant {
             id: constant_id(&self.module_name, &declaration.name),
             name: declaration.name.clone(),
             type_ref,
-            literal_text: None,
+            literal_text: enum_value.map(|(_, member)| member),
             literal_boolean: None,
             literal_int: None,
             literal_float: None,
@@ -1210,10 +1303,15 @@ impl AirLowerer {
             }
             if let Some(accesses) = self.tool_memory_accesses.get(target) {
                 for access in accesses {
-                    if !memory_scopes.iter().any(|scope| scope.memory_ref == access.memory_ref && scope.access == access.access) {
+                    if !memory_scopes.iter().any(|scope| {
+                        scope.memory_ref == access.memory_ref && scope.access == access.access
+                    }) {
                         self.diagnostics.push(AirDiagnostic::new(
                             AirDiagnosticCode::OwnerMemoryScopeMissing,
-                            format!("agent `{id}` cannot select `{target}` without scope `{}` `{}`", access.memory_ref, access.access),
+                            format!(
+                                "agent `{id}` cannot select `{target}` without scope `{}` `{}`",
+                                access.memory_ref, access.access
+                            ),
                             Some(declaration.source_ref.clone()),
                         ));
                     }
@@ -1735,6 +1833,8 @@ impl AirLowerer {
                 }
             }
             AstExpression::Value { source_ref, .. }
+            | AstExpression::OptionalSome { source_ref, .. }
+            | AstExpression::OptionalNone { source_ref, .. }
             | AstExpression::Record { source_ref, .. }
             | AstExpression::TextConversion { source_ref, .. }
             | AstExpression::FieldAccess { source_ref, .. }
@@ -1851,6 +1951,7 @@ impl AirLowerer {
         FlowGraphEnvironment {
             symbols: &self.symbols,
             type_fields: &self.type_fields,
+            type_variants: &self.type_variants,
             agent_authority: &self.agent_authority,
             tool_memory_accesses: &self.tool_memory_accesses,
             effectful_symbols: &self.effectful_symbols,
@@ -1913,7 +2014,9 @@ impl AirLowerer {
     }
 
     fn lower_type_ref_raw(&mut self, raw: &str, source_ref: &SourceRef) -> String {
-        if let Some(inner) = raw.strip_prefix("List of ") {
+        if let Some(inner) = raw.strip_prefix("Optional of ") {
+            format!("optional:{}", self.lower_type_ref_raw(inner, source_ref))
+        } else if let Some(inner) = raw.strip_prefix("List of ") {
             format!("list:{}", self.lower_type_ref_raw(inner, source_ref))
         } else if self
             .symbols
@@ -1937,7 +2040,10 @@ impl AirLowerer {
     }
 
     fn lower_type_ref_raw_silent(&self, raw: &str) -> Option<String> {
-        if let Some(inner) = raw.strip_prefix("List of ") {
+        if let Some(inner) = raw.strip_prefix("Optional of ") {
+            self.lower_type_ref_raw_silent(inner)
+                .map(|inner_ref| format!("optional:{inner_ref}"))
+        } else if let Some(inner) = raw.strip_prefix("List of ") {
             self.lower_type_ref_raw_silent(inner)
                 .map(|inner_ref| format!("list:{inner_ref}"))
         } else if self
@@ -2002,6 +2108,7 @@ impl AirLowerer {
 struct FlowGraphEnvironment<'a> {
     symbols: &'a HashMap<String, SymbolRef>,
     type_fields: &'a HashMap<String, HashMap<String, TypeFieldRef>>,
+    type_variants: &'a HashMap<String, HashSet<String>>,
     agent_authority: &'a HashMap<String, Vec<AirCallableBy>>,
     tool_memory_accesses: &'a HashMap<String, Vec<AirMemoryAccess>>,
     effectful_symbols: &'a HashSet<String>,
@@ -2018,6 +2125,7 @@ struct FlowGraphSpec<'a> {
 struct FlowGraphBuilder<'a> {
     symbols: &'a HashMap<String, SymbolRef>,
     type_fields: &'a HashMap<String, HashMap<String, TypeFieldRef>>,
+    type_variants: &'a HashMap<String, HashSet<String>>,
     agent_authority: &'a HashMap<String, Vec<AirCallableBy>>,
     tool_memory_accesses: &'a HashMap<String, Vec<AirMemoryAccess>>,
     effectful_symbols: &'a HashSet<String>,
@@ -2038,7 +2146,6 @@ struct FlowGraphBuilder<'a> {
     expression_counter: usize,
     trace_counter: usize,
     first_call_node_id: Option<String>,
-    declared_bindings: HashSet<String>,
     external_effect_possible: bool,
 }
 
@@ -2059,6 +2166,7 @@ impl<'a> FlowGraphBuilder<'a> {
         let mut builder = Self {
             symbols: environment.symbols,
             type_fields: environment.type_fields,
+            type_variants: environment.type_variants,
             agent_authority: environment.agent_authority,
             tool_memory_accesses: environment.tool_memory_accesses,
             effectful_symbols: environment.effectful_symbols,
@@ -2079,7 +2187,6 @@ impl<'a> FlowGraphBuilder<'a> {
             expression_counter: 0,
             trace_counter: 0,
             first_call_node_id: None,
-            declared_bindings: HashSet::new(),
             external_effect_possible: false,
         };
         builder.push_trace(AirTraceAnchorKind::ScopeEntry, None, None);
@@ -2137,6 +2244,10 @@ impl<'a> FlowGraphBuilder<'a> {
                         source_ref: Some(source_ref.clone()),
                     });
                     self.nodes.push(AirFlowNode {
+                        collection_ref: None,
+                        item_binding: None,
+                        max_concurrency: None,
+                        max_items: None,
                         id: fallback_node_id.clone(),
                         kind: AirFlowNodeKind::Fallback,
                         approval_ref: None,
@@ -2182,6 +2293,10 @@ impl<'a> FlowGraphBuilder<'a> {
                         source_ref: Some(source_ref.clone()),
                     });
                     self.nodes.push(AirFlowNode {
+                        collection_ref: None,
+                        item_binding: None,
+                        max_concurrency: None,
+                        max_items: None,
                         id: stop_node_id.clone(),
                         kind: AirFlowNodeKind::Stop,
                         approval_ref: None,
@@ -2284,6 +2399,7 @@ impl<'a> FlowGraphBuilder<'a> {
         match statement {
             AstStatement::Bind(statement) => self.lower_bind(statement),
             AstStatement::Call(statement) => self.lower_call(statement),
+            AstStatement::Parallel(statement) => self.lower_parallel(statement),
             AstStatement::HumanApproval(statement) => self.lower_human_approval(statement),
             AstStatement::UserInteraction(statement) => self.lower_user_interaction(statement),
             AstStatement::Give(statement) => self.lower_give(statement),
@@ -2295,7 +2411,6 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     fn lower_bind(&mut self, statement: &AstBindStatement) -> FlowFragment {
-        let node_id = self.next_node_id();
         let binding_type = self.lower_type_ref(&statement.type_ref);
         let value_ref = self
             .lower_expression_handle(
@@ -2304,9 +2419,25 @@ impl<'a> FlowGraphBuilder<'a> {
                 ExpressionContext::Binding,
             )
             .handle;
-        let result_binding = self.declare_local_binding(
+        self.lower_typed_binding(
             &statement.name,
+            binding_type,
+            value_ref,
             &statement.source_ref,
+        )
+    }
+
+    fn lower_typed_binding(
+        &mut self,
+        name: &str,
+        binding_type: String,
+        value_ref: String,
+        source_ref: &SourceRef,
+    ) -> FlowFragment {
+        let node_id = self.next_node_id();
+        let result_binding = self.declare_local_binding(
+            name,
+            source_ref,
             Some(binding_type),
             AirDiagnosticCode::DuplicateLocalBinding,
             "local binding",
@@ -2314,9 +2445,13 @@ impl<'a> FlowGraphBuilder<'a> {
         let trace_point = self.push_trace(
             AirTraceAnchorKind::Binding,
             Some(node_id.clone()),
-            Some(statement.source_ref.clone()),
+            Some(source_ref.clone()),
         );
         self.nodes.push(AirFlowNode {
+            collection_ref: None,
+            item_binding: None,
+            max_concurrency: None,
+            max_items: None,
             id: node_id.clone(),
             kind: AirFlowNodeKind::Bind,
             approval_ref: None,
@@ -2329,9 +2464,62 @@ impl<'a> FlowGraphBuilder<'a> {
             result_binding,
             condition_ref: None,
             trace_point_refs: vec![trace_point],
-            source_ref: statement.source_ref.clone(),
+            source_ref: source_ref.clone(),
         });
         FlowFragment::linear(node_id)
+    }
+
+    fn lower_parallel(&mut self, statement: &AstParallelStatement) -> FlowFragment {
+        let Some(output_type) = self
+            .symbols
+            .get(&statement.call.target)
+            .and_then(|symbol| symbol.output_type.clone())
+        else {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::StrategyInterfaceRequired,
+                "parallel requires a callable with an explicit gives interface",
+                Some(statement.call.source_ref.clone()),
+            ));
+            return FlowFragment::empty();
+        };
+        let Some((collection, item_type)) = self.collection_handle(&statement.collection) else {
+            return FlowFragment::empty();
+        };
+        let outer_values = self.local_values.clone();
+        let outer_types = self.local_value_types.clone();
+        let item_binding = self.declare_local_binding(
+            &statement.item,
+            &statement.call.source_ref,
+            Some(item_type),
+            AirDiagnosticCode::DuplicateResultBinding,
+            "parallel item",
+        );
+        let mut call = statement.call.clone();
+        call.result_binding = None;
+        // Unlike historical implicit calls, a fan-out always has an explicit
+        // interface, including the zero-argument spelling.
+        if call.arguments.is_empty() {
+            if let Some(symbol) = self.symbols.get(&call.target).cloned() {
+                self.lower_call_arguments(&call, &symbol);
+            }
+        }
+        let count = self.nodes.len();
+        let fragment = self.lower_call(&call);
+        self.local_values = outer_values;
+        self.local_value_types = outer_types;
+        let result_binding = statement.call.result_binding.as_ref().and_then(|binding| {
+            self.lower_result_binding(binding, Some(format!("list:{output_type}")))
+        });
+        if self.nodes.len() > count {
+            let node = self.nodes.last_mut().unwrap();
+            node.kind = AirFlowNodeKind::ParallelCall;
+            node.collection_ref = Some(collection);
+            node.item_binding = item_binding.map(|name| format!("value:{name}"));
+            node.max_concurrency = Some(statement.max_concurrency);
+            node.max_items = Some(statement.max_items);
+            node.result_binding = result_binding;
+        }
+        fragment
     }
 
     fn lower_call(&mut self, statement: &AstCallStatement) -> FlowFragment {
@@ -2349,10 +2537,19 @@ impl<'a> FlowGraphBuilder<'a> {
             SymbolKind::Function => AirFlowNodeKind::CallFunction,
             SymbolKind::Tool => AirFlowNodeKind::CallTool,
             SymbolKind::Skill => AirFlowNodeKind::CallSkill,
+            SymbolKind::Strategy if symbol.output_type.is_none() => {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::StrategyInterfaceRequired,
+                    "a called strategy must declare an explicit takes/gives interface with gives",
+                    Some(statement.source_ref.clone()),
+                ));
+                return FlowFragment::empty();
+            }
+            SymbolKind::Strategy => AirFlowNodeKind::CallStrategy,
             SymbolKind::Agent if enriched && symbol.output_type.is_none() => {
                 self.diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::EnrichedAgentCallBlocked,
-                    "calls to an `agent` with `with` or `into` require an explicit, locally resolved `takes` / `gives` interface",
+                    "calls to an `agent` with `with` or `into` require an explicit, resolved `takes` / `gives` interface",
                     Some(statement.source_ref.clone()),
                 ));
                 return FlowFragment::empty();
@@ -2371,11 +2568,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 }
                 AirFlowNodeKind::CallAgent
             }
-            SymbolKind::Constant
-            | SymbolKind::Memory
-            | SymbolKind::Type
-            | SymbolKind::Strategy
-            | SymbolKind::Trigger => {
+            SymbolKind::Constant | SymbolKind::Memory | SymbolKind::Type | SymbolKind::Trigger => {
                 self.diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::UnknownReference,
                     format!("`{}` is not callable in Touba V1", statement.target),
@@ -2385,9 +2578,10 @@ impl<'a> FlowGraphBuilder<'a> {
             }
         };
         self.check_tool_memory_accesses(&symbol, &statement.source_ref);
-        let requires_explicit_agent_inputs = symbol.kind == SymbolKind::Agent
-            && symbol.contract_resolved
-            && !symbol.signature_inputs.is_empty();
+        let requires_explicit_agent_inputs =
+            matches!(symbol.kind, SymbolKind::Agent | SymbolKind::Strategy)
+                && symbol.contract_resolved
+                && !symbol.signature_inputs.is_empty();
         let arguments = if enriched || requires_explicit_agent_inputs {
             self.lower_call_arguments(statement, &symbol)
         } else {
@@ -2406,6 +2600,10 @@ impl<'a> FlowGraphBuilder<'a> {
             self.first_call_node_id = Some(node_id.clone());
         }
         self.nodes.push(AirFlowNode {
+            collection_ref: None,
+            item_binding: None,
+            max_concurrency: None,
+            max_items: None,
             id: node_id.clone(),
             kind,
             approval_ref: None,
@@ -2489,6 +2687,10 @@ impl<'a> FlowGraphBuilder<'a> {
             Some(statement.source_ref.clone()),
         );
         self.nodes.push(AirFlowNode {
+            collection_ref: None,
+            item_binding: None,
+            max_concurrency: None,
+            max_items: None,
             id: node_id.clone(),
             kind: AirFlowNodeKind::HumanApproval,
             approval_ref: Some(format!("approval:{}:{}", self.graph_id, node_id)),
@@ -2594,6 +2796,10 @@ impl<'a> FlowGraphBuilder<'a> {
             Some(statement.source_ref.clone()),
         );
         self.nodes.push(AirFlowNode {
+            collection_ref: None,
+            item_binding: None,
+            max_concurrency: None,
+            max_items: None,
             id: node_id.clone(),
             kind: AirFlowNodeKind::UserInteraction,
             approval_ref: None,
@@ -2775,16 +2981,15 @@ impl<'a> FlowGraphBuilder<'a> {
         diagnostic_code: AirDiagnosticCode,
         label: &str,
     ) -> Option<String> {
-        if self.local_values.contains(name) || self.declared_bindings.contains(name) {
+        if self.local_values.contains(name) {
             self.diagnostics.push(AirDiagnostic::new(
                 diagnostic_code,
-                format!("{label} `{name}` is already defined in this graph"),
+                format!("{label} `{name}` is already visible in this scope"),
                 Some(source_ref.clone()),
             ));
             return None;
         }
 
-        self.declared_bindings.insert(name.to_string());
         self.local_values.insert(name.to_string());
         if let Some(binding_type) = binding_type {
             self.local_value_types
@@ -2802,6 +3007,10 @@ impl<'a> FlowGraphBuilder<'a> {
             Some(statement.source_ref.clone()),
         );
         self.nodes.push(AirFlowNode {
+            collection_ref: None,
+            item_binding: None,
+            max_concurrency: None,
+            max_items: None,
             id: node_id.clone(),
             kind: AirFlowNodeKind::Give,
             approval_ref: None,
@@ -2879,6 +3088,8 @@ impl<'a> FlowGraphBuilder<'a> {
                 }
             },
             AstExpression::StringLiteral { .. }
+            | AstExpression::OptionalSome { .. }
+            | AstExpression::OptionalNone { .. }
             | AstExpression::Record { .. }
             | AstExpression::IntLiteral { .. }
             | AstExpression::FloatLiteral { .. }
@@ -2920,6 +3131,34 @@ impl<'a> FlowGraphBuilder<'a> {
         context: ExpressionContext,
     ) -> LoweredExpression {
         match expression {
+            AstExpression::OptionalSome {
+                expression,
+                source_ref,
+            } => {
+                let operand = self.lower_expression_atom_or_air(expression, context);
+                let type_ref = format!(
+                    "optional:{}",
+                    operand.type_ref.as_deref().unwrap_or("unresolved:optional")
+                );
+                self.lower_optional_expression(
+                    AirExpressionKind::OptionalSome,
+                    vec![operand.handle],
+                    type_ref,
+                    source_ref,
+                )
+            }
+            AstExpression::OptionalNone {
+                type_ref,
+                source_ref,
+            } => {
+                let inner = self.lower_type_ref(type_ref);
+                self.lower_optional_expression(
+                    AirExpressionKind::OptionalNone,
+                    Vec::new(),
+                    format!("optional:{inner}"),
+                    source_ref,
+                )
+            }
             AstExpression::Record {
                 type_name,
                 fields,
@@ -3027,6 +3266,31 @@ impl<'a> FlowGraphBuilder<'a> {
         }
     }
 
+    fn lower_optional_expression(
+        &mut self,
+        kind: AirExpressionKind,
+        operands: Vec<String>,
+        type_ref: String,
+        source_ref: &SourceRef,
+    ) -> LoweredExpression {
+        let id = self.next_expression_id();
+        self.push_air_expression(AirExpression {
+            id,
+            kind,
+            operands,
+            type_ref: Some(type_ref),
+            source_ref: source_ref.clone(),
+            value_ref: None,
+            literal_text: None,
+            literal_boolean: None,
+            literal_int: None,
+            literal_float: None,
+            operator: None,
+            field_name: None,
+            record_fields: Vec::new(),
+        })
+    }
+
     fn lower_text_conversion_expression(
         &mut self,
         expression: &AstExpression,
@@ -3068,10 +3332,14 @@ impl<'a> FlowGraphBuilder<'a> {
         source_ref: &SourceRef,
     ) -> LoweredExpression {
         let Some((target_type, expected_fields)) = self
-            .type_fields
-            .iter()
-            .find(|(type_ref, _)| type_ref.rsplit('/').next() == Some(type_name))
-            .map(|(type_ref, fields)| (type_ref.clone(), fields.clone()))
+            .symbols
+            .get(type_name)
+            .filter(|symbol| symbol.kind == SymbolKind::Type)
+            .and_then(|symbol| {
+                self.type_fields
+                    .get(&symbol.id)
+                    .map(|fields| (symbol.id.clone(), fields.clone()))
+            })
         else {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::UnknownRecordType,
@@ -3163,6 +3431,38 @@ impl<'a> FlowGraphBuilder<'a> {
         field_source_ref: &SourceRef,
         source_ref: &SourceRef,
     ) -> LoweredExpression {
+        if let AstExpression::Symbol { value, .. } = target
+            && let Some(symbol) = self
+                .symbols
+                .get(value)
+                .filter(|symbol| symbol.kind == SymbolKind::Type)
+            && let Some(variants) = self.type_variants.get(&symbol.id)
+        {
+            if !variants.contains(field) {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::UnknownEnumVariant,
+                    format!("unknown member `{field}` on enum `{value}`"),
+                    Some(field_source_ref.clone()),
+                ));
+            }
+            let type_ref = symbol.id.clone();
+            let expression_id = self.next_expression_id();
+            return self.push_air_expression(AirExpression {
+                id: expression_id,
+                kind: AirExpressionKind::EnumValue,
+                literal_text: Some(field.to_string()),
+                type_ref: Some(type_ref),
+                value_ref: None,
+                literal_boolean: None,
+                literal_int: None,
+                literal_float: None,
+                operator: None,
+                operands: Vec::new(),
+                field_name: None,
+                record_fields: Vec::new(),
+                source_ref: source_ref.clone(),
+            });
+        }
         let target = self.lower_expression_atom_or_air(target, ExpressionContext::Expression);
         let Some(target_type) = target.type_ref.as_deref() else {
             return self.push_field_access_expression(
@@ -3380,7 +3680,12 @@ impl<'a> FlowGraphBuilder<'a> {
                 }
             }
             AstBinaryOperator::Equal | AstBinaryOperator::NotEqual => {
-                if are_equality_compatible(left_type, right_type) {
+                if ![left_type, right_type]
+                    .iter()
+                    .flatten()
+                    .any(|value| value.starts_with("optional:"))
+                    && are_equality_compatible(left_type, right_type)
+                {
                     Some(builtin_boolean())
                 } else {
                     self.invalid_operand_type(
@@ -3510,6 +3815,10 @@ impl<'a> FlowGraphBuilder<'a> {
             Some(statement.source_ref.clone()),
         );
         self.nodes.push(AirFlowNode {
+            collection_ref: None,
+            item_binding: None,
+            max_concurrency: None,
+            max_items: None,
             id: node_id.clone(),
             kind: AirFlowNodeKind::Stop,
             approval_ref: None,
@@ -3529,13 +3838,55 @@ impl<'a> FlowGraphBuilder<'a> {
 
     fn lower_if(&mut self, statement: &AstIfStatement) -> FlowFragment {
         let node_id = self.next_node_id();
-        let condition_ref = self.condition_handle(&statement.condition);
+        let (condition_ref, present_binding) = if let Some(binding) = &statement.present_binding {
+            let operand = self
+                .lower_expression_atom_or_air(&statement.condition, ExpressionContext::Condition);
+            let inner = operand
+                .type_ref
+                .as_deref()
+                .and_then(|value| value.strip_prefix("optional:"));
+            if inner.is_none() {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::InvalidExpressionOperandType,
+                    "if present requires Optional of T",
+                    Some(statement.source_ref.clone()),
+                ));
+            }
+            let inner = inner.unwrap_or("unresolved:optional").to_string();
+            let condition = self.lower_optional_expression(
+                AirExpressionKind::OptionalPresent,
+                vec![operand.handle.clone()],
+                builtin_boolean(),
+                &statement.source_ref,
+            );
+            let value = self.lower_optional_expression(
+                AirExpressionKind::OptionalValue,
+                vec![operand.handle],
+                inner.clone(),
+                &binding.source_ref,
+            );
+            (
+                condition.handle,
+                Some((
+                    binding.name.clone(),
+                    inner,
+                    value.handle,
+                    binding.source_ref.clone(),
+                )),
+            )
+        } else {
+            (self.condition_handle(&statement.condition), None)
+        };
         let trace_point = self.push_trace(
             AirTraceAnchorKind::Branch,
             Some(node_id.clone()),
             Some(statement.source_ref.clone()),
         );
         self.nodes.push(AirFlowNode {
+            collection_ref: None,
+            item_binding: None,
+            max_concurrency: None,
+            max_items: None,
             id: node_id.clone(),
             kind: AirFlowNodeKind::Branch,
             approval_ref: None,
@@ -3551,8 +3902,12 @@ impl<'a> FlowGraphBuilder<'a> {
             source_ref: statement.source_ref.clone(),
         });
 
-        let then_branch =
-            self.lower_branch(&node_id, AirFlowEdgeRole::True, &statement.then_branch);
+        let then_branch = self.lower_branch_with_binding(
+            &node_id,
+            AirFlowEdgeRole::True,
+            &statement.then_branch,
+            present_binding,
+        );
         let else_branch =
             self.lower_branch(&node_id, AirFlowEdgeRole::False, &statement.else_branch);
         self.external_effect_possible = self.external_effect_possible
@@ -3573,19 +3928,35 @@ impl<'a> FlowGraphBuilder<'a> {
 
     fn lower_for(&mut self, statement: &AstForStatement) -> FlowFragment {
         let node_id = self.next_node_id();
-        let Some(collection_handle) = self.collection_handle(&statement.collection) else {
+        let Some((collection_handle, item_type)) = self.collection_handle(&statement.collection)
+        else {
             return FlowFragment::empty();
         };
         let item_handle = format!("value:{}", statement.item);
         let outer_values = self.local_values.clone();
         let outer_value_types = self.local_value_types.clone();
-        self.local_values.insert(statement.item.clone());
+        if self
+            .declare_local_binding(
+                &statement.item,
+                &statement.source_ref,
+                Some(item_type),
+                AirDiagnosticCode::DuplicateResultBinding,
+                "loop item",
+            )
+            .is_none()
+        {
+            return FlowFragment::empty();
+        }
         let trace_point = self.push_trace(
             AirTraceAnchorKind::Loop,
             Some(node_id.clone()),
             Some(statement.source_ref.clone()),
         );
         self.nodes.push(AirFlowNode {
+            collection_ref: None,
+            item_binding: None,
+            max_concurrency: None,
+            max_items: None,
             id: node_id.clone(),
             kind: AirFlowNodeKind::Loop,
             approval_ref: None,
@@ -3610,7 +3981,11 @@ impl<'a> FlowGraphBuilder<'a> {
             self.edges.push(AirFlowEdge {
                 from_node_id: exit.node_id,
                 to_node_id: node_id.clone(),
-                role: AirFlowEdgeRole::LoopNext,
+                role: if exit.role == AirFlowEdgeRole::Next {
+                    AirFlowEdgeRole::LoopNext
+                } else {
+                    exit.role
+                },
                 source_ref: Some(statement.source_ref.clone()),
             });
         }
@@ -3641,6 +4016,10 @@ impl<'a> FlowGraphBuilder<'a> {
             Some(statement.source_ref.clone()),
         );
         self.nodes.push(AirFlowNode {
+            collection_ref: None,
+            item_binding: None,
+            max_concurrency: None,
+            max_items: None,
             id: node_id.clone(),
             kind: AirFlowNodeKind::Loop,
             approval_ref: None,
@@ -3662,7 +4041,11 @@ impl<'a> FlowGraphBuilder<'a> {
             self.edges.push(AirFlowEdge {
                 from_node_id: exit.node_id,
                 to_node_id: node_id.clone(),
-                role: AirFlowEdgeRole::LoopNext,
+                role: if exit.role == AirFlowEdgeRole::Next {
+                    AirFlowEdgeRole::LoopNext
+                } else {
+                    exit.role
+                },
                 source_ref: Some(statement.source_ref.clone()),
             });
         }
@@ -3682,11 +4065,47 @@ impl<'a> FlowGraphBuilder<'a> {
         role: AirFlowEdgeRole,
         statements: &[AstStatement],
     ) -> SequenceFragment {
+        self.lower_branch_with_binding(from_node_id, role, statements, None)
+    }
+
+    fn lower_branch_with_binding(
+        &mut self,
+        from_node_id: &str,
+        role: AirFlowEdgeRole,
+        statements: &[AstStatement],
+        binding: Option<(String, String, String, SourceRef)>,
+    ) -> SequenceFragment {
+        // An absent else is a fallthrough from the branch node, not an empty
+        // terminal path. Keep its role until the enclosing sequence connects it.
+        if statements.is_empty() && binding.is_none() {
+            return SequenceFragment {
+                exits: vec![PendingExit {
+                    node_id: from_node_id.to_string(),
+                    role,
+                }],
+                terminal_reason: None,
+                external_effect_possible: self.external_effect_possible,
+            };
+        }
         let outer_values = self.local_values.clone();
         let outer_value_types = self.local_value_types.clone();
         let outer_external_effect_possible = self.external_effect_possible;
         let first_node_before = self.nodes.len();
+        let prefix = binding.map(|(name, type_ref, handle, source_ref)| {
+            self.lower_typed_binding(&name, type_ref, handle, &source_ref)
+        });
+        let body_first = self.nodes.len();
         let fragment = self.lower_statement_sequence(statements);
+        if let Some(prefix) = prefix.as_ref() {
+            if let Some(body) = self.nodes.get(body_first) {
+                self.edges.push(AirFlowEdge {
+                    from_node_id: prefix.entry_node_id.clone().expect("binding has an entry"),
+                    to_node_id: body.id.clone(),
+                    role: AirFlowEdgeRole::Next,
+                    source_ref: statements.first().map(statement_source_ref),
+                });
+            }
+        }
         let branch_external_effect_possible = self.external_effect_possible;
         if let Some(entry_node_id) = self
             .nodes
@@ -3704,7 +4123,11 @@ impl<'a> FlowGraphBuilder<'a> {
         self.local_value_types = outer_value_types;
         self.external_effect_possible = outer_external_effect_possible;
         SequenceFragment {
-            exits: fragment.exits,
+            exits: if statements.is_empty() {
+                prefix.map(|value| value.exits).unwrap_or_default()
+            } else {
+                fragment.exits
+            },
             terminal_reason: fragment.terminal_reason,
             external_effect_possible: branch_external_effect_possible,
         }
@@ -3741,6 +4164,8 @@ impl<'a> FlowGraphBuilder<'a> {
                 format!("literal:bool:{value}")
             }
             AstExpression::FieldAccess { .. }
+            | AstExpression::OptionalSome { .. }
+            | AstExpression::OptionalNone { .. }
             | AstExpression::Record { .. }
             | AstExpression::TextConversion { .. }
             | AstExpression::Unary { .. }
@@ -3760,15 +4185,15 @@ impl<'a> FlowGraphBuilder<'a> {
         }
     }
 
-    fn collection_handle(&mut self, expression: &AstExpression) -> Option<String> {
+    fn collection_handle(&mut self, expression: &AstExpression) -> Option<(String, String)> {
         let lowered =
             self.lower_expression_handle(expression, None, ExpressionContext::LoopCollection);
-        if lowered
+        if let Some(item_type) = lowered
             .type_ref
             .as_deref()
-            .is_some_and(|type_ref| type_ref.starts_with("list:"))
+            .and_then(|t| t.strip_prefix("list:"))
         {
-            Some(lowered.handle)
+            Some((lowered.handle, item_type.to_string()))
         } else {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::InvalidLoopCollection,
@@ -3784,7 +4209,9 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     fn lower_type_ref_raw(&mut self, raw: &str, source_ref: &SourceRef) -> String {
-        if let Some(inner) = raw.strip_prefix("List of ") {
+        if let Some(inner) = raw.strip_prefix("Optional of ") {
+            format!("optional:{}", self.lower_type_ref_raw(inner, source_ref))
+        } else if let Some(inner) = raw.strip_prefix("List of ") {
             format!("list:{}", self.lower_type_ref_raw(inner, source_ref))
         } else if let Some(symbol) = self
             .symbols
@@ -4061,6 +4488,8 @@ fn expression_handle(expression: &AstExpression) -> String {
         AstExpression::FloatLiteral { value, .. } => format!("literal:float:{value}"),
         AstExpression::BooleanLiteral { value, .. } => format!("literal:bool:{value}"),
         AstExpression::FieldAccess { source_ref, .. }
+        | AstExpression::OptionalSome { source_ref, .. }
+        | AstExpression::OptionalNone { source_ref, .. }
         | AstExpression::TextConversion { source_ref, .. }
         | AstExpression::Unary { source_ref, .. }
         | AstExpression::Binary { source_ref, .. }
@@ -4093,6 +4522,8 @@ fn failure_family(value: &str) -> AirFailureFamily {
 fn expression_source_ref(expression: &AstExpression) -> SourceRef {
     match expression {
         AstExpression::Symbol { source_ref, .. }
+        | AstExpression::OptionalSome { source_ref, .. }
+        | AstExpression::OptionalNone { source_ref, .. }
         | AstExpression::Record { source_ref, .. }
         | AstExpression::Value { source_ref, .. }
         | AstExpression::StringLiteral { source_ref, .. }
@@ -4111,6 +4542,7 @@ fn statement_source_ref(statement: &AstStatement) -> SourceRef {
     match statement {
         AstStatement::Bind(statement) => statement.source_ref.clone(),
         AstStatement::Call(statement) => statement.source_ref.clone(),
+        AstStatement::Parallel(statement) => statement.call.source_ref.clone(),
         AstStatement::HumanApproval(statement) => statement.source_ref.clone(),
         AstStatement::UserInteraction(statement) => statement.source_ref.clone(),
         AstStatement::Give(statement) => statement.source_ref.clone(),

@@ -4,6 +4,14 @@ sidebar_position: 4
 
 # Référence traces
 
+## Provenance et décisions
+
+Les nouveaux AIR produits par la CLI utilisent des identités de source relatives à une racine commune aux fichiers compilés, sans enregistrer le chemin absolu de cette racine dans l’AIR. Les traces héritent de ces identités. Le résultat technique de compilation `--json` fournit séparément `source_root` à l’éditeur ; les diagnostics locaux gardent leurs chemins pour ouvrir le fichier. Avant de partager un artefact, vérifiez aussi les données et métadonnées applicatives : ce changement n’est pas un anonymiseur général.
+
+L’éditeur résout une source relative depuis le dossier de travail, ou demande la racine du projet. Un déplacement conserve l’identité AIR si les sources et leurs chemins relatifs restent identiques. Les anciens AIR et traces ne sont pas réécrits : recompilez et faites revoir les locks si vous migrez leur provenance.
+
+Une répétition autorisée reste exécutable. Les observations et la chronologie exposent `repeated_from_step` et `identical_invocation_number`, sans créer de permission à usage unique. Une sélection native peut ne fournir aucun `reason` : cette absence n’est ni un raisonnement caché disponible ni une erreur ; aucun motif n’est inventé. Les métadonnées inchangées d’un skill pack ne sont tracées qu’une fois par invocation d’agent ; contrôles d’autorité et de budget restent évalués à chaque requête.
+
 Le contrat machine courant est `touba-trace-v1` avec le profil
 `touba-trace-capabilities-v1`. Les traces d'une autre version doivent être
 migrées explicitement avant consommation.
@@ -144,7 +152,7 @@ touba audit \
 ```
 
 L’audit des traces (TA-1) produit un rapport de validation et peut écrire un export
-`trace-audit-export-v0.1-local`.
+`trace-audit-export-v1-local`.
 
 Il vérifie seulement les artefacts fournis explicitement : trace, AIR, source,
 manifest runtime ou manifest d’audit. Il calcule des digests `sha256`,
@@ -183,3 +191,16 @@ garantie de conformité automatique.
 - Score de confiance mémoire
 - Statut `Verified` ou `Unverified`
 :::
+
+
+## Causalité parallèle
+
+Le runtime émet `parallel_group_admitted`, `parallel_group_refused`,
+`parallel_branch_started`, `parallel_branch_completed`,
+`parallel_branch_suspended`, `parallel_join_completed`,
+`parallel_join_failed` et `parallel_group_resumed`.
+Les événements descendants portent `group_id`, `branch_id` et
+`parent_branch_id`. Ces identités restent stables à la reprise ; l'ordre
+local des événements ne constitue pas un ordre total des systèmes externes.
+Les résultats et journaux de continuation privés ne sont pas des payloads
+publics de trace. Les messages `show` sont restitués dans l'ordre d'entrée.

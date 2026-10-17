@@ -51,8 +51,7 @@ export function createFileEffectJournal(path, options = {}) {
       ) {
         throw journalError("EffectJournalInvalid", "effect journal entry requires effect_id");
       }
-      const normalized = validateEffectJournalEntry(entry, entry.effect_id);
-      assertNoSecretValue(normalized, secretValues);
+      const normalized = validateStoredEffectEntry(entry, entry.effect_id, { secretValues });
       const journal = loadEffectJournal(path, { secretValues });
       journal.entries[entry.effect_id] = structuredClone(normalized);
       saveEffectJournal(path, journal);
@@ -102,10 +101,24 @@ export function loadEffectJournal(path, { secretValues = [] } = {}) {
     if (!EFFECT_ID_PATTERN.test(effectId) || !isPlainRecord(entry)) {
       throw journalError("EffectJournalInvalid", "effect journal contains an invalid entry");
     }
-    journal.entries[effectId] = structuredClone(validateEffectJournalEntry(entry, effectId));
+    journal.entries[effectId] = structuredClone(validateStoredEffectEntry(entry, effectId, { secretValues }));
   }
   assertNoSecretValue(journal, secretValues);
   return journal;
+}
+
+/** Shared persistence validation for local journal adapters.
+ * @param {unknown} entry
+ * @param {string} effectId
+ * @param {{secretValues?: string[]}} [options]
+ */
+export function validateStoredEffectEntry(entry, effectId, { secretValues = [] } = {}) {
+  if (!EFFECT_ID_PATTERN.test(effectId) || !isPlainRecord(entry)) {
+    throw journalError("EffectJournalInvalid", "effect journal contains an invalid entry");
+  }
+  const normalized = validateEffectJournalEntry(entry, effectId);
+  assertNoSecretValue(normalized, secretValues);
+  return normalized;
 }
 
 function saveEffectJournal(path, journal) {

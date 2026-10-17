@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readStoreFixture, writeStoreFixture } from "./store-fixtures.mjs";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,6 +13,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import { execFileSync } from "node:child_process";
 
 import { canonicalDigest } from "@touba/runtime";
 
@@ -34,9 +38,391 @@ const REVIEW_TARGET = "strategy:demo.review/RunReview";
 const USER_REF = "user:test-reviewer";
 const DEVICE_REF = "device:test-suite";
 
+for (const delegated of [false, true]) test(`compiled ${delegated ? "agent-selected" : "source"} continuation survives server restart and validates persisted scopes`, async t => {
+  const root = createTestProject();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = join(root, "src/demo/approval.tb");
+  writeFileSync(source, `module demo.approval
+strategy Child
+    description "Obtain approval before returning this value."
+    takes value as Text
+    gives Text
+    do
+        human.approve
+            with context as value
+            into approval
+        give value
+${delegated ? `agent Coordinator
+    takes value as Text
+    gives Text
+    responsibility "Delegate approval and return the reviewed result."
+    uses Child
+    callable_by strategy RunApproval
+` : ""}
+strategy RunApproval
+    gives Text
+    uses ${delegated ? "Coordinator" : "Child"}
+    do
+        ${delegated ? "Coordinator" : "Child"}
+            with value as "nested request"
+            into reviewed
+        give reviewed
+`);
+  const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
+    new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
+  writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
+  const steps = [];
+  const agentDecisionProvider = delegated ? request => {
+    if (request.mode === "summary") return { action: "request_capabilities" };
+    steps.push(request.step_index);
+    return request.step_index === 0
+      ? { target_ref: "strategy:demo.approval/Child", arguments: { value: request.inputs.value } }
+      : { action: "answer_directly", result: request.observations[0].value };
+  } : undefined;
+  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true, agentDecisionProvider });
+  try {
+    await service.start();
+    const paused = await runSandbox(serverBaseUrl(service), WAIT_TARGET);
+    const pending = await getJson(`${serverBaseUrl(service)}/approvals/pending/current`);
+    await service.stop();
+    const path = join(root, ".touba/sandbox-checkpoints.sqlite");
+    const stored = readStoreFixture(path);
+    assert.equal(stored.records[0].checkpoint.call_stack.length, delegated ? 2 : 1);
+    for (const corrupt of [f => { delete f.caller_scope; }, f => { delete f.caller_scope.values; },
+      f => { delete f.caller_scope.loop_state; }, f => { f.caller_scope.input_value_keys = ["missing"]; },
+      f => { f.caller_scope.active_agent_ref = 42; }, f => { f.kind = "invented"; }]) {
+      const invalid = structuredClone(stored); corrupt(invalid.records[0].checkpoint.call_stack[0]);
+      writeJson(path, invalid);
+      const bytes = readFileSync(path);
+      assert.throws(() => createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true, agentDecisionProvider }),
+        { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+      assert.deepEqual(readFileSync(path), bytes);
+    }
+    if (delegated) for (const corrupt of [
+      f => { delete f.max_steps; }, f => { f.observations = [{}]; }, f => { f.next_step_index = 0; },
+      f => { f.arguments = null; }, f => { f.capability_refs = null; },
+    ]) {
+      const invalid = structuredClone(stored); corrupt(invalid.records[0].checkpoint.call_stack[1]);
+      writeJson(path, invalid);
+      const bytes = readFileSync(path);
+      assert.throws(() => createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true, agentDecisionProvider }),
+        { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+      assert.deepEqual(readFileSync(path), bytes);
+    }
+    // Restore the exact test snapshot. No recovery or effect ran while corrupted.
+    writeJson(path, stored);
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true, agentDecisionProvider });
+    await service.start();
+    const base = serverBaseUrl(service);
+    assert.equal((await postJson(`${base}/decisions`, decisionFor(pending))).status, 202);
+    const resumed = await postJson(`${base}/runs/sandbox/resume`, { request_id: pending.request_id });
+    assert.equal(resumed.status, 200, await resumed.clone().text());
+    const completed = await resumed.json();
+    assert.equal(completed.status, "success", JSON.stringify(completed));
+    assert.equal(completed.run_id, paused.run_id);
+    assert.equal(completed.result, "nested request");
+    if (delegated) assert.deepEqual(steps, [0, 1]);
+  } finally { await service.stop(); }
+});
+
+test("native parallel approval continuations survive project-server restart and release one occurrence at a time", async t => {
+  const root = createTestProject();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, "src/demo/approval.tb");
+  writeFileSync(path, `module demo.approval
+skill Review
+    takes value as Text
+    gives Text
+    do
+        human.approve
+            with context as value
+            into approval
+        give value
+strategy RunApproval
+    takes values as List of Text
+    gives List of Text
+    do
+        parallel Review
+            each value in values
+            with value as value
+            max_concurrency 2
+            max_items 10
+            into results
+        give results
+`);
+  const air = JSON.parse(execFileSync(new URL("../../../target/debug/touba-compile", import.meta.url).pathname, [path], { encoding: "utf8" }));
+  writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
+  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+  try {
+    await service.start();
+    const response = await postJson(`${serverBaseUrl(service)}/runs/sandbox`, {
+      schema_version: "touba-sandbox-run-request-v1", execution_kind: "entrypoint", target_ref: WAIT_TARGET,
+      effect_policy: "runtime_only", inputs: { values: ["first", "second"] },
+      requested_by: { kind: "studio", id: "parallel-test" }, reason: "Verify native parallel continuations.",
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    let result = await response.json();
+    let attempts = 0;
+    while (result.status === "stopped" && attempts++ < 4) {
+      const pending = await getJson(`${serverBaseUrl(service)}/approvals/pending/current`);
+      await service.stop();
+      service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+      await service.start();
+      const base = serverBaseUrl(service);
+      assert.equal((await postJson(`${base}/decisions`, decisionFor(pending))).status, 202);
+      const resumed = await postJson(`${base}/runs/sandbox/resume`, { request_id: pending.request_id });
+      assert.equal(resumed.status, 200, await resumed.clone().text());
+      result = await resumed.json();
+    }
+    assert.equal(result.status, "success", JSON.stringify(result));
+    assert.deepEqual(result.result, ["first", "second"]);
+  } finally { await service.stop(); }
+});
+
+test("human checkpoint budget omissions and tampering fail before recovery without changing stored bytes", async t => {
+  const root = createTestProject({ withSentinel: true });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const marker = join(root, "external-effect.log");
+  configureSentinelHandler(root, marker);
+  const service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+  try {
+    await service.start();
+    await runSandbox(serverBaseUrl(service), SENTINEL_TARGET, "allow_declared_external_effects");
+  } finally { await service.stop(); }
+  const path = join(root, ".touba/sandbox-checkpoints.sqlite");
+  const original = readStoreFixture(path);
+  for (const mutate of [c => { delete c.active_elapsed_ms; }, c => { delete c.effective_limits; },
+    c => { c.active_elapsed_ms = -1; }, c => { c.effective_limits = { max_tool_calls: 0 }; },
+    c => { delete c.call_stack; }, c => { c.call_frame = {}; }, c => { c.call_stack = [{ kind: "invented" }]; },
+    c => { delete c.loop_state; }, c => { delete c.next_call_index; }, c => { delete c.active_caller_ref; },
+    c => { delete c.budget_counters.provider_calls; }]) {
+    const altered = structuredClone(original); mutate(altered.records[0].checkpoint);
+    writeJson(path, altered);
+    const bytes = readFileSync(path);
+    assert.throws(() => createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true }),
+      { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+    assert.deepEqual(readFileSync(path), bytes);
+    assert.equal(existsSync(marker), false);
+  }
+});
+
+test("WAIT cold backup restores a pending decision and native evidence; incomplete historical results fail without rewrite", async () => {
+  const root = createTestProject({ withSentinel: true });
+  const backup = mkdtempSync(join(tmpdir(), "touba-wait-cold-backup-"));
+  const markerPath = join(root, "external-effect.log");
+  configureSentinelHandler(root, markerPath);
+  let service;
+  try {
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    let base = serverBaseUrl(service);
+    const paused = await runSandbox(base, SENTINEL_TARGET, "allow_declared_external_effects");
+    const pending = await getJson(`${base}/approvals/pending/current`);
+    const evidence = await getJson(`${base}/runs/${paused.run_id}/trace`);
+    assert.equal(existsSync(markerPath), false);
+    await service.stop();
+    service = null;
+    cpSync(root, join(backup, "project"), { recursive: true, preserveTimestamps: true });
+    const storePath = join(root, ".touba/sandbox-checkpoints.sqlite");
+    const original = readFileSync(storePath);
+    const historical = readStoreFixture(storePath);
+    delete historical.records[0].paused_result.messages;
+    delete historical.records[0].paused_result.messages_truncated;
+    writeJson(storePath, historical);
+    const incompatible = readFileSync(storePath);
+    assert.throws(() => loadSandboxCheckpointStore(storePath), { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+    assert.deepEqual(readFileSync(storePath), incompatible);
+    assert.equal(existsSync(markerPath), false);
+    // Restore the coherent cold snapshot at the same path, with no external
+    // effects since the snapshot. This is not a rewrite of historical data.
+    cpSync(join(backup, "project"), root, { recursive: true, preserveTimestamps: true });
+    assert.deepEqual(readFileSync(storePath), original);
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    base = serverBaseUrl(service);
+    assert.deepEqual(await getJson(`${base}/approvals/pending/current`), pending);
+    assert.deepEqual(await getJson(`${base}/runs/${paused.run_id}/trace`), evidence);
+    assert.equal((await postJson(`${base}/decisions`, decisionFor(pending))).status, 202);
+    const resume = await postJson(`${base}/runs/sandbox/resume`, { request_id: pending.request_id });
+    assert.equal(resume.status, 200, await resume.clone().text());
+    assert.equal((await resume.json()).status, "success");
+    const terminal = await getJson(`${base}/runs/${paused.run_id}/trace`);
+    assert.equal(terminal.complete, true);
+    assert.equal(terminal.segments.length, 2);
+    const replay = await postJson(`${base}/runs/sandbox/resume`, { request_id: pending.request_id });
+    assert.equal(replay.status, 200);
+    assert.equal(readFileSync(markerPath, "utf8"), "dispatched\n");
+    assert.deepEqual(await getJson(`${base}/runs/${paused.run_id}/trace`), terminal);
+  } finally {
+    if (service) await service.stop();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(backup, { recursive: true, force: true });
+  }
+});
+
+for (const decision of ["approve", "reject"]) test(`compiled show messages survive successive pauses and ${decision} without duplication`, async () => {
+  const root = createTestProject();
+  let service;
+  try {
+    const sourcePath = join(root, "src/demo/approval.tb");
+    writeFileSync(sourcePath, `module demo.approval
+strategy RunApproval
+    gives Text
+    do
+        show
+            with message as "Before review"
+        human.approve
+            with context as "First review"
+            into first
+        show
+            with message as "Between reviews"
+        human.approve
+            with context as "Second review"
+            into second
+        show
+            with message as "After reviews"
+        give "Business result"
+`);
+    const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
+      new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--", sourcePath], { encoding: "utf8" }));
+    writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    let base = serverBaseUrl(service);
+    const session = await createInteraction(base, WAIT_TARGET);
+    const foreign = await createInteraction(base, WAIT_TARGET);
+    const operation = await sendInteractionMessage(base, session.session_id, "messages-run");
+    await waitForInteractionStatus(base, session.session_id, operation.operation_id, "awaiting_human");
+    const output = async () => (await getJson(`${base}/interactions/sessions/${session.session_id}`)).messages.filter(message => message.role === "touba");
+    assert.deepEqual((await output()).flatMap(message => message.run_result.messages.map(m => m.text)), ["Before review"]);
+    const initialEvidence = await getJson(`${base}/runs/${operation.run_id}/trace`);
+    assert.equal(initialEvidence.complete, false);
+    assert.equal(initialEvidence.segments.length, 1);
+    assert.equal(initialEvidence.segments[0].state, "paused");
+    for (const [index, choice] of ["approve", decision].entries()) {
+      const sessionsPath = join(root, ".touba/interaction-sessions.sqlite");
+      const beforeResume = readJson(sessionsPath);
+      const eventsPath = join(root, ".touba/project-events.jsonl");
+      const beforeResumeEvents = readFileSync(eventsPath, "utf8");
+      const pending = await getJson(`${base}/approvals/pending/current`);
+      assert.equal((await postJson(`${base}/decisions`, decisionFor(pending, { decision: choice }))).status, 202);
+      const request = { schema_version: "touba-interaction-resume-request-v1", request_id: pending.request_id };
+      const response = await postJson(`${base}/interactions/sessions/${session.session_id}/resume`, request);
+      assert.equal(response.status, 202, await response.clone().text());
+      if (index === 0) await waitForDifferentPending(base, pending.request_id);
+      else await waitForInteractionStatus(base, session.session_id, operation.operation_id, decision === "approve" ? "succeeded" : "failed");
+      const repeated = await postJson(`${base}/interactions/sessions/${session.session_id}/resume`, request);
+      assert.equal(repeated.status, 200, await repeated.clone().text());
+      await service.stop();
+      if (index === 0) {
+        // Crash window: the durable result exists, but its session projection
+        // has not committed. Startup must recover the messages, not rerun show.
+        const interrupted = beforeResume.sessions.find(candidate => candidate.session_id === session.session_id);
+        interrupted.status = "running";
+        interrupted.last_run_status = "running";
+        interrupted.operations[0].status = "running";
+        interrupted.operations[0].completed_at = null;
+        interrupted.messages.find(message => message.role === "user").run_status = "running";
+        writeJson(sessionsPath, beforeResume);
+        writeFileSync(eventsPath, beforeResumeEvents, "utf8");
+        const checkpointsPath = join(root, ".touba/sandbox-checkpoints.sqlite");
+        const store = readJson(checkpointsPath);
+        for (const record of store.records.filter(candidate => candidate.operation_id === operation.operation_id)) {
+          // Durable results precede their UI/event projection markers. Retain
+          // only the first pause, which was already visible before the resume.
+          record.human_wait.projections.interaction = null;
+          record.human_wait.projections.terminal_event = null;
+          if (record.request_id !== pending.request_id) record.human_wait.projections.pause_interaction = null;
+        }
+        writeJson(checkpointsPath, store);
+      }
+      service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+      await service.start();
+      base = serverBaseUrl(service);
+      const messages = await output();
+      const evidence = await getJson(`${base}/runs/${operation.run_id}/trace`);
+      assert.equal(evidence.segments.length, index + 2);
+      assert.equal(evidence.complete, index === 1);
+      assert.equal(evidence.segments[0].digest, initialEvidence.segments[0].digest);
+      assert.ok(evidence.segments.every(segment => segment.trace?.run?.run_id === operation.run_id));
+      assert.ok(evidence.segments[1].trace.events.some(event => event.kind === "human_approval_resumed"));
+      assert.doesNotMatch(JSON.stringify(evidence), /Before review|Between reviews|After reviews|Business result/);
+      const expected = index === 0 || decision === "reject" ? ["Before review", "Between reviews"] : ["Before review", "Between reviews", "After reviews"];
+      assert.deepEqual(messages.flatMap(message => message.run_result.messages.map(m => m.text)), expected);
+      assert.deepEqual(messages.filter(message => message.run_result.messages.length).map(message => message.display_text), expected);
+      assert.doesNotMatch(JSON.stringify(readProjectEventJournal(join(root, ".touba/project-events.jsonl"))), /Before review|Between reviews|After reviews|Business result/);
+      assert.equal((await getJson(`${base}/interactions/sessions/${foreign.session_id}`)).messages.length, 0);
+    }
+    const messages = await output();
+    assert.equal(messages.at(-1).run_result.result, decision === "approve" ? "Business result" : null);
+  } finally { await service?.stop(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("approval context is explicit, bounded and private, while unrelated input stays hidden", async () => {
+  const root = createTestProject();
+  let service;
+  try {
+    const path = join(root, ".touba/air/demo/approval.air.json");
+    const air = readJson(path);
+    air.definitions.strategies[0].signature.inputs = [
+      { name: "note", type_ref: "builtin:Text" }, { name: "unrelated", type_ref: "builtin:Text" },
+    ];
+    air.execution_graphs[0].nodes[0].context_refs = ["value:note"];
+    writeJson(path, air);
+    service = createToubaProjectServer({ projectRoot: root, contractsRoot, port: 0, quiet: true });
+    await service.start();
+    const base = serverBaseUrl(service);
+    for (const note of ["Expense E-42: CAD 125, approved supplier", "", "x".repeat(5000)]) {
+      const response = await postJson(`${base}/runs/sandbox`, {
+        schema_version: "touba-sandbox-run-request-v1", execution_kind: "entrypoint",
+        target_ref: WAIT_TARGET, effect_policy: "runtime_only",
+        inputs: { note, unrelated: "PRIVATE_UNRELATED_RECORD" },
+        requested_by: { kind: "service", id: "approval-context-test" }, reason: "Review selected context",
+      });
+      const result = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(result));
+      assert.equal(result.status, "stopped", JSON.stringify(result));
+      const pending = await getJson(`${base}/approvals/pending/current?run_id=${result.run_id}`);
+      assert.equal(pending.summary.length <= 4096, true);
+      assert.equal(pending.summary.length > 0, true);
+      if (note.length > 0 && note.length < 4096) assert.equal(pending.summary, note);
+      assert.doesNotMatch(JSON.stringify(pending), /PRIVATE_UNRELATED_RECORD/);
+      assert.doesNotMatch(JSON.stringify(result.trace), /Expense E-42|PRIVATE_UNRELATED_RECORD/);
+      assert.doesNotMatch(JSON.stringify(readProjectEventJournal(join(root, ".touba/project-events.jsonl"))), /Expense E-42|PRIVATE_UNRELATED_RECORD/);
+    }
+    await service.stop();
+    service = createToubaProjectServer({ projectRoot: root, contractsRoot, port: 0, quiet: true });
+    await service.start();
+  } finally { await service?.stop(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("eight independent approval requests run concurrently and keep separate durable identities", async t => {
+  const root = createTestProject();
+  const service = createToubaProjectServer({ projectRoot: root, contractsRoot, port: 0, quiet: true });
+  try {
+    await service.start();
+    const start = performance.now();
+    const results = await Promise.all(Array.from({ length: 8 }, () => runSandbox(serverBaseUrl(service), WAIT_TARGET)));
+    t.diagnostic(`Eight concurrent approval runs: ${Math.round(performance.now() - start)} ms (local deterministic workflow)`);
+    assert.ok(results.every(result => result.status === "stopped"));
+    assert.equal(new Set(results.map(result => result.run_id)).size, 8);
+    const store = loadSandboxCheckpointStore(join(root, ".touba/sandbox-checkpoints.sqlite"));
+    assert.equal(store.records.length, 8);
+    const interactionStart = performance.now();
+    await Promise.all(Array.from({ length: 8 }, async (_, index) => {
+      const base = serverBaseUrl(service);
+      const session = await createInteraction(base, WAIT_TARGET);
+      const operation = await sendInteractionMessage(base, session.session_id, `parallel-${index}`);
+      await waitForInteractionStatus(base, session.session_id, operation.operation_id, "awaiting_human");
+    }));
+    t.diagnostic(`Eight concurrent session/message/approval flows: ${Math.round(performance.now() - interactionStart)} ms`);
+    assert.equal(loadSandboxCheckpointStore(join(root, ".touba/sandbox-checkpoints.sqlite")).records.length, 16);
+  } finally { await service.stop(); rmSync(root, { recursive: true, force: true }); }
+});
+
 test("stored human checkpoints retain loop cursors and refuse missing correlation without rewriting", async () => {
   const root = createTestProject();
-  const path = join(root, ".touba", "sandbox-checkpoints.json");
+  const path = join(root, ".touba", "sandbox-checkpoints.sqlite");
   const service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
   try {
     await service.start();
@@ -61,7 +447,7 @@ test("stored human checkpoints retain loop cursors and refuse missing correlatio
     ];
     for (const mutate of mutations) {
       const invalid = structuredClone(stored); mutate(invalid.records[0]);
-      const bytes = JSON.stringify(invalid); writeFileSync(path, bytes, "utf8");
+      writeStoreFixture(path, invalid); const bytes = readFileSync(path, "utf8");
       assert.throws(() => loadSandboxCheckpointStore(path), { code: "ToubaServeSandboxCheckpointStoreInvalid" });
       assert.equal(readFileSync(path, "utf8"), bytes);
     }
@@ -70,7 +456,7 @@ test("stored human checkpoints retain loop cursors and refuse missing correlatio
 
 test("obsolete checkpoint stores are refused unchanged, including empty stores", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-wait-obsolete-"));
-  const path = join(root, "sandbox-checkpoints.json");
+  const path = join(root, "sandbox-checkpoints.sqlite");
   try {
     for (const schema_version of ["touba-sandbox-checkpoints-v0.1", "touba-sandbox-checkpoints-v0.2"]) {
       for (const records of [[], [{ run_id: "historical", status: "completed" }]]) {
@@ -159,7 +545,7 @@ test("WAIT deadline uses the server clock at D-1, D, and D+1; one timer is armed
 
 test("WAIT v0.3 validation and orphan requests fail closed without mutating durable bytes", async () => {
   const root = createTestProject();
-  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
   const clock = controlledClock(Date.now() - 1_000);
   let service = createToubaProjectServer({
     contractsRoot,
@@ -179,8 +565,8 @@ test("WAIT v0.3 validation and orphan requests fail closed without mutating dura
 
     const invalidStore = structuredClone(validStore);
     invalidStore.records[0].human_wait.request_digest = `sha256:${"f".repeat(64)}`;
-    const invalidBytes = `${JSON.stringify(invalidStore)}\n`;
-    writeFileSync(checkpointPath, invalidBytes, "utf8");
+    writeStoreFixture(checkpointPath, invalidStore);
+    const invalidBytes = readFileSync(checkpointPath, "utf8");
     assert.throws(() => loadSandboxCheckpointStore(checkpointPath), {
       code: "ToubaServeSandboxCheckpointStoreInvalid",
     });
@@ -190,8 +576,8 @@ test("WAIT v0.3 validation and orphan requests fail closed without mutating dura
       schema_version: "touba-sandbox-checkpoints-v1",
       records: [],
     };
-    const orphanBytes = `${JSON.stringify(orphanStore)}\n`;
-    writeFileSync(checkpointPath, orphanBytes, "utf8");
+    writeStoreFixture(checkpointPath, orphanStore);
+    const orphanBytes = readFileSync(checkpointPath, "utf8");
     service = createToubaProjectServer({
       contractsRoot,
       projectRoot: root,
@@ -218,7 +604,7 @@ test("WAIT v0.3 validation and orphan requests fail closed without mutating dura
 test("WAIT v0.3 rejects resealed pause and decision traces bound to another approval or outcome", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now());
-  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
   const service = createToubaProjectServer({
     contractsRoot,
     projectRoot: root,
@@ -262,8 +648,8 @@ test("WAIT v0.3 rejects resealed pause and decision traces bound to another appr
     for (const mutate of variants) {
       const corrupted = structuredClone(validStore);
       mutate(corrupted.records[0]);
-      const bytes = `${JSON.stringify(corrupted)}\n`;
-      writeFileSync(checkpointPath, bytes, "utf8");
+      writeStoreFixture(checkpointPath, corrupted);
+      const bytes = readFileSync(checkpointPath, "utf8");
       assert.throws(() => loadSandboxCheckpointStore(checkpointPath), {
         code: "ToubaServeSandboxCheckpointStoreInvalid",
       });
@@ -539,7 +925,7 @@ test("WAIT interaction cancellation is exact, crash-safe, and idempotently repai
     assert.equal(completed.status, "completed");
     assert.equal(completed.human_wait.resolution.kind, "cancelled");
     assert.equal(completed.human_wait.terminalization.attempt_count, 1);
-    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
     const terminalBytes = readFileSync(checkpointPath, "utf8");
     clock.setNow(Date.parse(completed.human_wait.deadline_at) + 1);
     const repeated = await postJson(
@@ -620,7 +1006,7 @@ test("WAIT cancellation wakes the live worker after a post-claim error and retri
 test("WAIT capacity rejects the 101st human target before execution but permits a pure target", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now() - 1_000);
-  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
   let service = createToubaProjectServer({
     contractsRoot,
     projectRoot: root,
@@ -761,7 +1147,7 @@ test("WAIT successive pauses retain distinct request and result identities in th
       new Set([first.request_id, second.request_id]),
     );
     assert.equal(new Set(pauseEvents.map((event) => event.payload.result_digest)).size, 2);
-    const records = loadSandboxCheckpointStore(join(root, ".touba", "sandbox-checkpoints.json"))
+    const records = loadSandboxCheckpointStore(join(root, ".touba", "sandbox-checkpoints.sqlite"))
       .records.filter((record) => record.operation_id === operation.operation_id);
     assert.equal(records.length, 2);
     const firstRecord = records.find((record) => record.request_id === first.request_id);
@@ -783,7 +1169,7 @@ test("WAIT successive pauses retain distinct request and result identities in th
 test("WAIT failed terminalization is valid only after an attempt, retries on one timer, and recovers at cap 100", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now() - DAY_MS - 2_000);
-  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
   const airPath = join(root, ".touba", "air", "demo", "approval.air.json");
   const originalAirBytes = readFileSync(airPath, "utf8");
   let service = createToubaProjectServer({
@@ -841,8 +1227,8 @@ test("WAIT failed terminalization is valid only after an attempt, retries on one
     assert.doesNotThrow(() => loadSandboxCheckpointStore(checkpointPath));
     const sensitiveErrorStore = structuredClone(validFailedStore);
     sensitiveErrorStore.records[0].human_wait.terminalization.error.bearer = "must-not-be-persisted";
-    const sensitiveErrorBytes = `${JSON.stringify(sensitiveErrorStore)}\n`;
-    writeFileSync(checkpointPath, sensitiveErrorBytes, "utf8");
+    writeStoreFixture(checkpointPath, sensitiveErrorStore);
+    const sensitiveErrorBytes = readFileSync(checkpointPath, "utf8");
     assert.throws(() => loadSandboxCheckpointStore(checkpointPath), {
       code: "ToubaServeSandboxCheckpointStoreInvalid",
     });
@@ -851,8 +1237,8 @@ test("WAIT failed terminalization is valid only after an attempt, retries on one
     const invalidFailedStore = structuredClone(validFailedStore);
     invalidFailedStore.records[0].human_wait.terminalization.attempt_count = 0;
     invalidFailedStore.records[0].human_wait.terminalization.last_attempt_at = null;
-    const invalidBytes = `${JSON.stringify(invalidFailedStore)}\n`;
-    writeFileSync(checkpointPath, invalidBytes, "utf8");
+    writeStoreFixture(checkpointPath, invalidFailedStore);
+    const invalidBytes = readFileSync(checkpointPath, "utf8");
     assert.throws(() => loadSandboxCheckpointStore(checkpointPath), {
       code: "ToubaServeSandboxCheckpointStoreInvalid",
     });
@@ -908,6 +1294,10 @@ test("WAIT automatic expiry never dispatches an effect located after the human b
     const expired = await waitForRecord(root, pending.request_id, (record) => record.status === "completed");
     assert.equal(expired.human_wait.resolution.kind, "expired");
     assert.equal(expired.result.trace.events.some((event) => event.type === "tool_call_started"), false);
+    const evidence = await getJson(`${baseUrl}/runs/${paused.run_id}/trace`);
+    assert.equal(evidence.complete, true);
+    assert.deepEqual(evidence.segments.map(segment => segment.phase), ["initial", "human_terminal"]);
+    assert.equal(evidence.segments.flatMap(segment => segment.trace.events).some(event => event.kind === "tool_call_started"), false);
     assert.equal(existsSync(markerPath), false);
     await service.stop();
 
@@ -930,7 +1320,7 @@ test("WAIT automatic expiry never dispatches an effect located after the human b
 test("WAIT live worker repairs a transient decision projection failure before the deadline without resuming", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now());
-  const decisionsPath = join(root, ".touba", "human-decisions.json");
+  const decisionsPath = join(root, ".touba", "human-decisions.sqlite");
   const service = createToubaProjectServer({
     contractsRoot,
     projectRoot: root,
@@ -1189,8 +1579,8 @@ test("WAIT live projection retry reuses the exact durable terminal result withou
 test("WAIT restart projects a completed decision into a still-running interaction before interruption recovery", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now());
-  const sessionsPath = join(root, ".touba", "interaction-sessions.json");
-  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+  const sessionsPath = join(root, ".touba", "interaction-sessions.sqlite");
+  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
   const eventsPath = join(root, ".touba", "project-events.jsonl");
   let service = createToubaProjectServer({
     contractsRoot,
@@ -1273,10 +1663,112 @@ test("WAIT restart projects a completed decision into a still-running interactio
   }
 });
 
+test("WAIT completed projections survive bounded session retention without replaying effects", async () => {
+  const root = createTestProject();
+  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+  try {
+    await service.start();
+    const url = serverBaseUrl(service);
+    const session = await createInteraction(url, WAIT_TARGET);
+    const operation = await sendInteractionMessage(url, session.session_id, "retained_approval");
+    await waitForInteractionStatus(url, session.session_id, operation.operation_id, "awaiting_human");
+    const pending = await getJson(`${url}/approvals/pending/current`);
+    assert.equal((await postJson(`${url}/decisions`, decisionFor(pending))).status, 202);
+    const resumed = await postJson(`${url}/runs/sandbox/resume`, { request_id: pending.request_id });
+    assert.equal(resumed.status, 200, await resumed.clone().text());
+    await waitForInteractionStatus(url, session.session_id, operation.operation_id, "succeeded");
+    const before = humanRecord(root, pending.request_id);
+    assert.notEqual(before.human_wait.projections.terminal_event, null);
+    for (let index = 0; index < 101; index += 1) await createInteraction(url, PURE_TARGET);
+    assert.equal((await fetch(`${url}/interactions/sessions/${session.session_id}`)).status, 404);
+    await service.stop();
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    assert.deepEqual(humanRecord(root, pending.request_id), before);
+    const replay = await postJson(`${serverBaseUrl(service)}/decisions`, decisionFor(pending));
+    assert.equal(replay.status, 409);
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const historyCount of [0, 100]) test(`WAIT ${historyCount} completed approvals preserve restart and eight concurrent multi-handler sessions`, { timeout: 180000 }, async t => {
+  const root = createTestProject({ withSentinel: true });
+  const marker = join(root, "concurrent-writes.txt");
+  configureSentinelHandler(root, marker);
+  const manifestPath = join(root, "touba.manifest.json");
+  const manifest = readJson(manifestPath);
+  manifest.bindings["tool:demo.approval/Sentinel"].timeout_ms = 5000;
+  writeJson(manifestPath, manifest);
+  // The concurrent path dispatches three real processes before its approval pause.
+  // Keep the separate history path unchanged and do not rewrite saved evidence.
+  const airPath = join(root, ".touba/air/demo/approval.air.json");
+  const air = readJson(airPath);
+  const sentinel = air.execution_graphs.find(graph => graph.owner_ref === SENTINEL_TARGET);
+  const dispatch = sentinel.nodes.find(node => node.id === "sentinel");
+  sentinel.nodes.push({ ...structuredClone(dispatch), id: "sentinel2" }, { ...structuredClone(dispatch), id: "sentinel3" });
+  sentinel.entry_node_id = "sentinel";
+  sentinel.edges = [edge("sentinel", "sentinel2", "next"), edge("sentinel2", "sentinel3", "next"),
+    edge("sentinel3", "approval_sentinel", "next"), edge("approval_sentinel", "sentinel_done", "next")];
+  writeJson(airPath, air);
+  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+  const lag = monitorEventLoopDelay({ resolution: 10 });
+  try {
+    await service.start();
+    const url = serverBaseUrl(service);
+    const started = performance.now();
+    for (let index = 0; index < historyCount; index++) {
+      const session = await createInteraction(url, WAIT_TARGET);
+      const operation = await sendInteractionMessage(url, session.session_id, `history-${index}`);
+      await waitForInteractionStatus(url, session.session_id, operation.operation_id, "awaiting_human");
+      const pending = await getJson(`${url}/approvals/pending/current`);
+      assert.equal((await postJson(`${url}/decisions`, decisionFor(pending))).status, 202);
+      const resumed = await postJson(`${url}/runs/sandbox/resume`, { request_id: pending.request_id });
+      assert.equal(resumed.status, 200, await resumed.clone().text());
+      await waitForInteractionStatus(url, session.session_id, operation.operation_id, "succeeded");
+    }
+    t.diagnostic(`${historyCount} actual approval/resume flows: ${Math.round(performance.now() - started)} ms`);
+    await service.stop();
+    const restartAt = performance.now();
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    const restartMs = performance.now() - restartAt;
+    t.diagnostic(`Restart with ${historyCount} completed checkpoints: ${Math.round(restartMs)} ms`);
+    assert.ok(restartMs < 10000, `restart took ${Math.round(restartMs)} ms`);
+    const storePath = join(root, ".touba/sandbox-checkpoints.sqlite");
+    assert.equal(loadSandboxCheckpointStore(storePath).records.filter(record => record.status === "completed").length, historyCount);
+    const concurrentAt = performance.now();
+    lag.enable();
+    const results = await Promise.all(Array.from({ length: 8 }, async (_, index) => {
+      const base = serverBaseUrl(service);
+      const session = await createInteraction(base, SENTINEL_TARGET, "allow_declared_external_effects");
+      const operation = await sendInteractionMessage(base, session.session_id, `concurrent-${index}`);
+      return waitForInteractionOperation(base, session.session_id, operation.operation_id);
+    }));
+    t.diagnostic(`Eight concurrent three-handler sessions after history: ${Math.round(performance.now() - concurrentAt)} ms`);
+    lag.disable();
+    t.diagnostic(`Event-loop lag: mean ${(lag.mean / 1e6).toFixed(1)} ms, max ${(lag.max / 1e6).toFixed(1)} ms`);
+    assert.deepEqual(results.map(result => result.status), Array(8).fill("awaiting_human"), JSON.stringify(results));
+    assert.equal(new Set(results.map(result => result.operation_id)).size, 8);
+    assert.equal(readFileSync(marker, "utf8"), "dispatched\n".repeat(24));
+    const effects = Object.values(readJson(join(root, ".touba/project.effect-journal.sqlite")).entries);
+    assert.equal(effects.length, 24);
+    assert.ok(effects.every(effect => effect.state === "applied"));
+    await service.stop();
+    // A terminal record is still evidence: optimization must not ignore corruption.
+    const store = readJson(storePath);
+    store.records[0].human_wait.request_digest = "sha256:" + "0".repeat(64);
+    writeJson(storePath, store);
+    assert.throws(() => createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true }),
+      { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+  } finally { lag.disable(); await service.stop(); rmSync(root, { recursive: true, force: true }); }
+});
+
 test("WAIT rejects a pause projection marker bound to a foreign interaction session without side effects", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now());
-  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
   const eventsPath = join(root, ".touba", "project-events.jsonl");
   const service = createToubaProjectServer({
     contractsRoot,
@@ -1322,7 +1814,7 @@ test("WAIT rejects a pause projection marker bound to a foreign interaction sess
 test("WAIT rejects a terminal event marker that bypasses its exact interaction projection", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now());
-  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
   const eventsPath = join(root, ".touba", "project-events.jsonl");
   const service = createToubaProjectServer({
     contractsRoot,
@@ -1433,8 +1925,8 @@ test("WAIT rejects cancellation once a decision owns the paused interaction and 
 test("WAIT interaction resume refuses a same-run session with divergent operation and target identities", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now());
-  const sessionsPath = join(root, ".touba", "interaction-sessions.json");
-  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
+  const sessionsPath = join(root, ".touba", "interaction-sessions.sqlite");
+  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
   const service = createToubaProjectServer({
     contractsRoot,
     projectRoot: root,
@@ -1488,9 +1980,9 @@ test("WAIT request and decision projections reject wrong collections and duplica
   await t.test("approval request and decision projection cardinality", async () => {
     const root = createTestProject();
     const clock = controlledClock(Date.now());
-    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
-    const requestsPath = join(root, ".touba", "human-requests.json");
-    const decisionsPath = join(root, ".touba", "human-decisions.json");
+    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
+    const requestsPath = join(root, ".touba", "human-requests.sqlite");
+    const decisionsPath = join(root, ".touba", "human-decisions.sqlite");
     let service = createToubaProjectServer({
       contractsRoot,
       projectRoot: root,
@@ -1513,8 +2005,8 @@ test("WAIT request and decision projections reject wrong collections and duplica
         { ...canonicalRequests, approvals: [approval, structuredClone(approval)] },
         { ...canonicalRequests, approvals: [approval, divergentApproval] },
       ]) {
-        const bytes = `${JSON.stringify(requestStore)}\n`;
-        writeFileSync(requestsPath, bytes, "utf8");
+        writeStoreFixture(requestsPath, requestStore);
+        const bytes = readFileSync(requestsPath, "utf8");
         await expectServerRepairFailure({ clock, root });
         assert.equal(readFileSync(checkpointPath, "utf8"), arbiterBytes);
         assert.equal(readFileSync(requestsPath, "utf8"), bytes);
@@ -1568,8 +2060,8 @@ test("WAIT request and decision projections reject wrong collections and duplica
           schema_version: "touba-human-decisions-v1",
           decisions: [decision, duplicate],
         };
-        const bytes = `${JSON.stringify(decisionStore)}\n`;
-        writeFileSync(decisionsPath, bytes, "utf8");
+        writeStoreFixture(decisionsPath, decisionStore);
+        const bytes = readFileSync(decisionsPath, "utf8");
         await expectServerRepairFailure({ clock, root });
         assert.equal(readFileSync(checkpointPath, "utf8"), claimedArbiterBytes);
         assert.equal(readFileSync(decisionsPath, "utf8"), bytes);
@@ -1583,8 +2075,8 @@ test("WAIT request and decision projections reject wrong collections and duplica
   await t.test("human review stored as an approval", async () => {
     const root = createAgentReviewProject();
     const clock = controlledClock(Date.now());
-    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.json");
-    const requestsPath = join(root, ".touba", "human-requests.json");
+    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
+    const requestsPath = join(root, ".touba", "human-requests.sqlite");
     const service = createToubaProjectServer({
       agentDecisionProvider: testAgentDecisionProvider,
       contractsRoot,
@@ -1601,8 +2093,8 @@ test("WAIT request and decision projections reject wrong collections and duplica
       const store = readJson(requestsPath);
       store.approvals = [store.reviews[0]];
       store.reviews = [];
-      const bytes = `${JSON.stringify(store)}\n`;
-      writeFileSync(requestsPath, bytes, "utf8");
+      writeStoreFixture(requestsPath, store);
+      const bytes = readFileSync(requestsPath, "utf8");
       await expectServerRepairFailure({
         agentDecisionProvider: testAgentDecisionProvider,
         clock,
@@ -1999,13 +2491,13 @@ async function runSandbox(baseUrl, targetRef, effectPolicy = "runtime_only") {
   return response.json();
 }
 
-async function createInteraction(baseUrl, targetRef) {
+async function createInteraction(baseUrl, targetRef, effectPolicy = "runtime_only") {
   const response = await postJson(`${baseUrl}/interactions/sessions`, {
     schema_version: "touba-interaction-session-create-v1",
     target_ref: targetRef,
     target_kind: "strategy",
     presentation: "workflow",
-    effect_policy: "runtime_only",
+    effect_policy: effectPolicy,
     requested_by: { kind: "studio", id: "durable-human-waits-test" },
   });
   assert.equal(response.status, 201, await response.clone().text());
@@ -2076,7 +2568,7 @@ function decisionFor(pending, { decision = "approve", decidedAt = "2026-09-16T00
 }
 
 function humanRecord(root, requestId) {
-  const path = join(root, ".touba", "sandbox-checkpoints.json");
+  const path = join(root, ".touba", "sandbox-checkpoints.sqlite");
   const record = loadSandboxCheckpointStore(path).records.find((candidate) => candidate.request_id === requestId);
   assert.ok(record, `missing durable human wait ${requestId}`);
   return record;
@@ -2167,10 +2659,9 @@ async function postJson(url, body) {
 }
 
 function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
+  return readStoreFixture(path);
 }
 
 function writeJson(path, value) {
-  mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  writeStoreFixture(path, value);
 }

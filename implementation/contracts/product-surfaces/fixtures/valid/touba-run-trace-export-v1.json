@@ -1,0 +1,14 @@
+{
+  "schema_version": "touba-run-trace-export-v1",
+  "run_id": "sandbox_example",
+  "complete": false,
+  "segments": [{
+    "index": 0,
+    "phase": "initial",
+    "state": "recording",
+    "reason": "not_completed",
+    "previous_digest": null,
+    "trace": null,
+    "digest": "sha256:294902b123c89426e082dc0696509203adad2a509c7f11ef0519bde3def460db"
+  }]
+}

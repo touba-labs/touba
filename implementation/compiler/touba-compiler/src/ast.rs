@@ -15,7 +15,15 @@ pub struct SourceRef {
 pub struct AstDocument {
     pub module: AstModule,
     pub imports: Vec<AstImportDeclaration>,
+    pub run_limits: Vec<AstRunLimit>,
     pub declarations: Vec<AstDeclaration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstRunLimit {
+    pub name: String,
+    pub value: AstExpression,
+    pub source_ref: SourceRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +99,13 @@ pub struct AstMemoryDeclaration {
 pub struct AstTypeDeclaration {
     pub name: String,
     pub fields: Vec<AstField>,
+    pub variants: Vec<AstEnumVariant>,
+    pub source_ref: SourceRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstEnumVariant {
+    pub name: String,
     pub source_ref: SourceRef,
 }
 
@@ -254,6 +269,7 @@ pub struct AstBody {
 pub enum AstStatement {
     Bind(AstBindStatement),
     Call(AstCallStatement),
+    Parallel(AstParallelStatement),
     HumanApproval(AstHumanApprovalStatement),
     UserInteraction(AstUserInteractionStatement),
     Give(AstGiveStatement),
@@ -310,6 +326,15 @@ pub struct AstCallStatement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstParallelStatement {
+    pub call: AstCallStatement,
+    pub item: String,
+    pub collection: AstExpression,
+    pub max_concurrency: u64,
+    pub max_items: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstCallArgument {
     pub name: String,
     pub value: AstExpression,
@@ -336,6 +361,7 @@ pub struct AstStopStatement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstIfStatement {
     pub condition: AstExpression,
+    pub present_binding: Option<AstResultBinding>,
     pub then_branch: Vec<AstStatement>,
     pub else_branch: Vec<AstStatement>,
     pub source_ref: SourceRef,
@@ -358,6 +384,14 @@ pub struct AstWhileStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstExpression {
+    OptionalSome {
+        expression: Box<AstExpression>,
+        source_ref: SourceRef,
+    },
+    OptionalNone {
+        type_ref: AstTypeRef,
+        source_ref: SourceRef,
+    },
     Record {
         type_name: String,
         fields: Vec<AstRecordField>,

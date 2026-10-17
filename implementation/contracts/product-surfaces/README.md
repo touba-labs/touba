@@ -10,45 +10,52 @@ lossless mapping to the source contract and its `schema_version`.
 
 ## Contracts
 
+Declared input types retain their source meaning: enum type descriptors expose
+`enum_values`, and `optional:<type_ref>` uses explicit presence envelopes
+(`{"present":false}` or `{"present":true,"value":...}`). Optional fields remain
+required; consumers must not substitute missing fields, null or empty strings.
+Lists and optionals recursively retain reachable record/enum definitions.
+
 | Contract | Primary consumers | Purpose |
 | --- | --- | --- |
-| `touba-auth-session-v0.1` | client, Mobile, project server | Authenticated human identity, organization membership, permissions and bounded session metadata. |
-| `touba-identity-directory-v0.1` | client | Organization members and role definitions without devices, sessions or credentials. |
-| `touba-device-pairing-v0.1` | client, Mobile | One-time, expiring identity pairing issued for a specific user. |
-| `touba-identity-audit-v0.1` | client | Bounded audit trail for identity and access-management actions. |
+| `touba-auth-session-v1` | client, Mobile, project server | Authenticated human identity, organization membership, permissions and bounded session metadata. |
+| `touba-identity-directory-v1` | client | Organization members and role definitions without devices, sessions or credentials. |
+| `touba-device-pairing-v1` | client, Mobile | One-time, expiring identity pairing issued for a specific user. |
+| `touba-identity-audit-v1` | client | Bounded audit trail for identity and access-management actions. |
 | `touba-project-inspection-v1` | client | Project structure, generated artifacts, agent responsibilities copied from AIR, executable input contracts including common agent-capability signatures, entrypoint effect-policy requirements, installed packages, diagnostics. |
 | `touba-effective-project-v1` | CLI, Inspect, client | Deterministic non-authoritative projection of the effective project profile, declared inputs, derived artifacts and provenance without secret values or business payloads. |
-| `touba-project-refresh-request-v0.1` | client, CLI | Request a project refresh from the project server. |
-| `touba-project-refresh-v0.1` | client | Project refresh result, artifact snapshot, changed files, diagnostics. |
-| `touba-project-change-proposal-v0.1` | client | Reviewable project change proposal. |
-| `touba-project-change-proposed-v0.1` | client | Accepted change proposal with validation evidence. |
-| `touba-project-change-apply-v0.1` | client | Apply or refuse a pending change proposal. |
-| `touba-project-change-result-v0.1` | client | Final applied/refused change result and evidence. |
-| `touba-project-change-history-v0.1` | client | Read-only change proposal inbox with pending, applied and refused states. |
-| `touba-project-change-detail-v0.1` | client | Detailed change proposal evidence without raw patch content. |
-| `touba-element-authoring-request-v0.1` | client, project server | Typed semantic intention for one Touba primitive; optionally binds submission to an exact preview digest. |
-| `touba-element-authoring-preview-v0.1` | client | Read-only Core-rendered file diffs, validations, impact and digest before a proposal exists. |
-| `touba-project-event-stream-v0.1` | client, Mobile | Live event stream descriptor for project-server clients. |
-| `touba-project-event-v0.1` | client, Mobile | Contracted event envelope emitted by the project server. |
-| `touba-authority-graph-v0.1` | client | Project authority graph derived from Touba source, AIR and metadata artifacts. |
-| `touba-product-identity-v0.1` | client, Mobile | Product identity surface for users, teams, devices, assignments and escalation policies. |
+| `touba-project-refresh-request-v1` | client, CLI | Request a project refresh from the project server. |
+| `touba-project-refresh-v1` | client | Project refresh result, artifact snapshot, changed files, diagnostics. |
+| `touba-project-change-proposal-v1` | client | Reviewable project change proposal. |
+| `touba-project-change-proposed-v1` | client | Accepted change proposal with validation evidence. |
+| `touba-project-change-apply-v1` | client | Apply or refuse a pending change proposal. |
+| `touba-project-change-result-v1` | client | Final applied/refused change result and evidence. |
+| `touba-project-change-history-v1` | client | Read-only change proposal inbox with pending, applied and refused states. |
+| `touba-project-change-detail-v1` | client | Detailed change proposal evidence without raw patch content. |
+| `touba-element-authoring-request-v1` | client, project server | Typed semantic intention for one Touba primitive; optionally binds submission to an exact preview digest. |
+| `touba-element-authoring-preview-v1` | client | Read-only Core-rendered file diffs, validations, impact and digest before a proposal exists. |
+| `touba-project-event-stream-v1` | client, Mobile | Live event stream descriptor for project-server clients. |
+| `touba-project-event-v1` | client, Mobile | Contracted event envelope emitted by the project server. |
+| `touba-authority-graph-v1` | client | Project authority graph derived from Touba source, AIR and metadata artifacts. |
+| `touba-product-identity-v1` | client, Mobile | Product identity surface for users, teams, devices, assignments and escalation policies. |
 | `touba-run-summary-v1` | client, Mobile | Compact run status, trace reference, budget usage, pending approvals. |
 | `touba-operation-resume-request-v1` | client, CLI | Exact RESUME-1 checkpoint claim for one interrupted operation. |
 | `touba-operation-recovery-v1` | client, CLI | Server-derived operation state, freshness, correlations, effect reconciliation class, allowed actions and refusal. |
-| `touba-interaction-session-create-v0.1` | client | Creates a bounded interaction session for one executable project target and one effect policy. |
-| `touba-interaction-message-request-v0.1` | client | Submits typed inputs and a display message to an interaction session. |
-| `touba-interaction-resume-request-v0.1` | client | Resumes the durable human checkpoint associated with an interaction session. |
-| `touba-interaction-session-v0.1` | client | Durable message and run history for one agent, function, skill, strategy, tool or trigger. |
-| `touba-interaction-session-list-v0.1` | client | Bounded index used to restore project interaction sessions. |
-| `touba-interaction-asset-v0.1` | client, project server | Opaque, digest-verified content handle without a client-visible storage path. |
+| `touba-interaction-session-create-v1` | client | Creates a bounded interaction session for one executable project target and one effect policy. |
+| `touba-interaction-message-request-v1` | client | Submits typed inputs and a display message to an interaction session. |
+| `touba-interaction-resume-request-v1` | client | Resumes the durable human checkpoint associated with an interaction session. |
+| `touba-interaction-session-v1` | client | Durable message and run history for one agent, function, skill, strategy, tool or trigger. |
+| `touba-interaction-session-list-v1` | client | Bounded index used to restore project interaction sessions. |
+| `touba-interaction-asset-v1` | client, project server | Opaque, digest-verified content handle without a client-visible storage path. |
 | `touba-trace-timeline-v1` | client | Ordered trace timeline for review and investigation. |
+| `touba-run-trace-export-v1` | Authorized audit clients | Native per-invocation trace segments, local digest chain and explicit completeness; no AIR/source/checkpoint discovery. |
 | `touba-trigger-status-v1` | client, Mobile | Trigger state, queue state, replay/rate-limit surface. |
 | `touba-approval-request-v1` | client, Mobile | Human approval request before an effect proceeds. |
 | `touba-approval-decision-v1` | Touba Engine | Human approval decision submitted by a client. |
 | `touba-human-review-request-v1` | client, Mobile | Review request that asks for judgement without implying approval. |
 | `touba-human-review-decision-v1` | Touba Engine | Structured review result submitted by a client. |
-| `touba-human-decision-history-v0.1` | client, Mobile | Read-only history of accepted approval and review decisions. |
-| `touba-human-decision-detail-v0.1` | client, Mobile | Normalized accepted human decision detail by schema and request id. |
+| `touba-human-decision-history-v1` | client, Mobile | Read-only history of accepted approval and review decisions. |
+| `touba-human-decision-detail-v1` | client, Mobile | Normalized accepted human decision detail by schema and request id. |
 | `touba-registry-resource-v1` | client, Hub | Versioned resource metadata for skills, agents, integrations, workflows, packages. |
 | `touba-alert-v1` | client, Mobile | Notification-only alert, separate from runtime decisions. |
 
@@ -128,6 +135,7 @@ POST /project/refresh
 GET  /authority/graph
 GET  /identity
 GET  /runs/current
+GET  /runs/<run_id>/trace
 GET  /operations/<operation_id>/recovery
 POST /runs/sandbox
 POST /runs/sandbox/resume
@@ -179,21 +187,21 @@ digest and request identity are checked server-side; a stale or concurrent
 claim is never resolved by UI state.
 
 `/state` returns the current project server state. `/authority/graph` returns
-`touba-authority-graph-v0.1`, a graph of declared modules, packages, triggers,
+`touba-authority-graph-v1`, a graph of declared modules, packages, triggers,
 strategies, agents, skills, functions, tools, human gates, memory scopes and
 capability grants extracted from project artifacts. The server reports dangling
 or inconsistent references as diagnostics instead of inventing implicit
 authority.
 
-`/identity` returns `touba-product-identity-v0.1`, the product identity surface
+`/identity` returns `touba-product-identity-v1`, the product identity surface
 for users, teams, roles, paired devices, sessions, assignments and escalation
 policies. This contract identifies human actors and product devices; it does
 not grant runtime authority, which remains enforced by Touba Engine.
 
 `/events` is the
 server-sent event stream consumed by live clients. The stream is described by
-`touba-project-event-stream-v0.1`; each emitted message is a
-`touba-project-event-v0.1` envelope with `event_id`, monotonic `sequence`,
+`touba-project-event-stream-v1`; each emitted message is a
+`touba-project-event-v1` envelope with `event_id`, monotonic `sequence`,
 `type`, `source`, `emitted_at` and the versioned payload. The server writes an
 `id: <event_id>` SSE field and keeps a bounded `.touba/project-events.jsonl`
 journal. A reconnecting client may send `Last-Event-ID`; retained events after
@@ -210,19 +218,19 @@ versioned Touba contracts.
 stores them through the configured human decision backend and rejects replay for
 the same `schema_version` and `request_id`.
 
-`GET /decisions` returns `touba-human-decision-history-v0.1`.
+`GET /decisions` returns `touba-human-decision-history-v1`.
 `GET /decisions/<schema_version>/<request_id>` returns
-`touba-human-decision-detail-v0.1`. These routes expose a normalized, read-only
+`touba-human-decision-detail-v1`. These routes expose a normalized, read-only
 view of accepted human decisions for client and Mobile.
 
-`/project/refresh` accepts `touba-project-refresh-request-v0.1` and returns
-`touba-project-refresh-v0.1`. The refresh result includes a bounded artifact
+`/project/refresh` accepts `touba-project-refresh-request-v1` and returns
+`touba-project-refresh-v1`. The refresh result includes a bounded artifact
 snapshot, changed artifacts and diagnostics such as stale AIR.
 
 `POST /elements/preview` and `POST /elements/propose` accept the same typed
-`touba-element-authoring-request-v0.1` intention. Preview renders and validates
+`touba-element-authoring-request-v1` intention. Preview renders and validates
 the exact source, manifest and guarded handler-stub targets without writing a
-file or a pending proposal. It returns `touba-element-authoring-preview-v0.1`.
+file or a pending proposal. It returns `touba-element-authoring-preview-v1`.
 client sends its `preview_digest` with the subsequent proposal; the server
 recomputes current target digests and rejects stale previews before persistence.
 
@@ -230,6 +238,15 @@ recomputes current target digests and rejects stale previews before persistence.
 profile derives a presentation mode, primary text path, structured context and
 accepted content kinds from the compiled input contract. Ambiguous signatures
 remain structured; the server does not invent a text field or media capability.
+
+Sandbox results carry `messages` separately from `result`, in runtime
+order, with a `messages_truncated` flag. The server retains the first 100
+messages within 16 KiB total text and 4 KiB per message, preserving UTF-8.
+Messages are business content: authorized result/session routes expose them,
+never the public progress SSE or minimized trace. A continuation contains only
+new messages; persisted checkpoint results retain earlier messages without
+replaying them. The current development contract requires both fields;
+incomplete stored human-wait results are refused without rewriting private history.
 
 `/interactions/sessions` creates and restores bounded project interaction
 sessions. A message executes through the same sandbox request, manifest,
@@ -272,17 +289,17 @@ outside messages and traces, and returns an opaque handle. Resolving that handle
 remains the responsibility of a declared target capability; the interaction
 profile does not imply model-level image, audio or document support.
 
-`/changes/propose` accepts `touba-project-change-proposal-v0.1` and returns
-`touba-project-change-proposed-v0.1`. The server refuses unsafe paths, internal
+`/changes/propose` accepts `touba-project-change-proposal-v1` and returns
+`touba-project-change-proposed-v1`. The server refuses unsafe paths, internal
 directories, unapproved target files, invalid Touba JSON metadata and `.tb`
 patches that fail `touba compile --stdout`.
 
-`/changes/apply` accepts `touba-project-change-apply-v0.1` and returns
-`touba-project-change-result-v0.1`. It applies or refuses a pending proposal,
+`/changes/apply` accepts `touba-project-change-apply-v1` and returns
+`touba-project-change-result-v1`. It applies or refuses a pending proposal,
 rejects replay and emits refresh/change events.
 
-`/changes` returns `touba-project-change-history-v0.1`.
-`/changes/<proposal_id>` returns `touba-project-change-detail-v0.1`. These
+`/changes` returns `touba-project-change-history-v1`.
+`/changes/<proposal_id>` returns `touba-project-change-detail-v1`. These
 read-only routes expose status, target, actor, reason, content digest,
 validations and write evidence. They do not expose the raw patch content.
 

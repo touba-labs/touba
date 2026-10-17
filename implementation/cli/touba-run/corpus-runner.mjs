@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { loadAirFromJson, executeAirDocument } from "@touba/runtime";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -36,7 +37,7 @@ export const FIXTURES = [
     inputs: { request: { topic: "source" } },
     expectStatus: "stopped",
   },
-  { id: "tb-v01-003-branch", file: "tb-v01-003-branch.tb", inputs: { accepted: true }, expectStatus: "success" },
+  { id: "tb-v01-003-branch", file: "tb-v01-003-branch.tb", inputs: { accepted: true }, expectStatus: "success", expectResult: { body: "accepted" } },
   { id: "tb-v01-004-loop", file: "tb-v01-004-loop.tb", inputs: { items: ["item-1", "item-2"] }, expectStatus: "success" },
   {
     id: "tb-v01-005-strategy-agents",
@@ -52,6 +53,8 @@ export const ANNEAU1_POSITIVE_FIXTURES = [
     file: "positive/tb-a1-p01-tool-with-argument.tb",
     inputs: { request: { query: "source" } },
     expectStatus: "success",
+    expectResult: { body: "source requested" },
+    expectCalls: { "tool:examples.a1_tool_argument/FetchSource": 1 },
   },
   {
     id: "tb-a1-p02-tool-result-binding",
@@ -64,6 +67,9 @@ export const ANNEAU1_POSITIVE_FIXTURES = [
     file: "positive/tb-a1-p03-skill-composition-binding.tb",
     inputs: { request: { query: "source" } },
     expectStatus: "success",
+    entryRef: "skill:examples.a1_skill_composition/RunPipeline",
+    expectResult: { body: "source" },
+    expectCalls: { "skill:examples.a1_skill_composition/LoadSource": 1, "skill:examples.a1_skill_composition/BuildNote": 1 },
   },
   {
     id: "tb-a1-p04-branch-on-bound-value",
@@ -76,12 +82,17 @@ export const ANNEAU1_POSITIVE_FIXTURES = [
     file: "positive/tb-a1-p05-loop-explicit-item-call.tb",
     inputs: { requests: [{ query: "one" }, { query: "two" }] },
     expectStatus: "success",
+    expectResult: "processed",
+    expectCalls: { "tool:examples.a1_loop_binding/FetchSource": 2 },
   },
   {
     id: "tb-a1-p06-fallback-resolved-with-binding",
     file: "positive/tb-a1-p06-fallback-resolved-with-binding.tb",
     inputs: { request: { query: "source" } },
     expectStatus: "success",
+    entryRef: "skill:examples.a1_fallback_binding/BuildSource",
+    expectResult: { body: "source" },
+    expectCalls: { "tool:examples.a1_fallback_binding/FetchSource": 1, "skill:examples.a1_fallback_binding/FallbackSource": 1 },
   },
   {
     id: "tb-a1-p07-simple-agent-calls-no-enriched-dispatch",
@@ -419,6 +430,7 @@ async function executeFixtureAtPath(sourcePath, fixture, toolHandlers) {
     const result = await executeAirDocument(document, {
       toolHandlers,
       inputs: fixture.inputs,
+      entryRef: fixture.entryRef,
     });
     const normalizedDocument = normalizeFixtureArtifact(document);
     const normalizedResult = normalizeFixtureArtifact(result);
@@ -498,8 +510,15 @@ export function validateTraceResult(fixture, result) {
   if (result.status !== fixture.expectStatus) {
     errors.push(`expected status "${fixture.expectStatus}", got "${result.status}"`);
   }
+  if (Object.hasOwn(fixture, "expectResult") && !isDeepStrictEqual(result.result, fixture.expectResult)) {
+    errors.push("returned value does not match the fixture's declared expectation");
+  }
 
   const events = result.trace?.events ?? [];
+  for (const [targetRef, count] of Object.entries(fixture.expectCalls ?? {})) {
+    const actual = events.filter(event => event.kind === "call_started" && event.payload?.target_ref === targetRef).length;
+    if (actual !== count) errors.push(`expected ${count} calls of ${targetRef}, got ${actual}`);
+  }
   if (events.length === 0) errors.push("trace has no events");
   if (events[0]?.kind !== "run_started") {
     errors.push(`first event should be run_started, got "${events[0]?.kind}"`);

@@ -840,6 +840,7 @@ test("executes a process tool handler V1 with JSON protocol and minimal secret e
         ...["has_authorized_secret", "inherited_env_visible", "secret_value_in_stdin"].map(name => parameter(name, "builtin:Boolean")),
       ], source_ref: sourceRef() });
     document.definitions.tools[0].signature.output_type = "type:test/Inspection";
+    document.definitions.skills[0].signature.output_type = "type:test/Inspection";
     const result = await executeAirDocument(document, {
       entryRef: "skill:test/SearchFlow",
       inputs: {
@@ -1006,7 +1007,7 @@ test("redacts secrets from process handler controlled errors and non-zero exits"
     {
       name: "non-zero exit",
       script: "process.stderr.write(process.env.SEARCH_API_KEY); process.exit(2);",
-      expectedMessage: /exited non-zero.*\[redacted-secret\]/,
+      expectedMessage: /exited non-zero.*local development test/,
     },
   ];
 
@@ -1773,7 +1774,7 @@ test("pauses human approval without a decision and resumes when approved", async
     },
   });
 
-  assert.equal(paused.status, "stopped");
+  assert.equal(paused.status, "stopped", JSON.stringify(paused));
   assertKinds(paused.trace, [
     "run_started",
     "scope_entered",
@@ -1998,7 +1999,7 @@ test("executes show and pauses ask until user input is provided", async () => {
     entryRef: "skill:test/Interact",
   });
 
-  assert.equal(paused.status, "stopped");
+  assert.equal(paused.status, "stopped", JSON.stringify(paused));
   assert.equal(paused.reason, "user_input_pending");
   assert.equal(paused.messages[0].text, "Touba ready");
   assert.deepEqual(paused.pending_interaction, { interaction_ref: "interaction:test:ask", prompt: "Search query?" });
@@ -2562,7 +2563,7 @@ test("evaluates field access expressions in call arguments", async () => {
         source_ref: sourceRef(),
       },
     ],
-    skills: [skill("ReviewScore", "graph:skill:test/ReviewScore", ["tool:test/StoreScore"], [parameter("analysis", "type:test/Analysis"), parameter("bonus", "builtin:Float")])],
+    skills: [skill("ReviewScore", "graph:skill:test/ReviewScore", ["tool:test/StoreScore"], [parameter("analysis", "type:test/Analysis"), parameter("bonus", "builtin:Float")], "type:test/Decision")],
     graphs: [
       graph("graph:skill:test/ReviewScore", "skill:test/ReviewScore", [
         node("n1", "call_tool", {
@@ -2824,7 +2825,7 @@ test("human checkpoints preserve collection cursors and loop continuations", asy
   const options = { entryRef: "skill:test/ReviewItems", inputs: { items: ["first", "second"] }, durableHumanApprovals: true,
     toolHandlers: { "tool:test/Write": ({ arguments: args }) => { writes.push(args.item); return "stored"; } } };
   const paused = await executeAirDocument(document, options);
-  assert.equal(paused.status, "stopped");
+  assert.equal(paused.status, "stopped", JSON.stringify(paused));
   assert.deepEqual(paused.checkpoint.loop_state, { "graph:skill:test/ReviewItems:loop": { index: 1 } });
   for (const corrupt of [
     checkpoint => { delete checkpoint.loop_state; },
@@ -2838,9 +2839,13 @@ test("human checkpoints preserve collection cursors and loop continuations", asy
     assert.equal(refused.status, "failure");
     assert.deepEqual(writes, ["first"]);
   }
-  const resumed = await executeAirDocument(document, { ...options, inputs: {}, humanApprovalResumeCheckpoint: paused.checkpoint,
+  const second = await executeAirDocument(document, { ...options, inputs: {}, humanApprovalResumeCheckpoint: paused.checkpoint,
     humanApprovalDecisions: { "approval:items": "approved" } });
-  assert.equal(resumed.status, "success");
+  assert.equal(second.reason, "human_approval_pending");
+  assert.deepEqual(writes, ["first", "second"]);
+  const resumed = await executeAirDocument(document, { ...options, inputs: {}, humanApprovalResumeCheckpoint: second.checkpoint,
+    humanApprovalDecisions: { "approval:items": "approved" } });
+  assert.equal(resumed.status, "success", JSON.stringify(resumed));
   assert.equal(resumed.result, "done");
   assert.deepEqual(writes, ["first", "second"]);
 });
@@ -3373,7 +3378,7 @@ test("lets the runtime decision provider request a capability catalog and provid
       assert.equal(request.mode, "capabilities");
       assert.equal(request.model_input.protocol, "touba-agent-model-input-v1");
       assert.equal(request.model_input.mode, "capability_catalog");
-      assert.deepEqual(request.model_input.allowed_actions, ["select_capability", "request_human_review"]);
+      assert.deepEqual(request.model_input.allowed_actions, ["select_capability", "request_human_review", "answer_directly"]);
       assert.equal(request.capabilities.length, 2);
       const searchCapability = request.capabilities.find((item) => item.target_ref === "skill:test/Search");
       assert.equal(searchCapability?.description, "Collect relevant external research data through the governed search capability.");
@@ -4118,7 +4123,8 @@ test("keeps allowed execution links informative while execution still goes throu
     graphs: [
       graph("graph:strategy:test/RunResearch", "strategy:test/RunResearch", [
         node("s1", "call_agent", { target_ref: "agent:test/Researcher" }),
-      ]),
+        node("s2", "call_agent", { target_ref: "agent:test/Researcher" }),
+      ], [edge("s1", "s2", "next")]),
     ],
   });
   const handlerCalls = [];
@@ -4180,10 +4186,15 @@ test("keeps allowed execution links informative while execution still goes throu
 
   assert.equal(result.status, "success");
   assert.equal(result.result, "tool-result");
-  assert.deepEqual(handlerCalls, ["tool:test/Search"]);
+  assert.deepEqual(handlerCalls, ["tool:test/Search", "tool:test/Search"]);
   assert.equal(eventOf(result.trace, "agent_capability_selected").payload.selected_ref, "tool:test/Search");
   assert.equal(eventOf(result.trace, "tool_binding_authorized").payload.tool_ref, "tool:test/Search");
   assert.equal(JSON.stringify(result.trace).includes("example script only"), false);
+  // Summary, capability selection and final summary all receive the context,
+  // but unchanged pack metadata is emitted only once for this agent invocation.
+  assert.equal(eventsOf(result.trace, "skill_pack_discovery_listed").length, 2);
+  assert.equal(eventsOf(result.trace, "skill_pack_activated").length, 2);
+  assert.equal(eventsOf(result.trace, "skill_pack_resource_refused").length, 2);
 });
 
 test("refuses skill pack activation when the activation budget is exceeded", async () => {
@@ -4834,6 +4845,8 @@ test("exposes continuation guidance after intermediate opaque observations", asy
       if (request.step_index === 0 && request.mode === "capabilities") {
 	        assert.deepEqual(request.model_input.decision_policy, {
 	          select_exactly_one_catalog_capability_when_execution_is_needed: true,
+	          answer_directly_only_if_goal_satisfied: true,
+	          answer_directly_must_not_replace_required_human_review: true,
 	          request_human_review_only_when_no_catalog_capability_suffices: true,
 	          request_human_review_when_goal_requires_human_judgment: true,
 	          select_by_task_need_not_usage_history: true,
@@ -5241,7 +5254,7 @@ test("resumes agent-requested human review from checkpoint without redispatching
     },
   });
 
-  assert.equal(paused.status, "stopped");
+  assert.equal(paused.status, "stopped", JSON.stringify(paused));
   assert.equal(toolCalls, 1);
   assert.ok(paused.checkpoint);
   assert.equal(paused.checkpoint.kind, "agent_human_review");
@@ -5251,7 +5264,7 @@ test("resumes agent-requested human review from checkpoint without redispatching
   assert.equal(paused.checkpoint.agent_loop_state.next_step_index, 2);
   assert.equal(paused.checkpoint.agent_loop_state.observations.length, 1);
   assert.deepEqual(paused.checkpoint.agent_loop_state.observations[0].arguments, { topic: "source-17" });
-  assert.equal(paused.checkpoint.call_frame.graph_ref, "graph:strategy:test/RunResearch");
+  assert.equal(paused.checkpoint.call_stack[0].graph_ref, "graph:strategy:test/RunResearch");
   assert.equal(eventOf(paused.trace, "human_approval_checkpoint_created").payload.external_tool_dispatches, 1);
 
   const resumedProviderCalls = [];
@@ -5281,7 +5294,7 @@ test("resumes agent-requested human review from checkpoint without redispatching
     },
   });
 
-  assert.equal(resumed.status, "success");
+  assert.equal(resumed.status, "success", JSON.stringify(resumed));
   assert.equal(resumed.result, "approved after checkpoint");
   assert.equal(toolCalls, 1);
   assert.deepEqual(resumedProviderCalls, ["summary:2"]);
@@ -5296,6 +5309,8 @@ test("resumes agent-requested human review from checkpoint without redispatching
 
 test("typed agent review checkpoints preserve caller and agent scopes independently", async () => {
   const document = typedAgentCallDocument();
+  // This scenario returns the caller request rather than the agent verdict.
+  document.definitions.strategies[0].signature.output_type = "type:test/ReviewRequest";
   document.definitions.strategies[0].signature.inputs.push(parameter("agent_request", "type:test/ReviewRequest"));
   const caller = document.execution_graphs[0];
   caller.nodes[0].arguments = ["value:agent_request"];
@@ -5311,11 +5326,11 @@ test("typed agent review checkpoints preserve caller and agent scopes independen
         : { action: "request_human_review", review_prompt: "Approve the request." };
     },
   });
-  assert.equal(paused.status, "stopped");
+  assert.equal(paused.status, "stopped", JSON.stringify(paused));
   for (const corrupt of [
-    checkpoint => { delete checkpoint.call_frame.caller_scope; },
-    checkpoint => { checkpoint.call_frame.caller_scope.input_value_keys = ["value:missing"]; },
-    checkpoint => { checkpoint.call_frame.caller_scope.value_types["value:request"] = 42; },
+    checkpoint => { delete checkpoint.call_stack[0].caller_scope; },
+    checkpoint => { checkpoint.call_stack[0].caller_scope.input_value_keys = ["value:missing"]; },
+    checkpoint => { checkpoint.call_stack[0].caller_scope.value_types["value:request"] = 42; },
   ]) {
     const invalid = structuredClone(paused.checkpoint);
     corrupt(invalid);
@@ -5336,7 +5351,7 @@ test("typed agent review checkpoints preserve caller and agent scopes independen
       ? { action: "request_capabilities", reason: "Request the second review." }
       : { action: "request_human_review", review_prompt: "Approve the final response." },
   });
-  assert.equal(paused.status, "stopped");
+  assert.equal(paused.status, "stopped", JSON.stringify(paused));
   assert.ok(paused.checkpoint, "a second pause must keep both scopes resumable");
   const resumed = await executeAirDocument(document, {
     humanApprovalResumeCheckpoint: JSON.parse(JSON.stringify(paused.checkpoint)),
@@ -5346,7 +5361,7 @@ test("typed agent review checkpoints preserve caller and agent scopes independen
       return { action: "answer_directly", result: { verdict: "approved" } };
     },
   });
-  assert.equal(resumed.status, "success");
+  assert.equal(resumed.status, "success", JSON.stringify(resumed));
   assert.deepEqual(resumed.result, { summary: "caller" });
 });
 
@@ -5381,7 +5396,7 @@ test("refuses incomplete agent human review checkpoint resume", async () => {
 
   const incompleteCheckpoint = {
     ...paused.checkpoint,
-    call_frame: undefined,
+    call_stack: undefined,
   };
   const resumed = await executeAirDocument(document, {
     humanApprovalResumeCheckpoint: incompleteCheckpoint,
@@ -5401,11 +5416,12 @@ test("refuses incomplete agent human review checkpoint resume", async () => {
   assert.equal(eventOf(resumed.trace, "run_completed").payload.status, "failure");
 });
 
-test("refuses agent human review checkpoint for nested agent invocation without call stack support", async () => {
+test("nested agent review resumes the specialist and then its coordinator without replay", async () => {
+  let toolCalls = 0;
   const result = await executeAirDocument(nestedAgentInvocationReviewAfterToolDocument(), {
     durableHumanApprovals: true,
     toolHandlers: {
-      "tool:test/Fetch": async () => "fetched",
+      "tool:test/Fetch": async () => { toolCalls++; return "fetched"; },
     },
     agentDecisionProvider: (request) => {
       if (request.agent_ref === "agent:test/Coordinator") {
@@ -5439,12 +5455,20 @@ test("refuses agent human review checkpoint for nested agent invocation without 
     },
   });
 
-  assert.equal(result.status, "failure");
-  assert.equal(eventOf(result.trace, "human_approval_pause_refused").payload.reason, "agent_review_call_frame_unavailable");
-  assert.equal(
-    eventOf(result.trace, "failure_detected").payload.runtime_error_code,
-    "HumanApprovalCheckpointUnsupported",
-  );
+  assert.equal(result.reason, "human_approval_pending");
+  assert.ok(result.checkpoint.call_stack.some(frame => frame.kind === "agent_capability"));
+  const resumed = await executeAirDocument(nestedAgentInvocationReviewAfterToolDocument(), {
+    durableHumanApprovals: true, humanApprovalResumeCheckpoint: result.checkpoint,
+    humanApprovalDecisions: { [result.checkpoint.approval_ref]: "approved" },
+    toolHandlers: { "tool:test/Fetch": () => { toolCalls++; return "must not replay"; } },
+    agentDecisionProvider: request => ({
+      action: "answer_directly",
+      result: request.agent_ref === "agent:test/Specialist" ? "reviewed" : request.observations[0].value,
+    }),
+  });
+  assert.equal(resumed.status, "success", JSON.stringify(resumed));
+  assert.equal(resumed.result, "reviewed");
+  assert.equal(toolCalls, 1);
 });
 
 test("refuses explicit human approval pause after external tool dispatch without durable resume", async () => {
@@ -5491,7 +5515,7 @@ test("resumes explicit human approval from checkpoint without redispatching prio
     toolHandlers,
   });
 
-  assert.equal(paused.status, "stopped");
+  assert.equal(paused.status, "stopped", JSON.stringify(paused));
   assert.equal(toolCalls, 1);
   assert.ok(paused.checkpoint);
   assert.equal(paused.checkpoint.checkpoint_schema_version, "touba-human-approval-checkpoint-v1");
@@ -5509,7 +5533,7 @@ test("resumes explicit human approval from checkpoint without redispatching prio
     toolHandlers,
   });
 
-  assert.equal(resumed.status, "success");
+  assert.equal(resumed.status, "success", JSON.stringify(resumed));
   assert.equal(resumed.result, "approved");
   assert.equal(toolCalls, 1);
   assert.equal(eventsOf(resumed.trace, "tool_binding_authorized").length, 0);
@@ -6003,7 +6027,7 @@ test("resumes a trigger target approval checkpoint without replaying prior effec
 
   const paused = await executeTriggerEvent(document, event, options);
 
-  assert.equal(paused.status, "stopped");
+  assert.equal(paused.status, "stopped", JSON.stringify(paused));
   assert.equal(toolCalls, 1);
   assert.equal(paused.checkpoint.entry_ref, "trigger:test/ReviewWebhook");
   assert.equal(paused.checkpoint.graph_ref, "graph:strategy:test/RunReview");
@@ -6016,7 +6040,7 @@ test("resumes a trigger target approval checkpoint without replaying prior effec
     },
   });
 
-  assert.equal(resumed.status, "success");
+  assert.equal(resumed.status, "success", JSON.stringify(resumed));
   assert.equal(resumed.result, "approved");
   assert.equal(toolCalls, 1);
   assert.equal(
@@ -6428,7 +6452,7 @@ function memoryToolDocument({ throughAgent = false, skillScope = true, agentScop
   const readSkill = {
     ...skill("ReadKnowledgeFlow", "graph:skill:test/ReadKnowledgeFlow", [
       "tool:test/ReadProjectKnowledge",
-    ]),
+    ], [], readTool.signature.output_type),
     ...(skillScope ? { memory_scopes: [memoryScope("ProjectKnowledge", "read")] } : {}),
   };
   const readGraph = graph(
@@ -6554,7 +6578,7 @@ function toolPayloadSchemaDocument() {
         },
       }),
     ],
-    skills: [skill("SearchFlow", "graph:skill:test/SearchFlow", ["tool:test/Search"], [parameter("request", "type:test/SearchRequest")])],
+    skills: [skill("SearchFlow", "graph:skill:test/SearchFlow", ["tool:test/Search"], [parameter("request", "type:test/SearchRequest")], "type:test/SearchResult")],
     graphs: [
       graph("graph:skill:test/SearchFlow", "skill:test/SearchFlow", [
         node("n1", "call_tool", {
@@ -6590,7 +6614,7 @@ function listPayloadConstraintDocument() {
         },
       }),
     ],
-    skills: [skill("BatchFlow", "graph:skill:test/BatchFlow", ["tool:test/SendBatch"], [parameter("request", "type:test/BatchRequest")])],
+    skills: [skill("BatchFlow", "graph:skill:test/BatchFlow", ["tool:test/SendBatch"], [parameter("request", "type:test/BatchRequest")], "list:builtin:Text")],
     graphs: [
       graph("graph:skill:test/BatchFlow", "skill:test/BatchFlow", [
         node("n1", "call_tool", {
@@ -7491,14 +7515,14 @@ function parameter(name, typeRef) {
   };
 }
 
-function skill(name, flowGraphRef, uses = [], inputs = []) {
+function skill(name, flowGraphRef, uses = [], inputs = [], outputType = "builtin:Text") {
   return {
     id: `skill:test/${name}`,
     name,
     description: `${name} test skill capability.`,
     signature: {
       inputs,
-      output_type: "builtin:Text",
+      output_type: outputType,
     },
     uses,
     flow_graph_ref: flowGraphRef,

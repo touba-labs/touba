@@ -14,6 +14,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { packageSdk } from "./package-sdk.mjs";
+import { toolchainBuildIdentity } from "./build-identity.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -195,6 +196,7 @@ function writeMetadata(sdk) {
     toolchain_profile: "touba-local-toolchain-v1",
     platform,
     sdk,
+    build: toolchainBuildIdentity(toolchainRoot),
     touba_version: readPackageVersion(join(implementationRoot, "cli", "touba-project", "package.json")),
     node_source: resolveNodeRuntimeSource(process.platform === "win32" ? "node.exe" : "node"),
     entrypoints: {

@@ -61,16 +61,19 @@ fn recovered_cst_diagnostic(
 }
 
 fn first_recovered_node(node: Node<'_>) -> Option<Node<'_>> {
-    if node.is_error() || node.is_missing() {
-        return Some(node);
-    }
+    // Prefer the earliest nested recovery site over a whole declaration that
+    // Tree-sitter wrapped in ERROR. Never accept the recovered tree itself.
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if let Some(recovered) = first_recovered_node(child) {
             return Some(recovered);
         }
     }
-    None
+    if node.is_error() || node.is_missing() {
+        Some(node)
+    } else {
+        None
+    }
 }
 
 fn source_ref(source_id: &str, node: Node<'_>) -> SourceRef {

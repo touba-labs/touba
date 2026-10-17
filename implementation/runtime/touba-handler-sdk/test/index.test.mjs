@@ -468,13 +468,10 @@ test("redacts unexpected handler errors", async () => {
     { requiredGrants: ["network"] },
   );
 
-  assert.deepEqual(response, {
-    ok: false,
-    error: {
-      code: "UnhandledHandlerError",
-      message: "handler failed",
-    },
-  });
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, "UnhandledHandlerError");
+  assert.match(response.error.message, /handler failed \(Error\).*exported run/);
+  assert.doesNotMatch(JSON.stringify(response), /secret-value|internal failure/);
 });
 
 test("checks defense-in-depth grants and secret handles", async () => {
@@ -711,6 +708,8 @@ test("ToubaEngine compiles a source and runs it through the Touba CLI facade", a
       },
       agentDecisionProviderTimeoutMs: 1000,
       agentDecisionProviderMaxRetries: 1,
+      agentDecisionProviderInitialMode: "capabilities",
+      agentDecisionProviderContentMode: "opaque_refs",
       maxAgentSteps: 4,
       maxProviderCalls: 3,
     });
@@ -735,6 +734,8 @@ test("ToubaEngine compiles a source and runs it through the Touba CLI facade", a
     assert.ok(calls[1].args.includes("--require-resource-bindings"));
     assert.ok(calls[1].args.includes("--agent-decisions-json"));
     assert.ok(calls[1].args.includes("--agent-decision-provider"));
+    assert.equal(calls[1].args[calls[1].args.indexOf("--agent-decision-provider-initial-mode") + 1], "capabilities");
+    assert.equal(calls[1].args[calls[1].args.indexOf("--agent-decision-provider-content-mode") + 1], "opaque_refs");
     assert.ok(calls[1].args.includes(join(workspace, "decision-provider.mjs")));
     const metadataIndex = calls[1].args.indexOf("--agent-decision-provider-metadata-json");
     assert.notEqual(metadataIndex, -1);
@@ -831,7 +832,7 @@ test("ToubaEngine redacts known secret values from command failures", async () =
 
 test("createAiSdkDecisionProvider can answer directly from orientation input", async () => {
   const calls = [];
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
     generateObject: async (request) => {
@@ -869,7 +870,7 @@ test("createAiSdkDecisionProvider can answer directly from orientation input", a
 
 test("createAiSdkDecisionProvider passes an explicit maxOutputTokens budget", async () => {
   const calls = [];
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
     maxOutputTokens: 96,
@@ -899,7 +900,7 @@ test("createOllamaDecisionProvider provides a non-OpenAI AI SDK helper without a
   delete process.env.OLLAMA_API_KEY;
   try {
     const calls = [];
-    const provider = createOllamaDecisionProvider({
+    const provider = createOllamaDecisionProvider({ history: false,
       model: "llama3.2",
       baseURL: "http://127.0.0.1:11434/v1",
       generateObject: async (request) => {
@@ -936,7 +937,7 @@ test("createOllamaDecisionProvider provides a non-OpenAI AI SDK helper without a
 
 test("createAiSdkDecisionProvider rejects invalid output budget options", () => {
   assert.throws(
-    () => createAiSdkDecisionProvider({
+    () => createAiSdkDecisionProvider({ history: false,
       model: "test-provider/test-model",
       maxOutputTokens: 0,
       generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({}) }),
@@ -964,6 +965,7 @@ test("provider helpers do not derive model configuration from domain input", asy
       const calls = [];
       const instrumentedFetch = async () => { throw new Error("fetch must not run in this local test"); };
       const options = {
+        history: false,
         apiKeyEnvNames: ["TOUBA_SDK_TEST_API_KEY"],
         headers: async (request) => ({ "x-test-agent": request.agent_ref }),
         fetch: instrumentedFetch,
@@ -990,7 +992,7 @@ test("provider helpers do not derive model configuration from domain input", asy
 });
 
 test("createAiSdkDecisionProvider rejects overly rich structured decisions", async () => {
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
     generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
@@ -1017,7 +1019,7 @@ test("createAiSdkDecisionProvider rejects overly rich structured decisions", asy
 
 test("createAiSdkDecisionProvider requests a catalog and selects a capability with signature arguments", async () => {
   const calls = [];
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: (request) => `test-provider/${request.mode}`,
     source: "test_ai_sdk",
     providerOptions: { test: { store: false } },
@@ -1074,25 +1076,25 @@ test("createAiSdkDecisionProvider requests a catalog and selects a capability wi
   assert.equal(calls[1].model, "test-provider/capabilities");
   assert.deepEqual(calls[1].providerOptions, { test: { store: false } });
   assert.equal(jsonSchemaOf(calls[1]).title, "touba_agent_capability_decision");
-  assert.deepEqual(jsonSchemaOf(calls[1]).properties.target_ref.enum, [
+  assert.deepEqual(catalogueSelectionSchema(calls[1]).properties.target_ref.enum, [
     "skill:test/Search",
     "skill:test/Answer",
     "human_review",
   ]);
-  assert.deepEqual(jsonSchemaOf(calls[1]).properties.action.enum, [
+  assert.deepEqual(catalogueSelectionSchema(calls[1]).properties.action.enum, [
     "select_capability",
     "request_human_review",
   ]);
   assert.match(calls[1].system, /declared responsibility boundary/u);
   assert.match(calls[1].system, /pass a result to another agent/u);
-  const argumentSchemas = jsonSchemaOf(calls[1]).properties.arguments.anyOf;
+  const argumentSchemas = catalogueSelectionSchema(calls[1]).properties.arguments.anyOf;
   assert.equal(argumentSchemas[0].properties.request.type, "object");
   assert.equal(argumentSchemas[0].properties.request.properties.rows.type, "integer");
   assert.deepEqual(argumentSchemas[1].properties, {});
 });
 
 test("createAiSdkDecisionProvider can request governed human review from the catalog", async () => {
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
     generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
@@ -1124,7 +1126,7 @@ test("createAiSdkDecisionProvider can request governed human review from the cat
 
 test("createAiSdkDecisionProvider can disable dynamic human review by policy", async () => {
   const calls = [];
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     allowHumanReview: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
@@ -1151,9 +1153,9 @@ test("createAiSdkDecisionProvider can disable dynamic human review by policy", a
   const decision = await provider(agentDecisionCatalogRequest());
 
   assert.equal(decision.target_ref, "skill:test/Answer");
-  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, ["select_capability"]);
+  assert.deepEqual(catalogueSelectionSchema(calls[0]).properties.action.enum, ["select_capability"]);
   assert.equal(
-    jsonSchemaOf(calls[0]).properties.target_ref.enum.includes("human_review"),
+    catalogueSelectionSchema(calls[0]).properties.target_ref.enum.includes("human_review"),
     false,
   );
   assert.match(calls[0].system, /Dynamic human review is not authorized/u);
@@ -1161,7 +1163,7 @@ test("createAiSdkDecisionProvider can disable dynamic human review by policy", a
 
 test("createAiSdkDecisionProvider permits repeated authorized capability selections", async () => {
   const calls = [];
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
     generateObject: async (request) => {
@@ -1196,7 +1198,7 @@ test("createAiSdkDecisionProvider permits repeated authorized capability selecti
   assert.equal(repeated.target_ref, "skill:test/Search");
   assert.equal(decision.arguments.request.rows, 1);
   assert.equal(repeated.arguments.request.rows, 2);
-  assert.deepEqual(jsonSchemaOf(calls[0]).properties.target_ref.enum, [
+  assert.deepEqual(catalogueSelectionSchema(calls[0]).properties.target_ref.enum, [
     "skill:test/Search",
     "skill:test/Answer",
     "human_review",
@@ -1206,7 +1208,7 @@ test("createAiSdkDecisionProvider permits repeated authorized capability selecti
 
 test("createAiSdkDecisionProvider does not infer completion from capability usage", async () => {
   const calls = [];
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     allowHumanReview: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
@@ -1238,7 +1240,7 @@ test("createAiSdkDecisionProvider does not infer completion from capability usag
 });
 
 test("createAiSdkDecisionProvider permits a catalog request after every capability was used", async () => {
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     allowHumanReview: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
@@ -1262,7 +1264,7 @@ test("createAiSdkDecisionProvider permits a catalog request after every capabili
 
 test("createAiSdkDecisionProvider supports bounded terminal completion", async () => {
   const calls = [];
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
     generateObject: async (request) => {
@@ -1292,7 +1294,7 @@ test("createAiSdkDecisionProvider supports bounded terminal completion", async (
 });
 
 test("createAiSdkDecisionProvider can declare terminal work incomplete", async () => {
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     source: "test_ai_sdk",
     generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
@@ -1330,7 +1332,7 @@ test("createAiSdkDecisionProvider keeps heterogeneous capability signatures sepa
   ];
   let choice = choices[0];
   const calls = [];
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     allowHumanReview: false,
     generateObject: async (call) => {
@@ -1343,7 +1345,7 @@ test("createAiSdkDecisionProvider keeps heterogeneous capability signatures sepa
     const decision = await provider(request);
     assert.deepEqual(decision.arguments, choice.arguments);
   }
-  const branches = jsonSchemaOf(calls[0]).properties.arguments.anyOf;
+  const branches = catalogueSelectionSchema(calls[0]).properties.arguments.anyOf;
   assert.equal(branches.length, 4);
   assert.deepEqual(branches.map((branch) => branch.required), [["value"], ["value"], ["cursor"], []]);
   assert.equal(branches[0].properties.value.type, "string");
@@ -1395,7 +1397,7 @@ test("createAiSdkDecisionProvider preserves declared result types in orientation
       else request.agent_signature = example.signature;
       let result = example.result;
       const calls = [];
-      const provider = createAiSdkDecisionProvider({
+      const provider = createAiSdkDecisionProvider({ history: false,
         model: "test-provider/test-model",
         generateObject: async (call) => {
           calls.push(call);
@@ -1414,7 +1416,7 @@ test("createAiSdkDecisionProvider preserves declared result types in orientation
 });
 
 test("createAiSdkDecisionProvider allows non-answer actions for a typed result", async () => {
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     generateObject: async (call) => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({
       action: jsonSchemaOf(call).title === "touba_agent_orientation_decision" ? "request_capabilities" : "cannot_complete",
@@ -1432,7 +1434,7 @@ test("createAiSdkDecisionProvider allows non-answer actions for a typed result",
 
 test("createAiSdkDecisionProvider refuses incomplete type descriptors before generation", async () => {
   let calls = 0;
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     generateObject: async () => { calls += 1; return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({}) }; },
   });
@@ -1451,7 +1453,7 @@ test("createAiSdkDecisionProvider never expands authority from descriptive state
     available_capability_refs: [...request.capability_refs, "tool:test/Undeclared"],
     used_capability_refs: request.capability_refs,
   };
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({
       action: "select_capability",
@@ -1460,7 +1462,7 @@ test("createAiSdkDecisionProvider never expands authority from descriptive state
     }) }),
   });
   await assert.rejects(() => provider(request), /unavailable capability/u);
-  const terminalProvider = createAiSdkDecisionProvider({
+  const terminalProvider = createAiSdkDecisionProvider({ history: false,
     model: "test-provider/test-model",
     generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: { decision: {
       action: "select_capability",
@@ -1517,6 +1519,10 @@ function agentDecisionSummaryRequest() {
 
 function jsonSchemaOf(call) {
   return call.schema.jsonSchema ?? call.schema;
+}
+
+function catalogueSelectionSchema(call) {
+  return jsonSchemaOf(call).properties.decision.anyOf.find(branch => branch.properties.action.enum.includes("select_capability"));
 }
 
 function agentDecisionCatalogRequest() {

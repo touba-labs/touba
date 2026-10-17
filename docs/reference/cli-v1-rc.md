@@ -1,8 +1,30 @@
 # Référence CLI
 
+## Sorties et diagnostics
+
+`--output json` écrit l’enveloppe complète avant de terminer, y compris via un tube ou une redirection. Le SDK consomme cette enveloppe ; une sortie JSON invalide reste une erreur, jamais un succès reconstitué depuis la trace. Les codes de sortie distinguent succès (0), échec (1), attente (3), arrêt ou rejet (4) et annulation (5).
+
+Les erreurs d’entrée indiquent les champs déclarés manquants et le type attendu. Les champs inconnus sont comptés sans exposer leur nom, qui pourrait contenir une donnée sensible. Les refus de binding donnent une indication adaptée au motif ; un manifest présent n’est pas présenté comme manquant. `touba serve` affiche son adresse dès le démarrage, sauf avec `--quiet`.
+
 Les commandes de cette page supposent que la commande `touba` est disponible dans le terminal.
 
 L’extension VS Code Touba aide à travailler dans l’éditeur, mais elle ne remplace pas la CLI pour les commandes terminal.
+
+## Arrêt des commandes et services
+
+Sur POSIX, lorsqu'elle délègue une commande comme `run`, `serve` ou
+`trigger serve`, la CLI transmet `SIGTERM`, `SIGINT` et `SIGHUP` à son
+processus enfant direct, puis attend sa fin. Pour les deux services,
+un `SIGTERM` envoyé au PID du lanceur arrête ainsi le serveur et libère son
+port. Ctrl+C reste utilisable au terminal. Le code de sortie de l'enfant est
+conservé ; s'il termine par un signal, le lanceur termine par le même signal.
+
+Un signal système n'est pas une annulation gouvernée : il ne garantit ni
+trace finale complète, ni checkpoint, ni annulation d'un effet déjà réalisé.
+Utilisez les contrôles d'exécution pour une interruption gouvernée. `SIGKILL`
+ne peut pas être relayé ; un superviseur qui force l'arrêt doit gérer tout
+le groupe ou l'arbre de processus. L'arrêt forcé Windows n'est pas un signal
+POSIX interceptable par la CLI.
 
 ## Admission des entrées et des ressources
 
@@ -42,7 +64,7 @@ Ce document n'active pas le trigger à la place du manifest hôte.
 | `touba run` | Exécute un AIR JSON |
 | `touba trigger run` | Exécute un trigger `schedule` en runner foreground borné |
 | `touba trigger serve` | Lance un service webhook pour triggers `request` |
-| `touba serve` | Lance le serveur projet authentifié pour client, Mobile et les clients de contrats |
+| `touba serve` | Lance le serveur projet authentifié pour les clients de contrats |
 | `touba deploy` | Planifie, publie, active ou restaure une révision immuable |
 | `touba inspect` | Inspecte une source, un AIR, une trace ou un manifest |
 | `touba audit` | Valide une trace et peut produire un export d’audit |
@@ -51,7 +73,7 @@ Ce document n'active pas le trigger à la place du manifest hôte.
 | `touba registry resolve` | Résout une entrée de registry statique vers un lock local sans installer ni exécuter de package |
 | `touba manifest generate` | Génère un manifest de binding à partir d’un AIR |
 | `touba handler stub` | Génère un squelette de handler pour les tools |
-| `touba version` | Affiche les versions CLI, runtime, schémas et distribution |
+| `touba version` | Affiche la version Touba et la build ; détails avec `--json` |
 | `touba update` | Explique la politique de mise à jour du canal courant |
 
 ## `touba init`
@@ -106,8 +128,7 @@ JavaScript est le langage hôte disponible aujourd’hui :
 touba init --language javascript
 ```
 
-Python est la cible naturelle pour un second SDK lorsqu’un chantier dédié sera
-ouvert. Aujourd’hui, la CLI refuse les langages hôtes qui ne sont pas encore
+Aujourd’hui, la CLI refuse les langages hôtes qui ne sont pas encore
 livrés.
 
 Pour cibler un autre dossier :
@@ -199,6 +220,11 @@ faut le relier à un `tool` Touba gouverné par AIR, manifest, grants, limites,
 lock et traces.
 
 ## `touba prepare`
+
+`--host-decisions-json '<objet>'` sélectionne explicitement grants, handles,
+effets et limites dans le manifest. `plan` montre le diff, `check` refuse
+un diff non appliqué, `write` applique les décisions idempotemment. Voir
+[le guide projet](../guides/projet-touba-prepare.md).
 
 ```sh title="Terminal"
 touba prepare --mode plan
@@ -382,6 +408,10 @@ Le runtime Touba exécute l’AIR, pas directement le fichier `.tb`.
 
 ## `touba run`
 
+Pour le diagnostic local, `--handler-diagnostics <fichier-neuf>` exige un
+run plan `dev` sur POSIX, sans profil durci ni lock obligatoire. Voir
+[le canal privé du handler](../guides/tool-binding-handler-manifest.md).
+
 ```sh title="Terminal"
 touba run program.air.json
 ```
@@ -564,7 +594,8 @@ borné.
 | `--human-decisions-json` sans checkpoint | le run démarre depuis le début avec décisions pré-fournies |
 | `human_approval` dans le graph d’entrée | écriture puis reprise locale supportées |
 | `request_human_review` demandé par un agent appelé depuis le graph d’entrée | écriture puis reprise locale supportées |
-| pile agentique imbriquée plus profonde | refus explicite au lieu d’une reprise ambiguë |
+| pile source/agent imbriquée | continuations validées, budgets conservés et reprise sans redemander les sélections achevées |
+| groupe `parallel` | attentes par occurrence de branche et suspension coordonnée ; progression persistable avec `--parallel-checkpoint-out` |
 
 Dans les événements de trace, `decision_binding` désigne le nom de binding où le
 résultat de décision est écrit. Ce n’est pas l’identifiant d’une décision
@@ -756,6 +787,8 @@ trigger WebhookRun
 
 ```json title="touba.manifest.json"
 {
+  "manifest_version": "touba-manifest-v1",
+  "bindings": {},
   "triggers": {
     "trigger:examples.webhook/WebhookRun": {
       "enabled": true,
@@ -991,23 +1024,6 @@ Pour un endpoint Ollama local standard, aucune clé n’est requise. Si l’endp
 compatible exige une clé, elle doit venir d’un secret hôte ou de l’environnement,
 pas des inputs Touba ni d’un fichier versionné.
 
-### Options historiques de compatibilité locale
-
-`touba run` conserve trois options de compatibilité pour les premiers corpus :
-
-```sh title="Terminal"
-touba run program.air.json --stubs
-touba run program.air.json --local-fetch-source-text "source locale"
-touba run program.air.json --local-apply-change-summary "résumé local"
-```
-
-Ces options sont des stubs historiques de validation locale. Elles ne constituent
-pas le chemin recommandé pour un projet, ne peuvent pas être combinées avec
-`--manifest`, et ne doivent pas être utilisées comme preuve d'un handler réel.
-Pour un usage normal, déclarer les tools dans l'AIR, générer ou écrire un
-manifest, puis exécuter avec `--manifest`, `--secrets` si nécessaire et les
-handlers projet.
-
 ## Sorties de `touba run`
 
 ### Contrat de sortie pour les intégrations
@@ -1078,12 +1094,14 @@ support explicite.
 
 ## `touba serve`
 
+Le [guide API du serveur projet](../guides/api-serveur-projet.md) décrit les routes d'interaction, l'identité de décision, le contexte d'approbation, la reprise et les providers.
+
 ```sh title="Terminal"
-export TOUBA_STUDIO_TOKEN='replace-with-a-strong-token'
+export TOUBA_PROJECT_TOKEN='replace-with-a-strong-token'
 
 touba serve \
   --project-root . \
-  --auth-token-env TOUBA_STUDIO_TOKEN
+  --auth-token-env TOUBA_PROJECT_TOKEN
 ```
 
 Le serveur projet expose les contrats versionnés du projet, les événements
@@ -1099,7 +1117,7 @@ aux grants des bindings ; client ne reçoit jamais les valeurs résolues.
 ```sh title="Terminal"
 touba serve \
   --project-root . \
-  --auth-token-env TOUBA_STUDIO_TOKEN \
+  --auth-token-env TOUBA_PROJECT_TOKEN \
   --secrets touba.secrets.prod.json
 ```
 
@@ -1108,7 +1126,7 @@ Pour relier une cible de déploiement :
 ```sh title="Terminal"
 touba serve \
   --project-root . \
-  --auth-token-env TOUBA_STUDIO_TOKEN \
+  --auth-token-env TOUBA_PROJECT_TOKEN \
   --deployment-target-url https://deploy.example.com \
   --deployment-target-token-env TOUBA_DEPLOY_TOKEN
 ```
@@ -1237,7 +1255,7 @@ runtime. Seul le manifest assemblé est une autorité d’exécution.
 touba audit --trace trace.json
 ```
 
-Valide une trace Touba et produit un rapport `trace-audit-validation-v0.1`.
+Valide une trace Touba et produit un rapport `trace-audit-validation-v1`.
 
 Avec plus de contexte :
 
@@ -1269,13 +1287,13 @@ Options :
 | --- | --- |
 | `--trace` | trace à valider, obligatoire |
 | `--air` | AIR associé, optionnel |
-| `--source` | source `.tb` associée, optionnelle |
+| `--source` | source `.tb` explicite, option répétable pour les modules importés |
 | `--manifest` | manifest runtime associé, optionnel |
 | `--audit-manifest` | manifest d’audit existant à vérifier |
 | `--retention-class` | classe de rétention déclarative |
 | `--redaction-policy` | politique de redaction attendue |
 | `--export` | fichier d’export écrit seulement si le rapport est `ok` |
-| `--report-out` | fichier de rapport `trace-audit-validation-v0.1` écrit avec le suffixe `.trace-audit-report.json` |
+| `--report-out` | fichier de rapport `trace-audit-validation-v1` écrit avec le suffixe `.trace-audit-report.json` |
 | `--output text\|json` | format du rapport |
 
 `touba audit` ne signe pas les artefacts, ne crée pas d’horodatage légal et ne
@@ -1490,9 +1508,23 @@ touba version
 touba version --json
 ```
 
-Affiche les versions de la CLI, du runtime, des schémas AIR/trace/manifest/secrets/audit, les capacités publiques déclarées par ce binaire et le canal de distribution courant.
+Affiche deux lignes : `touba <version>` et `build <identifiant court>`.
+L'identifiant correspond aux 12 premiers caractères de l'empreinte SHA-256
+du contenu assemblé de la toolchain. Deux builds de développement peuvent
+ainsi être distinguées sans créer de sous-version.
 
-`--json` est utile pour identifier précisément un binaire dans un rapport ou une session de support.
+`--json` conserve les versions de tous les composants, les schémas, les
+capacités publiques, Node, le canal de distribution et le chemin de l'archive
+SDK. `build.id` contient l'empreinte complète de l'assemblage installé. Utiliser
+ce format pour les scripts et les rapports de support ; `touba doctor` vérifie
+l'installation.
+
+Depuis le checkout source non assemblé, la build indique `source-local`.
+Une installation sans identité d'assemblage reconnue indique `unknown` :
+réassembler et réinstaller la toolchain pour obtenir cette identité.
+L'identifiant ne dépend ni du dossier d'installation ni d'une variable
+d'environnement. Il identifie le contenu au moment de l'assemblage ; ce n'est
+ni une signature ni une revérification des fichiers à chaque appel.
 
 La source courante affiche les packages Touba en `0.1.0`. Les champs de schémas
 restent versionnés séparément, par exemple `touba-air-v1` ou
@@ -1507,7 +1539,7 @@ Le champ `distribution.channel` identifie le mode d'installation :
 | `macos-local-release` | bundle macOS local, non signé et sans canal public |
 
 Si `touba version --json` affiche encore `0.0.0` ou `unknown`, l'installation
-active vient d'un ancien build. Regénérer puis réinstaller la toolchain locale
+active est ancienne ou incomplète. Regénérer puis réinstaller la toolchain locale
 ou le bundle local avant de diagnostiquer le code courant.
 
 ## `touba doctor`
@@ -1545,3 +1577,21 @@ renvoie le même contrat sous forme machine-readable.
 La V1 utilise une réinstallation explicite depuis une archive plus récente ou
 depuis le canal de package manager qui a installé Touba. L’update automatique
 reste une couche de distribution ultérieure.
+
+## Exécutions parallèles
+
+`touba run` accepte `--parallel-checkpoint-out <path>`,
+`--parallel-resume-checkpoint <path>` et `--parallel-limits-json <object>`.
+Le checkpoint est privé, écrit atomiquement avec permissions 0600 avant
+dispatch, après résultat et avant jointure. Pour une validation en attente,
+utiliser `--human-decisions-json` avec son `approval_ref` exact, propre à
+l'occurrence ; une décision ne libère pas une autre branche.
+
+Les plafonds hôte sont `maxBranches` (1024), `maxExternalCalls` (16),
+`maxDepth` (64), `maxConcurrency` et `maxItems` (1024 chacun),
+`maxJournalEntries` (100000), `maxCheckpointBytes` (16777216).
+L'hôte peut resserrer les bornes source ; une reprise n'élargit pas les anciens
+plafonds. Garder le journal d'effets avec le checkpoint lorsqu'un tool écrit.
+Une issue externe inconnue sans preuve de journal est refusée, pas rejouée.
+Ce mécanisme sauvegarde le groupe avant sa jointure, pas arbitrairement tout
+le workflow après celle-ci. Voir le [tutoriel](../tutoriels/orchestration-multi-agent-sequentielle.md).

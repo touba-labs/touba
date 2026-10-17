@@ -10,6 +10,7 @@ pub struct Inputs {
     pub module_only: bool,
     pub entry: String,
     pub sources: Vec<(String, String)>,
+    pub source_root: PathBuf,
 }
 
 // Resolve source modules, never runtime handlers, configuration or secrets.
@@ -60,6 +61,13 @@ pub fn load(args: impl Iterator<Item = String>) -> Result<Inputs, String> {
     } else {
         read(&entry)?
     };
+    let mut source_root = entry
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|name| name == "src"))
+        .and_then(Path::parent)
+        .or_else(|| entry.parent())
+        .ok_or("source has no parent directory")?
+        .to_path_buf();
     let entry = entry.to_string_lossy().into_owned();
     let mut sources = vec![(entry.clone(), text)];
     let mut seen_paths = HashSet::from([entry.clone()]);
@@ -107,11 +115,21 @@ pub fn load(args: impl Iterator<Item = String>) -> Result<Inputs, String> {
         }
         index += 1;
     }
+    // One common source root keeps imports unambiguous and paths portable.
+    // Only explicitly loaded source modules participate, never host configs.
+    for (id, _) in &sources {
+        while !Path::new(id).starts_with(&source_root) {
+            if !source_root.pop() {
+                return Err("source files must share a filesystem root".into());
+            }
+        }
+    }
     Ok(Inputs {
         json,
         module_only,
         entry,
         sources,
+        source_root,
     })
 }
 

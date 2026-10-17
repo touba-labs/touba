@@ -50,8 +50,8 @@ export function buildEffectiveProjectDocument(options) {
       resolve(root, airRoot, ...document.module.name.split(".")) + ".air.json",
       document,
     )),
-    ...(toolBindings.length > 0
-      ? [derivedInput(root, "manifest", manifestPath, expectedManifest)]
+    ...(toolBindings.length > 0 || Object.keys(expectedManifest.triggers ?? {}).length > 0
+      ? [manifestInput(root, manifestPath, expectedManifest)]
       : []),
     ...(expectedRunPlan && runPlanPath
       ? [derivedInput(root, "run_plan", runPlanPath, expectedRunPlan)]
@@ -257,6 +257,19 @@ function derivedInput(root, kind, path, document) {
     digest_sha256: digestBytes(Buffer.from(`${JSON.stringify(document, null, 2)}\n`, "utf8")),
     provenance: "derived",
   };
+}
+
+function manifestInput(root, path, expected) {
+  const input = derivedInput(root, "manifest", path, expected);
+  // Preparation preserves an unchanged user manifest, including its layout.
+  // Pin those actual bytes, not a serialization that was never written.
+  if (existsSync(path)) {
+    const bytes = readFileSync(path);
+    if (JSON.stringify(JSON.parse(bytes.toString("utf8"))) === JSON.stringify(expected)) {
+      input.digest_sha256 = digestBytes(bytes);
+    }
+  }
+  return input;
 }
 
 function digestBytes(bytes) {

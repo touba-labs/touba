@@ -65,7 +65,9 @@ function locateDependency(parent, name) {
   }
 }
 
-function copyDependency(source, destination, inventory, ancestors = new Set()) {
+// Preserve each installed dependency's own resolution tree. Flattening by name
+// silently substitutes versions when two providers pin different releases.
+export function copyDependency(source, destination, inventory, ancestors = new Set()) {
   if (ancestors.has(source)) throw new Error("SDK dependency cycle requires an explicit packaging layout");
   const manifest = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
   inventory.set(`${manifest.name}@${manifest.version}`, { name: manifest.name, version: manifest.version, license: manifest.license ?? null });

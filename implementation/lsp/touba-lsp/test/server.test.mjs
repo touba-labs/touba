@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SymbolKind } from "vscode-languageserver/node.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   completionForPosition,
@@ -9,9 +10,65 @@ import {
   findHoverCall,
   hoverForPosition,
   renderHoverCall,
+  runToubaCompileJson,
   toLspDiagnostic,
   tryParseCompilerEnvelopeFromExecError,
 } from "../src/server.mjs";
+
+test("editor consumes the native parallel node and completes its bounded source clauses", () => {
+  const source = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/parallel-v1/positive/diagnostics.tb", import.meta.url));
+  const compiled = runToubaCompileJson(source);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled.diagnostics));
+  const node = compiled.air.execution_graphs[0].nodes.find(node => node.kind === "parallel_call");
+  const position = { line: node.source_ref.start_line, character: node.source_ref.start_column + 10 };
+  assert.ok(definitionForPosition(compiled.air, pathToFileURL(source).href, position));
+  const completions = completionForPosition(compiled.air, "", { line: 0, character: 0 }).map(item => item.label);
+  for (const keyword of ["parallel", "each", "max_concurrency", "max_items"]) assert.ok(completions.includes(keyword));
+});
+
+test("editor exposes compiled enum members, nominal hover and exact member definitions", () => {
+  const source = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/enum-business.tb", import.meta.url));
+  const compiled = runToubaCompileJson(source);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled.diagnostics));
+  const uri = pathToFileURL(source).href;
+  const symbols = extractSymbols(compiled.air, uri);
+  assert.ok(symbols.some(symbol => symbol.name === "Priority" && symbol.kind === SymbolKind.Enum));
+  assert.ok(symbols.some(symbol => symbol.name === "high" && symbol.kind === SymbolKind.EnumMember));
+  const expression = compiled.air.execution_graphs.flatMap(graph => graph.expressions ?? []).find(expression => expression.kind === "enum_value");
+  const position = { line: expression.source_ref.start_line, character: expression.source_ref.start_column };
+  assert.match(hoverForPosition(compiled.air, position), /Priority.high/);
+  const definition = definitionForPosition(compiled.air, uri, position);
+  assert.equal(definition.range.start.line, compiled.air.definitions.types[0].variants[2].source_ref.start_line);
+  const prefix = "        give Priority.h";
+  assert.deepEqual(completionForPosition(compiled.air, prefix, { line: 0, character: prefix.length }).map(item => item.label), ["high"]);
+});
+
+test("editor consumes optional signatures and guarded branches from the actual compiler", () => {
+  const source = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/optional-business.tb", import.meta.url));
+  const compiled = runToubaCompileJson(source);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled.diagnostics));
+  const declaration = compiled.air.definitions.functions.find(value => value.name === "Label");
+  assert.match(hoverForPosition(compiled.air, { line: declaration.source_ref.start_line, character: declaration.source_ref.start_column }), /optional:type:contacts\/Contact/);
+  const completions = completionForPosition(compiled.air, "", { line: 0, character: 0 }).map(value => value.label);
+  for (const keyword of ["Optional", "present", "some", "none"]) assert.ok(completions.includes(keyword));
+});
+
+test("editor consumes actual nested-control AIR and resolves inner tool calls", () => {
+  const source = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/control-flow-v1/positive/nested-controls.tb", import.meta.url));
+  const compiled = runToubaCompileJson(source);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled.diagnostics));
+  const uri = pathToFileURL(source).href;
+  const symbols = extractSymbols(compiled.air, uri);
+  assert.ok(symbols.some(symbol => symbol.name === "Classify"));
+  const graph = compiled.air.execution_graphs.find(g => g.owner_ref === "skill:control.nested/Visit");
+  for (const node of graph.nodes.filter(node => node.kind === "call_tool")) {
+    const position = { line: node.source_ref.start_line, character: node.source_ref.start_column };
+    assert.match(hoverForPosition(compiled.air, position), /tool:control\.nested\/Write/);
+    assert.ok(definitionForPosition(compiled.air, uri, position));
+  }
+  const labels = completionForPosition(compiled.air, "        else ", { line: 0, character: 13 }).map(item => item.label);
+  for (const keyword of ["if", "else", "for", "while"]) assert.ok(labels.includes(keyword));
+});
 
 test("parses compiler JSON diagnostics from a non-zero exec error stdout", () => {
   const error = new Error("compiler exited with status 1");

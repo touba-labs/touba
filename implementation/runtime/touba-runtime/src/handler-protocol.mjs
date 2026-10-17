@@ -1,6 +1,9 @@
 // @ts-check
 
 import { spawn as spawnProcess } from "node:child_process";
+import { resolve as resolvePath } from "node:path";
+import { realpathSync } from "node:fs";
+import { validatedHandlerDiagnostic } from "./handler-diagnostics.mjs";
 import {
   validateEffectReceipt,
 } from "./effect-contract.mjs";
@@ -52,6 +55,8 @@ const EFFECT_ID_PATTERN = /^effect:sha256:[0-9a-f]{64}$/u;
  * @property {Record<string, string | undefined>=} env
  * @property {(() => void | Promise<void>)=} beforeDispatch
  * @property {(() => void | Promise<void>)=} beforeSpawn
+ * @property {ReturnType<import('./handler-diagnostics.mjs').openLocalHandlerDiagnostics>=} localHandlerDiagnostics
+ * @property {string=} runId
  */
 
 /**
@@ -86,10 +91,23 @@ export async function runProcessToolHandler(input) {
     await input.beforeSpawn();
   }
   const childEnv = preparedChildEnv ?? buildHandlerEnv(secretHandles, secretStore);
+  const diagnostics = input.localHandlerDiagnostics;
+  /** @param {string} arg */
+  const diagnosticSourcePath = arg => {
+    const path = resolvePath(binding.handler.cwd ?? process.cwd(), arg);
+    try { return realpathSync(path); } catch { return path; }
+  };
+  const diagnosticSources = diagnostics ? binding.handler.args.flatMap((arg, index) =>
+    /\.(?:mjs|cjs|js)$/u.test(arg) && !arg.startsWith("-")
+      ? [{ index, path: diagnosticSourcePath(arg) }] : []).slice(0, 8) : [];
+  if (diagnostics) {
+    childEnv.TOUBA_LOCAL_DIAGNOSTIC_FD = "3";
+    childEnv.TOUBA_LOCAL_DIAGNOSTIC_SOURCES = JSON.stringify(diagnosticSources);
+  }
   const child = spawnProcess(sandboxPlan.command, sandboxPlan.args, {
     cwd: binding.handler.cwd,
     env: childEnv,
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: diagnostics ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
     shell: false,
     windowsHide: true,
   });
@@ -102,6 +120,23 @@ export async function runProcessToolHandler(input) {
     const stdoutChunks = [];
     /** @type {Buffer[]} */
     const stderrChunks = [];
+    let diagnosticSize = 0;
+    /** @type {Buffer[]} */
+    const diagnosticChunks = [];
+    if (diagnostics) child.stdio[3]?.on("data", chunk => {
+      diagnosticSize += chunk.length;
+      if (diagnosticSize <= 4096) diagnosticChunks.push(chunk);
+      else diagnostics.markIncomplete();
+    });
+    /** @param {string} reason */
+    const recordDiagnostic = reason => {
+      if (!diagnostics) return;
+      const detail = diagnosticSize > 0 && diagnosticSize <= 4096
+        ? validatedHandlerDiagnostic(Buffer.concat(diagnosticChunks).toString("utf8"), diagnosticSources) : null;
+      if (diagnosticSize > 0 && detail === null) diagnostics.markIncomplete();
+      diagnostics.record({ run_id: input.runId ?? null, call_id: request.call_id ?? null,
+        tool_ref: toolRef, reason, ...(detail ?? {}) });
+    };
 
     const timer = setTimeout(() => {
       failAndKill(
@@ -122,6 +157,7 @@ export async function runProcessToolHandler(input) {
       }
       settled = true;
       clearTimeout(timer);
+      recordDiagnostic("completed");
       resolve(value);
     };
 
@@ -134,6 +170,7 @@ export async function runProcessToolHandler(input) {
       }
       settled = true;
       clearTimeout(timer);
+      recordDiagnostic(error instanceof RuntimeFailure ? error.code : "ToolHandlerFailure");
       reject(error);
     };
 
@@ -209,15 +246,13 @@ export async function runProcessToolHandler(input) {
           ));
           return;
         }
-        const suffix = stderr.trim() ? `: ${stderr.trim()}` : "";
         finishReject(
           new RuntimeFailure(
-            `tool handler exited non-zero ${toolRef} (${code ?? signal})${suffix}`,
+            `tool handler exited non-zero ${toolRef} (${code ?? signal}); inspect the handler with a local development test`,
             {
               toolRef,
               exitCode: code,
               signal,
-              cause: stderr.trim() || undefined,
             },
             "ToolHandlerNonZeroExit",
           ),

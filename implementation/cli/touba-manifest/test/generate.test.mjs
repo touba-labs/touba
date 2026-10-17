@@ -228,6 +228,8 @@ test("generates a SDK handler contract test from an AIR tool", () => {
   assert.match(contract, /handleToolRequest/);
   assert.match(contract, /TOUBA_HANDLER_SDK/);
   assert.match(contract, /without granting runtime authority/);
+  assert.match(contract, /test\.todo\("business behavior:/);
+  assert.match(contract, /admission tests alone do not cover it/);
   assert.match(contract, /from "\.\/search_datasets\.handler\.mjs"/);
   assert.match(contract, /InvalidToolRef/);
   assert.match(contract, /MissingGrant/);

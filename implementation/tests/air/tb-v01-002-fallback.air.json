@@ -6,7 +6,7 @@
     "id": "module:examples.fallback",
     "name": "examples.fallback",
     "source_ref": {
-      "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+      "source_id": "tb-v01-002-fallback.tb",
       "start_byte": 0,
       "end_byte": 24,
       "start_line": 0,
@@ -25,7 +25,7 @@
             "name": "topic",
             "type_ref": "builtin:Text",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+              "source_id": "tb-v01-002-fallback.tb",
               "start_byte": 49,
               "end_byte": 62,
               "start_line": 3,
@@ -36,7 +36,7 @@
           }
         ],
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 26,
           "end_byte": 64,
           "start_line": 2,
@@ -53,7 +53,7 @@
             "name": "content",
             "type_ref": "builtin:Text",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+              "source_id": "tb-v01-002-fallback.tb",
               "start_byte": 84,
               "end_byte": 99,
               "start_line": 6,
@@ -64,7 +64,7 @@
           }
         ],
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 64,
           "end_byte": 101,
           "start_line": 5,
@@ -85,7 +85,7 @@
               "name": "request",
               "type_ref": "type:examples.fallback/SourceRequest",
               "source_ref": {
-                "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+                "source_id": "tb-v01-002-fallback.tb",
                 "start_byte": 135,
                 "end_byte": 159,
                 "start_line": 9,
@@ -98,7 +98,7 @@
           "output_type": "type:examples.fallback/SourceText"
         },
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 101,
           "end_byte": 182,
           "start_line": 8,
@@ -118,7 +118,7 @@
               "name": "request",
               "type_ref": "type:examples.fallback/SourceRequest",
               "source_ref": {
-                "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+                "source_id": "tb-v01-002-fallback.tb",
                 "start_byte": 218,
                 "end_byte": 242,
                 "start_line": 13,
@@ -133,7 +133,7 @@
         "uses": [],
         "flow_graph_ref": "graph:skill:examples.fallback/BuildFallbackSource",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 182,
           "end_byte": 285,
           "start_line": 12,
@@ -151,7 +151,7 @@
               "name": "request",
               "type_ref": "type:examples.fallback/SourceRequest",
               "source_ref": {
-                "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+                "source_id": "tb-v01-002-fallback.tb",
                 "start_byte": 313,
                 "end_byte": 337,
                 "start_line": 19,
@@ -171,7 +171,7 @@
           {
             "target_ref": "tool:examples.fallback/FetchPrimarySource",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+              "source_id": "tb-v01-002-fallback.tb",
               "start_byte": 363,
               "end_byte": 386,
               "start_line": 21,
@@ -183,7 +183,7 @@
           {
             "target_ref": "skill:examples.fallback/BuildFallbackSource",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+              "source_id": "tb-v01-002-fallback.tb",
               "start_byte": 391,
               "end_byte": 415,
               "start_line": 22,
@@ -198,7 +198,7 @@
           "failure:graph:skill:examples.fallback/BuildSource:1"
         ],
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 285,
           "end_byte": 591,
           "start_line": 18,
@@ -219,7 +219,7 @@
               "name": "request",
               "type_ref": "type:examples.fallback/SourceRequest",
               "source_ref": {
-                "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+                "source_id": "tb-v01-002-fallback.tb",
                 "start_byte": 618,
                 "end_byte": 642,
                 "start_line": 32,
@@ -238,7 +238,7 @@
           {
             "target_ref": "skill:examples.fallback/BuildSource",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+              "source_id": "tb-v01-002-fallback.tb",
               "start_byte": 777,
               "end_byte": 793,
               "start_line": 35,
@@ -253,7 +253,7 @@
             "caller_ref": "strategy:examples.fallback/RunSourceLookup",
             "caller_kind": "strategy",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+              "source_id": "tb-v01-002-fallback.tb",
               "start_byte": 798,
               "end_byte": 834,
               "start_line": 36,
@@ -264,7 +264,7 @@
           }
         ],
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 591,
           "end_byte": 836,
           "start_line": 31,
@@ -285,7 +285,7 @@
           {
             "target_ref": "agent:examples.fallback/Researcher",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+              "source_id": "tb-v01-002-fallback.tb",
               "start_byte": 921,
               "end_byte": 936,
               "start_line": 41,
@@ -302,7 +302,7 @@
               "name": "request",
               "type_ref": "type:examples.fallback/SourceRequest",
               "source_ref": {
-                "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+                "source_id": "tb-v01-002-fallback.tb",
                 "start_byte": 871,
                 "end_byte": 895,
                 "start_line": 39,
@@ -315,7 +315,7 @@
           "output_type": "type:examples.fallback/SourceText"
         },
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 836,
           "end_byte": 1043,
           "start_line": 38,
@@ -339,7 +339,7 @@
             "trace:graph:skill:examples.fallback/BuildFallbackSource:3"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 279,
             "end_byte": 283,
             "start_line": 16,
@@ -351,7 +351,7 @@
       ],
       "edges": [],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 268,
         "end_byte": 285,
         "start_line": 15,
@@ -378,7 +378,7 @@
             "trace:graph:skill:examples.fallback/BuildSource:5"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 431,
             "end_byte": 518,
             "start_line": 24,
@@ -397,7 +397,7 @@
             "trace:graph:skill:examples.fallback/BuildSource:4"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 518,
             "end_byte": 529,
             "start_line": 27,
@@ -414,7 +414,7 @@
             "trace:graph:skill:examples.fallback/BuildSource:6"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 561,
             "end_byte": 589,
             "start_line": 29,
@@ -430,7 +430,7 @@
           "to_node_id": "node:graph:skill:examples.fallback/BuildSource:2",
           "role": "next",
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 518,
             "end_byte": 529,
             "start_line": 27,
@@ -444,7 +444,7 @@
           "to_node_id": "node:graph:skill:examples.fallback/BuildSource:3",
           "role": "failure",
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 561,
             "end_byte": 589,
             "start_line": 29,
@@ -458,7 +458,7 @@
           "to_node_id": "node:graph:skill:examples.fallback/BuildSource:3",
           "role": "fallback",
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 561,
             "end_byte": 589,
             "start_line": 29,
@@ -477,7 +477,7 @@
           "failure_family": "handler",
           "target_node_id": "node:graph:skill:examples.fallback/BuildSource:3",
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 561,
             "end_byte": 589,
             "start_line": 29,
@@ -491,7 +491,7 @@
         "failure:graph:skill:examples.fallback/BuildSource:1"
       ],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 420,
         "end_byte": 534,
         "start_line": 23,
@@ -517,7 +517,7 @@
             "trace:graph:strategy:examples.fallback/RunSourceLookup:3"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 952,
             "end_byte": 1031,
             "start_line": 43,
@@ -536,7 +536,7 @@
             "trace:graph:strategy:examples.fallback/RunSourceLookup:4"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 1031,
             "end_byte": 1042,
             "start_line": 46,
@@ -552,7 +552,7 @@
           "to_node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:2",
           "role": "next",
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+            "source_id": "tb-v01-002-fallback.tb",
             "start_byte": 1031,
             "end_byte": 1042,
             "start_line": 46,
@@ -563,7 +563,7 @@
         }
       ],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 941,
         "end_byte": 1043,
         "start_line": 42,
@@ -590,7 +590,7 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:skill:examples.fallback/BuildFallbackSource:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 279,
         "end_byte": 283,
         "start_line": 16,
@@ -615,7 +615,7 @@
       "anchor_kind": "call",
       "node_id": "node:graph:skill:examples.fallback/BuildSource:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 431,
         "end_byte": 518,
         "start_line": 24,
@@ -630,7 +630,7 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:skill:examples.fallback/BuildSource:2",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 518,
         "end_byte": 529,
         "start_line": 27,
@@ -645,7 +645,7 @@
       "anchor_kind": "failure",
       "node_id": "node:graph:skill:examples.fallback/BuildSource:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 561,
         "end_byte": 589,
         "start_line": 29,
@@ -660,7 +660,7 @@
       "anchor_kind": "fallback",
       "node_id": "node:graph:skill:examples.fallback/BuildSource:3",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 561,
         "end_byte": 589,
         "start_line": 29,
@@ -685,7 +685,7 @@
       "anchor_kind": "call",
       "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 952,
         "end_byte": 1031,
         "start_line": 43,
@@ -700,7 +700,7 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:2",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+        "source_id": "tb-v01-002-fallback.tb",
         "start_byte": 1031,
         "end_byte": 1042,
         "start_line": 46,

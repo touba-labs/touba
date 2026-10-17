@@ -92,7 +92,7 @@ function functionAir() {
 
 test("function purity admits pure graphs and rejects every effectful node kind", () => {
   assert.ok(validateAirMachineContract(functionAir()));
-  for (const kind of ["call_tool", "call_skill", "call_agent", "human_approval", "user_interaction", "fallback"]) {
+  for (const kind of ["call_tool", "call_skill", "call_strategy", "call_agent", "human_approval", "user_interaction", "fallback"]) {
     const air = functionAir();
     // An unreachable effect is also forbidden.
     air.execution_graphs[0].nodes.push({ id: "unreachable", kind });

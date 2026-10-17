@@ -16,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { validateHumanCheckpointBudgetState, validateHumanCheckpointContinuation } from "../../../runtime/touba-runtime/src/human-approval-checkpoints.mjs";
 
 import {
   PRODUCT_SURFACE_CONTRACTS,
@@ -26,6 +27,11 @@ import {
   unavailableAirInputContract,
 } from "../../../contracts/product-surfaces/input-contracts.mjs";
 import { buildInteractionContract } from "../../../contracts/product-surfaces/interaction-contracts.mjs";
+import { readPreparedProject } from "./prepared-project.mjs";
+import { validatedRecords } from "./validated-records.mjs";
+import { indexedStore } from "./indexed-store.mjs";
+import { loadHumanDecisionStore, saveHumanDecisionStore, readHumanRequestStore, saveHumanRequestStore } from "./human-stores.mjs";
+import { withNativeTrace, readNativeTraceExport } from "./native-traces.mjs";
 import {
   buildElementAuthoringChangeSet,
   ELEMENT_AUTHORING_SCHEMA_VERSION,
@@ -41,7 +47,7 @@ import {
   tracePrefixDigest,
   validateExecutionCheckpoint,
 } from "@touba/runtime";
-import { createFileEffectJournal, loadEffectJournal } from "@touba/runtime/file-effect-journal";
+import { createIndexedEffectJournal, loadIndexedEffectJournal } from "./indexed-effect-journal.mjs";
 import {
   buildDeploymentBundle,
   deploymentReadinessChecks,
@@ -50,6 +56,7 @@ import {
 } from "@touba/deployment";
 import {
   archiveInteractionSession,
+  auditInteractionAssets,
   completeInteractionOperation,
   createInteractionSession,
   enqueueInteractionOperation,
@@ -67,7 +74,9 @@ import {
   listInteractionSessions,
   MAX_INTERACTION_ASSET_BYTES,
   readInteractionAsset,
-  recordInteractionOperationProgress,
+  readInteractionSessions,
+  bufferedInteractionProgress,
+  boundedResultText,
   recoverInterruptedInteractionOperations,
   requestInteractionOperationCancel,
   resumeInterruptedInteractionOperation,
@@ -78,15 +87,15 @@ import {
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8791;
-const DEFAULT_HUMAN_DECISIONS_PATH = ".touba/human-decisions.json";
+const DEFAULT_HUMAN_DECISIONS_PATH = ".touba/human-decisions.sqlite";
 const DEFAULT_CHANGE_PROPOSALS_PATH = ".touba/project-change-proposals.json";
 const DEFAULT_EVENT_JOURNAL_PATH = ".touba/project-events.jsonl";
 const DEFAULT_RUN_SUMMARY_PATH = ".touba/current-run-summary.json";
 const DEFAULT_TRACE_TIMELINE_PATH = ".touba/current-trace-timeline.json";
 const DEFAULT_TRIGGER_STATUS_PATH = ".touba/trigger-status.json";
-const DEFAULT_HUMAN_REQUESTS_PATH = ".touba/human-requests.json";
-const DEFAULT_SANDBOX_CHECKPOINTS_PATH = ".touba/sandbox-checkpoints.json";
-const DEFAULT_EFFECT_JOURNAL_PATH = ".touba/project.effect-journal.json";
+const DEFAULT_HUMAN_REQUESTS_PATH = ".touba/human-requests.sqlite";
+const DEFAULT_SANDBOX_CHECKPOINTS_PATH = ".touba/sandbox-checkpoints.sqlite";
+const DEFAULT_EFFECT_JOURNAL_PATH = ".touba/project.effect-journal.sqlite";
 const DEFAULT_PRODUCT_IDENTITY_PATH = ".touba/product-identity.json";
 const DEFAULT_COST_OBSERVATORY_PATH = ".touba/cost-observatory.json";
 const DEFAULT_HANDLER_SANDBOX_STATUS_PATH = ".touba/handler-sandbox-status.json";
@@ -94,8 +103,8 @@ const DEFAULT_MOBILE_NOTIFICATIONS_PATH = ".touba/mobile-notifications.json";
 const DEFAULT_MOBILE_PAIRINGS_PATH = ".touba/mobile-pairings.json";
 const DEFAULT_MOBILE_QUICK_APPROVAL_POLICY_PATH = ".touba/mobile-quick-approval-policy.json";
 const DEFAULT_MOBILE_ESCALATION_PATH = ".touba/mobile-escalation.json";
-const DEFAULT_INTERACTION_SESSIONS_PATH = ".touba/interaction-sessions.json";
-const DEFAULT_INTERACTION_ASSETS_PATH = ".touba/interaction-assets.json";
+const DEFAULT_INTERACTION_SESSIONS_PATH = ".touba/interaction-sessions.sqlite";
+const DEFAULT_INTERACTION_ASSETS_PATH = ".touba/interaction-assets.sqlite";
 const DEFAULT_INTERACTION_ASSETS_DIRECTORY = ".touba/interaction-assets";
 const DEFAULT_DEV_SECRETS_PROFILE_PATH = "touba.secrets.dev.json";
 const DEFAULT_EVENT_JOURNAL_LIMIT = 200;
@@ -108,8 +117,6 @@ const MAX_PROJECT_SCAN_DEPTH = 6;
 const CONTRACT_INDEX_SCHEMA_VERSION = "touba-project-server-contract-index-v1";
 const LIVE_STATE_SCHEMA_VERSION = "touba-project-live-state-v1";
 const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v1";
-const HUMAN_DECISION_STORE_SCHEMA_VERSION = "touba-human-decisions-v1";
-const HUMAN_REQUEST_STORE_SCHEMA_VERSION = "touba-human-requests-v1";
 const SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION = "touba-sandbox-checkpoints-v1";
 const HUMAN_WAIT_SCHEMA_VERSION = "touba-human-wait-v1";
 const HUMAN_WAIT_TTL_MS = 86_400_000;
@@ -218,6 +225,17 @@ const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
   "/reviews/pending/current": "touba-human-review-request-v1",
 });
 
+const validateCurrentCheckpointRecord = validatedRecords(validateSandboxCheckpointRecord);
+export const CHECKPOINT_INDEXES = Object.freeze({
+  kind: "json_extract(body, '$.record_kind')",
+  request_id: "json_extract(body, '$.request_id')",
+  operation_id: "json_extract(body, '$.operation_id')",
+  run_id: "json_extract(body, '$.run_id')",
+  status: "json_extract(body, '$.status')",
+  active_human: "CASE WHEN json_extract(body, '$.record_kind') = 'human' AND json_extract(body, '$.status') IN ('pending', 'resolution_claimed') THEN 1 ELSE 0 END",
+  needs_projection: "CASE WHEN json_extract(body, '$.record_kind') = 'human' AND json_extract(body, '$.status') IN ('completed', 'superseded') AND json_extract(body, '$.human_wait.projections.terminal_event') IS NULL THEN 1 ELSE 0 END",
+});
+
 if (isMainModule()) {
   try {
     const options = parseArgs(process.argv.slice(2));
@@ -232,6 +250,9 @@ if (isMainModule()) {
     await service.start();
   } catch (error) {
     process.stderr.write(`touba serve error [${error.code ?? "ToubaServeError"}]: ${error.message}\n`);
+    for (const diagnostic of error.diagnostics ?? []) {
+      process.stderr.write(`  [${diagnostic.code}]: ${diagnostic.message}\n`);
+    }
     process.exit(1);
   }
 }
@@ -399,6 +420,12 @@ export function createToubaProjectServer(options = {}) {
   if (!isLoopbackHost(host) && authToken === undefined) {
     throw serviceError("ToubaServeAuthRequired", "non-loopback Touba project server hosts require --auth-token-env");
   }
+  for (const path of [sandboxCheckpointsPath, humanRequestsPath, humanDecisionsPath, effectJournalPath, interactionSessionsPath, interactionAssetsPath]) {
+    if (path.endsWith(".sqlite") && existsSync(path.slice(0, -7) + ".json")) {
+      throw serviceError("ToubaServeStoredStateIncompatible",
+        "previous-build state exists beside the configured indexed store; preserve it and finish or archive it with its original build before starting this build");
+    }
+  }
   preflightServeOptions({
     contractsRoot,
     projectRoot,
@@ -423,6 +450,9 @@ export function createToubaProjectServer(options = {}) {
   // Stored waits must already satisfy the canonical contract; never rewrite
   // historical records or invent missing correlation/trace evidence.
   loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  readHumanRequestStore(humanRequestsPath);
+  loadHumanDecisionStore(humanDecisionsPath);
+  auditInteractionAssets(interactionAssetsPath);
   validateHumanWaitInteractionProjectionMarkers({
     interactionSessionsPath,
     sandboxCheckpointsPath,
@@ -430,7 +460,7 @@ export function createToubaProjectServer(options = {}) {
   eventSequence = latestProjectEventSequence(readProjectEventJournal(eventJournalPath));
   const recoverInterruptedInteractions = () => {
     const recovered = recoverInterruptedInteractionOperations({ sessionsPath: interactionSessionsPath });
-    const checkpointStore = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+    const checkpointStore = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "human", status: ["pending", "resolution_claimed"] }]);
     for (const operation of recovered) {
       if (operation.status === "cancelled") {
         cancelSandboxExecutionRecord({
@@ -472,7 +502,7 @@ export function createToubaProjectServer(options = {}) {
     sandboxCheckpointsPath,
     traceTimelinePath,
   });
-  let interactionRecoveryDeferred = loadSandboxCheckpointStore(sandboxCheckpointsPath).records
+  let interactionRecoveryDeferred = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "human", status: "resolution_claimed" }]).records
     .some((record) => (
       record.record_kind === "human"
       && record.status === "resolution_claimed"
@@ -487,7 +517,7 @@ export function createToubaProjectServer(options = {}) {
   });
 
   const reserveHumanWaitCapacity = ({ runId = null } = {}) => {
-    const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+    const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1 }]);
     const activeRecords = activeHumanWaitRecords(store);
     const normalizedRunId = nonEmptyString(runId) ?? null;
     if (
@@ -664,6 +694,7 @@ export function createToubaProjectServer(options = {}) {
       sandboxCheckpointsPath,
     });
     validateHumanWaitInteractionProjectionMarkers({
+      filter: initialRecovery ? undefined : [{ active_human: 1 }, { needs_projection: 1 }],
       interactionSessionsPath,
       sandboxCheckpointsPath,
     });
@@ -678,7 +709,7 @@ export function createToubaProjectServer(options = {}) {
       interactionSessionsPath,
       sandboxCheckpointsPath,
     });
-    let store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+    let store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1 }]);
     const claimed = store.records
       .filter((record) => automaticHumanWaitClaimIsEligible({
         initialRecovery,
@@ -697,7 +728,7 @@ export function createToubaProjectServer(options = {}) {
       }
     }
 
-    store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+    store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1 }]);
     const selectionNowMs = humanWaitRuntime.nowMs();
     const due = activeHumanWaitRecords(store)
       .filter((record) => (
@@ -733,7 +764,7 @@ export function createToubaProjectServer(options = {}) {
       }
     }
 
-    store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+    store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ needs_projection: 1 }]);
     const completed = store.records
       .filter((record) => (
         (
@@ -746,10 +777,7 @@ export function createToubaProjectServer(options = {}) {
             && isPlainObject(record.result)
           )
         )
-        && (
-          initialRecovery
-          || record.human_wait.projections?.terminal_event === null
-        )
+        && record.human_wait.projections?.terminal_event === null
       ))
       .sort((left, right) => (
         right.human_wait.resolution.completed_at.localeCompare(left.human_wait.resolution.completed_at)
@@ -784,7 +812,7 @@ export function createToubaProjectServer(options = {}) {
       });
       humanWaitState.initialRecoveryPending = false;
     }
-    store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+    store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1 }]);
     const next = activeHumanWaitRecords(store)
       .filter((record) => record.human_wait.resolution === null)
       .sort(compareHumanWaitRecords)[0];
@@ -857,6 +885,7 @@ export function createToubaProjectServer(options = {}) {
     const task = new Promise((resolveTask) => setImmediate(resolveTask))
       .then(async () => {
         let ownedCapacityReservation = capacityReservation;
+        let progressRecorder = null;
         try {
         const operationArgs = {
           operationId: operation.operation_id,
@@ -875,20 +904,15 @@ export function createToubaProjectServer(options = {}) {
           interactionOperationEventPayload(started),
           nextEvent,
         );
-        const traceEventObserver = (event) => {
-          const progressed = recordInteractionOperationProgress({
-            event,
-            operationId: operation.operation_id,
-            sessionId: session.session_id,
-            sessionsPath: interactionSessionsPath,
-          });
+        progressRecorder = bufferedInteractionProgress(operationArgs, progressed => {
           publishEvent(
             eventClients,
             "interaction.run.progress",
             interactionOperationEventPayload(progressed),
             nextEvent,
           );
-        };
+        });
+        const traceEventObserver = event => progressRecorder.record(event);
         const common = {
           agentDecisionProvider,
           agentDecisionProviderContentMode: options.agentDecisionProviderContentMode,
@@ -927,6 +951,7 @@ export function createToubaProjectServer(options = {}) {
           humanWaitState.reservations.delete(ownedCapacityReservation);
           ownedCapacityReservation = null;
         }
+        progressRecorder.flush();
         const completed = completeInteractionOperation({
           operationId: operation.operation_id,
           result,
@@ -959,6 +984,7 @@ export function createToubaProjectServer(options = {}) {
           });
         }
         } finally {
+          progressRecorder?.close();
           if (ownedCapacityReservation !== null) {
             humanWaitState.reservations.delete(ownedCapacityReservation);
           }
@@ -968,7 +994,7 @@ export function createToubaProjectServer(options = {}) {
       .catch((cause) => {
         let durableHumanStateExists = false;
         try {
-          durableHumanStateExists = loadSandboxCheckpointStore(sandboxCheckpointsPath).records.some((record) => (
+          durableHumanStateExists = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: operation.operation_id }]).records.some((record) => (
             record.record_kind === "human"
             && record.operation_id === operation.operation_id
             && record.run_id === operation.run_id
@@ -1368,7 +1394,7 @@ export function createToubaProjectServer(options = {}) {
         // The durable checkpoint can be committed before its interaction
         // projection. Always consult the WAIT arbiter before branching on the
         // eventually-consistent operation status.
-        const waitRecords = loadSandboxCheckpointStore(sandboxCheckpointsPath).records.filter((record) => (
+        const waitRecords = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: operationId }]).records.filter((record) => (
           record.record_kind === "human"
           && record.operation_id === operationId
           && record.run_id === currentOperation.run_id
@@ -1625,7 +1651,7 @@ export function createToubaProjectServer(options = {}) {
         const durableResume = isPlainObject(body) && Object.hasOwn(body, "operation_id");
         if (durableResume) {
           const normalized = normalizeDurableResumeRequest(body);
-          const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+          const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: normalized.operation_id }]);
           const checkpoint = store.records.find((candidate) => candidate.operation_id === normalized.operation_id);
           if (checkpoint === undefined) {
             throw serviceError("DurableResumeNotAvailable", "durable operation checkpoint is unavailable");
@@ -1709,7 +1735,7 @@ export function createToubaProjectServer(options = {}) {
           errorCode: "ToubaServeInteractionResumeInvalid",
           message: "interaction resume request does not match its contract",
         });
-        const checkpoint = loadSandboxCheckpointStore(sandboxCheckpointsPath).records
+        const checkpoint = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: body.request_id }]).records
           .find((candidate) => candidate.request_id === body.request_id);
         if (checkpoint === undefined) {
           throw serviceError(
@@ -1814,6 +1840,23 @@ export function createToubaProjectServer(options = {}) {
           etag: `"${asset.digest}"`,
         });
         response.end(buffer);
+        return;
+      }
+      const nativeTraceMatch = /^\/runs\/([^/]+)\/trace$/u.exec(url.pathname);
+      if (request.method === "GET" && nativeTraceMatch !== null) {
+        // Mobile pairing tokens expose bounded operational surfaces, not native
+        // execution evidence. The project token/identity boundary still applies.
+        if (authToken !== undefined && !constantTimeTextEqual(request.headers.authorization, `Bearer ${authToken}`)) {
+          writeJson(response, 403, { status: "error", code: "ToubaServeNativeTraceUnauthorized" });
+          return;
+        }
+        const evidence = readNativeTraceExport(projectRoot, decodeURIComponent(nativeTraceMatch[1]));
+        if (evidence === null) {
+          writeJson(response, 404, { status: "error", code: "ToubaServeNativeTraceUnavailable" });
+        } else {
+          response.setHeader("cache-control", "no-store");
+          writeJson(response, 200, evidence);
+        }
         return;
       }
       if (request.method === "GET" && url.pathname === "/trace/current") {
@@ -2457,7 +2500,7 @@ export function createToubaProjectServer(options = {}) {
       humanWaitState.stopping = false;
       await requestHumanWaitWorker();
       if (interactionRecoveryDeferred) {
-        const cancellationStillClaimed = loadSandboxCheckpointStore(sandboxCheckpointsPath).records
+        const cancellationStillClaimed = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "human", status: "resolution_claimed" }]).records
           .some((record) => (
             record.record_kind === "human"
             && record.status === "resolution_claimed"
@@ -2737,7 +2780,7 @@ export function preflightServeOptions({
     ["ToubaServeInteractionAssetStoreInvalid", "interaction asset store", interactionAssetsPath],
   ]) {
     if (!isPathInside(projectRoot, filePath)) {
-      diagnostics.push(serviceDiagnostic(code, `${label} path must stay inside the project root`));
+      diagnostics.push(serviceDiagnostic(code, `${label} path ${JSON.stringify(filePath)} must stay inside the project root ${JSON.stringify(projectRoot)}`));
     } else if (existsSync(filePath) && statSync(filePath).isDirectory()) {
       diagnostics.push(serviceDiagnostic(code, `${filePath} is a directory`));
     }
@@ -2747,7 +2790,7 @@ export function preflightServeOptions({
     && (!existsSync(effectJournalPath) || !statSync(effectJournalPath).isDirectory())
   ) {
     try {
-      loadEffectJournal(effectJournalPath);
+      loadIndexedEffectJournal(effectJournalPath);
     } catch (cause) {
       diagnostics.push(serviceDiagnostic(
         "ToubaServeEffectJournalPathInvalid",
@@ -2844,7 +2887,7 @@ export function acceptDecision({
     productIdentityPath,
     requireProjectAuthorization,
   });
-  const store = loadHumanDecisionStore(humanDecisionsPath);
+  const store = loadHumanDecisionStore(humanDecisionsPath, [{ request_id: decision.request_id }]);
   const duplicate = store.decisions.some((item) =>
     item.schema_version === schemaVersion && item.request_id === decision.request_id
   );
@@ -2878,7 +2921,7 @@ async function acceptDecisionWithHumanWait({
     requireProjectAuthorization: false,
   });
   const checkpointStoreExists = existsSync(sandboxCheckpointsPath);
-  const checkpointStore = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const checkpointStore = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: decision.request_id }]);
   const record = checkpointStore.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === decision?.request_id
   ));
@@ -3024,7 +3067,7 @@ function assertProjectDecisionAuthorized({
     if (!humanRequestsPath || !existsSync(humanRequestsPath)) {
       throw serviceError("ToubaServeDecisionRequestNotFound", "decision does not match a pending project request");
     }
-    const requestStore = readHumanRequestStore(humanRequestsPath);
+    const requestStore = readHumanRequestStore(humanRequestsPath, [{ request_id: decision.request_id }]);
     const requests = isReview ? requestStore.reviews : requestStore.approvals;
     pendingRequest = requests.find((request) => request.request_id === decision.request_id);
   }
@@ -3059,9 +3102,13 @@ function assertProjectDecisionAuthorized({
   }
   const assigned = identity.assignments.some((assignment) =>
     assignment.request_id === decision.request_id
+    && assignment.run_id === decision.run_id
+    && assignment.trace_ref === decision.trace_ref
     && assignment.user_ref === decision.user_ref
     && assignment.device_ref === decision.device_ref
     && ["assigned", "accepted"].includes(assignment.status)
+    && Date.parse(assignment.assigned_at) <= Date.parse(acceptedAt)
+    && Date.parse(acceptedAt) < Date.parse(assignment.expires_at)
   );
   const roleScopes = new Set(identity.roles
     .filter((role) => user.role_refs.includes(role.role_ref))
@@ -3101,7 +3148,7 @@ export function getHumanDecisionDetail({
     throw serviceError("ToubaServeDecisionContractUnsupported", "decision schema_version is not accepted by this service");
   }
   const id = requiredNonEmptyString(requestId, "request_id");
-  const store = loadHumanDecisionStore(humanDecisionsPath);
+  const store = loadHumanDecisionStore(humanDecisionsPath, [{ request_id: id }]);
   const decision = store.decisions.find((item) =>
     item.schema_version === schemaVersion && item.request_id === id
   );
@@ -3134,7 +3181,7 @@ export function readOperationRecovery({
   generatedAt = new Date().toISOString(),
 }) {
   const normalizedOperationId = requiredNonEmptyString(operationId, "operation_id");
-  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath).records.filter((candidate) => (
+  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: normalizedOperationId }]).records.filter((candidate) => (
     candidate.operation_id === normalizedOperationId
   ));
   const execution = records.find((candidate) => candidate.record_kind === "execution");
@@ -3146,10 +3193,7 @@ export function readOperationRecovery({
     throw serviceError("ToubaServeOperationNotFound", "operation recovery state is unavailable");
   }
 
-  const journal = loadEffectJournal(effectJournalPath);
-  const entries = Object.values(journal.entries).filter((entry) => (
-    entry.effect_scope_id === normalizedOperationId
-  ));
+  const entries = createIndexedEffectJournal(effectJournalPath).entriesForScope(normalizedOperationId);
   const effects = operationEffectSummary(entries);
   const status = operationRecoveryStatus({ execution, human });
   const correlations = {
@@ -3438,7 +3482,7 @@ export async function executeProjectSandboxRun({
     required: secretsRequired,
     secretsPath,
   });
-  const effectJournal = providedEffectJournal ?? createFileEffectJournal(effectJournalPath, {
+  const effectJournal = providedEffectJournal ?? createIndexedEffectJournal(effectJournalPath, {
     secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
   });
   // RESUME-1 is intentionally limited to direct entry graphs. Trigger
@@ -3485,7 +3529,8 @@ export async function executeProjectSandboxRun({
       toolBindingManifest,
       traceEventObserver,
     };
-    runtimeResult = executionKind === "trigger"
+    runtimeResult = await withNativeTrace({ projectRoot, runId, phase: "initial",
+      secretValues: secretStore?.resolvedSecretEntries?.().map(entry => entry.value) ?? [] }, async () => executionKind === "trigger"
       ? await executeTriggerEvent(resolved.document, {
         trigger_ref: targetRef,
         event_id: nonEmptyString(request.event_id) ?? `sandbox-event-${runId}`,
@@ -3496,7 +3541,7 @@ export async function executeProjectSandboxRun({
         ...runtimeOptions,
         entryRef: targetRef,
         inputs: isPlainObject(request.inputs) ? request.inputs : {},
-      });
+      }));
   } catch (cause) {
     finalizeSandboxExecutionRecord({
       operationId,
@@ -3582,9 +3627,44 @@ export function buildSandboxRunResult({
     duration_ms: Math.max(0, Date.now() - startedMs),
     effect_policy: effectPolicy,
     result: runtimeResult.result ?? null,
+    ...sandboxMessages(runtimeResult.messages ?? []),
     trace: sandboxTraceSummary(runtimeResult.trace),
     diagnostics: [sandboxRunDiagnostic(runtimeResult, executionKind)],
   };
+}
+
+function sandboxMessages(source) {
+  if (!Array.isArray(source) || source.some(message => !isPlainObject(message)
+    || typeof message.interaction_ref !== "string" || !message.interaction_ref
+    || typeof message.text !== "string")) {
+    throw serviceError("ToubaServeSandboxResultInvalid", "runtime messages must use interaction_ref and text");
+  }
+  const messages = [];
+  let remaining = 16 * 1024;
+  let truncated = false;
+  for (const message of source) {
+    if (messages.length === 100 || remaining === 0) { truncated = true; break; }
+    const text = boundedResultText(message.text, Math.min(4096, remaining));
+    truncated ||= text !== message.text;
+    remaining -= Buffer.byteLength(text, "utf8");
+    messages.push({ interaction_ref: message.interaction_ref, text });
+  }
+  return { messages, messages_truncated: truncated };
+}
+
+function sandboxMessagesAreValid(result) {
+  if (typeof result.messages_truncated !== "boolean" || !Array.isArray(result.messages)
+    || result.messages.length > 100) return false;
+  let total = 0;
+  for (const message of result.messages) {
+    if (!isPlainObject(message) || Object.keys(message).some(key => !["interaction_ref", "text"].includes(key))
+      || typeof message.interaction_ref !== "string" || !message.interaction_ref
+      || typeof message.text !== "string") return false;
+    const bytes = Buffer.byteLength(message.text, "utf8");
+    if (bytes > 4096) return false;
+    total += bytes;
+  }
+  return total <= 16 * 1024;
 }
 
 function sandboxRunDiagnostic(runtimeResult, executionKind) {
@@ -3677,7 +3757,7 @@ export async function resumeProjectSandboxRun({
     });
   }
   const requestId = requiredNonEmptyString(request?.request_id, "request_id");
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }]);
   const record = store.records.find((candidate) => candidate.request_id === requestId);
   if (!record) {
     throw serviceError("ToubaServeSandboxCheckpointNotFound", "sandbox checkpoint request_id is unknown");
@@ -3704,7 +3784,7 @@ export async function resumeProjectSandboxRun({
     required: secretsRequired,
     secretsPath,
   });
-  const effectJournal = createFileEffectJournal(effectJournalPath, {
+  const effectJournal = createIndexedEffectJournal(effectJournalPath, {
     secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
   });
   const startedMs = Date.now();
@@ -3733,7 +3813,8 @@ export async function resumeProjectSandboxRun({
       toolBindingManifest,
       traceEventObserver,
     };
-    runtimeResult = record.execution_kind === "trigger"
+    runtimeResult = await withNativeTrace({ projectRoot, runId: record.run_id, phase: "human_resume",
+      secretValues: secretStore?.resolvedSecretEntries?.().map(entry => entry.value) ?? [] }, async () => record.execution_kind === "trigger"
       ? await executeTriggerEvent(resolved.document, {
         trigger_ref: record.target_ref,
         event_id: `resume-${record.run_id}`,
@@ -3743,7 +3824,7 @@ export async function resumeProjectSandboxRun({
       : await executeAirDocument(resolved.document, {
         ...runtimeOptions,
         entryRef: record.target_ref,
-      });
+      }));
   } catch (cause) {
     if (cause instanceof ToubaRuntimeError) {
       const error = serviceError("ToubaServeSandboxRuntimeRejected", cause.message);
@@ -3849,7 +3930,7 @@ async function terminalizeAutomaticHumanWait({
       required: secretsRequired,
       secretsPath,
     });
-    const effectJournal = createFileEffectJournal(effectJournalPath, {
+    const effectJournal = createIndexedEffectJournal(effectJournalPath, {
       secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
     });
     const startedMs = Date.now();
@@ -3873,7 +3954,8 @@ async function terminalizeAutomaticHumanWait({
       secretStore,
       toolBindingManifest,
     };
-    const runtimeResult = record.execution_kind === "trigger"
+    const runtimeResult = await withNativeTrace({ projectRoot, runId: record.run_id, phase: "human_terminal",
+      secretValues: secretStore?.resolvedSecretEntries?.().map(entry => entry.value) ?? [] }, async () => record.execution_kind === "trigger"
       ? await executeTriggerEvent(resolved.document, {
         trigger_ref: record.target_ref,
         event_id: `${resolutionKind}-${record.run_id}`,
@@ -3883,7 +3965,7 @@ async function terminalizeAutomaticHumanWait({
       : await executeAirDocument(resolved.document, {
         ...runtimeOptions,
         entryRef: record.target_ref,
-      });
+      }));
     if (runtimeResult.checkpoint !== undefined || sandboxHumanTerminalDecision(runtimeResult) !== resolutionKind) {
       throw serviceError(
         "ToubaServeSandboxCheckpointStoreInvalid",
@@ -3977,12 +4059,12 @@ async function resumeProjectDurableSandboxRun({
       required: secretsRequired,
       secretsPath,
     });
-    const effectJournal = createFileEffectJournal(effectJournalPath, {
+    const effectJournal = createIndexedEffectJournal(effectJournalPath, {
       secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
     });
     const durableCancelRequestedProvider = () => {
       if (cancelRequestedProvider?.() === true) return true;
-      const current = loadSandboxCheckpointStore(sandboxCheckpointsPath).records.find((candidate) => (
+      const current = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: record.operation_id }]).records.find((candidate) => (
         candidate.record_kind === "execution" && candidate.operation_id === record.operation_id
       ));
       return current?.status === "cancelled";
@@ -4021,7 +4103,8 @@ async function resumeProjectDurableSandboxRun({
       toolBindingManifest,
       traceEventObserver,
     };
-    runtimeResult = record.execution_kind === "trigger"
+    runtimeResult = await withNativeTrace({ projectRoot, runId: record.run_id, phase: "execution_resume",
+      secretValues: secretStore?.resolvedSecretEntries?.().map(entry => entry.value) ?? [] }, async () => record.execution_kind === "trigger"
       ? await executeTriggerEvent(resolved.document, {
         trigger_ref: record.target_ref,
         event_id: `resume-${record.run_id}`,
@@ -4031,7 +4114,7 @@ async function resumeProjectDurableSandboxRun({
       : await executeAirDocument(resolved.document, {
         ...runtimeOptions,
         entryRef: record.target_ref,
-      });
+      }));
   } catch (cause) {
     const code = cause instanceof ToubaRuntimeError
       ? cause.code ?? "DurableResumeCheckpointInvalid"
@@ -4086,7 +4169,10 @@ async function resumeProjectDurableSandboxRun({
 
 function resolveSandboxAirDocument({ projectRoot, targetRef }) {
   const diagnostics = [];
-  const artifacts = collectProjectArtifacts(projectRoot, diagnostics).filter((artifact) => artifact.kind === "air");
+  const prepared = readPreparedProject(projectRoot);
+  const artifacts = prepared
+    ? prepared.inputs.filter(input => input.kind === "air").map(input => ({ relative_path: input.path }))
+    : collectProjectArtifacts(projectRoot, diagnostics).filter((artifact) => artifact.kind === "air");
   if (artifacts.length === 0) {
     const error = serviceError("ToubaServeSandboxAirUnavailable", "project has no AIR artifact to execute");
     error.diagnostics = diagnostics;
@@ -4114,7 +4200,10 @@ function resolveSandboxAirDocument({ projectRoot, targetRef }) {
 }
 
 function loadOptionalProjectManifest({ projectRoot }) {
-  const manifestPath = join(projectRoot, "touba.manifest.json");
+  const prepared = readPreparedProject(projectRoot);
+  const manifestInput = prepared?.inputs.find(input => input.kind === "manifest");
+  if (prepared && !manifestInput) return undefined;
+  const manifestPath = join(projectRoot, manifestInput?.path ?? "touba.manifest.json");
   if (!existsSync(manifestPath)) {
     return undefined;
   }
@@ -4554,22 +4643,19 @@ function recoverTerminalHumanInteractions({
   traceTimelinePath,
 }) {
   // A recorded pause/session projection is part of the durable crash protocol.
-  // Never mark later terminal projections complete if that exact interaction
-  // session disappeared or diverged.
+  // Unfinished projections must retain their exact interaction. Fully published
+  // terminal records outlive the bounded UI history and are never re-executed.
   validateHumanWaitInteractionProjectionMarkers({
+    filter: requestId === null ? undefined : [{ request_id: requestId }],
     interactionSessionsPath,
     sandboxCheckpointsPath,
   });
-  const sessionSummaries = listInteractionSessions(interactionSessionsPath).sessions;
-  if (sessionSummaries.length === 0) return;
-  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath).records.filter((record) => (
+  const sessions = readInteractionSessions(interactionSessionsPath);
+  if (sessions.length === 0) return;
+  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath, requestId === null ? undefined : [{ request_id: requestId }]).records.filter((record) => (
     requestId === null || record.request_id === requestId
   ));
-  for (const summary of sessionSummaries) {
-    const session = getInteractionSession({
-      sessionId: summary.session_id,
-      sessionsPath: interactionSessionsPath,
-    });
+  for (const session of sessions) {
     for (const operation of session.operations.filter((candidate) => (
       [
         "queued",
@@ -4601,6 +4687,13 @@ function recoverTerminalHumanInteractions({
         || right.request_id.localeCompare(left.request_id)
       ))[0];
       if (!record) continue;
+      // Validate published evidence without rewriting the whole session store.
+      // Incomplete projections still use the crash-repair path below.
+      if (record.human_wait.projections.terminal_event !== null
+        && operation.status === sandboxRunSummaryStatus(record.result)
+        && session.messages.some(message => message.operation_id === operation.operation_id
+          && message.role === "touba" && isPlainObject(message.run_result)
+          && canonicalDigest(message.run_result) === canonicalDigest(record.result))) continue;
       if (
         record.human_wait.resolution.kind === "decision"
         && !humanDecisionResultProvesResolution(record)
@@ -4642,37 +4735,41 @@ function recoverTerminalHumanInteractions({
 }
 
 function validateHumanWaitInteractionProjectionMarkers({
+  filter,
   interactionSessionsPath,
   sandboxCheckpointsPath,
 }) {
-  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath).records.filter((record) => (
+  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath, filter).records.filter((record) => (
     record.record_kind === "human"
   ));
+  const sessions = new Map(readInteractionSessions(interactionSessionsPath)
+    .map(session => [session.session_id, session]));
   for (const record of records) {
+    const projectionMayHaveExpired = ["completed", "superseded"].includes(record.status)
+      && record.human_wait.resolution?.status === "completed"
+      && record.human_wait.projections.interaction !== null
+      && record.human_wait.projections.terminal_event !== null;
     for (const [field, result] of [
       ["pause_interaction", record.paused_result],
       ["interaction", record.result],
     ]) {
       const marker = record.human_wait.projections[field];
       if (marker === null) continue;
-      let session;
-      try {
-        session = getInteractionSession({
-          sessionId: marker.session_id,
-          sessionsPath: interactionSessionsPath,
-        });
-      } catch {
+      // Validate durable evidence even when the UI projection has aged out.
+      const resultDigest = isPlainObject(result) ? canonicalDigest(result) : null;
+      if (resultDigest === null || marker.result_digest !== resultDigest) {
+        throw serviceError("ToubaServeSandboxCheckpointStoreInvalid",
+          `human wait ${field} marker does not match its durable result`);
+      }
+      const session = sessions.get(marker.session_id);
+      if (session === undefined) {
+        if (projectionMayHaveExpired) continue;
         throw serviceError(
           "ToubaServeSandboxCheckpointStoreInvalid",
           `human wait ${field} marker references an unknown interaction session`,
         );
       }
-      const operation = session.operations.find((candidate) => (
-        candidate.operation_id === record.operation_id
-        && candidate.run_id === record.run_id
-        && candidate.target_ref === record.target_ref
-      ));
-      const resultDigest = isPlainObject(result) ? canonicalDigest(result) : null;
+      const operation = session.operations.find((candidate) => candidate.operation_id === record.operation_id);
       const messageExists = session.messages.some((message) => (
         message.operation_id === record.operation_id
         && message.role === "touba"
@@ -4681,10 +4778,8 @@ function validateHumanWaitInteractionProjectionMarkers({
       ));
       if (
         session.target_ref !== record.target_ref
-        || operation === undefined
-        || resultDigest === null
-        || marker.result_digest !== resultDigest
-        || !messageExists
+        || (operation !== undefined && (operation.run_id !== record.run_id || operation.target_ref !== record.target_ref))
+        || (!projectionMayHaveExpired && (operation === undefined || !messageExists))
       ) {
         throw serviceError(
           "ToubaServeSandboxCheckpointStoreInvalid",
@@ -4702,16 +4797,12 @@ function repairPausedHumanInteractions({
   nextEvent,
   sandboxCheckpointsPath,
 }) {
-  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath).records.filter((record) => (
+  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1 }]).records.filter((record) => (
     record.record_kind === "human"
     && ["pending", "resolution_claimed"].includes(record.status)
   ));
   if (records.length === 0) return;
-  for (const summary of listInteractionSessions(interactionSessionsPath).sessions) {
-    const session = getInteractionSession({
-      sessionId: summary.session_id,
-      sessionsPath: interactionSessionsPath,
-    });
+  for (const session of readInteractionSessions(interactionSessionsPath)) {
     for (const record of records) {
       const operation = session.operations.find((candidate) => (
         candidate.operation_id === record.operation_id
@@ -4767,17 +4858,13 @@ function repairClaimedHumanCancellationProjections({
   interactionSessionsPath,
   sandboxCheckpointsPath,
 }) {
-  const claims = loadSandboxCheckpointStore(sandboxCheckpointsPath).records.filter((record) => (
+  const claims = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "human", status: "resolution_claimed" }]).records.filter((record) => (
     record.record_kind === "human"
     && record.status === "resolution_claimed"
     && record.human_wait.resolution?.kind === "cancelled"
   ));
   if (claims.length === 0) return;
-  for (const summary of listInteractionSessions(interactionSessionsPath).sessions) {
-    const session = getInteractionSession({
-      sessionId: summary.session_id,
-      sessionsPath: interactionSessionsPath,
-    });
+  for (const session of readInteractionSessions(interactionSessionsPath)) {
     for (const claim of claims) {
       const operation = session.operations.find((candidate) => (
         candidate.operation_id === claim.operation_id
@@ -5803,18 +5890,31 @@ export function buildAuthorityGraph({
   const artifacts = collectProjectArtifacts(projectRoot, diagnostics);
   const builder = createAuthorityGraphBuilder(diagnostics);
 
+  // Compiled graph nodes identify individual approval sites. Do not also
+  // reconstruct these gates from source spelling (approve vs human_approval).
+  const airArtifacts = new Map();
+  const compiledOwners = new Set();
+  for (const artifact of artifacts.filter(item => item.kind === "air")) {
+    const value = readJsonArtifact(join(projectRoot, artifact.relative_path), artifact.relative_path, diagnostics);
+    airArtifacts.set(artifact.relative_path, value);
+    for (const graph of Array.isArray(value?.execution_graphs) ? value.execution_graphs : []) {
+      if (typeof graph?.owner_ref === "string") compiledOwners.add(graph.owner_ref);
+    }
+  }
+
   for (const artifact of artifacts) {
     const artifactPath = join(projectRoot, artifact.relative_path);
     if (artifact.kind === "source") {
       parseToubaSourceAuthority({
         builder,
+        compiledOwners,
         content: readTextArtifact(artifactPath, artifact.relative_path, diagnostics),
         path: artifact.relative_path,
       });
       continue;
     }
     if (artifact.kind === "air") {
-      const value = readJsonArtifact(artifactPath, artifact.relative_path, diagnostics);
+      const value = airArtifacts.get(artifact.relative_path);
       if (value !== undefined) {
         parseAirAuthority({ builder, value, path: artifact.relative_path });
       }
@@ -5871,20 +5971,22 @@ export function readPendingHumanRequest({
     }
     throw serviceError("ToubaServePendingHumanRequestNotFound", "pending human request store is not available");
   }
-  const store = readHumanRequestStore(humanRequestsPath);
-  const decisions = loadHumanDecisionStore(humanDecisionsPath);
-  const decided = new Set(decisions.decisions.map((decision) =>
-    `${decision.schema_version}:${decision.request_id}`
-  ));
   const schemaVersion = kind === "approval"
     ? "touba-approval-request-v1"
     : "touba-human-review-request-v1";
-  const requests = kind === "approval" ? store.approvals : store.reviews;
   const waitRecords = sandboxCheckpointsPath !== undefined && existsSync(sandboxCheckpointsPath)
-    ? new Map(loadSandboxCheckpointStore(sandboxCheckpointsPath).records
+    ? new Map(loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1 }]).records
       .filter((record) => record.record_kind === "human")
       .map((record) => [record.request_id, record]))
     : null;
+  const filter = waitRecords !== null ? [{ request_id: [...waitRecords.keys()] }]
+    : runId !== null ? [{ run_id: runId }] : undefined;
+  const store = readHumanRequestStore(humanRequestsPath, filter);
+  const requests = kind === "approval" ? store.approvals : store.reviews;
+  const decisions = loadHumanDecisionStore(humanDecisionsPath, filter);
+  const decided = new Set(decisions.decisions.map((decision) =>
+    `${decision.schema_version}:${decision.request_id}`
+  ));
   const pending = requests.find((request) =>
     (runId === null || request.run_id === runId)
     && (
@@ -6588,6 +6690,19 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
 function collectProjectArtifacts(projectRoot, diagnostics) {
   const artifacts = [];
   visitProjectDirectory(projectRoot, "", 0, artifacts, diagnostics);
+  try {
+    const prepared = readPreparedProject(projectRoot, { verify: false });
+    for (const input of prepared?.inputs ?? []) {
+      if (!["air", "manifest", "run_plan"].includes(input.kind)
+        || artifacts.some(artifact => artifact.relative_path === input.path)) continue;
+      const path = join(projectRoot, input.path);
+      const stats = statSync(path);
+      artifacts.push({ relative_path: input.path, kind: projectArtifactKind(input.path),
+        size_bytes: stats.size, mtime_ms: Math.trunc(stats.mtimeMs), sha256: sha256Buffer(readFileSync(path)) });
+    }
+  } catch (error) {
+    diagnostics.push(serviceDiagnostic(error.code, error.message, "warning"));
+  }
   artifacts.sort((left, right) => left.relative_path.localeCompare(right.relative_path));
   return artifacts.slice(0, MAX_PROJECT_ARTIFACTS);
 }
@@ -6869,7 +6984,7 @@ function parseAirAuthority({ builder, value, path }) {
       if (!isPlainObject(node) || !String(node.kind ?? "").startsWith("human")) {
         continue;
       }
-      const ref = `human_gate:${graph.owner_ref ?? graph.id}/${node.kind}`;
+      const ref = `human_gate:${graph.owner_ref ?? graph.id}/${node.id}`;
       builder.addNode({
         ref,
         kind: "human_gate",
@@ -6953,7 +7068,7 @@ function parsePackageAuthority({ builder, value, path }) {
   }
 }
 
-function parseToubaSourceAuthority({ builder, content, path }) {
+function parseToubaSourceAuthority({ builder, content, path, compiledOwners }) {
   if (content === undefined) {
     return;
   }
@@ -7042,8 +7157,9 @@ function parseToubaSourceAuthority({ builder, content, path }) {
         });
       }
     }
-    for (const humanMatch of block.body.matchAll(/\bhuman\.(approve|review)\b/gmu)) {
-      const gateRef = `human_gate:${ownerRef}/${humanMatch[1]}`;
+    for (const humanMatch of compiledOwners.has(ownerRef) ? [] : block.body.matchAll(/^[ \t]*human\.(approve|review)\b/gmu)) {
+      const gateLine = block.startLine + lineNumberAt(block.body, humanMatch.index) - 1;
+      const gateRef = `human_gate:${ownerRef}/source:${gateLine}`;
       const gateEvidence = authorityEvidence("source", path, `${path}:${block.startLine + lineNumberAt(block.body, humanMatch.index) - 1}`);
       builder.addNode({
         ref: gateRef,
@@ -8347,23 +8463,7 @@ function assertKnownContract(schemaVersion) {
   }
 }
 
-function loadHumanDecisionStore(humanDecisionsPath) {
-  if (!existsSync(humanDecisionsPath)) {
-    return {
-      schema_version: HUMAN_DECISION_STORE_SCHEMA_VERSION,
-      decisions: [],
-    };
-  }
-  const store = JSON.parse(readFileSync(humanDecisionsPath, "utf8"));
-  if (store.schema_version !== HUMAN_DECISION_STORE_SCHEMA_VERSION || !Array.isArray(store.decisions)) {
-    throw serviceError("ToubaServeHumanDecisionStoreInvalid", `human decision store must use ${HUMAN_DECISION_STORE_SCHEMA_VERSION}`);
-  }
-  return store;
-}
 
-function saveHumanDecisionStore(humanDecisionsPath, store) {
-  writeJsonStoreAtomic(humanDecisionsPath, store);
-}
 
 function loadMobilePairingStore(mobilePairingsPath) {
   if (!existsSync(mobilePairingsPath)) {
@@ -8413,22 +8513,6 @@ function activeMobilePairingTokenAuthorized({
   );
 }
 
-function readHumanRequestStore(humanRequestsPath) {
-  let store;
-  try {
-    store = JSON.parse(readFileSync(humanRequestsPath, "utf8"));
-  } catch (cause) {
-    throw serviceError("ToubaServeHumanRequestStoreInvalid", `human request store is not valid JSON: ${cause.message}`);
-  }
-  if (
-    store?.schema_version !== HUMAN_REQUEST_STORE_SCHEMA_VERSION
-    || !Array.isArray(store.approvals)
-    || !Array.isArray(store.reviews)
-  ) {
-    throw serviceError("ToubaServeHumanRequestStoreInvalid", `human request store must use ${HUMAN_REQUEST_STORE_SCHEMA_VERSION}`);
-  }
-  return store;
-}
 
 function portableHumanCheckpointSnapshot(checkpoint) {
   const normalize = (value, path, insideArray = false) => {
@@ -8493,7 +8577,7 @@ function persistSandboxCheckpoint({
     errorCode: "ToubaServePendingHumanRequestInvalid",
     message: "runtime checkpoint could not be represented as a human request",
   });
-  const checkpointStore = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const checkpointStore = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }, { active_human: 1 }]);
   const existing = checkpointStore.records.find((candidate) => candidate.request_id === requestId);
   if (existing === undefined) {
     if (activeHumanWaitRecords(checkpointStore).some((candidate) => candidate.run_id === durableCheckpoint.run_id)) {
@@ -8573,7 +8657,7 @@ function completeHumanDecisionWithSuccessor({
     errorCode: "ToubaServePendingHumanRequestInvalid",
     message: "successor checkpoint could not be represented as a human request",
   });
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: [previousRequestId, requestId] }]);
   const previous = store.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === previousRequestId
   ));
@@ -8670,7 +8754,7 @@ export function persistSandboxExecutionCheckpoint({
   if (segment.run_id !== runId) {
     throw serviceError("DurableResumeCheckpointIncompatible", "runtime trace run_id does not match its checkpoint");
   }
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "execution", operation_id: operationId }]);
   const existing = store.records.find((candidate) => (
     candidate.record_kind === "execution" && candidate.operation_id === operationId
   ));
@@ -8873,7 +8957,7 @@ export function recoverInterruptedSandboxExecutions({
   sandboxCheckpointsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "execution", status: ["running", "resume_claimed"] }]);
   const recovered = [];
   for (const record of store.records) {
     if (record.record_kind !== "execution" || !["running", "resume_claimed"].includes(record.status)) continue;
@@ -8895,7 +8979,7 @@ function finalizeSandboxExecutionRecord({
   status,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "execution", operation_id: operationId }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "execution" && candidate.operation_id === operationId
   ));
@@ -8919,7 +9003,7 @@ function cancelSandboxExecutionRecord({
   sandboxCheckpointsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "execution", operation_id: operationId }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "execution" && candidate.operation_id === operationId
   ));
@@ -8944,7 +9028,7 @@ function claimSandboxExecutionResume({
   generatedAt = new Date().toISOString(),
 }) {
   const normalized = normalizeDurableResumeRequest(request);
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: normalized.operation_id }]);
   const record = store.records.find((candidate) => candidate.operation_id === normalized.operation_id);
   if (record === undefined) {
     throw serviceError("DurableResumeNotAvailable", "durable operation checkpoint is unavailable");
@@ -9011,7 +9095,7 @@ function refuseSandboxExecutionResume({
   sandboxCheckpointsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "execution", operation_id: operationId }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "execution" && candidate.operation_id === operationId
   ));
@@ -9109,7 +9193,8 @@ function humanRequestFromCheckpoint({ checkpoint, createdAt, requestId }) {
     requester_ref: checkpoint.requester_ref ?? checkpoint.caller_ref ?? checkpoint.entry_ref,
     capability_ref: checkpoint.required_by_ref ?? checkpoint.graph_ref ?? checkpoint.entry_ref,
     reason: `Approval required by ${checkpoint.graph_ref ?? checkpoint.entry_ref}.`,
-    summary: `Resume ${checkpoint.entry_ref} at its declared human approval boundary.`,
+    summary: approvalContextSummary(checkpoint)
+      ?? `Resume ${checkpoint.entry_ref} at its declared human approval boundary.`,
     allowed_decisions: ["approve", "reject"],
     expires_at: expiresAt,
     trace_ref: traceRef,
@@ -9117,14 +9202,31 @@ function humanRequestFromCheckpoint({ checkpoint, createdAt, requestId }) {
   };
 }
 
-function saveHumanRequestStore(humanRequestsPath, store) {
-  writeJsonStoreAtomic(humanRequestsPath, store);
+function approvalContextSummary(checkpoint) {
+  // Only the explicitly selected approval context is projected, never all
+  // inputs, previous show messages, handler output or the checkpoint itself.
+  // Checkpoint creation has already excluded resolved secrets. Keep this
+  // bounded private human-request field out of traces and SSE payloads.
+  const parts = [];
+  for (const [index, ref] of (checkpoint.context_refs ?? []).entries()) {
+    const value = checkpoint.context_values?.[index] ?? (ref.startsWith("value:") ? checkpoint.values?.[ref]
+      : ref.startsWith("literal:string:") ? ref.slice("literal:string:".length)
+      : undefined);
+    if (value === undefined) continue;
+    const text = typeof value === "string" ? value : JSON.stringify(value, (key, item) =>
+      /^(?:password|token|api_key|secret_value|resolved_secret|credential|connection_string)$/iu.test(key)
+        ? "[redacted]" : item);
+    if (typeof text === "string" && text.trim().length > 0) parts.push(text);
+  }
+  if (parts.length === 0) return null;
+  const text = parts.join("\n");
+  return text.length > MAX_HUMAN_WAIT_TEXT_LENGTH
+    ? text.slice(0, MAX_HUMAN_WAIT_TEXT_LENGTH - 3) + "..." : text;
 }
 
+
 function projectHumanRequestDocument({ humanRequestsPath, request }) {
-  const store = existsSync(humanRequestsPath)
-    ? readHumanRequestStore(humanRequestsPath)
-    : { schema_version: HUMAN_REQUEST_STORE_SCHEMA_VERSION, approvals: [], reviews: [] };
+  const store = readHumanRequestStore(humanRequestsPath, [{ request_id: request.request_id }]);
   const collection = request.mode === "approval" ? store.approvals : store.reviews;
   const otherCollection = request.mode === "approval" ? store.reviews : store.approvals;
   const matchingExpected = collection.filter((candidate) => candidate.request_id === request.request_id);
@@ -9157,7 +9259,7 @@ function projectHumanRequestDocument({ humanRequestsPath, request }) {
 }
 
 function projectHumanDecisionDocument({ humanDecisionsPath, decision }) {
-  const store = loadHumanDecisionStore(humanDecisionsPath);
+  const store = loadHumanDecisionStore(humanDecisionsPath, [{ request_id: decision.request_id }]);
   const sameRequest = store.decisions.filter((candidate) => candidate.request_id === decision.request_id);
   if (sameRequest.length > 1) {
     throw serviceError(
@@ -9190,9 +9292,11 @@ function repairHumanWaitProjections({
   humanRequestsPath,
   sandboxCheckpointsPath,
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
-  const projectedDecisions = loadHumanDecisionStore(humanDecisionsPath).decisions;
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, activeOnly ? [{ active_human: 1 }] : undefined);
   const records = activeOnly ? activeHumanWaitRecords(store) : store.records;
+  const projectedDecisions = new Map(loadHumanDecisionStore(humanDecisionsPath,
+    activeOnly ? [{ request_id: records.filter(record => record.record_kind === "human").map(record => record.request_id) }] : undefined)
+    .decisions.map(decision => [decision.request_id, decision]));
   for (const record of records) {
     if (record.record_kind !== "human") continue;
     const request = record.human_wait.request;
@@ -9205,9 +9309,7 @@ function repairHumanWaitProjections({
     });
     projectHumanRequestDocument({ humanRequestsPath, request });
     const resolution = record.human_wait.resolution;
-    const conflictingProjection = projectedDecisions.find((decision) => (
-      decision.request_id === record.request_id
-    ));
+    const conflictingProjection = projectedDecisions.get(record.request_id);
     if (resolution?.kind !== "decision") {
       if (
         conflictingProjection !== undefined
@@ -9268,7 +9370,7 @@ function validateStoredDecisionSnapshot({ contractsRoot, decision }) {
 }
 
 function claimHumanWaitDecision({ acceptedAt, decision, sandboxCheckpointsPath }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: decision.request_id }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === decision.request_id
   ));
@@ -9327,7 +9429,7 @@ function completeHumanDecisionResolution({
   result,
   sandboxCheckpointsPath,
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === requestId
   ));
@@ -9354,7 +9456,7 @@ function beginAutomaticHumanWaitTerminalization({
   requestId,
   sandboxCheckpointsPath,
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === requestId
   ));
@@ -9390,7 +9492,7 @@ function failAutomaticHumanWaitTerminalization({
   requestId,
   sandboxCheckpointsPath,
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === requestId
   ));
@@ -9414,7 +9516,7 @@ function completeAutomaticHumanWaitTerminalization({
   result,
   sandboxCheckpointsPath,
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === requestId
   ));
@@ -9445,7 +9547,7 @@ function claimAutomaticHumanWait({
   if (!["expired", "cancelled"].includes(kind)) {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "automatic human wait resolution kind is invalid");
   }
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, typeof requestId === "string" ? [{ request_id: requestId }] : [{ active_human: 1 }]);
   const record = selectHumanWaitForClaim({ operationId, requestId, runId, store });
   if (record === undefined) return null;
   const claimMs = parseHumanWaitInstant(claimedAt, "human wait claimed_at");
@@ -9565,27 +9667,35 @@ function isCompletedAutomaticHumanWait(record) {
     && isPlainObject(record.result);
 }
 
-export function loadSandboxCheckpointStore(sandboxCheckpointsPath) {
-  if (!existsSync(sandboxCheckpointsPath)) {
-    return { schema_version: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION, records: [] };
-  }
-  let store;
+function indexedCheckpointStore(path) {
+  return indexedStore({
+    path,
+    schemaVersion: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION,
+    keyOf: record => JSON.stringify([record.record_kind, record.record_kind === "human" ? record.request_id : record.operation_id]),
+    validate: validateCurrentCheckpointRecord,
+    indexes: CHECKPOINT_INDEXES,
+    checkTransaction(db) {
+      const active = db.prepare(`SELECT body FROM records WHERE ${CHECKPOINT_INDEXES.active_human} = 1`).all()
+        .map(row => JSON.parse(row.body));
+      active.forEach((record, index) => validateCurrentCheckpointRecord(record, index));
+      validateSandboxHumanWaitSet(active);
+    },
+  });
+}
+
+export function loadSandboxCheckpointStore(sandboxCheckpointsPath, filter) {
   try {
-    store = JSON.parse(readFileSync(sandboxCheckpointsPath, "utf8"));
-  } catch {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "sandbox checkpoint store is not valid JSON");
+    const records = indexedCheckpointStore(sandboxCheckpointsPath).read(filter);
+    validateSandboxHumanWaitSet(records);
+    return { schema_version: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION, records };
+  } catch (error) {
+    if (error instanceof SyntaxError || typeof error.errno === "number" || error.code?.startsWith("ERR_SQLITE")
+      || error.code === "ToubaStoreRecordInvalid" || error.code === "ToubaStoreFormatIncompatible") {
+      throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", error.code === "ToubaStoreFormatIncompatible"
+        ? error.message : "sandbox checkpoint store is not a valid indexed state");
+    }
+    throw error;
   }
-  if (
-    !isPlainObject(store)
-    || store.schema_version !== SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION
-    || !Array.isArray(store.records)
-    || Object.keys(store).some((field) => !["schema_version", "records"].includes(field))
-  ) {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `sandbox checkpoint store must use ${SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION}`);
-  }
-  store.records.forEach((record, index) => validateSandboxCheckpointRecord(record, index));
-  validateSandboxHumanWaitSet(store.records);
-  return store;
 }
 
 function saveSandboxCheckpointStore(sandboxCheckpointsPath, store) {
@@ -9596,9 +9706,9 @@ function saveSandboxCheckpointStore(sandboxCheckpointsPath, store) {
   ) {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "refusing to write an invalid sandbox checkpoint store");
   }
-  store.records.forEach((record, index) => validateSandboxCheckpointRecord(record, index));
+  store.records.forEach((record, index) => validateCurrentCheckpointRecord(record, index));
   validateSandboxHumanWaitSet(store.records);
-  writeJsonStoreAtomic(sandboxCheckpointsPath, store);
+  indexedCheckpointStore(sandboxCheckpointsPath).write(store.records);
 }
 
 function validateSandboxCheckpointRecord(record, index) {
@@ -9661,11 +9771,14 @@ function validateStoredHumanCheckpoint(record, index) {
   const allowed = new Set([
     "checkpoint_schema_version", "kind", "scope", "run_id", "entry_ref",
     "module_ref", "air_schema_version", "air_digest", "approval_ref", "mode",
-    "graph_ref", "node_id", "resume_target_ref", "decision_binding", "context_refs",
+    "graph_ref", "node_id", "resume_target_ref", "decision_binding", "context_refs", "context_values",
     "caller_ref", "agent_ref", "requester_ref", "required_by_ref", "review_prompt",
-    "review_reason", "step_index", "agent_loop_state", "call_frame", "values",
+    "review_reason", "step_index", "agent_loop_state", "call_stack", "values",
     "input_value_keys", "value_types", "budget_counters", "effect_state",
+    "active_elapsed_ms", "effective_limits",
     "next_call_index", "active_agent_ref", "active_caller_ref", "trace_prefix_digest", "loop_state",
+    "parallel_state", "parallel_limits", "next_parallel_group", "pending_approvals", "parallel_digest",
+    "max_agent_steps", "max_loop_iterations",
   ]);
   if (
     !isPlainObject(checkpoint)
@@ -9682,7 +9795,7 @@ function validateStoredHumanCheckpoint(record, index) {
   }
   if (
     checkpoint.checkpoint_schema_version !== "touba-human-approval-checkpoint-v1"
-    || !["human_approval", "agent_human_review"].includes(checkpoint.kind)
+    || !["human_approval", "agent_human_review", "parallel_group"].includes(checkpoint.kind)
     || checkpoint.run_id !== record.run_id
     || checkpoint.approval_ref !== record.approval_ref
     || checkpoint.entry_ref !== record.target_ref
@@ -9691,10 +9804,15 @@ function validateStoredHumanCheckpoint(record, index) {
   ) {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix} identity is invalid`);
   }
-  const expectedScope = checkpoint.kind === "agent_human_review" ? "agent_decision_loop" : "entry_graph";
+  const expectedScope = checkpoint.kind === "parallel_group" ? "parallel_group"
+    : checkpoint.kind === "agent_human_review" ? "agent_decision_loop" : "graph_stack";
+  try { validateHumanCheckpointBudgetState(checkpoint); }
+  catch { throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix} budget state is missing or invalid`); }
   if (checkpoint.scope !== expectedScope) {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix}.scope is invalid`);
   }
+  try { validateHumanCheckpointContinuation(checkpoint); }
+  catch { throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix} continuation is missing or invalid`); }
   if (checkpoint.loop_state !== undefined) {
     if (!isPlainObject(checkpoint.loop_state)) {
       throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix}.loop_state is invalid`);
@@ -9747,10 +9865,14 @@ function validateStoredHumanCheckpoint(record, index) {
     ) {
       throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix}.context_refs is invalid`);
     }
+    if (checkpoint.context_values !== undefined && (!Array.isArray(checkpoint.context_values)
+      || checkpoint.context_values.length !== checkpoint.context_refs.length)) {
+      throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix}.context_values is invalid`);
+    }
     if (checkpoint.resume_target_ref !== null && checkpoint.resume_target_ref !== undefined) {
       requiredHumanWaitIdentifier(checkpoint.resume_target_ref, `${prefix}.resume_target_ref`);
     }
-  } else {
+  } else if (checkpoint.kind === "agent_human_review") {
     requiredHumanWaitIdentifier(checkpoint.agent_ref, `${prefix}.agent_ref`);
     requiredHumanWaitText(checkpoint.review_prompt, `${prefix}.review_prompt`);
     requiredHumanWaitText(checkpoint.review_reason, `${prefix}.review_reason`);
@@ -9767,9 +9889,6 @@ function validateStoredHumanCheckpoint(record, index) {
     ) {
       throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix}.agent_loop_state is invalid`);
     }
-    if (checkpoint.call_frame !== null && checkpoint.call_frame !== undefined && !isPlainObject(checkpoint.call_frame)) {
-      throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix}.call_frame is invalid`);
-    }
   }
   try {
     canonicalDigest(checkpoint);
@@ -9784,6 +9903,7 @@ function validateStoredHumanResult(result, record, prefix, {
   if (
     !isPlainObject(result)
     || result.schema_version !== SANDBOX_RUN_RESULT_SCHEMA_VERSION
+    || !sandboxMessagesAreValid(result)
     || result.run_id !== record.run_id
     || result.target_ref !== record.target_ref
     || result.execution_kind !== record.execution_kind
@@ -10594,6 +10714,7 @@ function bearerTokenFromAuthorization(authorization) {
 }
 
 export function requiredIdentityPermission(method, pathname) {
+  if (method === "GET" && /^\/runs\/[^/]+\/trace$/u.test(pathname)) return "executions.read";
   if (method === "GET" && pathname === "/health") return null;
   if (method === "POST" && pathname === "/mobile/pairings/accept") return null;
   if (method === "GET" && pathname === "/events") return "executions.read";
@@ -10612,6 +10733,7 @@ export function requiredIdentityPermission(method, pathname) {
   if (pathname.startsWith("/decisions")) {
     return method === "POST" ? "decisions.act" : "decisions.read";
   }
+  if (pathname.startsWith("/approvals/") || pathname.startsWith("/reviews/")) return "decisions.read";
   if (pathname.startsWith("/deployments")) {
     if (method === "GET" || pathname === "/deployments/plan") return "deployments.read";
     if (pathname === "/deployments/publish") return "deployments.publish";
@@ -10920,7 +11042,7 @@ function appendInteractionCompletionEventOnce({
 }) {
   const type = interactionCompletionEventType(operation.status);
   const resultDigest = canonicalDigest(result);
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: operation.operation_id }]);
   const matchingRecords = store.records.filter((candidate) => (
     candidate.record_kind === "human"
     && candidate.operation_id === operation.operation_id
@@ -11036,7 +11158,7 @@ function publishHumanWaitResumeEventOnce({
   result,
   sandboxCheckpointsPath,
 }) {
-  const record = loadSandboxCheckpointStore(sandboxCheckpointsPath).records.find((candidate) => (
+  const record = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }]).records.find((candidate) => (
     candidate.record_kind === "human"
     && candidate.request_id === requestId
     && isPlainObject(candidate.result)
@@ -11096,7 +11218,7 @@ function persistHumanWaitProjectionMarker({
   sandboxCheckpointsPath,
   sessionId,
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath);
+  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === requestId
   ));
@@ -11177,6 +11299,9 @@ function writeSse(response, event, data) {
 }
 
 function httpStatusForError(code) {
+  if (code === "ToubaServeNativeTraceRunInvalid") return 400;
+  if (code === "ToubaServeNativeTraceRunConflict") return 409;
+  if (["ToubaServeNativeTraceStorageFull", "ToubaServeNativeTraceStorageUnavailable"].includes(code)) return 503;
   if (
     code === "ToubaServeUnauthorized"
     || code === "ToubaServeIdentityUnauthorized"
@@ -11319,6 +11444,8 @@ function parseArgs(rawArgs) {
     const arg = rawArgs[index];
     if (arg === "--help" || arg === "-h") {
       options.help = true;
+    } else if (arg === "--identity") {
+      options.productIdentityPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--contracts-root") {
       options.contractsRoot = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--project-root") {
@@ -11480,9 +11607,10 @@ async function loadAgentDecisionProviderFromPath(providerPath) {
 
 function usage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-decisions <human-decisions.json>] [--human-requests <path>] [--effect-journal <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
+    "Usage: touba serve [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-decisions <human-decisions.sqlite>] [--human-requests <path>] [--effect-journal <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for authenticated project clients.",
+    "Use --identity <project-identity.json> to load an explicit, schema-validated identity configuration inside the project root.",
     "",
     "Defaults:",
     `  host: ${DEFAULT_HOST}`,

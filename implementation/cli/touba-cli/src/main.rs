@@ -13,11 +13,17 @@ fn main() {
         }
     };
     let path = &inputs.entry;
-    let result = if inputs.module_only {
+    let mut result = if inputs.module_only {
         compile_module_sources(path, &inputs.sources)
     } else {
         compile_project_sources(path, &inputs.sources)
     };
+    if let Some(document) = result.document.take() {
+        let mut value = serde_json::to_value(document).expect("AIR serializes");
+        portable_source_ids(&mut value, &inputs.source_root);
+        result.document =
+            Some(serde_json::from_value(value).expect("source identities preserve AIR shape"));
+    }
     if inputs.json {
         let diag_json =
             serde_json::to_value(&result.diagnostics).unwrap_or(serde_json::Value::Null);
@@ -30,6 +36,8 @@ fn main() {
             "ok": result.document.is_some(),
             "diagnostics": diag_json,
             "air": air_json,
+            // Tooling-only location hint; never embedded in AIR or runtime traces.
+            "source_root": inputs.source_root,
         });
         println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
         process::exit(if result.document.is_some() { 0 } else { 1 });
@@ -68,5 +76,45 @@ fn main() {
             }
             process::exit(1);
         }
+    }
+}
+
+fn portable_source_ids(value: &mut serde_json::Value, root: &std::path::Path) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            if let Some(serde_json::Value::String(id)) = fields
+                .get_mut("source_ref")
+                .and_then(|reference| reference.get_mut("source_id"))
+            {
+                if let Ok(relative) = std::path::Path::new(id).strip_prefix(root) {
+                    *id = relative.to_string_lossy().replace('\\', "/");
+                }
+            }
+            for child in fields.values_mut() {
+                portable_source_ids(child, root);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                portable_source_ids(child, root);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn portable_provenance_does_not_rewrite_business_source_id_fields() {
+        let root = std::env::temp_dir().join("touba-source-identity");
+        let original = root.join("source.tb").to_string_lossy().into_owned();
+        let mut value = serde_json::json!({
+            "source_ref": { "source_id": original },
+            "business_value": { "source_id": original },
+        });
+        super::portable_source_ids(&mut value, &root);
+        assert_eq!(value["source_ref"]["source_id"], "source.tb");
+        assert_eq!(value["business_value"]["source_id"], original);
     }
 }

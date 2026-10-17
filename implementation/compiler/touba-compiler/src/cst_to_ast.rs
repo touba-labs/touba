@@ -60,6 +60,8 @@ impl<'a> AstLowerer<'a> {
         let mut module = None;
         let mut imports = Vec::new();
         let mut declarations = Vec::new();
+        let mut run_limits = Vec::new();
+        let mut saw_run_limits = false;
         let mut saw_non_import_declaration = false;
 
         for child in named_children(root) {
@@ -83,7 +85,7 @@ impl<'a> AstLowerer<'a> {
                             "imports must appear after the module declaration",
                         );
                     }
-                    if saw_non_import_declaration {
+                    if saw_non_import_declaration || saw_run_limits {
                         self.push_error(
                             AstDiagnosticCode::ImportPlacementInvalid,
                             child,
@@ -92,6 +94,31 @@ impl<'a> AstLowerer<'a> {
                     }
                     if let Some(declaration) = self.lower_import_declaration(child) {
                         imports.push(declaration);
+                    }
+                }
+                "run_limits_declaration" => {
+                    if module.is_none() || saw_non_import_declaration || saw_run_limits {
+                        self.push_error(AstDiagnosticCode::InvalidRunLimits, child,
+                            "a single limits run block must follow imports and precede declarations");
+                    }
+                    saw_run_limits = true;
+                    for limit in named_children(child) {
+                        if limit.kind() != "run_limit_clause" {
+                            continue;
+                        }
+                        let value_node = self.required_field(limit, "value")?;
+                        run_limits.push(AstRunLimit {
+                            name: self.required_field_text(limit, "name")?,
+                            value: self.lower_expression(value_node)?,
+                            source_ref: self.source_ref(limit),
+                        });
+                    }
+                    if run_limits.is_empty() {
+                        self.push_error(
+                            AstDiagnosticCode::InvalidRunLimits,
+                            child,
+                            "limits run requires at least one limit",
+                        );
                     }
                 }
                 "define_declaration" => {
@@ -106,7 +133,7 @@ impl<'a> AstLowerer<'a> {
                         declarations.push(AstDeclaration::Memory(declaration));
                     }
                 }
-                "type_declaration" => {
+                "type_declaration" | "enum_declaration" => {
                     saw_non_import_declaration = true;
                     if let Some(declaration) = self.lower_type_declaration(child) {
                         declarations.push(AstDeclaration::Type(declaration));
@@ -171,6 +198,7 @@ impl<'a> AstLowerer<'a> {
         Some(AstDocument {
             module,
             imports,
+            run_limits,
             declarations,
         })
     }
@@ -214,6 +242,16 @@ impl<'a> AstLowerer<'a> {
         Some(AstTypeDeclaration {
             name,
             fields,
+            variants: named_children(node)
+                .into_iter()
+                .filter(|child| child.kind() == "enum_variant")
+                .filter_map(|child| {
+                    Some(AstEnumVariant {
+                        name: self.required_field_text(child, "name")?,
+                        source_ref: self.source_ref(child),
+                    })
+                })
+                .collect(),
             source_ref: self.source_ref(node),
         })
     }
@@ -579,7 +617,7 @@ impl<'a> AstLowerer<'a> {
 
     fn lower_description_clause(&mut self, node: Node<'_>) -> Option<String> {
         let value_node = self.required_field(node, "value")?;
-        let value = self.text(value_node).trim_matches('"').trim().to_string();
+        let value = self.lower_text_literal(value_node)?.trim().to_string();
         if value.is_empty() { None } else { Some(value) }
     }
 
@@ -589,7 +627,7 @@ impl<'a> AstLowerer<'a> {
         agent_name: &str,
     ) -> Option<String> {
         let value_node = self.required_field(node, "value")?;
-        let value = self.text(value_node).trim_matches('"').trim().to_string();
+        let value = self.lower_text_literal(value_node)?.trim().to_string();
         if value.is_empty() {
             self.push_error(
                 AstDiagnosticCode::InvalidAgentResponsibility,
@@ -708,6 +746,9 @@ impl<'a> AstLowerer<'a> {
     fn lower_statement(&mut self, node: Node<'_>) -> Option<AstStatement> {
         match node.kind() {
             "bind_statement" => self.lower_bind_statement(node).map(AstStatement::Bind),
+            "parallel_statement" => self
+                .lower_parallel_statement(node)
+                .map(AstStatement::Parallel),
             "call_statement" => self.lower_call_statement(node).map(AstStatement::Call),
             "human_approval_statement" => self
                 .lower_human_approval_statement(node)
@@ -888,6 +929,103 @@ impl<'a> AstLowerer<'a> {
         })
     }
 
+    fn lower_parallel_statement(&mut self, node: Node<'_>) -> Option<AstParallelStatement> {
+        let mut arguments = Vec::new();
+        let mut result_binding = None;
+        let mut each = None;
+        let mut concurrency = None;
+        let mut items = None;
+        let mut seen = HashSet::new();
+        for child in named_children(node) {
+            let key = match child.kind() {
+                "symbol_identifier" => continue,
+                "call_argument_clause" => {
+                    let argument = self.lower_call_argument_clause(child)?;
+                    let key = format!("with:{}", argument.name);
+                    arguments.push(argument);
+                    key
+                }
+                "call_result_binding_clause" => {
+                    result_binding = self.lower_call_result_binding_clause(child);
+                    "into".to_string()
+                }
+                "parallel_each_clause" => {
+                    let collection = self.required_field(child, "collection")?;
+                    each = Some((
+                        self.required_field_text(child, "item")?,
+                        self.lower_expression(collection)?,
+                    ));
+                    "each".to_string()
+                }
+                "parallel_limit_clause" => {
+                    let name = self.required_field_text(child, "name")?;
+                    let value = self
+                        .required_field_text(child, "value")?
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|value| *value > 0 && *value <= 9_007_199_254_740_991);
+                    if value.is_none() {
+                        self.push_error(
+                            AstDiagnosticCode::UnsupportedCstNode,
+                            child,
+                            "parallel bounds must be positive safe integers",
+                        );
+                    }
+                    if name == "max_concurrency" {
+                        concurrency = value;
+                    } else {
+                        items = value;
+                    }
+                    name
+                }
+                _ => {
+                    self.push_error(
+                        AstDiagnosticCode::UnsupportedCstNode,
+                        child,
+                        "unsupported parallel clause",
+                    );
+                    continue;
+                }
+            };
+            if !seen.insert(key) {
+                self.push_error(
+                    AstDiagnosticCode::DuplicateCallArgument,
+                    child,
+                    "duplicate parallel clause",
+                );
+            }
+        }
+        let (Some((item, collection)), Some(max_concurrency), Some(max_items), Some(binding)) =
+            (each, concurrency, items, result_binding)
+        else {
+            self.push_error(
+                AstDiagnosticCode::UnsupportedCstNode,
+                node,
+                "parallel requires each, max_concurrency, max_items and into",
+            );
+            return None;
+        };
+        if max_concurrency > max_items {
+            self.push_error(
+                AstDiagnosticCode::UnsupportedCstNode,
+                node,
+                "max_concurrency cannot exceed max_items",
+            );
+        }
+        Some(AstParallelStatement {
+            call: AstCallStatement {
+                target: self.required_field_text(node, "target")?,
+                arguments,
+                result_binding: Some(binding),
+                source_ref: self.source_ref(node),
+            },
+            item,
+            collection,
+            max_concurrency,
+            max_items,
+        })
+    }
+
     fn lower_call_statement(&mut self, node: Node<'_>) -> Option<AstCallStatement> {
         let target = self.required_field_text(node, "target")?;
         let mut arguments = Vec::new();
@@ -959,7 +1097,19 @@ impl<'a> AstLowerer<'a> {
 
     fn lower_if_statement(&mut self, node: Node<'_>) -> Option<AstIfStatement> {
         let condition_node = self.required_field(node, "condition")?;
-        let condition = self.lower_expression(condition_node)?;
+        let (condition, present_binding) = if condition_node.kind() == "present_condition" {
+            let value_node = self.required_field(condition_node, "value")?;
+            let binding_node = self.required_field(condition_node, "binding")?;
+            (
+                self.lower_expression(value_node)?,
+                Some(AstResultBinding {
+                    name: self.text(binding_node),
+                    source_ref: self.source_ref(binding_node),
+                }),
+            )
+        } else {
+            (self.lower_expression(condition_node)?, None)
+        };
         let blocks: Vec<_> = named_children(node)
             .into_iter()
             .filter(|child| child.kind() == "block")
@@ -968,13 +1118,21 @@ impl<'a> AstLowerer<'a> {
             .first()
             .map(|block| self.lower_block_statements(*block))
             .unwrap_or_default();
-        let else_branch = blocks
-            .get(1)
-            .map(|block| self.lower_block_statements(*block))
-            .unwrap_or_default();
+        let else_branch = if let Some(branch) = named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == "if_statement")
+        {
+            vec![AstStatement::If(self.lower_if_statement(branch)?)]
+        } else {
+            blocks
+                .get(1)
+                .map(|block| self.lower_block_statements(*block))
+                .unwrap_or_default()
+        };
 
         Some(AstIfStatement {
             condition,
+            present_binding,
             then_branch,
             else_branch,
             source_ref: self.source_ref(node),
@@ -1021,6 +1179,17 @@ impl<'a> AstLowerer<'a> {
             .collect()
     }
 
+    fn lower_text_literal(&mut self, node: Node<'_>) -> Option<String> {
+        match serde_json::from_str::<String>(&self.text(node)) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                self.push_error(AstDiagnosticCode::InvalidTextLiteral, node,
+                    "Text requires valid JSON escapes and no raw control characters; use \\n for a newline and \\\\ for a literal backslash");
+                None
+            }
+        }
+    }
+
     fn lower_expression(&mut self, node: Node<'_>) -> Option<AstExpression> {
         if node.kind() == "expression" {
             let Some(child) = node.named_child(0) else {
@@ -1061,7 +1230,7 @@ impl<'a> AstLowerer<'a> {
             "symbol_identifier" => Some(AstExpression::Symbol { value, source_ref }),
             "value_identifier" => Some(AstExpression::Value { value, source_ref }),
             "string" => Some(AstExpression::StringLiteral {
-                value: value.trim_matches('"').to_string(),
+                value: self.lower_text_literal(node)?,
                 source_ref,
             }),
             "integer" => Some(AstExpression::IntLiteral { value, source_ref }),
@@ -1081,6 +1250,20 @@ impl<'a> AstLowerer<'a> {
                 let value_node = self.required_field(node, "value")?;
                 Some(AstExpression::TextConversion {
                     expression: Box::new(self.lower_expression(value_node)?),
+                    source_ref,
+                })
+            }
+            "optional_some_expression" => {
+                let value_node = self.required_field(node, "value")?;
+                Some(AstExpression::OptionalSome {
+                    expression: Box::new(self.lower_expression(value_node)?),
+                    source_ref,
+                })
+            }
+            "optional_none_expression" => {
+                let type_node = self.required_field(node, "type")?;
+                Some(AstExpression::OptionalNone {
+                    type_ref: self.lower_type_ref(type_node)?,
                     source_ref,
                 })
             }
@@ -1239,6 +1422,25 @@ pub(crate) fn parse_error_message(source: &str) -> String {
         return "`ask` is a block interaction, not an inline input call. Use `ask` inside a `strategy` or `skill` `do` block with `with prompt as \"...\"` and `into <binding>`; a `.tb` file also requires a `module` declaration.".to_string();
     }
 
+    let mut declaration = "";
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("uses ") && trimmed.contains(',') {
+            return "`uses` takes one capability per line. Repeat `uses <Name>` instead of a comma-separated list.".to_string();
+        }
+        if trimmed == line && !trimmed.is_empty() && !trimmed.starts_with('#') {
+            declaration = trimmed.split_whitespace().next().unwrap_or("");
+        }
+        if declaration == "function" && trimmed.starts_with("uses ") {
+            return "`function` is pure and does not accept a `uses` clause. Call pure functions directly in its `do` block; use a `skill` or `strategy` to compose governed capabilities.".to_string();
+        }
+        if declaration == "strategy" && trimmed.starts_with("on failure") {
+            return "`on failure` belongs to a `skill`, not a `strategy`. Put the recoverable operation and its explicit failure-family handler in a skill.".to_string();
+        }
+        if declaration == "skill" && trimmed.starts_with("callable_by ") {
+            return "`callable_by` declares agent invocation authority and belongs to an `agent`, not a `skill`.".to_string();
+        }
+    }
     "Tree-sitter CST contains a syntax error".to_string()
 }
 

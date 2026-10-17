@@ -11,6 +11,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
+import { applyHostDecisions } from "./host-decisions.mjs";
 
 import {
   generateHandlerContractTestFromAirTool,
@@ -490,7 +491,17 @@ export async function prepareProject(options = {}) {
     try {
       airDocument = await compileSource(sourcePath, compileOptions);
     } catch (error) {
-      diagnostics.push(errorDiagnostic("SourceCompileFailed", error.message, { source_path: sourcePath }));
+      if (Array.isArray(error.diagnostics)) {
+        // Each module is compiled against the explicit project sources. The
+        // same dependency error must not be attributed to every entry module.
+        for (const diagnostic of error.diagnostics) {
+          if (!diagnostics.some(existing => JSON.stringify(existing) === JSON.stringify(diagnostic))) {
+            diagnostics.push(diagnostic);
+          }
+        }
+      } else {
+        diagnostics.push(errorDiagnostic("SourceCompileFailed", error.message, { source_path: sourcePath }));
+      }
       continue;
     }
 
@@ -520,11 +531,6 @@ export async function prepareProject(options = {}) {
     }
 
     airDocuments.push({ document: airDocument, sourcePath });
-    const airPath = airOutputPath(root, actualModuleName, airRoot);
-    actions.push(action(mode === "write" ? "write_air" : "would_write_air", airPath, {
-      module_name: actualModuleName,
-      source_path: sourcePath,
-    }));
   }
 
   for (const airPath of airPaths) {
@@ -569,6 +575,18 @@ export async function prepareProject(options = {}) {
   });
   diagnostics.push(...assembly.diagnostics);
   const preparedAirDocuments = assembly.entries;
+  for (const { document, sourcePath } of preparedAirDocuments) {
+    if (sourcePath === undefined) continue;
+    const airPath = airOutputPath(root, document.module.name, airRoot);
+    const expected = `${JSON.stringify(document, null, 2)}\n`;
+    if (existsSync(airPath) && readFileSync(airPath, "utf8") === expected) continue;
+    actions.push(action(mode === "write" ? "write_air" : "would_write_air", airPath, {
+      module_name: document.module.name, source_path: sourcePath,
+    }));
+    if (mode === "check") diagnostics.push(errorDiagnostic("PreparedAirDrift",
+      "prepared AIR is missing or differs from the current compiled source; run prepare --mode write",
+      { air_path: airPath, source_path: sourcePath }));
+  }
   if (entryRef === undefined) {
     const inferred = resolveRunPlanEntry(preparedAirDocuments, undefined, [], null);
     if (inferred) entryRef = inferred.ref;
@@ -675,15 +693,34 @@ export async function prepareProject(options = {}) {
     mode,
     required: expectedToolRefs.length > 0,
   });
+  let proposedManifest = mergeManifest(currentManifest, expectedManifest, diagnostics, manifestPath);
+  if (!hasErrorDiagnostics(diagnostics)) {
+    try {
+      const proposal = applyHostDecisions(proposedManifest, options.hostDecisions, manifestRequirements,
+        bindingFragmentComposition.toolRefs);
+      proposedManifest = proposal.manifest;
+      for (const change of proposal.changes) {
+        actions.push(action(mode === "write" ? "apply_host_decision" : "would_apply_host_decision", manifestPath, change));
+      }
+      if (mode === "check" && proposal.changes.length > 0) diagnostics.push(errorDiagnostic(
+        "HostDecisionDrift", "explicit host decisions differ from the current manifest; review with plan and apply with write",
+        { manifest_path: manifestPath }));
+    } catch (error) {
+      diagnostics.push(errorDiagnostic(error.code ?? "HostDecisionInvalid",
+        "host decisions are invalid or conflict with a binding fragment; no preparation changes were written",
+        { manifest_path: manifestPath }));
+    }
+  }
   inspectManifest({
     currentManifest,
+    reviewedManifest: proposedManifest,
+    fragmentToolRefs: bindingFragmentComposition.toolRefs,
     expectedManifest,
     manifestPath,
     diagnostics,
     actions,
     mode,
   });
-  const proposedManifest = mergeManifest(currentManifest, expectedManifest, diagnostics, manifestPath);
   const expectedEffectiveProject = hasErrorDiagnostics(diagnostics) ? null : assertEffectiveProjectSafe(buildEffectiveProjectDocument({
       root,
       profile: runProfile,
@@ -709,7 +746,8 @@ export async function prepareProject(options = {}) {
   validateAgentSecretScopes(proposedManifest, manifestRequirements, permissionDiagnostics, actions, mode, manifestPath);
   for (const diagnostic of permissionDiagnostics) {
     diagnostics.push({ ...diagnostic, severity: mode === "check" ? "error" : "warning" });
-    actions.push(action("review_required_permission", manifestPath, { code: diagnostic.code, tool_ref: diagnostic.tool_ref, agent_ref: diagnostic.agent_ref }));
+    actions.push(action("review_required_permission", manifestPath, { code: diagnostic.code,
+      tool_ref: diagnostic.tool_ref, agent_ref: diagnostic.agent_ref, message: diagnostic.message }));
   }
   inspectStubs({ stubs, diagnostics, actions, mode });
   inspectSecretProfiles({ secretProfiles, diagnostics, actions, mode });
@@ -918,7 +956,11 @@ export function renderReport(report) {
     lines.push("Actions:");
     for (const item of report.actions) {
       const target = item.path ?? item.tool_ref ?? item.module_name ?? "";
-      lines.push(`- ${item.kind}${target ? ` ${target}` : ""}`);
+      lines.push(`- ${item.kind}${target ? ` ${target}` : ""}${item.code ? ` [${item.code}]` : ""}${item.tool_ref && item.tool_ref !== target ? ` ${item.tool_ref}` : ""}${item.message ? `: ${item.message}` : ""}`);
+      if (["apply_host_decision", "would_apply_host_decision"].includes(item.kind)) {
+        lines.push(`  ${item.target_ref} ${item.field}: ${JSON.stringify(item.before)} -> ${JSON.stringify(item.after)}`);
+        if (item.source_required !== undefined) lines.push(`  source_required: ${JSON.stringify(item.source_required)}`);
+      }
     }
   }
   if (report.diagnostics?.length > 0) {
@@ -1911,7 +1953,7 @@ async function compileSource(sourcePath, options) {
 
 function compileSourceWithCargo(sourcePath, options = {}) {
   const implementationRoot = options.implementationRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-  const sourceArgs = ["--module", ...[...new Set(options.moduleSourcePaths ?? [])]
+  const sourceArgs = ["--json", "--module", ...[...new Set(options.moduleSourcePaths ?? [])]
     .flatMap(path => ["--module-source", path])];
   for (const root of new Set(options.sourceRoots ?? [])) sourceArgs.push("--source-root", root);
   sourceArgs.push(sourcePath);
@@ -1976,9 +2018,19 @@ function compileSourceWithCommand(command, args, options = {}) {
   }
   if (result.status !== 0) {
     const details = (result.stderr || result.stdout || "").trim();
-    throw new Error(details || `touba-compile exited with code ${result.status}`);
+    const error = new Error(details || `touba-compile exited with code ${result.status}`);
+    if (result.stdout?.trim().startsWith("{")) {
+      const envelope = JSON.parse(result.stdout);
+      if (envelope.ok === false && Array.isArray(envelope.diagnostics)) {
+        error.diagnostics = envelope.diagnostics.map(diagnostic => errorDiagnostic(diagnostic.code,
+          diagnostic.message, { source_path: diagnostic.source_ref?.source_id, source_ref: diagnostic.source_ref }));
+      }
+    }
+    throw error;
   }
-  return JSON.parse(result.stdout);
+  const envelope = JSON.parse(result.stdout);
+  if (envelope.ok !== true || !envelope.air) throw new Error("compiler did not return a valid AIR envelope");
+  return envelope.air;
 }
 
 function airOutputPath(root, moduleName, airRoot) {
@@ -2051,6 +2103,18 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
   }
 
   const assembled = cloneJson(entryDocument);
+  // Match the compiler: entry provenance wins ties, then lexical module order.
+  // Unimported modules cannot change the entry's run budget.
+  for (const moduleName of [...visitedModules].sort()) {
+    const budgets = byModule.get(moduleName).budgets;
+    if (!budgets) continue;
+    assembled.budgets ??= { run: {} };
+    for (const [kind, limit] of Object.entries(budgets.run)) {
+      if (!assembled.budgets.run[kind] || limit.value < assembled.budgets.run[kind].value) {
+        assembled.budgets.run[kind] = cloneJson(limit);
+      }
+    }
+  }
   if (!Array.isArray(assembled.imports)) {
     assembled.imports = [];
   }
@@ -2831,6 +2895,7 @@ function composeBindingFragments({ fragmentPaths, expectedManifest, diagnostics,
       bindings: Object.fromEntries(Object.entries(manifest.bindings).sort(([a], [b]) => a.localeCompare(b))),
     },
     fragments,
+    toolRefs: new Set(seenBindings.keys()),
   };
 }
 
@@ -4203,6 +4268,12 @@ function expectedStubs(airDocuments, options) {
       stubs.push({
         artifact_kind: "handler_stub",
         tool_ref: tool.id,
+        declared_contract: {
+          REQUIRED_GRANTS: normalizeStringArray(tool.required_capabilities),
+          REQUIRED_SECRET_HANDLES: normalizeStringArray(tool.required_secrets),
+          INPUT_SIGNATURE: (tool.signature?.inputs ?? []).map(({ name, type_ref }) => ({ name, type_ref })),
+          OUTPUT_TYPE: tool.signature?.output_type ?? null,
+        },
         path: join(options.root, relativePath),
         relative_path: relativePath,
         content: generateHandlerStubFromAirTool(tool, {
@@ -4258,7 +4329,7 @@ function inspectEffectiveProject({ path, expected, diagnostics, actions, mode })
   }
 }
 
-function inspectManifest({ currentManifest, expectedManifest, manifestPath, diagnostics, actions, mode }) {
+function inspectManifest({ currentManifest, reviewedManifest = currentManifest, fragmentToolRefs = new Set(), expectedManifest, manifestPath, diagnostics, actions, mode }) {
   const expectedToolRefs = Object.keys(expectedManifest.bindings);
   if (expectedToolRefs.length === 0) {
     if (currentManifest?.bindings && Object.keys(currentManifest.bindings).length > 0) {
@@ -4317,9 +4388,14 @@ function inspectManifest({ currentManifest, expectedManifest, manifestPath, diag
       }
       continue;
     }
-    validateBindingCoverage(actual, expected, diagnostics, manifestPath, toolRef);
+    if (fragmentToolRefs.has(toolRef) && stableJson(actual) !== stableJson(expected)) {
+      diagnostics.push(errorDiagnostic("BindingFragmentManifestDrift",
+        "current manifest differs from an explicit binding fragment; reconcile the host configuration before preparation",
+        { manifest_path: manifestPath, tool_ref: toolRef }));
+    }
+    validateBindingCoverage(reviewedManifest.bindings[toolRef], expected, diagnostics, manifestPath, toolRef);
   }
-  validateAgentSecretScopes(currentManifest, expectedManifest, diagnostics, actions, mode, manifestPath);
+  validateAgentSecretScopes(reviewedManifest, expectedManifest, diagnostics, actions, mode, manifestPath);
 }
 
 function validateDraftManifestEffects(manifest) {
@@ -4430,6 +4506,26 @@ function inspectStubs({ stubs, diagnostics, actions, mode }) {
           tool_ref: stub.tool_ref,
           path: stub.path,
         }));
+      } else if (stub.declared_contract) {
+        const source = readFileSync(stub.path, "utf8");
+        // Inspect generated literals only. Never import or execute user code in
+        // prepare, and never overwrite a developer's handler implementation.
+        if (source.includes("TOUBA_HANDLER_GENERATED_BY")) {
+          for (const [name, expected] of Object.entries(stub.declared_contract)) {
+            const match = source.match(new RegExp(`\\bconst ${name} = ([\\s\\S]*?);`));
+            if (!match) continue; // Custom code may compute its own contract.
+            let actual;
+            try { actual = JSON.parse(match[1]); } catch { continue; }
+            if (JSON.stringify(actual) === JSON.stringify(expected)) continue;
+            const diagnostic = errorDiagnostic("HandlerDeclaredContractDrift",
+              `${name} in ${stub.path} differs from AIR for ${stub.tool_ref}; review the handler contract explicitly`,
+              { tool_ref: stub.tool_ref, path: stub.path, field: name });
+            diagnostics.push({ ...diagnostic, severity: mode === "check" ? "error" : "warning" });
+            actions.push(action("review_required_permission", stub.path, {
+              tool_ref: stub.tool_ref, code: diagnostic.code, message: diagnostic.message,
+            }));
+          }
+        }
       }
       continue;
     }

@@ -21,7 +21,7 @@ function request(mode = "summary") {
 
 test("business instructions supplement the SDK protocol and resolve per request", async () => {
   let captured;
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test/model", instructions: (input) => `Support service, mode ${input.mode}.`,
     generateObject: async (options) => {
       captured = options;
@@ -36,13 +36,13 @@ test("business instructions supplement the SDK protocol and resolve per request"
 
 test("explicit system override remains explicit and instructions reject non-text", async () => {
   let captured;
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test/model", system: "Custom protocol", instructions: "Application guidance",
     generateObject: async (options) => { captured = options; return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({ action: "answer_directly", result: "ok" }) }; },
   });
   await provider(request());
   assert.ok(captured.system.startsWith("Custom protocol\n\nApplication guidance\n\nRuntime context: "));
-  const invalid = createAiSdkDecisionProvider({ model: "test/model", instructions: () => ({ invalid: true }), generateObject: () => assert.fail("must reject before model") });
+  const invalid = createAiSdkDecisionProvider({ history: false, model: "test/model", instructions: () => ({ invalid: true }), generateObject: () => assert.fail("must reject before model") });
   await assert.rejects(() => invalid(request()), /instructions must resolve to a string/);
 });
 
@@ -50,7 +50,7 @@ test("disabled review is absent from the model action space without mutating run
   const input = request();
   const original = structuredClone(input);
   let prompt;
-  const provider = createAiSdkDecisionProvider({
+  const provider = createAiSdkDecisionProvider({ history: false,
     model: "test/model", allowHumanReview: false,
     generateObject: async (options) => { prompt = JSON.parse(options.system.split("\n\nRuntime context: ").at(-1)); return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: structuredModelObject({ action: "answer_directly", result: "ok" }) }; },
   });

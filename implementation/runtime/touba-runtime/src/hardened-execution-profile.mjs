@@ -4,6 +4,15 @@ import { spawnSync } from "node:child_process";
 import { ToubaRuntimeError } from "./runtime-errors.mjs";
 
 export const HARDENED_EXECUTION_PROFILE_VERSION = "touba-hardened-execution-profile-v1";
+// Only fixed structural codes may cross the public admission boundary. Never
+// forward arbitrary exception messages or provider-supplied error codes.
+export const HARDENED_ERROR_CODES = Object.freeze([
+  "HardenedSupplyChainEvidenceRequired", "HardenedRedactionEvidenceRequired",
+  "HardenedDurableCheckpointRequired", "HardenedSecretsPolicyInvalid",
+  "HardenedProviderModeInvalid", "HardenedBudgetRequired", "HardenedSandboxBindingRequired",
+  "HardenedSandboxUnavailable", "HardenedSandboxVersionUnsupported", "HardenedProfileInvalid",
+  "HardenedProfileVersionUnsupported", "HardenedControlRequired", "HardenedProfileExtensionUnknown",
+]);
 const REQUIRED_BUDGETS = ["max_run_ms", "max_steps", "max_tool_calls", "max_agent_invocations"];
 const PROFILE_FIELDS = new Set(["schema_version", "controls"]);
 const CONTROL_FIELDS = new Set([

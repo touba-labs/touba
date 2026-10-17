@@ -4,9 +4,9 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
-    "air_digest": "sha256:a573f16a7b116a7639867274e3664336feebb8312a3f5c7032130c8e01178662",
+    "air_digest": "sha256:d3a3a2a08285a5d277427484ab0e333507369bf26b9c849675280a6299d8f4fa",
     "module_ref": "module:examples.a1_fallback_binding",
-    "entry_ref": "skill:examples.a1_fallback_binding/FallbackSource"
+    "entry_ref": "skill:examples.a1_fallback_binding/BuildSource"
   },
   "events": [
     {
@@ -15,7 +15,7 @@
       "sequence_index": 0,
       "kind": "run_started",
       "payload": {
-        "entry_ref": "skill:examples.a1_fallback_binding/FallbackSource",
+        "entry_ref": "skill:examples.a1_fallback_binding/BuildSource",
         "max_loop_iterations": 100
       }
     },
@@ -25,14 +25,120 @@
       "sequence_index": 1,
       "kind": "scope_entered",
       "air_ref": {
-        "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/FallbackSource",
-        "owner_ref": "skill:examples.a1_fallback_binding/FallbackSource"
+        "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/BuildSource",
+        "owner_ref": "skill:examples.a1_fallback_binding/BuildSource"
       }
     },
     {
       "event_id": "event:run-1:3",
       "run_id": "run-1",
       "sequence_index": 2,
+      "kind": "call_started",
+      "air_ref": {
+        "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/BuildSource",
+        "owner_ref": "skill:examples.a1_fallback_binding/BuildSource",
+        "node_id": "node:graph:skill:examples.a1_fallback_binding/BuildSource:1",
+        "source_ref": {
+          "source_id": "tb-a1-p06-fallback-resolved-with-binding.tb",
+          "start_byte": 459,
+          "end_byte": 539,
+          "start_line": 24,
+          "start_column": 8,
+          "end_line": 27,
+          "end_column": 8
+        }
+      },
+      "payload": {
+        "target_ref": "tool:examples.a1_fallback_binding/FetchSource",
+        "caller_ref": "skill:examples.a1_fallback_binding/BuildSource",
+        "agent_ref": null,
+        "argument_count": 1
+      }
+    },
+    {
+      "event_id": "event:run-1:4",
+      "run_id": "run-1",
+      "sequence_index": 3,
+      "kind": "failure_detected",
+      "air_ref": {
+        "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/BuildSource",
+        "owner_ref": "skill:examples.a1_fallback_binding/BuildSource",
+        "node_id": "node:graph:skill:examples.a1_fallback_binding/BuildSource:1",
+        "source_ref": {
+          "source_id": "tb-a1-p06-fallback-resolved-with-binding.tb",
+          "start_byte": 459,
+          "end_byte": 539,
+          "start_line": 24,
+          "start_column": 8,
+          "end_line": 27,
+          "end_column": 8
+        }
+      },
+      "payload": {
+        "failure_path_ref": "failure:graph:skill:examples.a1_fallback_binding/BuildSource:1",
+        "failure_mode": "fallback",
+        "failure_family": "handler",
+        "declared_failure_family": "handler",
+        "runtime_error_code": "ToolHandlerFailed",
+        "target_ref": "tool:examples.a1_fallback_binding/FetchSource",
+        "tool_ref": "tool:examples.a1_fallback_binding/FetchSource",
+        "caller_ref": "skill:examples.a1_fallback_binding/BuildSource",
+        "provider_cause": "bounded anneau 1 fallback trigger"
+      },
+      "message": "tool handler failed tool:examples.a1_fallback_binding/FetchSource: bounded anneau 1 fallback trigger"
+    },
+    {
+      "event_id": "event:run-1:5",
+      "run_id": "run-1",
+      "sequence_index": 4,
+      "kind": "fallback_selected",
+      "air_ref": {
+        "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/BuildSource",
+        "owner_ref": "skill:examples.a1_fallback_binding/BuildSource"
+      },
+      "payload": {
+        "failure_path_ref": "failure:graph:skill:examples.a1_fallback_binding/BuildSource:1",
+        "target_node_id": "node:graph:skill:examples.a1_fallback_binding/BuildSource:3"
+      }
+    },
+    {
+      "event_id": "event:run-1:6",
+      "run_id": "run-1",
+      "sequence_index": 5,
+      "kind": "call_started",
+      "air_ref": {
+        "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/BuildSource",
+        "owner_ref": "skill:examples.a1_fallback_binding/BuildSource",
+        "node_id": "node:graph:skill:examples.a1_fallback_binding/BuildSource:3",
+        "source_ref": {
+          "source_id": "tb-a1-p06-fallback-resolved-with-binding.tb",
+          "start_byte": 582,
+          "end_byte": 605,
+          "start_line": 29,
+          "start_column": 8,
+          "end_line": 29,
+          "end_column": 31
+        }
+      },
+      "payload": {
+        "target_ref": "skill:examples.a1_fallback_binding/FallbackSource",
+        "caller_ref": "skill:examples.a1_fallback_binding/BuildSource"
+      }
+    },
+    {
+      "event_id": "event:run-1:7",
+      "run_id": "run-1",
+      "sequence_index": 6,
+      "kind": "scope_entered",
+      "air_ref": {
+        "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/FallbackSource",
+        "owner_ref": "skill:examples.a1_fallback_binding/FallbackSource"
+      }
+    },
+    {
+      "event_id": "event:run-1:8",
+      "run_id": "run-1",
+      "sequence_index": 7,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/FallbackSource",
@@ -44,9 +150,46 @@
       }
     },
     {
-      "event_id": "event:run-1:4",
+      "event_id": "event:run-1:9",
       "run_id": "run-1",
-      "sequence_index": 3,
+      "sequence_index": 8,
+      "kind": "call_completed",
+      "air_ref": {
+        "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/BuildSource",
+        "owner_ref": "skill:examples.a1_fallback_binding/BuildSource",
+        "node_id": "node:graph:skill:examples.a1_fallback_binding/BuildSource:3",
+        "source_ref": {
+          "source_id": "tb-a1-p06-fallback-resolved-with-binding.tb",
+          "start_byte": 582,
+          "end_byte": 605,
+          "start_line": 29,
+          "start_column": 8,
+          "end_line": 29,
+          "end_column": 31
+        }
+      },
+      "payload": {
+        "target_ref": "skill:examples.a1_fallback_binding/FallbackSource",
+        "caller_ref": "skill:examples.a1_fallback_binding/BuildSource"
+      }
+    },
+    {
+      "event_id": "event:run-1:10",
+      "run_id": "run-1",
+      "sequence_index": 9,
+      "kind": "scope_exited",
+      "air_ref": {
+        "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/BuildSource",
+        "owner_ref": "skill:examples.a1_fallback_binding/BuildSource"
+      },
+      "payload": {
+        "status": "success"
+      }
+    },
+    {
+      "event_id": "event:run-1:11",
+      "run_id": "run-1",
+      "sequence_index": 10,
       "kind": "run_completed",
       "payload": {
         "status": "success",

@@ -19,6 +19,10 @@ function main() {
       "cli/touba-supply-chain/src/validate.mjs",
       "cli/touba-supply-chain/test/validate.test.mjs",
       "tests/agent-decision-provider-v1/package.json",
+      "cli/touba-run/test/parallel.test.mjs",
+      "cli/touba-run/test/parallel-process.test.mjs",
+      "runtime/touba-handler-sdk/test/parallel-engine.test.mjs",
+      "cli/touba-distribution/src/check-parallel-install.mjs",
       "examples/providers/ollama-decision.provider.mjs",
       "tests/memory-backend-host/backend/memory_backend_server.mjs",
       "tests/memory-backend-host/docker/Dockerfile.memory-backend",
@@ -83,6 +87,7 @@ function main() {
     assertScript(packageJson, "validate:js-sdk-project");
     assertScript(packageJson, "validate:js-sdk-engine-project");
     assertScript(packageJson, "validate:agent-decision-provider-v1");
+    assertScript(packageJson, "validate:parallel-v1");
     assertScript(packageJson, "validate:agentdojo-benchmark");
     assertScript(packageJson, "validate:team-multi-equipe");
     assertScript(packageJson, "validate:memory-backend-host");

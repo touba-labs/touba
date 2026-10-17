@@ -14,7 +14,7 @@ skill FallbackSource
     takes request as SourceRequest
     gives SourceText
     do
-        give SourceText
+        give record SourceText { body as request.query }
 
 skill BuildSource
     takes request as SourceRequest

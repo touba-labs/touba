@@ -18,12 +18,18 @@ assert.equal(air.execution_graphs.find((graph) => (graph.failure_paths?.length ?
 for (const name of [
   "tb-failure-v1-n01-missing-family.tb",
   "tb-failure-v1-n02-unknown-family.tb",
-  "tb-failure-v1-n03-nested-control.tb",
 ]) {
   const result = compile(`negative/syntax/${name}`);
   assert.notEqual(result.status, 0, `${name} must fail`);
 }
 const invariant = compile("negative/semantic/tb-failure-v1-n04-invariant-while.tb");
+const nested = compile("positive/tb-failure-v1-p02-nested-control.tb");
+assert.equal(nested.status, 0, nested.stderr);
+for (const [ready, expected] of [[false, "done"], [true, "nested"]]) {
+  const result = await executeAirDocument(JSON.parse(nested.stdout), { inputs: { ready } });
+  assert.equal(result.status, "success");
+  assert.equal(result.result, expected);
+}
 assert.notEqual(invariant.status, 0);
 assert.match(`${invariant.stdout}\n${invariant.stderr}`, /InvariantLoopCondition/);
 
@@ -48,7 +54,7 @@ assert.equal(eventOf(bounded.trace, "run_started").payload.max_loop_iterations, 
 assert.equal(eventOf(bounded.trace, "failure_detected").payload.runtime_error_code,
   "LoopIterationLimitExceeded");
 
-console.log("failure-flow-v1: status=success families=6 catchable=4 negatives=5");
+console.log("failure-flow-v1: status=success families=6 catchable=4 nested-controls=accepted");
 
 function compile(relativePath) {
   return spawnSync(process.env.CARGO ?? "cargo", [

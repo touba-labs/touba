@@ -34,9 +34,11 @@ export default grammar({
         choice(
           $.module_declaration,
           $.import_declaration,
+          $.run_limits_declaration,
           $.define_declaration,
           $.memory_declaration,
           $.type_declaration,
+          $.enum_declaration,
           $.function_declaration,
           $.tool_declaration,
           $.skill_declaration,
@@ -61,6 +63,16 @@ export default grammar({
       "from",
       $._sp,
       field("from_module", $.module_name),
+    ),
+
+    run_limits_declaration: $ => seq(
+      "limits", $._sp, "run",
+      indentedBlock($, $.run_limit_clause),
+    ),
+
+    run_limit_clause: $ => seq(
+      field("name", $.value_identifier), $._sp, "as", $._sp,
+      field("value", $.expression),
     ),
 
     define_declaration: $ => seq(
@@ -97,6 +109,13 @@ export default grammar({
       $._sp,
       field("type", $.type_ref),
     ),
+
+    enum_declaration: $ => seq(
+      "enum", $._sp, field("name", $.symbol_identifier),
+      indentedBlock($, $.enum_variant),
+    ),
+
+    enum_variant: $ => field("name", $.value_identifier),
 
     function_declaration: $ => seq(
       "function",
@@ -296,6 +315,7 @@ export default grammar({
       $.human_approval_statement,
       $.user_interaction_statement,
       $.call_statement,
+      $.parallel_statement,
       $.give_statement,
       $.stop_statement,
       $.if_statement,
@@ -304,14 +324,20 @@ export default grammar({
       $.indent_error,
     ),
 
-    _nested_statement: $ => choice(
-      $.bind_statement,
-      $.human_approval_statement,
-      $.user_interaction_statement,
-      $.call_statement,
-      $.give_statement,
-      $.stop_statement,
-      $.indent_error,
+    parallel_statement: $ => seq(
+      "parallel", $._sp, field("target", $.symbol_identifier),
+      indentedBlock($, choice($.parallel_each_clause, $.call_argument_clause,
+        $.parallel_limit_clause, $.call_result_binding_clause, $.indent_error)),
+    ),
+
+    parallel_each_clause: $ => seq(
+      "each", $._sp, field("item", $.value_identifier), $._sp, "in", $._sp,
+      field("collection", $.expression),
+    ),
+
+    parallel_limit_clause: $ => seq(
+      field("name", choice("max_concurrency", "max_items")), $._sp,
+      field("value", $.integer),
     ),
 
     call_statement: $ => seq(
@@ -384,10 +410,13 @@ export default grammar({
     if_statement: $ => prec.right(seq(
       "if",
       $._sp,
-      field("condition", $.expression),
+      field("condition", choice($.present_condition, $.expression)),
       $.block,
-      optional(seq("else", $.block)),
+      optional(seq("else", choice($.block, seq($._sp, $.if_statement)))),
     )),
+
+    present_condition: $ => seq("present", $._sp, field("value", $.expression),
+      $._sp, "as", $._sp, field("binding", $.value_identifier)),
 
     for_statement: $ => seq(
       "for",
@@ -407,7 +436,7 @@ export default grammar({
       $.block,
     ),
 
-    block: $ => indentedBlock($, $._nested_statement),
+    block: $ => indentedBlock($, $._statement),
 
     expression: $ => $._or_expression,
 
@@ -488,6 +517,8 @@ export default grammar({
     )),
 
     _primary_expression: $ => choice(
+      $.optional_some_expression,
+      $.optional_none_expression,
       $.record_expression,
       $.text_conversion_expression,
       $.parenthesized_expression,
@@ -513,6 +544,9 @@ export default grammar({
       ")",
     ),
 
+    optional_some_expression: $ => seq("some", optional($._sp), "(", field("value", $.expression), ")"),
+    optional_none_expression: $ => seq("none", optional($._sp), "(", field("type", $.type_ref), ")"),
+
     record_expression: $ => seq(
       "record",
       $._sp,
@@ -535,7 +569,8 @@ export default grammar({
 
     type_ref: $ => choice(
       $.symbol_identifier,
-      seq("List", $._sp, "of", $._sp, $.symbol_identifier),
+      seq("List", $._sp, "of", $._sp, $.type_ref),
+      seq("Optional", $._sp, "of", $._sp, $.type_ref),
     ),
 
     module_name: $ => seq(
@@ -553,7 +588,8 @@ export default grammar({
 
     trigger_event_detail: _ => /[A-Za-z_][A-Za-z0-9_]*/,
 
-    string: _ => /"[^"\n]*"/,
+    // Escapes are decoded and validated once by the CST -> AST compiler.
+    string: _ => /"([^"\\\n\r]|\\[^\n\r])*"/,
 
     integer: _ => /0|[1-9]\d*/,
 

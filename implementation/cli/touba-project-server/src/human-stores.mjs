@@ -1,0 +1,95 @@
+import { indexedStore } from "./indexed-store.mjs";
+import { readFileSync } from "node:fs";
+import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
+import { validatedRecords } from "./validated-records.mjs";
+
+const REQUEST_SCHEMA = "touba-human-requests-v1";
+const DECISION_SCHEMA = "touba-human-decisions-v1";
+const requestSnapshots = new WeakMap();
+const schemas = new Map(["touba-approval-request-v1", "touba-human-review-request-v1",
+  "touba-approval-decision-v1", "touba-human-review-decision-v1"].map(name => [name,
+  JSON.parse(readFileSync(new URL(`../../../contracts/product-surfaces/schemas/${name}.schema.json`, import.meta.url), "utf8"))]));
+const validateRequest = validatedRecords(record => {
+  const request = record?.request;
+  const approval = record?.collection === "approvals";
+  if (!request || Object.keys(record).some(key => !["collection", "request"].includes(key))
+    || !["approvals", "reviews"].includes(record.collection)
+    || request.mode !== (approval ? "approval" : "human_review")
+    || request.schema_version !== (approval ? "touba-approval-request-v1" : "touba-human-review-request-v1")
+    || validateObject(schemas.get(request.schema_version), request).length > 0) {
+    throw invalid("human request projection has an invalid contract or collection");
+  }
+});
+const validateDecision = validatedRecords(record => {
+  if (!record || !["touba-approval-decision-v1", "touba-human-review-decision-v1"].includes(record.schema_version)) {
+    throw invalid("human decision projection has an invalid identity");
+  }
+  const { accepted_at, ...decision } = record;
+  if (typeof accepted_at !== "string" || !Number.isFinite(Date.parse(accepted_at))
+    || validateObject(schemas.get(decision.schema_version), decision).length > 0) {
+    throw invalid("human decision projection has an invalid contract or acceptance instant");
+  }
+});
+export const HUMAN_REQUEST_INDEXES = Object.freeze({
+  request_id: "json_extract(body, '$.request.request_id')",
+  run_id: "json_extract(body, '$.request.run_id')",
+  collection: "json_extract(body, '$.collection')",
+});
+export const HUMAN_DECISION_INDEXES = Object.freeze({
+  request_id: "json_extract(body, '$.request_id')",
+  run_id: "json_extract(body, '$.run_id')",
+});
+
+function requests(path) {
+  return indexedStore({ path, schemaVersion: REQUEST_SCHEMA,
+    keyOf: record => record.request.request_id,
+    indexes: HUMAN_REQUEST_INDEXES,
+    validate: validateRequest,
+  });
+}
+
+function decisions(path) {
+  return indexedStore({ path, schemaVersion: DECISION_SCHEMA,
+    keyOf: record => record.request_id,
+    indexes: HUMAN_DECISION_INDEXES,
+    validate: validateDecision,
+  });
+}
+
+export function readHumanRequestStore(path, filter) {
+  const records = read(requests(path), filter);
+  const result = { schema_version: REQUEST_SCHEMA,
+    approvals: records.filter(record => record.collection === "approvals").map(record => record.request),
+    reviews: records.filter(record => record.collection === "reviews").map(record => record.request) };
+  requestSnapshots.set(result, records);
+  return result;
+}
+
+export function saveHumanRequestStore(path, store) {
+  const records = requestSnapshots.get(store);
+  if (!records) throw invalid("request write requires a fresh store snapshot");
+  records.splice(0, records.length,
+    ...store.approvals.map(request => ({ collection: "approvals", request })),
+    ...store.reviews.map(request => ({ collection: "reviews", request })));
+  requests(path).write(records);
+}
+
+export function loadHumanDecisionStore(path, filter) {
+  return { schema_version: DECISION_SCHEMA, decisions: read(decisions(path), filter) };
+}
+
+export function saveHumanDecisionStore(path, store) {
+  decisions(path).write(store.decisions);
+}
+
+function read(store, filter) {
+  try { return store.read(filter); }
+  catch (cause) {
+    if (cause.code === "ToubaStoreRecordInvalid") throw invalid("human projection has a duplicate or divergent stored identity");
+    throw cause;
+  }
+}
+
+function invalid(message) {
+  return Object.assign(new Error(message), { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+}

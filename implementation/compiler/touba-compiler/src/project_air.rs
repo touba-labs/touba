@@ -73,6 +73,26 @@ impl<'a> ProjectAirAssembler<'a> {
         }
 
         let mut assembled = entry.clone();
+        // A source limit constrains the whole linked run, never a fresh allowance
+        // for each imported call. Entry provenance wins ties, then lexical order.
+        let mut budget_modules: Vec<_> = visited_modules.iter().collect();
+        budget_modules.sort();
+        for name in budget_modules {
+            if let Some(budgets) = &self.modules[name].budgets {
+                let target = assembled.budgets.get_or_insert_with(|| AirBudgets {
+                    run: Default::default(),
+                });
+                for (kind, limit) in &budgets.run {
+                    if target
+                        .run
+                        .get(kind)
+                        .is_none_or(|current| limit.value < current.value)
+                    {
+                        target.run.insert(kind.clone(), limit.clone());
+                    }
+                }
+            }
+        }
         let mut collector = ProjectAirCollector::new(&self.modules, &mut assembled);
         collector.collect_module_imports(entry);
         collector.collect_graph_dependencies(entry);
@@ -558,14 +578,20 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
     fn include_graph_dependencies(&mut self, graph: &AirFlowGraph) {
         for node in &graph.nodes {
             if let Some(target_ref) = node.target_ref.as_deref() {
-                if node.kind == AirFlowNodeKind::CallAgent {
+                if node.kind == AirFlowNodeKind::CallAgent
+                    || (node.kind == AirFlowNodeKind::ParallelCall
+                        && target_ref.starts_with("agent:"))
+                {
                     self.validate_agent_call_authority(
                         graph.owner_ref.as_str(),
                         target_ref,
                         Some(&node.source_ref),
                     );
                 }
-                if node.kind == AirFlowNodeKind::CallTool {
+                if node.kind == AirFlowNodeKind::CallTool
+                    || (node.kind == AirFlowNodeKind::ParallelCall
+                        && target_ref.starts_with("tool:"))
+                {
                     self.validate_tool_memory_access(
                         graph.owner_ref.as_str(),
                         target_ref,
@@ -573,6 +599,9 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
                     );
                 }
                 self.include_ref(target_ref, Some(&node.source_ref));
+            }
+            if let Some(collection) = &node.collection_ref {
+                self.include_value_ref(collection, Some(&node.source_ref));
             }
             for argument in &node.arguments {
                 self.include_value_ref(argument, Some(&node.source_ref));
@@ -611,7 +640,10 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
     }
 
     fn include_type_ref(&mut self, type_ref: &str, source_ref: Option<&SourceRef>) {
-        if let Some(inner) = type_ref.strip_prefix("list:") {
+        if let Some(inner) = type_ref
+            .strip_prefix("list:")
+            .or_else(|| type_ref.strip_prefix("optional:"))
+        {
             self.include_type_ref(inner, source_ref);
             return;
         }
@@ -752,7 +784,10 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
             let mut visited = HashSet::new();
             for usage in &agent.use_refs {
                 self.validate_catalog_memory_target(
-                    &agent.id, &usage.target_ref, &usage.source_ref, &mut visited,
+                    &agent.id,
+                    &usage.target_ref,
+                    &usage.source_ref,
+                    &mut visited,
                 );
             }
         }
@@ -772,13 +807,21 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
             self.validate_tool_memory_access(agent_ref, target_ref, Some(source_ref));
             return;
         }
-        let graphs: Vec<_> = self.assembled.execution_graphs.iter()
-            .filter(|graph| graph.owner_ref == target_ref).cloned().collect();
+        let graphs: Vec<_> = self
+            .assembled
+            .execution_graphs
+            .iter()
+            .filter(|graph| graph.owner_ref == target_ref)
+            .cloned()
+            .collect();
         for graph in graphs {
             for node in graph.nodes {
                 if let Some(target) = node.target_ref {
                     self.validate_catalog_memory_target(
-                        agent_ref, &target, &node.source_ref, visited,
+                        agent_ref,
+                        &target,
+                        &node.source_ref,
+                        visited,
                     );
                 }
             }
@@ -1171,7 +1214,9 @@ fn flow_node_kind_label(kind: AirFlowNodeKind) -> &'static str {
         AirFlowNodeKind::CallFunction => "call_function",
         AirFlowNodeKind::CallTool => "call_tool",
         AirFlowNodeKind::CallSkill => "call_skill",
+        AirFlowNodeKind::CallStrategy => "call_strategy",
         AirFlowNodeKind::CallAgent => "call_agent",
+        AirFlowNodeKind::ParallelCall => "parallel_call",
         AirFlowNodeKind::Bind => "bind",
         AirFlowNodeKind::HumanApproval => "human_approval",
         AirFlowNodeKind::UserInteraction => "user_interaction",

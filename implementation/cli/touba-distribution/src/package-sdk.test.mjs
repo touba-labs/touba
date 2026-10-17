@@ -12,6 +12,7 @@ import { packageLocalToolchain } from "./package-local-toolchain.mjs";
 import { installLocalToolchain } from "./install-local-toolchain.mjs";
 import { runDocumentRecipe } from "./tutorial-recipe.mjs";
 import { npmCommand } from "./npm-command.mjs";
+import { toolchainBuildIdentity } from "./build-identity.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -27,6 +28,25 @@ test("installed archive supplies an independent SDK, provider dependencies, lice
     const archive = version.distribution.sdk_archive;
     assert.ok(archive && realpathSync(archive).startsWith(realpathSync(installed.install_root)));
     const metadata = JSON.parse(readFileSync(join(installed.install_root, "TOOLCHAIN.json"), "utf8"));
+    assert.deepEqual(metadata.build, toolchainBuildIdentity(installed.install_root));
+    assert.deepEqual(metadata.build, toolchainBuildIdentity(toolchainRoot));
+    assert.equal(version.build.id, metadata.build.id);
+    const fakeBuildEnv = { TOUBA_BUILD_ID: "spoofed-build", GITHUB_SHA: "a".repeat(40) };
+    assert.equal(run(node, [cli, "version"], workspace, fakeBuildEnv), `touba ${version.cli}\nbuild ${metadata.build.id.slice(0, 12)}\n`);
+    assert.equal(JSON.parse(run(node, [cli, "version", "--json"], workspace, fakeBuildEnv)).build.id, metadata.build.id);
+    const metadataPath = join(installed.install_root, "TOOLCHAIN.json");
+    try {
+      for (const invalid of [undefined, { ...metadata.build, id: "not-a-hash" }, { ...metadata.build, id: [metadata.build.id] }, { ...metadata.build, algorithm: "other" }]) {
+        writeFileSync(metadataPath, JSON.stringify({ ...metadata, build: invalid }));
+        assert.equal(JSON.parse(run(node, [cli, "version", "--json"], workspace, fakeBuildEnv)).build.id, "unknown");
+      }
+      rmSync(metadataPath);
+      assert.equal(run(node, [cli, "version"], workspace, fakeBuildEnv), `touba ${version.cli}\nbuild unknown\n`);
+      writeFileSync(metadataPath, "{invalid json");
+      const corrupt = spawnSync(node, [cli, "version", "--json"], { cwd: workspace, encoding: "utf8", env: isolatedEnv() });
+      assert.notEqual(corrupt.status, 0);
+      assert.equal(corrupt.stdout, "");
+    } finally { writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`); }
     assert.equal(createHash("sha256").update(readFileSync(archive)).digest("hex"), metadata.sdk.sha256);
     if (process.platform !== "win32") {
       const implementationRoot = join(here, "../../..");
@@ -97,6 +117,9 @@ test("installed archive supplies an independent SDK, provider dependencies, lice
       }
       assert.equal(health?.service, "touba-project-server");
       assert.equal(health?.status, "ok");
+      const nativeContract = await fetch(`http://127.0.0.1:${port}/contracts/touba-run-trace-export-v1`);
+      assert.equal(nativeContract.status, 200);
+      assert.equal((await fetch(`http://127.0.0.1:${port}/runs/absent/trace`)).status, 404);
     } finally {
       if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"]);
       else { try { process.kill(-child.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; } }

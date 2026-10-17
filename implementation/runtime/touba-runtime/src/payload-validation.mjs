@@ -51,6 +51,7 @@ export function validateEntryInputPayload(entry, values, context) {
  *
  * @typedef {object} ToubaTypeDefinition
  * @property {AirParameter[]=} fields
+ * @property {{name: string}[]=} variants
  *
  * @typedef {object} PayloadValidationContext
  * @property {{ types: Map<string, ToubaTypeDefinition> }} indexes
@@ -340,6 +341,19 @@ function validatePayloadValue(value, typeRef, context, details) {
     return;
   }
 
+  if (typeRef.startsWith("optional:")) {
+    if (!isPlainRecord(value) || !Object.hasOwn(value, "present")
+      || typeof value.present !== "boolean"
+      || Object.keys(value).length !== (value.present ? 2 : 1)
+      || (value.present && !Object.hasOwn(value, "value"))) {
+      throwToolSchemaFailure("expected explicit Optional envelope", value, typeRef, details);
+    }
+    if (value.present) validatePayloadValue(value.value, typeRef.slice(9), context, {
+      ...details, path: `${details.path}.value`,
+    });
+    return;
+  }
+
   if (typeRef.startsWith("list:")) {
     if (!Array.isArray(value)) {
       throwToolSchemaFailure("expected List", value, typeRef, details);
@@ -357,6 +371,13 @@ function validatePayloadValue(value, typeRef, context, details) {
   const localType = context.indexes.types.get(typeRef);
   if (!localType) {
     throwToolSchemaFailure("unresolved payload type", value, typeRef, details);
+  }
+
+  if (Array.isArray(localType.variants)) {
+    if (typeof value !== "string" || !localType.variants.some(variant => variant.name === value)) {
+      throwToolSchemaFailure("expected a declared enum member", value, typeRef, details);
+    }
+    return;
   }
 
   if (!isPlainRecord(value)) {

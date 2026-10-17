@@ -24,6 +24,13 @@ export async function executeReferenceAir(document, {
   let result;
   let failureCode = null;
   try {
+    if ((document.definitions.types ?? []).some(type => type.variants)) throw refusal("ReferenceEnumOutsideProfile", "business");
+    if (document.execution_graphs.some(graph => (graph.expressions ?? []).some(expression => expression.kind.startsWith("optional_")))
+      || Object.values(document.definitions).flat().some(definition =>
+        [definition.signature?.output_type, ...(definition.signature?.inputs ?? []).map(input => input.type_ref),
+          ...(definition.fields ?? []).map(field => field.type_ref)].some(type => /(^|:)optional:/u.test(type ?? "")))) {
+      throw refusal("ReferenceOptionalOutsideProfile", "business");
+    }
     const graph = document.execution_graphs.find((item) => item.owner_ref === entryRef);
     if (!graph) throw refusal("ReferenceEntryUnknown", "business");
     result = await executeGraph(document, graph, trace, simulatedAdapters, maxSteps);

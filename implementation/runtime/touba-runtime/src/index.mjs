@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { failureFamilyForRuntimeCode } from "../../../contracts/machine/contracts.mjs";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
@@ -6,7 +7,11 @@ import {
   agentDecisionProviderContent,
   agentProviderObservationBudgetReport,
 } from "./agent-provider-content.mjs";
-import { runAgentDecisionLoop } from "./agent-loop.mjs";
+import { runAgentDecisionLoop, appendAgentCapabilityObservation } from "./agent-loop.mjs";
+import { createInvocationScope, snapshotInvocationValue } from "./invocation-scope.mjs";
+import { createParallelRuntime, parallelBoundary, parallelBudget, parallelExternal,
+  parallelHuman, parallelRecord, trackParallelTransport, runParallelGroup,
+  pendingParallelApprovals, validateParallelState, assertParallelOutcomesKnown, ParallelSuspend } from "./parallel-execution.mjs";
 import {
   AIR_CAPABILITY_PROFILE,
   AIR_JSON_PROFILE,
@@ -65,6 +70,10 @@ import {
   normalizeOptionalHumanApprovalCheckpoint,
   stringArraysEqual,
   validateHumanApprovalCheckpointCompatibility,
+  validateHumanCheckpointBudgetState,
+  validateHumanCheckpointContinuation,
+  validateCheckpointScope,
+  MAX_INVOCATION_FRAMES,
 } from "./human-approval-checkpoints.mjs";
 import {
   agentHumanReviewApprovalRef,
@@ -368,7 +377,7 @@ function createExecutionContext(document, entryRef, options = {}) {
   const executionDurabilityEnabled = executionResumeCheckpoint !== null
     || executionCheckpointObserver !== null;
   const humanApprovalResumeCheckpoint = normalizeOptionalHumanApprovalCheckpoint(
-    options.humanApprovalResumeCheckpoint ?? options.human_approval_resume_checkpoint,
+    options.parallelResumeCheckpoint ?? options.humanApprovalResumeCheckpoint ?? options.human_approval_resume_checkpoint,
   );
   if (executionDurabilityEnabled && humanApprovalResumeCheckpoint !== null) {
     throw new RuntimeFailure(
@@ -377,7 +386,9 @@ function createExecutionContext(document, entryRef, options = {}) {
       "DurableResumeUnsupportedState",
     );
   }
-  const runId = options.runId ?? options.run_id ?? executionResumeCheckpoint?.run_id ?? "run-1";
+  const containsParallel = document.execution_graphs.some(graph => graph.nodes.some(node => node.kind === "parallel_call"));
+  const runId = options.runId ?? options.run_id ?? executionResumeCheckpoint?.run_id ?? humanApprovalResumeCheckpoint?.run_id
+    ?? (containsParallel ? `run-${randomUUID()}` : "run-1");
   const trace = new TraceBuilder(
     document,
     entryRef,
@@ -404,6 +415,7 @@ function createExecutionContext(document, entryRef, options = {}) {
     toolBindingManifest,
     resourceBindings,
     secretStore: normalizeOptionalSecretStore(options.secretStore),
+    localHandlerDiagnostics: options.localHandlerDiagnostics,
     values: new Map(initialValues),
     inputValueKeys: new Set(initialValues.keys()),
     valueTypes: new Map(),
@@ -457,6 +469,7 @@ function createExecutionContext(document, entryRef, options = {}) {
       "agentProviderObservationsMaxBytes",
     ),
     skillPacks,
+    skillPackProjectionTraces: new Set(),
     activeSkillPackRefs,
     skillPackActivationReasons: normalizeSkillPackActivationReasons(
       options.skillPackActivationReasons ?? options.skill_pack_activation_reasons ?? {},
@@ -483,10 +496,12 @@ function createExecutionContext(document, entryRef, options = {}) {
         outcome: null,
         blockerCode: null,
       },
-    durableHumanApprovals: options.durableHumanApprovals === true
+    durableHumanApprovals: containsParallel
+      || options.durableHumanApprovals === true
       || options.durable_human_approvals === true,
     humanApprovalResumeCheckpoint,
     pendingHumanApprovalCheckpoint: null,
+    parallelRuntime: createParallelRuntime(options),
     callStack: [],
     loopState: new Map(),
     maxLoopIterations: normalizePositiveRuntimeInteger(
@@ -540,8 +555,10 @@ function validateConfiguredInteractionReferences(document, context) {
     const match = typeof ref === "string" && /^approval:(agent:.+):step-(\d+):human-review$/u.exec(ref);
     return match && context.indexes.agents.has(match[1]) && Number(match[2]) < context.maxAgentSteps;
   };
+  const parallelApprovals = new Set(context.humanApprovalResumeCheckpoint?.kind === "parallel_group"
+    ? pendingParallelApprovals(context.humanApprovalResumeCheckpoint.parallel_state).map(entry => entry.approval_ref) : []);
   for (const [ref, decision] of context.humanApprovalDecisions) {
-    if (!approvals.has(ref) && !knownAgentReview(ref)) {
+    if (!approvals.has(ref) && !knownAgentReview(ref) && !parallelApprovals.has(ref)) {
       throw new RuntimeFailure("approval decision must reference a declared approval or an existing agent review", {}, "UnknownApprovalReference");
     }
     if (!classifyHumanApprovalDecision(decision).valid) {
@@ -681,15 +698,21 @@ function restoreDurableRuntimeState(context, checkpoint) {
     agentInvocations: checkpoint.runtime_state.budget_counters.agent_invocations,
     providerCalls: checkpoint.runtime_state.budget_counters.provider_calls,
   };
-  for (const [budgetKind, priorValue] of Object.entries(
-    checkpoint.runtime_state.effective_limits,
-  )) {
+  restoreEffectiveLimits(context, checkpoint.runtime_state.effective_limits);
+  context.runState.activeElapsedBaseMs = checkpoint.runtime_state.active_elapsed_ms;
+  context.effectState.externalToolDispatches = checkpoint.runtime_state.external_tool_dispatches;
+  context.effectState.nextEffectIndex = checkpoint.runtime_state.next_effect_index;
+  context.nextCallIndex = checkpoint.runtime_state.next_call_index;
+}
+
+function restoreEffectiveLimits(context, limits) {
+  for (const [budgetKind, priorValue] of Object.entries(limits)) {
     const current = context.budgetState.effectiveLimits.get(budgetKind);
     if (!current || current.value > priorValue) {
       context.budgetState.effectiveLimits.set(budgetKind, Object.freeze({
         budgetKind,
         value: priorValue,
-        authoritySource: current?.authoritySource ?? "checkpoint",
+        authoritySource: "checkpoint",
         candidates: [
           ...(current?.candidates ?? []),
           { authority_source: "checkpoint", value: priorValue },
@@ -697,10 +720,6 @@ function restoreDurableRuntimeState(context, checkpoint) {
       }));
     }
   }
-  context.runState.activeElapsedBaseMs = checkpoint.runtime_state.active_elapsed_ms;
-  context.effectState.externalToolDispatches = checkpoint.runtime_state.external_tool_dispatches;
-  context.effectState.nextEffectIndex = checkpoint.runtime_state.next_effect_index;
-  context.nextCallIndex = checkpoint.runtime_state.next_call_index;
 }
 
 async function executeDurableEntry(document, entryRef, context) {
@@ -1698,6 +1717,9 @@ async function executeHumanApprovalResumeCheckpoint(document, entryRef, context)
       "HumanApprovalResumeCheckpointRequired",
     );
   }
+  if (checkpoint.kind === "parallel_group") {
+    return resumeParallelCheckpoint(document, entryRef, context, checkpoint);
+  }
   if (checkpoint.kind === "agent_human_review") {
     return executeAgentHumanReviewResumeCheckpoint(document, entryRef, context, checkpoint);
   }
@@ -1716,9 +1738,10 @@ async function executeHumanApprovalResumeCheckpoint(document, entryRef, context)
       external_tool_dispatches: checkpoint.effect_state?.external_tool_dispatches,
     }),
   });
-  return executeGraph(checkpoint.graph_ref, context, {
-    startNodeId: checkpoint.node_id, loopState: context.loopState,
-  });
+  return resumeInvocationStack(context, () => executeTypedGraph(
+    graphOwnerDefinition(checkpoint.graph_ref, context), checkpoint.graph_ref, context,
+    { startNodeId: checkpoint.node_id, loopState: context.loopState },
+  ));
 }
 
 function validateHumanApprovalResumeCheckpoint(document, entryRef, context, checkpoint) {
@@ -1730,7 +1753,7 @@ function validateHumanApprovalResumeCheckpoint(document, entryRef, context, chec
     );
   }
   validateHumanApprovalCheckpointCompatibility(document, entryRef, checkpoint, {
-    expectedScope: "entry_graph",
+    expectedScope: "graph_stack",
   });
 
   const graph = context.indexes.graphs.get(checkpoint.graph_ref);
@@ -1747,10 +1770,13 @@ function validateHumanApprovalResumeCheckpoint(document, entryRef, context, chec
       "InvalidHumanApprovalCheckpoint",
     );
   }
+  validateInvocationCheckpointStack(context, checkpoint, graph.owner_ref);
   const approvalRef = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
   const resumeTargetRef = nextNodeId(graph, node.id, successEdgeRole(graph, node.id));
   if (
     checkpoint.approval_ref !== approvalRef
+    || checkpoint.mode !== node.approval_mode
+    || !stringArraysEqual(checkpoint.context_refs, node.context_refs ?? [])
     || checkpoint.resume_target_ref !== resumeTargetRef
     || checkpoint.decision_binding !== node.result_binding
   ) {
@@ -1778,40 +1804,65 @@ function applyHumanApprovalResumeCheckpoint(context, checkpoint) {
   context.loopState = graphLoopStateFromHumanCheckpoint(context, checkpoint);
   context.values = mapFromCheckpointObject(checkpoint.values, "values");
   context.inputValueKeys = new Set(checkpointStringArray(checkpoint.input_value_keys, "input_value_keys"));
-  context.valueTypes = mapFromCheckpointObject(checkpoint.value_types ?? {}, "value_types");
-  context.budgetState.counters = {
-    steps: checkpoint.budget_counters?.steps ?? 0,
-    toolCalls: checkpoint.budget_counters?.tool_calls ?? 0,
-    agentInvocations: checkpoint.budget_counters?.agent_invocations ?? 0,
-    providerCalls: checkpoint.budget_counters?.provider_calls ?? 0,
-  };
-  context.effectState.externalToolDispatches = checkpoint.effect_state?.external_tool_dispatches ?? 0;
-  context.effectState.nextEffectIndex = checkpoint.effect_state?.next_effect_index ?? 1;
-  context.nextCallIndex = checkpoint.next_call_index ?? 1;
-  context.activeAgentRef = checkpoint.active_agent_ref ?? null;
-  context.activeCallerRef = checkpoint.active_caller_ref ?? null;
+  context.valueTypes = mapFromCheckpointObject(checkpoint.value_types, "value_types");
+  context.effectState.externalToolDispatches = checkpoint.effect_state.external_tool_dispatches;
+  context.effectState.nextEffectIndex = checkpoint.effect_state.next_effect_index;
+  context.nextCallIndex = checkpoint.next_call_index;
+  context.agentInvocationId = checkpoint.agent_invocation_id ?? null;
+  context.activeAgentRef = checkpoint.active_agent_ref;
+  context.activeCallerRef = checkpoint.active_caller_ref;
+  context.callStack = checkpointJsonClone(checkpoint.call_stack, "call_stack");
+  context.invocationDepth = context.callStack.length + 1;
 }
 
 function graphLoopStateFromHumanCheckpoint(context, checkpoint) {
-  const graphRef = checkpoint.kind === "human_approval"
-    ? checkpoint.graph_ref : checkpoint.call_frame?.graph_ref;
+  return graphLoopStateFromScope(context,
+    ["human_approval", "parallel_group"].includes(checkpoint.kind) ? checkpoint.graph_ref : null, checkpoint, checkpoint.node_id);
+}
+
+function graphLoopStateFromScope(context, graphRef, scope, cursorNodeId = undefined) {
   const graph = graphRef ? context.indexes.graphs.get(graphRef) : null;
   const loopKeys = new Set((graph?.nodes ?? [])
     .filter(node => node.kind === "loop").map(node => `${graph.id}:${node.id}`));
-  // Legacy checkpoints are still usable for loop-free graphs. A cursor cannot
-  // be reconstructed safely for an older checkpoint of a graph containing loops.
-  if (checkpoint.loop_state === undefined && loopKeys.size > 0) {
-    throw new RuntimeFailure("human approval checkpoint is missing graph loop cursors",
-      { graphRef }, "HumanApprovalCheckpointIncompatible");
-  }
-  const states = mapFromCheckpointObject(checkpoint.loop_state ?? {}, "loop_state");
+  const states = mapFromCheckpointObject(scope.loop_state, "loop_state");
   for (const [key, state] of states) {
     if (!loopKeys.has(key) || !state || typeof state !== "object" || Array.isArray(state)
       || Object.keys(state).length !== 1 || !Object.hasOwn(state, "index")) {
       throw new RuntimeFailure("human approval checkpoint loop cursor does not match AIR",
-        { graphRef, loopKey: key }, "InvalidHumanApprovalCheckpoint");
+        { graphRef }, "InvalidHumanApprovalCheckpoint");
     }
-    checkpointNonNegativeSafeInteger(state.index, `loop_state.${key}.index`);
+    checkpointNonNegativeSafeInteger(state.index, "loop_state.index");
+  }
+  // A valid-looking empty map must not reset a suspended parent's iteration.
+  // Find loop bodies from control-flow edges, never from source line numbers.
+  if (graph && cursorNodeId) {
+    for (const loop of graph.nodes.filter(node => node.kind === "loop")) {
+      const exit = nextNodeId(graph, loop.id, "loop_exit");
+      const pending = [nextNodeId(graph, loop.id, "loop_next")];
+      const body = new Set();
+      while (pending.length) {
+        const id = pending.pop();
+        if (!id || id === loop.id || id === exit || body.has(id)) continue;
+        body.add(id);
+        pending.push(...graph.edges.filter(edge => edge.from_node_id === id).map(edge => edge.to_node_id));
+      }
+      const cursor = states.get(`${graph.id}:${loop.id}`);
+      if (body.has(cursorNodeId)) {
+        if (!cursor || cursor.index < 1) checkpointContinuationInvalid("checkpoint is missing an active loop cursor");
+        if (loop.arguments?.length >= 2) {
+          const scoped = { ...context, values: mapFromCheckpointObject(scope.values, "values"),
+            valueTypes: mapFromCheckpointObject(scope.value_types, "value_types") };
+          const collection = resolveHandle(loop.arguments[0], scoped, graph);
+          const item = scoped.values.get(loop.arguments[1]);
+          if (!Array.isArray(collection) || cursor.index > collection.length
+            || canonicalDigest(item) !== canonicalDigest(collection[cursor.index - 1])) {
+            checkpointContinuationInvalid("checkpoint loop cursor and item do not match the saved collection");
+          }
+        }
+      } else if (cursor && cursor.index !== 0) {
+        checkpointContinuationInvalid("checkpoint contains an inactive loop cursor");
+      }
+    }
   }
   return states;
 }
@@ -1832,7 +1883,7 @@ async function executeAgentHumanReviewResumeCheckpoint(document, entryRef, conte
       trace_prefix_digest: checkpoint.trace_prefix_digest,
       external_tool_dispatches: checkpoint.effect_state?.external_tool_dispatches,
       observation_count: loopState.observations.length,
-      call_frame_present: checkpoint.call_frame !== undefined && checkpoint.call_frame !== null,
+      call_stack_depth: checkpoint.call_stack.length,
     }),
   });
 
@@ -1848,18 +1899,15 @@ async function executeAgentHumanReviewResumeCheckpoint(document, entryRef, conte
       value: reviewResult,
     },
   ];
-  if (checkpoint.call_frame) context.callStack.push(checkpoint.call_frame);
-  let agentResult;
-  try {
-    agentResult = await executeAgentDecisionLoop(agent, capabilityRefs, context, {
+  return resumeInvocationStack(context, () => {
+    context.maxAgentSteps = Math.min(context.maxAgentSteps, loopState.maxSteps);
+    return executeAgentDecisionLoop(agent, capabilityRefs, context, {
       startStepIndex: loopState.nextStepIndex,
       observations,
     });
-  } finally {
-    if (checkpoint.call_frame) context.callStack.pop();
-  }
-  return resumeAgentHumanReviewCaller(context, checkpoint, agent, agentResult);
+  });
 }
+
 
 function validateAgentHumanReviewResumeCheckpoint(document, entryRef, context, checkpoint) {
   validateHumanApprovalCheckpointCompatibility(document, entryRef, checkpoint, {
@@ -1885,6 +1933,8 @@ function validateAgentHumanReviewResumeCheckpoint(document, entryRef, context, c
   const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
   if (
     loopState.agentRef !== agentRef
+    || checkpoint.step_index !== loopState.stepIndex
+    || checkpoint.mode !== "agent_review"
     || checkpoint.approval_ref !== agentHumanReviewApprovalRef(agentRef, loopState.stepIndex)
     || !stringArraysEqual(loopState.capabilityRefs, capabilityRefs)
   ) {
@@ -1905,7 +1955,7 @@ function validateAgentHumanReviewResumeCheckpoint(document, entryRef, context, c
       "HumanApprovalResumeDecisionRequired",
     );
   }
-  validateAgentHumanReviewCallFrame(context, checkpoint, agentRef);
+  validateInvocationCheckpointStack(context, checkpoint, agentRef);
 }
 
 function agentLoopStateFromCheckpoint(checkpoint) {
@@ -1936,64 +1986,205 @@ function agentLoopStateFromCheckpoint(checkpoint) {
     agentRef,
     stepIndex,
     nextStepIndex,
+    maxSteps: checkpointNonNegativeSafeInteger(loopState.max_steps, "agent_loop_state.max_steps"),
     observations,
     capabilityRefs,
   };
 }
 
-function validateAgentHumanReviewCallFrame(context, checkpoint, agentRef) {
-  if (checkpoint.call_frame === undefined || checkpoint.call_frame === null) {
-    if (checkpoint.entry_ref === agentRef) {
-      return;
+function checkpointContinuationInvalid(message, incompatible = false) {
+  throw new RuntimeFailure(message, {},
+    incompatible ? "HumanApprovalCheckpointIncompatible" : "InvalidHumanApprovalCheckpoint");
+}
+
+function graphOwnerDefinition(graphRef, context) {
+  const graph = requireDefinition(context.indexes.graphs, graphRef);
+  const owner = context.indexes.strategies.get(graph.owner_ref)
+    ?? context.indexes.skills.get(graph.owner_ref) ?? context.indexes.functions.get(graph.owner_ref);
+  if (!owner || (owner.flow_graph_ref ?? owner.body_graph_ref) !== graphRef) {
+    checkpointContinuationInvalid("checkpoint graph does not belong to its declared owner", true);
+  }
+  return owner;
+}
+
+function validateCheckpointTypedScope(scope, definition, context) {
+  validateCheckpointScope(scope);
+  const scoped = { ...context, values: mapFromCheckpointObject(scope.values, "values"),
+    valueTypes: mapFromCheckpointObject(scope.value_types, "value_types") };
+  for (const [key, typeRef] of scoped.valueTypes) {
+    if (!isValueCompatibleWithType(scoped.values.get(key), typeRef, scoped)) {
+      checkpointContinuationInvalid("checkpoint contains a value incompatible with its type");
     }
-    throw new RuntimeFailure(
-      "agent human review checkpoint has no resumable caller frame",
-      { approvalRef: checkpoint.approval_ref, agentRef },
-      "InvalidHumanApprovalCheckpoint",
-    );
   }
-  const frame = checkpoint.call_frame;
-  if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
-    throw new RuntimeFailure(
-      "agent human review checkpoint call_frame must be an object",
-      { approvalRef: checkpoint.approval_ref, agentRef },
-      "InvalidHumanApprovalCheckpoint",
-    );
+  for (const input of definition.signature?.inputs ?? []) {
+    if (!scoped.values.has(valueHandle(input.name))
+      || !isValueCompatibleWithType(scoped.values.get(valueHandle(input.name)), input.type_ref, scoped)) {
+      checkpointContinuationInvalid("checkpoint is missing a valid invocation input");
+    }
   }
-  const graphRef = checkpointString(frame.graph_ref, "call_frame.graph_ref");
-  // Validate both environments before resuming any provider or external effect.
-  callerValueScopeFromCheckpoint(frame.caller_scope);
-  const nodeId = checkpointString(frame.node_id, "call_frame.node_id");
-  const graph = context.indexes.graphs.get(graphRef);
-  const node = graph?.nodes?.find((candidate) => candidate.id === nodeId);
-  const expectedResumeTargetRef = graph && node ? nextNodeId(graph, node.id, successEdgeRole(graph, node.id)) : undefined;
-  if (
-    !graph
-    || !node
-    || node.kind !== "call_agent"
-    || node.target_ref !== agentRef
-    || graph.owner_ref !== checkpoint.entry_ref
-    || frame.caller_ref !== graph.owner_ref
-    || frame.target_ref !== agentRef
-    || frame.result_binding !== node.result_binding
-    || frame.resume_target_ref !== expectedResumeTargetRef
-  ) {
-    throw new RuntimeFailure(
-      "agent human review checkpoint caller frame does not match AIR",
-      {
-        approvalRef: checkpoint.approval_ref,
-        agentRef,
-        graphRef,
-        nodeId,
-      },
-      "HumanApprovalCheckpointIncompatible",
-    );
+}
+
+function validateAgentCheckpointHistory(agent, state, context) {
+  if (!stringArraysEqual(state.capability_refs, agent.uses ?? [])) {
+    checkpointContinuationInvalid("checkpoint capability catalog does not match uses", true);
   }
+  for (const observation of state.observations ?? []) {
+    if (observation.action === "request_human_review") {
+      if (observation.result_type !== "human_review_decision"
+        || observation.value?.decision !== "approved"
+        || observation.value?.approval_ref !== agentHumanReviewApprovalRef(agent.id, observation.step_index)) {
+        checkpointContinuationInvalid("checkpoint human review observation is invalid");
+      }
+    } else {
+      validateAgentCheckpointSelection(agent, observation.target_ref, observation.arguments, context);
+      const type = targetOutputType(observation.target_ref, context);
+      if (observation.kind !== callerKindFromRef(observation.target_ref)
+        || observation.result_type !== payloadValueKind(observation.value)
+        || (type && !isValueCompatibleWithType(observation.value, type, context))) {
+        checkpointContinuationInvalid("checkpoint capability observation is not typed correctly");
+      }
+    }
+  }
+}
+
+function validateAgentCheckpointSelection(agent, targetRef, args, context) {
+  const target = definitionForCapability(targetRef, context);
+  if (!(agent.uses ?? []).includes(targetRef) || !target
+    || (targetRef.startsWith("agent:") && !evaluateAgentInvocationAuthority(agent.id, target).authorized)) {
+    checkpointContinuationInvalid("checkpoint selected capability is not authorized", true);
+  }
+  try {
+    callArgumentsForAgentDecision({ targetRef, arguments: args }, context);
+  } catch {
+    checkpointContinuationInvalid("checkpoint selected capability arguments are invalid");
+  }
+}
+
+function validateInvocationCheckpointStack(context, checkpoint, leafRef) {
+  validateHumanCheckpointContinuation(checkpoint);
+  let expectedOwner = context.indexes.triggers.get(context.entryRef)?.target_ref ?? context.entryRef;
+  let expectedCaller = null, expectedAgent = null;
+  for (const frame of checkpoint.call_stack) {
+    if (frame.caller_scope.active_agent_ref !== expectedAgent || frame.caller_scope.active_caller_ref !== expectedCaller) {
+      checkpointContinuationInvalid("checkpoint caller identity does not match its continuation", true);
+    }
+    if (frame.kind === "agent_capability") {
+      const agent = context.indexes.agents.get(frame.agent_ref);
+      if (!agent || agent.id !== expectedOwner || frame.caller_ref !== agent.id) {
+        checkpointContinuationInvalid("checkpoint agent continuation does not match its caller", true);
+      }
+      validateCheckpointTypedScope(frame.caller_scope, agent, context);
+      graphLoopStateFromScope(context, null, frame.caller_scope);
+      validateAgentCheckpointHistory(agent, frame, context);
+      validateAgentCheckpointSelection(agent, frame.target_ref, frame.arguments, context);
+      expectedCaller = agent.id;
+      expectedAgent = agent.id;
+    } else {
+      const graph = context.indexes.graphs.get(frame.graph_ref);
+      const node = graph?.nodes.find(candidate => candidate.id === frame.node_id);
+      if (!graph || !node || graph.owner_ref !== expectedOwner
+        || frame.graph_owner_ref !== graph.owner_ref || frame.caller_ref !== graph.owner_ref
+        || frame.kind !== node.kind || frame.target_ref !== node.target_ref
+        || frame.result_binding !== node.result_binding
+        || frame.success_edge_role !== successEdgeRole(graph, node.id)
+        || frame.resume_target_ref !== nextNodeId(graph, node.id, successEdgeRole(graph, node.id))) {
+        checkpointContinuationInvalid("checkpoint call stack does not match the AIR path", true);
+      }
+      const definition = graphOwnerDefinition(graph.id, context);
+      validateCheckpointTypedScope(frame.caller_scope, definition, context);
+      graphLoopStateFromScope(context, graph.id, frame.caller_scope, node.id);
+      if (frame.kind === "call_agent") {
+        const agent = context.indexes.agents.get(frame.target_ref);
+        if (!agent || !evaluateAgentInvocationAuthority(graph.owner_ref, agent).authorized) {
+          checkpointContinuationInvalid("checkpoint agent caller is not authorized", true);
+        }
+      }
+      expectedCaller = graph.owner_ref;
+    }
+    expectedOwner = frame.target_ref;
+  }
+  if (expectedOwner !== leafRef || checkpoint.active_agent_ref !== expectedAgent
+    || checkpoint.active_caller_ref !== expectedCaller) {
+    checkpointContinuationInvalid("checkpoint leaf identity does not match its call stack", true);
+  }
+  const definition = checkpoint.kind === "agent_human_review"
+    ? requireDefinition(context.indexes.agents, leafRef)
+    : graphOwnerDefinition(checkpoint.graph_ref, context);
+  validateCheckpointTypedScope(checkpoint, definition, context);
+  graphLoopStateFromHumanCheckpoint(context, checkpoint);
+  if (checkpoint.kind === "agent_human_review") validateAgentCheckpointHistory(definition, checkpoint.agent_loop_state, context);
+  assertCheckpointHasNoResolvedSecret(checkpoint, context, checkpoint.approval_ref);
+}
+
+function restoreCheckpointCaller(context, frame, hostAgentSteps) {
+  const scope = frame.caller_scope;
+  context.values = mapFromCheckpointObject(scope.values, "caller_scope.values");
+  context.valueTypes = mapFromCheckpointObject(scope.value_types, "caller_scope.value_types");
+  context.inputValueKeys = new Set(scope.input_value_keys);
+  context.loopState = graphLoopStateFromScope(context, frame.graph_ref, scope);
+  context.activeAgentRef = scope.active_agent_ref;
+  context.activeCallerRef = scope.active_caller_ref;
+  context.agentInvocationId = scope.agent_invocation_id ?? null;
+  context.invocationDepth = context.callStack.length + 1;
+  context.maxAgentSteps = frame.decision_mode === "loop" ? Math.min(hostAgentSteps, frame.max_steps) : hostAgentSteps;
+}
+
+async function resumeInvocationStack(context, executeLeaf) {
+  let result, failure;
+  const hostAgentSteps = context.maxAgentSteps;
+  try { result = await executeLeaf(); }
+  catch (error) { if (!(error instanceof RuntimeFailure)) throw error; failure = error; }
+  while (context.callStack.length > 0) {
+    const frame = context.callStack.pop();
+    restoreCheckpointCaller(context, frame, hostAgentSteps);
+    try {
+      if (frame.kind === "agent_capability") {
+        // A failed selection was never an observation. Propagate to the
+        // next caller's declared failure path instead of inventing a result.
+        if (failure) continue;
+        const agent = requireDefinition(context.indexes.agents, frame.agent_ref);
+        if (frame.decision_mode === "loop") {
+          const observations = checkpointJsonClone(frame.observations, "agent_loop_state.observations");
+          appendAgentCapabilityObservation(agent.id, frame.target_ref, frame.step_index,
+            frame.arguments, result, observations, context);
+          result = await executeAgentDecisionLoop(agent, [...agent.uses ?? []], context,
+            { startStepIndex: frame.next_step_index, observations });
+        }
+        validateAgentFinalResult(agent, result, context);
+        continue;
+      }
+      const graph = requireDefinition(context.indexes.graphs, frame.graph_ref);
+      const node = graph.nodes.find(candidate => candidate.id === frame.node_id);
+      let edgeRole;
+      if (failure) {
+        edgeRole = handleCallFailure(graph, node, frame.target_ref, context, failure).edgeRole;
+        failure = null;
+      } else {
+        bindCompletedCall(graph, node, frame.target_ref, result, context, true);
+        edgeRole = successEdgeRole(graph, node.id);
+      }
+      const next = nextNodeId(graph, node.id, edgeRole);
+      if (next) {
+        result = await executeTypedGraph(graphOwnerDefinition(graph.id, context), graph.id, context,
+          { startNodeId: next, loopState: context.loopState });
+      } else {
+        validateGraphResult(graphOwnerDefinition(graph.id, context), result, context);
+        context.trace.push("scope_exited", { airRef: { flow_graph_ref: graph.id, owner_ref: graph.owner_ref },
+          payload: { status: "success" } });
+      }
+    } catch (error) {
+      if (!(error instanceof RuntimeFailure)) throw error;
+      failure = error;
+    }
+  }
+  if (failure) throw failure;
+  return result;
 }
 
 function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
   const approvalRef = checkpoint.approval_ref;
   const humanDecision = context.humanApprovalDecisions.get(approvalRef);
+  context.humanApprovalDecisions.delete(approvalRef);
   const transition = classifyHumanApprovalDecision(humanDecision);
   if (!transition.valid) {
     const error = new RuntimeFailure(
@@ -2054,74 +2245,23 @@ function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
   });
 }
 
-async function resumeAgentHumanReviewCaller(context, checkpoint, agent, agentResult) {
-  if (checkpoint.call_frame === undefined || checkpoint.call_frame === null) {
-    return agentResult;
-  }
-  const callerScope = callerValueScopeFromCheckpoint(checkpoint.call_frame.caller_scope);
-  context.values = callerScope.values;
-  context.valueTypes = callerScope.valueTypes;
-  context.inputValueKeys = callerScope.inputValueKeys;
-  const graph = requireDefinition(context.indexes.graphs, checkpoint.call_frame.graph_ref);
-  const node = graph.nodes.find((candidate) => candidate.id === checkpoint.call_frame.node_id);
-  if (!node) {
-    throw new RuntimeFailure(
-      "agent human review checkpoint caller node is missing",
-      {
-        approvalRef: checkpoint.approval_ref,
-        agentRef: agent.id,
-        graphRef: checkpoint.call_frame.graph_ref,
-        nodeId: checkpoint.call_frame.node_id,
-      },
-      "InvalidHumanApprovalCheckpoint",
-    );
-  }
-  if (node.result_binding) {
-    const bindingHandle = valueHandle(node.result_binding);
-    context.values.set(bindingHandle, agentResult);
-    const outputType = targetOutputType(agent.id, context);
-    if (outputType) {
-      context.valueTypes.set(bindingHandle, outputType);
-    }
-  }
-  context.trace.push("call_completed", {
-    airRef: airRefForNode(graph, node),
-    payload: compactPayload({
-      target_ref: agent.id,
-      caller_ref: graph.owner_ref,
-      agent_ref: context.activeAgentRef,
-      result_binding: node.result_binding,
-      resumed_from_checkpoint: true,
-    }),
-  });
-  const resumeTargetRef = checkpoint.call_frame.resume_target_ref;
-  if (resumeTargetRef) {
-    return executeGraph(graph.id, context, {
-      startNodeId: resumeTargetRef, loopState: context.loopState,
-    });
-  }
-  context.trace.push("scope_exited", {
-    airRef: {
-      flow_graph_ref: graph.id,
-      owner_ref: graph.owner_ref,
-      node_id: node.id,
-    },
-    payload: {
-      status: "success",
-    },
-  });
-  return agentResult;
+function checkpointCallStack(context, approvalRef) {
+  const frames = checkpointJsonClone(context.callStack, "call_stack");
+  assertCheckpointHasNoResolvedSecret(frames, context, approvalRef);
+  return frames;
 }
 
 function createHumanApprovalCheckpoint(context, graph, node, payload) {
   const values = checkpointObjectFromMap(context.values, "values");
   assertCheckpointHasNoResolvedSecret(values, context, payload.approval_ref);
+  const contextValues = (payload.context_refs ?? []).map(ref => resolveHandle(ref, context, graph));
+  assertCheckpointHasNoResolvedSecret(contextValues, context, payload.approval_ref);
   const valueTypes = checkpointObjectFromMap(context.valueTypes, "value_types");
   const tracePrefixDigest = `sha256:${sha256Json(context.trace.document())}`;
   const checkpoint = {
     checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
     kind: "human_approval",
-    scope: "entry_graph",
+    scope: "graph_stack",
     run_id: context.trace.runId,
     entry_ref: context.entryRef,
     module_ref: context.trace.airDocument.module.id,
@@ -2134,6 +2274,8 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
     resume_target_ref: payload.resume_target_ref,
     decision_binding: node.result_binding,
     context_refs: payload.context_refs ?? [],
+    context_values: contextValues,
+    call_stack: checkpointCallStack(context, payload.approval_ref),
     loop_state: checkpointObjectFromMap(context.loopState, "loop_state"),
     caller_ref: payload.caller_ref,
     agent_ref: payload.agent_ref,
@@ -2142,6 +2284,8 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
     values,
     input_value_keys: [...context.inputValueKeys],
     value_types: valueTypes,
+    active_elapsed_ms: Math.ceil(activeElapsedMilliseconds(context)),
+    effective_limits: Object.fromEntries([...context.budgetState.effectiveLimits.entries()].map(([kind, limit]) => [kind, limit.value])),
     budget_counters: {
       steps: context.budgetState.counters.steps,
       tool_calls: context.budgetState.counters.toolCalls,
@@ -2153,6 +2297,7 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
       next_effect_index: context.effectState.nextEffectIndex,
     },
     next_call_index: context.nextCallIndex,
+    agent_invocation_id: context.agentInvocationId ?? null,
     active_agent_ref: context.activeAgentRef,
     active_caller_ref: context.activeCallerRef,
     trace_prefix_digest: tracePrefixDigest,
@@ -2173,12 +2318,9 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
   return checkpoint;
 }
 
-function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, observations, payload, callFrame) {
+function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, observations, payload) {
   const values = checkpointObjectFromMap(context.values, "values");
   assertCheckpointHasNoResolvedSecret(values, context, payload.approval_ref);
-  if (callFrame) {
-    assertCheckpointHasNoResolvedSecret(callFrame.caller_scope, context, payload.approval_ref);
-  }
   const checkpointObservations = checkpointJsonClone(observations, "agent_loop_state.observations");
   assertCheckpointHasNoResolvedSecret(checkpointObservations, context, payload.approval_ref);
   const valueTypes = checkpointObjectFromMap(context.valueTypes, "value_types");
@@ -2205,6 +2347,7 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
       agent_ref: agent.id,
       step_index: stepIndex,
       next_step_index: stepIndex + 1,
+      max_steps: context.maxAgentSteps,
       capability_refs: capabilityRefs,
       observations: checkpointObservations,
       consumed_decisions: [
@@ -2222,11 +2365,13 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
         }),
       ],
     },
-    call_frame: callFrame,
-    loop_state: checkpointObjectFromMap(context.loopState, "loop_state"),
+    call_stack: checkpointCallStack(context, payload.approval_ref),
+    loop_state: {},
     values,
     input_value_keys: [...context.inputValueKeys],
     value_types: valueTypes,
+    active_elapsed_ms: Math.ceil(activeElapsedMilliseconds(context)),
+    effective_limits: Object.fromEntries([...context.budgetState.effectiveLimits.entries()].map(([kind, limit]) => [kind, limit.value])),
     budget_counters: {
       steps: context.budgetState.counters.steps,
       tool_calls: context.budgetState.counters.toolCalls,
@@ -2238,6 +2383,7 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
       next_effect_index: context.effectState.nextEffectIndex,
     },
     next_call_index: context.nextCallIndex,
+    agent_invocation_id: context.agentInvocationId ?? null,
     active_agent_ref: context.activeAgentRef,
     active_caller_ref: context.activeCallerRef,
     trace_prefix_digest: tracePrefixDigest,
@@ -2254,56 +2400,31 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
       trace_prefix_digest: tracePrefixDigest,
       external_tool_dispatches: context.effectState.externalToolDispatches,
       observation_count: checkpointObservations.length,
-      call_frame_present: callFrame !== undefined && callFrame !== null,
+      call_stack_depth: context.callStack.length,
     }),
   });
   return checkpoint;
 }
 
+function hasInvocationContinuationStack(context, leafRef) {
+  if (context.callStack.length > MAX_INVOCATION_FRAMES) return false;
+  let owner = context.indexes.triggers.get(context.entryRef)?.target_ref ?? context.entryRef;
+  for (const frame of context.callStack) {
+    if ((frame.kind === "agent_capability" ? frame.agent_ref : frame.graph_owner_ref) !== owner || !frame.caller_scope) return false;
+    owner = frame.target_ref;
+  }
+  return owner === leafRef;
+}
+
 function canCreateHumanApprovalCheckpoint(context, graph) {
-  if (context.durableHumanApprovals !== true) {
-    return false;
-  }
-  if (graph.owner_ref === context.entryRef) {
-    return true;
-  }
-  const entryTrigger = context.indexes.triggers.get(context.entryRef);
-  return entryTrigger?.target_kind === "strategy"
-    && entryTrigger.target_ref === graph.owner_ref;
+  return context.durableHumanApprovals === true && hasInvocationContinuationStack(context, graph.owner_ref);
 }
 
 function agentHumanReviewCheckpointSupport(context, agentRef) {
-  if (context.durableHumanApprovals !== true) {
-    return {
-      supported: false,
-      reason: "durable_human_approvals_disabled",
-      callFrame: null,
-    };
-  }
-  if (context.entryRef === agentRef) {
-    return {
-      supported: true,
-      callFrame: null,
-    };
-  }
-  const frame = context.callStack.at(-1);
-  if (!frame || frame.kind !== "call_agent" || frame.target_ref !== agentRef) {
-    return {
-      supported: false,
-      reason: "agent_review_call_frame_unavailable",
-      callFrame: null,
-    };
-  }
-  if (frame.graph_owner_ref !== context.entryRef) {
-    return {
-      supported: false,
-      reason: "nested_caller_graph_requires_call_stack_checkpoint",
-      callFrame: frame,
-    };
-  }
   return {
-    supported: true,
-    callFrame: frame,
+    supported: context.durableHumanApprovals === true && hasInvocationContinuationStack(context, agentRef),
+    reason: context.durableHumanApprovals === true
+      ? "agent_review_continuation_unavailable" : "durable_human_approvals_disabled",
   };
 }
 
@@ -2347,21 +2468,18 @@ function refuseAgentHumanReviewCheckpointUnavailable(context, payload, support) 
   throw error;
 }
 
-function callerValueScopeFromCheckpoint(scope) {
-  if (!scope || typeof scope !== "object" || Array.isArray(scope)
-    || !Array.isArray(scope.input_value_keys)) {
-    throw new RuntimeFailure("agent review checkpoint requires the caller value scope",
-      {}, "InvalidHumanApprovalCheckpoint");
-  }
-  const values = mapFromCheckpointObject(scope.values, "call_frame.caller_scope.values");
-  const valueTypes = mapFromCheckpointObject(scope.value_types, "call_frame.caller_scope.value_types");
-  const inputValueKeys = new Set(checkpointStringArray(scope.input_value_keys, "call_frame.caller_scope.input_value_keys"));
-  if ([...inputValueKeys].some(key => !values.has(key))
-    || [...valueTypes.values()].some(type => typeof type !== "string")) {
-    throw new RuntimeFailure("agent review checkpoint caller value scope is inconsistent",
-      {}, "InvalidHumanApprovalCheckpoint");
-  }
-  return { values, valueTypes, inputValueKeys };
+
+
+function checkpointCallerScope(context) {
+  return {
+    agent_invocation_id: context.agentInvocationId ?? null,
+    values: checkpointObjectFromMap(context.values, "caller_scope.values"),
+    value_types: checkpointObjectFromMap(context.valueTypes, "caller_scope.value_types"),
+    input_value_keys: [...context.inputValueKeys],
+    loop_state: checkpointObjectFromMap(context.loopState, "caller_scope.loop_state"),
+    active_agent_ref: context.activeAgentRef,
+    active_caller_ref: context.activeCallerRef,
+  };
 }
 
 function callFrameForNode(graph, node, targetRef, context) {
@@ -2376,13 +2494,8 @@ function callFrameForNode(graph, node, targetRef, context) {
     result_binding: node.result_binding,
     success_edge_role: edgeRole,
     resume_target_ref: nextNodeId(graph, node.id, edgeRole),
-    caller_scope: node.kind === "call_agent" && context.durableHumanApprovals
-      ? {
-        values: checkpointObjectFromMap(context.values, "call_frame.caller_scope.values"),
-        value_types: checkpointObjectFromMap(context.valueTypes, "call_frame.caller_scope.value_types"),
-        input_value_keys: [...context.inputValueKeys],
-      }
-      : undefined,
+    caller_scope: ["call_function", "call_skill", "call_strategy", "call_agent", "fallback"].includes(node.kind) && context.durableHumanApprovals
+      ? checkpointCallerScope(context) : undefined,
   });
 }
 
@@ -2777,11 +2890,21 @@ function isValueCompatibleWithType(value, typeRef, context) {
   if (typeRef === BUILTIN_FLOAT) {
     return typeof value === "number" && Number.isFinite(value);
   }
+  if (typeof typeRef === "string" && typeRef.startsWith("optional:")) {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      && Object.hasOwn(value, "present") && [true, false].includes(value.present)
+      && Object.keys(value).length === (value.present ? 2 : 1)
+      && (!value.present || (Object.hasOwn(value, "value")
+        && isValueCompatibleWithType(value.value, typeRef.slice(9), context)));
+  }
   if (typeof typeRef === "string" && typeRef.startsWith("list:")) {
     return Array.isArray(value)
       && value.every((item) => isValueCompatibleWithType(item, typeRef.slice("list:".length), context));
   }
   const type = context.indexes.types.get(typeRef);
+  if (Array.isArray(type?.variants)) {
+    return typeof value === "string" && type.variants.some(variant => variant.name === value);
+  }
   if (!type || !Array.isArray(type.fields)) {
     return true;
   }
@@ -2916,6 +3039,11 @@ function refuseTriggerAfterCancel(context, triggerRef, eventId, sourceKind) {
 }
 
 async function executeTarget(targetRef, context, callArguments = null, options = {}) {
+  if ((context.invocationDepth ?? 0) >= Math.min(MAX_INVOCATION_FRAMES, context.parallelRuntime.limits.maxDepth)) {
+    throw new RuntimeFailure("invocation depth exceeds the runtime limit", { limit: MAX_INVOCATION_FRAMES }, "InvocationDepthLimitExceeded");
+  }
+  context = createInvocationScope(context);
+  context.invocationDepth = (context.invocationDepth ?? 0) + 1;
   if (!options.dispatchAlreadyChecked) {
     assertRunCanDispatch(context, { targetRef });
   }
@@ -2925,7 +3053,7 @@ async function executeTarget(targetRef, context, callArguments = null, options =
       fn.signature,
       callArguments,
       context,
-      () => executeGraph(fn.body_graph_ref, context),
+      () => executeTypedGraph(fn, fn.body_graph_ref, context),
       { markInputValues: options.inputValueArguments === true, entryInputs: options.entryInputs === true },
     );
   }
@@ -2935,12 +3063,27 @@ async function executeTarget(targetRef, context, callArguments = null, options =
       skill.signature,
       callArguments,
       context,
-      () => executeGraph(skill.flow_graph_ref, context),
+      () => executeTypedGraph(skill, skill.flow_graph_ref, context),
       { markInputValues: options.inputValueArguments === true, entryInputs: options.entryInputs === true },
     );
   }
   if (targetRef.startsWith("agent:")) {
     const agent = requireDefinition(context.indexes.agents, targetRef);
+    // Each invocation, including identical arguments and recursive/parallel
+    // calls, owns a separate conversation. Replay retains the recorded ID.
+    const invocationRecord = parallelRecord(context, "agent_invocation", { agent_ref: agent.id });
+    if (invocationRecord?.replay) {
+      context.agentInvocationId = invocationRecord.entry.invocation_id;
+      if (typeof context.agentInvocationId !== "string" || !context.agentInvocationId) {
+        throw new RuntimeFailure("missing agent invocation identity", {}, "InvalidParallelCheckpoint");
+      }
+    } else {
+      context.agentInvocationId = `invocation:${randomUUID()}`;
+      if (invocationRecord) {
+        invocationRecord.entry.invocation_id = context.agentInvocationId;
+        invocationRecord.entry.state = "done";
+      }
+    }
     return executeAgentInterface(agent, callArguments, context, async () => {
       const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
       const capabilities = capabilityRefs.map((capabilityRef) =>
@@ -3017,20 +3160,11 @@ async function executeTarget(targetRef, context, callArguments = null, options =
           }),
         });
 
-        const previousAgentRef = context.activeAgentRef;
-        const previousCallerRef = context.activeCallerRef;
         const selectedCallArguments = callArgumentsForAgentDecision(decision, context);
         if (decision.targetRef.startsWith("agent:")) {
           authorizeAgentInvocationByCaller(agent.id, decision.targetRef, context);
         }
-        context.activeAgentRef = agent.id;
-        context.activeCallerRef = agent.id;
-        try {
-          return await executeTarget(decision.targetRef, context, selectedCallArguments);
-        } finally {
-          context.activeAgentRef = previousAgentRef;
-          context.activeCallerRef = previousCallerRef;
-        }
+        return executeAgentCapability(agent, decision, context, selectedCallArguments);
       }
 
       throw new RuntimeFailure(
@@ -3045,11 +3179,19 @@ async function executeTarget(targetRef, context, callArguments = null, options =
   }
   if (targetRef.startsWith("strategy:")) {
     const strategy = requireDefinition(context.indexes.strategies, targetRef);
+    if (callArguments !== null) {
+      const inputs = strategy.signature?.inputs ?? [];
+      if (inputs.length !== callArguments.length || inputs.some((input, index) =>
+        !isValueCompatibleWithType(callArguments[index], input.type_ref, context))) {
+        throw new RuntimeFailure("strategy arguments must match its declared interface",
+          { targetRef }, "StrategyInputTypeMismatch");
+      }
+    }
     return withBoundArguments(
       strategy.signature,
       callArguments,
       context,
-      () => executeGraph(strategy.flow_graph_ref, context),
+      () => executeTypedGraph(strategy, strategy.flow_graph_ref, context),
       { markInputValues: options.inputValueArguments === true, entryInputs: options.entryInputs === true },
     );
   }
@@ -3064,6 +3206,24 @@ async function executeTarget(targetRef, context, callArguments = null, options =
     );
   }
   throw new RuntimeFailure(`unsupported AIR target ${targetRef}`, { targetRef });
+}
+
+async function executeTypedGraph(definition, graphRef, context, options = {}) {
+  const result = await executeGraph(graphRef, context, options);
+  validateGraphResult(definition, result, context);
+  return result;
+}
+
+function validateGraphResult(definition, result, context) {
+  const expectedTypeRef = definition.signature?.output_type;
+  if (expectedTypeRef && !isValueCompatibleWithType(result, expectedTypeRef, context)) {
+    throw new RuntimeFailure(`result of ${definition.id} does not match ${expectedTypeRef}`, {
+      targetRef: definition.id,
+      expectedTypeRef,
+      valueKind: payloadValueKind(result),
+    });
+  }
+  return result;
 }
 
 async function executeAgentInterface(agent, callArguments, context, execute) {
@@ -3204,26 +3364,75 @@ function refuseAgentInterface(context, agent, reason, code, message, details = {
   }, code);
 }
 
+async function executeAgentCapability(agent, decision, context, callArguments, loopState = null) {
+  const previousAgentRef = context.activeAgentRef;
+  const previousCallerRef = context.activeCallerRef;
+  const frame = context.durableHumanApprovals ? {
+    kind: "agent_capability",
+    agent_ref: agent.id,
+    caller_ref: agent.id,
+    target_ref: decision.targetRef,
+    decision_mode: loopState ? "loop" : "single",
+    capability_refs: [...(agent.uses ?? [])],
+    arguments: loopState?.observationArguments ?? argumentsForAgentObservation(decision.targetRef, callArguments, context),
+    caller_scope: { ...checkpointCallerScope(context), loop_state: {} },
+    ...(loopState ? {
+      step_index: loopState.stepIndex,
+      next_step_index: loopState.stepIndex + 1,
+      max_steps: context.maxAgentSteps,
+      observations: checkpointJsonClone(loopState.observations, "agent_loop_state.observations"),
+    } : {}),
+  } : null;
+  if (frame) context.callStack.push(frame);
+  context.activeAgentRef = agent.id;
+  context.activeCallerRef = agent.id;
+  try {
+    return await executeTarget(decision.targetRef, context, callArguments);
+  } finally {
+    if (frame) context.callStack.pop();
+    context.activeAgentRef = previousAgentRef;
+    context.activeCallerRef = previousCallerRef;
+  }
+}
+
 async function executeAgentDecisionLoop(agent, capabilityRefs, context, options = {}) {
-  return runAgentDecisionLoop(
-    agent,
-    capabilityRefs,
-    context,
-    {
-      resolveAgentDecision,
-      executeAgentHumanReview,
-      assertAgentDecisionDoesNotExecuteSkillPack,
-      callArgumentsForAgentDecision,
-      argumentsForAgentObservation,
-      authorizeAgentInvocationByCaller,
-      executeTarget,
-      validateAgentFinalResult,
-    },
-    options,
-  );
+  const parentProjectionTraces = context.skillPackProjectionTraces;
+  context.skillPackProjectionTraces = new Set();
+  try {
+    return await runAgentDecisionLoop(
+      agent,
+      capabilityRefs,
+      context,
+      {
+        resolveAgentDecision,
+        executeAgentHumanReview,
+        assertAgentDecisionDoesNotExecuteSkillPack,
+        callArgumentsForAgentDecision,
+        argumentsForAgentObservation,
+        authorizeAgentInvocationByCaller,
+        executeAgentCapability,
+        validateAgentFinalResult,
+      },
+      options,
+    );
+  } finally {
+    context.skillPackProjectionTraces = parentProjectionTraces;
+  }
 }
 
 function executeAgentHumanReview(agent, decision, context, stepIndex, observations = []) {
+  if (context.parallelBranch) {
+    const ref = agentHumanReviewApprovalRef(agent.id, stepIndex);
+    return parallelHuman(context, { approval_ref: ref, mode: "agent_review", agent_ref: agent.id,
+      review_prompt: decision.reviewPrompt ?? "Review the requested agent decision.", step_index: stepIndex }, value => {
+      context.humanApprovalDecisions.set(ref, value);
+      return executeAgentHumanReviewBody(agent, decision, context, stepIndex, observations);
+    });
+  }
+  return executeAgentHumanReviewBody(agent, decision, context, stepIndex, observations);
+}
+
+function executeAgentHumanReviewBody(agent, decision, context, stepIndex, observations = []) {
   const approvalRef = agentHumanReviewApprovalRef(agent.id, stepIndex);
   const basePayload = compactPayload({
     approval_ref: approvalRef,
@@ -3249,7 +3458,6 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
     if (
       context.durableHumanApprovals === true
       && checkpointSupport.supported !== true
-      && context.effectState.externalToolDispatches > 0
     ) {
       refuseAgentHumanReviewCheckpointUnavailable(context, basePayload, checkpointSupport);
     }
@@ -3264,7 +3472,6 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
         stepIndex,
         observations,
         basePayload,
-        checkpointSupport.callFrame,
       );
     }
     context.trace.push("human_approval_paused", {
@@ -3288,6 +3495,7 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
   context.trace.push("human_approval_paused", {
     payload: basePayload,
   });
+  context.humanApprovalDecisions.delete(approvalRef);
   const transition = classifyHumanApprovalDecision(humanDecision);
   if (!transition.valid) {
     throw new RuntimeFailure(
@@ -3539,6 +3747,7 @@ function signatureDescriptor(signature, context) {
     inputs: (signature.inputs ?? []).map((input) => parameterDescriptor(input, context)),
     output_type: signature.output_type,
     output_fields: typeFieldsDescriptor(signature.output_type, context),
+    output_enum_values: typeEnumValues(signature.output_type, context),
   });
 }
 
@@ -3547,6 +3756,7 @@ function parameterDescriptor(parameter, context) {
     name: parameter.name,
     type_ref: parameter.type_ref,
     fields: typeFieldsDescriptor(parameter.type_ref, context),
+    enum_values: typeEnumValues(parameter.type_ref, context),
   });
 }
 
@@ -3554,8 +3764,8 @@ function typeFieldsDescriptor(typeRef, context, ancestors = new Set()) {
   if (typeof typeRef !== "string" || typeRef.trim() === "") {
     return undefined;
   }
-  if (typeRef.startsWith("list:")) {
-    return typeFieldsDescriptor(typeRef.slice("list:".length), context, ancestors);
+  if (typeRef.startsWith("list:") || typeRef.startsWith("optional:")) {
+    return typeFieldsDescriptor(typeRef.slice(typeRef.indexOf(":") + 1), context, ancestors);
   }
   if (ancestors.has(typeRef)) {
     return undefined;
@@ -3569,7 +3779,13 @@ function typeFieldsDescriptor(typeRef, context, ancestors = new Set()) {
     name: field.name,
     type_ref: field.type_ref,
     fields: typeFieldsDescriptor(field.type_ref, context, nestedAncestors),
+    enum_values: typeEnumValues(field.type_ref, context),
   }));
+}
+
+function typeEnumValues(typeRef, context) {
+  while (typeof typeRef === "string" && /^(list|optional):/u.test(typeRef)) typeRef = typeRef.slice(typeRef.indexOf(":") + 1);
+  return context.indexes.types.get(typeRef)?.variants?.map(variant => variant.name);
 }
 
 function uniqueKinds(refs) {
@@ -3706,6 +3922,7 @@ function agentDecisionProviderRequest(agent, capabilityRefs, context, mode, loop
     protocol: AGENT_DECISION_PROTOCOL_VERSION,
     mode,
     run_id: context.trace.runId,
+    invocation_id: context.agentInvocationId,
     agent_ref: agent.id,
     agent_name: agent.name,
     agent_signature: signatureDescriptor(agent.signature, context),
@@ -3863,6 +4080,8 @@ function agentModelInput(
 	      }
 	      : {
 	        select_exactly_one_catalog_capability_when_execution_is_needed: true,
+	        answer_directly_only_if_goal_satisfied: true,
+	        answer_directly_must_not_replace_required_human_review: true,
 	        request_human_review_only_when_no_catalog_capability_suffices: true,
 	        request_human_review_when_goal_requires_human_judgment: true,
 	        select_by_task_need_not_usage_history: true,
@@ -3884,7 +4103,7 @@ function agentModelInput(
       ? ["answer_directly", "cannot_complete"]
       : orientationMode
       ? ["answer_directly", "request_capabilities"]
-      : ["select_capability", "request_human_review"],
+      : ["select_capability", "request_human_review", "answer_directly"],
     capabilities: catalogMode ? capabilities : undefined,
     output_contract: finalizationMode
       ? {
@@ -3916,14 +4135,18 @@ function agentModelInput(
       }
       : {
         action: {
-          enum: ["select_capability", "request_human_review"],
+          enum: ["select_capability", "request_human_review", "answer_directly"],
+        },
+        direct_answer: {
+          type: "JSON",
+          description: "Typed final result when the available data and observations satisfy the goal.",
         },
         target_ref: {
           enum_source: "capabilities[].target_ref",
         },
         reason: {
           type: "Text",
-          description: "Brief reason for the capability selection.",
+          description: "Brief reason for the selected action.",
         },
         arguments: {
           type: "Object",
@@ -3990,7 +4213,7 @@ function prepareSkillPackModelContext(context, agent, providerMode, capabilityRe
     provider_mode: providerMode,
     skill_pack_count: hints.length,
   });
-  context.trace.push("skill_pack_discovery_listed", {
+  traceSkillPackProjection(context, "skill_pack_discovery_listed", {
     payload: compactPayload({
       agent_ref: agent.id,
       provider_mode: providerMode,
@@ -4029,7 +4252,7 @@ function prepareSkillPackModelContext(context, agent, providerMode, capabilityRe
       reason,
     });
     active.push(activePack);
-    context.trace.push("skill_pack_activated", {
+    traceSkillPackProjection(context, "skill_pack_activated", {
       payload: compactPayload({
         agent_ref: agent.id,
         provider_mode: providerMode,
@@ -4073,6 +4296,16 @@ function skillPackHint(pack) {
   });
 }
 
+// Deduplicate descriptive projection events only. Resource/authority checks and
+// byte budgets above still run on every provider request, including after resume.
+function traceSkillPackProjection(context, kind, event) {
+  const { provider_mode, ...state } = event.payload;
+  const key = JSON.stringify([kind, state]);
+  if (context.skillPackProjectionTraces.has(key)) return;
+  context.skillPackProjectionTraces.add(key);
+  context.trace.push(kind, event);
+}
+
 function activeSkillPackRecord(context, pack, reason, agent, providerMode, capabilityRefs) {
   const resources = pack.resources.map((resource) =>
     activeSkillPackResourceRecord(context, pack, resource, agent, providerMode)
@@ -4104,7 +4337,7 @@ function activeSkillPackResourceRecord(context, pack, resource, agent, providerM
   });
 
   if (resource.kind === "script") {
-    context.trace.push("skill_pack_resource_refused", {
+    traceSkillPackProjection(context, "skill_pack_resource_refused", {
       payload: compactPayload({
         agent_ref: agent.id,
         provider_mode: providerMode,
@@ -4124,7 +4357,7 @@ function activeSkillPackResourceRecord(context, pack, resource, agent, providerM
 
   assertSkillPackResourceHasNoResolvedSecret(context, pack, resource, agent, providerMode);
   const approxSizeBytes = Buffer.byteLength(resource.content, "utf8");
-  context.trace.push("skill_pack_resource_loaded", {
+  traceSkillPackProjection(context, "skill_pack_resource_loaded", {
     payload: compactPayload({
       agent_ref: agent.id,
       provider_mode: providerMode,
@@ -4351,12 +4584,31 @@ async function callAgentDecisionProvider(request, context) {
 }
 
 async function callAgentDecisionProviderAttempt(request, context, attemptIndex) {
+  if (context.parallelBranch) {
+    return parallelExternal(context, "provider", { request, attemptIndex }, [], async entry => {
+      if (!entry.budget_reserved) {
+      consumeProviderBudget(context, { agentRef: request.agent_ref, targetRef: request.agent_ref,
+        providerMode: request.mode, providerAttempt: attemptIndex });
+      entry.budget_reserved = true;
+      }
+      await context.parallelBranch.control.persist();
+      context.parallelCheckRun();
+      entry.dispatched = true;
+      return callAgentDecisionProviderAttemptBody(request, context, attemptIndex, true);
+    });
+  }
+  return callAgentDecisionProviderAttemptBody(request, context, attemptIndex);
+}
+
+async function callAgentDecisionProviderAttemptBody(request, context, attemptIndex, reserved = false) {
+  if (!reserved) {
   consumeProviderBudget(context, {
     agentRef: request.agent_ref,
     targetRef: request.agent_ref,
     providerMode: request.mode,
     providerAttempt: attemptIndex,
   });
+  }
   context.trace.push("agent_decision_provider_call_attempted", {
     payload: compactPayload({
       agent_ref: request.agent_ref,
@@ -4368,11 +4620,11 @@ async function callAgentDecisionProviderAttempt(request, context, attemptIndex) 
     }),
   });
   try {
-    const response = await withAgentDecisionProviderTimeout(
-      context.agentDecisionProvider.decide(request),
+    const response = snapshotInvocationValue(await withAgentDecisionProviderTimeout(
+      trackParallelTransport(context, Promise.resolve().then(() => context.agentDecisionProvider.decide(snapshotInvocationValue(request)))),
       context.agentDecisionProviderTimeoutMs,
       request,
-    );
+    ), "AgentDecisionProviderSchemaViolation");
     assertResultHasNoResolvedSecret(response, context.secretStore);
     const decision = normalizeAgentDecisionProviderResponse(request.agent_ref, response);
     if (decision.action === "cannot_complete" && request.mode !== "finalization") {
@@ -4421,6 +4673,12 @@ async function callAgentDecisionProviderAttempt(request, context, attemptIndex) 
       error instanceof Error ? error.message : String(error),
       secretValuesForRedaction(context.secretStore),
     );
+    const decisionError = error?.name === "ToubaAgentDecisionProviderError"
+      && (new Set(["InvalidModelDecision", "IncompleteModelDecision", "InvalidAgentDecisionRequest",
+        "UnsupportedDecisionTypeDescriptor", "DecisionHistoryBusy", "DecisionHistoryMismatch",
+        "DecisionHistoryClosed", "DecisionHistoryUnresolvedCall", "DecisionHistoryLimitExceeded",
+        "ProviderContextWindowExceeded", "DecisionHistorySummaryInvalid"]).has(error.code));
+    const outputError = ["AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError"].includes(error?.name);
     throw new RuntimeFailure(
       `agent decision provider failed for ${request.agent_ref}: ${message}`,
       {
@@ -4429,8 +4687,9 @@ async function callAgentDecisionProviderAttempt(request, context, attemptIndex) 
         providerAttempt: attemptIndex,
         cause: message,
         provider_metadata: request.provider_metadata,
+        provider_error_code: decisionError ? error.code : outputError ? error.name : undefined,
       },
-      "AgentDecisionProviderUnavailable",
+      decisionError || outputError ? "AgentDecisionProviderSchemaViolation" : "AgentDecisionProviderUnavailable",
     );
   }
 }
@@ -4812,6 +5071,34 @@ function validateAgentCapabilityArgumentValues(targetRef, inputs, values, contex
 }
 
 async function executeTool(tool, context) {
+  if (context.parallelBranch) {
+    const binding = validateToolBinding(tool, context);
+    const args = argumentObject(tool.signature, context);
+    validateToolInputPayload(tool, args, context);
+    assertNoSecretValueInToolArguments(tool, binding, args, context);
+    const result = await parallelExternal(context, "tool", {
+      target_ref: tool.id, arguments: args, caller_ref: context.activeCallerRef, agent_ref: context.activeAgentRef,
+    }, tool.memory_accesses ?? [], async entry => {
+      // Recheck grants and scopes after waiting for transport/memory admission.
+      validateToolBinding(tool, context);
+      if (!entry.budget_reserved) {
+        consumeRunBudget(context, "max_tool_calls", 1, { targetRef: tool.id, dispatch: true });
+        entry.budget_reserved = true;
+      }
+      if (binding?.effectContract?.kind === "external_write" && !entry.effect_index) {
+        entry.effect_index = context.effectState.nextEffectIndex++;
+      }
+      await context.parallelBranch.control.persist();
+      context.parallelCheckRun();
+      return executeToolBody(tool, context);
+    });
+    validateToolOutputPayload(tool, result, context);
+    return result;
+  }
+  return executeToolBody(tool, context);
+}
+
+async function executeToolBody(tool, context) {
   const toolRef = tool.id;
   const binding = validateToolBinding(tool, context);
   if (binding) {
@@ -4862,6 +5149,8 @@ async function executeTool(tool, context) {
       };
       if (!durableReservation) context.nextCallIndex += 1;
       const handlerResponse = await runProcessToolHandler({
+        localHandlerDiagnostics: context.localHandlerDiagnostics,
+        runId: context.trace.runId,
         toolRef: tool.id,
         binding,
         request: handlerRequest,
@@ -4885,13 +5174,13 @@ async function executeTool(tool, context) {
   }
   try {
     recordExternalToolDispatch(context);
-    const value = await handler({
+    const value = snapshotInvocationValue(await handler(snapshotInvocationValue({
       toolRef,
       arguments: toolArguments,
       values: Object.fromEntries(context.values),
       binding: binding ? bindingPublicView(binding) : undefined,
       resourceBindings,
-    });
+    })), "ToolOutputSchemaViolation");
     assertResultHasNoResolvedSecret(value, context.secretStore);
     validateToolOutputPayload(tool, value, context);
     validateToolPayloadConstraints("output", tool, value, binding?.payloadConstraints?.output ?? []);
@@ -4941,10 +5230,10 @@ async function executeEffectfulProcessTool(
     && durablePending.node_id === context.executionDurability.cursor?.node_id
     && durablePending.tool_ref === toolRef
     && durablePending.effect_contract_kind === "external_write";
-  const effectIndex = resumedEffect
+  const effectIndex = context.parallelOperation?.effect_index ?? (resumedEffect
     ? durablePending.effect_index
-    : context.effectState.nextEffectIndex;
-  if (!resumedEffect) context.effectState.nextEffectIndex += 1;
+    : context.effectState.nextEffectIndex);
+  if (!resumedEffect && !context.parallelOperation?.effect_index) context.effectState.nextEffectIndex += 1;
   const airDigest = airDocumentDigest(context.trace.airDocument);
   const effectId = deriveEffectId({
     effectScopeId,
@@ -5121,6 +5410,8 @@ async function executeEffectfulProcessTool(
   let handlerResponse;
   try {
     handlerResponse = await runProcessToolHandler({
+      localHandlerDiagnostics: context.localHandlerDiagnostics,
+      runId: context.trace.runId,
       toolRef,
       binding,
       request: handlerRequest,
@@ -5478,6 +5769,10 @@ function assertNoResolvedSecretInEffectArtifact(value, toolRef, field, secretSto
 }
 
 function recordExternalToolDispatch(context) {
+  if (context.parallelBranch) {
+    context.parallelCheckRun();
+    context.parallelOperation.dispatched = true;
+  }
   context.effectState.externalToolDispatches += 1;
 }
 
@@ -7903,9 +8198,12 @@ function activeElapsedMilliseconds(context) {
 
 async function executeNode(graph, node, context) {
   switch (node.kind) {
+    case "parallel_call":
+      return executeParallelNode(graph, node, context);
     case "call_function":
     case "call_tool":
     case "call_skill":
+    case "call_strategy":
     case "call_agent":
       return executeCallNode(graph, node, context);
     case "bind":
@@ -7930,15 +8228,238 @@ async function executeNode(graph, node, context) {
         status: "stopped",
       };
     case "fallback":
-      return {
-        edgeRole: "next",
-        result: await executeTarget(requiredTarget(node), context),
-      };
+      return executeFallbackNode(graph, node, context);
     default:
       throw new RuntimeFailure(`unsupported AIR node kind ${node.kind}`, {
         graphRef: graph.id,
         nodeId: node.id,
       });
+  }
+}
+
+function parallelCheckpoint(context, graph, node, state) {
+  const pending = pendingParallelApprovals(state);
+  const first = pending[0];
+  const checkpoint = {
+    checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION, kind: "parallel_group", scope: "parallel_group",
+    run_id: context.trace.runId, entry_ref: context.entryRef, module_ref: context.trace.airDocument.module.id,
+    air_schema_version: context.trace.airDocument.air_schema_version, air_digest: airDocumentDigest(context.trace.airDocument),
+    graph_ref: graph.id, node_id: node.id, call_stack: checkpointCallStack(context, first?.approval_ref ?? state.id),
+    ...checkpointCallerScope(context), parallel_state: state,
+    parallel_limits: context.parallelRuntime.limits, next_parallel_group: context.parallelRuntime.nextGroup,
+    max_agent_steps: context.maxAgentSteps, max_loop_iterations: context.maxLoopIterations,
+    ...(first ? { ...first.metadata, approval_ref: first.approval_ref,
+      pending_approvals: pending.map(entry => ({ ...entry.metadata, approval_ref: entry.approval_ref })) } : {}),
+    active_elapsed_ms: Math.ceil(activeElapsedMilliseconds(context)),
+    effective_limits: Object.fromEntries([...context.budgetState.effectiveLimits].map(([kind, limit]) => [kind, limit.value])),
+    budget_counters: { steps: context.budgetState.counters.steps, tool_calls: context.budgetState.counters.toolCalls,
+      agent_invocations: context.budgetState.counters.agentInvocations, provider_calls: context.budgetState.counters.providerCalls },
+    effect_state: { external_tool_dispatches: context.effectState.externalToolDispatches, next_effect_index: context.effectState.nextEffectIndex },
+    next_call_index: context.nextCallIndex, trace_prefix_digest: canonicalDigest(context.trace.document()),
+  };
+  assertCheckpointHasNoResolvedSecret(checkpoint, context, first?.approval_ref ?? state.id);
+  const portable = checkpointJsonClone(checkpoint, "parallel_checkpoint");
+  portable.parallel_digest = canonicalDigest(portable);
+  if (Buffer.byteLength(JSON.stringify(portable)) > context.parallelRuntime.limits.maxCheckpointBytes) {
+    throw new RuntimeFailure("parallel checkpoint exceeds its byte limit", {}, "ParallelCheckpointLimitExceeded");
+  }
+  return portable;
+}
+
+async function resumeParallelCheckpoint(document, entryRef, context, checkpoint) {
+  if (checkpoint.run_id !== context.trace.runId) checkpointContinuationInvalid("parallel run identity changed", true);
+  validateHumanApprovalCheckpointCompatibility(document, entryRef, checkpoint, { expectedScope: "parallel_group" });
+  const graph = context.indexes.graphs.get(checkpoint.graph_ref);
+  const node = graph?.nodes.find(node => node.id === checkpoint.node_id);
+  if (!graph || node?.kind !== "parallel_call") checkpointContinuationInvalid("parallel cursor does not match AIR", true);
+  validateInvocationCheckpointStack(context, checkpoint, graph.owner_ref);
+  validateParallelState(checkpoint.parallel_state, context.parallelRuntime.limits);
+  assertParallelOutcomesKnown(checkpoint.parallel_state);
+  for (const [key, value] of Object.entries(checkpoint.parallel_limits ?? {})) {
+    if (!Object.hasOwn(context.parallelRuntime.limits, key) || !Number.isSafeInteger(value) || value < 1) {
+      checkpointContinuationInvalid("invalid saved parallel limit");
+    }
+    context.parallelRuntime.limits[key] = Math.min(value, context.parallelRuntime.limits[key]);
+  }
+  if (Object.keys(checkpoint.parallel_limits ?? {}).length !== Object.keys(context.parallelRuntime.limits).length
+    || !Number.isSafeInteger(checkpoint.next_parallel_group) || checkpoint.next_parallel_group < 2) {
+    checkpointContinuationInvalid("parallel checkpoint requires complete host limits and identity state");
+  }
+  context.parallelRuntime.nextGroup = checkpoint.next_parallel_group;
+  for (const [field, key] of [["max_agent_steps", "maxAgentSteps"], ["max_loop_iterations", "maxLoopIterations"]]) {
+    if (!Number.isSafeInteger(checkpoint[field]) || checkpoint[field] < 1) checkpointContinuationInvalid("missing invocation ceiling");
+    context[key] = Math.min(context[key], checkpoint[field]);
+  }
+  const pending = pendingParallelApprovals(checkpoint.parallel_state);
+  for (const entry of pending) if (context.humanApprovalDecisions.has(entry.approval_ref)) {
+    context.trace.push("human_approval_checkpoint_loaded", { payload: {
+      checkpoint_schema_version: checkpoint.checkpoint_schema_version, kind: checkpoint.kind,
+      approval_ref: entry.approval_ref, checkpoint_run_id: checkpoint.run_id,
+      trace_prefix_digest: checkpoint.trace_prefix_digest,
+    } });
+  }
+  if (pending.length && !pending.some(entry => context.humanApprovalDecisions.has(entry.approval_ref))) {
+    throw new RuntimeFailure("parallel resume requires a decision for a pending branch occurrence", {}, "HumanApprovalResumeDecisionRequired");
+  }
+  // Refusal/expiry/cancellation terminates the group before any sibling starts.
+  for (const entry of pending) {
+    const decision = context.humanApprovalDecisions.get(entry.approval_ref);
+    if (decision && decision !== "approved") {
+      context.trace.push("human_approval_decided", { payload: { approval_ref: entry.approval_ref, decision } });
+      context.trace.push(classifyHumanApprovalDecision(decision).terminalEvent, { payload: { approval_ref: entry.approval_ref, decision } });
+      throw new RuntimeStop("parallel approval refused", { reason: `human_approval_${decision}` });
+    }
+  }
+  applyHumanApprovalResumeCheckpoint(context, checkpoint);
+  for (const entry of pending) {
+    if (context.humanApprovalDecisions.get(entry.approval_ref) === "approved") {
+      context.trace.push("human_approval_decided", { payload: { approval_ref: entry.approval_ref, decision: "approved" } });
+      context.trace.push("human_approval_resumed", { payload: { approval_ref: entry.approval_ref, group_id: checkpoint.parallel_state.id } });
+      entry.state = "done";
+      entry.value = "approved";
+      context.humanApprovalDecisions.delete(entry.approval_ref);
+    }
+  }
+  if (pendingParallelApprovals(checkpoint.parallel_state).length) {
+    context.pendingHumanApprovalCheckpoint = parallelCheckpoint(context, graph, node, checkpoint.parallel_state);
+    if (context.parallelRuntime.observer) await context.parallelRuntime.observer({
+      checkpoint: structuredClone(context.pendingHumanApprovalCheckpoint), trace: context.trace.document(),
+    });
+    throw new RuntimeStop("parallel group awaits remaining approvals", { reason: "human_approval_pending" });
+  }
+  return resumeInvocationStack(context, async () => {
+    const outcome = await executeParallelNode(graph, node, context, checkpoint.parallel_state);
+    const next = nextNodeId(graph, node.id, outcome.edgeRole);
+    return executeTypedGraph(graphOwnerDefinition(graph.id, context), graph.id, context,
+      { startNodeId: next, loopState: context.loopState });
+  });
+}
+
+async function executeParallelNode(graph, node, context, restored = null) {
+  const runtime = context.parallelRuntime;
+  const definition = definitionForCapability(node.target_ref, context);
+  if (!definition?.signature?.output_type || !["skill", "strategy"].includes(graph.owner_ref.split(":")[0])) {
+    throw new RuntimeFailure("parallel requires a typed callable from a skill or strategy", {}, "InvalidParallelContract");
+  }
+  const collection = resolveHandle(node.collection_ref, context, graph);
+  if (!Array.isArray(collection) || collection.length > Math.min(node.max_items, runtime.limits.maxItems)) {
+    context.trace.push("parallel_group_refused", { airRef: airRefForNode(graph, node), payload: { reason: "item_limit_or_type" } });
+    throw new RuntimeFailure("parallel input must be a list within max_items", {}, "ParallelItemLimitExceeded");
+  }
+  if (node.target_ref.startsWith("agent:")) authorizeAgentInvocationByCaller(graph.owner_ref, node.target_ref, context);
+  const allArguments = collection.map(item => {
+    const scope = createInvocationScope(context);
+    scope.values.set(valueHandle(node.item_binding), snapshotInvocationValue(item));
+    const args = (node.arguments ?? []).map(ref => resolveHandle(ref, scope, graph));
+    if (args.length !== definition.signature.inputs.length || args.some((arg, index) =>
+      !isValueCompatibleWithType(arg, definition.signature.inputs[index].type_ref, context))) {
+      throw new RuntimeFailure("all parallel arguments must match the declared interface before admission", {}, "ParallelInputTypeMismatch");
+    }
+    assertCheckpointHasNoResolvedSecret(args, context, node.target_ref);
+    return snapshotInvocationValue(args);
+  });
+  const groupRecord = parallelRecord(context, "group", { graph: graph.id, node: node.id, arguments: allArguments });
+  const state = restored ?? groupRecord?.entry.group ?? {
+    id: context.parallelBranch ? `${context.parallelBranch.state.id}/group-${groupRecord.index}` : `${context.trace.runId}/parallel-${runtime.nextGroup++}`,
+    graph_ref: graph.id, node_id: node.id, max_concurrency: node.max_concurrency, max_items: node.max_items,
+    branches: allArguments.map((args, index) => ({ id: "", arguments: args, status: "queued", journal: [], messages: [] })),
+  };
+  for (const [index, branch] of state.branches.entries()) if (!branch.id) branch.id = `${state.id}/${index}`;
+  if (state.graph_ref !== graph.id || state.node_id !== node.id || state.max_concurrency !== node.max_concurrency
+    || state.max_items !== node.max_items || canonicalDigest(state.branches.map(branch => branch.arguments)) !== canonicalDigest(allArguments)) {
+    throw new RuntimeFailure("parallel continuation does not match its source and inputs", {}, "ParallelContinuationMismatch");
+  }
+  if (runtime.alive + state.branches.filter(branch => branch.status !== "done").length > runtime.limits.maxBranches) {
+    throw new RuntimeFailure("global parallel branch limit exceeded", {}, "ParallelBranchLimitExceeded");
+  }
+  const saved = validateParallelState(state, runtime.limits);
+  for (const branch of state.branches) if (branch.status === "done"
+    && !isValueCompatibleWithType(branch.result, definition.signature.output_type, context)) {
+    throw new RuntimeFailure("completed branch has an invalid result", {}, "InvalidParallelCheckpoint");
+  }
+  if (groupRecord) groupRecord.entry.group = state;
+  let persistence = Promise.resolve();
+  const control = context.parallelBranch?.control ?? {
+    paused: false, failure: null, entries: saved.entries,
+    persist: async () => {
+      if (Buffer.byteLength(JSON.stringify(state)) > runtime.limits.maxCheckpointBytes) {
+        throw new RuntimeFailure("parallel checkpoint exceeds its byte limit", {}, "ParallelCheckpointLimitExceeded");
+      }
+      if (!runtime.observer) return;
+      const checkpoint = parallelCheckpoint(context, graph, node, state);
+      persistence = persistence.then(() => runtime.observer({ checkpoint, trace: context.trace.document() }));
+      await persistence;
+    },
+  };
+  context.trace.push(restored || groupRecord?.replay ? "parallel_group_resumed" : "parallel_group_admitted", {
+    airRef: airRefForNode(graph, node), payload: { group_id: state.id, count: state.branches.length,
+      max_concurrency: Math.min(node.max_concurrency, runtime.limits.maxConcurrency) },
+  });
+  await control.persist();
+  try {
+    const results = await runParallelGroup(state, context, control, async branchState => {
+      const branch = createInvocationScope(context);
+      branch.parallelBranch = { state: branchState, cursor: 0, control, replaying: branchState.journal.length > 0 };
+      branch.parallelDecisions = context.parallelDecisions ?? context.humanApprovalDecisions;
+      branch.humanApprovalDecisions = new Map();
+      branch.userInputs = new Map(context.userInputs);
+      branch.messages = [];
+      branch.activeCallerRef = graph.owner_ref;
+      branch.callStack = [];
+      branch.durableHumanApprovals = false;
+      branch.parallelCheckRun = () => assertRunCanContinue(branch);
+      branch.parallelCheckValue = value => assertCheckpointHasNoResolvedSecret(value, branch, state.id);
+      const runTrace = (context.sharedRunRoot ?? context).trace;
+      branch.trace = Object.create(runTrace);
+      branch.trace.push = (kind, options = {}) => branch.parallelBranch.replaying ? undefined : runTrace.push(kind, {
+        ...options, payload: { ...options.payload, group_id: state.id, branch_id: branchState.id,
+          parent_branch_id: context.parallelBranch?.state.id ?? null },
+      });
+      const value = await executeTarget(node.target_ref, branch, branchState.arguments);
+      if (branch.parallelBranch.cursor !== branchState.journal.length) {
+        throw new RuntimeFailure("parallel continuation has unconsumed records", {}, "ParallelContinuationMismatch");
+      }
+      branchState.messages = snapshotInvocationValue(branch.messages);
+      return value;
+    });
+    if (!context.parallelBranch) await Promise.all([...runtime.inFlight]);
+    await control.persist(); // Durable all-complete boundary, before publishing the join.
+    context.values.set(valueHandle(node.result_binding), results);
+    context.valueTypes.set(valueHandle(node.result_binding), `list:${definition.signature.output_type}`);
+    for (const branch of state.branches) context.messages.push(...branch.messages);
+    if (groupRecord) groupRecord.entry.state = "done";
+    context.trace.push("parallel_join_completed", { airRef: airRefForNode(graph, node), payload: { group_id: state.id, count: results.length } });
+    return { edgeRole: successEdgeRole(graph, node.id), result: results };
+  } catch (error) {
+    if (context.parallelBranch) throw error;
+    await Promise.all([...runtime.inFlight]);
+    if (error instanceof ParallelSuspend && !control.failure) {
+      const checkpoint = parallelCheckpoint(context, graph, node, state);
+      context.pendingHumanApprovalCheckpoint = checkpoint;
+      await control.persist();
+      throw new RuntimeStop("parallel group awaits approval", { reason: "human_approval_pending" });
+    }
+    context.trace.push("parallel_join_failed", { airRef: airRefForNode(graph, node), payload: { group_id: state.id,
+      branch_id: control.failedBranch ?? null, runtime_error_code: (control.failure ?? error).code } });
+    return handleCallFailure(graph, node, node.target_ref, context, control.failure ?? error);
+  }
+}
+
+async function executeFallbackNode(graph, node, context) {
+  const targetRef = requiredTarget(node);
+  const frame = callFrameForNode(graph, node, targetRef, context);
+  const caller = context.activeCallerRef;
+  context.callStack.push(frame);
+  context.activeCallerRef = graph.owner_ref;
+  context.trace.push("call_started", { airRef: airRefForNode(graph, node),
+    payload: compactPayload({ target_ref: targetRef, caller_ref: graph.owner_ref, agent_ref: context.activeAgentRef }) });
+  try {
+    const result = await executeTarget(targetRef, context);
+    bindCompletedCall(graph, node, targetRef, result, context);
+    return { edgeRole: successEdgeRole(graph, node.id), result };
+  } finally {
+    context.callStack.pop();
+    context.activeCallerRef = caller;
   }
 }
 
@@ -7973,6 +8494,19 @@ function executeBindNode(graph, node, context) {
 }
 
 function executeHumanApprovalNode(graph, node, context) {
+  if (context.parallelBranch) {
+    const ref = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
+    return parallelHuman(context, { approval_ref: ref, mode: requiredApprovalMode(node),
+      caller_ref: graph.owner_ref, context_refs: node.context_refs ?? [],
+      context_values: (node.context_refs ?? []).map(ref => resolveHandle(ref, context, graph)) }, value => {
+      context.humanApprovalDecisions.set(ref, value);
+      return executeHumanApprovalNodeBody(graph, node, context);
+    });
+  }
+  return executeHumanApprovalNodeBody(graph, node, context);
+}
+
+function executeHumanApprovalNodeBody(graph, node, context) {
   const approvalRef = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
   const mode = requiredApprovalMode(node);
   const contextRefs = node.context_refs ?? [];
@@ -8001,7 +8535,7 @@ function executeHumanApprovalNode(graph, node, context) {
     const durableResumeAvailable = canCreateHumanApprovalCheckpoint(context, graph);
     if (context.durableHumanApprovals && !durableResumeAvailable) {
       throw new RuntimeFailure(
-        "the local human checkpoint requires an entry-graph approval; nested continuations require execution durability",
+        "human checkpoint requires a complete invocation continuation stack",
         { approvalRef, graphRef: graph.id },
         "HumanApprovalCheckpointUnsupportedScope",
       );
@@ -8082,6 +8616,9 @@ function executeHumanApprovalNode(graph, node, context) {
     throw error;
   }
 
+  // A host decision authorizes one occurrence, never future loop iterations
+  // or later invocations of the same source approval node.
+  context.humanApprovalDecisions.delete(approvalRef);
   context.trace.push("human_approval_decided", {
     airRef: airRefForNode(graph, node),
     payload: {
@@ -8137,6 +8674,19 @@ function traceHumanApprovalFailure(graph, node, context, error) {
 async function executeUserInteractionNode(graph, node, context) {
   const interactionRef = node.interaction_ref ?? `interaction:${graph.id}:${node.id}`;
   const mode = requiredUserInteractionMode(node);
+  if (mode === "ask" && context.parallelBranch && !context.parallelOperation) {
+    const prompt = resolveHandle(node.arguments[0], context, graph);
+    const result = await parallelExternal(context, "input", { graph: graph.id, node: node.id, prompt }, [], async () => {
+      const occurrence = `${interactionRef}:parallel:${context.parallelBranch.state.id}:${context.parallelBranch.cursor - 1}`;
+      const answer = await trackParallelTransport(context,
+        executeUserInteractionNode(graph, { ...node, interaction_ref: occurrence }, context));
+      if (answer.done) throw new RuntimeFailure("parallel ask requires an occurrence-specific host answer or userInputProvider", {}, "ParallelUserInputRequired");
+      return answer;
+    });
+    context.values.set(valueHandle(node.result_binding), result.result);
+    context.valueTypes.set(valueHandle(node.result_binding), BUILTIN_TEXT);
+    return result;
+  }
   const argumentRef = (node.arguments ?? [])[0];
   if (!argumentRef) {
     const error = new RuntimeFailure(
@@ -8243,6 +8793,9 @@ async function executeUserInteractionNode(graph, node, context) {
         authoritySource: "host",
         reason: "cancel_requested",
       });
+    }
+    if (context.parallelBranch) {
+      throw new RuntimeFailure("parallel ask requires an occurrence-specific host answer or userInputProvider", {}, "ParallelUserInputRequired");
     }
     context.pendingInteraction = { interaction_ref: interactionRef, prompt: text };
     return {
@@ -8377,103 +8930,132 @@ async function executeCallNode(graph, node, context) {
       context.callStack.pop();
       context.activeCallerRef = previousCallerRef;
     }
-    if (node.result_binding) {
-      const bindingHandle = valueHandle(node.result_binding);
-      context.values.set(bindingHandle, result);
-      const outputType = targetOutputType(targetRef, context);
-      if (outputType) {
-        context.valueTypes.set(bindingHandle, outputType);
-      }
-    }
-    context.trace.push("call_completed", {
-      airRef: airRefForNode(graph, node),
-      payload: compactPayload({
-        target_ref: targetRef,
-        caller_ref: graph.owner_ref,
-        agent_ref: context.activeAgentRef,
-        result_binding: node.result_binding,
-        ...(context.compensation?.lastAttempt
-          ? {
-            compensation_id: context.compensation.config.envelope.compensation_id,
-            compensates_effect_id:
-              context.compensation.config.envelope.compensates_effect_id,
-            inverse_effect_id: context.compensation.lastAttempt.inverseEffectId,
-            attempt_index: context.compensation.lastAttempt.attemptIndex,
-            result: context.compensation.lastAttempt.result,
-          }
-          : {}),
-      }),
-    });
+    bindCompletedCall(graph, node, targetRef, result, context);
     return {
       edgeRole: successEdgeRole(graph, node.id),
       result,
     };
   } catch (error) {
-    if (!(error instanceof RuntimeFailure)) {
-      throw error;
-    }
-    const declaredFailurePath = failurePathForNode(graph, node.id);
-    const failureFamily = runtimeFailureFamily(error);
-    const failurePath = declaredFailurePath?.failure_family === failureFamily
-      ? declaredFailurePath
-      : undefined;
-    context.trace.push("failure_detected", {
-      airRef: airRefForNode(graph, node),
-      payload: compactPayload({
-        failure_path_ref: declaredFailurePath?.id,
-        failure_mode: failurePath?.mode ?? "unhandled_family",
-        failure_family: failureFamily,
-        declared_failure_family: declaredFailurePath?.failure_family,
-        ...runtimeFailureTracePayload(error, {
-          fallbackTargetRef: targetRef,
-          callerRef: graph.owner_ref,
-          agentRef: context.activeAgentRef,
-          compensation: context.compensation,
-        }),
-      }),
-      message: error.message,
-    });
-    if (!failurePath) {
-      throw error;
-    }
-    if (failurePath.mode === "stop") {
-      return {
-        edgeRole: "failure",
-      };
-    }
-    context.trace.push("fallback_selected", {
-      airRef: {
-        flow_graph_ref: graph.id,
-        owner_ref: graph.owner_ref,
-      },
-      payload: {
-        failure_path_ref: failurePath.id,
-        target_node_id: failurePath.target_node_id,
-      },
-    });
-    return {
-      edgeRole: "fallback",
-    };
+    return handleCallFailure(graph, node, targetRef, context, error);
   }
 }
 
-function isDispatchNode(node) {
-  return ["call_function", "call_tool", "call_skill", "call_agent"].includes(node.kind);
-}
-
-function initializeRunControls(context) {
-  initializeRuntimeRunControls(context, {
-    initializeBudgetControls: () => initializeBudgetControls(context),
+function bindCompletedCall(graph, node, targetRef, result, context, resumed = false) {
+  if (node.result_binding) {
+    const bindingHandle = valueHandle(node.result_binding);
+    context.values.set(bindingHandle, result);
+    const outputType = targetOutputType(targetRef, context);
+    if (outputType) {
+      context.valueTypes.set(bindingHandle, outputType);
+    }
+  }
+  context.trace.push("call_completed", {
+    airRef: airRefForNode(graph, node),
+    payload: compactPayload({
+      target_ref: targetRef,
+      caller_ref: graph.owner_ref,
+      agent_ref: context.activeAgentRef,
+      result_binding: node.result_binding,
+      resumed_from_checkpoint: resumed ? true : undefined,
+      ...(context.compensation?.lastAttempt
+        ? {
+          compensation_id: context.compensation.config.envelope.compensation_id,
+          compensates_effect_id:
+            context.compensation.config.envelope.compensates_effect_id,
+          inverse_effect_id: context.compensation.lastAttempt.inverseEffectId,
+          attempt_index: context.compensation.lastAttempt.attemptIndex,
+          result: context.compensation.lastAttempt.result,
+        }
+        : {}),
+    }),
   });
 }
 
+function handleCallFailure(graph, node, targetRef, context, error) {
+  if (!(error instanceof RuntimeFailure)) {
+    throw error;
+  }
+  const declaredFailurePath = failurePathForNode(graph, node.id);
+  const failureFamily = runtimeFailureFamily(error);
+  const failurePath = declaredFailurePath?.failure_family === failureFamily
+    ? declaredFailurePath
+    : undefined;
+  context.trace.push("failure_detected", {
+    airRef: airRefForNode(graph, node),
+    payload: compactPayload({
+      failure_path_ref: declaredFailurePath?.id,
+      failure_mode: failurePath?.mode ?? "unhandled_family",
+      failure_family: failureFamily,
+      declared_failure_family: declaredFailurePath?.failure_family,
+      ...runtimeFailureTracePayload(error, {
+        fallbackTargetRef: targetRef,
+        callerRef: graph.owner_ref,
+        agentRef: context.activeAgentRef,
+        compensation: context.compensation,
+      }),
+    }),
+    message: error.message,
+  });
+  if (!failurePath) {
+    throw error;
+  }
+  if (failurePath.mode === "stop") {
+    return {
+      edgeRole: "failure",
+    };
+  }
+  context.trace.push("fallback_selected", {
+    airRef: {
+      flow_graph_ref: graph.id,
+      owner_ref: graph.owner_ref,
+    },
+    payload: {
+      failure_path_ref: failurePath.id,
+      target_node_id: failurePath.target_node_id,
+    },
+  });
+  return {
+    edgeRole: "fallback",
+  };
+}
+
+function isDispatchNode(node) {
+  return ["call_function", "call_tool", "call_skill", "call_strategy", "call_agent"].includes(node.kind);
+}
+
+function initializeRunControls(context) {
+  const checkpoint = context.humanApprovalResumeCheckpoint;
+  if (checkpoint && !context.runState.initialized) {
+    validateHumanApprovalCheckpointCompatibility(context.trace.airDocument, context.entryRef, checkpoint);
+    validateHumanCheckpointBudgetState(checkpoint);
+    validateHumanCheckpointContinuation(checkpoint);
+    context.budgetState.counters = {
+      steps: checkpoint.budget_counters.steps,
+      toolCalls: checkpoint.budget_counters.tool_calls,
+      agentInvocations: checkpoint.budget_counters.agent_invocations,
+      providerCalls: checkpoint.budget_counters.provider_calls,
+    };
+    restoreEffectiveLimits(context, checkpoint.effective_limits);
+    context.runState.activeElapsedBaseMs = checkpoint.active_elapsed_ms;
+  }
+  initializeRuntimeRunControls(context, {
+    initializeBudgetControls: () => initializeBudgetControls(context),
+  });
+  if (checkpoint) {
+    assertDurableBudgetCountersWithinLimits(context);
+    observeRunTimeBudget(context);
+  }
+}
+
 function assertRunCanContinue(context) {
+  parallelBoundary(context);
   assertRuntimeRunCanContinue(context, {
     observeRunTimeBudget: () => observeRunTimeBudget(context),
   });
 }
 
 function assertRunCanDispatch(context, details) {
+  parallelBoundary(context);
   assertRuntimeRunCanDispatch(context, details, {
     observeRunTimeBudget: () => observeRunTimeBudget(context, details),
     consumeDispatchBudget: () => consumeDispatchBudget(context, details),
@@ -8629,7 +9211,7 @@ function initializeBudgetControls(context) {
 
 function consumeDispatchBudget(context, details = {}) {
   const targetRef = details.targetRef;
-  if (targetRef?.startsWith("tool:")) {
+  if (targetRef?.startsWith("tool:") && !context.parallelBranch) {
     consumeRunBudget(context, "max_tool_calls", 1, {
       ...details,
       dispatch: true,
@@ -8655,6 +9237,10 @@ function consumeProviderBudget(context, details = {}) {
 }
 
 function consumeRunBudget(context, budgetKind, amount, details = {}) {
+  return parallelBudget(context, { budgetKind, amount, details }, () => consumeRunBudgetBody(context, budgetKind, amount, details));
+}
+
+function consumeRunBudgetBody(context, budgetKind, amount, details = {}) {
   const limit = context.budgetState.effectiveLimits.get(budgetKind);
   const counterName = RUN_BUDGET_COUNTERS[budgetKind];
   if (!counterName) {
@@ -8663,9 +9249,12 @@ function consumeRunBudget(context, budgetKind, amount, details = {}) {
   const consumedValue = context.budgetState.counters[counterName];
   const nextValue = consumedValue + amount;
   if (!limit) {
-    if (context.executionDurability.enabled) {
-      context.budgetState.counters[counterName] = nextValue;
+    if (!Number.isSafeInteger(nextValue)) {
+      throw new RuntimeFailure("run budget counter cannot be represented safely", { budgetKind }, "BudgetExceeded");
     }
+    // A later human resume may tighten policy. Preserve prior usage even when
+    // the original segment did not declare a limit for this kind.
+    context.budgetState.counters[counterName] = nextValue;
     return;
   }
   if (nextValue > limit.value) {
@@ -8853,7 +9442,7 @@ function executeLoopNode(graph, node, context) {
     conditionResult = Boolean(resolveHandle(requiredCondition(node), context, graph));
   }
 
-  if (state.index >= context.maxLoopIterations) {
+  if (conditionResult && state.index >= context.maxLoopIterations) {
     throw new RuntimeFailure("loop exceeded runtime iteration limit", {
       graphRef: graph.id,
       nodeId: node.id,
@@ -8971,9 +9560,15 @@ function resolveHandleType(handle, context, graph) {
 
 function evaluateExpression(expression, context, graph) {
   switch (expression.kind) {
+    case "optional_some":
+    case "optional_none":
+    case "optional_present":
+    case "optional_value":
+      return evaluateOptionalExpression(expression, context, graph);
     case "value_ref":
       return resolveHandle(requiredExpressionField(expression, "value_ref"), context, graph);
     case "literal_text":
+    case "enum_value":
       return requiredExpressionField(expression, "literal_text");
     case "literal_boolean":
       return Boolean(requiredExpressionField(expression, "literal_boolean"));
@@ -9001,6 +9596,26 @@ function evaluateExpression(expression, context, graph) {
         kind: expression.kind,
       });
   }
+}
+
+function evaluateOptionalExpression(expression, context, graph) {
+  const fail = (code = "OptionalValueInvalid") => {
+    throw new RuntimeFailure("optional expression violates its declared type or presence", { expressionId: expression.id }, code);
+  };
+  if (expression.kind === "optional_none") return { present: false };
+  const handle = expression.operands[0];
+  const operandType = resolveHandleType(handle, context, graph);
+  const value = resolveHandle(handle, context, graph);
+  if (expression.kind === "optional_some") {
+    if (expression.type_ref !== `optional:${operandType}`
+      || !isValueCompatibleWithType(value, operandType, context)) fail();
+    return { present: true, value };
+  }
+  if (!operandType?.startsWith("optional:") || !isValueCompatibleWithType(value, operandType, context)) fail();
+  if (expression.kind === "optional_present") return value.present;
+  if (expression.type_ref !== operandType.slice(9)) fail();
+  if (!value.present) fail("OptionalValueAbsent");
+  return value.value;
 }
 
 function evaluateRecordExpression(expression, context, graph) {
@@ -9103,11 +9718,19 @@ function evaluateUnaryExpression(expression, context, graph) {
 function evaluateBinaryExpression(expression, context, graph) {
   const operator = requiredExpressionField(expression, "operator");
   const operands = expression.operands ?? [];
-  if (operands.length !== 2) {
+  if (!Array.isArray(operands) || operands.length !== 2) {
     throw new RuntimeFailure("binary expression requires two operands", {
       expressionId: expression.id,
       operandCount: operands.length,
     });
+  }
+  const operandTypes = operands.map(handle => resolveHandleType(handle, context, graph));
+  if (operandTypes.some(type => type?.startsWith("optional:"))) {
+    throw new RuntimeFailure("optional values require an explicit presence branch", { expressionId: expression.id });
+  }
+  if (operandTypes.some(type => Array.isArray(context.indexes.types.get(type)?.variants))
+    && (!["equal", "not_equal"].includes(operator) || operandTypes[0] !== operandTypes[1])) {
+    throw new RuntimeFailure("enum operands require equality of the same nominal type", { expressionId: expression.id });
   }
 
   if (operator === "and") {
@@ -9318,7 +9941,7 @@ async function withBoundArguments(
       context.valueTypes.set(handle, inputs[index].type_ref);
     }
     if (argumentValues !== null || callerValues.has(handle)) {
-      context.values.set(handle, argumentValues === null ? callerValues.get(handle) : argumentValues[index]);
+      context.values.set(handle, snapshotInvocationValue(argumentValues === null ? callerValues.get(handle) : argumentValues[index]));
       if (markInputValues || (argumentValues === null && callerInputKeys.has(handle))) {
         context.inputValueKeys.add(handle);
       }
@@ -9752,6 +10375,7 @@ function runtimeFailureTracePayload(error, context) {
     provider_timeout_ms: error.details?.timeoutMs,
     provider_cause: error.details?.cause,
     provider_cause_code: error.details?.providerCauseCode ?? error.details?.causeCode,
+    provider_error_code: error.details?.provider_error_code,
     provider_metadata: error.details?.provider_metadata,
     retry_limit: error.details?.retryLimit,
     missing_capability: error.details?.missingCapability,

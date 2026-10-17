@@ -1,6 +1,6 @@
 //! Lowering of declarations that do not own an executable graph.
 
-use crate::air::{AirMemory, AirType, AirTypeField};
+use crate::air::{AirEnumVariant, AirMemory, AirType, AirTypeField};
 use crate::ast::{AstMemoryDeclaration, AstTypeDeclaration};
 use crate::resolution::{memory_id, type_id};
 
@@ -24,6 +24,14 @@ pub(crate) fn lower_type_declaration(
         id: type_id(module_name, &declaration.name),
         name: declaration.name.clone(),
         fields,
+        variants: declaration
+            .variants
+            .iter()
+            .map(|variant| AirEnumVariant {
+                name: variant.name.clone(),
+                source_ref: variant.source_ref.clone(),
+            })
+            .collect(),
         source_ref: declaration.source_ref.clone(),
     }
 }
@@ -61,6 +69,7 @@ mod tests {
             &AstTypeDeclaration {
                 name: "Decision".to_string(),
                 fields: Vec::new(),
+                variants: Vec::new(),
                 source_ref: source_ref(),
             },
             Vec::new(),

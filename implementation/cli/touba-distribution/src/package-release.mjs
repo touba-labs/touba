@@ -197,6 +197,8 @@ export function parsePackageReleaseArgs(rawArgs) {
       options.allowOtherPlatform = true;
     } else if (arg === "--no-build-compiler") {
       options.buildCompiler = false;
+    } else if (arg === "--release-root") {
+      options.releaseRoot = resolve(requiredValue(arg, rawArgs, ++index));
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -725,7 +727,7 @@ function readPackageVersion(packageJsonPath) {
 
 function usage() {
   return [
-    "Usage: package-release [--platform <platform>] [--public] [--experimental] [--json]",
+    "Usage: package-release [--platform <platform>] [--release-root <directory>] [--public] [--experimental] [--json]",
     "",
     "Creates a Touba release bundle for the current host platform.",
     "Cross-platform packaging is refused by default.",

@@ -141,7 +141,7 @@ test("compiled agent signature and repeated calls cross the real SDK schema adap
     // No provider model is invoked and this is not a model-quality evaluation.
     generateObject: async (call) => {
       const context = JSON.parse(call.system.split("\n\nRuntime context: ").at(-1));
-      const data = JSON.parse(call.prompt);
+      const data = JSON.parse(call.messages.at(-1).content);
       const prompt = { ...context, agent_state: { ...context.agent_state, observations: data.observations } };
       const schema = call.schema.jsonSchema ?? call.schema;
       const mode = prompt.runtime_contract.mode;
@@ -149,22 +149,23 @@ test("compiled agent signature and repeated calls cross the real SDK schema adap
       providerModes.push(mode);
       assert.equal(prompt.agent.signature.output_type, "builtin:Int");
       assert.equal(call.model, "scripted-no-network-model");
-      assert.deepEqual((mode === "capabilities" ? schema : schema.properties.decision.anyOf[0]).properties.source.enum, [providerSource]);
+      assert.deepEqual(schema.properties.decision.anyOf[0].properties.source.enum, [providerSource]);
       assert.deepEqual(state.used_capability_refs, state.step_index === 0 ? [] : [skillRef]);
 
       if (mode === "capabilities") {
         assert.deepEqual(state.available_capability_refs, [skillRef]);
-        assert.deepEqual(schema.properties.target_ref.enum, [skillRef]);
-        assert.deepEqual(schema.properties.arguments.properties.item, { type: "integer" });
-        assert.deepEqual(schema.properties.arguments.required, ["item"]);
-        return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: {
+        const selection = schema.properties.decision.anyOf.find(branch => branch.properties.action.enum.includes("select_capability"));
+        assert.deepEqual(selection.properties.target_ref.enum, [skillRef]);
+        assert.deepEqual(selection.properties.arguments.properties.item, { type: "integer" });
+        assert.deepEqual(selection.properties.arguments.required, ["item"]);
+        return { finishReason: "stop", response: { body: { object: "response", status: "completed" } }, object: { decision: {
           action: "select_capability",
           target_ref: skillRef,
           arguments: { item: values[state.step_index] },
           source: providerSource,
           reason: "Exercise the next declared integer transformation.",
           review_prompt: "",
-        } };
+        } } };
       }
 
       assert.deepEqual(schema.properties.decision.anyOf.map(branch => branch.properties.result), [

@@ -1,8 +1,6 @@
 // Model-response fixtures use the SDK's current structured transport envelope.
-// Native catalogue decisions remain tool calls; structured catalogue selections
-// keep their separate target/argument schema.
+// Native catalogue decisions remain tool calls; structured decisions use the
+// same envelope in orientation, catalogue and terminal finalization.
 export function structuredModelObject(decision) {
-  return ["answer_directly", "request_capabilities", "cannot_complete"].includes(decision?.action)
-    ? { decision }
-    : decision;
+  return { decision };
 }

@@ -1,0 +1,150 @@
+module contacts
+
+enum Channel
+    email
+    phone
+
+type Contact
+    address is Text
+    channel is Channel
+
+type Envelope
+    contact is Optional of Contact
+
+function Label
+    takes contact as Optional of Contact
+    gives Text
+    do
+        if present contact as known
+            if known.channel == Channel.email
+                give known.address
+            else
+                give "Phone contact"
+        else
+            give "No contact"
+
+function Absent
+    gives Optional of Contact
+    do
+        give none(Contact)
+
+function Present
+    takes address as Text
+    gives Optional of Contact
+    do
+        give some(record Contact { address as address, channel as Channel.email })
+
+function FirstEmail
+    takes contacts as List of Optional of Contact
+    gives Optional of Text
+    do
+        for candidate in contacts
+            if present candidate as known
+                if known.channel == Channel.email
+                    give some(known.address)
+        give none(Text)
+
+function Nested
+    takes candidate as Optional of Optional of Text
+    gives Text
+    do
+        if present candidate as inner
+            if present inner as value
+                give value
+            else
+                give "Inner absent"
+        else
+            give "Outer absent"
+
+function ReadEnvelope
+    takes envelope as Envelope
+    gives Optional of Contact
+    do
+        give envelope.contact
+
+function Choose
+    takes first as Optional of Text
+    takes backup as Optional of Text
+    gives Text
+    do
+        if present first as chosen
+            give chosen
+        else if present backup as chosen
+            give chosen
+        else
+            give "Unavailable"
+
+function FirstAvailable
+    takes candidates as Optional of List of Optional of Contact
+    gives Optional of Contact
+    do
+        if present candidates as contacts
+            for candidate in contacts
+                if present candidate as known
+                    give some(known)
+        give none(Contact)
+
+strategy Review
+    takes contact as Optional of Contact
+    gives Text
+    do
+        if present contact as known
+            human.approve
+                with context as known
+                into approval
+            give known.address
+        else
+            give "No contact"
+
+tool Lookup
+    description "Look up the requested contact, returning explicit absence when it does not exist."
+    takes query as Text
+    takes channel as Optional of Channel
+    gives Optional of Contact
+
+tool StoreContact
+    takes contact as Contact
+    gives Text
+
+strategy LookupOnly
+    takes channel as Optional of Channel
+    gives Optional of Contact
+    uses Lookup
+    do
+        Lookup
+            with query as "Find contact"
+            with channel as channel
+            into contact
+        give contact
+
+strategy ReviewAll
+    takes contacts as List of Optional of Contact
+    gives Text
+    uses StoreContact
+    do
+        for candidate in contacts
+            if present candidate as known
+                human.approve
+                    with context as known
+                    into approval
+                StoreContact
+                    with contact as known
+                    into stored
+        give "Reviewed"
+
+agent Advisor
+    responsibility "Find the requested contact through the authorized lookup."
+    takes query as Text
+    gives Optional of Contact
+    uses Lookup
+    callable_by strategy Dispatch
+
+strategy Dispatch
+    takes query as Text
+    gives Optional of Contact
+    uses Advisor
+    do
+        Advisor
+            with query as query
+            into result
+        give result

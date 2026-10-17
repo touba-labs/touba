@@ -4,7 +4,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { npmCommand } from "./npm-command.mjs";
+import { toolchainBuildIdentity } from "./build-identity.mjs";
 
 import {
   createReleasePlan,
@@ -14,7 +16,7 @@ import {
 try {
   const options = parsePackageReleaseArgs(process.argv.slice(2));
   if (options.help === true) {
-    process.stdout.write("Usage: check-release-archive [--platform <platform>] [--experimental]\n");
+    process.stdout.write("Usage: check-release-archive [--platform <platform>] [--release-root <directory>] [--experimental]\n");
   } else {
     checkReleaseArchive(createReleasePlan(options));
   }
@@ -70,6 +72,12 @@ function checkReleaseArchive(plan) {
     assertEqual(versionReport.distribution.platform, plan.platform, "distribution platform");
     assertEqual(versionReport.commands.doctor, true, "doctor command manifest");
     assertEqual(versionReport.commands.run_profile, true, "run profile command manifest");
+    const expectedBuild = toolchainBuildIdentity(join(installPrefix, "touba-toolchain"));
+    assertEqual(versionReport.build.id, expectedBuild.id, "installed payload build identity");
+    assertEqual(versionReport.build.algorithm, expectedBuild.algorithm, "build identity algorithm");
+    assertEqual(versionReport.build.identity_scope, expectedBuild.identity_scope, "build identity scope");
+    const humanVersion = runTouba(cliPath, ["version"], releaseEnv(workspace, installPrefix));
+    assertEqual(humanVersion.stdout, `touba ${plan.toubaVersion}\nbuild ${expectedBuild.id.slice(0, 12)}\n`, "concise version output");
 
     const doctor = runTouba(cliPath, ["doctor", "--json"], releaseEnv(workspace, installPrefix));
     const doctorReport = JSON.parse(doctor.stdout);
@@ -93,6 +101,15 @@ function checkReleaseArchive(plan) {
       ["sdk-smoke.mjs", join(installedRoot, "lib/cli/touba-project/src/main.mjs")], { cwd: project, env: sdkEnv });
     if (!sdkSmoke.stdout.includes("SDK_ARCHIVE_OK")) throw new Error("Installed SDK smoke did not complete");
     process.stdout.write("CHECKED_RELEASE_SDK positive and negative cases\n");
+
+    if (process.platform !== "win32") {
+      const signalTests = fileURLToPath(new URL("../../touba-project/test/signals.test.mjs", import.meta.url));
+      runCommand(join(installedRoot, "bin", "node"), ["--test", signalTests], {
+        cwd: workspace,
+        env: { ...sdkEnv, TOUBA_SIGNAL_TEST_CLI: cliPath },
+      });
+      process.stdout.write("CHECKED_RELEASE_SIGNALS launcher PID, group, child exit and port reuse\n");
+    }
 
     const update = runTouba(cliPath, ["update"], releaseEnv(workspace, installPrefix), 1);
     if (!update.stdout.includes("Status: manual_reinstall_required")) {

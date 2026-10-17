@@ -542,6 +542,55 @@ test("generates real digests without approvals or overwriting review decisions",
   });
 });
 
+test("one project lock covers multiple explicit AIRs and refuses any artifact drift", () => {
+  withFixtureProject(fixture => {
+    const otherAir = path.join(fixture.root, "other.air.json");
+    const other = JSON.parse(readFileSync(fixture.paths.air, "utf8"));
+    other.module.name = "examples.other";
+    other.module.id = "module:examples.other";
+    other.definitions.tools = other.definitions.tools.map(tool => ({ ...tool, id: "tool:examples.other/Second" }));
+    fixture.manifest.bindings["tool:examples.other/Second"] = structuredClone(Object.values(fixture.manifest.bindings)[0]);
+    writeJson(otherAir, other);
+    writeJson(fixture.paths.manifest, fixture.manifest);
+    const output = path.join(fixture.root, "project.lock.json");
+    generateSupplyChainLock({ ...fixture.paths, additionalAir: [otherAir], out: output,
+      packageRoot: "handlers", sdkMetadataJson: JSON.stringify(fixture.lock.handlers[0].sdk) });
+    for (const air of [fixture.paths.air, otherAir]) {
+      const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: output, air }));
+      assert.deepEqual(report.diagnostics.map(item => item.code), ["SupplyChainReviewNotApproved"]);
+      assert.equal(report.handlers.length, 2);
+    }
+    const original = readFileSync(otherAir, "utf8");
+    const cliOutput = path.join(fixture.root, "cli-multi.lock.json");
+    const generated = spawnSync(process.execPath, [path.join(implementationDir, "cli/touba-project/src/main.mjs"),
+      "supply-chain", "generate", "--air", fixture.paths.air, "--air", otherAir,
+      "--manifest", fixture.paths.manifest, "--out", cliOutput, "--package-root", "handlers"], { encoding: "utf8" });
+    assert.equal(generated.status, 0, generated.stderr);
+    assert.equal(JSON.parse(readFileSync(cliOutput, "utf8")).additional_air.length, 1);
+    const reviewed = JSON.parse(readFileSync(output, "utf8"));
+    reviewed.review = structuredClone(fixture.lock.review);
+    writeJson(output, reviewed);
+    for (const air of [fixture.paths.air, otherAir]) {
+      const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: output, air }), { requireReview: true });
+      assert.equal(report.status, "ok", JSON.stringify(report.diagnostics));
+    }
+    writeFileSync(otherAir, original + "\n");
+    const drift = validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: output }));
+    assert.equal(drift.status, "error");
+    assertDiagnostic(drift, "SupplyChainDigestMismatch");
+    writeFileSync(otherAir, original);
+    const lock = JSON.parse(readFileSync(output, "utf8"));
+    const validLock = structuredClone(lock);
+    lock.additional_air[0] = structuredClone(lock.air);
+    writeJson(output, lock);
+    assertDiagnostic(validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: output })), "SupplyChainLockSchemaMismatch");
+    writeJson(output, validLock);
+    lock.additional_air[0].path = "../escape.air.json";
+    writeJson(output, lock);
+    assertDiagnostic(validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: output })), "SupplyChainArtifactPathMismatch");
+  });
+});
+
 test("accepts equivalent project-root aliases without relaxing file confinement", () => {
   withFixtureProject((fixture) => {
     const aliases = mkdtempSync(path.join(tmpdir(), "touba-lock-alias-"));

@@ -1,0 +1,69 @@
+module orders
+
+enum Priority
+    low
+    normal
+    high
+
+define DefaultPriority as Priority = Priority.normal
+
+type Order
+    priority is Priority
+    title is Text
+
+function IsUrgent
+    takes priority as Priority
+    gives Boolean
+    do
+        give priority == Priority.high
+
+function Default
+    gives Priority
+    do
+        give DefaultPriority
+
+function CreateOrder
+    takes priority as Priority
+    gives Order
+    do
+        give record Order { priority as priority, title as "Shipment" }
+
+function HasUrgent
+    takes priorities as List of Priority
+    gives Boolean
+    do
+        for priority in priorities
+            if priority == Priority.high
+                give true
+        give false
+
+strategy Review
+    takes priority as Priority
+    gives Priority
+    do
+        human.approve
+            with context as "Review shipment priority"
+            into approval
+        give priority
+
+tool EchoPriority
+    description "Return the validated shipping priority."
+    takes priority as Priority
+    gives Priority
+
+agent Dispatcher
+    takes request as Text
+    gives Priority
+    responsibility "Select a shipping priority using the declared capability."
+    uses EchoPriority
+    callable_by strategy Dispatch
+
+strategy Dispatch
+    takes request as Text
+    gives Priority
+    uses Dispatcher
+    do
+        Dispatcher
+            with request as request
+            into priority
+        give priority

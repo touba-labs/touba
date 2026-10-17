@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createAiSdkDecisionProvider } from "../src/index.mjs";
+import { createAiSdkDecisionProvider, createMemoryDecisionHistoryStore } from "../src/index.mjs";
 import { nativeCapabilityName } from "../src/native-decision.mjs";
 import {
   EFFECT_JOURNAL_SCHEMA_VERSION,
@@ -160,7 +160,9 @@ before(() => {
 });
 
 function nativeCall(toolName, input) {
-  return { finishReason: "tool-calls", toolCalls: [{ toolCallId: "selected_by_fixture", toolName, input }] };
+  const call = { toolCallId: "selected_by_fixture", toolName, input };
+  return { finishReason: "tool-calls", toolCalls: [call],
+    response: { messages: [{ role: "assistant", content: [{ type: "tool-call", ...call }] }] } };
 }
 function select(name, input = { topic: "source-17" }) { return nativeCall(nativeCapabilityName(ref("tool", name)), input); }
 function review() { return nativeCall(reviewName, { review_prompt: "Please review the current source." }); }
@@ -221,6 +223,62 @@ function failureDiagnostic(result) {
   return JSON.stringify(result.trace.events.filter((event) => ["failure_detected", "agent_decision_provider_failed"].includes(event.kind)));
 }
 
+test("untyped completed prose is a schema failure, not a provider outage", async () => {
+  let dispatches = 0;
+  const run = await execute({
+    options: { toolHandlers: { [ref("tool", "Fetch")]: () => { dispatches++; return "unused"; } } },
+    decide: () => ({ finishReason: "stop", text: "The work is complete.", toolCalls: [],
+      response: { messages: [{ role: "assistant", content: "The work is complete." }] } }),
+  });
+  assert.equal(run.result.status, "failure");
+  assert.equal(failureCode(run.result), "AgentDecisionProviderSchemaViolation");
+  assert.match(failureDiagnostic(run.result), /InvalidModelDecision/);
+  assert.equal(dispatches, 0);
+  const unavailable = await execute({ decide: () => { throw new Error("Simulated transport unavailable"); } });
+  assert.equal(failureCode(unavailable.result), "AgentDecisionProviderUnavailable");
+});
+
+test("successive identical agent calls have separate identities and conversations", async () => {
+  const twice = compile(source.replace("            into result\n        give result", `            into first
+        Worker
+            with user_goal as user_goal
+            into result
+        give result`));
+  let dispatches = 0;
+  const run = await execute({ document: twice,
+    options: { toolHandlers: { [ref("tool", "Fetch")]: () => `receipt-${++dispatches}` } },
+    decide: request => request.step_index === 0 ? select("Fetch") : answer("The source was read."),
+  });
+  assert.equal(run.result.status, "success", failureDiagnostic(run.result));
+  assert.equal(dispatches, 2);
+  const identities = run.runtimeRequests.map(request => request.invocation_id);
+  assert.equal(new Set(identities).size, 2);
+  assert.equal(identities[0], identities[1]);
+  assert.equal(identities[2], identities[3]);
+  const second = run.calls[2].options;
+  assert.equal(parts(second).filter(part => part.type === "tool-call").length, 0);
+  assert(!JSON.stringify(second).includes("receipt-1"));
+});
+
+test("typed catalogue completion preserves repeated calls and never creates an extra effect", async () => {
+  let dispatches = 0;
+  const run = await execute({
+    options: { toolHandlers: { [ref("tool", "Fetch")]: () => `receipt-${++dispatches}` } },
+    decide: request => {
+      if (request.mode === "summary") return catalogue();
+      if (request.step_index < 2) return select("Fetch", { topic: "same source" });
+      return nativeCall("touba_finish", { reason: "Two authorized reads returned their receipts.", result: "Read twice." });
+    },
+  });
+  assert.equal(run.result.status, "success", failureDiagnostic(run.result));
+  assert.equal(run.result.result, "Read twice.");
+  assert.equal(dispatches, 2);
+  assert.equal(run.calls.length, 5);
+  assert(run.runtimeRequests.at(-1).model_input.allowed_actions.includes("answer_directly"));
+  assert.equal(run.calls.at(-1).kind, "native");
+  assert.equal(run.result.trace.events.filter(event => event.kind === "agent_direct_answer_returned").length, 1);
+});
+
 test("native opaque projection selects a real capability without manufacturing opaque call history", async () => {
   const argumentMarker = "OPAQUE_ARGUMENT_MUST_STAY_PRIVATE";
   const resultMarker = "OPAQUE_RESULT_MUST_STAY_PRIVATE";
@@ -252,7 +310,7 @@ test("native opaque projection selects a real capability without manufacturing o
   assert.equal(runtimeContext(last).external_content_access.raw_content_in_provider_request, false);
 });
 
-test("native human review records the actual host decision as data, not a fictitious tool result", async () => {
+test("native human review links the original call to the actual host decision", async () => {
   for (const decision of ["approved", "rejected"]) {
     let dispatches = 0;
     const run = await execute({
@@ -268,7 +326,8 @@ test("native human review records the actual host decision as data, not a fictit
     });
     if (decision === "approved") {
       const options = run.calls.at(-1).options;
-      assert.equal(parts(options).filter((part) => ["tool-call", "tool-result"].includes(part.type)).length, 0);
+      assert.equal(parts(options).filter((part) => ["tool-call", "tool-result"].includes(part.type)).length, 2);
+      assert.equal(parts(options).find(part => part.type === "tool-call").toolCallId, "selected_by_fixture");
       assert(userText(options).includes(approvalRef(0)));
       assert(userText(options).includes("approved"));
       assert(userText(options).includes("human_review_decision"));
@@ -291,24 +350,27 @@ test("native review policy and mandatory source approval cannot be bypassed by m
   assert.equal(required.result.trace.events.some((event) => event.kind === "human_approval_paused"), true);
 });
 
-async function pausedAfterEffect() {
+async function pausedAfterEffect(maxProviderCalls = 4) {
+  const history = { store: createMemoryDecisionHistoryStore(), namespace: "resume-test" };
   let dispatches = 0;
   const toolHandlers = { [ref("tool", "Fetch")]: ({ arguments: args }) => { dispatches++; assert.deepEqual(args, { topic: "source-17" }); return "observed source"; } };
   const paused = await execute({
-    options: { durableHumanApprovals: true, toolHandlers, runLimits: { max_provider_calls: 4, max_tool_calls: 1 } },
+    providerOptions: { history },
+    options: { durableHumanApprovals: true, toolHandlers, runLimits: { max_provider_calls: maxProviderCalls, max_tool_calls: 1 } },
     decide: (request) => request.step_index === 0 ? select("Fetch") : request.mode === "summary" ? catalogue() : review(),
   });
   assert.equal(paused.result.status, "stopped", failureDiagnostic(paused.result));
   assert.equal(dispatches, 1);
   assert.equal(paused.result.checkpoint.kind, "agent_human_review");
   assert.equal(paused.result.checkpoint.budget_counters.provider_calls, 3);
-  return { ...paused, toolHandlers, dispatches: () => dispatches };
+  return { ...paused, history, toolHandlers, dispatches: () => dispatches };
 }
 
 test("native resume restores invocation history and human evidence without redispatching or resetting quotas", async () => {
   const paused = await pausedAfterEffect();
   const checkpoint = JSON.parse(JSON.stringify(paused.result.checkpoint));
   const resumed = await execute({
+    providerOptions: { history: paused.history },
     options: { humanApprovalResumeCheckpoint: checkpoint, humanApprovalDecisions: { [approvalRef(1)]: "approved" }, toolHandlers: paused.toolHandlers,
       runLimits: { max_provider_calls: 4, max_tool_calls: 1 } },
     decide: (request) => { assert.equal(request.step_index, 2); return answer("Reviewed source."); },
@@ -319,8 +381,8 @@ test("native resume restores invocation history and human evidence without redis
   const history = parts(resumed.calls[0].options);
   const calls = history.filter((part) => part.type === "tool-call");
   const results = history.filter((part) => part.type === "tool-result");
-  assert.equal(calls.length, 1);
-  assert.equal(results.length, 1);
+  assert.equal(calls.length, 2);
+  assert.equal(results.length, 2, JSON.stringify(history));
   assert.deepEqual(calls[0].input, { topic: "source-17" });
   assert.equal(calls[0].toolName, nativeCapabilityName(ref("tool", "Fetch")));
   assert.equal(results[0].toolCallId, calls[0].toolCallId);
@@ -335,32 +397,43 @@ test("native resume restores invocation history and human evidence without redis
   assert.equal(failureCode(exhausted.result), "AgentDecisionProviderBudgetExceeded");
   assert.equal(exhausted.calls.length, 0);
   assert.equal(paused.dispatches(), 1);
-  const exhaustedTools = await execute({
+  const widened = await execute({
     options: { humanApprovalResumeCheckpoint: checkpoint, humanApprovalDecisions: { [approvalRef(1)]: "approved" }, toolHandlers: paused.toolHandlers,
+      runLimits: { max_provider_calls: 8, max_tool_calls: 1 } },
+    decide: (request) => request.mode === "summary" ? catalogue() : select("Fetch"),
+  });
+  assert.equal(failureCode(widened.result), "AgentDecisionProviderBudgetExceeded");
+  assert.equal(widened.calls.length, 1);
+  assert.equal(paused.dispatches(), 1);
+  // The tool ceiling needs a separate run with enough provider allowance from
+  // the start. Raising it only at resume must not widen the previous ceiling.
+  const enoughProviderCalls = await pausedAfterEffect(8);
+  const exhaustedTools = await execute({
+    options: { humanApprovalResumeCheckpoint: enoughProviderCalls.result.checkpoint,
+      humanApprovalDecisions: { [approvalRef(1)]: "approved" }, toolHandlers: enoughProviderCalls.toolHandlers,
       runLimits: { max_provider_calls: 8, max_tool_calls: 1 } },
     decide: (request) => request.mode === "summary" ? catalogue() : select("Fetch"),
   });
   assert.equal(exhaustedTools.result.status, "failure");
   assert.equal(failureCode(exhaustedTools.result), "ToolCallBudgetExceeded");
   assert.equal(exhaustedTools.calls.length, 2);
-  assert.equal(paused.dispatches(), 1);
+  assert.equal(enoughProviderCalls.dispatches(), 1);
 });
 
-test("native resume treats pre-arguments historical observations as data instead of inventing empty calls", async () => {
+test("native resume refuses incomplete historical observations before provider or handler execution", async () => {
   const paused = await pausedAfterEffect();
   const checkpoint = JSON.parse(JSON.stringify(paused.result.checkpoint));
-  // The additive arguments field was absent from older checkpoints. Preserve
-  // that absence; do not synthesize invocation arguments from current inputs.
+  // Current V1 checkpoints must contain complete invocation evidence.
+  // Do not infer omitted arguments or silently accept an obsolete shape.
   delete checkpoint.agent_loop_state.observations[0].arguments;
   const resumed = await execute({
     options: { humanApprovalResumeCheckpoint: checkpoint, humanApprovalDecisions: { [approvalRef(1)]: "approved" }, toolHandlers: paused.toolHandlers },
     decide: () => answer("Historical evidence received."),
   });
-  assert.equal(resumed.result.status, "success");
+  assert.equal(resumed.result.status, "failure");
+  assert.equal(failureCode(resumed.result), "InvalidHumanApprovalCheckpoint");
   assert.equal(paused.dispatches(), 1);
-  assert.equal(parts(resumed.calls[0].options).filter((part) => ["tool-call", "tool-result"].includes(part.type)).length, 0);
-  assert(userText(resumed.calls[0].options).includes("observed source"));
-  assert(userText(resumed.calls[0].options).includes(ref("tool", "Fetch")));
+  assert.equal(resumed.calls.length, 0);
 });
 
 function skillPack() {
@@ -386,7 +459,7 @@ test("native skill pack hints, procedures and script metadata remain non-executa
     assert(userText(options).includes("PACK_HINT_DATA_MARKER"));
     assert.equal(userText(options).includes("PACK_PROCEDURE_DATA_MARKER"), active);
     assert(!JSON.stringify(run.calls).includes("PACK_SCRIPT_MUST_NOT_BE_LOADED"));
-    assert.deepEqual(Object.keys(options.tools).sort(), [nativeCapabilityName(ref("tool", "Fetch")), nativeCapabilityName(ref("tool", "ReadNotes")), reviewName].sort());
+    assert.deepEqual(Object.keys(options.tools).sort(), [nativeCapabilityName(ref("tool", "Fetch")), nativeCapabilityName(ref("tool", "ReadNotes")), "touba_finish", reviewName].sort());
     if (active) assert(run.result.trace.events.some((event) => event.kind === "skill_pack_resource_refused"));
   }
 });
@@ -431,6 +504,7 @@ test("native agent proposals preserve callable_by authority for authorized and r
         assert.deepEqual(request.capability_refs, [specialistRef]);
         assert.deepEqual(Object.keys(modelOptions.tools).sort(), [
           nativeCapabilityName(specialistRef),
+          "touba_finish",
           reviewName,
         ].sort());
         return nativeCall(nativeCapabilityName(specialistRef), {});
@@ -469,6 +543,40 @@ test("native agent proposals preserve callable_by authority for authorized and r
       && event.payload.agent_ref === specialistRef),
     true,
   );
+});
+
+test("native multi-agent review resumes with one specialist result and no repeated selection", async () => {
+  const providerOptions = { history: { store: createMemoryDecisionHistoryStore(), namespace: "delegated-resume" } };
+  const coordinator = "agent:tests.native_delegation/Coordinator";
+  const specialist = "agent:tests.native_delegation/Specialist";
+  const options = { entryRef: "strategy:tests.native_delegation/Run", inputs: {}, durableHumanApprovals: true };
+  const paused = await execute({ document: delegatedAir, options, providerOptions, decide: request => {
+    return request.agent_ref === coordinator ? nativeCall(nativeCapabilityName(specialist), {})
+      : nativeCall(reviewName, { review_prompt: "Approve this specialist result." });
+  } });
+  assert.equal(paused.result.reason, "human_approval_pending", failureDiagnostic(paused.result));
+  const checkpoint = paused.result.checkpoint;
+  const seen = [];
+  const resumed = await execute({ document: delegatedAir, providerOptions,
+    options: { ...options, humanApprovalResumeCheckpoint: structuredClone(checkpoint),
+      humanApprovalDecisions: { [checkpoint.approval_ref]: "approved" } },
+    decide: (request, modelOptions) => {
+      seen.push([request.agent_ref, request.step_index]);
+      if (request.agent_ref === specialist) {
+        assert.equal(request.observations[0].value.decision, "approved");
+        return answer("reviewed specialist");
+      }
+      const history = parts(modelOptions);
+      assert.equal(history.filter(part => part.type === "tool-call").length, 1);
+      assert.equal(history.filter(part => part.type === "tool-result").length, 1, JSON.stringify(history));
+      assert.equal(request.observations[0].target_ref, specialist);
+      assert.equal(request.observations[0].value, "reviewed specialist");
+      return answer("coordinated " + request.observations[0].value);
+    },
+  });
+  assert.equal(resumed.result.status, "success", failureDiagnostic(resumed.result));
+  assert.equal(resumed.result.result, "coordinated reviewed specialist");
+  assert.deepEqual(seen, [[specialist, 1], [coordinator, 1]]);
 });
 
 function secretManifest() {

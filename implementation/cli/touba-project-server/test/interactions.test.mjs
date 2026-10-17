@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { readStoreFixture } from "./store-fixtures.mjs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   archiveInteractionSession,
+  bufferedInteractionProgress,
   completeInteractionOperation,
   createInteractionSession,
   enqueueInteractionOperation,
@@ -36,7 +38,7 @@ test("interaction operations persist bounded progress without raw runtime payloa
       sessionsPath,
     });
     recordInteractionOperationProgress({
-      event: {
+      events: [{
         kind: "tool_dispatch_started",
         sequence_index: 4,
         payload: {
@@ -44,7 +46,7 @@ test("interaction operations persist bounded progress without raw runtime payloa
           secret_value: "MUST_NOT_PERSIST",
           raw_payload: { customer: "sensitive" },
         },
-      },
+      }],
       operationId: operation.operation_id,
       sessionId: session.session_id,
       sessionsPath,
@@ -57,6 +59,40 @@ test("interaction operations persist bounded progress without raw runtime payloa
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("progress batches persist before notification, keep counts, and surface changed-store corruption", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-progress-batch-"));
+  const sessionsPath = join(root, "sessions.json");
+  let recorder;
+  try {
+    const session = createSession(sessionsPath);
+    const operation = enqueueInteractionOperation({ message: interactionMessage(), runId: "batch-run", sessionId: session.session_id, sessionsPath });
+    const args = { operationId: operation.operation_id, sessionId: session.session_id, sessionsPath };
+    startInteractionOperation(args);
+    let notifications = 0;
+    recorder = bufferedInteractionProgress(args, current => {
+      notifications++;
+      assert.equal(getInteractionSession(args).operations[0].event_count, current.event_count);
+    });
+    for (let i = 0; i < 81; i++) recorder.record({ kind: "scope_entered", sequence_index: i, payload: { secret_value: "PRIVATE" } });
+    assert.equal(notifications, 1);
+    recorder.flush();
+    assert.equal(notifications, 2);
+    const stored = getInteractionSession(args).operations[0];
+    assert.equal(stored.event_count, 81);
+    assert.equal(stored.recent_events.length, 80);
+    assert.doesNotMatch(readFileSync(sessionsPath, "utf8"), /PRIVATE/);
+    recorder.record({ kind: "scope_exited", sequence_index: 81 });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(notifications, 3);
+    // Reading the same file successfully must not hide a subsequent mutation.
+    writeFileSync(sessionsPath, "broken JSON");
+    recorder.record({ kind: "run_completed", sequence_index: 82 });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.throws(() => recorder.flush(), { code: "ToubaServeInteractionSessionStoreInvalid" });
+    assert.equal(notifications, 3);
+  } finally { recorder?.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test("cancel-requested interaction operations recover as cancelled and can be archived", () => {
@@ -83,7 +119,7 @@ test("cancel-requested interaction operations recover as cancelled and can be ar
       sessionsPath,
     });
     assert.equal(archived.status, "archived");
-    const store = JSON.parse(readFileSync(sessionsPath, "utf8"));
+    const store = readStoreFixture(sessionsPath);
     assert.equal(store.schema_version, "touba-interaction-sessions-v1");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -451,6 +487,8 @@ function interactionMessage() {
 function interactionRunResult(operation, { code, completedAt }) {
   return {
     schema_version: "touba-sandbox-run-result-v1",
+    messages: [],
+    messages_truncated: false,
     run_id: operation.run_id,
     target_ref: operation.target_ref,
     status: "stopped",

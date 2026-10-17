@@ -6,6 +6,14 @@ sidebar_position: 1
 
 Cette page est une aide de consultation pour la syntaxe visible.
 
+## Text, types et portée des liaisons
+
+Un littéral `Text` est entre guillemets doubles sur une ligne source. Les échappements JSON sont décodés une seule fois : `\n` (saut de ligne), `\r`, `\t`, `\b`, `\f`, `\"`, `\\`, `\/` et `\uXXXX` (Unicode, y compris paires valides). `"a\n\nb"` contient deux sauts de ligne ; `"\\n"` conserve un antislash suivi de n. Les échappements invalides et les contrôles bruts sont refusés. Les chaînes source multilignes restent non admises ; ni interpolation, ni évaluation JavaScript implicite.
+
+`Int / Int` retourne un `Float`. Il n'existe pas de division entière ni de formatage monétaire implicite : gardez les cents en `Int` et confiez leur présentation à une fonction hôte adaptée.
+
+Un nom de liaison est local à son bloc. Des branches distinctes peuvent réutiliser le même nom ; masquer un nom encore visible ou utiliser un nom hors de son bloc est refusé. Les contrôles `if`, `for` et `while` peuvent s'imbriquer dans les fonctions, skills et stratégies. Les éléments de liste restent typés, y compris avec `List of List of Int`.
+
 ## Module
 
 <!-- touba-example: compile -->
@@ -18,6 +26,24 @@ Dans un projet Touba, le chemin recommandé reprend le nom logique du module :
 ```text title="Structure"
 src/examples/name.tb
 ```
+
+## Limites du run
+
+<!-- touba-example: compile -->
+```touba
+module examples.bounded
+
+limits run
+    max_run_ms as 30000
+    max_steps as 100
+    max_tool_calls as 20
+    max_agent_invocations as 5
+    max_provider_calls as 10
+```
+
+Un seul bloc `limits run`, après les imports et avant les déclarations, fixe les plafonds du run entier. Chaque valeur est un littéral Int strictement positif, au plus `9007199254740991`. Le compilateur conserve la localisation source dans l’AIR ; aucune édition manuelle de JSON n’est nécessaire.
+
+Une capacité peut être réutilisée tant que son autorité et le budget le permettent. Les sous-agents partagent les compteurs du run ; une reprise humaine conserve la consommation précédente. À l’assemblage, les plafonds de tous les modules importés transitivement, même pour un type, sont combinés par minimum. Un module non importé ne contribue pas. Un package ne doit donc déclarer un plafond global que s’il veut contraindre tout run qui l’importe.
 
 ## Imports
 
@@ -138,6 +164,84 @@ type Request
 
 Builtins principaux : `Text`, `Boolean`, `Int`, `Float`, `List of <Type>`.
 
+### Énumérations métier
+
+Une énumération nomme un ensemble fermé de valeurs. Chaque déclaration est un
+type distinct : `Priority.high` n'est pas un `Text`.
+
+<!-- touba-example: compile -->
+```touba title="priority.tb"
+module priority
+
+enum Priority
+    low
+    normal
+    high
+
+define DefaultPriority as Priority = Priority.normal
+
+function IsUrgent
+    takes priority as Priority
+    gives Boolean
+    do
+        give priority == Priority.high
+```
+
+Les comparaisons `==` et `!=` demandent le même type nominal. Les comparaisons
+ordonnées et la conversion implicite depuis un texte sont refusées. Les records,
+listes et signatures peuvent utiliser ce type ; l'import est
+`import type Priority from priority`.
+
+À la frontière JSON (handler, entrée hôte ou réponse agentique), la valeur est
+le nom exact du membre, par exemple `"high"`, vérifié dans le type attendu.
+Une valeur inconnue est refusée, jamais remplacée par un membre par défaut.
+Pour un argument statique de trigger, utiliser une constante `define`.
+Cette forme ne comporte ni payload associé ni instruction `match`.
+
+### Valeurs optionnelles explicites
+
+`Optional of T` distingue une valeur absente d'une valeur vide. `some(value)`
+construit une présence ; `none(T)` construit une absence typée.
+
+<!-- touba-example: compile -->
+```touba title="optional_contact.tb"
+module optional_contact
+
+function ContactLabel
+    takes contact as Optional of Text
+    gives Text
+    do
+        if present contact as address
+            give address
+        else
+            give "No contact"
+
+function EmptyContact
+    gives Optional of Text
+    do
+        give none(Text)
+
+function KnownContact
+    takes address as Text
+    gives Optional of Text
+    do
+        give some(address)
+```
+
+`address` n'existe que dans la branche `if present`. L'accès direct
+`contact.value`, l'utilisation comme `Text` et la comparaison de deux
+optionnels sont refusés : traiter la présence, puis comparer la valeur extraite.
+Les tests de présence se composent avec `else if` et les boucles.
+Les types `List of Optional of Contact` et `Optional of List of Contact`
+ont des sens distincts et sont acceptés.
+
+En JSON, utiliser `{"present":false}` ou
+`{"present":true,"value":"person@example.test"}`, sans autre champ.
+`null` n'est pas une absence Touba ; un champ Optional reste obligatoire
+dans un record. `{"present":true,"value":""}` est un texte présent et vide.
+Les handlers et les providers doivent respecter la même enveloppe.
+`some` et `none` sont des expressions, pas des constantes de module `define`.
+
 ## Constantes de module
 
 `define` nomme une valeur de module immuable et non sensible.
@@ -158,7 +262,7 @@ define ReviewsEnabled as Boolean = true
 Une constante peut être utilisée par les fonctions, skills ou stratégies du même module.
 
 :::info Portée
-- Seuls les littéraux `Text`, `Boolean`, `Int` et `Float` sont acceptés
+- Seuls les littéraux `Text`, `Boolean`, `Int`, `Float` et les membres d'énumération qualifiés sont acceptés
 - Pas d'expression composée dans `define`
 - Pas de secret, variable d'environnement ou chemin local dans `define`
 :::
@@ -271,9 +375,52 @@ skill Run
 
 Les familles capturables sont `business`, `authority`, `provider` et
 `handler`. Une famille différente remonte jusqu'au résultat terminal. Une
-annulation ou un arrêt humain n'est jamais capturé. Les blocs `if`, `for` et
-`while` ne peuvent pas contenir une autre structure de contrôle dans cette
-version.
+annulation ou un arrêt humain n'est jamais capturé.
+
+## Conditions et itérations composables
+
+`else if` sélectionne le premier cas vrai ; le `else` final est facultatif.
+Sans cas retenu, le programme continue après la chaîne. Chaque `for` parcourt
+sa liste dans l'ordre ; une liste vide n'exécute pas son corps. Les boucles
+intérieures repartent du début à chaque nouvelle entrée.
+
+<!-- touba-example: compile -->
+```touba title="Sélection et parcours"
+module examples.control
+
+function FirstPositive
+    takes rows as List of List of Int
+    gives Int
+    do
+        for row in rows
+            for item in row
+                if item > 0
+                    give item
+        give 0
+
+function Category
+    takes value as Int
+    gives Text
+    do
+        if value < 0
+            give "negative"
+        else if value == 0
+            give "zero"
+        else
+            give "positive"
+```
+
+`give` quitte l'invocation, même depuis une boucle intérieure. Les valeurs
+restent immuables ; il n'y a ni affectation, ni `break`, ni `continue`.
+`while` réévalue sa condition et reste borné : une condition qui ne change
+pas peut atteindre la limite. Un littéral `while true` ou `while false`
+est refusé à la compilation.
+
+La limite hôte `max_loop_iterations` (100 par défaut) s'applique à chaque
+activation d'une boucle. Terminer exactement à la limite est permis ;
+entamer une itération supplémentaire est refusé. L'imbrication ne contourne
+ni les budgets globaux du run, ni l'autorité des appels. Une approbation
+humaine dans une boucle exige une nouvelle décision à chaque passage.
 
 ## Agent
 
@@ -306,9 +453,12 @@ Researcher
 
 `with` est obligatoire pour chaque entrée déclarée et `into` nomme la sortie
 validée contre `gives`. Aucune entrée ou sortie n’est déduite de `uses`. Un
-agent sans signature garde uniquement l’appel simple historique. L’appel
-enrichi d’un agent importé reste refusé dans cette tranche, faute de résolution
-de signature intermodule au moment du typecheck.
+agent sans signature accepte seulement l’appel simple. Un agent importé avec
+une signature explicite accepte aussi ces liaisons : le compilateur doit disposer
+des sources des modules concernés pour résoudre et vérifier leur contrat.
+Les types gardent leur identité de module et `callable_by` reste vérifié.
+Une même capacité autorisée peut être appelée plusieurs fois, dans les budgets
+applicables ; les droits du spécialiste ne deviennent pas ceux de son appelant.
 
 La forme inter-module explicite est acceptée pour les agents importés :
 
@@ -330,6 +480,12 @@ strategy RunSearch
     do
         Researcher
 ```
+
+Une stratégie locale ou importée avec `gives` peut aussi être appelée par une
+skill ou une stratégie avec `with` / `into`. Tous ses paramètres sont explicites.
+Les valeurs locales sont isolées ; budgets et annulation restent ceux du run.
+Une function pure ne peut pas appeler une stratégie. Une révision bornée peut
+transmettre son état typé à une nouvelle invocation, sans mémoire implicite.
 
 ## Trigger
 
@@ -401,12 +557,41 @@ tool ReadProjectKnowledge
 :::info
 - Pas de code handler inline dans `.tb`
 - Pas de `handled_by`
-- Les appels enrichis d'agents utilisent `with` / `into` avec une signature locale explicite ; les signatures d'agents importés ne sont pas prises en charge dans cette tranche.
+- Les appels enrichis d'agents utilisent `with` / `into` avec une signature explicite résolue, locale ou importée. Aucun contrat n'est inféré de `uses`.
 - Pas de méthode hôte comme `title.toLowerCase()`
 - Pas de lecture `stdin`
 - Pas de `show` ou `ask` dans `function`
+- Pas de clause `uses` dans une `function` pure ; appeler les fonctions pures directement.
+- `on failure` appartient à un `skill`, pas à une `strategy`.
+- `callable_by` appartient à un `agent`, pas à un `skill`.
 - Pas de réassignation ou variable mutable
 - Pas de constante de module basée sur un appel ou une expression composée
 - Pas d’import effectful de package externe, alias, wildcard ou re-export dans la portée actuelle
 - Pas de `runs agent` dans un trigger
 :::
+
+`Float` utilise l’arithmétique flottante binaire. `text()` préserve sa valeur numérique et peut afficher un bruit décimal comme `0.7000000000000001` ; aucun arrondi silencieux n’est appliqué. Utilisez des unités entières `Int` pour des montants exacts à échelle fixe et un formatage explicite côté application hôte pour l’affichage.
+
+
+## Parallélisme structuré
+
+Une skill ou stratégie distribue une liste typée vers une cible déclarée :
+
+<!-- touba-example: fragment -->
+```touba
+parallel Diagnose
+    each incident in incidents
+    with request as incident
+    max_concurrency 4
+    max_items 32
+    into diagnoses
+```
+
+Fragment à placer dans un corps `do`, avec cible et variables déclarées.
+La cible peut être un agent, une stratégie, une skill, une function ou un tool
+avec sortie explicite R. Le résultat est `List of R`, dans l'ordre des entrées.
+Les deux bornes sont obligatoires, entières et positives ; la concurrence ne
+peut pas dépasser la cardinalité maximale. Tous les arguments sont contrôlés
+avant admission. Aucun résultat partiel n'est publié. Les règles d'autorité
+usuelles s'appliquent ; une function pure ne peut pas contenir ce bloc.
+Voir le [tutoriel multi-agent](../tutoriels/orchestration-multi-agent-sequentielle.md).

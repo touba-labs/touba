@@ -135,9 +135,14 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
   };
   const handlerReports = [];
 
+  // Each entry AIR remains executable on its own. All project AIR artifacts
+  // are pinned and checked, so a shared manifest never admits an unpinned tool.
+  const projectAir = validateProjectAir(artifacts, fs, diagnostics);
+  const selectedAir = projectAir.find(item => artifacts.air && sameFilePath(item.path, artifacts.air.path, fs));
+
   for (const kind of ["air", "manifest"]) {
     if (!lock?.[kind] || !artifacts[kind]) continue;
-    const relative = lock[kind].path;
+    const relative = kind === "air" && selectedAir ? selectedAir.record.path : lock[kind].path;
     const root = path.dirname(artifacts.lock.path);
     const declaredPath = typeof relative === "string" ? path.resolve(root, relative) : root;
     if (typeof relative !== "string" || path.isAbsolute(relative) || hasUnsafeRelativeSegments(relative)
@@ -148,7 +153,7 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
   }
 
   if (lock?.air && artifacts.air) {
-    artifactStatus.air.drift_status = validateArtifactDigest("air", lock.air.digest, artifacts.air.digest, diagnostics)
+    artifactStatus.air.drift_status = validateArtifactDigest("air", selectedAir?.record.digest ?? lock.air.digest, artifacts.air.digest, diagnostics)
       ? "ok"
       : "changed";
   } else if (lock?.air) {
@@ -171,6 +176,7 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
   }
 
   const airToolRefs = collectAirToolRefs(artifacts.air?.json);
+  for (const item of projectAir) for (const ref of collectAirToolRefs(item.json)) airToolRefs.add(ref);
   const manifestBindings = bindingsFromManifest(artifacts.manifest?.json);
   collectCompensationInverseToolRefs(
     artifacts.manifest?.json,
@@ -607,6 +613,38 @@ function worstMetadataStatus(current, next) {
   return (order.get(next) ?? 2) > (order.get(current) ?? 2) ? next : current;
 }
 
+function validateProjectAir(artifacts, fs, diagnostics) {
+  const lock = artifacts.lock?.json;
+  if (!Array.isArray(lock?.additional_air) || lock.additional_air.length === 0) return [];
+  const root = path.dirname(artifacts.lock.path);
+  const documents = [];
+  const paths = new Set();
+  for (const record of [lock.air, ...lock.additional_air]) {
+    if (!isPlainObject(record) || typeof record.path !== "string") continue;
+    const absolutePath = path.resolve(root, record.path);
+    if (path.isAbsolute(record.path) || hasUnsafeRelativeSegments(record.path)
+      || !safeContainedFile(root, absolutePath, fs)) {
+      diagnostics.push(error("SupplyChainArtifactPathMismatch", "project AIR must be a regular file confined to the lock directory", "air"));
+      continue;
+    }
+    const physicalPath = fs.realpathSync(absolutePath);
+    if (paths.has(physicalPath)) {
+      diagnostics.push(error("SupplyChainLockSchemaMismatch", "duplicate project AIR path", "air"));
+      continue;
+    }
+    paths.add(physicalPath);
+    try {
+      const artifact = readJsonArtifact(absolutePath, "air", fs);
+      validateArtifactVersions({ air: artifact }, diagnostics);
+      if (!validateArtifactDigest("air", record.digest, artifact.digest, diagnostics)) continue;
+      documents.push({ ...artifact, record });
+    } catch {
+      diagnostics.push(error("AirChanged", "project AIR is missing or invalid", "air"));
+    }
+  }
+  return documents;
+}
+
 function validateLockShape(lock, diagnostics) {
   if (!isPlainObject(lock)) {
     diagnostics.push(error("SupplyChainLockSchemaMismatch", "lock must be an object", "lock"));
@@ -619,6 +657,12 @@ function validateLockShape(lock, diagnostics) {
     diagnostics.push(error("SupplyChainLockSchemaMismatch", "lock_kind must be supply_chain", "lock"));
   }
   validateLockArtifact("air", lock.air, true, diagnostics);
+  if (lock.additional_air !== undefined && !Array.isArray(lock.additional_air)) {
+    diagnostics.push(error("SupplyChainLockSchemaMismatch", "additional_air must be an array", "lock"));
+  }
+  for (const artifact of Array.isArray(lock.additional_air) ? lock.additional_air : []) {
+    validateLockArtifact("air", artifact, true, diagnostics);
+  }
   validateLockArtifact("manifest", lock.manifest, false, diagnostics);
   if (!Array.isArray(lock.handlers)) {
     diagnostics.push(error("SupplyChainLockSchemaMismatch", "handlers must be an array", "lock", "handlers"));

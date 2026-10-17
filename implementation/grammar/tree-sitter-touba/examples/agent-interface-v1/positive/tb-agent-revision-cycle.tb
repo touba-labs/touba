@@ -1,0 +1,48 @@
+module agent.revision
+
+limits run
+    max_steps as 100
+    max_agent_invocations as 5
+    max_provider_calls as 5
+
+type Draft
+    text is Text
+    accepted is Boolean
+
+agent Reviewer
+    takes draft as Draft
+    gives Draft
+    responsibility "Review the supplied draft and return an explicit revision and acceptance decision."
+    callable_by strategy Iterate
+
+strategy Iterate
+    takes draft as Draft
+    takes remaining as Int
+    gives Draft
+    uses Reviewer
+    uses Iterate
+    do
+        if draft.accepted
+            give draft
+        else if remaining > 0
+            Reviewer
+                with draft as draft
+                into reviewed
+            Iterate
+                with draft as reviewed
+                with remaining as remaining - 1
+                into final
+            give final
+        else
+            stop
+
+strategy Run
+    takes draft as Draft
+    gives Draft
+    uses Iterate
+    do
+        Iterate
+            with draft as draft
+            with remaining as 3
+            into final
+        give final

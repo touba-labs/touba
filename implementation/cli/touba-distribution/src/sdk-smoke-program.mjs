@@ -1,11 +1,30 @@
 // Executed only after npm installs the distributed tarball in a clean project.
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineTool, ToubaEngine, toubaSdkMetadata, createOpenAiDecisionProvider, createOllamaDecisionProvider } from "@touba/sdk";
+import { assertRunSucceeded, assertRunRefused, assertTraceEvents } from "@touba/sdk/testing";
+import { createSqliteDecisionHistoryStore } from "@touba/sdk/history/sqlite";
+import { createProviderContextFetch } from "@touba/sdk";
+
+const historyStore = createSqliteDecisionHistoryStore({ filename: ":memory:" });
+await historyStore.transact("archive-check", async () => ({ record: { retained: true }, result: true }));
+assert.deepEqual(historyStore.read("archive-check"), { retained: true });
+await historyStore.transact("archive-check", async record => {
+  assert.equal(record.retained, true); return { record };
+});
+historyStore.close();
+
+const contextFetch = createProviderContextFetch({ provider: "openai", contextWindowTokens: 1000,
+  countFetch: async () => Response.json({ input_tokens: 900 }),
+  fetch: () => assert.fail("an over-budget installed request must not generate") });
+await assert.rejects(contextFetch("https://api.openai.com/v1/responses", {
+  body: JSON.stringify({ model: "fixture", input: "Read.", max_output_tokens: 100 }),
+}), { code: "ProviderContextWindowExceeded" });
 
 assert.equal(typeof defineTool, "function");
 assert.equal(toubaSdkMetadata().name, "@touba/sdk");
@@ -18,6 +37,109 @@ const engine = new ToubaEngine({ command: process.execPath, commandArgs: [proces
 const run = await engine.run({ source: "hello.tb" });
 assert.equal(run.status, "success");
 assert.equal(run.result, "installed-sdk-ok");
+assertRunSucceeded(run, "installed-sdk-ok");
+assertTraceEvents(run.trace, { kind: "run_completed", count: 1 });
+
+// Scripted decisions drive the installed runtime; the handler is a real child
+// process. Its test-only invocation journal is checked independently of traces.
+writeFileSync("testing.tb", `module archive_testing
+tool NormalizeTicket
+    description "Normalize the supplied ticket text."
+    takes ticket as Text
+    gives Text
+tool Forbidden
+    description "An operation outside the agent responsibility."
+    takes ticket as Text
+    gives Text
+agent Reviewer
+    responsibility "Normalize the ticket using the authorized tool."
+    takes ticket as Text
+    gives Text
+    uses NormalizeTicket
+    callable_by strategy Review
+strategy Review
+    takes ticket as Text
+    gives Text
+    uses Reviewer
+    do
+        Reviewer
+            with ticket as ticket
+            into reviewed
+        give reviewed
+`);
+const testingHandler = body => `import { defineTool } from "@touba/sdk";
+import { appendFileSync } from "node:fs";
+await defineTool({ toolRef: "tool:archive_testing/NormalizeTicket", inputSignature: [{name:"ticket",type_ref:"builtin:Text"}],
+  outputType: "builtin:Text", run: async ({request}) => { appendFileSync("testing-calls.log", "invoked\\n"); ${body} } });`;
+writeFileSync("testing.handler.mjs", testingHandler("return request.trim();"));
+writeFileSync("testing-calls.log", "");
+writeFileSync("testing.manifest.json", JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {
+  "tool:archive_testing/NormalizeTicket": { handler: { kind: "process", command: process.execPath, args: [join(process.cwd(), "testing.handler.mjs")] },
+    grants: [], secrets: [], timeout_ms: 5000, max_payload_bytes: 16384, effect_contract: { kind: "none" } },
+} }));
+const writeTestProvider = target => writeFileSync("testing.provider.mjs", `import { createScriptedDecisionProvider } from "@touba/sdk/testing";
+export default createScriptedDecisionProvider([
+  { expect: {mode:"capabilities", agent_ref:"agent:archive_testing/Reviewer", step_index:0},
+    decision: {action:"select_capability", target_ref:${JSON.stringify(target)}, arguments:{ticket:"  T-1  "}, source:"scripted-test"} },
+  { expect: {mode:"summary", agent_ref:"agent:archive_testing/Reviewer", step_index:1},
+    decision: {action:"answer_directly", result:"T-1", source:"scripted-test"} }
+]);`);
+const testingOptions = { source: "testing.tb", entryRef: "strategy:archive_testing/Review", inputs: { ticket: "  T-1  " },
+  manifest: "testing.manifest.json", agentDecisionProvider: "testing.provider.mjs", agentDecisionProviderInitialMode: "capabilities" };
+writeTestProvider("tool:archive_testing/NormalizeTicket");
+assertRunSucceeded(await engine.run(testingOptions), "T-1");
+assert.equal(readFileSync("testing-calls.log", "utf8"), "invoked\n");
+writeTestProvider("tool:archive_testing/Forbidden");
+await assertRunRefused(() => engine.run(testingOptions), "AgentCapabilityNotAllowed");
+assert.equal(readFileSync("testing-calls.log", "utf8"), "invoked\n", "refusal must not call the handler");
+writeTestProvider("tool:archive_testing/NormalizeTicket");
+writeFileSync("testing.handler.mjs", testingHandler("return request.ticket.trim();"));
+await assertRunRefused(() => engine.run(testingOptions), "ToolHandlerReportedError");
+writeFileSync("testing.air.json", (await engine.compile({ source: "testing.tb" })).airJson);
+writeFileSync("testing.run-plan.json", JSON.stringify({ run_plan_schema_version: "touba-run-plan-v1",
+  profile: "dev", entry_ref: testingOptions.entryRef, air: "testing.air.json", manifest: "testing.manifest.json" }));
+const diagnosticPath = `testing.diagnostics.${process.pid}.jsonl`;
+const diagnosed = spawnSync(process.execPath, [process.argv[2], "run", "--run-plan", "testing.run-plan.json",
+  "--agent-decision-provider", "testing.provider.mjs", "--agent-decision-provider-initial-mode", "capabilities",
+  "--inputs-json", '{"ticket":"T-1"}', "--output", "json", "--handler-diagnostics", diagnosticPath], { encoding: "utf8" });
+assert.equal(diagnosed.status, 1, diagnosed.stdout + diagnosed.stderr);
+assert.equal(JSON.parse(diagnosed.stdout).reason, "ToolHandlerReportedError");
+const diagnostic = JSON.parse(readFileSync(diagnosticPath, "utf8"));
+assert.equal(diagnostic.error_class, "TypeError");
+assert.ok(diagnostic.line > 0);
+assert.equal(diagnosed.stdout.includes("handler_arg_index"), false);
+writeFileSync("testing.handler.mjs", testingHandler("return request.trim();"));
+
+writeFileSync("enum.tb", `module archive_enums
+enum Priority
+    low
+    high
+define DefaultPriority as Priority = Priority.high
+function IsUrgent
+    takes priority as Priority
+    gives Boolean
+    do
+        give priority == DefaultPriority
+`);
+assert.equal((await engine.run({ source: "enum.tb", entryRef: "function:archive_enums/IsUrgent",
+  inputs: { priority: "high" } })).result, true);
+await assert.rejects(engine.run({ source: "enum.tb", entryRef: "function:archive_enums/IsUrgent",
+  inputs: { priority: "unknown" } }));
+
+writeFileSync("optional.tb", `module archive_optional
+function Label
+    takes value as Optional of Text
+    gives Text
+    do
+        if present value as label
+            give label
+        else
+            give "Absent"
+`);
+for (const [value, result] of [[{ present: true, value: "" }, ""], [{ present: false }, "Absent"]]) {
+  assert.equal((await engine.run({ source: "optional.tb", entryRef: "function:archive_optional/Label", inputs: { value } })).result, result);
+}
+await assert.rejects(engine.run({ source: "optional.tb", entryRef: "function:archive_optional/Label", inputs: { value: null } }));
 
 // Keep the generator's exports and signature; change only business code.
 command(["init", "--root", process.cwd()]);
@@ -50,13 +172,22 @@ const previouslyPrepared = existsSync(".touba/build/dev/touba.manifest.json");
 const prepared = JSON.parse(command(["prepare", "--root", process.cwd(), "--mode", "write", "--json"]));
 assert.equal(prepared.status, previouslyPrepared ? "success" : "needs_changes");
 assert.equal(prepared.sdk_dependency.status, "ready");
-const manifest = JSON.parse(readFileSync(prepared.manifest_path, "utf8"));
+let manifest = JSON.parse(readFileSync(prepared.manifest_path, "utf8"));
+const hostDecisions = { bindings: Object.fromEntries(Object.keys(manifest.bindings).map(ref => [ref, {
+  effect_contract: { kind: "none" }, grants: ref.endsWith("/Echo") ? ["network"] : [],
+}])) };
+const hostArgs = ["prepare", "--root", process.cwd(), "--host-decisions-json", JSON.stringify(hostDecisions), "--json"];
+const beforeHostPlan = readFileSync(prepared.manifest_path, "utf8");
+command([...hostArgs, "--mode", "plan"]);
+assert.equal(readFileSync(prepared.manifest_path, "utf8"), beforeHostPlan);
+assert.equal(JSON.parse(command([...hostArgs, "--mode", "write"])).status, "success");
+const repeatedHostPlan = JSON.parse(command([...hostArgs, "--mode", "write"]));
+assert.equal(repeatedHostPlan.actions.some(action => action.kind === "apply_host_decision"), false);
+assert.equal(JSON.parse(command([...hostArgs, "--mode", "check"])).status, "success");
+manifest = JSON.parse(readFileSync(prepared.manifest_path, "utf8"));
 const contracts = [];
 const originalHandlers = new Map();
 for (const [ref, binding] of Object.entries(manifest.bindings)) {
-  // Explicit host decisions for these read-only test handlers.
-  binding.effect_contract = { kind: "none" };
-  binding.grants = ref.endsWith("/Echo") ? ["network"] : [];
   const file = binding.handler.args[0];
   const original = readFileSync(file, "utf8");
   originalHandlers.set(file, original);
@@ -67,7 +198,6 @@ for (const [ref, binding] of Object.entries(manifest.bindings)) {
   writeFileSync(file, replaced);
   contracts.push(file.replace(/\.handler\.mjs$/u, ".handler.contract.test.mjs"));
 }
-writeFileSync(prepared.manifest_path, JSON.stringify(manifest, null, 2));
 const contractRun = spawnSync(process.execPath, ["--test", ...contracts], { encoding: "utf8" });
 assert.equal(contractRun.status, 0, contractRun.stdout + contractRun.stderr);
 const output = await engine.run({ source: "src/distribution/handlers.tb", entryRef: "skill:distribution.handlers/Work",
@@ -161,12 +291,42 @@ for (const factory of [createOpenAiDecisionProvider, createOllamaDecisionProvide
         }), { headers: { "Content-Type": "application/json" } });
       } });
     const result = await provider({ protocol: "touba-agent-decision-v1", mode: "summary", content_mode: "inline",
+      run_id: "archive-run", invocation_id: randomUUID(), step_index: 0,
       agent_ref: "agent:distribution/Worker", agent_signature: { output_type: "builtin:Text" },
       capability_refs: [], capabilities: [], model_input: { protocol: "touba-agent-model-input-v1",
         user_input: { value: {} }, allowed_actions: ["answer_directly"], agent_state: {} } });
     assert.equal(result.result, "done"); assert.equal(calls, 1);
   }
 }
+// Exercise the installed SDK, not the checkout or a CLI fallback. This catches
+// an archive that documents triggerEvent but silently drops it at invocation.
+const triggerRoot = join(process.cwd(), "trigger-archive-check");
+mkdirSync(triggerRoot, { recursive: true });
+writeFileSync(join(triggerRoot, "program.tb"), `module archive.trigger
+strategy Run
+    takes message as Text
+    gives Text
+    do
+        give message
+trigger Receive
+    on request POST "/receive"
+    runs strategy Run
+    with message as payload.message
+    limits
+        max_runs_per_day as 5
+        timeout_ms as 30000
+`);
+const triggerRef = "trigger:archive.trigger/Receive";
+writeFileSync(join(triggerRoot, "touba.manifest.json"), JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {},
+  triggers: { [triggerRef]: { enabled: true, source: { kind: "request" },
+    payload: { format: "json", content_types: ["application/json"], max_bytes: 4096, map: { message: "$.message" } },
+    limits: { max_runs_per_day: 5, timeout_ms: 30000 } } } }));
+const triggerEngine = new ToubaEngine({ projectRoot: triggerRoot, command: process.execPath, commandArgs: [process.argv[2]] });
+const triggerOptions = { source: "program.tb", manifest: "touba.manifest.json", triggerState: "archive.trigger-state.json",
+  triggerEvent: { trigger_ref: triggerRef, source_kind: "request", event_id: `archive-request-${randomUUID()}`, arguments: { message: "Archived SDK\nverified" } } };
+assert.equal((await triggerEngine.run(triggerOptions)).result, "Archived SDK\nverified");
+await assert.rejects(triggerEngine.run(triggerOptions), error => error.details.reason === "TriggerReplayRejected");
+console.log("SDK_ARCHIVE_TRIGGER_OK");
 console.log("SDK_ARCHIVE_OK");
 
 function command(args) {

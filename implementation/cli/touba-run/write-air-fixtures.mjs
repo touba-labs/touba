@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { airDocumentDigest } from "../../runtime/touba-runtime/src/air-identity.mjs";
 import {
   CorpusFixtureError,
   FIXTURES,
@@ -74,6 +75,9 @@ process.exit(allPassed ? 0 : 1);
 
 function validateTraceAirCoherence(trace, air) {
   const errors = [];
+  if (trace.run?.air_digest !== airDocumentDigest(air)) {
+    errors.push("trace air_digest does not commit to the complete fixture AIR");
+  }
   if (trace.run?.air_schema_version !== air.air_schema_version) {
     errors.push(`trace air_schema_version ${trace.run?.air_schema_version} != AIR ${air.air_schema_version}`);
   }

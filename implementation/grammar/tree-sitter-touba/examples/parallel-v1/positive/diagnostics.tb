@@ -1,0 +1,26 @@
+module parallel.diagnostics
+
+tool Diagnose
+    description "Return a diagnosis for the supplied incident."
+    takes request as Text
+    gives Text
+
+agent Specialist
+    takes request as Text
+    gives Text
+    responsibility "Diagnose the supplied incident using the authorized diagnostic capability."
+    uses Diagnose
+    callable_by strategy Run
+
+strategy Run
+    takes incidents as List of Text
+    gives List of Text
+    uses Specialist
+    do
+        parallel Specialist
+            each incident in incidents
+            with request as incident
+            max_concurrency 4
+            max_items 32
+            into diagnoses
+        give diagnoses

@@ -88,6 +88,15 @@ function validate(document) {
       : runToubaCompileJson(sourcePath, { ...context, sourceText: document.getText() });
     const sourceUris = new Map([[resolve(sourcePath), document.uri], [sourcePath, document.uri]]);
     if (existsSync(sourcePath)) sourceUris.set(realpathSync(sourcePath), document.uri);
+    if (result.air && typeof result.source_root === "string") {
+      const visit = value => {
+        if (!value || typeof value !== "object") return;
+        const id = value.source_ref?.source_id;
+        if (typeof id === "string") sourceUris.set(id, pathToFileURL(resolve(result.source_root, id)).href);
+        for (const child of Object.values(value)) visit(child);
+      };
+      visit(result.air);
+    }
     publishResult(document.uri, result, sourceUris, document.getText());
   } catch (e) {
     // A failed compiler is not evidence that a document is valid.
@@ -275,15 +284,21 @@ export function extractSymbols(air, uri, sourceUris) {
       if (!ref) continue;
       symbols.push({
         name: item.name,
-        kind: symbolKind,
+        kind: item.variants ? SymbolKind.Enum : symbolKind,
         location: locationForSourceRef(uri, ref, sourceUris),
       });
+      for (const variant of item.variants ?? []) {
+        symbols.push({ name: variant.name, containerName: item.name, kind: SymbolKind.EnumMember,
+          location: locationForSourceRef(uri, variant.source_ref, sourceUris) });
+      }
     }
   }
   return symbols;
 }
 
 export function hoverForPosition(air, position) {
+  const member = findEnumMember(air, position);
+  if (member) return `${member.type.name}.${member.variant.name}\ntype: ${member.type.id}`;
   const importDeclaration = findHoverImport(air, position);
   if (importDeclaration) {
     return renderHoverImport(importDeclaration);
@@ -347,7 +362,7 @@ export function findHoverDeclaration(air, position) {
   ]) {
     for (const item of defs[definitionKey] ?? []) {
       if (isOnDeclarationHeader(position, item.source_ref)) {
-        return { kind, item };
+        return { kind: item.variants ? "enum" : kind, item };
       }
     }
   }
@@ -362,6 +377,7 @@ export function renderHoverDeclaration({ kind, item }) {
   pushConstantLiteral(lines, item);
   pushSignature(lines, item.signature);
   pushFields(lines, item.fields);
+  pushList(lines, "members", item.variants?.map(variant => variant.name));
   pushList(lines, "uses", item.uses);
   pushCallableBy(lines, item.callable_by);
   pushMemoryAccesses(lines, item.memory_accesses);
@@ -582,6 +598,8 @@ function isOnDeclarationHeader(position, ref) {
 }
 
 export function definitionForPosition(air, uri, position, sourceUris) {
+  const member = findEnumMember(air, position);
+  if (member) return locationForSourceRef(uri, member.variant.source_ref, sourceUris);
   const definitions = indexDefinitionsById(air);
   const reference = findReferenceAtPosition(air, position);
   if (!reference) return null;
@@ -648,6 +666,13 @@ export function findReferenceAtPosition(air, position) {
 }
 
 export function completionForPosition(air, documentText, position) {
+  const prefix = (documentText.split("\n")[position.line] ?? "").slice(0, position.character);
+  const enumPrefix = /\b([A-Z][A-Za-z0-9_]*)\.([a-z_][A-Za-z0-9_]*)?$/u.exec(prefix);
+  if (enumPrefix && isCompletionSupportedContext(documentText, position)) {
+    const type = (air?.definitions?.types ?? []).find(type => type.name === enumPrefix[1] && type.variants);
+    if (type) return type.variants.filter(member => member.name.startsWith(enumPrefix[2] ?? ""))
+      .map(member => ({ label: member.name, kind: CompletionItemKind.EnumMember, detail: `${type.name}.${member.name}` }));
+  }
   if (!isCompletionSupportedContext(documentText, position)) {
     return [];
   }
@@ -683,8 +708,8 @@ function declarationCompletions(air) {
       seen.add(item.name);
       items.push({
         label: item.name,
-        kind: completionKind,
-        detail: `Touba ${kindLabel} declaration`,
+        kind: item.variants ? CompletionItemKind.Enum : completionKind,
+        detail: `Touba ${item.variants ? "enum" : kindLabel} declaration`,
       });
     }
   }
@@ -736,6 +761,18 @@ function containsPosition(position, ref) {
   return true;
 }
 
+function findEnumMember(air, position) {
+  for (const graph of air.execution_graphs ?? []) {
+    for (const expression of graph.expressions ?? []) {
+      if (expression.kind !== "enum_value" || !containsPosition(position, expression.source_ref)) continue;
+      const type = (air.definitions.types ?? []).find(type => type.id === expression.type_ref);
+      const variant = type?.variants?.find(variant => variant.name === expression.literal_text);
+      if (variant) return { type, variant };
+    }
+  }
+  return null;
+}
+
 function locationForSourceRef(uri, ref, sourceUris) {
   const targetUri = uriForSourceRef(uri, ref, sourceUris);
   return {
@@ -765,6 +802,7 @@ const TOUBA_V01_KEYWORDS = Object.freeze([
   "import",
   "define",
   "type",
+  "enum",
   "function",
   "tool",
   "memory",
@@ -782,6 +820,9 @@ const TOUBA_V01_KEYWORDS = Object.freeze([
   "show",
   "ask",
   "text",
+  "some",
+  "none",
+  "present",
   "callable_by",
   "uses",
   "do",
@@ -792,6 +833,12 @@ const TOUBA_V01_KEYWORDS = Object.freeze([
   "schedule",
   "runs",
   "limits",
+  "run",
+  "max_run_ms",
+  "max_steps",
+  "max_tool_calls",
+  "max_agent_invocations",
+  "max_provider_calls",
   "max_runs_per_day",
   "timeout_ms",
   "failure",
@@ -802,11 +849,16 @@ const TOUBA_V01_KEYWORDS = Object.freeze([
   "for",
   "in",
   "while",
+  "parallel",
+  "each",
+  "max_concurrency",
+  "max_items",
   "give",
   "is",
   "are",
   "as",
   "List",
+  "Optional",
   "of",
   "true",
   "false",

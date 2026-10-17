@@ -14,7 +14,12 @@ import {
   assertCompleteProviderResponse,
 } from "./decision-contract.mjs";
 import { decideNativeCapability } from "./native-decision.mjs";
+import { createDecisionHistory } from "./decision-history.mjs";
+import { createProviderContextFetch } from "./provider-context.mjs";
+export { createProviderContextFetch } from "./provider-context.mjs";
+export { createMemoryDecisionHistoryStore } from "./decision-history.mjs";
 import { providerBudgetFetch, validateProviderRequestBudget } from "./provider-request-budget.mjs";
+import { emitLocalHandlerDiagnostic } from "./handler-diagnostic.mjs";
 
 export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
 const PROTOCOL = TOOL_HANDLER_PROTOCOL_VERSION;
@@ -110,6 +115,9 @@ export class ToubaEngine {
       appendOptionalPath(args, "--effect-journal", options.effectJournal, this.projectRoot);
       appendOptionalPath(args, "--human-checkpoint-out", options.humanCheckpointOut, this.projectRoot);
       appendOptionalPath(args, "--human-resume-checkpoint", options.humanResumeCheckpoint, this.projectRoot);
+      appendOptionalPath(args, "--parallel-checkpoint-out", options.parallelCheckpointOut, this.projectRoot);
+      appendOptionalPath(args, "--parallel-resume-checkpoint", options.parallelResumeCheckpoint, this.projectRoot);
+      appendOptionalJson(args, "--parallel-limits-json", options.parallelLimits, "parallelLimits");
       appendOptionalPath(args, "--supply-chain-lock", options.supplyChainLock, this.projectRoot);
       appendOptionalJson(args, "--run-limits-json", options.runLimits, "runLimits");
       for (const [key, flag] of [
@@ -120,6 +128,8 @@ export class ToubaEngine {
         if (options[key] === true) args.push(flag);
       }
       appendOptionalJson(args, "--inputs-json", options.inputs, "inputs");
+      appendOptionalJson(args, "--trigger-event-json", options.triggerEvent, "triggerEvent");
+      appendOptionalPath(args, "--state", options.triggerState, this.projectRoot);
       appendOptionalJson(args, "--human-decisions-json", options.humanDecisions, "humanDecisions");
       appendOptionalJson(args, "--user-inputs-json", options.userInputs, "userInputs");
       appendOptionalJson(args, "--agent-decisions-json", options.agentDecisions, "agentDecisions");
@@ -150,6 +160,14 @@ export class ToubaEngine {
         options.agentDecisionProviderMetadata,
         "agentDecisionProviderMetadata",
       );
+      for (const [key, flag, allowed] of [
+        ["agentDecisionProviderInitialMode", "--agent-decision-provider-initial-mode", ["summary", "capabilities"]],
+        ["agentDecisionProviderContentMode", "--agent-decision-provider-content-mode", ["inline", "opaque_refs"]],
+      ]) {
+        if (options[key] === undefined) continue;
+        if (!allowed.includes(options[key])) throw new ToubaEngineError("options", `run.${key} must be one of: ${allowed.join(", ")}`);
+        args.push(flag, options[key]);
+      }
       if (options.agentDecisionProviderTimeoutMs !== undefined) {
         args.push(
           "--agent-decision-provider-timeout-ms",
@@ -281,6 +299,10 @@ export class ToubaEngine {
 
 export function createAiSdkDecisionProvider(options = {}) {
   const normalized = normalizeAiSdkDecisionProviderOptions(options);
+  if (normalized.context !== undefined) {
+    throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "configure createProviderContextFetch on the supplied model transport; context is supported directly by createOpenAiDecisionProvider");
+  }
+  const history = createDecisionHistory(normalized.history, normalized.decisionInterface);
   if (normalized.maxProviderRequestBytes !== undefined) {
     throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "maxProviderRequestBytes requires an HTTP provider factory; configure the supplied model transport for a generic AI SDK provider");
   }
@@ -298,40 +320,64 @@ export function createAiSdkDecisionProvider(options = {}) {
     const effectiveSystem = [system ?? defaultDecisionSystemPrompt(request, {
       allowHumanReview, transport: normalized.decisionInterface === "native" && request.mode === "capabilities" ? "native_tools" : "json_schema",
     }), instructions].filter(Boolean).join("\n\n");
-    if (normalized.decisionInterface === "native") {
-      return decideNativeCapability(request, {
-        ...normalized, model, allowHumanReview, system: effectiveSystem, providerOptions,
+    const execute = async (capture = null) => {
+      if (normalized.decisionInterface === "native") {
+        const historyOptions = capture ? {
+          preserveHistory: true,
+          generateText: async generation => capture(normalized.generateText ?? (await import("ai")).generateText, generation, "text"),
+          generateObject: async generation => capture(await historyObjectGenerator(normalized), generation, "object"),
+        } : {};
+        return decideNativeCapability(request, {
+          ...normalized, ...historyOptions, model, allowHumanReview, system: effectiveSystem, providerOptions,
+        });
+      }
+      const generateObject = capture ? await historyObjectGenerator(normalized) : await aiSdkGenerateObject(normalized);
+      const schema = decisionSchemaForRequest(request, normalized, { allowHumanReview });
+      const aiSchema = await aiSdkJsonSchema(schema, normalized);
+      const { context: runtimeContext, data } = structuredDecisionInput(request, { allowHumanReview });
+      const prompt = JSON.stringify(data);
+      const generation = compactObject({
+        model,
+        schema: aiSchema,
+        schemaName: schema.title,
+        schemaDescription: schema.description,
+        system: `${effectiveSystem}\n\nRuntime context: ${JSON.stringify(runtimeContext)}`,
+        prompt,
+        temperature: normalized.temperature,
+        maxRetries: normalized.maxRetries,
+        maxOutputTokens: normalized.maxOutputTokens,
+        providerOptions,
       });
-    }
-    const generateObject = await aiSdkGenerateObject(normalized);
-    const schema = decisionSchemaForRequest(request, normalized, { allowHumanReview });
-    const aiSchema = await aiSdkJsonSchema(schema, normalized);
-    const { context: runtimeContext, data } = structuredDecisionInput(request, { allowHumanReview });
-    const prompt = JSON.stringify(data);
-    const result = await generateObject(compactObject({
-      model,
-      schema: aiSchema,
-      schemaName: schema.title,
-      schemaDescription: schema.description,
-      system: `${effectiveSystem}\n\nRuntime context: ${JSON.stringify(runtimeContext)}`,
-      prompt,
-      temperature: normalized.temperature,
-      maxRetries: normalized.maxRetries,
-      maxOutputTokens: normalized.maxOutputTokens,
-      providerOptions,
-    }));
+      const result = capture ? await capture(generateObject, generation, "object") : await generateObject(generation);
 
-    assertCompleteProviderResponse(result, normalized);
+      assertCompleteProviderResponse(result, normalized);
 
-    return normalizeStructuredDecisionObject(request, result?.object, normalized.source, {
-      allowHumanReview,
-    });
+      return normalizeStructuredDecisionObject(request, result?.object, normalized.source, {
+        allowHumanReview,
+      });
+    };
+    return history ? history.run(request, model, execute) : execute();
+  };
+}
+
+async function historyObjectGenerator(options) {
+  if (options.generateObject !== undefined) return aiSdkGenerateObject(options);
+  const { generateText, Output } = await import("ai");
+  return async ({ schema, schemaName, schemaDescription, ...generation }) => {
+    const result = await generateText({ ...generation,
+      output: Output.object({ schema, name: schemaName, description: schemaDescription }) });
+    assertCompleteProviderResponse(result, options);
+    return { object: result.output, response: result.response, finishReason: result.finishReason,
+      providerMetadata: result.providerMetadata, usage: result.usage };
   };
 }
 
 export function createOpenAiDecisionProvider(options = {}) {
   validateProviderRequestBudget(options);
-  const { maxProviderRequestBytes: _httpBudget, ...providerOptions } = options;
+  const { maxProviderRequestBytes: _httpBudget, context, ...providerOptions } = options;
+  const contextFetch = context === undefined ? options.fetch : createProviderContextFetch({
+    ...context, provider: "openai", fetch: options.fetch, countFetch: options.countFetch ?? options.fetch,
+  });
   const normalized = {
     ...providerOptions,
     responseProtocol: "openai-responses",
@@ -349,7 +395,7 @@ export function createOpenAiDecisionProvider(options = {}) {
         organization: options.organization,
         project: options.project,
         headers: await valueForRequest(options.headers, request),
-        fetch: providerBudgetFetch(options, request),
+        fetch: providerBudgetFetch({ ...options, fetch: contextFetch }, request),
       }));
       const modelId = await valueForRequest(options.model, request)
         ?? process.env.TOUBA_OPENAI_MODEL
@@ -434,13 +480,21 @@ function normalizeAiSdkDecisionProviderOptions(options) {
   if (options.decisionInterface !== undefined && !["structured", "native"].includes(options.decisionInterface)) {
     throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "decisionInterface must be structured or native");
   }
+  if (options.temperature !== undefined && options.temperature !== null
+    && !(Number.isFinite(options.temperature) && options.temperature >= 0 && options.temperature <= 2)) {
+    throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "temperature must be null or a number from 0 to 2");
+  }
+  if (options.nativeToolChoice !== undefined && !["auto", "required"].includes(options.nativeToolChoice)) {
+    throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "nativeToolChoice must be auto or required");
+  }
   return {
     ...options,
     decisionInterface: options.decisionInterface ?? "structured",
     source: typeof options.source === "string" && options.source.trim() !== ""
       ? options.source
       : options.decisionInterface === "native" ? "ai_sdk_native_tools" : "ai_sdk_structured_output",
-    temperature: options.temperature ?? 0,
+    temperature: options.temperature === null ? undefined : options.temperature ?? 0,
+    nativeToolChoice: options.nativeToolChoice ?? "required",
     maxRetries: options.maxRetries ?? 1,
     maxOutputTokens: normalizePositiveIntegerOption(options.maxOutputTokens ?? 700, "maxOutputTokens"),
   };
@@ -1077,6 +1131,7 @@ export async function handleToolRequest(rawInput, expectedToolRef, handler, opti
     const normalized = normalizeError(error, effect, {
       compensation: compensation !== undefined,
     });
+    emitLocalHandlerDiagnostic(error);
     const response = {
       ok: false,
       error: {
@@ -1657,7 +1712,10 @@ function normalizeError(error, effect = undefined, options = {}) {
   }
   return {
     code: "UnhandledHandlerError",
-    message: "handler failed",
+    // Do not expose arbitrary exception messages, causes or stacks: handlers
+    // can embed credentials there. A bounded class and repair hint are safe.
+    message: `handler failed (${[TypeError, RangeError, SyntaxError, ReferenceError, URIError, EvalError]
+      .find(Type => error instanceof Type)?.name ?? "Error"}); reproduce by invoking the exported run({ request, context }) in a local business test; use ToubaHandlerError for a safe public diagnostic`,
   };
 }
 

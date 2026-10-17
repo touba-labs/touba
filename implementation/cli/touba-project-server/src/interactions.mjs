@@ -8,9 +8,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
+import { validatedRecords } from "./validated-records.mjs";
+import { indexedStore } from "./indexed-store.mjs";
 
 const SESSION_SCHEMA = JSON.parse(readFileSync(new URL("../../../contracts/product-surfaces/schemas/touba-interaction-session-v1.schema.json", import.meta.url), "utf8"));
+const ASSET_SCHEMA = JSON.parse(readFileSync(new URL("../../../contracts/product-surfaces/schemas/touba-interaction-asset-v1.schema.json", import.meta.url), "utf8"));
 
 export const INTERACTION_SESSION_CREATE_SCHEMA_VERSION = "touba-interaction-session-create-v1";
 export const INTERACTION_MESSAGE_REQUEST_SCHEMA_VERSION = "touba-interaction-message-request-v1";
@@ -51,6 +55,7 @@ export function createInteractionSession({
   generatedAt = new Date().toISOString(),
 }) {
   const store = loadInteractionSessionStore(sessionsPath);
+  const removeIds = [];
   while (store.sessions.length >= MAX_SESSIONS) {
     const evictable = store.sessions
       .filter((session) => !sessionHasActiveOperation(session))
@@ -61,6 +66,7 @@ export function createInteractionSession({
         `interaction store already has ${MAX_SESSIONS} sessions with active operations`,
       );
     }
+    removeIds.push(evictable.session_id);
     store.sessions.splice(store.sessions.findIndex((session) => (
       session.session_id === evictable.session_id
     )), 1);
@@ -82,9 +88,8 @@ export function createInteractionSession({
     operations: [],
   };
   store.sessions.push(session);
-  store.sessions = store.sessions
-    .sort(compareInteractionSessionAge);
-  saveJsonAtomic(sessionsPath, store);
+  store.sessions.sort(compareInteractionSessionAge);
+  saveInteractionSessionStore(sessionsPath, store, { removeIds });
   return session;
 }
 
@@ -123,8 +128,14 @@ export function listInteractionSessions(sessionsPath) {
   };
 }
 
+// Fresh validated snapshot for a synchronous recovery pass. It must not be
+// retained across awaits or used to authorize a later write.
+export function readInteractionSessions(sessionsPath) {
+  return loadInteractionSessionStore(sessionsPath).sessions;
+}
+
 export function getInteractionSession({ sessionId, sessionsPath }) {
-  const session = loadInteractionSessionStore(sessionsPath).sessions
+  const session = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]).sessions
     .find((candidate) => candidate.session_id === sessionId);
   if (session === undefined) {
     throw interactionError("ToubaServeInteractionSessionNotFound", "interaction session is unknown");
@@ -153,7 +164,7 @@ export function enqueueInteractionOperation({
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
+  const store = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]);
   const session = requireSession(store, sessionId);
   const existing = session.operations.find((operation) => operation.message_id === message.message_id);
   if (existing !== undefined) return existing;
@@ -199,7 +210,7 @@ export function enqueueInteractionOperation({
   session.status = "running";
   session.last_run_status = "queued";
   session.updated_at = generatedAt;
-  saveJsonAtomic(sessionsPath, store);
+  saveInteractionSessionStore(sessionsPath, store);
   return operation;
 }
 
@@ -209,7 +220,7 @@ export function startInteractionOperation({
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
+  const store = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]);
   const { session, operation } = requireOperation(store, sessionId, operationId);
   if (!["queued", "awaiting_human", "cancel_requested"].includes(operation.status)) {
     throw interactionError("ToubaServeInteractionOperationStateInvalid", "interaction operation cannot start from its current state");
@@ -224,7 +235,7 @@ export function startInteractionOperation({
     session.last_run_status = "running";
   }
   session.updated_at = generatedAt;
-  saveJsonAtomic(sessionsPath, store);
+  saveInteractionSessionStore(sessionsPath, store);
   return operation;
 }
 
@@ -239,7 +250,7 @@ export function resumeInterruptedInteractionOperation({
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
+  const store = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]);
   const { session, operation } = requireOperation(store, sessionId, operationId);
   if (operation.status !== "interrupted") {
     throw interactionError(
@@ -254,28 +265,62 @@ export function resumeInterruptedInteractionOperation({
   session.status = "running";
   session.last_run_status = "running";
   session.updated_at = generatedAt;
-  saveJsonAtomic(sessionsPath, store);
+  saveInteractionSessionStore(sessionsPath, store);
   return operation;
 }
 
 export function recordInteractionOperationProgress({
-  event,
+  events,
   operationId,
   sessionId,
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
+  const store = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]);
   const { session, operation } = requireOperation(store, sessionId, operationId);
   if (!ACTIVE_OPERATION_STATUSES.has(operation.status)) return operation;
-  const progress = publicProgressEvent(event, generatedAt);
-  operation.event_count += 1;
-  operation.current_event = progress;
-  operation.recent_events.push(progress);
+  const progress = events.map(event => publicProgressEvent(event, generatedAt));
+  if (progress.length === 0) return operation;
+  operation.event_count += progress.length;
+  operation.current_event = progress.at(-1);
+  operation.recent_events.push(...progress);
   operation.recent_events = operation.recent_events.slice(-MAX_PROGRESS_EVENTS_PER_OPERATION);
   session.updated_at = generatedAt;
-  saveJsonAtomic(sessionsPath, store);
+  saveInteractionSessionStore(sessionsPath, store);
   return operation;
+}
+
+// Progress is a bounded UI projection, not the effect journal or checkpoint.
+// Coalesce synchronous trace bursts, then persist before publishing to SSE.
+export function bufferedInteractionProgress(args, onProgress) {
+  let pending = [];
+  let scheduled = null;
+  let failure = null;
+  const flush = () => {
+    if (scheduled !== null) clearImmediate(scheduled);
+    scheduled = null;
+    if (failure) throw failure;
+    if (!pending.length) return;
+    const events = pending;
+    pending = [];
+    try {
+      onProgress(recordInteractionOperationProgress({ ...args, events }));
+    } catch (error) { failure = error; throw error; }
+  };
+  return {
+    record(event) {
+      if (failure) throw failure;
+      pending.push(event);
+      if (pending.length >= MAX_PROGRESS_EVENTS_PER_OPERATION) return flush();
+      scheduled ??= setImmediate(() => { try { flush(); } catch { /* Delivered to the run on its next event or final flush. */ } });
+    },
+    flush,
+    close() {
+      if (scheduled !== null) clearImmediate(scheduled);
+      scheduled = null;
+      pending = [];
+    },
+  };
 }
 
 export function completeInteractionOperation({
@@ -285,7 +330,7 @@ export function completeInteractionOperation({
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
+  const store = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]);
   const { session, operation } = requireOperation(store, sessionId, operationId);
   assertInteractionResultIdentity({ operation, result });
   const finalStatus = operationStatusForRun(result);
@@ -336,7 +381,7 @@ export function completeInteractionOperation({
   session.status = sessionStatusForOperation(operation.status);
   session.last_run_status = operation.status;
   session.updated_at = generatedAt;
-  saveJsonAtomic(sessionsPath, store);
+  saveInteractionSessionStore(sessionsPath, store);
   return operation;
 }
 
@@ -348,7 +393,7 @@ export function failInteractionOperation({
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
+  const store = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]);
   const { session, operation } = requireOperation(store, sessionId, operationId);
   if (
     operation.status === "awaiting_human"
@@ -366,7 +411,7 @@ export function failInteractionOperation({
   session.status = "failed";
   session.last_run_status = "failed";
   session.updated_at = generatedAt;
-  saveJsonAtomic(sessionsPath, store);
+  saveInteractionSessionStore(sessionsPath, store);
   return operation;
 }
 
@@ -376,7 +421,7 @@ export function requestInteractionOperationCancel({
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
+  const store = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]);
   const { session, operation } = requireOperation(store, sessionId, operationId);
   if (operation.status === "cancel_requested") return operation;
   if (!["queued", "running", "awaiting_human"].includes(operation.status)) {
@@ -387,7 +432,7 @@ export function requestInteractionOperationCancel({
   session.status = "running";
   session.last_run_status = "cancel_requested";
   session.updated_at = generatedAt;
-  saveJsonAtomic(sessionsPath, store);
+  saveInteractionSessionStore(sessionsPath, store);
   return operation;
 }
 
@@ -396,7 +441,7 @@ export function archiveInteractionSession({
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
+  const store = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]);
   const session = requireSession(store, sessionId);
   if (session.operations.some((operation) => (
     ACTIVE_OPERATION_STATUSES.has(operation.status) || operation.status === "awaiting_human"
@@ -408,7 +453,7 @@ export function archiveInteractionSession({
   }
   session.status = "archived";
   session.updated_at = generatedAt;
-  saveJsonAtomic(sessionsPath, store);
+  saveInteractionSessionStore(sessionsPath, store);
   return session;
 }
 
@@ -445,7 +490,7 @@ export function recoverInterruptedInteractionOperations({
       recovered.push(operation);
     }
   }
-  if (recovered.length > 0) saveJsonAtomic(sessionsPath, store);
+  if (recovered.length > 0) saveInteractionSessionStore(sessionsPath, store);
   return recovered;
 }
 
@@ -494,7 +539,7 @@ export function storeInteractionAsset({
   if (digest !== undefined && digest !== actualDigest) {
     throw interactionError("ToubaServeInteractionAssetDigestMismatch", "interaction asset digest does not match its content");
   }
-  const store = loadInteractionAssetStore(assetsPath);
+  const store = loadInteractionAssetStore(assetsPath, [{ digest: actualDigest }]);
   const existing = store.assets.find((asset) => asset.digest === actualDigest);
   if (existing !== undefined) return publicAsset(existing);
   const handle = `asset_${actualDigest.slice("sha256:".length, "sha256:".length + 24)}`;
@@ -513,12 +558,12 @@ export function storeInteractionAsset({
     storage_name: storageName,
   };
   store.assets.push(asset);
-  saveJsonAtomic(assetsPath, store);
+  indexedAssetStore(assetsPath).write(store.assets);
   return publicAsset(asset);
 }
 
 export function readInteractionAsset({ assetsDirectory, assetsPath, handle }) {
-  const asset = loadInteractionAssetStore(assetsPath).assets
+  const asset = loadInteractionAssetStore(assetsPath, [{ id: handle }]).assets
     .find((candidate) => candidate.handle === handle);
   if (asset === undefined) {
     throw interactionError("ToubaServeInteractionAssetNotFound", "interaction asset handle is unknown");
@@ -535,55 +580,62 @@ export function readInteractionAsset({ assetsDirectory, assetsPath, handle }) {
   return { asset: publicAsset(asset), buffer };
 }
 
-function loadInteractionSessionStore(path) {
-  if (!existsSync(path)) {
-    return { schema_version: INTERACTION_SESSION_STORE_SCHEMA_VERSION, sessions: [] };
-  }
-  const store = readStore(path, "ToubaServeInteractionSessionStoreInvalid");
-  if (!Array.isArray(store?.sessions)) {
-    throw interactionError(
-      "ToubaServeInteractionSessionStoreInvalid",
-      "interaction session store must contain a sessions array",
-    );
-  }
-  if (store.schema_version !== INTERACTION_SESSION_STORE_SCHEMA_VERSION) {
-    throw interactionError(
-      "ToubaServeInteractionSessionStoreInvalid",
-      `interaction session store must use ${INTERACTION_SESSION_STORE_SCHEMA_VERSION}`,
-    );
-  }
-  if (Object.keys(store).some(key => !["schema_version", "sessions"].includes(key))
-    || store.sessions.some(session => validateObject(SESSION_SCHEMA, session).length > 0)) {
+const validateCurrentSession = validatedRecords(session => {
+  if (validateObject(SESSION_SCHEMA, session).length > 0) {
     throw interactionError("ToubaServeInteractionSessionStoreInvalid", "stored sessions must satisfy the canonical session contract");
   }
-  return store;
+});
+
+function indexedSessionStore(path) {
+  return indexedStore({
+    path, schemaVersion: INTERACTION_SESSION_STORE_SCHEMA_VERSION,
+    keyOf: session => session.session_id, validate: validateCurrentSession,
+    checkTransaction(db) {
+      if (db.prepare("SELECT COUNT(*) AS count FROM records").get().count > MAX_SESSIONS) {
+        throw interactionError("ToubaServeInteractionSessionCapacityExceeded", "interaction projection exceeds its bounded window");
+      }
+    },
+  });
 }
 
-function loadInteractionAssetStore(path) {
-  if (!existsSync(path)) {
-    return { schema_version: INTERACTION_ASSET_STORE_SCHEMA_VERSION, assets: [] };
-  }
-  const store = readStore(path, "ToubaServeInteractionAssetStoreInvalid");
-  if (
-    store?.schema_version !== INTERACTION_ASSET_STORE_SCHEMA_VERSION
-    || !Array.isArray(store.assets)
-  ) {
-    throw interactionError(
-      "ToubaServeInteractionAssetStoreInvalid",
-      `interaction asset store must use ${INTERACTION_ASSET_STORE_SCHEMA_VERSION}`,
-    );
-  }
-  return store;
-}
-
-function readStore(path, code) {
-  if (statSync(path).isDirectory()) throw interactionError(code, "interaction store path is a directory");
+function loadInteractionSessionStore(path, filter) {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch (cause) {
-    throw interactionError(code, `interaction store is not valid JSON: ${cause.message}`);
+    return { schema_version: INTERACTION_SESSION_STORE_SCHEMA_VERSION, sessions: indexedSessionStore(path).read(filter) };
+  } catch (error) {
+    if (error instanceof SyntaxError || typeof error.errno === "number" || error.code?.startsWith("ToubaStore") || error.code?.startsWith("ERR_SQLITE")) {
+      throw interactionError("ToubaServeInteractionSessionStoreInvalid", "interaction session store is not a valid indexed state");
+    }
+    throw error;
   }
 }
+
+function saveInteractionSessionStore(path, store, options) {
+  indexedSessionStore(path).write(store.sessions, options);
+}
+
+function indexedAssetStore(path) {
+  return indexedStore({ path, schemaVersion: INTERACTION_ASSET_STORE_SCHEMA_VERSION,
+    keyOf: asset => asset.handle, indexes: { digest: "json_extract(body, '$.digest')" },
+    validate(asset) {
+      if (!asset || validateObject(ASSET_SCHEMA, publicAsset(asset)).length > 0
+        || !/^sha256:[a-f0-9]{64}$/.test(asset.digest)
+        || asset.storage_name !== `${asset.digest.slice(7)}.bin`
+        || asset.handle !== `asset_${asset.digest.slice(7, 31)}`) {
+        throw interactionError("ToubaServeInteractionAssetStoreInvalid", "stored asset has an invalid contract or content address");
+      }
+    },
+  });
+}
+
+function loadInteractionAssetStore(path, filter) {
+  try {
+    return { schema_version: INTERACTION_ASSET_STORE_SCHEMA_VERSION, assets: indexedAssetStore(path).read(filter) };
+  } catch {
+    throw interactionError("ToubaServeInteractionAssetStoreInvalid", "interaction asset store is not a valid indexed state");
+  }
+}
+
+export function auditInteractionAssets(path) { loadInteractionAssetStore(path); }
 
 function assertAssetMetadata({ buffer, contentKind, mediaType, name }) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
@@ -626,15 +678,17 @@ function boundedDisplayText(value) {
 }
 
 function resultDisplayText(result) {
+  if (result.messages?.length) return boundedResultText(result.messages.map(message => message.text).join("\n"));
   if (typeof result.result === "string") return boundedResultText(result.result);
   if (result.result === null || result.result === undefined) return "";
   return boundedResultText(JSON.stringify(result.result));
 }
 
-function boundedResultText(value) {
+export function boundedResultText(value, maxBytes = MAX_INTERACTION_DISPLAY_TEXT_BYTES) {
   const bytes = Buffer.from(String(value), "utf8");
-  if (bytes.length <= MAX_INTERACTION_DISPLAY_TEXT_BYTES) return String(value);
-  return `${bytes.subarray(0, MAX_INTERACTION_DISPLAY_TEXT_BYTES).toString("utf8")}...`;
+  if (bytes.length <= maxBytes) return String(value);
+  const suffix = ".".repeat(Math.min(3, maxBytes));
+  return new StringDecoder("utf8").write(bytes.subarray(0, maxBytes - suffix.length)) + suffix;
 }
 
 function operationStatusForRun(result) {
@@ -760,13 +814,6 @@ function shortTargetRef(ref) {
 
 function compactTimestamp(value) {
   return String(value).replaceAll(/[^0-9]/gu, "").slice(0, 14);
-}
-
-function saveJsonAtomic(path, value) {
-  mkdirSync(dirname(path), { recursive: true });
-  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  renameSync(tempPath, path);
 }
 
 function writeBufferAtomic(path, value) {

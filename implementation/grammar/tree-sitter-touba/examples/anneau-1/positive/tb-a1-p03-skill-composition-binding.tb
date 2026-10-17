@@ -27,7 +27,7 @@ skill BuildNote
     takes source as SourceText
     gives SourceNote
     do
-        give SourceNote
+        give record SourceNote { body as source.body }
 
 skill RunPipeline
     takes request as SourceRequest

@@ -112,6 +112,9 @@ export function normalizeAirRunLimits(limits, fieldName) {
       });
     }
     const record = /** @type {RuntimeBudgetRecord} */ (entry);
+    if (Object.keys(record).some(key => key !== "value" && key !== "source_ref")) {
+      throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName}.${budgetKind} contains unknown fields`, { budgetKind });
+    }
     if (typeof record.value !== "number" || !Number.isSafeInteger(record.value) || record.value <= 0) {
       throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName}.${budgetKind}.value must be a positive integer`, {
         budgetKind,

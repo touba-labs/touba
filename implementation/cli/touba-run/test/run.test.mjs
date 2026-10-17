@@ -122,6 +122,27 @@ strategy Check
   }
 });
 
+test("optional human checkpoint preserves a completed run and never erases an existing checkpoint", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-run-optional-checkpoint-"));
+  try {
+    const airPath = writeAirDocument(workspace, linearSourceDocument());
+    const checkpointPath = join(workspace, "optional.json");
+    const args = [runPath, airPath, ...fixtureBindingArgs(airPath, { content: "completed once" }),
+      "--human-checkpoint-out", checkpointPath, "--output", "json"];
+    const first = spawnSync(process.execPath, args, { encoding: "utf8" });
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(JSON.parse(first.stdout).status, "success");
+    assert.equal(existsSync(checkpointPath), false);
+    writeFileSync(checkpointPath, "previous checkpoint, not from this run");
+    const second = spawnSync(process.execPath, args, { encoding: "utf8" });
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal(JSON.parse(second.stdout).status, "success");
+    assert.equal(readFileSync(checkpointPath, "utf8"), "previous checkpoint, not from this run");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("refuses an explicit hardened profile without supply-chain evidence before execution", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-hardened-"));
   try {
@@ -312,7 +333,12 @@ test("reports an explicit diagnostic when a tool binding is missing", () => {
     assert.equal(failure.status, 1);
     assert.match(failure.stderr, /missing tool binding/);
     assert.match(failure.stderr, /tool:examples\.linear_skill\/FetchSource/);
-    assert.match(failure.stderr, /--manifest <path>/);
+    assert.match(failure.stderr, /provide --manifest <path>/);
+    const manifestPath = join(workspace, "empty.manifest.json");
+    writeFileSync(manifestPath, JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {} }));
+    const missingBinding = runCliExpectFailure([runPath, airPath, "--manifest", manifestPath]);
+    assert.match(missingBinding.stderr, /binding.*supplied manifest/);
+    assert.doesNotMatch(missingBinding.stderr, /provide --manifest/);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -1270,9 +1296,39 @@ test("reports entry payload schema diagnostics before process handler dispatch",
     assert.match(failure.stderr, /EntryInputSchemaInvalid/);
     assert.match(failure.stderr, /inputs\.request\.query/);
     assert.equal(failure.stderr.includes("fixture-secret-value"), false);
+    const missing = runCliExpectFailure([runPath, airPath, "--inputs-json", "{}"]);
+    assert.match(missing.stderr, /missing fields: request/);
+    const extra = runCliExpectFailure([runPath, airPath, "--inputs-json", JSON.stringify({
+      request: { query: "ordinary" }, "private-unknown-field": true,
+    })]);
+    assert.match(extra.stderr, /unexpected field count: 1/);
+    assert.doesNotMatch(extra.stderr, /private-unknown-field/);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("explains short-secret substring collisions without dispatch or bypass", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-short-secret-"));
+  try {
+    const airPath = compileFixtureToAir(workspace, toolBindingV1SourceFixture, "short-secret");
+    const manifestPath = writeFixtureManifest(workspace, "touba.manifest.positive.json");
+    const marker = join(workspace, "handler-dispatched");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    for (const binding of Object.values(manifest.bindings)) {
+      binding.handler = { kind: "process", command: process.execPath,
+        args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "called")`] };
+    }
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const failure = runCliExpectFailure([runPath, airPath, "--manifest", manifestPath,
+      "--secrets", toolBindingV1SecretsFixture, "--inputs-json", JSON.stringify({ request: { query: "catalog" } }),
+      "--output", "json"], { env: { ...process.env, SEARCH_API_TOKEN: "g" } });
+    const envelope = JSON.parse(failure.stdout);
+    assert.equal(envelope.reason, "SecretValueInToolArguments");
+    assert.match(failure.stderr, /short secret can also match ordinary text/);
+    // Binding authorization precedes argument admission; it is not dispatch.
+    assert.equal(existsSync(marker), false);
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
 
 test("reports tool payload constraint diagnostics before process handler dispatch", () => {
@@ -3186,7 +3242,7 @@ test("reports trigger refusals and dry-run manifest limit widening without paylo
     ]);
 
     assert.equal(sourceMismatch.status, 1);
-    assert.match(sourceMismatch.stderr, /runtime error \[TriggerSourceMismatch\]/);
+    assert.match(sourceMismatch.stderr, /trigger error \[TriggerSourceMismatch\]/);
     assert.match(sourceMismatch.stderr, /: event_source_mismatch/);
     assert.equal(sourceMismatch.stderr.includes("raw-secret-payload"), false);
 

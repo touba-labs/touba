@@ -2815,6 +2815,7 @@ fn reports_missing_secret_read_capability_for_tool_secrets() {
 fn reports_empty_flow_graph_for_empty_ast_body_with_source_ref() {
     let source_ref = test_source_ref("invalid-empty-flow-ast");
     let document = AstDocument {
+        run_limits: Vec::new(),
         module: AstModule {
             name: "invalid.empty_flow".to_string(),
             source_ref: source_ref.clone(),

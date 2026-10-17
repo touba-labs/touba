@@ -15,7 +15,7 @@ function request(mode = "capabilities") {
 }
 
 function nativeOptions(overrides = {}) {
-  return { model: "offline", decisionInterface: "native", allowHumanReview: false,
+  return { model: "offline", decisionInterface: "native", allowHumanReview: false, history: false,
     jsonSchema: (schema) => schema, ...overrides };
 }
 
@@ -83,6 +83,26 @@ test("invalid interface and unenforceable generic transport budgets fail explici
   assert.throws(() => createAiSdkDecisionProvider({ maxProviderRequestBytes: 100 }), /HTTP provider factory/);
 });
 
+test("model transport options omit sampling and allow auto without weakening proposal validation", async () => {
+  for (const mode of ["capabilities", "finalization"]) {
+    let sent;
+    const provider = createAiSdkDecisionProvider(nativeOptions({temperature: null, nativeToolChoice: "auto",
+      generateText: async (options) => {sent = options; return {finishReason: "tool-calls", toolCalls: [selection()]};},
+      generateObject: async (options) => {sent = options; return {finishReason: "stop", object: structuredModelObject({action: "answer_directly", result: "done"})};},
+    }));
+    await provider(request(mode));
+    assert.equal(sent.temperature, undefined);
+    assert.equal(sent.toolChoice, mode === "capabilities" ? "auto" : undefined);
+  }
+  for (const response of [{finishReason: "stop", text: "I am done", toolCalls: []},
+    {finishReason: "tool-calls", toolCalls: [selection(), selection()]},
+    {finishReason: "tool-calls", toolCalls: [{...selection(), toolName: "unauthorized"}]}]) {
+    await assert.rejects(createAiSdkDecisionProvider(nativeOptions({nativeToolChoice: "auto", generateText: async () => response}))(request()));
+  }
+  for (const temperature of [false, "0", NaN, Infinity, -1, 3]) assert.throws(() => createAiSdkDecisionProvider({temperature}), /temperature/);
+  for (const nativeToolChoice of [null, "none", "tool", false]) assert.throws(() => createAiSdkDecisionProvider({nativeToolChoice}), /nativeToolChoice/);
+});
+
 test("native names are stable, bounded and distinct even with identical or non-ASCII display names", () => {
   const refs = ["tool:one/Read", "skill:one/Read", "agent:two/Read", `tool:long/${"é".repeat(100)}`, "tool:long/____"];
   const names = refs.map(nativeCapabilityName);
@@ -98,7 +118,7 @@ function httpResponse(output) {
     output, usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 } }), { headers: { "Content-Type": "application/json" } });
 }
 
-test("actual AI SDK HTTP serialization preserves executed pairs, native signatures and tool-free finalization", async () => {
+test("stateless HTTP serialization preserves observations without invented provider calls", async () => {
   const envName = "TOUBA_NATIVE_TEST_API_KEY";
   const previous = process.env[envName];
   process.env[envName] = "local-fake-key-not-a-credential";
@@ -107,7 +127,7 @@ test("actual AI SDK HTTP serialization preserves executed pairs, native signatur
       const input = request();
       input.observations = [{ action: "select_capability", target_ref: "tool:service/Read", arguments: { reference: "previous" }, value: 23 }];
       const bodies = [];
-      const provider = factory({ model: "gpt-4o-mini-2024-07-18", apiKeyEnvNames: [envName],
+      const provider = factory({ history: false, model: "gpt-4o-mini-2024-07-18", apiKeyEnvNames: [envName],
         decisionInterface: "native", allowHumanReview: false, maxRetries: 0, source: "transport_test",
         fetch: async (_url, init) => {
           const body = JSON.parse(init.body);
@@ -120,11 +140,11 @@ test("actual AI SDK HTTP serialization preserves executed pairs, native signatur
       assert.equal(bodies[0].tools[0].strict, true);
       assert.equal(bodies[0].parallel_tool_calls, false);
       assert.equal(bodies[0].text?.format?.type, undefined);
-      const call = bodies[0].input.find((item) => item.type === "function_call");
-      const result = bodies[0].input.find((item) => item.type === "function_call_output");
-      assert.deepEqual(JSON.parse(call.arguments), { reference: "previous" });
-      assert.equal(result.output, "23");
-      assert.equal(result.call_id, call.call_id);
+      assert.equal(bodies[0].input.some(item => ["function_call", "function_call_output"].includes(item.type)), false);
+      const observed = bodies[0].input.flatMap(item => item.role === "user" ? item.content : [])
+        .map(part => JSON.parse(part.text)).find(item => item.category === "runtime_observation");
+      assert.deepEqual(observed.observation.arguments, { reference: "previous" });
+      assert.equal(observed.observation.value, 23);
       input.mode = input.model_input.mode = "finalization";
       assert.equal((await provider(input)).result, "completed");
       assert.equal(bodies[1].tools, undefined);
@@ -147,7 +167,7 @@ test("HTTP factory budgets guard the fully serialized native request before any 
         let httpCalls = 0;
         const input = request();
         input.model_input.skill_pack_budgets = { model_input_max_bytes: runtimeLimit };
-        const provider = factory({ model: "gpt-4o-mini-2024-07-18", apiKeyEnvNames: [envName], decisionInterface: "native",
+        const provider = factory({ history: false, model: "gpt-4o-mini-2024-07-18", apiKeyEnvNames: [envName], decisionInterface: "native",
           allowHumanReview: false, maxRetries: 0, maxProviderRequestBytes: runtimeLimit ? 100000 : 64,
           fetch: async () => { httpCalls++; assert.fail("over-budget request must not be transmitted"); } });
         await assert.rejects(() => provider(input), (error) => {

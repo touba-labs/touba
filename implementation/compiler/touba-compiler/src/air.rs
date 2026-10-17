@@ -15,9 +15,24 @@ pub struct AirDocument {
     pub module: AirModule,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imports: Vec<AirImport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budgets: Option<AirBudgets>,
     pub definitions: AirDefinitions,
     pub execution_graphs: Vec<AirFlowGraph>,
     pub trace_points: Vec<AirTracePoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AirBudgets {
+    pub run: BTreeMap<String, AirRunLimit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AirRunLimit {
+    pub value: u64,
+    pub source_ref: SourceRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +95,14 @@ pub struct AirType {
     pub id: String,
     pub name: String,
     pub fields: Vec<AirTypeField>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<AirEnumVariant>,
+    pub source_ref: SourceRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AirEnumVariant {
+    pub name: String,
     pub source_ref: SourceRef,
 }
 
@@ -296,6 +319,14 @@ pub struct AirFlowNode {
     pub result_binding: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_binding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrency: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_items: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trace_point_refs: Vec<String>,
     pub source_ref: SourceRef,
@@ -307,7 +338,9 @@ pub enum AirFlowNodeKind {
     CallFunction,
     CallTool,
     CallSkill,
+    CallStrategy,
     CallAgent,
+    ParallelCall,
     Bind,
     HumanApproval,
     UserInteraction,
@@ -387,6 +420,11 @@ pub struct AirRecordField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AirExpressionKind {
+    OptionalSome,
+    OptionalNone,
+    OptionalPresent,
+    OptionalValue,
+    EnumValue,
     ValueRef,
     LiteralText,
     LiteralBoolean,
@@ -509,6 +547,8 @@ impl AirDiagnostic {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AirDiagnosticCode {
     AstError,
+    InvalidRunLimits,
+    InvalidTextLiteral,
     DuplicateDefinition,
     MissingExecutableBody,
     MissingSignatureOutput,
@@ -527,6 +567,7 @@ pub enum AirDiagnosticCode {
     UnresolvedCallArgumentValue,
     DuplicateResultBinding,
     EnrichedAgentCallBlocked,
+    StrategyInterfaceRequired,
     MissingAgentInterfaceOutput,
     MissingHumanApprovalContextArgument,
     MissingHumanApprovalDecisionBinding,
@@ -558,6 +599,8 @@ pub enum AirDiagnosticCode {
     InvalidExpressionOperandType,
     UnknownExpressionField,
     UnknownRecordType,
+    UnknownEnumVariant,
+    DuplicateEnumVariant,
     MissingRecordField,
     UnknownRecordField,
     DuplicateRecordField,

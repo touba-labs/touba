@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { npmCommand } from "./npm-command.mjs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -10,6 +10,11 @@ import {
   renderUninstallPowerShell,
   renderWindowsCmdLauncher,
 } from "./package-release.mjs";
+
+test("isolated release roots work for packaging and archive qualification", () => {
+  assert.equal(parsePackageReleaseArgs(["--release-root", "candidate artifacts"]).releaseRoot, resolve("candidate artifacts"));
+  assert.throws(() => parsePackageReleaseArgs(["--release-root"]), /requires/);
+});
 
 test("npm execution preserves Windows paths with spaces without a shell", () => {
   const args = ["install", "C:\\isolated project\\touba-sdk.tgz"];

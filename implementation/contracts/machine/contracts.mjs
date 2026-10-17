@@ -5,13 +5,15 @@ export const TRACE_PROTOCOL_VERSION = "touba-trace-v1";
 export const TRACE_CAPABILITY_PROFILE = "touba-trace-capabilities-v1";
 
 export const AIR_NODE_KINDS = Object.freeze([
-  "call_function", "call_tool", "call_skill", "call_agent", "bind",
+  "call_function", "call_tool", "call_skill", "call_strategy", "call_agent", "parallel_call", "bind",
   "human_approval", "user_interaction", "branch", "loop", "give", "stop", "fallback",
 ]);
 export const AIR_EDGE_ROLES = Object.freeze([
   "next", "true", "false", "loop_next", "loop_exit", "failure", "fallback",
 ]);
 export const AIR_EXPRESSION_KINDS = Object.freeze([
+  "optional_some", "optional_none", "optional_present", "optional_value",
+  "enum_value",
   "value_ref", "literal_text", "literal_boolean", "literal_int", "literal_float",
   "text_conversion", "field_access", "construct_record", "unary_op", "binary_op",
 ]);
@@ -23,6 +25,9 @@ export const TRACE_FAILURE_FAMILIES = Object.freeze([
 ]);
 export const TRACE_EVENT_KINDS = Object.freeze([
   "admission_refused",
+  "parallel_group_admitted", "parallel_group_refused", "parallel_branch_started",
+  "parallel_branch_completed", "parallel_branch_suspended", "parallel_join_completed",
+  "parallel_join_failed", "parallel_group_resumed",
   "agent_capabilities_listed", "agent_capability_descriptions_diagnosed",
   "agent_capability_refused", "agent_capability_result_returned", "agent_capability_selected",
   "agent_decision_catalog_requested", "agent_decision_provider_call_attempted",
@@ -96,6 +101,21 @@ export function validateAirMachineContract(value) {
   rejectUnknownFields(definitions, AIR_DEFINITION_COLLECTIONS, "$.definitions");
   const graphs = requireArray(document.execution_graphs, "$.execution_graphs");
   requireArray(document.trace_points, "$.trace_points");
+  if (document.budgets !== undefined) {
+    const budgets = requireObject(document.budgets, "$.budgets", "AIR budgets");
+    rejectUnknownFields(budgets, new Set(["run"]), "$.budgets");
+    if (budgets.run !== undefined) {
+      const run = requireObject(budgets.run, "$.budgets.run", "AIR run budgets");
+      rejectUnknownFields(run, new Set(["max_run_ms", "max_steps", "max_tool_calls", "max_agent_invocations", "max_provider_calls"]), "$.budgets.run");
+      for (const [kind, value] of Object.entries(run)) {
+        const path = `$.budgets.run.${kind}`;
+        const limit = requireObject(value, path, "AIR run limit");
+        rejectUnknownFields(limit, new Set(["value", "source_ref"]), path);
+        if (!Number.isSafeInteger(limit.value) || limit.value <= 0) fail("AirBudgetInvalid", "run limit must be a positive safe integer", `${path}.value`);
+        requireObject(limit.source_ref, `${path}.source_ref`, "run limit source reference");
+      }
+    }
+  }
 
   const allIds = new Set();
   for (const [collection, items] of Object.entries(definitions)) {
@@ -107,8 +127,107 @@ export function validateAirMachineContract(value) {
   for (let index = 0; index < graphs.length; index += 1) {
     validateGraph(graphs[index], allIds, `$.execution_graphs[${index}]`);
   }
+  validateEnums(definitions, graphs);
+  validateOptionals(definitions, graphs);
   validateFunctionPurity(definitions, graphs);
+  validateStrategyCalls(definitions, graphs);
+  const callable = new Map([...(definitions.functions ?? []), ...(definitions.tools ?? []), ...(definitions.skills ?? []),
+    ...(definitions.agents ?? []), ...(definitions.strategies ?? [])].map(item => [item.id, item]));
+  for (const graph of graphs) for (const node of graph.nodes) {
+    if (node.kind !== "parallel_call") continue;
+    const target = callable.get(node.target_ref);
+    if (!/^(skill|strategy):/u.test(graph.owner_ref) || !target?.signature?.output_type
+      || !Array.isArray(target.signature.inputs) || (node.arguments ?? []).length !== target.signature.inputs.length) {
+      fail("InvalidParallelContract", "parallel requires a typed target and all explicit arguments in a skill or strategy");
+    }
+  }
   return document;
+}
+
+/** @param {Record<string, Array<Record<string, any>>>} definitions
+ * @param {Array<Record<string, any>>} graphs */
+function validateStrategyCalls(definitions, graphs) {
+  const strategies = new Map((definitions.strategies ?? []).map(item => [item.id, item]));
+  for (const [graphIndex, graph] of graphs.entries()) {
+    for (const [nodeIndex, node] of graph.nodes.entries()) {
+      if (node.kind !== "call_strategy") continue;
+      const path = `$.execution_graphs[${graphIndex}].nodes[${nodeIndex}]`;
+      const target = strategies.get(node.target_ref);
+      if (!target || !target.id.startsWith("strategy:") || !target.signature?.output_type) {
+        fail("AirStrategyTargetInvalid", "call_strategy must resolve to a strategy with an explicit signature", `${path}.target_ref`);
+      }
+      if (!Array.isArray(target.signature.inputs)
+        || (node.arguments ?? []).length !== target.signature.inputs.length) {
+        fail("AirStrategyArgumentsInvalid", "call_strategy requires every explicit input", `${path}.arguments`);
+      }
+    }
+  }
+}
+
+/** @param {Record<string, Array<Record<string, any>>>} definitions
+ *  @param {Array<Record<string, any>>} graphs */
+function validateOptionals(definitions, graphs) {
+  const knownTypes = new Set(["builtin:Text", "builtin:Boolean", "builtin:Int", "builtin:Float",
+    ...(definitions.types ?? []).map(type => type.id)]);
+  /** @param {unknown} type */
+  const validType = type => {
+    while (typeof type === "string" && /^(list|optional):/u.test(type)) type = type.slice(type.indexOf(":") + 1);
+    return knownTypes.has(type);
+  };
+  for (const constant of definitions.constants ?? []) {
+    if (typeof constant.type_ref === "string" && constant.type_ref.startsWith("optional:")) fail("AirOptionalInvalid", "module constants cannot contain optional constructors");
+  }
+  for (const [graphIndex, graph] of graphs.entries()) for (const [index, expression] of (graph.expressions ?? []).entries()) {
+    if (typeof expression.type_ref === "string" && expression.type_ref.startsWith("optional:") && (expression.kind.startsWith("literal_") || expression.kind === "construct_record")) {
+      fail("AirOptionalInvalid", "optional values require explicit constructors or typed references");
+    }
+    if (!expression.kind.startsWith("optional_")) continue;
+    const path = `$.execution_graphs[${graphIndex}].expressions[${index}]`;
+    rejectUnknownFields(expression, new Set(["id", "kind", "operands", "type_ref", "source_ref"]), path);
+    const operands = expression.operands ?? [];
+    const constructor = ["optional_some", "optional_none"].includes(expression.kind);
+    if (!validType(expression.type_ref) || (constructor && !expression.type_ref.startsWith("optional:"))
+      || (expression.kind === "optional_present" && expression.type_ref !== "builtin:Boolean")
+      || !Array.isArray(operands) || operands.length !== (expression.kind === "optional_none" ? 0 : 1)
+      || operands.some(handle => typeof handle !== "string" || !handle.length)) {
+      fail("AirOptionalInvalid", "optional expression requires its declared type and exact operands", path);
+    }
+  }
+}
+
+/** @param {Record<string, Array<Record<string, any>>>} definitions
+ *  @param {Array<Record<string, any>>} graphs */
+function validateEnums(definitions, graphs) {
+  const enums = new Map();
+  for (const [index, type] of (definitions.types ?? []).entries()) {
+    if (!Object.hasOwn(type, "variants")) continue;
+    const path = `$.definitions.types[${index}]`;
+    const variants = requireArray(type.variants, `${path}.variants`);
+    if (!variants.length || requireArray(type.fields, `${path}.fields`).length) fail("AirEnumInvalid", "enum needs members and no record fields", path);
+    const names = new Set();
+    for (const [memberIndex, member] of variants.entries()) {
+      const memberPath = `${path}.variants[${memberIndex}]`;
+      requireObject(member, memberPath, "enum member");
+      rejectUnknownFields(member, new Set(["name", "source_ref"]), memberPath);
+      if (typeof member.name !== "string" || !/^[a-z_][A-Za-z0-9_]*$/u.test(member.name) || names.has(member.name)) fail("AirEnumInvalid", "enum members must be distinct value identifiers", memberPath);
+      requireObject(member.source_ref, `${memberPath}.source_ref`, "enum source reference");
+      names.add(member.name);
+    }
+    enums.set(type.id, names);
+  }
+  for (const [index, constant] of (definitions.constants ?? []).entries()) {
+    if (enums.has(constant.type_ref) && (!enums.get(constant.type_ref).has(constant.literal_text)
+      || ["literal_boolean", "literal_int", "literal_float"].some(key => Object.hasOwn(constant, key)))) fail("AirEnumValueInvalid", "constant must contain one declared enum member", `$.definitions.constants[${index}]`);
+  }
+  for (const [graphIndex, graph] of graphs.entries()) for (const [index, expression] of (graph.expressions ?? []).entries()) {
+    const path = `$.execution_graphs[${graphIndex}].expressions[${index}]`;
+    if (expression.kind === "enum_value") {
+      rejectUnknownFields(expression, new Set(["id", "kind", "literal_text", "type_ref", "source_ref"]), path);
+      if (!enums.get(expression.type_ref)?.has(expression.literal_text)) fail("AirEnumValueInvalid", "expression must name a declared enum member", path);
+    } else if (["literal_text", "construct_record"].includes(expression.kind) && enums.has(expression.type_ref)) {
+      fail("AirEnumValueInvalid", "enum values require an explicit enum expression", path);
+    }
+  }
 }
 
 // Check the entire function graph, not just the path chosen in this execution.
@@ -156,6 +275,20 @@ function validateGraph(value, allIds, path) {
     if (nodeIds.has(id)) fail("DuplicateAirId", `duplicate AIR node id ${id}`, `${path}.nodes[${index}].id`);
     nodeIds.add(id);
     requireEnum(node.kind, AIR_NODE_KINDS, `${path}.nodes[${index}].kind`);
+    const parallelFields = ["collection_ref", "item_binding", "max_concurrency", "max_items"];
+    if (node.kind === "parallel_call") {
+      rejectUnknownFields(node, new Set(["id", "kind", "target_ref", "arguments", "result_binding",
+        "source_ref", "trace_point_refs", ...parallelFields]), path);
+      for (const field of ["target_ref", "collection_ref", "item_binding", "result_binding"]) requireString(node[field], path);
+      if (!node.item_binding.startsWith("value:") || node.item_binding === node.result_binding
+        || !Number.isSafeInteger(node.max_concurrency) || node.max_concurrency < 1
+        || !Number.isSafeInteger(node.max_items) || node.max_items < node.max_concurrency) {
+        fail("InvalidParallelContract", "parallel requires valid bounded concurrency, items and local bindings", path);
+      }
+      for (const argument of node.arguments ?? []) requireString(argument, path);
+    } else if (parallelFields.some(field => Object.hasOwn(node, field))) {
+      fail("InvalidParallelContract", "parallel fields require parallel_call", path);
+    }
   }
   const entry = requireString(graph.entry_node_id, `${path}.entry_node_id`);
   if (!nodeIds.has(entry)) fail("AirReferenceUnresolved", `entry node ${entry} is absent`, `${path}.entry_node_id`);
@@ -286,6 +419,7 @@ export function canonicalizeMachineValue(value) {
 /** @param {unknown} codeValue @param {unknown} [failureMode] @returns {string} */
 export function failureFamilyForRuntimeCode(codeValue, failureMode = undefined) {
   const code = String(codeValue ?? "RuntimeFailure");
+  if (/^(InvalidParallel|ParallelContinuation|ParallelOutcome|Parallel.*LimitExceeded)/u.test(code)) return "authority";
   if (code === "RuntimeCancelled") return "cancelled";
   if (code === "RuntimeStopped" || /human_approval|human_review/u.test(String(failureMode ?? ""))) {
     return "human_stop";

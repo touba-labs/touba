@@ -36,6 +36,7 @@ pub enum AstDiagnosticSeverity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AstDiagnosticCode {
     ParseError,
+    InvalidTextLiteral,
     MissingModule,
     DuplicateModule,
     MissingRequiredChild,
@@ -44,6 +45,7 @@ pub enum AstDiagnosticCode {
     DuplicateAgentResponsibility,
     InvalidAgentResponsibility,
     ImportPlacementInvalid,
+    InvalidRunLimits,
     DuplicateCallArgument,
     MultipleCallResultBindings,
     UnsupportedCstNode,

@@ -4,27 +4,77 @@ sidebar_position: 8
 
 # Référence diagnostics
 
+## Intégration projet, agents et handlers
+
+| Code | Cause | Action |
+| --- | --- | --- |
+| `StrategyInterfaceRequired` | Appel source d’une stratégie sans signature de sortie explicite | Déclarer `gives` et fournir chaque argument `takes` |
+| `StrategyInputTypeMismatch` | Arguments incompatibles avec l’interface de la stratégie | Corriger les valeurs ou types source, puis recompiler |
+| `InvocationDepthLimitExceeded` | Plus de 64 appels imbriqués | Borner la récursion ou simplifier le workflow, sans élargir l’autorité |
+| `InvalidHumanApprovalCheckpoint` / `HumanApprovalCheckpointIncompatible` | Continuation absente, mal formée ou incompatible avec l’AIR | Préserver l’état ; employer l’AIR correspondant et un checkpoint complet du format courant, sans rejouer les effets |
+| `UnknownToolCapability` | Nom de capacité inconnu | Utiliser la liste fermée du [guide tools](../guides/tool-binding-handler-manifest.md) ; séparer les opérations en tools distincts |
+| `MissingTriggerArgument` | Argument `takes` de la cible non lié | Ajouter `with <nom> as payload.<champ>` pour une requête, ou une valeur pour un schedule |
+| `AgentDecisionRequired` | Aucune décision déterministe ou provider configuré | Configurer `--agent-decision-provider` sur `run` ou `serve`, ou des décisions explicites |
+| `ToolHandlerReportedError` / `UnhandledHandlerError` | Exception du handler | Reproduire son `run({ request, context })` dans un test métier local ; ne pas publier de messages contenant des secrets |
+| `TriggerPayloadInvalid` | Champ requis absent ou mauvais type | Corriger le payload et son mapping ; un littéral source n'est pas un repli d'un champ mappé manquant |
+| `TriggerEventPayloadConflict` | Identifiant déjà utilisé avec un contenu différent | Ne pas réutiliser l'identifiant pour un nouvel événement |
+| `TriggerReplayRejected` | Événement déjà consommé | Retrouver son résultat ; ne pas redispatcher l'effet |
+| `ToubaServeDecisionIdentityUnauthorized` | Utilisateur inactif, appareil non appairé ou autorité de décision absente | Configurer l'[identité et l'affectation](../guides/api-serveur-projet.md), sans désactiver les contrôles |
+| `ToubaServeSandboxCheckpointStoreInvalid` | État durable incohérent ou corrompu | Conserver les fichiers et diagnostiquer la corrélation ; ne pas supprimer les attentes pour redémarrer |
+| `ToubaServeSandboxInvalid` | Requête ou discriminant incorrect pour la route | Utiliser `/triggers/fire` pour un trigger et `/runs/sandbox` pour une entrée |
+| `ToubaServeProjectAirStale` | Sources plus récentes que l'AIR ou AIR absent | Relancer `prepare --profile dev --mode write`, puis rafraîchir le projet |
+| `ToubaServePreparedProjectInvalid` | Préparation dev invalide, périmée ou hors racine | Corriger les entrées et régénérer la préparation |
+| `ToubaServeHumanWaitConflict` | Décision ou reprise déjà réclamée | Relire l'état de cette demande ; ne pas créer une approbation de remplacement |
+| `HandlerEntryUnknownTool` | Binding sans déclaration dans les AIR verrouillés | Fournir tous les AIR du projet avec des `--air` répétés, ou retirer le binding réellement obsolète |
+| `PreparedAirDrift` | AIR dérivé différent de la compilation attendue | Régénérer avec `prepare --mode write` ; ne pas éditer le dérivé |
+| `HandlerDeclaredContractDrift` | Constantes du handler généré différentes du source | Relire et ajuster grants, handles et signature du handler et de son test ; le code métier n'est pas écrasé |
+| `RuntimeFailure` (retour incompatible) | Valeur retournée incompatible avec `gives` | Corriger le chemin de retour et son type, puis recompiler ; ne pas accepter `null` comme succès typé |
+
+## Préparation et diagnostic local
+
+| Code | Cause | Action |
+| --- | --- | --- |
+| `HostDecisionJsonInvalid` / `HostDecisionInvalid` / `HostDecisionFieldUnknown` | Décisions hôte malformées ou champs inconnus | Fournir uniquement les sélections documentées ; JSON CLI limité à 64 KiB, sans valeurs secrètes |
+| `HostDecisionTargetUnknown` / `HostDecisionSelectionInvalid` | Cible, grant, handle ou accès non déclaré, ou sélection répétée | Vérifier les besoins source et sélectionner explicitement les droits légitimes |
+| `HostDecisionEffectInvalid` / `HostDecisionLimitInvalid` | Contrat d'effet ou limite invalide | Déclarer le contrat exact et des limites entières strictement positives |
+| `HostDecisionDrift` | Décisions demandées non appliquées | Revoir le diff en `plan`, appliquer en `write`, puis vérifier en `check` |
+| `HostDecisionFragmentConflict` / `BindingFragmentManifestDrift` | Décision concurrente ou dérive d'un fragment | Réconcilier explicitement le fragment et le manifest, sans élargissement automatique |
+| `HandlerDiagnosticsForbidden` | Diagnostic privé hors profil local autorisé | Utiliser un run plan `dev` sur POSIX, sans lock obligatoire ni profil durci |
+| `HandlerDiagnosticsUnavailable` | Destination absente, existante ou non inscriptible | Choisir un fichier nouveau dans un répertoire accessible ; aucun fichier n'est écrasé |
+
 Cette page liste les diagnostics et erreurs utilisateur principaux.
 
 :::info Comment lire cette page
 Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action recommandée. Pour approfondir, consulter la [référence CLI](./cli-v1-rc.md) ou le [guide dépannage](https://pap-touba.github.io/documentation-site/docs/guides/depannage).
 :::
 
+## Sources, audit et démarrage
+
+| Code | Cause | Action |
+| --- | --- | --- |
+| `SourceRefMismatch` | Source correspondante absente | Fournir tous les modules avec des `--source` répétés et conserver leur arborescence |
+| `SourceRefAmbiguous` / `SourceArtifactDuplicate` / `SourceArtifactUnused` | Sources ambiguës, répétées ou étrangères | Fournir exactement les sources référencées |
+| `TraceAuditDigestMismatch` | Artefact différent du scellé | Conserver les preuves et rechercher l'altération, sans régénérer le scellé pour masquer l'écart |
+| `ToubaServePreflightFailed` | Démarrage refusé | Lire les diagnostics détaillés et chemins signalés |
+| `ToubaServeProductIdentityPathInvalid` | Chemin d'identité extérieur au projet ou invalide | Placer le fichier sous `--project-root` et corriger `--identity` |
+| `AgentCapabilityNotAllowed` | Sélection absente du `uses` de l'agent | Corriger la décision ; élargir l'autorité uniquement si la capacité est légitime |
+| `InvalidTextLiteral` | Échappement invalide ou contrôle brut | Utiliser les échappements JSON, notamment `\n` et `\\` |
+
 ## Compilation et sémantique
 
 | Code ou famille | Cause probable | Action |
 | --- | --- | --- |
 | `UnknownReference` | Appel ou référence introuvable | Vérifier le nom et la déclaration |
-| `MissingExplicitCallArgument` | Argument requis absent | Ajouter `with <source> as <nom>` |
-| `UnknownCallArgument` | Nom d'argument inconnu | Aligner `as <nom>` avec `takes` |
+| `MissingExplicitCallArgument` | Argument requis absent | Ajouter `with <nom> as <expression>` |
+| `UnknownCallArgument` | Nom d'argument inconnu | Aligner le nom après `with` avec `takes` |
 | `DuplicateCallArgument` | Même argument fourni deux fois | Supprimer le doublon |
 | `DuplicateResultBinding` | Binding `into` déjà utilisé | Choisir un nom distinct |
 | `DuplicateLocalBinding` | Nom `bind` déjà utilisé dans le graphe | Choisir un nom local distinct |
-| `UnsupportedModuleConstantExpression` | `define` contient autre chose qu'un littéral | Utiliser un littéral ou déplacer le calcul dans une fonction |
+| `UnsupportedModuleConstantExpression` | `define` contient autre chose qu'un littéral ou membre d'énumération qualifié | Utiliser une valeur admise ou déplacer le calcul dans une fonction |
 | `UnreachableStatement` | Instruction placée après un retour terminal (`give`, `stop`, ou `if` dont toutes les branches terminent) | Déplacer l’instruction avant le retour, ou garder un seul `give` par chemin |
 | `InvalidBranchCondition` | Condition `if` non booléenne | Produire un `Boolean` |
 | `MissingAgentInterfaceOutput` | Agent avec `takes` mais sans sortie finale | Ajouter `gives <Type>` |
-| `EnrichedAgentCallBlocked` | Appel `with`/`into` vers un agent historique ou dont la signature n’est pas résolue localement | Déclarer l’interface locale, ou conserver l’appel simple |
+| `EnrichedAgentCallBlocked` | Appel `with`/`into` vers un agent sans interface résolue | Déclarer `takes` / `gives` et fournir les sources nécessaires à la résolution, y compris les modules importés |
 | `AgentCallerNotAllowed` | Appel agent non autorisé | Corriger `callable_by` |
 | `UnsupportedTriggerEventKind` | Trigger d'une famille non livrée | Utiliser `on schedule "..."` |
 | `UnsupportedTriggerTargetKind` | Trigger vers une cible non livrée | Utiliser `runs strategy <Name>` |
@@ -40,6 +90,8 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | --- | --- | --- |
 | `InvalidExpressionOperandType` | Opérateur appliqué au mauvais type | Vérifier `Text`, `Boolean`, `Int`, `Float` |
 | `UnknownExpressionField` | Champ absent | Vérifier le type local |
+| `UnknownEnumVariant` | Membre d'énumération inconnu | Utiliser un membre déclaré du type qualifié |
+| `DuplicateEnumVariant` | Membre déclaré plusieurs fois | Garder un nom unique par membre |
 | `StaticExpressionDivisionByZero` | Division par zéro détectable | Corriger le dénominateur |
 | `InvariantLoopCondition` | `while` utilise directement `true` ou `false` | Fournir une condition qui dépend d'une valeur runtime, ou retirer la boucle |
 | `UnknownRecordType` | Type cible du constructeur inconnu | Déclarer un type local existant |
@@ -47,7 +99,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `UnknownRecordField` | Champ absent du type nominal | Corriger ou retirer le champ |
 | `DuplicateRecordField` | Même champ fourni plusieurs fois | Conserver une occurrence |
 | `RecordFieldTypeMismatch` | Valeur incompatible avec le type du champ | Corriger l'expression ou le type |
-| `AstError` | Syntaxe hors périmètre | Utiliser les expressions natives |
+| `AstError` | Erreur de syntaxe ou construction non admise | Examiner la position locale et le conseil associé ; vérifier indentation et clauses, sans accepter un arbre récupéré |
 
 ## Runtime, tools, manifest et secrets
 
@@ -64,6 +116,8 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `SecretNotGrantedToAgent` | Agent non autorisé à utiliser le handle | Corriger le scope agent |
 | `ToolInputSchemaInvalid` | Input tool invalide | Aligner l'entrée avec `takes` |
 | `ToolOutputSchemaInvalid` | Sortie handler invalide | Corriger le handler ou le `gives` |
+| `OptionalValueAbsent` | Extraction d'une absence dans un AIR fourni directement | Recompiler le source et extraire seulement dans `if present` |
+| `OptionalValueInvalid` | Enveloppe ou type d'optionnel incohérent | Conserver l'enveloppe présente/absente et le type déclaré, sans null implicite |
 | `ToolPayloadConstraintViolation` | Contrainte `payload_constraints` violée | Corriger l'entrée, la sortie handler ou la contrainte du manifest |
 | `ToolHandlerTimeout` | Handler trop lent | Corriger le handler ou le timeout |
 | `AgentDecisionProviderUnavailable` | Provider agentique indisponible ou exception levée | Vérifier le module provider et ses dépendances |
@@ -201,3 +255,20 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `InvalidHumanApprovalDecision` | Décision non supportée | Utiliser une décision acceptée |
 | `UserInteractionRequired` | `ask` sans entrée | Fournir les entrées utilisateur |
 | `InvalidUserInput` | Entrée `ask` non textuelle | Fournir une chaîne |
+
+## Parallélisme et continuations
+
+| Code | Cause | Action |
+| --- | --- | --- |
+| `InvalidParallelContract` | Cible, signature ou contexte de `parallel` invalide | Déclarer une cible typée depuis une skill/stratégie et recompiler la source. |
+| `ParallelInputTypeMismatch` | Au moins un argument ne respecte pas la signature | Corriger la liste ou les liaisons ; le groupe est refusé avant son premier appel. |
+| `ParallelItemLimitExceeded` | Entrée non liste ou cardinalité au-delà de la borne | Vérifier le type et traiter des lots dans les limites déclarées ; aucune troncature implicite. |
+| `ParallelBranchLimitExceeded` | Trop de branches vivantes, groupes imbriqués compris | Réduire le fan-out ou revoir les plafonds hôte justifiés, sans contourner les budgets. |
+| `ParallelUserInputRequired` | `ask` sans réponse hôte pour son occurrence | Fournir une réponse corrélée ; ne pas réutiliser la réponse d'une autre branche. |
+| `ParallelJournalLimitExceeded` / `ParallelCheckpointLimitExceeded` | Journal privé ou checkpoint trop volumineux | Réduire la taille des données ou du groupe ; préserver le dernier état valide. |
+| `InvalidParallelCheckpoint` / `ParallelContinuationMismatch` | État incomplet ou divergent de l'exécution sauvegardée | Conserver le fichier, vérifier build, source et artefacts ; ne pas le corriger à la main. |
+| `ParallelOutcomeUnknown` | Appel interrompu sans issue démontrée | Rapprocher l'effet avec le journal et le service externe ; pas de redispatch aveugle. |
+
+Les erreurs propres au tool, au provider, à l'autorité ou au budget restent
+visibles : un échec de branche n'est pas remplacé par un succès partiel.
+Voir [Reprise](../guides/reprise-durable-bornee.md) et [Budgets](../guides/budgets-autonomie.md).

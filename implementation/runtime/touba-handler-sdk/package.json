@@ -5,7 +5,9 @@
   "description": "Touba JavaScript SDK. Current V1 support covers process tool handlers and a local CLI-backed engine.",
   "type": "module",
   "exports": {
-    ".": "./src/index.mjs"
+    ".": "./src/index.mjs",
+    "./testing": "./src/testing.mjs",
+    "./history/sqlite": "./src/sqlite-decision-history.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
@@ -14,8 +16,8 @@
     "node": ">=24 <25"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.65",
-    "ai": "^6.0.190",
+    "@ai-sdk/openai": "^3.0.80",
+    "ai": "^6.0.215",
     "zod": "^4.4.3"
   }
 }

@@ -4,7 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
-    "air_digest": "sha256:e009126d2bb627a3b0878177cbe6bc2b75b7ea71c662c0f71a9a89358d58a4f9",
+    "air_digest": "sha256:251ac85066585fd45fdb50acfa1f680fc007d957217e61076f8ae781e4d0249b",
     "module_ref": "module:examples.fallback",
     "entry_ref": "strategy:examples.fallback/RunSourceLookup"
   },
@@ -39,7 +39,7 @@
         "owner_ref": "strategy:examples.fallback/RunSourceLookup",
         "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 952,
           "end_byte": 1031,
           "start_line": 43,
@@ -65,7 +65,7 @@
         "owner_ref": "strategy:examples.fallback/RunSourceLookup",
         "node_id": "node:graph:strategy:examples.fallback/RunSourceLookup:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 952,
           "end_byte": 1031,
           "start_line": 43,
@@ -207,7 +207,7 @@
         "owner_ref": "skill:examples.fallback/BuildSource",
         "node_id": "node:graph:skill:examples.fallback/BuildSource:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 431,
           "end_byte": 518,
           "start_line": 24,
@@ -233,7 +233,7 @@
         "owner_ref": "skill:examples.fallback/BuildSource",
         "node_id": "node:graph:skill:examples.fallback/BuildSource:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-002-fallback.tb",
+          "source_id": "tb-v01-002-fallback.tb",
           "start_byte": 431,
           "end_byte": 518,
           "start_line": 24,
@@ -273,6 +273,31 @@
       "event_id": "event:run-1:13",
       "run_id": "run-1",
       "sequence_index": 12,
+      "kind": "call_started",
+      "air_ref": {
+        "flow_graph_ref": "graph:skill:examples.fallback/BuildSource",
+        "owner_ref": "skill:examples.fallback/BuildSource",
+        "node_id": "node:graph:skill:examples.fallback/BuildSource:3",
+        "source_ref": {
+          "source_id": "tb-v01-002-fallback.tb",
+          "start_byte": 561,
+          "end_byte": 589,
+          "start_line": 29,
+          "start_column": 8,
+          "end_line": 29,
+          "end_column": 36
+        }
+      },
+      "payload": {
+        "target_ref": "skill:examples.fallback/BuildFallbackSource",
+        "caller_ref": "skill:examples.fallback/BuildSource",
+        "agent_ref": "agent:examples.fallback/Researcher"
+      }
+    },
+    {
+      "event_id": "event:run-1:14",
+      "run_id": "run-1",
+      "sequence_index": 13,
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildFallbackSource",
@@ -280,9 +305,9 @@
       }
     },
     {
-      "event_id": "event:run-1:14",
+      "event_id": "event:run-1:15",
       "run_id": "run-1",
-      "sequence_index": 13,
+      "sequence_index": 14,
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildFallbackSource",
@@ -294,9 +319,9 @@
       }
     },
     {
-      "event_id": "event:run-1:15",
+      "event_id": "event:run-1:16",
       "run_id": "run-1",
-      "sequence_index": 14,
+      "sequence_index": 15,
       "kind": "run_completed",
       "payload": {
         "status": "stopped",

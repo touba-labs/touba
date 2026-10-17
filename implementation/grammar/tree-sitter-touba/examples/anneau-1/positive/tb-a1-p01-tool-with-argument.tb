@@ -17,4 +17,4 @@ skill BuildSource
     do
         FetchSource
             with request as request
-        give SourceText
+        give record SourceText { body as "source requested" }

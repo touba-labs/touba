@@ -4,7 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
-    "air_digest": "sha256:8fc579c6826d3d29065b4f930c70cd2f96c6bba81790ac86a2259b97b3435e6b",
+    "air_digest": "sha256:2e0bdb4cc5d4ae5b23f4dbc45503d9d3437cfe87fc70193dca9bf44fd6be321d",
     "module_ref": "module:examples.a1_tool_argument",
     "entry_ref": "skill:examples.a1_tool_argument/BuildSource"
   },
@@ -39,7 +39,7 @@
         "owner_ref": "skill:examples.a1_tool_argument/BuildSource",
         "node_id": "node:graph:skill:examples.a1_tool_argument/BuildSource:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p01-tool-with-argument.tb",
+          "source_id": "tb-a1-p01-tool-with-argument.tb",
           "start_byte": 290,
           "end_byte": 346,
           "start_line": 17,
@@ -65,7 +65,7 @@
         "owner_ref": "skill:examples.a1_tool_argument/BuildSource",
         "node_id": "node:graph:skill:examples.a1_tool_argument/BuildSource:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p01-tool-with-argument.tb",
+          "source_id": "tb-a1-p01-tool-with-argument.tb",
           "start_byte": 290,
           "end_byte": 346,
           "start_line": 17,

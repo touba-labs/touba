@@ -984,6 +984,7 @@ for (const scenario of [
   {
     name: "timeout before mutation",
     effectHandler: "http-effect-timeout-before-mutation",
+    handlerTimeoutMs: 500,
     holdFirstResponse: false,
     expectedCode: "ToolHandlerTimeout",
     expectedRequests: 0,
@@ -992,6 +993,7 @@ for (const scenario of [
   {
     name: "timeout after mutation",
     effectHandler: "http-effect-timeout",
+    handlerTimeoutMs: 500,
     holdFirstResponse: true,
     expectedCode: "ToolHandlerTimeout",
     expectedRequests: 1,
@@ -1000,6 +1002,9 @@ for (const scenario of [
   {
     name: "invalid receipt",
     effectHandler: "http-effect-invalid-receipt",
+    // This case tests receipt validation, not a race against process startup.
+    // Keep the short deadlines on the two timeout cases above.
+    handlerTimeoutMs: 5000,
     holdFirstResponse: false,
     expectedCode: "EffectReceiptInvalid",
     expectedRequests: 1,
@@ -1018,7 +1023,7 @@ for (const scenario of [
         effectContractKind: "external_write",
         effectRetryMode: "none",
         effectServiceUrl: external.url,
-        handlerTimeoutMs: 500,
+        handlerTimeoutMs: scenario.handlerTimeoutMs,
       });
       child = spawnService(fixture, [
         "--max-events",

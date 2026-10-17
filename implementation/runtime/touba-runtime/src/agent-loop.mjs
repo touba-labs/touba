@@ -21,7 +21,7 @@ import { isDeepStrictEqual } from "node:util";
  *   callArgumentsForAgentDecision: (decision: any, context: any) => any,
  *   argumentsForAgentObservation: (targetRef: string, callArguments: any, context: any) => Record<string, unknown>,
  *   authorizeAgentInvocationByCaller: (callerRef: string, targetRef: string, context: any) => void,
- *   executeTarget: (targetRef: string, context: any, callArguments: any) => Promise<any>,
+ *   executeAgentCapability: (agent: any, decision: any, context: any, callArguments: any, loopState: any) => Promise<any>,
  *   validateAgentFinalResult: (agent: any, result: unknown, context: any) => unknown,
  * }} operations
  * @param {{observations?: any[], startStepIndex?: number}} [options]
@@ -164,43 +164,13 @@ export async function runAgentDecisionLoop(
       operations.authorizeAgentInvocationByCaller(agent.id, decision.targetRef, context);
     }
 
-    const previousAgentRef = context.activeAgentRef;
-    const previousCallerRef = context.activeCallerRef;
-    context.activeAgentRef = agent.id;
-    context.activeCallerRef = agent.id;
-    let result;
-    try {
-      result = await operations.executeTarget(
-        decision.targetRef,
-        context,
-        selectedCallArguments,
-      );
-    } finally {
-      context.activeAgentRef = previousAgentRef;
-      context.activeCallerRef = previousCallerRef;
-    }
+    const result = await operations.executeAgentCapability(
+      agent, decision, context, selectedCallArguments,
+      { stepIndex, observations, observationArguments },
+    );
+    appendAgentCapabilityObservation(agent.id, decision.targetRef, stepIndex,
+      observationArguments, result, observations, context);
 
-    const observation = {
-      step_index: stepIndex,
-      action: "select_capability",
-      target_ref: decision.targetRef,
-      kind: callerKindFromRef(decision.targetRef),
-      arguments: observationArguments,
-      result_type: payloadValueKind(result),
-      value: result,
-      ...repetition,
-    };
-    observations.push(observation);
-    context.trace.push("agent_capability_result_returned", {
-      payload: compactPayload({
-        agent_ref: agent.id,
-        step_index: stepIndex,
-        selected_ref: decision.targetRef,
-        result_available: true,
-        result_type: observation.result_type,
-        ...repetition,
-      }),
-    });
   }
 
   // maxAgentSteps bounds capability/review execution, not the provider's
@@ -256,4 +226,30 @@ export async function runAgentDecisionLoop(
     { agentRef: agent.id, maxAgentSteps: context.maxAgentSteps },
     "AgentStepLimitExceeded",
   );
+}
+
+/** Append exactly one completed selection, shared by ordinary and resumed loops.
+ * @param {string} agentRef
+ * @param {string} targetRef
+ * @param {number} stepIndex
+ * @param {Record<string, unknown>} args
+ * @param {any} result
+ * @param {any[]} observations
+ * @param {any} context */
+export function appendAgentCapabilityObservation(agentRef, targetRef, stepIndex, args, result, observations, context) {
+  const identical = observations.filter(observation => observation.action === "select_capability"
+    && observation.target_ref === targetRef && isDeepStrictEqual(observation.arguments, args));
+  const repetition = identical.length ? {
+    repeated_from_step: identical[0].step_index, identical_invocation_number: identical.length + 1,
+  } : {};
+  const observation = {
+    step_index: stepIndex, action: "select_capability", target_ref: targetRef,
+    kind: callerKindFromRef(targetRef), arguments: args, result_type: payloadValueKind(result),
+    value: result, ...repetition,
+  };
+  observations.push(observation);
+  context.trace.push("agent_capability_result_returned", { payload: {
+    agent_ref: agentRef, step_index: stepIndex, selected_ref: targetRef,
+    result_available: true, result_type: observation.result_type, ...repetition,
+  } });
 }

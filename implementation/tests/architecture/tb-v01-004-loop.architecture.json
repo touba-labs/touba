@@ -6,7 +6,7 @@
     "id": "module:examples.loop",
     "name": "examples.loop",
     "source_ref": {
-      "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+      "source_id": "tb-v01-004-loop.tb",
       "start_byte": 0,
       "end_byte": 20,
       "start_line": 0,
@@ -21,7 +21,7 @@
       "kind": "module",
       "name": "examples.loop",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 0,
         "end_byte": 20,
         "start_line": 0,
@@ -36,7 +36,7 @@
       "name": "NormalizedItems",
       "origin": "local",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 22,
         "end_byte": 71,
         "start_line": 2,
@@ -51,7 +51,7 @@
       "name": "NormalizeItem",
       "origin": "local",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 71,
         "end_byte": 158,
         "start_line": 5,
@@ -66,7 +66,7 @@
       "name": "NormalizeItems",
       "origin": "local",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 158,
         "end_byte": 409,
         "start_line": 11,
@@ -82,7 +82,7 @@
       "name": "Normalizer",
       "origin": "local",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 409,
         "end_byte": 631,
         "start_line": 21,
@@ -102,7 +102,7 @@
       "name": "RunNormalization",
       "origin": "local",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 631,
         "end_byte": 845,
         "start_line": 28,
@@ -118,7 +118,7 @@
       "owner_ref": "function:examples.loop/NormalizeItem",
       "entry_node_id": "node:graph:function:examples.loop/NormalizeItem:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 136,
         "end_byte": 158,
         "start_line": 8,
@@ -136,7 +136,7 @@
         "value:item"
       ],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 147,
         "end_byte": 156,
         "start_line": 9,
@@ -151,7 +151,7 @@
       "owner_ref": "skill:examples.loop/NormalizeItems",
       "entry_node_id": "node:graph:skill:examples.loop/NormalizeItems:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 264,
         "end_byte": 409,
         "start_line": 15,
@@ -171,7 +171,7 @@
       ],
       "condition_ref": "loop_has_next:value:items",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 275,
         "end_byte": 361,
         "start_line": 16,
@@ -190,7 +190,7 @@
         "value:item"
       ],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 305,
         "end_byte": 361,
         "start_line": 17,
@@ -208,7 +208,7 @@
         "expr:expression:graph:skill:examples.loop/NormalizeItems:1"
       ],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 361,
         "end_byte": 407,
         "start_line": 19,
@@ -223,7 +223,7 @@
       "owner_ref": "strategy:examples.loop/RunNormalization",
       "entry_node_id": "node:graph:strategy:examples.loop/RunNormalization:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 739,
         "end_byte": 845,
         "start_line": 32,
@@ -243,7 +243,7 @@
       ],
       "result_binding": "normalized",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 750,
         "end_byte": 829,
         "start_line": 33,
@@ -261,7 +261,7 @@
         "value:normalized"
       ],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 829,
         "end_byte": 844,
         "start_line": 36,
@@ -289,7 +289,7 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:function:examples.loop/NormalizeItem:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 147,
         "end_byte": 156,
         "start_line": 9,
@@ -317,7 +317,7 @@
       "anchor_kind": "loop",
       "node_id": "node:graph:skill:examples.loop/NormalizeItems:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 275,
         "end_byte": 361,
         "start_line": 16,
@@ -333,7 +333,7 @@
       "anchor_kind": "call",
       "node_id": "node:graph:skill:examples.loop/NormalizeItems:2",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 305,
         "end_byte": 361,
         "start_line": 17,
@@ -349,7 +349,7 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:skill:examples.loop/NormalizeItems:3",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 361,
         "end_byte": 407,
         "start_line": 19,
@@ -377,7 +377,7 @@
       "anchor_kind": "call",
       "node_id": "node:graph:strategy:examples.loop/RunNormalization:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 750,
         "end_byte": 829,
         "start_line": 33,
@@ -393,7 +393,7 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:strategy:examples.loop/RunNormalization:2",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 829,
         "end_byte": 844,
         "start_line": 36,
@@ -450,7 +450,7 @@
       "to": "agent:examples.loop/Normalizer",
       "caller_kind": "strategy",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 592,
         "end_byte": 629,
         "start_line": 26,
@@ -536,7 +536,7 @@
       "graph_ref": "graph:skill:examples.loop/NormalizeItems",
       "role": "loop_next",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 305,
         "end_byte": 361,
         "start_line": 17,
@@ -552,7 +552,7 @@
       "graph_ref": "graph:skill:examples.loop/NormalizeItems",
       "role": "loop_next",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 275,
         "end_byte": 361,
         "start_line": 16,
@@ -568,7 +568,7 @@
       "graph_ref": "graph:skill:examples.loop/NormalizeItems",
       "role": "loop_exit",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 361,
         "end_byte": 407,
         "start_line": 19,
@@ -614,7 +614,7 @@
       "graph_ref": "graph:strategy:examples.loop/RunNormalization",
       "role": "next",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-004-loop.tb",
+        "source_id": "tb-v01-004-loop.tb",
         "start_byte": 829,
         "end_byte": 844,
         "start_line": 36,

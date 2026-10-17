@@ -1,0 +1,13 @@
+module incident.specialist
+
+import type Request from incident.contracts
+import type Diagnosis from incident.contracts
+
+agent Diagnose
+    description "Assess one incident and return a typed diagnosis for the requested review attempt."
+    takes attempt as Int
+    takes request as Request
+    gives Diagnosis
+    responsibility "Diagnose the supplied incident using only its explicit context."
+    callable_by strategy incident.coordinator.Resolve
+    callable_by agent incident.coordinator.Coordinator

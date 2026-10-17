@@ -78,7 +78,12 @@ export function generateHandlerContractTestFromAirTool(tool, options = {}) {
     ? normalizedTool.signature.output_type
     : null;
 
-  return `import test from "node:test";
+  return `// Admission contract checks only: these tests do not exercise business success.
+// Add domain tests that call run({ request, context }) with representative inputs
+// and assert actual outputs and effects. A single declared input is unwrapped
+// into request; multiple inputs form a named object. Never test external effects
+// against production services or treat these generated checks as business coverage.
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createToolHandler,
@@ -105,6 +110,8 @@ test("handler exposes SDK metadata without granting runtime authority", () => {
   assert.equal(TOUBA_HANDLER_GENERATED_BY.tool, "touba handler stub");
   assert.equal(typeof TOUBA_HANDLER_GENERATED_BY.version, "string");
 });
+
+test.todo("business behavior: add domain inputs, output assertions and independent effect checks; admission tests alone do not cover it");
 
 test("handler contract refuses an unexpected tool ref before business code", async () => {
   const response = await handleToolRequest(

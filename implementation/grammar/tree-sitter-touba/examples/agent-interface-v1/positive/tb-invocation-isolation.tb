@@ -1,0 +1,27 @@
+module agent.isolation
+
+type Request
+    query is Text
+
+tool Inspect
+    takes request as Request
+    gives Request
+
+tool Later
+    gives Text
+
+skill Isolated
+    takes request as Request
+    gives Request
+    uses Inspect
+    uses Later
+    do
+        Inspect
+            with request as request
+            into first
+        Later
+            into marker
+        Inspect
+            with request as request
+            into second
+        give first

@@ -172,3 +172,24 @@ test("accepts media only through canonical typed handles", () => {
 function readJson(relativePath) {
   return JSON.parse(readFileSync(join(contractsRoot.pathname, relativePath), "utf8"));
 }
+
+test("retains enum members through nested list and record input contracts", () => {
+  const contract = buildAirInputContract({
+    air: { definitions: { types: [
+      { id: "type:orders/Priority", name: "Priority", fields: [], variants: [{ name: "low" }, { name: "high" }] },
+      { id: "type:orders/Order", name: "Order", fields: [{ name: "priority", type_ref: "type:orders/Priority" }] },
+    ] } },
+    kind: "strategy",
+    definition: { signature: { inputs: [
+      { name: "orders", type_ref: "optional:list:optional:list:type:orders/Order" },
+      { name: "priority", type_ref: "type:orders/Priority" },
+    ] } },
+  });
+  assert.equal(contract.types.length, 2);
+  assert.deepEqual(contract.types.find(type => type.name === "Priority"), {
+    ref: "type:orders/Priority", name: "Priority", fields: [], enum_values: ["low", "high"],
+  });
+  assert.equal(contract.fields.every(field => field.required), true);
+  const schema = readJson("schemas/touba-project-inspection-v1.schema.json");
+  assert.deepEqual(validateObject({ ...schema.$defs.inputType, $defs: schema.$defs }, contract.types[1]), []);
+});

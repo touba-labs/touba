@@ -4,7 +4,7 @@
   "title": "touba-sandbox-run-result-v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "execution_kind", "target_ref", "status", "reason", "started_at", "completed_at", "duration_ms", "effect_policy", "result", "trace", "diagnostics"],
+  "required": ["schema_version", "run_id", "execution_kind", "target_ref", "status", "reason", "started_at", "completed_at", "duration_ms", "effect_policy", "result", "messages", "messages_truncated", "trace", "diagnostics"],
   "properties": {
     "schema_version": { "const": "touba-sandbox-run-result-v1" },
     "run_id": { "type": "string" },
@@ -17,6 +17,11 @@
     "duration_ms": { "type": "integer" },
     "effect_policy": { "enum": ["runtime_only", "allow_declared_external_effects"] },
     "result": {},
+    "messages_truncated": { "type": "boolean" },
+    "messages": { "type": "array", "maxItems": 100, "items": {
+      "type": "object", "additionalProperties": false, "required": ["interaction_ref", "text"],
+      "properties": { "interaction_ref": { "type": "string", "minLength": 1 }, "text": { "type": "string" } }
+    } },
     "trace": {
       "type": "object",
       "additionalProperties": false,

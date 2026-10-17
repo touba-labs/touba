@@ -2698,6 +2698,12 @@ function validateSourceRefs(diagnostics, label, sourcePath, artifact) {
 
 function sourceIdMatchesPath(sourceId, normalizedSourcePath) {
   const value = String(sourceId);
+  if (!path.isAbsolute(value) && !path.win32.isAbsolute(value)) {
+    const parts = value.split("/");
+    if (!parts.every(part => part && part !== "." && part !== ".." && !part.includes("\\"))) return false;
+    const expected = normalizedSourcePath.split(path.sep);
+    return parts.every((part, index) => part === expected[expected.length - parts.length + index]);
+  }
   return [
     path.resolve(value),
     path.resolve(implementationDir, value),

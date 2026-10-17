@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { airDocumentDigest } from "../../runtime/touba-runtime/src/air-identity.mjs";
 
 const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
 const implementationRoot = path.resolve(fixtureRoot, "../..");
@@ -53,7 +54,12 @@ try {
   if (process.argv.includes("--write-trace-fixture")) {
     writeFileSync(expectedTracePath, JSON.stringify(stripSourceRefs(trace), null, 2) + "\n");
   }
-  assert.deepEqual(stripSourceRefs(trace), readJson(expectedTracePath));
+  const expectedTrace = readJson(expectedTracePath);
+  // The snapshot describes event semantics. Independently recompute the full
+  // commitment from this compilation, including its portable source metadata.
+  // Never rewrite the historical snapshot or omit the commitment assertion.
+  expectedTrace.run.air_digest = airDocumentDigest(air);
+  assert.deepEqual(stripSourceRefs(trace), expectedTrace);
   assert.equal(JSON.stringify(trace).includes("Review fixture"), false);
   assert.equal(JSON.stringify(trace).includes("approved"), false);
 

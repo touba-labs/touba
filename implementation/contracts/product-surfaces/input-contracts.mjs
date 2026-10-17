@@ -57,8 +57,8 @@ function reachableInputTypes(fields, typeDefinitions) {
   const reachable = new Map();
   const visit = (typeRef) => {
     let nestedRef = typeRef;
-    while (typeof nestedRef === "string" && nestedRef.startsWith("list:")) {
-      nestedRef = nestedRef.slice("list:".length);
+    while (typeof nestedRef === "string" && /^(list|optional):/u.test(nestedRef)) {
+      nestedRef = nestedRef.slice(nestedRef.indexOf(":") + 1);
     }
     const definition = definitionsByRef.get(nestedRef);
     if (definition === undefined || reachable.has(nestedRef)) {
@@ -73,6 +73,7 @@ function reachableInputTypes(fields, typeDefinitions) {
       ref: nestedRef,
       name: nonEmptyString(definition.name) ?? nestedRef,
       fields: typeFields,
+      ...(definition.variants ? { enum_values: definition.variants.map(variant => variant.name) } : {}),
     });
     for (const field of typeFields) {
       visit(field.type_ref);

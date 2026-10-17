@@ -6,7 +6,7 @@
     "id": "module:examples.branch",
     "name": "examples.branch",
     "source_ref": {
-      "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+      "source_id": "tb-v01-003-branch.tb",
       "start_byte": 0,
       "end_byte": 22,
       "start_line": 0,
@@ -25,7 +25,7 @@
             "name": "body",
             "type_ref": "builtin:Text",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+              "source_id": "tb-v01-003-branch.tb",
               "start_byte": 47,
               "end_byte": 59,
               "start_line": 3,
@@ -36,7 +36,7 @@
           }
         ],
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "source_id": "tb-v01-003-branch.tb",
           "start_byte": 24,
           "end_byte": 61,
           "start_line": 2,
@@ -56,7 +56,7 @@
         },
         "body_graph_ref": "graph:function:examples.branch/IsAcceptable",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "source_id": "tb-v01-003-branch.tb",
           "start_byte": 61,
           "end_byte": 127,
           "start_line": 5,
@@ -77,7 +77,7 @@
               "name": "accepted",
               "type_ref": "builtin:Boolean",
               "source_ref": {
-                "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+                "source_id": "tb-v01-003-branch.tb",
                 "start_byte": 155,
                 "end_byte": 174,
                 "start_line": 11,
@@ -96,7 +96,7 @@
           {
             "target_ref": "function:examples.branch/IsAcceptable",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+              "source_id": "tb-v01-003-branch.tb",
               "start_byte": 203,
               "end_byte": 220,
               "start_line": 13,
@@ -108,9 +108,9 @@
         ],
         "flow_graph_ref": "graph:skill:examples.branch/ReviewDraft",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+          "source_id": "tb-v01-003-branch.tb",
           "start_byte": 127,
-          "end_byte": 331,
+          "end_byte": 361,
           "start_line": 10,
           "start_column": 0,
           "end_line": 21,
@@ -130,9 +130,9 @@
           {
             "target_ref": "skill:examples.branch/ReviewDraft",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-              "start_byte": 452,
-              "end_byte": 468,
+              "source_id": "tb-v01-003-branch.tb",
+              "start_byte": 482,
+              "end_byte": 498,
               "start_line": 23,
               "start_column": 4,
               "end_line": 23,
@@ -145,9 +145,9 @@
             "caller_ref": "strategy:examples.branch/RunReview",
             "caller_kind": "strategy",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-              "start_byte": 473,
-              "end_byte": 503,
+              "source_id": "tb-v01-003-branch.tb",
+              "start_byte": 503,
+              "end_byte": 533,
               "start_line": 24,
               "start_column": 4,
               "end_line": 24,
@@ -156,9 +156,9 @@
           }
         ],
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-          "start_byte": 331,
-          "end_byte": 505,
+          "source_id": "tb-v01-003-branch.tb",
+          "start_byte": 361,
+          "end_byte": 535,
           "start_line": 21,
           "start_column": 0,
           "end_line": 26,
@@ -177,9 +177,9 @@
           {
             "target_ref": "agent:examples.branch/Reviewer",
             "source_ref": {
-              "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-              "start_byte": 558,
-              "end_byte": 571,
+              "source_id": "tb-v01-003-branch.tb",
+              "start_byte": 588,
+              "end_byte": 601,
               "start_line": 28,
               "start_column": 4,
               "end_line": 28,
@@ -194,9 +194,9 @@
               "name": "accepted",
               "type_ref": "builtin:Boolean",
               "source_ref": {
-                "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-                "start_byte": 534,
-                "end_byte": 553,
+                "source_id": "tb-v01-003-branch.tb",
+                "start_byte": 564,
+                "end_byte": 583,
                 "start_line": 27,
                 "start_column": 10,
                 "end_line": 27,
@@ -207,9 +207,9 @@
           "output_type": null
         },
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-          "start_byte": 505,
-          "end_byte": 623,
+          "source_id": "tb-v01-003-branch.tb",
+          "start_byte": 535,
+          "end_byte": 683,
           "start_line": 26,
           "start_column": 0,
           "end_line": 32,
@@ -234,7 +234,7 @@
             "trace:graph:function:examples.branch/IsAcceptable:3"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "source_id": "tb-v01-003-branch.tb",
             "start_byte": 116,
             "end_byte": 125,
             "start_line": 8,
@@ -246,7 +246,7 @@
       ],
       "edges": [],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "source_id": "tb-v01-003-branch.tb",
         "start_byte": 105,
         "end_byte": 127,
         "start_line": 7,
@@ -268,7 +268,7 @@
             "trace:graph:skill:examples.branch/ReviewDraft:3"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "source_id": "tb-v01-003-branch.tb",
             "start_byte": 236,
             "end_byte": 248,
             "start_line": 15,
@@ -285,9 +285,9 @@
             "trace:graph:skill:examples.branch/ReviewDraft:4"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "source_id": "tb-v01-003-branch.tb",
             "start_byte": 257,
-            "end_byte": 331,
+            "end_byte": 361,
             "start_line": 16,
             "start_column": 8,
             "end_line": 21,
@@ -298,19 +298,19 @@
           "id": "node:graph:skill:examples.branch/ReviewDraft:3",
           "kind": "give",
           "arguments": [
-            "symbol:AcceptedDraft"
+            "expr:expression:graph:skill:examples.branch/ReviewDraft:1"
           ],
           "trace_point_refs": [
             "trace:graph:skill:examples.branch/ReviewDraft:5"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "source_id": "tb-v01-003-branch.tb",
             "start_byte": 281,
-            "end_byte": 299,
+            "end_byte": 329,
             "start_line": 17,
             "start_column": 12,
             "end_line": 17,
-            "end_column": 30
+            "end_column": 60
           }
         },
         {
@@ -320,9 +320,9 @@
             "trace:graph:skill:examples.branch/ReviewDraft:6"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-            "start_byte": 325,
-            "end_byte": 329,
+            "source_id": "tb-v01-003-branch.tb",
+            "start_byte": 355,
+            "end_byte": 359,
             "start_line": 19,
             "start_column": 12,
             "end_line": 19,
@@ -336,13 +336,13 @@
           "to_node_id": "node:graph:skill:examples.branch/ReviewDraft:3",
           "role": "true",
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "source_id": "tb-v01-003-branch.tb",
             "start_byte": 281,
-            "end_byte": 299,
+            "end_byte": 329,
             "start_line": 17,
             "start_column": 12,
             "end_line": 17,
-            "end_column": 30
+            "end_column": 60
           }
         },
         {
@@ -350,9 +350,9 @@
           "to_node_id": "node:graph:skill:examples.branch/ReviewDraft:4",
           "role": "false",
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-            "start_byte": 325,
-            "end_byte": 329,
+            "source_id": "tb-v01-003-branch.tb",
+            "start_byte": 355,
+            "end_byte": 359,
             "start_line": 19,
             "start_column": 12,
             "end_line": 19,
@@ -364,9 +364,9 @@
           "to_node_id": "node:graph:skill:examples.branch/ReviewDraft:2",
           "role": "next",
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+            "source_id": "tb-v01-003-branch.tb",
             "start_byte": 257,
-            "end_byte": 331,
+            "end_byte": 361,
             "start_line": 16,
             "start_column": 8,
             "end_line": 21,
@@ -374,10 +374,32 @@
           }
         }
       ],
+      "expressions": [
+        {
+          "id": "expression:graph:skill:examples.branch/ReviewDraft:1",
+          "kind": "construct_record",
+          "record_fields": [
+            {
+              "name": "body",
+              "value_ref": "literal:string:accepted"
+            }
+          ],
+          "type_ref": "type:examples.branch/AcceptedDraft",
+          "source_ref": {
+            "source_id": "tb-v01-003-branch.tb",
+            "start_byte": 286,
+            "end_byte": 329,
+            "start_line": 17,
+            "start_column": 17,
+            "end_line": 17,
+            "end_column": 60
+          }
+        }
+      ],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "source_id": "tb-v01-003-branch.tb",
         "start_byte": 225,
-        "end_byte": 331,
+        "end_byte": 361,
         "start_line": 14,
         "start_column": 4,
         "end_line": 21,
@@ -397,9 +419,9 @@
             "trace:graph:strategy:examples.branch/RunReview:3"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-            "start_byte": 587,
-            "end_byte": 595,
+            "source_id": "tb-v01-003-branch.tb",
+            "start_byte": 617,
+            "end_byte": 625,
             "start_line": 30,
             "start_column": 8,
             "end_line": 30,
@@ -410,19 +432,19 @@
           "id": "node:graph:strategy:examples.branch/RunReview:2",
           "kind": "give",
           "arguments": [
-            "symbol:AcceptedDraft"
+            "expr:expression:graph:strategy:examples.branch/RunReview:1"
           ],
           "trace_point_refs": [
             "trace:graph:strategy:examples.branch/RunReview:4"
           ],
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-            "start_byte": 604,
-            "end_byte": 622,
+            "source_id": "tb-v01-003-branch.tb",
+            "start_byte": 634,
+            "end_byte": 682,
             "start_line": 31,
             "start_column": 8,
             "end_line": 31,
-            "end_column": 26
+            "end_column": 56
           }
         }
       ],
@@ -432,20 +454,42 @@
           "to_node_id": "node:graph:strategy:examples.branch/RunReview:2",
           "role": "next",
           "source_ref": {
-            "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-            "start_byte": 604,
-            "end_byte": 622,
+            "source_id": "tb-v01-003-branch.tb",
+            "start_byte": 634,
+            "end_byte": 682,
             "start_line": 31,
             "start_column": 8,
             "end_line": 31,
-            "end_column": 26
+            "end_column": 56
+          }
+        }
+      ],
+      "expressions": [
+        {
+          "id": "expression:graph:strategy:examples.branch/RunReview:1",
+          "kind": "construct_record",
+          "record_fields": [
+            {
+              "name": "body",
+              "value_ref": "literal:string:accepted"
+            }
+          ],
+          "type_ref": "type:examples.branch/AcceptedDraft",
+          "source_ref": {
+            "source_id": "tb-v01-003-branch.tb",
+            "start_byte": 639,
+            "end_byte": 682,
+            "start_line": 31,
+            "start_column": 13,
+            "end_line": 31,
+            "end_column": 56
           }
         }
       ],
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 576,
-        "end_byte": 623,
+        "source_id": "tb-v01-003-branch.tb",
+        "start_byte": 606,
+        "end_byte": 683,
         "start_line": 29,
         "start_column": 4,
         "end_line": 32,
@@ -470,7 +514,7 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:function:examples.branch/IsAcceptable:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "source_id": "tb-v01-003-branch.tb",
         "start_byte": 116,
         "end_byte": 125,
         "start_line": 8,
@@ -495,7 +539,7 @@
       "anchor_kind": "call",
       "node_id": "node:graph:skill:examples.branch/ReviewDraft:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "source_id": "tb-v01-003-branch.tb",
         "start_byte": 236,
         "end_byte": 248,
         "start_line": 15,
@@ -510,9 +554,9 @@
       "anchor_kind": "branch",
       "node_id": "node:graph:skill:examples.branch/ReviewDraft:2",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "source_id": "tb-v01-003-branch.tb",
         "start_byte": 257,
-        "end_byte": 331,
+        "end_byte": 361,
         "start_line": 16,
         "start_column": 8,
         "end_line": 21,
@@ -525,13 +569,13 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:skill:examples.branch/ReviewDraft:3",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
+        "source_id": "tb-v01-003-branch.tb",
         "start_byte": 281,
-        "end_byte": 299,
+        "end_byte": 329,
         "start_line": 17,
         "start_column": 12,
         "end_line": 17,
-        "end_column": 30
+        "end_column": 60
       }
     },
     {
@@ -540,9 +584,9 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:skill:examples.branch/ReviewDraft:4",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 325,
-        "end_byte": 329,
+        "source_id": "tb-v01-003-branch.tb",
+        "start_byte": 355,
+        "end_byte": 359,
         "start_line": 19,
         "start_column": 12,
         "end_line": 19,
@@ -565,9 +609,9 @@
       "anchor_kind": "call",
       "node_id": "node:graph:strategy:examples.branch/RunReview:1",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 587,
-        "end_byte": 595,
+        "source_id": "tb-v01-003-branch.tb",
+        "start_byte": 617,
+        "end_byte": 625,
         "start_line": 30,
         "start_column": 8,
         "end_line": 30,
@@ -580,13 +624,13 @@
       "anchor_kind": "completion",
       "node_id": "node:graph:strategy:examples.branch/RunReview:2",
       "source_ref": {
-        "source_id": "grammar/tree-sitter-touba/examples/tb-v01-003-branch.tb",
-        "start_byte": 604,
-        "end_byte": 622,
+        "source_id": "tb-v01-003-branch.tb",
+        "start_byte": 634,
+        "end_byte": 682,
         "start_line": 31,
         "start_column": 8,
         "end_line": 31,
-        "end_column": 26
+        "end_column": 56
       }
     }
   ]

@@ -43,7 +43,7 @@ const REDACTION_POLICIES = new Set([
 const ARTIFACT_DIGEST_FIELDS = {
   trace: "trace_digest",
   air: "air_digest",
-  source: "source_digest",
+  sources: "sources_digest",
   manifest: "manifest_digest",
 };
 
@@ -95,7 +95,19 @@ export function loadTraceAuditArtifacts(paths, options = {}) {
     artifacts.air = readJsonArtifact(paths.air, "air", fs);
   }
   if (paths.source) {
-    artifacts.source = readTextArtifact(paths.source, "source", fs);
+    const pathsList = Array.isArray(paths.source) ? paths.source : [paths.source];
+    if (new Set(pathsList.map(value => path.resolve(value))).size !== pathsList.length) {
+      throw new Error("SourceArtifactDuplicate: provide each source file once");
+    }
+    const sourceIds = [...new Set(collectSourceRefs(artifacts).map(item => item.sourceRef.source_id))];
+    const items = pathsList.map(file => {
+      const artifact = readTextArtifact(file, "source", fs);
+      const identities = sourceIds.filter(id => sourceIdMatchesPath(id, path.resolve(file)));
+      if (identities.length > 1) throw new Error("SourceRefAmbiguous: one source file matches multiple source identities");
+      return { ...artifact, source_id: identities[0] ?? path.basename(file) };
+    }).sort((a, b) => a.source_id < b.source_id ? -1 : a.source_id > b.source_id ? 1 : 0);
+    artifacts.sources = { items, digest: crypto.createHash("sha256")
+      .update(JSON.stringify(items.map(item => ({ source_id: item.source_id, digest: item.digest })))).digest("hex") };
   }
   if (paths.manifest) {
     artifacts.manifest = readJsonArtifact(paths.manifest, "manifest", fs);
@@ -167,7 +179,7 @@ export function validateTraceAuditArtifacts(artifacts, options = {}) {
     checked: {
       trace_schema: Boolean(artifacts.trace),
       trace_air_coherence: Boolean(artifacts.trace && artifacts.air && artifacts.trace.json.run?.admission !== "refused"),
-      source_refs: Boolean(artifacts.source && (artifacts.trace || artifacts.air)),
+      source_refs: Boolean(artifacts.sources && (artifacts.trace || artifacts.air)),
       digests: true,
       redaction: true,
     },
@@ -196,11 +208,8 @@ export function createTraceAuditExport(artifacts, validation) {
   if (artifacts.air) {
     exportDocument.artifacts.air = artifacts.air.json;
   }
-  if (artifacts.source) {
-    exportDocument.artifacts.source = {
-      source_id: artifacts.source.path,
-      text: artifacts.source.text,
-    };
+  if (artifacts.sources) {
+    exportDocument.artifacts.sources = artifacts.sources.items.map(({ source_id, text }) => ({ source_id, text }));
   }
   if (artifacts.manifest) {
     exportDocument.artifacts.manifest = artifacts.manifest.json;
@@ -510,6 +519,9 @@ function validateAuditManifestShape(manifest, diagnostics) {
     );
   }
   for (const [field, digest] of Object.entries(manifest.artifacts || {})) {
+    if (!Object.values(ARTIFACT_DIGEST_FIELDS).includes(field)) {
+      diagnostics.push(error("TraceAuditManifestInvalid", "unknown artifact digest field", "audit_manifest", field));
+    }
     validateDigestShape(field, digest, diagnostics);
   }
   scanUnsupportedClaims(manifest, "audit_manifest", diagnostics);
@@ -659,20 +671,35 @@ function validateTraceSequence(trace, diagnostics) {
 }
 
 function validateSourceRefs(artifacts, diagnostics) {
-  if (!artifacts.source) {
+  if (!artifacts.sources) {
     return;
   }
-  const expectedSourceId = path.resolve(artifacts.source.path);
+  const used = new Set();
   for (const { sourceRef, artifact } of collectSourceRefs(artifacts)) {
-    if (!sourceIdMatchesPath(sourceRef.source_id, expectedSourceId)) {
-      diagnostics.push(error("SourceRefMismatch", "source_ref does not match explicit source artifact", artifact, "source_ref"));
+    const matches = artifacts.sources.items.filter(source => sourceIdMatchesPath(sourceRef.source_id, path.resolve(source.path)));
+    if (matches.length !== 1) {
+      diagnostics.push(error(matches.length === 0 ? "SourceRefMismatch" : "SourceRefAmbiguous",
+        "source_ref must match exactly one explicit source artifact", artifact, "source_ref"));
       return;
     }
+    used.add(matches[0]);
+  }
+  if (used.size !== artifacts.sources.items.length) {
+    diagnostics.push(error("SourceArtifactUnused", "an explicit source is not referenced by the trace or AIR", "sources"));
   }
 }
 
 function sourceIdMatchesPath(sourceId, expectedSourceId) {
   const value = String(sourceId);
+  // The explicit source remains the authority. A portable identity is a
+  // component-wise suffix; all declared directories are checked, and traversal
+  // components are never accepted as portable identities.
+  if (!path.isAbsolute(value) && !path.win32.isAbsolute(value)) {
+    const parts = value.split("/");
+    if (!parts.every(part => part && part !== "." && part !== ".." && !part.includes("\\"))) return false;
+    const expected = expectedSourceId.split(path.sep);
+    return parts.every((part, i) => part === expected[expected.length - parts.length + i]);
+  }
   return [
     path.resolve(value),
     path.resolve(implementationDir, value),
@@ -686,8 +713,8 @@ function validateRedaction(artifacts, auditManifest, diagnostics) {
       scanSensitiveContent(artifacts[artifactName].json, artifactName, diagnostics);
     }
   }
-  if (artifacts.source) {
-    scanSensitiveContent(artifacts.source.text, "source", diagnostics);
+  for (const source of artifacts.sources?.items ?? []) {
+    scanSensitiveContent(source.text, "source", diagnostics);
   }
 }
 
@@ -910,7 +937,7 @@ function parseArgs(argv) {
     } else if (arg === "--air") {
       options.air = next();
     } else if (arg === "--source") {
-      options.source = next();
+      (options.source ??= []).push(next());
     } else if (arg === "--manifest") {
       options.manifest = next();
     } else if (arg === "--audit-manifest") {
@@ -937,7 +964,7 @@ function parseArgs(argv) {
 }
 
 function renderUsage() {
-  return `Usage: touba-audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--timeline-out <timeline.trace-timeline.json>] [--output text|json]\n`;
+  return `Usage: touba-audit --trace <trace.json> [--air <air.json>] [--source <file.tb> ...] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--timeline-out <timeline.trace-timeline.json>] [--output text|json]\n`;
 }
 
 function main(argv) {

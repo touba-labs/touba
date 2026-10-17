@@ -1,0 +1,8 @@
+module incident.contracts
+
+type Request
+    query is Text
+
+type Diagnosis
+    summary is Text
+    attempt is Int

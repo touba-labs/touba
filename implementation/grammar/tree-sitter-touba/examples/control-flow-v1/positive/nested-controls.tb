@@ -1,0 +1,88 @@
+module control.nested
+
+tool Write
+    takes value as Text
+    gives Text
+
+function Classify
+    takes x as Int
+    gives Text
+    do
+        if x < 0
+            bind label as Text = "negative"
+            give label
+        else if x == 0
+            bind label as Text = "zero"
+            give label
+        else if x < 10
+            bind label as Text = "small"
+            give label
+        else
+            bind label as Text = "large"
+            give label
+
+function First
+    takes rows as List of List of Int
+    gives Int
+    do
+        for row in rows
+            for item in row
+                if item > 0
+                    give item
+        give 0
+
+skill Visit
+    takes rows as List of List of Int
+    gives Text
+    uses Write
+    do
+        for row in rows
+            for item in row
+                if item > 0
+                    Write
+                        with value as text(item)
+                        into stored
+                else if item == 0
+                    Write
+                        with value as "zero"
+                        into stored
+        give "visited"
+
+strategy Twice
+    takes rows as List of List of Int
+    gives Text
+    uses Visit
+    do
+        Visit
+            with rows as rows
+            into first
+        Visit
+            with rows as rows
+            into second
+        give second
+
+strategy Review
+    takes rows as List of List of Int
+    gives Text
+    uses Write
+    do
+        for row in rows
+            for item in row
+                human.approve
+                    with context as item
+                    into approval
+                Write
+                    with value as text(item)
+                    into stored
+        give "reviewed"
+
+function Bounded
+    takes ready as Boolean
+    takes items as List of Int
+    gives Int
+    do
+        while ready
+            for item in items
+                if item > 0
+                    give item
+        give 0

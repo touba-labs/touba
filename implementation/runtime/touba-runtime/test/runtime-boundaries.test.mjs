@@ -210,14 +210,18 @@ test("normalizes and validates human approval checkpoints at a typed boundary", 
     module_ref: airDocument.module.id,
     entry_ref: "skill:test/Noop",
     air_digest: airDocumentDigest(airDocument),
-    scope: "entry_graph",
+    scope: "graph_stack",
     approval_ref: "approval:test/review",
   };
 
   assert.equal(normalizeOptionalHumanApprovalCheckpoint(null), null);
-  assert.equal(normalizeOptionalHumanApprovalCheckpoint(checkpoint), checkpoint);
+  const normalized = normalizeOptionalHumanApprovalCheckpoint(checkpoint);
+  assert.deepEqual(normalized, checkpoint);
+  assert.notEqual(normalized, checkpoint, "resuming must not mutate the caller's saved evidence");
+  normalized.approval_ref = "approval:changed/by-host";
+  assert.equal(checkpoint.approval_ref, "approval:test/review");
   validateHumanApprovalCheckpointCompatibility(airDocument, "skill:test/Noop", checkpoint, {
-    expectedScope: "entry_graph",
+    expectedScope: "graph_stack",
   });
 
   assert.throws(
@@ -229,7 +233,7 @@ test("normalizes and validates human approval checkpoints at a typed boundary", 
       airDocument,
       "skill:test/Other",
       checkpoint,
-      { expectedScope: "entry_graph" },
+      { expectedScope: "graph_stack" },
     ),
     (error) =>
       error instanceof ToubaRuntimeError
@@ -618,7 +622,7 @@ test("fuzzes process handler stdout protocol without leaking resolved secrets", 
       name: "non-zero stderr containing secret",
       script: "process.stderr.write(process.env.SEARCH_API_KEY); process.exit(2);",
       expectedCode: "ToolHandlerNonZeroExit",
-      expectedMessage: /\[redacted-secret\]/,
+      expectedMessage: /local development test/,
     },
   ];
 
@@ -868,7 +872,7 @@ function payloadConstraintDocument() {
         },
       }),
     ],
-    skills: [skill("SearchFlow", "graph:skill:test/SearchFlow", ["tool:test/Search"], [parameter("request", "type:test/SearchRequest")])],
+    skills: [skill("SearchFlow", "graph:skill:test/SearchFlow", ["tool:test/Search"], [parameter("request", "type:test/SearchRequest")], "type:test/SearchResult")],
     graphs: [
       graph("graph:skill:test/SearchFlow", "skill:test/SearchFlow", [
         node("n1", "call_tool", {
@@ -994,13 +998,13 @@ function tool(name, fields = {}) {
   };
 }
 
-function skill(name, flowGraphRef, uses = [], inputs = []) {
+function skill(name, flowGraphRef, uses = [], inputs = [], outputType = "builtin:Text") {
   return {
     id: `skill:test/${name}`,
     name,
     signature: {
       inputs,
-      output_type: "builtin:Text",
+      output_type: outputType,
     },
     uses,
     flow_graph_ref: flowGraphRef,

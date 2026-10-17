@@ -10,6 +10,8 @@
   "duration_ms": 1000,
   "effect_policy": "runtime_only",
   "result": "ready",
+  "messages": [{ "interaction_ref": "interaction:billing/review", "text": "Review completed." }],
+  "messages_truncated": false,
   "trace": {
     "run_id": "sandbox_20260627_001",
     "entry_ref": "strategy:billing/RunInvoiceReview",

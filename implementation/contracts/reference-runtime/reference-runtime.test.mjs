@@ -56,3 +56,28 @@ function effectAir() {
   air.execution_graphs[0].edges = [{ from_node_id: "call", to_node_id: "give", role: "next", source_ref: air.module.source_ref }];
   return air;
 }
+
+test("refuses optional signatures outside the reference profile before effects", async () => {
+  const air = effectAir();
+  air.definitions.skills[0].signature = { inputs: [{ name: "contact", type_ref: "optional:builtin:Text" }] };
+  let invoked = false;
+  const result = await executeReferenceAir(air, {
+    entryRef: "skill:conformance/Run",
+    simulatedAdapters: { "tool:conformance/Lookup": { simulated: true, invoke: () => { invoked = true; } } },
+  });
+  assert.equal(result.failure_code, "ReferenceOptionalOutsideProfile");
+  assert.equal(invoked, false);
+});
+
+test("refuses enum programs outside the reference profile before simulated effects", async () => {
+  const air = effectAir();
+  air.definitions.types.push({ id: "type:conformance/Priority", name: "Priority", fields: [],
+    variants: [{ name: "high", source_ref: air.module.source_ref }], source_ref: air.module.source_ref });
+  let invoked = false;
+  const result = await executeReferenceAir(air, {
+    entryRef: "skill:conformance/Run",
+    simulatedAdapters: { "tool:conformance/Lookup": { simulated: true, invoke: () => { invoked = true; } } },
+  });
+  assert.equal(result.failure_code, "ReferenceEnumOutsideProfile");
+  assert.equal(invoked, false);
+});

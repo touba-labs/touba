@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readStoreFixture, writeStoreFixture } from "./store-fixtures.mjs";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +38,7 @@ test("durable resume requires the explicit current request contract before store
 
 test("execution store refuses obsolete human and execution envelopes without migration", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-checkpoint-obsolete-"));
-  const path = join(root, "sandbox-checkpoints.json");
+  const path = join(root, "sandbox-checkpoints.sqlite");
   try {
     for (const schema_version of ["touba-sandbox-checkpoints-v0.1", "touba-sandbox-checkpoints-v0.2"]) {
       const bytes = JSON.stringify({ schema_version, records: [{ record_kind: "execution", status: "completed" }] });
@@ -50,7 +51,7 @@ test("execution store refuses obsolete human and execution envelopes without mig
 
 test("execution checkpoint observer replaces one atomic record and recovery only marks it interrupted", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-execution-checkpoint-"));
-  const path = join(root, "sandbox-checkpoints.json");
+  const path = join(root, "sandbox-checkpoints.sqlite");
   const operationId = "operation:host-test";
   const runId = "run:host-test";
   try {
@@ -107,16 +108,16 @@ test("execution checkpoint observer replaces one atomic record and recovery only
     assert.equal(recovered[0].status, "interrupted");
     assert.equal(recovered[0].checkpoint.revision, 2);
     assert.equal(recoverInterruptedSandboxExecutions({ sandboxCheckpointsPath: path }).length, 0);
-    const durable = JSON.parse(readFileSync(path, "utf8"));
+    const durable = readStoreFixture(path);
     const summaryTampered = structuredClone(durable);
     summaryTampered.records[0].trace_prefix.events[1].summary = "semantically altered";
-    writeFileSync(path, JSON.stringify(summaryTampered), "utf8");
+    writeStoreFixture(path, summaryTampered);
     assert.throws(() => loadSandboxCheckpointStore(path), {
       code: "ToubaServeSandboxCheckpointStoreInvalid",
     });
     const tampered = structuredClone(durable);
     tampered.records[0].trace_prefix.events[1].index = 7;
-    writeFileSync(path, JSON.stringify(tampered), "utf8");
+    writeStoreFixture(path, tampered);
     assert.throws(() => loadSandboxCheckpointStore(path), {
       code: "ToubaServeSandboxCheckpointStoreInvalid",
     });
@@ -127,7 +128,7 @@ test("execution checkpoint observer replaces one atomic record and recovery only
 
 test("execution checkpoint persistence refuses resealed monotone state regressions without replacing the store", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-execution-checkpoint-monotone-"));
-  const path = join(root, "sandbox-checkpoints.json");
+  const path = join(root, "sandbox-checkpoints.sqlite");
   const operationId = "operation:host-monotone";
   const runId = "run:host-monotone";
   try {
@@ -245,7 +246,7 @@ test("active elapsed time can replace only a dispatch reservation from the curre
         updatedAt: "2026-09-16T00:00:01.000Z",
       });
       if (claimedBeforeCrash) {
-        const store = JSON.parse(readFileSync(path, "utf8"));
+        const store = readStoreFixture(path);
         store.records[0].status = "resume_claimed";
         store.records[0].resume_claim = {
           resume_request_id: "resume:active-time:precrash",
@@ -254,7 +255,7 @@ test("active elapsed time can replace only a dispatch reservation from the curre
           claimed_at: "2026-09-16T00:00:02.000Z",
           status: "claimed",
         };
-        writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+        writeStoreFixture(path, store);
       }
       const secondTrace = trace(runId, [
         { kind: "run_started", sequence_index: 0 },
@@ -319,7 +320,7 @@ test("active elapsed time can replace only a dispatch reservation from the curre
       trace: initialTrace,
       updatedAt: "2026-09-16T00:00:01.000Z",
     });
-    const claimedStore = JSON.parse(readFileSync(path, "utf8"));
+    const claimedStore = readStoreFixture(path);
     claimedStore.records[0].status = "resume_claimed";
     claimedStore.records[0].resume_claim = {
       resume_request_id: "resume:active-time:current",
@@ -328,7 +329,7 @@ test("active elapsed time can replace only a dispatch reservation from the curre
       claimed_at: "2026-09-16T00:00:02.000Z",
       status: "claimed",
     };
-    writeFileSync(path, `${JSON.stringify(claimedStore, null, 2)}\n`, "utf8");
+    writeStoreFixture(path, claimedStore);
     const dispatchedTrace = trace(runId, [
       { kind: "run_started", sequence_index: 0 },
       { kind: "tool_call_started", sequence_index: 1 },
@@ -392,7 +393,7 @@ test("active elapsed time can replace only a dispatch reservation from the curre
 
 test("canonical checkpoint store refuses unknown record fields", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-checkpoint-strict-"));
-  const path = join(root, "sandbox-checkpoints.json");
+  const path = join(root, "sandbox-checkpoints.sqlite");
   try {
     writeFileSync(path, JSON.stringify({
       schema_version: "touba-sandbox-checkpoints-v1",
@@ -423,7 +424,7 @@ test("canonical checkpoint store refuses unknown record fields", () => {
 
 test("invalid checkpoint JSON reports only a structural error without leaking source content", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-checkpoint-invalid-json-"));
-  const path = join(root, "sandbox-checkpoints.json");
+  const path = join(root, "sandbox-checkpoints.sqlite");
   const secret = "ToubaSecretValueMustNotLeak";
   const rawPrompt = "raw prompt content must not leak";
   try {
@@ -436,7 +437,7 @@ test("invalid checkpoint JSON reports only a structural error without leaking so
       () => loadSandboxCheckpointStore(path),
       (error) => {
         assert.equal(error.code, "ToubaServeSandboxCheckpointStoreInvalid");
-        assert.equal(error.message, "sandbox checkpoint store is not valid JSON");
+        assert.equal(error.message, "stored state is not the current indexed format; preserve it and use its original build before upgrading");
         assert.equal(error.message.includes(secret), false);
         assert.equal(error.message.includes(rawPrompt), false);
         return true;
@@ -449,8 +450,8 @@ test("invalid checkpoint JSON reports only a structural error without leaking so
 
 test("restart preserves a pre-crash cancellation and refuses durable resurrection", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-cancelled-resume-"));
-  const sessionsPath = join(root, ".touba", "interaction-sessions.json");
-  const checkpointsPath = join(root, ".touba", "sandbox-checkpoints.json");
+  const sessionsPath = join(root, ".touba", "interaction-sessions.sqlite");
+  const checkpointsPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
   let service;
   try {
     const session = createInteractionSession({

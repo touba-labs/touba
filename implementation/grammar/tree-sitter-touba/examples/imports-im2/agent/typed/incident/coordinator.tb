@@ -1,0 +1,38 @@
+module incident.coordinator
+
+import type Request from incident.contracts
+import type Diagnosis from incident.contracts
+import agent Diagnose from incident.specialist
+
+strategy Resolve
+    description "Run two explicit diagnosis attempts for an incident."
+    takes request as Request
+    gives Diagnosis
+    uses Diagnose
+    do
+        Diagnose
+            with request as request
+            with attempt as 1
+            into first
+        Diagnose
+            with request as request
+            with attempt as 2
+            into revised
+        give revised
+
+agent Coordinator
+    takes request as Request
+    gives Diagnosis
+    responsibility "Coordinate authorized incident diagnosis and return the final review."
+    uses Diagnose
+    callable_by strategy RunCoordinated
+
+strategy RunCoordinated
+    takes request as Request
+    gives Diagnosis
+    uses Coordinator
+    do
+        Coordinator
+            with request as request
+            into review
+        give review

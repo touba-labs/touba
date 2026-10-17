@@ -4,7 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
-    "air_digest": "sha256:957e10cd818842e94f5bdf38ac63cab231bced32e291f4075be0df2b3f50108a",
+    "air_digest": "sha256:072fe9edb144d192bc7322cd61a08dbd1be6bea90d6360bed10edb4b9b3a7fe1",
     "module_ref": "module:examples.a1_branch_binding",
     "entry_ref": "skill:examples.a1_branch_binding/BuildWhenReady"
   },
@@ -39,7 +39,7 @@
         "owner_ref": "skill:examples.a1_branch_binding/BuildWhenReady",
         "node_id": "node:graph:skill:examples.a1_branch_binding/BuildWhenReady:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p04-branch-on-bound-value.tb",
+          "source_id": "tb-a1-p04-branch-on-bound-value.tb",
           "start_byte": 403,
           "end_byte": 483,
           "start_line": 24,
@@ -65,7 +65,7 @@
         "owner_ref": "skill:examples.a1_branch_binding/BuildWhenReady",
         "node_id": "node:graph:skill:examples.a1_branch_binding/BuildWhenReady:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p04-branch-on-bound-value.tb",
+          "source_id": "tb-a1-p04-branch-on-bound-value.tb",
           "start_byte": 403,
           "end_byte": 483,
           "start_line": 24,
@@ -90,7 +90,7 @@
         "owner_ref": "skill:examples.a1_branch_binding/BuildWhenReady",
         "node_id": "node:graph:skill:examples.a1_branch_binding/BuildWhenReady:2",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p04-branch-on-bound-value.tb",
+          "source_id": "tb-a1-p04-branch-on-bound-value.tb",
           "start_byte": 483,
           "end_byte": 556,
           "start_line": 27,
@@ -140,7 +140,7 @@
         "owner_ref": "skill:examples.a1_branch_binding/BuildWhenReady",
         "node_id": "node:graph:skill:examples.a1_branch_binding/BuildWhenReady:2",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p04-branch-on-bound-value.tb",
+          "source_id": "tb-a1-p04-branch-on-bound-value.tb",
           "start_byte": 483,
           "end_byte": 556,
           "start_line": 27,
@@ -165,7 +165,7 @@
         "owner_ref": "skill:examples.a1_branch_binding/BuildWhenReady",
         "node_id": "node:graph:skill:examples.a1_branch_binding/BuildWhenReady:3",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p04-branch-on-bound-value.tb",
+          "source_id": "tb-a1-p04-branch-on-bound-value.tb",
           "start_byte": 556,
           "end_byte": 619,
           "start_line": 30,

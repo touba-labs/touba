@@ -1,0 +1,23 @@
+module incident.workflow
+
+import type Request from incident.contracts
+import type Diagnosis from incident.contracts
+import strategy Resolve from incident.coordinator
+
+limits run
+    max_steps as 100
+    max_agent_invocations as 4
+    max_provider_calls as 4
+
+strategy Run
+    takes request as Request
+    gives Diagnosis
+    uses Resolve
+    do
+        Resolve
+            with request as request
+            into first
+        Resolve
+            with request as request
+            into second
+        give second

@@ -25,7 +25,10 @@ export function generateSupplyChainLock(options) {
   const packageRoot = path.resolve(root, options.packageRoot ?? ".");
   const packagePath = path.join(packageRoot, "package.json");
   const artifacts = loadSupplyChainArtifacts(options);
-  if (artifacts.air.json.definitions?.tools?.length && !artifacts.manifest) throw new Error("AIR tools require --manifest");
+  const additionalAir = (options.additionalAir ?? []).map(air => loadSupplyChainArtifacts({ air }).air);
+  if ([artifacts.air, ...additionalAir].some(artifact => artifact.json.definitions?.tools?.length) && !artifacts.manifest) {
+    throw new Error("AIR tools require --manifest");
+  }
   const bindings = artifacts.manifest?.json.bindings ?? {};
   const hasHandlers = Object.keys(bindings).length > 0;
   if (hasHandlers) relativeFile(root, packagePath);
@@ -46,6 +49,7 @@ export function generateSupplyChainLock(options) {
     provenance: { prepared_by: { kind: "tool", id: "touba:supply-chain-generate" }, prepared_at: timestamp, source: { kind: "workspace", ref: "." } },
     review: { status: "pending" },
     air: record(artifacts.air.path),
+    ...(additionalAir.length ? { additional_air: additionalAir.map(artifact => record(artifact.path)) } : {}),
     ...(artifacts.manifest ? { manifest: record(artifacts.manifest.path) } : {}),
     handlers: [],
   };
@@ -84,18 +88,19 @@ export function generateSupplyChainLock(options) {
 }
 
 export function main(argv) {
-  const options = { files: [] };
+  const options = { files: [], additionalAir: [] };
   const keys = { "--air": "air", "--manifest": "manifest", "--out": "out", "--package-root": "packageRoot", "--entrypoint-arg": "entrypointArg", "--sdk-metadata-json": "sdkMetadataJson" };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help") {
-      process.stdout.write("Usage: touba supply-chain generate --air <program.air.json> [--manifest <touba.manifest.json>] --out <touba.lock.json> [--package-root <relative-dir>] [--file <package-relative-file> ...] [--entrypoint-arg <index|command>] [--sdk-metadata-json <object>]\nThe lock remains pending review. No existing file is overwritten. Add imported local files with --file; no dependency audit or command semantics are inferred.\n");
+      process.stdout.write("Usage: touba supply-chain generate --air <program.air.json> [--air <module.air.json> ...] [--manifest <touba.manifest.json>] --out <touba.lock.json> [--package-root <relative-dir>] [--file <package-relative-file> ...] [--entrypoint-arg <index|command>] [--sdk-metadata-json <object>]\nThe lock remains pending review. No existing file is overwritten. Add imported local files with --file; no dependency audit or command semantics are inferred.\n");
       return;
     }
     if (!keys[flag] && flag !== "--file") throw new Error(`unknown option ${flag}`);
     const value = argv[++index];
     if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
     if (flag === "--file") options.files.push(value);
+    else if (flag === "--air" && options.air) options.additionalAir.push(value);
     else options[keys[flag]] = flag === "--entrypoint-arg" && value !== "command" ? Number(value) : value;
   }
   process.stdout.write(`${JSON.stringify(generateSupplyChainLock(options), null, 2)}\n`);

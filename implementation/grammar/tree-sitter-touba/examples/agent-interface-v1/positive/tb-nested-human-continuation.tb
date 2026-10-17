@@ -1,0 +1,156 @@
+module agent.continuation
+
+tool Record
+    takes value as Text
+    gives Text
+
+skill Approved
+    takes value as Text
+    gives Text
+    uses Record
+    do
+        Record
+            with value as "before"
+            into before
+        human.approve
+            with context as value
+            into approval
+        Record
+            with value as value
+            into stored
+        give stored
+
+strategy Work
+    description "Record a value after explicit human approval."
+    takes value as Text
+    gives Text
+    uses Approved
+    do
+        Approved
+            with value as value
+            into approved
+        give approved
+
+strategy Run
+    takes values as List of Text
+    gives Text
+    uses Record
+    uses Work
+    do
+        Record
+            with value as "start"
+            into start
+        for value in values
+            Work
+                with value as value
+                into completed
+        human.approve
+            with context as "finish"
+            into approval
+        give "done"
+
+strategy Recurse
+    takes value as Text
+    takes remaining as Int
+    gives Text
+    uses Work
+    uses Recurse
+    do
+        if remaining > 0
+            Recurse
+                with value as value
+                with remaining as remaining - 1
+                into nested
+            give nested
+        else
+            Work
+                with value as value
+                into result
+            give result
+
+agent Reviewer
+    description "Obtain a human decision for the supplied value."
+    responsibility "Request review before returning the supplied value."
+    takes value as Text
+    gives Text
+    callable_by strategy ReviewWork
+    callable_by agent Coordinator
+
+strategy ReviewWork
+    takes value as Text
+    gives Text
+    uses Reviewer
+    do
+        Reviewer
+            with value as value
+            into reviewed
+        give reviewed
+
+strategy RunAgent
+    takes value as Text
+    gives Text
+    uses ReviewWork
+    do
+        ReviewWork
+            with value as "child"
+            into reviewed
+        give value
+
+skill Backup
+    takes value as Text
+    gives Text
+    do
+        give value
+
+skill Recover
+    takes value as Text
+    gives Text
+    uses Work
+    uses Backup
+    do
+        Work
+            with value as "child"
+            into result
+        give result
+    on failure handler
+        fallback Backup
+
+skill ManualRecovery
+    takes value as Text
+    gives Text
+    do
+        human.approve
+            with context as value
+            into approval
+        give value
+
+skill RecoverWithReview
+    takes value as Text
+    gives Text
+    uses Work
+    uses ManualRecovery
+    do
+        Work
+            with value as "child"
+            into result
+        give result
+    on failure handler
+        fallback ManualRecovery
+
+agent Coordinator
+    responsibility "Delegate a reviewed value, observe the result, and return it."
+    takes value as Text
+    gives Text
+    uses Work
+    uses Reviewer
+    callable_by strategy RunDelegation
+
+strategy RunDelegation
+    takes value as Text
+    gives Text
+    uses Coordinator
+    do
+        Coordinator
+            with value as value
+            into delegated
+        give delegated

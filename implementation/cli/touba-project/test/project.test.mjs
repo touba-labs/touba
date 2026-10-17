@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -438,7 +438,7 @@ test("CLI refresh signals an existing Touba project server", async () => {
   const service = createToubaProjectServer({
     contractsRoot,
     projectRoot: root,
-    humanDecisionsPath: join(root, ".touba", "human-decisions.json"),
+    humanDecisionsPath: join(root, ".touba", "human-decisions.sqlite"),
     changeProposalsPath: join(root, ".touba", "studio-change-proposals.json"),
     port: 0,
     quiet: true,
@@ -463,6 +463,41 @@ test("CLI refresh signals an existing Touba project server", async () => {
     assert.deepEqual(report.changes.changed_artifacts.map((item) => item.relative_path), ["main.tb"]);
   } finally {
     await service.stop();
+    cleanup(root);
+  }
+});
+
+test("CLI serve streams its startup address before the server exits", async () => {
+  const root = tempRoot();
+  writeFileSync(join(root, "main.tb"), "module demo.main\n");
+  const child = spawn(process.execPath, [cliPath, "serve", "--project-root", root, "--port", "0"], {
+    detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"],
+  });
+  const closed = new Promise(resolve => child.once("close", resolve));
+  try {
+    const startup = await new Promise((resolve, reject) => {
+      let stdout = "", stderr = "";
+      const timer = setTimeout(() => reject(new Error(`server startup was not streamed: ${stderr}`)), 15000);
+      child.stderr.on("data", bytes => { stderr += bytes; });
+      child.stdout.on("data", bytes => {
+        stdout += bytes;
+        if (stdout.includes("\n")) {
+          clearTimeout(timer);
+          try { resolve(JSON.parse(stdout.split("\n")[0])); } catch (error) { reject(error); }
+        }
+      });
+      child.once("error", error => { clearTimeout(timer); reject(error); });
+      child.once("close", () => { clearTimeout(timer); reject(new Error(`server exited before startup: ${stderr}`)); });
+    });
+    assert.equal(startup.event, "touba_project_server_started");
+    assert.ok(startup.port > 0);
+    assert.equal(child.exitCode, null);
+  } finally {
+    if (child.exitCode === null && child.pid) {
+      if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
+      else process.kill(-child.pid, "SIGTERM");
+    }
+    await closed;
     cleanup(root);
   }
 });
@@ -506,6 +541,31 @@ test("prepare plan reports AIR, manifest and handler stub actions for tools", as
   } finally {
     cleanup(root);
   }
+});
+
+test("prepare detects changed generated handler contracts without overwriting business code", async () => {
+  const root = tempRoot();
+  try {
+    const path = join(root, "input.air.json");
+    const air = airDocumentWithTool();
+    air.definitions.tools[0].signature.inputs[0].source_ref = { source_id: "source.tb", start_line: 1, start_column: 0, end_line: 1, end_column: 10 };
+    writeFileSync(path, JSON.stringify(air));
+    await prepareProject({ root, mode: "write", airPaths: ["input.air.json"] });
+    const stable = await prepareProject({ root, mode: "check", airPaths: ["input.air.json"] });
+    assert.equal(stable.diagnostics.some(item => item.code === "HandlerDeclaredContractDrift"), false);
+    const handler = join(root, "handlers/donnees_quebec/live_search/search_datasets.handler.mjs");
+    const original = readFileSync(handler, "utf8") + "\n// Custom business implementation must survive preparation.\n";
+    writeFileSync(handler, original);
+    air.definitions.tools[0].required_secrets.push("SECOND_TOKEN");
+    writeFileSync(path, JSON.stringify(air));
+    for (const mode of ["write", "check"]) {
+      const result = await prepareProject({ root, mode, airPaths: ["input.air.json"] });
+      assert.ok(result.diagnostics.some(item => item.code === "HandlerDeclaredContractDrift"), JSON.stringify(result));
+      assert.match(renderReport(result), /SECOND_TOKEN|REQUIRED_SECRET_HANDLES/);
+      assert.equal(readFileSync(handler, "utf8"), original);
+      if (mode === "check") assert.equal(result.status, "error");
+    }
+  } finally { cleanup(root); }
 });
 
 test("prepare write creates one project manifest and module-scoped handler stubs", async () => {
@@ -673,6 +733,21 @@ test("prepare composes explicit binding fragments into the project manifest", as
     assert.equal(binding.handler.args[0], "custom/search.handler.mjs");
     assert.equal(binding.timeout_ms, 12000);
     assert.equal(binding.max_payload_bytes, 2048);
+    const manifestBeforeConflict = readFileSync(report.manifest_path, "utf8");
+    const conflictOptions = { root, mode: "write", airPaths: ["input.air.json"], bindingFragmentPaths: ["bindings.search.json"] };
+    const conflicting = await prepareProject({ ...conflictOptions, hostDecisions: { bindings: {
+      "tool:donnees_quebec.live_search/SearchDatasets": { timeout_ms: 1000 },
+    } } });
+    assert.equal(conflicting.status, "error");
+    assert.ok(conflicting.diagnostics.some(d => d.code === "HostDecisionFragmentConflict"));
+    assert.equal(readFileSync(report.manifest_path, "utf8"), manifestBeforeConflict);
+    const fragment = JSON.parse(readFileSync(join(root, "bindings.search.json"), "utf8"));
+    fragment.bindings["tool:donnees_quebec.live_search/SearchDatasets"].timeout_ms = 13000;
+    writeJson(join(root, "bindings.search.json"), fragment);
+    const drift = await prepareProject(conflictOptions);
+    assert.equal(drift.status, "error");
+    assert.ok(drift.diagnostics.some(d => d.code === "BindingFragmentManifestDrift"));
+    assert.equal(readFileSync(report.manifest_path, "utf8"), manifestBeforeConflict);
     assert.deepEqual(binding.payload_constraints.input.request, { non_empty: true, max_length: 80 });
     assert.deepEqual(binding.payload_constraints.input["request.tags"], { min_items: 1, max_items: 5 });
     assert.deepEqual(binding.payload_constraints.input["request.mode"], { allowed_values: ["dry_run", "review"] });
@@ -1118,6 +1193,28 @@ test("prepare write creates an explicit RP-1 run plan for a pure Touba entry", a
   } finally {
     cleanup(root);
   }
+});
+
+test("multiple strategies share an explicit project entry across write and check", async () => {
+  const root = tempRoot();
+  try {
+    initProject({ root });
+    mkdirSync(join(root, "src/local"), { recursive: true });
+    writeFileSync(join(root, "src/local/run.tb"), 'module local.run\nstrategy First\n    gives Text\n    do\n        give "first"\nstrategy Second\n    gives Text\n    do\n        give "second"\n');
+    const options = { root, runProfile: "pure", entryRef: "strategy:local.run/Second" };
+    assert.equal((await prepareProject({ ...options, mode: "write" })).status, "success");
+    assert.equal((await prepareProject({ ...options, mode: "check" })).status, "success");
+    const drift = await prepareProject({ root, runProfile: "pure", mode: "check" });
+    assert.equal(drift.status, "error");
+    assert.ok(drift.diagnostics.some(diagnostic => diagnostic.code === "EffectiveProjectDrift"), JSON.stringify(drift));
+    const configPath = join(root, "touba.project.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.entry = options.entryRef;
+    writeJson(configPath, config);
+    for (const mode of ["write", "check"]) {
+      assert.equal((await prepareProject({ root, runProfile: "pure", mode })).status, "success");
+    }
+  } finally { cleanup(root); }
 });
 
 test("converged project preparation writes only profile-derived artifacts under .touba/build", async () => {
@@ -2286,6 +2383,22 @@ test("prepare reports IM-1 import resolution errors from explicit project AIR", 
   }
 });
 
+test("prepare attributes a shared import error once to its actual source", async () => {
+  const root = tempRoot();
+  try {
+    const sources = join(root, "src");
+    mkdirSync(sources);
+    writeFileSync(join(sources, "base.tb"), 'module base\nfunction Value\n    gives Text\n    do\n        give "ok"\n');
+    writeFileSync(join(sources, "broken.tb"), 'module broken\nimport function Missing from base\nfunction Value\n    gives Text\n    do\n        give "ok"\n');
+    writeFileSync(join(sources, "app.tb"), 'module app\nimport function Value from broken\nstrategy Run\n    uses Value\n    do\n        Value\n            into value\n        give value\n');
+    const report = await prepareProject({ root, mode: "plan" });
+    assert.equal(report.status, "error");
+    const imports = report.diagnostics.filter(d => d.code === "ImportDeclarationNotFound");
+    assert.equal(imports.length, 1, JSON.stringify(report.diagnostics));
+    assert.equal(imports[0].source_path, realpathSync(join(sources, "broken.tb")));
+  } finally { cleanup(root); }
+});
+
 test("prepare source compilation uses TOUBA_COMPILE_BIN before Cargo", async () => {
   const root = tempRoot();
   const compilerRoot = tempRoot();
@@ -2296,7 +2409,7 @@ test("prepare source compilation uses TOUBA_COMPILE_BIN before Cargo", async () 
     writeFileSync(sourcePath, "module local.simple\n", "utf8");
 
     const compilerPath = join(compilerRoot, "mock-touba-compile.mjs");
-    const airJson = JSON.stringify(airDocumentWithoutTools());
+    const airJson = JSON.stringify({ ok: true, air: airDocumentWithoutTools(), diagnostics: [] });
     writeFileSync(compilerPath, [
       "#!/usr/bin/env node",
       `process.stdout.write(${JSON.stringify(airJson)});`,
@@ -2553,7 +2666,7 @@ test("CLI run help exposes project profiles before runtime options", () => {
   assert.match(result.stdout, /touba run --project <path>/);
   assert.match(result.stdout, /Project profiles are read from touba\.project\.json/);
   assert.match(result.stdout, /prod profile requires touba\.lock\.json/);
-  assert.match(result.stdout, /--human-checkpoint-out <path> \| --human-resume-checkpoint <path>/);
+  assert.match(result.stdout, /--human-checkpoint-out <path> \[--human-resume-checkpoint <path>\]/);
   assert.match(result.stdout, /--output show\|result\|trace\|all\|run-summary/);
   assert.match(result.stdout, /--trace-out <path>/);
   assert.match(result.stdout, /--evidence-out <run\.evidence\.json>/);
@@ -2562,6 +2675,17 @@ test("CLI run help exposes project profiles before runtime options", () => {
   assert.equal(profiledResult.status, 0, profiledResult.stderr);
   assert.match(profiledResult.stdout, /Usage: touba run <program\.air\.json> \[--profile pure\|dev\|prod\]/);
   assert.equal(profiledResult.stderr, "");
+});
+
+test("CLI version keeps human output concise and does not claim an environment-supplied build identity", () => {
+  const env = { ...process.env, TOUBA_BUILD_ID: "spoofed-build", GITHUB_SHA: "a".repeat(40) };
+  const result = spawnSync(process.execPath, [cliPath, "version"], { encoding: "utf8", env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "touba 0.1.0\nbuild source-local\n");
+  assert.equal(result.stderr, "");
+  const json = spawnSync(process.execPath, [cliPath, "version", "--json"], { encoding: "utf8", env });
+  assert.equal(json.status, 0, json.stderr);
+  assert.equal(JSON.parse(json.stdout).build.id, "source-local");
 });
 
 test("CLI version reports public command and schema versions", () => {
@@ -2574,6 +2698,7 @@ test("CLI version reports public command and schema versions", () => {
   assert.equal(report.audit, "0.1.0");
   assert.equal(report.supply_chain, "0.1.0");
   assert.equal(report.manifest, "0.1.0");
+  assert.equal(report.sdk, "0.1.0");
   assert.equal(report.schemas.air, "touba-air-v1");
   assert.equal(report.schemas.trace, "touba-trace-v1");
   assert.equal(report.schemas.manifest, "touba-manifest-v1");

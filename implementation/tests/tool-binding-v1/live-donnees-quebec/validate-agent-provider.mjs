@@ -92,7 +92,7 @@ async function validatesLiveCatalogSelectionUsesAiSdkStructuredOutput() {
     generateObject: async (request) => {
       calls.push(request);
       return { finishReason: "stop", response: { body: { object: "response", status: "completed" } },
-        object: {
+        object: { decision: {
           action: "select_capability",
           target_ref: "skill:examples.donnees_quebec_agent_live/BuildDatasetBrief",
           source: "openai_structured_output",
@@ -100,7 +100,7 @@ async function validatesLiveCatalogSelectionUsesAiSdkStructuredOutput() {
           arguments: {
             request: requestPayload({ dryRun: false }),
           },
-        },
+        } },
       };
     },
   });
@@ -114,16 +114,17 @@ async function validatesLiveCatalogSelectionUsesAiSdkStructuredOutput() {
   });
   assert.equal(calls.length, 1);
   assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_capability_decision");
-  assert.deepEqual(jsonSchemaOf(calls[0]).properties.target_ref.enum, [
+  const selection = jsonSchemaOf(calls[0]).properties.decision.anyOf.find(branch => branch.properties.action.enum.includes("select_capability"));
+  assert.deepEqual(selection.properties.target_ref.enum, [
     "skill:examples.donnees_quebec_agent_live/SearchDatasetOnly",
     "skill:examples.donnees_quebec_agent_live/BuildDatasetBrief",
     "human_review",
   ]);
-  assert.deepEqual(jsonSchemaOf(calls[0]).properties.action.enum, [
+  assert.deepEqual(selection.properties.action.enum, [
     "select_capability",
     "request_human_review",
   ]);
-  const argumentsSchema = jsonSchemaOf(calls[0]).properties.arguments;
+  const argumentsSchema = selection.properties.arguments;
   const requestArgumentsSchema = (argumentsSchema.anyOf ?? [argumentsSchema])
     .find((schema) => schema.properties?.request);
   assert.equal(requestArgumentsSchema.properties.request.type, "object");
@@ -137,7 +138,7 @@ async function validatesLiveCatalogCanRequestHumanReview() {
   process.env.TOUBA_AGENT_DECISION_OPENAI_API_KEY = "test-only-openai-key";
   const provider = createDonneesQuebecDecisionProvider({
     generateObject: async () => ({ finishReason: "stop", response: { body: { object: "response", status: "completed" } },
-      object: {
+      object: { decision: {
         action: "request_human_review",
         target_ref: "human_review",
         source: "openai_structured_output",
@@ -146,7 +147,7 @@ async function validatesLiveCatalogCanRequestHumanReview() {
           request: requestPayload({ dryRun: false }),
         },
         review_prompt: "Validate the dataset selection.",
-      },
+      } },
     }),
   });
 
@@ -165,6 +166,9 @@ function summaryRequest({ dryRun }) {
     protocol: "touba-agent-decision-v1",
     mode: "summary",
     run_id: "test-run",
+    invocation_id: "fixture-invocation",
+    step_index: 0,
+    observations: [],
     agent_ref: "agent:examples.donnees_quebec_agent_live/Researcher",
     agent_name: "Researcher",
     responsibility: "Search and summarize public datasets.",

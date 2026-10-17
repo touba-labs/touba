@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-run-trace-export-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "complete", "segments"],
+  "properties": {
+    "schema_version": { "const": "touba-run-trace-export-v1" },
+    "run_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "complete": { "type": "boolean" },
+    "segments": {
+      "type": "array", "minItems": 1, "maxItems": 256,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["index", "phase", "state", "reason", "previous_digest", "trace", "digest"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "phase": { "enum": ["initial", "human_resume", "execution_resume", "human_terminal"] },
+          "state": { "enum": ["recording", "paused", "terminal", "unavailable"] },
+          "reason": { "enum": [null, "not_completed", "runtime_rejected", "trace_rejected", "storage_limit"] },
+          "previous_digest": { "type": ["string", "null"] },
+          "trace": { "type": ["object", "null"] },
+          "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+        }
+      }
+    }
+  }
+}

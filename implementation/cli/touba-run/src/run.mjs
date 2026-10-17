@@ -2,6 +2,8 @@ import { closeSync, constants, existsSync, fchmodSync, mkdirSync, openSync, read
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { openCliEffectJournal } from "./effect-journal.mjs";
+import { writeParallelCheckpoint } from "./parallel-checkpoint-file.mjs";
+import { openLocalHandlerDiagnostics } from "../../../runtime/touba-runtime/src/handler-diagnostics.mjs";
 import { resolvedSecretEntries } from "../../../runtime/touba-runtime/src/secret-redaction.mjs";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
 import { publicRunResult, runExitCode } from "../../../contracts/run-outcome.mjs";
@@ -12,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { TraceBuilder } from "../../../runtime/touba-runtime/src/trace-builder.mjs";
 import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { createAdmissionRefusalTrace } from "../../../runtime/touba-runtime/src/admission-trace.mjs";
+import { HARDENED_ERROR_CODES } from "../../../runtime/touba-runtime/src/hardened-execution-profile.mjs";
 import {
   loadAirFromJson,
   executeAirDocument,
@@ -90,7 +93,15 @@ class ResourceBindingsCliError extends Error {
 
 const parsedArgs = parseArgs(args);
 
-function refuseAdmission(code, stage, exitCode = 1) {
+// A provider may retain handles after completion. Keep the explicit process
+// boundary, but do not terminate while stdout/stderr still have queued bytes.
+async function exitAfterFlush(code) {
+  await Promise.all([process.stdout, process.stderr].map(stream =>
+    new Promise((resolve, reject) => stream.write("", error => error ? reject(error) : resolve()))));
+  process.exit(code);
+}
+
+async function refuseAdmission(code, stage, exitCode = 1) {
   const trace = createAdmissionRefusalTrace(code, stage);
   if (parsedArgs.traceOutPath !== undefined) {
     try {
@@ -103,13 +114,13 @@ function refuseAdmission(code, stage, exitCode = 1) {
     process.stdout.write(serializeJson(publicRunResult({ status: "failure", reason: code,
       result: null, messages: [], trace })));
   }
-  process.exit(exitCode);
+  await exitAfterFlush(exitCode);
 }
 
 if (parsedArgs.error) {
   process.stderr.write(`error: ${parsedArgs.error}\n`);
   printUsage();
-  refuseAdmission("ArgumentsInvalid", "arguments", 2);
+  await refuseAdmission("ArgumentsInvalid", "arguments", 2);
 }
 
 if (parsedArgs.runPlanPath !== undefined) {
@@ -119,25 +130,30 @@ if (parsedArgs.runPlanPath !== undefined) {
     applyRunPlanProfileDefaults(parsedArgs);
   } catch (e) {
     process.stderr.write(`run plan error [${e.code ?? "RunPlanInvalid"}]: ${e.message}\n`);
-    refuseAdmission("RunPlanInvalid", "run_plan", 1);
+    await refuseAdmission("RunPlanInvalid", "run_plan", 1);
   }
 }
 
 const parsedArgsError = validateParsedArgsAfterRunPlan(parsedArgs);
+if (parsedArgs.handlerDiagnosticsPath !== undefined && (parsedArgs.runPlanProfile !== "dev"
+    || parsedArgs.requireSupplyChainLock || parsedArgs.hardenedProfilePath !== undefined || process.platform === "win32")) {
+  process.stderr.write("error: local handler diagnostics require an explicit dev run plan on a POSIX host, without production or hardened execution\n");
+  await refuseAdmission("HandlerDiagnosticsForbidden", "arguments", 2);
+}
 if (parsedArgsError) {
   if (typeof parsedArgsError === "object") {
     process.stderr.write(`run plan error [${parsedArgsError.code}]: ${parsedArgsError.message}\n`);
-    refuseAdmission("RunPlanInvalid", "run_plan", 1);
+    await refuseAdmission("RunPlanInvalid", "run_plan", 1);
   } else {
     process.stderr.write(`error: ${parsedArgsError}\n`);
     printUsage();
-    refuseAdmission("ArgumentsInvalid", "arguments", 2);
+    await refuseAdmission("ArgumentsInvalid", "arguments", 2);
   }
 }
 
 if (parsedArgs.positional.length !== 1) {
   printUsage();
-  refuseAdmission("ArgumentsInvalid", "arguments", 2);
+  await refuseAdmission("ArgumentsInvalid", "arguments", 2);
 }
 
 const filePath = parsedArgs.positional[0];
@@ -146,7 +162,7 @@ try {
   json = readFileSync(filePath, "utf8");
 } catch (e) {
   process.stderr.write(`error: cannot read ${filePath}: ${e.message}\n`);
-  refuseAdmission("AirUnreadable", "air", 2);
+  await refuseAdmission("AirUnreadable", "air", 2);
 }
 
 let document;
@@ -154,7 +170,7 @@ try {
   document = loadAirFromJson(json);
 } catch (e) {
   process.stderr.write(`error: invalid AIR JSON: ${e.message}\n`);
-  refuseAdmission("AirInvalid", "air", 1);
+  await refuseAdmission("AirInvalid", "air", 1);
 }
 
 if (parsedArgs.runPlanPath !== undefined) {
@@ -162,7 +178,7 @@ if (parsedArgs.runPlanPath !== undefined) {
     validateRunPlanAgainstAir(parsedArgs, document, filePath);
   } catch (e) {
     process.stderr.write(`run plan error [${e.code ?? "RunPlanInvalid"}]: ${e.message}\n`);
-    refuseAdmission("RunPlanInvalid", "run_plan", 1);
+    await refuseAdmission("RunPlanInvalid", "run_plan", 1);
   }
 }
 
@@ -172,7 +188,7 @@ try {
 } catch (error) {
   const code = error.code ?? "SkillPackInvalid";
   process.stderr.write(`skill pack error [${code}]: ${error.message}\n`);
-  refuseAdmission(/^SkillPack[A-Za-z]+$/.test(code) ? code : "SkillPackInvalid", "skill_pack", 1);
+  await refuseAdmission(/^SkillPack[A-Za-z]+$/.test(code) ? code : "SkillPackInvalid", "skill_pack", 1);
 }
 
 let resourceBindings;
@@ -185,7 +201,7 @@ if (parsedArgs.resourceBindingsPath !== undefined || parsedArgs.requireResourceB
     });
   } catch (e) {
     process.stderr.write(`resource bindings error [${e.code ?? "ResourceBindingsInvalid"}]: ${e.message}\n`);
-    refuseAdmission(e instanceof ResourceBindingsCliError ? e.code : "ResourceBindingsInvalid", "resources", 1);
+    await refuseAdmission(e instanceof ResourceBindingsCliError ? e.code : "ResourceBindingsInvalid", "resources", 1);
   }
 }
 
@@ -197,7 +213,7 @@ if (parsedArgs.manifestPath !== undefined) {
     toolBindingManifest = loadManifestFromPath(parsedArgs.manifestPath);
   } catch (e) {
     process.stderr.write(`error: invalid manifest ${parsedArgs.manifestPath}: ${e.message}\n`);
-    refuseAdmission("ManifestInvalid", "manifest", 1);
+    await refuseAdmission("ManifestInvalid", "manifest", 1);
   }
 }
 
@@ -214,7 +230,7 @@ if (parsedArgs.supplyChainLockPath !== undefined) {
       supplyChainGate.code = "RunPlanSupplyChainDrift";
     }
     process.stderr.write(formatSupplyChainGateError(supplyChainGate));
-    refuseAdmission("SupplyChainAdmissionRefused", "supply_chain", 1);
+    await refuseAdmission("SupplyChainAdmissionRefused", "supply_chain", 1);
   }
   supplyChainValidated = true;
 }
@@ -228,7 +244,7 @@ if (parsedArgs.hardenedProfilePath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid hardened execution profile ${parsedArgs.hardenedProfilePath}: ${e.message}\n`);
-    refuseAdmission("HardenedProfileInvalid", "profile", 1);
+    await refuseAdmission("HardenedProfileInvalid", "profile", 1);
   }
 }
 
@@ -238,7 +254,7 @@ if (parsedArgs.secretsPath !== undefined) {
     secretStore = loadSecretsFromPath(parsedArgs.secretsPath);
   } catch (e) {
     process.stderr.write(`error: invalid secrets file ${parsedArgs.secretsPath}: ${e.message}\n`);
-    refuseAdmission("SecretsInvalid", "secrets", 1);
+    await refuseAdmission("SecretsInvalid", "secrets", 1);
   }
 }
 
@@ -248,11 +264,11 @@ if (parsedArgs.inputsJson !== undefined) {
     inputs = JSON.parse(parsedArgs.inputsJson);
   } catch (e) {
     process.stderr.write(`error: invalid --inputs-json: ${e.message}\n`);
-    refuseAdmission("InputsInvalid", "inputs", 2);
+    await refuseAdmission("InputsInvalid", "inputs", 2);
   }
   if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) {
     process.stderr.write("error: --inputs-json must decode to a JSON object\n");
-    refuseAdmission("InputsInvalid", "inputs", 2);
+    await refuseAdmission("InputsInvalid", "inputs", 2);
   }
 }
 
@@ -265,7 +281,7 @@ if (parsedArgs.humanDecisionsPath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid human decisions ${parsedArgs.humanDecisionsPath}: ${e.message}\n`);
-    refuseAdmission("HumanDecisionsInvalid", "human_decisions", 1);
+    await refuseAdmission("HumanDecisionsInvalid", "human_decisions", 1);
   }
 }
 if (parsedArgs.humanDecisionsJson !== undefined) {
@@ -273,20 +289,21 @@ if (parsedArgs.humanDecisionsJson !== undefined) {
     humanApprovalDecisions = parseJsonObject(parsedArgs.humanDecisionsJson, "--human-decisions-json");
   } catch (e) {
     process.stderr.write(`error: invalid --human-decisions-json: ${e.message}\n`);
-    refuseAdmission("HumanDecisionsInvalid", "human_decisions", 2);
+    await refuseAdmission("HumanDecisionsInvalid", "human_decisions", 2);
   }
 }
 
 let humanApprovalResumeCheckpoint;
-if (parsedArgs.humanResumeCheckpointPath !== undefined) {
+const resumeCheckpointPath = parsedArgs.parallelResumeCheckpointPath ?? parsedArgs.humanResumeCheckpointPath;
+if (resumeCheckpointPath !== undefined) {
   try {
     humanApprovalResumeCheckpoint = parseJsonObject(
-      readFileSync(parsedArgs.humanResumeCheckpointPath, "utf8"),
+      readFileSync(resumeCheckpointPath, "utf8"),
       `human resume checkpoint ${parsedArgs.humanResumeCheckpointPath}`,
     );
   } catch (e) {
     process.stderr.write(`error: invalid human resume checkpoint ${parsedArgs.humanResumeCheckpointPath}: ${e.message}\n`);
-    refuseAdmission("HumanCheckpointInvalid", "checkpoint", 1);
+    await refuseAdmission("HumanCheckpointInvalid", "checkpoint", 1);
   }
 }
 
@@ -299,7 +316,7 @@ if (parsedArgs.userInputsPath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid user inputs ${parsedArgs.userInputsPath}: ${e.message}\n`);
-    refuseAdmission("UserInputsInvalid", "user_inputs", 1);
+    await refuseAdmission("UserInputsInvalid", "user_inputs", 1);
   }
 }
 if (parsedArgs.userInputsJson !== undefined) {
@@ -307,7 +324,7 @@ if (parsedArgs.userInputsJson !== undefined) {
     userInputs = parseJsonObject(parsedArgs.userInputsJson, "--user-inputs-json");
   } catch (e) {
     process.stderr.write(`error: invalid --user-inputs-json: ${e.message}\n`);
-    refuseAdmission("UserInputsInvalid", "user_inputs", 2);
+    await refuseAdmission("UserInputsInvalid", "user_inputs", 2);
   }
 }
 
@@ -320,7 +337,7 @@ if (parsedArgs.agentDecisionsPath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid agent decisions ${parsedArgs.agentDecisionsPath}: ${e.message}\n`);
-    refuseAdmission("AgentDecisionsInvalid", "agent_decisions", 1);
+    await refuseAdmission("AgentDecisionsInvalid", "agent_decisions", 1);
   }
 }
 if (parsedArgs.agentDecisionsJson !== undefined) {
@@ -328,7 +345,7 @@ if (parsedArgs.agentDecisionsJson !== undefined) {
     agentDecisions = parseJsonObject(parsedArgs.agentDecisionsJson, "--agent-decisions-json");
   } catch (e) {
     process.stderr.write(`error: invalid --agent-decisions-json: ${e.message}\n`);
-    refuseAdmission("AgentDecisionsInvalid", "agent_decisions", 2);
+    await refuseAdmission("AgentDecisionsInvalid", "agent_decisions", 2);
   }
 }
 
@@ -338,7 +355,7 @@ if (parsedArgs.agentDecisionProviderPath !== undefined) {
     agentDecisionProvider = await loadAgentDecisionProviderFromPath(parsedArgs.agentDecisionProviderPath);
   } catch (e) {
     process.stderr.write(`error: invalid agent decision provider ${parsedArgs.agentDecisionProviderPath}: ${e.message}\n`);
-    refuseAdmission("DecisionProviderInvalid", "provider", 1);
+    await refuseAdmission("DecisionProviderInvalid", "provider", 1);
   }
 }
 
@@ -351,7 +368,7 @@ if (parsedArgs.triggerEventPath !== undefined) {
     );
   } catch (e) {
     process.stderr.write(`error: invalid trigger event ${parsedArgs.triggerEventPath}: ${e.message}\n`);
-    refuseAdmission("TriggerEventInvalid", "trigger", 1);
+    await refuseAdmission("TriggerEventInvalid", "trigger", 1);
   }
 }
 if (parsedArgs.triggerEventJson !== undefined) {
@@ -359,14 +376,14 @@ if (parsedArgs.triggerEventJson !== undefined) {
     triggerEvent = parseJsonObject(parsedArgs.triggerEventJson, "--trigger-event-json");
   } catch (e) {
     process.stderr.write(`error: invalid --trigger-event-json: ${e.message}\n`);
-    refuseAdmission("TriggerEventInvalid", "trigger", 2);
+    await refuseAdmission("TriggerEventInvalid", "trigger", 2);
   }
 }
 
 if (parsedArgs.triggerDryRun) {
   const report = dryRunTriggerEvent(document, triggerEvent, toolBindingManifest);
   process.stdout.write(serializeJson(report));
-  process.exit(report.status === "accepted" ? 0 : 1);
+  await exitAfterFlush(report.status === "accepted" ? 0 : 1);
 }
 
 let triggerState;
@@ -375,22 +392,32 @@ if (parsedArgs.triggerStatePath !== undefined) {
     triggerState = loadTriggerStateFromPath(parsedArgs.triggerStatePath);
   } catch (e) {
     process.stderr.write(`trigger state error [${e.code ?? "TriggerStateInvalid"}]: ${e.message}\n`);
-    refuseAdmission("TriggerStateInvalid", "trigger_state", 1);
+    await refuseAdmission("TriggerStateInvalid", "trigger_state", 1);
   }
 }
 
 let result;
 let effectHost;
+let handlerDiagnostics;
 const interactiveUserInputSession = parsedArgs.interactiveUserInputs
   ? createInteractiveUserInputSession()
   : null;
 try {
+  if (parsedArgs.handlerDiagnosticsPath !== undefined) {
+    try { handlerDiagnostics = openLocalHandlerDiagnostics(parsedArgs.handlerDiagnosticsPath); }
+    catch {
+      process.stderr.write("error: handler diagnostics require a new writable private file; no existing file is overwritten\n");
+      await refuseAdmission("HandlerDiagnosticsUnavailable", "arguments", 2);
+    }
+    process.once("exit", handlerDiagnostics.close);
+  }
   if (parsedArgs.effectJournalPath !== undefined) {
     effectHost = openCliEffectJournal(parsedArgs.effectJournalPath, resolvedSecretEntries(secretStore).map(entry => entry.value));
     process.once("exit", effectHost.close);
   }
   const effectRunId = effectHost ? (humanApprovalResumeCheckpoint?.run_id ?? `cli_${randomUUID()}`) : undefined;
   const executionOptions = {
+    localHandlerDiagnostics: handlerDiagnostics,
     runId: effectRunId,
     effectScopeId: effectRunId,
     effectJournal: effectHost?.journal,
@@ -425,6 +452,9 @@ try {
     killSwitchEnabled: parsedArgs.killSwitchEnabled,
     durableHumanApprovals: parsedArgs.humanCheckpointOutPath !== undefined,
     humanApprovalResumeCheckpoint,
+    parallelLimits: parsedArgs.parallelLimitsJson === undefined ? undefined : parseJsonObject(parsedArgs.parallelLimitsJson, "--parallel-limits-json"),
+    parallelCheckpointObserver: parsedArgs.parallelCheckpointOutPath === undefined ? undefined
+      : ({ checkpoint }) => writeParallelCheckpoint(parsedArgs.parallelCheckpointOutPath, checkpoint),
     hardenedExecutionProfile,
     supplyChainValidated,
     redactionEnabled: true,
@@ -444,8 +474,15 @@ try {
     process.stderr.write(`unexpected error: ${e.message}\n`);
   }
   interactiveUserInputSession?.close();
-  refuseAdmission("RuntimeAdmissionRefused", "runtime", 1);
+  const code = e instanceof ToubaRuntimeError && HARDENED_ERROR_CODES.includes(e.code)
+    ? e.code : "RuntimeAdmissionRefused";
+  await refuseAdmission(code, "runtime", 1);
 } finally {
+  if (handlerDiagnostics) {
+    handlerDiagnostics.close();
+    process.removeListener("exit", handlerDiagnostics.close);
+    if (handlerDiagnostics.incomplete) process.stderr.write("warning: local handler diagnostics are incomplete (invalid, full or unavailable channel)\n");
+  }
   effectHost?.close();
   if (effectHost) process.removeListener("exit", effectHost.close);
   interactiveUserInputSession?.close();
@@ -454,8 +491,8 @@ try {
 if (result.status === "failure") {
   const diagnostic =
     formatBudgetTraceDiagnostic(result.trace)
-    || formatFailureTraceDiagnostic(result.trace)
-    || formatTriggerTraceDiagnostic(result.trace);
+    || formatTriggerTraceDiagnostic(result.trace)
+    || formatFailureTraceDiagnostic(result.trace);
   if (diagnostic) {
     process.stderr.write(diagnostic);
   }
@@ -466,15 +503,13 @@ if (parsedArgs.traceOutPath !== undefined) {
     writeFileSync(parsedArgs.traceOutPath, serializeJson(result.trace), "utf8");
   } catch (e) {
     process.stderr.write(`error: cannot write trace ${parsedArgs.traceOutPath}: ${e.message}\n`);
-    process.exit(1);
+    await exitAfterFlush(1);
   }
 }
 
-if (parsedArgs.humanCheckpointOutPath !== undefined && result.status !== "failure") {
-  if (!result.checkpoint) {
-    process.stderr.write("error: no human approval checkpoint was produced\n");
-    process.exit(1);
-  }
+// Enabling durable pauses does not require the executed path to pause. A
+// completed run may already have produced effects; preserve its real outcome.
+if (parsedArgs.humanCheckpointOutPath !== undefined && result.checkpoint && result.status !== "failure") {
   try {
     const fd = openSync(parsedArgs.humanCheckpointOutPath,
       constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0), 0o600);
@@ -484,7 +519,7 @@ if (parsedArgs.humanCheckpointOutPath !== undefined && result.status !== "failur
     } finally { closeSync(fd); }
   } catch (e) {
     process.stderr.write(`error: cannot write human checkpoint ${parsedArgs.humanCheckpointOutPath}: ${e.message}\n`);
-    process.exit(1);
+    await exitAfterFlush(1);
   }
 }
 
@@ -493,12 +528,12 @@ if (parsedArgs.evidenceOutPath !== undefined) {
     writeFileSync(parsedArgs.evidenceOutPath, serializeJson(buildRunEvidence(result, parsedArgs)), "utf8");
   } catch (e) {
     process.stderr.write(`error: cannot write evidence ${parsedArgs.evidenceOutPath}: ${e.message}\n`);
-    process.exit(1);
+    await exitAfterFlush(1);
   }
 }
 
 process.stdout.write(renderOutput(result, parsedArgs.outputMode, parsedArgs));
-process.exit(runExitCode(result));
+await exitAfterFlush(runExitCode(result));
 
 function loadRunPlanFromPath(runPlanPath) {
   const resolvedPath = resolve(runPlanPath);
@@ -1156,6 +1191,13 @@ function parseArgs(rawArgs) {
     } else if (arg.startsWith("--effect-journal=")) {
       parsed.effectJournalPath = arg.slice("--effect-journal=".length);
       if (!parsed.effectJournalPath.endsWith(".effect-journal.json")) return { ...parsed, error: "--effect-journal requires a .effect-journal.json path" };
+    } else if (["--parallel-checkpoint-out", "--parallel-resume-checkpoint", "--parallel-limits-json"].includes(arg.split("=")[0])) {
+      const flag = arg.split("=")[0];
+      const value = arg.includes("=") ? arg.slice(flag.length + 1) : rawArgs[++index];
+      if (!value || value.startsWith("--")) return { ...parsed, error: `${flag} requires a value` };
+      const key = { "--parallel-checkpoint-out": "parallelCheckpointOutPath",
+        "--parallel-resume-checkpoint": "parallelResumeCheckpointPath", "--parallel-limits-json": "parallelLimitsJson" }[flag];
+      parsed[key] = value;
     } else if (arg === "--human-checkpoint-out") {
       index += 1;
       if (index >= rawArgs.length) {
@@ -1310,6 +1352,11 @@ function parseArgs(rawArgs) {
       parsed.supplyChainLockPath = arg.slice("--supply-chain-lock=".length);
     } else if (arg === "--require-supply-chain-lock") {
       parsed.requireSupplyChainLock = true;
+    } else if (arg === "--handler-diagnostics" || arg.startsWith("--handler-diagnostics=")) {
+      if (parsed.handlerDiagnosticsPath !== undefined) return { ...parsed, error: "--handler-diagnostics must be supplied once" };
+      const path = arg === "--handler-diagnostics" ? rawArgs[++index] : arg.slice("--handler-diagnostics=".length);
+      if (!path || path.startsWith("--")) return { ...parsed, error: "--handler-diagnostics requires a new file path" };
+      parsed.handlerDiagnosticsPath = path;
     } else if (arg === "--hardened-profile") {
       index += 1;
       if (index >= rawArgs.length) {
@@ -1535,9 +1582,8 @@ function parseArgs(rawArgs) {
   if (parsed.humanDecisionsPath !== undefined && parsed.humanDecisionsJson !== undefined) {
     return { ...parsed, error: "--human-decisions cannot be combined with --human-decisions-json" };
   }
-
-  if (parsed.humanCheckpointOutPath !== undefined && parsed.humanResumeCheckpointPath !== undefined) {
-    return { ...parsed, error: "--human-checkpoint-out cannot be combined with --human-resume-checkpoint" };
+  if (parsed.parallelResumeCheckpointPath !== undefined && parsed.humanResumeCheckpointPath !== undefined) {
+    return { ...parsed, error: "choose only one resume checkpoint" };
   }
 
   if (
@@ -1675,8 +1721,9 @@ function parseArgs(rawArgs) {
 }
 
 function printUsage() {
+  process.stderr.write("Local development only: --handler-diagnostics <new-private-file.jsonl> requires a dev run plan on POSIX; unavailable in production.\n");
   process.stderr.write(
-    "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.json>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path> | --human-resume-checkpoint <path>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
+    "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.json>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path>] [--human-resume-checkpoint <path>] [--parallel-checkpoint-out <path>] [--parallel-resume-checkpoint <path>] [--parallel-limits-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
 }
 
@@ -1739,8 +1786,13 @@ function createInteractiveUserInputSession() {
     output: process.stderr,
   });
   let closed = false;
+  let questions = Promise.resolve();
   return {
-    provider: async ({ prompt }) => rl.question(`${prompt} `),
+    provider: ({ prompt }) => {
+      const answer = questions.then(() => rl.question(`${prompt} `));
+      questions = answer.then(() => undefined, () => undefined);
+      return answer;
+    },
     close: () => {
       if (!closed) {
         closed = true;
@@ -2120,6 +2172,9 @@ function formatRuntimeError(error) {
     lines.push(`entry: ${error.details.entryRef}`);
     if (error.details.schemaPath) lines.push(`schema path: ${error.details.schemaPath}`);
     if (error.details.expectedTypeRef) lines.push(`expected type: ${error.details.expectedTypeRef}`);
+    if (error.details.actualType) lines.push(`actual type: ${error.details.actualType}`);
+    if (error.details.missingFields?.length) lines.push(`missing fields: ${error.details.missingFields.join(", ")}`);
+    if (error.details.unknownFieldCount) lines.push(`unexpected field count: ${error.details.unknownFieldCount}`);
   }
 
   if (toolRef) {
@@ -2160,7 +2215,7 @@ function formatRuntimeError(error) {
       lines.push(`unknown fields: ${error.details.unknownFields.join(", ")}`);
     }
 
-    lines.push(bindingGuidance(toolRef));
+    lines.push(bindingGuidance(error.code));
   }
   if (approvalRef) {
     lines.push(`human approval: ${approvalRef}`);
@@ -2235,6 +2290,7 @@ function formatFailureTraceDiagnostic(trace) {
         actualType: failureEvent.payload?.actual_type,
         missingFields: failureEvent.payload?.missing_fields,
         unknownFields: failureEvent.payload?.unknown_fields,
+        unknownFieldCount: failureEvent.payload?.unknown_field_count,
         approvalRef: failureEvent.payload?.approval_ref,
         decision: failureEvent.payload?.decision,
         interactionRef: failureEvent.payload?.interaction_ref,
@@ -2359,8 +2415,14 @@ function formatTriggerTraceDiagnostic(trace) {
 
 
 
-function bindingGuidance(toolRef) {
-  return "provide --manifest <path> with a matching touba-manifest-v1 binding; add --secrets <path> when the tool declares required secrets";
+function bindingGuidance(code) {
+  if (code === "ToolBindingManifestMissing" || (code === "ToolBindingMissing" && parsedArgs.manifestPath === undefined)) return "provide --manifest <path> with the tool's reviewed binding";
+  if (code === "ToolBindingMissing") return "add the declared tool's binding to the supplied manifest after review";
+  if (code?.startsWith("SecretValueIn")) return "keep resolved secrets out of arguments and results; matching includes object keys and substrings, so a short secret can also match ordinary text";
+  if (code?.includes("Secret")) return "check declared secret handles, manifest grants and agent scopes; do not put secret values in inputs";
+  if (code?.includes("Schema") || code?.includes("Payload")) return "check the declared input/output type and payload constraints at the reported schema path";
+  if (code?.includes("Grant") || code?.includes("Capability")) return "review the required capability and explicit manifest grants before retrying";
+  return "inspect the reported refusal and the supplied binding/handler configuration before retrying";
 }
 
 async function runTriggerScheduleRunner(document, parsedArgs, executionOptions, triggerState = undefined) {

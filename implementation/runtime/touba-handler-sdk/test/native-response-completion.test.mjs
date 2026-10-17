@@ -54,7 +54,7 @@ test("native and structured HTTP Responses reject non-completed envelopes despit
       for (const decisionInterface of ["structured", "native"]) for (const mode of ["summary", "capabilities", "finalization"]) {
         for (const status of ["failed", "incomplete", "in_progress", "cancelled", "queued"]) {
           let calls = 0;
-          const provider = factory({ model, source, decisionInterface, allowHumanReview: false,
+          const provider = factory({ history: false, model, source, decisionInterface, allowHumanReview: false,
             apiKeyEnvNames: [keyName], maxRetries: 0,
             fetch: async () => {
               calls++;
@@ -75,7 +75,7 @@ test("known Responses factories require completed status even without the object
       for (const status of [undefined, "incomplete", "completed"]) {
         const body = responseBody("summary", status);
         delete body.object;
-        const provider = factory({ model, source, decisionInterface: "native", allowHumanReview: false,
+        const provider = factory({ history: false, model, source, decisionInterface: "native", allowHumanReview: false,
           apiKeyEnvNames: [keyName], maxRetries: 0,
           fetch: async () => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } }) });
         if (status === "completed") assert.deepEqual(await provider(request("summary")), completeAnswer);
@@ -89,7 +89,7 @@ test("native and structured HTTP Responses accept completed decisions in all thr
   await withFakeKey(async (keyName) => {
     for (const factory of [createOpenAiDecisionProvider, createOllamaDecisionProvider]) {
       for (const decisionInterface of ["structured", "native"]) for (const mode of ["summary", "capabilities", "finalization"]) {
-        const provider = factory({ model, source, decisionInterface, allowHumanReview: false,
+        const provider = factory({ history: false, model, source, decisionInterface, allowHumanReview: false,
           apiKeyEnvNames: [keyName], maxRetries: 0,
           fetch: async () => new Response(JSON.stringify(responseBody(mode, "completed", decisionInterface)), { headers: { "Content-Type": "application/json" } }) });
         const decision = await provider(request(mode));
@@ -106,7 +106,7 @@ test("generic AI SDK models keep provider-neutral completion while explicit Resp
       ? { finishReason: "tool-calls", toolCalls: [{ toolName, input: {} }] }
       : { finishReason: "stop", object: structuredModelObject(completeAnswer) };
     for (const body of [undefined, { object: "another-provider", status: "provider-specific" }, { object: "response", status: "completed" }]) {
-      const provider = createAiSdkDecisionProvider({ model, source, decisionInterface: "native", allowHumanReview: false,
+      const provider = createAiSdkDecisionProvider({ history: false, model, source, decisionInterface: "native", allowHumanReview: false,
         jsonSchema: (schema) => schema,
         generateObject: async () => ({ ...success, response: { body } }),
         generateText: async () => ({ ...success, response: { body } }),
@@ -120,7 +120,7 @@ test("generic AI SDK models keep provider-neutral completion while explicit Resp
       { object: "response", status: "completed", error: { message: "PRIVATE_PROVIDER_ERROR" } },
       { object: "response", status: "completed", incomplete_details: { reason: "PRIVATE_PARTIAL_OUTPUT" } },
     ]) {
-      const provider = createAiSdkDecisionProvider({ model, source, decisionInterface: "native", allowHumanReview: false,
+      const provider = createAiSdkDecisionProvider({ history: false, model, source, decisionInterface: "native", allowHumanReview: false,
         jsonSchema: (schema) => schema,
         generateObject: async () => ({ ...success, response: { body } }),
         generateText: async () => ({ ...success, response: { body } }),

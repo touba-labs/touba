@@ -203,7 +203,7 @@ test("returns a direct agent answer through the extracted bounded loop", async (
   ]);
 });
 
-test("restores active agent context after a selected capability", async () => {
+test("delegates selected capability execution with the caller context and pending loop state", async () => {
   const events = [];
   const context = {
     maxAgentSteps: 2,
@@ -217,8 +217,13 @@ test("restores active agent context after a selected capability", async () => {
   ];
   const operations = agentOperations();
   operations.resolveAgentDecision = async () => decisions.shift();
-  operations.executeTarget = async (_targetRef, activeContext) => {
-    assert.equal(activeContext.activeAgentRef, "agent:test/Reviewer");
+  operations.executeAgentCapability = async (agent, decision, activeContext, args, loopState) => {
+    assert.equal(agent.id, "agent:test/Reviewer");
+    assert.equal(decision.targetRef, "tool:test/Lookup");
+    assert.equal(activeContext.activeAgentRef, "agent:test/Outer");
+    assert.deepEqual(args, []);
+    assert.equal(loopState.stepIndex, 0);
+    assert.deepEqual(loopState.observations, []);
     return { rows: 1 };
   };
 
@@ -256,7 +261,7 @@ test("offers one non-executable finalization decision after the last capability 
     phases.push(loopState.phase);
     return decisions.shift();
   };
-  operations.executeTarget = async () => ({ measured: true });
+  operations.executeAgentCapability = async () => ({ measured: true });
 
   const result = await runAgentDecisionLoop(
     { id: "agent:test/Measurer" },
@@ -320,8 +325,8 @@ test("never executes a capability selected during finalization", async () => {
   ];
   const operations = agentOperations();
   operations.resolveAgentDecision = async () => decisions.shift();
-  operations.executeTarget = async (targetRef) => {
-    executed.push(targetRef);
+  operations.executeAgentCapability = async (_agent, decision) => {
+    executed.push(decision.targetRef);
     return { ok: true };
   };
 
@@ -353,8 +358,8 @@ test("allows repeated capability dispatch until the explicit step budget is exha
     targetRef: "tool:test/Poll",
     source: "development-fixture",
   });
-  operations.executeTarget = async (targetRef) => {
-    executed.push(targetRef);
+  operations.executeAgentCapability = async (_agent, decision) => {
+    executed.push(decision.targetRef);
     return { ok: true };
   };
 
@@ -380,7 +385,7 @@ function agentOperations(decision = undefined) {
     callArgumentsForAgentDecision: () => [],
     argumentsForAgentObservation: () => ({}),
     authorizeAgentInvocationByCaller: () => {},
-    executeTarget: async () => ({ ok: true }),
+    executeAgentCapability: async () => ({ ok: true }),
     validateAgentFinalResult: (_agent, result) => result,
   };
 }

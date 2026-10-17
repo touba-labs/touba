@@ -1382,9 +1382,9 @@ test("inspects a TA-1 export and accepts explicit trace-audit option", () => {
 
     assert.equal(inspection.artifact_kind, "trace_audit_export");
     assert.equal(inspection.trace_audit.status, "ok");
-    assert.deepEqual(inspection.trace_audit.export_artifacts, ["trace", "air", "source"]);
+    assert.deepEqual(inspection.trace_audit.export_artifacts, ["trace", "air", "sources"]);
     assert.match(rendered, /Trace audit trace-audit-export-v1-local/);
-    assert.match(rendered, /export_artifacts=\[trace,air,source\]/);
+    assert.match(rendered, /export_artifacts=\[trace,air,sources\]/);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Artifact multi_artifacts/);
     assert.match(result.stdout, /trace_audit=.*trace-audit\.export\.json/);
@@ -2279,9 +2279,7 @@ function traceAuditExportFixture() {
         definitions: {},
         execution_graphs: [],
       },
-      source: {
-        source_id: "program.tb",
-      },
+      sources: [{ source_id: "program.tb", text: "module examples.ta1\n" }],
     },
   };
 }

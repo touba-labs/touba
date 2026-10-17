@@ -4,7 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
-    "air_digest": "sha256:99057e4b420ea7dcf62e4e80f07a33031e7611c381d73f56dd1f9809406268d8",
+    "air_digest": "sha256:c6ef2acbc12d5c92ddf258682be86afeb6d0a9eba345daaf39e08a8f61107018",
     "module_ref": "module:examples.a1_loop_binding",
     "entry_ref": "skill:examples.a1_loop_binding/BuildBatch"
   },
@@ -39,12 +39,12 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
-          "start_byte": 348,
-          "end_byte": 472,
-          "start_line": 20,
+          "source_id": "tb-a1-p05-loop-explicit-item-call.tb",
+          "start_byte": 291,
+          "end_byte": 415,
+          "start_line": 17,
           "start_column": 8,
-          "end_line": 24,
+          "end_line": 21,
           "end_column": 8
         }
       },
@@ -65,12 +65,12 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:2",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
-          "start_byte": 384,
-          "end_byte": 472,
-          "start_line": 21,
+          "source_id": "tb-a1-p05-loop-explicit-item-call.tb",
+          "start_byte": 327,
+          "end_byte": 415,
+          "start_line": 18,
           "start_column": 12,
-          "end_line": 24,
+          "end_line": 21,
           "end_column": 8
         }
       },
@@ -91,12 +91,12 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:2",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
-          "start_byte": 384,
-          "end_byte": 472,
-          "start_line": 21,
+          "source_id": "tb-a1-p05-loop-explicit-item-call.tb",
+          "start_byte": 327,
+          "end_byte": 415,
+          "start_line": 18,
           "start_column": 12,
-          "end_line": 24,
+          "end_line": 21,
           "end_column": 8
         }
       },
@@ -116,12 +116,12 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
-          "start_byte": 348,
-          "end_byte": 472,
-          "start_line": 20,
+          "source_id": "tb-a1-p05-loop-explicit-item-call.tb",
+          "start_byte": 291,
+          "end_byte": 415,
+          "start_line": 17,
           "start_column": 8,
-          "end_line": 24,
+          "end_line": 21,
           "end_column": 8
         }
       },
@@ -142,12 +142,12 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:2",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
-          "start_byte": 384,
-          "end_byte": 472,
-          "start_line": 21,
+          "source_id": "tb-a1-p05-loop-explicit-item-call.tb",
+          "start_byte": 327,
+          "end_byte": 415,
+          "start_line": 18,
           "start_column": 12,
-          "end_line": 24,
+          "end_line": 21,
           "end_column": 8
         }
       },
@@ -168,12 +168,12 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:2",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
-          "start_byte": 384,
-          "end_byte": 472,
-          "start_line": 21,
+          "source_id": "tb-a1-p05-loop-explicit-item-call.tb",
+          "start_byte": 327,
+          "end_byte": 415,
+          "start_line": 18,
           "start_column": 12,
-          "end_line": 24,
+          "end_line": 21,
           "end_column": 8
         }
       },
@@ -193,12 +193,12 @@
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:1",
         "source_ref": {
-          "source_id": "grammar/tree-sitter-touba/examples/anneau-1/positive/tb-a1-p05-loop-explicit-item-call.tb",
-          "start_byte": 348,
-          "end_byte": 472,
-          "start_line": 20,
+          "source_id": "tb-a1-p05-loop-explicit-item-call.tb",
+          "start_byte": 291,
+          "end_byte": 415,
+          "start_line": 17,
           "start_column": 8,
-          "end_line": 24,
+          "end_line": 21,
           "end_column": 8
         }
       },

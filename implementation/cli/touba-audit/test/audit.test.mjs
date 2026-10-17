@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, execFileSync } from "node:child_process";
 import {
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -189,7 +190,7 @@ test("creates a local export document only from explicit artifacts", () => {
     assert.equal(exportDocument.trace_audit_export_schema_version, "trace-audit-export-v1-local");
     assert.equal(exportDocument.artifacts.trace.run.run_id, "run-ta1");
     assert.equal(exportDocument.artifacts.air.module.id, "module:examples.ta1");
-    assert.equal(exportDocument.artifacts.source.text, fixture.sourceText);
+    assert.equal(exportDocument.artifacts.sources[0].text, fixture.sourceText);
     assert.equal(exportDocument.artifacts.secrets, undefined);
     assert.doesNotMatch(JSON.stringify(exportDocument), /\.env loaded|TOUBA_SHOULD_NOT_LEAK/i);
   });
@@ -408,6 +409,64 @@ test("CLI exits non-zero and does not write export on redaction failure", () => 
     assert.doesNotMatch(result.stdout, /raw local answer/);
     assert.throws(() => readFileSync(exportPath, "utf8"));
   });
+});
+
+test("portable source provenance remains auditable without leaking the supplied source path", () => {
+  withFixtureProject(({ paths, air, trace, root }) => {
+    const portable = value => JSON.parse(JSON.stringify(value).replaceAll(paths.source, "program.tb"));
+    const portableAir = portable(air);
+    const portableTrace = portable(trace);
+    portableTrace.run.air_digest = airDocumentDigest(portableAir);
+    writeJson(paths.air, portableAir);
+    writeJson(paths.trace, portableTrace);
+    const artifacts = loadTraceAuditArtifacts(paths);
+    const validation = validateTraceAuditArtifacts(artifacts);
+    assert.equal(validation.validationReport.status, "ok");
+    assert.ok(!JSON.stringify(createTraceAuditExport(artifacts, validation)).includes(root));
+    for (const identity of ["other/program.tb", "../../program.tb"]) {
+      const invalid = JSON.parse(JSON.stringify(portableAir).replaceAll('"program.tb"', JSON.stringify(identity)));
+      writeJson(paths.air, invalid);
+      assertDiagnostic(validateTraceAuditArtifacts(loadTraceAuditArtifacts(paths)), "SourceRefMismatch");
+    }
+  });
+});
+
+test("compiled imports audit all explicit sources, independent of order, and reject missing or changed sources", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "touba-audit-imports-"));
+  try {
+    const main = path.join(root, "main.tb");
+    const helper = path.join(root, "helper.tb");
+    writeFileSync(main, 'module audit.main\nimport function Label from audit.helper\nstrategy Run\n    gives Text\n    do\n        Label\n            into label\n        give label\n');
+    writeFileSync(helper, 'module audit.helper\nfunction Label\n    gives Text\n    do\n        give "Audited"\n');
+    const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "-p", "touba-cli", "--bin", "touba-compile", "--", main, "--module-source", helper], { cwd: implementationDir, encoding: "utf8" }));
+    const run = await executeAirDocument(air, { entryRef: "strategy:audit.main/Run" });
+    assert.equal(run.status, "success");
+    const paths = { air: path.join(root, "main.air.json"), trace: path.join(root, "run.trace.json"), source: [main, helper] };
+    writeJson(paths.air, air); writeJson(paths.trace, run.trace);
+    const artifacts = loadTraceAuditArtifacts(paths);
+    const validation = validateTraceAuditArtifacts(artifacts);
+    assert.equal(validation.validationReport.status, "ok", JSON.stringify(validation));
+    assert.equal(validation.validationReport.checked.source_refs, true);
+    assert.equal(artifacts.sources.digest, loadTraceAuditArtifacts({ ...paths, source: [helper, main] }).sources.digest);
+    assert.deepEqual(createTraceAuditExport(artifacts, validation).artifacts.sources.map(source => source.source_id), ["helper.tb", "main.tb"]);
+    assertDiagnostic(validateTraceAuditArtifacts(loadTraceAuditArtifacts({ ...paths, source: [main] })), "SourceRefMismatch");
+    assert.throws(() => loadTraceAuditArtifacts({ ...paths, source: [main, main] }), /SourceArtifactDuplicate/);
+    const foreign = path.join(root, "foreign.tb"); writeFileSync(foreign, "module foreign\n");
+    assertDiagnostic(validateTraceAuditArtifacts(loadTraceAuditArtifacts({ ...paths, source: [main, helper, foreign] })), "SourceArtifactUnused");
+    mkdirSync(path.join(root, "copy"));
+    const ambiguous = path.join(root, "copy", "helper.tb"); writeFileSync(ambiguous, readFileSync(helper));
+    assertDiagnostic(validateTraceAuditArtifacts(loadTraceAuditArtifacts({ ...paths, source: [main, helper, ambiguous] })), "SourceRefAmbiguous");
+    const report = path.join(root, "import.trace-audit-report.json");
+    const cli = spawnSync(process.execPath, [auditScript, "--trace", paths.trace, "--air", paths.air, "--source", main, "--source", helper, "--report-out", report], { encoding: "utf8" });
+    assert.equal(cli.status, 0, cli.stderr + cli.stdout);
+    assert.equal(JSON.parse(readFileSync(report)).validationReport.checked.source_refs, true);
+    const auditManifest = path.join(root, "sealed.json"); writeJson(auditManifest, createTraceAuditManifest(artifacts));
+    writeFileSync(helper, readFileSync(helper, "utf8").replace("Audited", "Changed"));
+    const tampered = loadTraceAuditArtifacts({ ...paths, auditManifest });
+    const failed = validateTraceAuditArtifacts(tampered);
+    assertDiagnostic(failed, "TraceAuditDigestMismatch");
+    assert.throws(() => createTraceAuditExport(tampered, failed), /TraceAuditExportRefused/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 function withFixtureProject(callback) {

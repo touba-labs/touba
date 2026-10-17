@@ -1,0 +1,56 @@
+module budgets.source
+
+limits run
+    max_run_ms as 30000
+    max_steps as 100
+    max_tool_calls as 2
+    max_agent_invocations as 2
+    max_provider_calls as 2
+
+tool Normalize
+    takes value as Text
+    gives Text
+
+skill Repeat
+    takes value as Text
+    gives Text
+    uses Normalize
+    do
+        Normalize
+            with value as value
+            into first
+        Normalize
+            with value as first
+            into second
+        Normalize
+            with value as second
+            into third
+        give third
+
+agent Specialist
+    description "Return a concise diagnosis of the supplied incident."
+    takes request as Text
+    gives Text
+    responsibility "Diagnose the supplied incident within the declared authority."
+    callable_by strategy Review
+
+strategy Review
+    takes request as Text
+    gives Text
+    uses Specialist
+    do
+        Specialist
+            with request as request
+            into first
+        Specialist
+            with request as first
+            into second
+        Specialist
+            with request as second
+            into third
+        give third
+
+function Ready
+    gives Text
+    do
+        give "ready"
