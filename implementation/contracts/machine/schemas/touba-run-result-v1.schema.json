@@ -16,6 +16,10 @@
       "type": "object", "additionalProperties": false, "required": ["interaction_ref", "prompt"],
       "properties": { "interaction_ref": { "type": "string" }, "prompt": { "type": "string" } }
     },
+    "pending_interactions": {
+      "type": "array", "minItems": 1,
+      "items": { "$ref": "#/properties/pending_interaction" }
+    },
     "trace": { "type": "object" }
   }
 }

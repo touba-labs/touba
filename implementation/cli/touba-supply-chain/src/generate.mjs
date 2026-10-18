@@ -3,8 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadSupplyChainArtifacts, resolveExecutable, sha256Text, SUPPLY_CHAIN_LOCK_SCHEMA_VERSION, validateSupplyChainArtifacts } from "./validate.mjs";
 import { localImportClosure } from "./local-imports.mjs";
+import { pythonImportClosure } from "./python-imports.mjs";
 
 const dependencyNames = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"];
+const pythonDependencyNames = ["pylock.toml", "uv.lock", "poetry.lock"];
 const posix = (value) => value.split(path.sep).join("/");
 function relativeFile(root, file) {
   const relative = path.relative(root, file);
@@ -31,15 +33,8 @@ export function generateSupplyChainLock(options) {
     throw new Error("AIR tools require --manifest");
   }
   const bindings = artifacts.manifest?.json.bindings ?? {};
-  const hasHandlers = Object.keys(bindings).length > 0;
-  if (hasHandlers) relativeFile(root, packagePath);
-  const packageJson = hasHandlers ? JSON.parse(readFileSync(packagePath, "utf8")) : {};
-  if (hasHandlers && (!packageJson.name || !packageJson.version)) throw new Error("package.json must declare name and version");
-  const files = new Set([...(hasHandlers ? [packagePath] : []), ...(options.files ?? []).map((file) => path.resolve(packageRoot, file))]);
-  const dependencies = dependencyNames.map((name) => path.join(packageRoot, name)).filter(existsSync);
-  if ((Object.keys(packageJson.dependencies ?? {}).length || Object.keys(packageJson.devDependencies ?? {}).length) && !dependencies.length) {
-    throw new Error("package dependencies require a real dependency lockfile before generating a supply-chain lock");
-  }
+  const files = new Set((options.files ?? []).map((file) => path.resolve(packageRoot, file)));
+  const dependencies = new Set();
   const timestamp = new Date().toISOString();
   const record = (file, base = root) => ({ path: relativeFile(base, file), digest: digest(file) });
   const lock = {
@@ -66,18 +61,39 @@ export function generateSupplyChainLock(options) {
     const argument = index === "command" ? command : handler.args?.[index];
     if (typeof argument !== "string" || argument.startsWith("-")) throw new Error(`${toolRef}: select the actual entrypoint with --entrypoint-arg`);
     const entrypoint = path.resolve(cwd, argument);
-    for (const file of localImportClosure(entrypoint)) files.add(file);
+    // Confinement precedes parsing, including for an entrypoint in another tree.
+    relativeFile(packageRoot, entrypoint);
+    const isPython = entrypoint.endsWith(".py");
+    const metadataPath = isPython ? path.join(packageRoot, "pyproject.toml") : packagePath;
+    relativeFile(root, metadataPath);
+    let identity, hasDependencies;
+    if (isPython) {
+      identity = pythonImportClosure(entrypoint, { packageRoot, python: options.python });
+      hasDependencies = identity.has_dependencies;
+      for (const file of identity.files) files.add(file);
+    } else {
+      identity = JSON.parse(readFileSync(packagePath, "utf8"));
+      if (!identity.name || !identity.version) throw new Error("package.json must declare name and version");
+      hasDependencies = Object.keys(identity.dependencies ?? {}).length || Object.keys(identity.devDependencies ?? {}).length;
+      for (const file of localImportClosure(entrypoint)) files.add(file);
+    }
+    files.add(metadataPath);
+    const dependencyFiles = (isPython ? pythonDependencyNames : dependencyNames).map(name => path.join(packageRoot, name)).filter(existsSync);
+    if (hasDependencies && !dependencyFiles.length) {
+      throw new Error(`${isPython ? "Python" : "JavaScript"} package dependencies require a real dependency lockfile before generating a supply-chain lock`);
+    }
+    for (const file of dependencyFiles) dependencies.add(file);
     lock.handlers.push({
       tool_ref: toolRef, path: relativeFile(root, entrypoint),
       command: handler.command, cwd: handler.cwd ?? ".", args: handler.args ?? [], digest: digest(entrypoint),
       ...(sdkMetadata === undefined ? {} : { sdk: structuredClone(sdkMetadata) }),
-      handler_package: { kind: "local", name: packageJson.name, version: packageJson.version,
+      handler_package: { kind: "local", name: identity.name, version: identity.version,
         package_root: posix(path.relative(root, packageRoot) || "."), entrypoint: relativeFile(packageRoot, entrypoint) },
     });
   }
   for (const handler of lock.handlers) {
     handler.handler_package.files = [...files].sort().map((file) => record(file, packageRoot));
-    if (dependencies.length) handler.handler_package.dependency_artifacts = dependencies.map((file) => record(file, packageRoot));
+    if (dependencies.size) handler.handler_package.dependency_artifacts = [...dependencies].sort().map((file) => record(file, packageRoot));
   }
   // SDK identity is explicitly supplied, never inferred from an import string.
   // Generation does not execute package code or approve these declarations.
@@ -90,11 +106,11 @@ export function generateSupplyChainLock(options) {
 
 export function main(argv) {
   const options = { files: [], additionalAir: [] };
-  const keys = { "--air": "air", "--manifest": "manifest", "--out": "out", "--package-root": "packageRoot", "--entrypoint-arg": "entrypointArg", "--sdk-metadata-json": "sdkMetadataJson" };
+  const keys = { "--air": "air", "--manifest": "manifest", "--out": "out", "--package-root": "packageRoot", "--entrypoint-arg": "entrypointArg", "--sdk-metadata-json": "sdkMetadataJson", "--python": "python" };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help") {
-      process.stdout.write("Usage: touba supply-chain generate --air <program.air.json> [--air <module.air.json> ...] [--manifest <touba.manifest.json>] --out <touba.lock.json> [--package-root <relative-dir>] [--file <package-relative-file> ...] [--entrypoint-arg <index|command>] [--sdk-metadata-json <object>]\nThe lock remains pending review. No existing file is overwritten. Literal local JavaScript imports are included transitively; computed imports are refused. Add other assets with --file. Bare dependencies require their dependency lock; this is not a vulnerability audit.\n");
+      process.stdout.write("Usage: touba supply-chain generate --air <program.air.json> [--air <module.air.json> ...] [--manifest <touba.manifest.json>] --out <touba.lock.json> [--package-root <relative-dir>] [--file <package-relative-file> ...] [--entrypoint-arg <index|command>] [--sdk-metadata-json <object>] [--python <trusted-interpreter>]\nThe lock remains pending review. No existing file is overwritten. Static local JavaScript and Python script imports are included transitively, without running handlers. Detected dynamic imports are refused. Python uses pyproject.toml and an isolated Python 3.11+ scanner. Add other assets with --file. Declared dependencies require their package-manager lock; installed dependencies are not audited.\n");
       return;
     }
     if (!keys[flag] && flag !== "--file") throw new Error(`unknown option ${flag}`);

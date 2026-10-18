@@ -306,6 +306,16 @@ Voir les [diagnostics de package](packages.md#vérifications-et-diagnostics). Le
 
 ## Politiques hôtes et contrôle de contenu
 
+- `ProjectConfigFieldUnknown` : clé inconnue dans le projet ou `configuration`.
+ Les contextes se déclarent dans `configuration.contexts`.
+- `ToolHandlerSandboxAccessDenied` : l'OS signale un accès refusé dans la
+ sandbox obligatoire. Vérifier les chemins de code et les grants/périmètres
+ de données, sans désactiver l'isolation. Un module inaccessible peut aussi
+ apparaître comme introuvable ; ce cas reste un échec de chargement.
+- `EngineCapacityExceeded` : le moteur JavaScript persistant a atteint sa
+ capacité de requêtes. Attendre la fin d'un run actif avant de réessayer ;
+ ce n'est pas un échec de lancement.
+
 `SkillPackSensitiveContentForbidden` reconnaît les valeurs de secrets résolues
 pour le run et les catégories de contenu explicitement interdites. Il ne s'agit
 pas d'un détecteur générique de motifs de clés API. Aucun secret ne doit être

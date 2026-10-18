@@ -57,6 +57,7 @@ export class ToubaEngineError extends Error {
     super(message);
     this.name = "ToubaEngineError";
     this.phase = phase;
+    this.code = details.code ?? details.reason;
     this.details = details;
   }
 }
@@ -228,8 +229,19 @@ export class ToubaEngine {
       const admissionRefused = envelope?.trace?.run?.admission === "refused"
         && envelope.trace.events.length === 1 && terminal?.kind === "admission_refused"
         && terminal.payload?.code === envelope.reason && envelope.status === "failure"
-        && envelope.result === null && envelope.messages?.length === 0 && envelope.pending_interaction === undefined;
+        && envelope.result === null && envelope.messages?.length === 0 && envelope.pending_interaction === undefined
+        && envelope.pending_interactions === undefined;
+      const question = value => value && typeof value === "object" && !Array.isArray(value)
+        && Object.keys(value).length === 2 && typeof value.interaction_ref === "string" && typeof value.prompt === "string";
+      const pending = envelope?.pending_interaction;
+      const pendings = envelope?.pending_interactions;
+      const validQuestions = (pending === undefined || (question(pending) && envelope.status === "stopped" && envelope.reason === "user_input_pending"))
+        && (pendings === undefined || (Array.isArray(pendings) && pendings.length > 0 && pendings.every(question)
+          && envelope.status === "stopped" && ["user_input_pending", "human_approval_pending"].includes(envelope.reason)
+          && new Set(pendings.map(value => value.interaction_ref)).size === pendings.length
+          && (pending === undefined || (pending.interaction_ref === pendings[0].interaction_ref && pending.prompt === pendings[0].prompt))));
       const validEnvelope = envelope?.schema_version === "touba-run-result-v1"
+        && validQuestions
         && ["success", "stopped", "cancelled", "failure"].includes(envelope.status)
         && typeof envelope.reason === "string" && Array.isArray(envelope.messages)
         && envelope.messages.every(message => typeof message?.interaction_ref === "string" && typeof message.text === "string")
@@ -254,6 +266,7 @@ export class ToubaEngine {
         result: envelope.result,
         messages: envelope.messages,
         ...(envelope.pending_interaction ? { pendingInteraction: envelope.pending_interaction } : {}),
+        pendingInteractions: envelope.pending_interactions ?? (envelope.pending_interaction ? [envelope.pending_interaction] : []),
         trace: envelope.trace,
       };
     } finally {
@@ -300,8 +313,15 @@ export class ToubaEngine {
         signal: options.signal,
       });
     } catch (error) {
-      throw new ToubaEngineError(phase, "Touba command could not be launched", {
-        code: typeof error.code === "string" ? error.code : "LaunchFailed",
+      const code = typeof error.code === "string" ? error.code : "LaunchFailed";
+      const messages = {
+        EngineCapacityExceeded: "Touba engine is at capacity; wait for an active run to finish before retrying",
+        EngineClosed: "Touba engine is closed",
+        EngineCancelled: "Touba engine operation was cancelled",
+      };
+      throw new ToubaEngineError(phase, messages[code] ?? (code.startsWith("EngineWorker")
+        ? "Touba persistent engine worker failed" : "Touba command could not be launched"), {
+        code,
       });
     }
     if (!options.allowFailure && result.status !== 0) {

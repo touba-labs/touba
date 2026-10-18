@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 import { handlerRelativePathForTool } from "./requirements.mjs";
 import { SDK_INSTALL_HINT } from "./sdk-dependency.mjs";
+import { generatePythonHandler, generatePythonContractTest } from "./python-stub.mjs";
 
 const DEFAULT_HANDLER_ROOT = "handlers";
 const DEFAULT_HANDLER_EXTENSION = "mjs";
@@ -15,6 +16,7 @@ const HANDLER_STUB_GENERATOR_METADATA = Object.freeze({
 
 export function generateHandlerStubFromAirTool(tool, options = {}) {
   const normalizedTool = normalizeTool(tool);
+  if (options.language === "python" || options.handlerExtension === "py" || options.sdkImport === "touba-sdk") return generatePythonHandler(normalizedTool);
   const sdkImport = options.sdkImport ?? DEFAULT_SDK_IMPORT;
   const requiredGrants = normalizeStringArray(normalizedTool.required_capabilities, "required_capabilities");
   const requiredSecretHandles = normalizeStringArray(normalizedTool.required_secrets, "required_secrets");
@@ -69,6 +71,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 export function generateHandlerContractTestFromAirTool(tool, options = {}) {
   const normalizedTool = normalizeTool(tool);
+  if (options.language === "python" || options.handlerExtension === "py" || options.sdkImport === "touba-sdk") return generatePythonContractTest(normalizedTool, options.handlerImport ?? "handler.py");
   const sdkImport = options.sdkImport ?? DEFAULT_SDK_IMPORT;
   const handlerImport = options.handlerImport ?? "./handler.mjs";
   const requiredGrants = normalizeStringArray(normalizedTool.required_capabilities, "required_capabilities");
@@ -221,7 +224,7 @@ export function planHandlerStubsFromAirDocument(airDocument, options = {}) {
   }
 
   const handlerRoot = options.handlerRoot ?? DEFAULT_HANDLER_ROOT;
-  const handlerExtension = options.handlerExtension ?? DEFAULT_HANDLER_EXTENSION;
+  const handlerExtension = options.handlerExtension ?? (options.language === "python" ? "py" : DEFAULT_HANDLER_EXTENSION);
 
   return selectedTools.map((tool) => {
     const normalizedTool = normalizeTool(tool);
@@ -323,6 +326,10 @@ function parseArgs(argv) {
       case "--sdk-import":
         options.sdkImport = requiredValue(arg, args);
         break;
+      case "--language":
+        options.language = requiredValue(arg, args);
+        if (!["javascript", "python"].includes(options.language)) throw new Error("choose language javascript or python");
+        break;
       case "--force":
         options.force = true;
         break;
@@ -361,6 +368,7 @@ function printUsage() {
 
 Options:
   --tool-ref <tool_ref>        Generate only one tool stub.
+  --language <language>        javascript (default) or python.
   --handler-root <path>        Handler directory. Default: ${DEFAULT_HANDLER_ROOT}.
   --handler-extension <ext>    Handler extension. Default: ${DEFAULT_HANDLER_EXTENSION}.
   --sdk-import <specifier>     SDK import specifier. Default: ${DEFAULT_SDK_IMPORT}.
@@ -376,7 +384,9 @@ async function main() {
     for (const stub of written) {
       process.stdout.write(`generated ${stub.path} for ${stub.toolRef}\n`);
     }
-    process.stdout.write(`${SDK_INSTALL_HINT}\n`);
+    process.stdout.write(`${options.language === "python" || options.handlerExtension === "py" || options.sdkImport === "touba-sdk"
+      ? "Run touba sdk install python in this project before executing the generated handlers."
+      : SDK_INSTALL_HINT}\n`);
   } catch (error) {
     process.stderr.write(`touba-handler-stub: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

@@ -79,7 +79,7 @@ export async function executeRunLifecycle(context, execute, operations) {
 
   const traceDocument = trace.document();
   validateTraceMachineContract(traceDocument);
-  /** @type {{status: string, reason: string, result: unknown, messages: any[], pending_interaction?: any, trace: unknown, checkpoint?: unknown}} */
+  /** @type {{status: string, reason: string, result: unknown, messages: any[], pending_interaction?: any, pending_interactions?: any[], trace: unknown, checkpoint?: unknown}} */
   const response = {
     status,
     reason,
@@ -87,7 +87,17 @@ export async function executeRunLifecycle(context, execute, operations) {
     messages: context.messages,
     trace: traceDocument,
   };
-  if (context.pendingInteraction) response.pending_interaction = context.pendingInteraction;
+  if (status === "stopped" && ["user_input_pending", "human_approval_pending"].includes(reason)) {
+    /** @type {{interaction_ref: string, prompt: string}[]} */
+    const pending = context.pendingHumanApprovalCheckpoint?.pending_interactions
+      ?? (context.pendingInteraction ? [context.pendingInteraction] : []);
+    if (pending.length) {
+      // Public questions only: never expose continuation state or branch journals.
+      const questions = pending.map(({ interaction_ref, prompt }) => ({ interaction_ref, prompt }));
+      response.pending_interactions = questions;
+      if (reason === "user_input_pending") response.pending_interaction = questions[0];
+    }
+  }
   if (context.pendingHumanApprovalCheckpoint) {
     response.checkpoint = context.pendingHumanApprovalCheckpoint;
   }

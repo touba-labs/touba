@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { effectContractToJson, normalizeEffectContract } from "../../touba-manifest/src/effect-contract.mjs";
 
-const fields = new Set(["grants", "secrets", "memories", "effect_contract", "timeout_ms", "max_payload_bytes", "package_handler"]);
+const fields = new Set(["grants", "secrets", "memories", "effect_contract", "timeout_ms", "max_payload_bytes", "package_handler", "sandbox"]);
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const fail = (code, details = {}) => { throw Object.assign(new Error(code), { code, details }); };
@@ -20,6 +20,16 @@ function selection(value, required) {
 }
 
 function normalizeField(field, value, required) {
+  if (field === "sandbox") {
+    knownKeys(value, new Set(["required", "profile", "code_paths", "read_paths", "write_paths", "local_sockets"]), "sandbox");
+    if (value.required !== undefined && typeof value.required !== "boolean"
+        || value.profile !== undefined && value.profile !== "default") fail("HostDecisionSandboxInvalid");
+    for (const key of ["code_paths", "read_paths", "write_paths", "local_sockets"]) {
+      if (value[key] !== undefined && (!Array.isArray(value[key]) || value[key].length > 4096
+        || value[key].some(path => typeof path !== "string" || !path || path.length > 4096 || path.includes("\0")))) fail("HostDecisionSandboxInvalid");
+    }
+    return structuredClone(value);
+  }
   if (["grants", "secrets", "memories"].includes(field)) return selection(value, required[field] ?? []);
   if (field === "effect_contract") {
     try { return effectContractToJson(normalizeEffectContract(value)); }
@@ -65,7 +75,10 @@ export function applyHostDecisions(manifest, decisions, requirements, fragmentTo
           try { return normalizeField(field, candidate, required); }
           catch (error) { error.details = { ...error.details, target_ref: ref, field }; throw error; }
         };
-        change(ref, field, proposed.bindings[ref], normalize(value),
+        const selected = field === "sandbox"
+          ? normalize({ ...(proposed.bindings[ref].sandbox ?? {}), ...normalize(value) })
+          : normalize(value);
+        change(ref, field, proposed.bindings[ref], selected,
           ["grants", "secrets", "memories"].includes(field) ? required[field] ?? [] : undefined, normalize);
       }
     }

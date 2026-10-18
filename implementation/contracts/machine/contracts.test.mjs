@@ -36,6 +36,23 @@ import {
   validateAirMachineContract, validateTraceMachineContract,
 } from "./contracts.mjs";
 
+test("parallel questions expose only public prompts, with consistent singular and plural views", () => {
+  const trace = validTrace();
+  trace.events.at(-1).payload = {status: "stopped", reason: "user_input_pending"};
+  const pending = [{interaction_ref: "ask:a", prompt: "First?"}, {interaction_ref: "ask:b", prompt: "Second?"}];
+  const value = publicRunResult({status: "stopped", reason: "user_input_pending", messages: [], trace,
+    pending_interaction: pending[0], pending_interactions: pending, checkpoint: {private: true}});
+  const schema = JSON.parse(readFileSync(new URL("schemas/touba-run-result-v1.schema.json", import.meta.url), "utf8"));
+  assert.deepEqual(validateObject(schema, value), []);
+  assert.equal(validateRunResult(value), value);
+  assert.equal(value.checkpoint, undefined);
+  for (const mutate of [copy => {copy.pending_interactions = [];}, copy => {copy.pending_interactions[1] = pending[0];},
+    copy => {copy.pending_interactions[0].journal = [];}, copy => {copy.pending_interaction = pending[1];}]) {
+    const copy = structuredClone(value); mutate(copy);
+    assert.throws(() => validateRunResult(copy), TypeError);
+  }
+});
+
 test("admission failure has a result envelope without inventing an executed run", () => {
   const output = publicRunResult({ status: "failure", reason: "ResourceBindingMissing", result: null,
     messages: [], trace: createAdmissionRefusalTrace("ResourceBindingMissing", "resources") });

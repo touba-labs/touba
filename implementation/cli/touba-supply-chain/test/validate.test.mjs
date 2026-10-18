@@ -546,6 +546,63 @@ test("generates real digests without approvals or overwriting review decisions",
   });
 });
 
+test("Python lock inventories real local imports, preserves review, and refuses source/dependency drift", () => {
+  withFixtureProject(fixture => {
+    const handler = path.join(fixture.root, "handlers/search.py");
+    const helper = path.join(fixture.root, "handlers/helper.py");
+    const project = path.join(fixture.root, "handlers/pyproject.toml");
+    const dependency = path.join(fixture.root, "handlers/pylock.toml");
+    writeFileSync(handler, "from helper import answer\nraise RuntimeError('never execute during generation')\n");
+    writeFileSync(helper, "answer = 42\n");
+    writeFileSync(project, '[project]\nname = "example-python"\nversion = "0.1.0"\ndependencies = ["touba-sdk==0.1.0"]\n');
+    const binding = fixture.manifest.bindings["tool:examples.sc1/Search"];
+    binding.handler = { kind: "process", command: process.platform === "win32" ? "python" : "python3", cwd: ".", args: ["handlers/search.py"] };
+    writeJson(fixture.paths.manifest, fixture.manifest);
+    const output = path.join(fixture.root, "python.lock.json");
+    const options = { ...fixture.paths, out: output, packageRoot: "handlers", sdkMetadataJson: JSON.stringify({ ...fixture.lock.handlers[0].sdk, name: "touba-sdk" }) };
+    assert.throws(() => generateSupplyChainLock(options), /Python package dependencies require a real dependency lockfile/);
+    assert.equal(existsSync(output), false);
+    // This test checks artifact drift, not resolution/installation of this package.
+    writeFileSync(dependency, 'lock-version = "1.0"\n[[packages]]\nname = "touba-sdk"\nversion = "0.1.0"\n');
+    generateSupplyChainLock(options);
+    const lock = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(lock.handlers[0].handler_package.name, "example-python");
+    assert.deepEqual(lock.handlers[0].handler_package.files.map(file => file.path), ["helper.py", "pyproject.toml", "search.py"]);
+    assert.deepEqual(lock.handlers[0].handler_package.dependency_artifacts.map(file => file.path), ["pylock.toml"]);
+    assert.deepEqual(lock.review, { status: "pending" });
+    const check = () => validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: output }));
+    assert.deepEqual(check().diagnostics.map(item => item.code), ["SupplyChainReviewNotApproved"]);
+    for (const file of [handler, helper, project, dependency]) {
+      const original = readFileSync(file);
+      writeFileSync(file, Buffer.concat([original, Buffer.from("\n")]));
+      assert.equal(check().status, "error", file);
+      writeFileSync(file, original);
+    }
+    const cli = spawnSync(process.execPath, [path.join(implementationDir, "cli/touba-project/src/main.mjs"), "supply-chain", "generate", "--air", fixture.paths.air, "--manifest", fixture.paths.manifest, "--out", path.join(fixture.root, "cli-python.lock.json"), "--package-root", "handlers", "--python", process.platform === "win32" ? "python" : "python3"], { encoding: "utf8" });
+    assert.equal(cli.status, 0, cli.stderr);
+  });
+});
+
+test("mixed Python/JavaScript handlers retain their own package identities", () => {
+  withFixtureProject(fixture => {
+    const second = "tool:examples.sc1/Python";
+    fixture.air.definitions.tools.push({ id: second, name: "Python" });
+    writeJson(fixture.paths.air, fixture.air);
+    fixture.manifest.bindings[second] = { ...structuredClone(fixture.manifest.bindings["tool:examples.sc1/Search"]), handler: {
+      kind: "process", command: process.platform === "win32" ? "python" : "python3", cwd: ".", args: ["handlers/second.py"],
+    } };
+    writeJson(fixture.paths.manifest, fixture.manifest);
+    writeFileSync(path.join(fixture.root, "handlers/second.py"), "import json\n");
+    writeFileSync(path.join(fixture.root, "handlers/pyproject.toml"), '[project]\nname = "python-part"\nversion = "0.1.0"\n');
+    const output = path.join(fixture.root, "mixed.lock.json");
+    generateSupplyChainLock({ ...fixture.paths, out: output, packageRoot: "handlers" });
+    const lock = JSON.parse(readFileSync(output, "utf8"));
+    assert.deepEqual(lock.handlers.map(handler => handler.handler_package.name), ["examples.sc1.handlers", "python-part"]);
+    for (const handler of lock.handlers) assert.deepEqual(handler.handler_package.files.map(file => file.path), ["package.json", "pyproject.toml", "search.handler.mjs", "second.py"]);
+    assert.notEqual(validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: output })).status, "error");
+  });
+});
+
 test("one project lock covers multiple explicit AIRs and refuses any artifact drift", () => {
   withFixtureProject(fixture => {
     const otherAir = path.join(fixture.root, "other.air.json");

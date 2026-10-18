@@ -1783,6 +1783,31 @@ for (const historyCount of [0, 16, 50, 100]) test(`WAIT ${historyCount} complete
   } finally { lag.disable(); await service.stop(); rmSync(root, { recursive: true, force: true }); }
 });
 
+test("offline preflight and startup both refuse an orphan interaction projection without altering stored state", async () => {
+  const root = createTestProject();
+  const service = createToubaProjectServer({contractsRoot, projectRoot: root, port: 0, quiet: true});
+  try {
+    await service.start();
+    const url = serverBaseUrl(service);
+    const session = await createInteraction(url, WAIT_TARGET);
+    const operation = await sendInteractionMessage(url, session.session_id, "orphan projection regression");
+    await waitForInteractionStatus(url, session.session_id, operation.operation_id, "awaiting_human");
+    await service.stop();
+    assert.equal(checkToubaProjectState({projectRoot: root}).status, "structurally_valid");
+    const sessionsPath = join(root, ".touba/interaction-sessions.sqlite");
+    const store = readStoreFixture(sessionsPath);
+    store.sessions = [];
+    writeStoreFixture(sessionsPath, store);
+    const paths = [sessionsPath, join(root, ".touba/sandbox-checkpoints.sqlite"), join(root, ".touba/state-origin.json")];
+    const bytes = paths.map(path => readFileSync(path));
+    const checked = checkToubaProjectState({projectRoot: root});
+    assert.equal(checked.status, "refused");
+    assert.ok(checked.diagnostics.some(d => d.code === "ToubaServeSandboxCheckpointStoreInvalid" && d.related_store === "interactionSessionsPath"), JSON.stringify(checked));
+    assert.throws(() => createToubaProjectServer({contractsRoot, projectRoot: root, port: 0, quiet: true}), {code: "ToubaServeSandboxCheckpointStoreInvalid"});
+    paths.forEach((path, index) => assert.deepEqual(readFileSync(path), bytes[index]));
+  } finally { await service.stop(); rmSync(root, {recursive: true, force: true}); }
+});
+
 test("WAIT rejects a pause projection marker bound to a foreign interaction session without side effects", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now());

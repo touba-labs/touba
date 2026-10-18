@@ -1,5 +1,7 @@
 # Touba
 
+Touba Labs: [contact@touba-labs.com](mailto:contact@touba-labs.com).
+
 Touba is a programming language and runtime for governed agentic systems.
 Touba means `Thinking Orchestration Using Bounded Agency`, and the official
 source extension is `.tb`.

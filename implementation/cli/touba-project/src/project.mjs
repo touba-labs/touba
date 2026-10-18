@@ -23,6 +23,8 @@ import {
 } from "../../touba-manifest/src/stub.mjs";
 import { buildManifestRequirements, handlerRelativePathForTool, unapprovedManifest } from "../../touba-manifest/src/requirements.mjs";
 import { inspectSdkDependency } from "../../touba-manifest/src/sdk-dependency.mjs";
+import { sdkSourceFiles } from "../../touba-manifest/src/sdk-build-identity.mjs";
+import { inspectPythonSdkDependency, projectPythonCommand } from "../../touba-manifest/src/python-sdk-dependency.mjs";
 import {
   normalizeEffectContract,
   TOUBA_MANIFEST_V1,
@@ -213,6 +215,7 @@ const PROJECT_LANGUAGE_ALIASES = new Map([
   ["python", "python"],
 ]);
 const PROJECT_LANGUAGE_PROFILES = Object.freeze({
+  python: Object.freeze({ language: "python", sdk: "touba-sdk", handlerCommand: process.platform === "win32" ? "python" : "python3", handlerExtension: "py" }),
   javascript: Object.freeze({
     language: "javascript",
     sdk: "@touba/sdk",
@@ -220,7 +223,7 @@ const PROJECT_LANGUAGE_PROFILES = Object.freeze({
     handlerExtension: DEFAULT_HANDLER_EXTENSION,
   }),
 });
-const RESERVED_PROJECT_LANGUAGES = new Set(["python", "typescript"]);
+const RESERVED_PROJECT_LANGUAGES = new Set(["typescript"]);
 const DEFAULT_RUN_PROFILES = Object.freeze({
   pure: Object.freeze({
     require_supply_chain_lock: false,
@@ -273,9 +276,9 @@ export function initProject(options = {}) {
     created,
     preserved,
     notes: [
-      "Install @touba/sdk explicitly in the JavaScript project before running generated handlers. touba version --json reports distribution.sdk_archive; use npm install --offline --ignore-scripts --save-exact <archive.tgz>. No dependency or package.json was modified.",
+      `Run touba sdk install ${projectConfig.document.language} explicitly before running generated handlers. No SDK dependency was modified by init.`,
       "No manifest is created until a project declares at least one tool.",
-      "JavaScript is the only project language available in this V1; Python and TypeScript are reserved for future work.",
+      "JavaScript and Python handlers share the same process protocol and Core admission. The selected SDK is installed per project.",
       "The runtime still receives manifests explicitly; project tooling only prepares artifacts.",
     ],
   };
@@ -606,7 +609,7 @@ export async function prepareProject(options = {}) {
 
   let expectedManifest = buildManifestRequirements(preparedAirDocuments.map((entry) => entry.document), {
     handlerRoot: options.handlerRoot ?? DEFAULT_HANDLER_ROOT,
-    handlerCommand: options.handlerCommand ?? languageProfile.handlerCommand,
+    handlerCommand: options.handlerCommand ?? (languageProfile.language === "python" ? projectPythonCommand(root) : languageProfile.handlerCommand),
     handlerExtension: options.handlerExtension ?? languageProfile.handlerExtension,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     maxPayloadBytes: options.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES,
@@ -633,8 +636,9 @@ export async function prepareProject(options = {}) {
   });
   const expectedToolRefs = Object.keys(expectedManifest.bindings);
   const sdkDependency = expectedToolRefs.length > 0
-    ? inspectSdkDependency(root, JSON.parse(readFileSync(new URL("../../../runtime/touba-handler-sdk/package.json", import.meta.url), "utf8")).version,
-      fileURLToPath(new URL("../../../runtime/touba-handler-sdk", import.meta.url)))
+    ? (languageProfile.language === "python" ? inspectPythonSdkDependency(root)
+      : inspectSdkDependency(root, JSON.parse(readFileSync(new URL("../../../runtime/touba-handler-sdk/package.json", import.meta.url), "utf8")).version,
+        fileURLToPath(new URL("../../../runtime/touba-handler-sdk", import.meta.url))))
     : null;
   if (sdkDependency?.code === "HandlerSdkBuildMismatch" || sdkDependency?.code === "HandlerSdkInvalid") {
     diagnostics.push(errorDiagnostic(sdkDependency.code, sdkDependency.message));
@@ -707,23 +711,58 @@ export async function prepareProject(options = {}) {
     required: expectedToolRefs.length > 0,
   });
   let proposedManifest = mergeManifest(currentManifest, expectedManifest, diagnostics, manifestPath);
+  let hostChanges = [];
   if (!hasErrorDiagnostics(diagnostics)) {
     try {
       const proposal = applyHostDecisions(proposedManifest, options.hostDecisions, manifestRequirements,
         bindingFragmentComposition.toolRefs, packageHandlerProposals(packageResolution.packages, root, manifestPath));
       proposedManifest = proposal.manifest;
-      for (const change of proposal.changes) {
-        actions.push(action(mode === "write" ? "apply_host_decision" : "would_apply_host_decision", manifestPath, change));
-      }
-      if (mode === "check" && proposal.changes.length > 0) diagnostics.push(errorDiagnostic(
-        "HostDecisionDrift", "explicit host decisions differ from the current manifest; review with plan and apply with write",
-        { manifest_path: manifestPath }));
+      hostChanges = proposal.changes;
     } catch (error) {
       diagnostics.push(errorDiagnostic(error.code ?? "HostDecisionInvalid",
         `invalid host decision${error.details?.path ? ` at ${error.details.path}` : ""}${error.details?.target_ref ? ` for ${error.details.target_ref}` : ""}${error.details?.field ? `, field ${error.details.field}` : ""}; no preparation changes were written`,
         { manifest_path: manifestPath, ...error.details }));
     }
   }
+  if (!hasErrorDiagnostics(diagnostics) && languageProfile.language === "javascript") {
+    for (const [toolRef, binding] of Object.entries(proposedManifest.bindings)) {
+      // Explicit fragments own their inventory. Raw protocol handlers may run
+      // without the SDK; only inventory an installed and verified project SDK.
+      if (binding.sandbox?.required !== true || bindingFragmentComposition.toolRefs.has(toolRef)
+          || sdkDependency?.status !== "ready") continue;
+      const cwd = resolve(dirname(manifestPath), binding.handler.cwd ?? ".");
+      const files = ["package.json", ...sdkSourceFiles(sdkDependency.path)]
+        .map(file => toPosixPath(relative(cwd, join(sdkDependency.path, file))));
+      const before = binding.sandbox.code_paths ?? [];
+      if (!Array.isArray(before) || before.some(path => typeof path !== "string")) {
+        diagnostics.push(errorDiagnostic("HandlerSandboxPathInvalid", "Sandbox code_paths must be an array of file paths", {tool_ref: toolRef}));
+        continue;
+      }
+      const after = [...new Set([...before, ...files])].sort();
+      if (after.length > 4096) {
+        diagnostics.push(errorDiagnostic("HandlerSandboxPathInvalid", "Sandbox code_paths exceeds its file limit", {tool_ref: toolRef}));
+        continue;
+      }
+      binding.sandbox.code_paths = after;
+      const previous = currentManifest?.bindings?.[toolRef]?.sandbox?.code_paths ?? [];
+      if (isDeepStrictEqual(previous, after)) continue;
+      actions.push(action(mode === "write" ? "configure_sandbox_code_paths" : "would_configure_sandbox_code_paths",
+        manifestPath, { target_ref: toolRef, field: "sandbox.code_paths", before: previous, after }));
+      if (mode === "check") diagnostics.push(errorDiagnostic("SandboxCodePathsDrift",
+        "Sandbox SDK inventory differs; review prepare plan before writing the manifest", { tool_ref: toolRef }));
+    }
+  }
+  // Compare the final proposal, including the reviewed technical inventory.
+  // Repeating an explicit code_paths selection must not report transient drift.
+  hostChanges = hostChanges.map(change => change.field === "sandbox"
+    ? {...change, after: proposedManifest.bindings[change.target_ref].sandbox} : change)
+    .filter(change => !isDeepStrictEqual(change.before, change.after));
+  for (const change of hostChanges) {
+    actions.push(action(mode === "write" ? "apply_host_decision" : "would_apply_host_decision", manifestPath, change));
+  }
+  if (mode === "check" && hostChanges.length > 0) diagnostics.push(errorDiagnostic(
+    "HostDecisionDrift", "explicit host decisions differ from the current manifest; review with plan and apply with write",
+    { manifest_path: manifestPath }));
   inspectManifest({
     currentManifest,
     reviewedManifest: proposedManifest,
@@ -1422,6 +1461,9 @@ function ensureProjectGitignore(root, created, preserved) {
   const gitignorePath = join(root, ".gitignore");
   const requiredEntries = [
     ".touba/",
+    ".venv/",
+    "__pycache__/",
+    "node_modules/",
     "*.air.json",
     "*.trace.json",
     ".env",
@@ -1561,7 +1603,7 @@ function resolveProjectConfigForPrepare(root, diagnostics) {
     const profile = projectLanguageProfile(document.language);
     return { path, document, profile };
   } catch (error) {
-    diagnostics.push(errorDiagnostic("ProjectConfigInvalid", error.message, {
+    diagnostics.push(errorDiagnostic(error.code ?? "ProjectConfigInvalid", error.message, {
       project_config_path: path,
     }));
     return {
@@ -1587,9 +1629,9 @@ function projectLanguageProfile(language) {
     return profile;
   }
   if (RESERVED_PROJECT_LANGUAGES.has(normalized)) {
-    throw new Error(`project language ${normalized} is not available in this V1; choose javascript`);
+    throw new Error(`project language ${normalized} is not available in this V1; choose javascript or python`);
   }
-  throw new Error(`unsupported project language ${normalized}; supported language: javascript`);
+  throw new Error(`unsupported project language ${normalized}; supported languages: javascript, python`);
 }
 
 function expectedProjectConfigDocument(profile) {
@@ -1616,6 +1658,7 @@ function readProjectConfig(path) {
   if (!document || typeof document !== "object" || Array.isArray(document)) {
     throw new Error(`project config must be an object: ${path}`);
   }
+  assertProjectConfigFields(document, ["project_version", "language", "sdk", "run_profiles", "packages", "artifact_layout", "entry", "configuration"], "root");
   if (document.project_version !== TOUBA_PROJECT_CONFIG_VERSION) {
     throw new Error(`project config project_version must be ${TOUBA_PROJECT_CONFIG_VERSION}`);
   }
@@ -1663,12 +1706,21 @@ function normalizeProjectConfiguration(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("project config configuration must be an object");
   }
+  assertProjectConfigFields(value, ["binding_fragments", "resource_bindings", "contexts", "ownership"], "configuration");
   return {
     binding_fragments: normalizeProjectPathList(value.binding_fragments, "configuration.binding_fragments"),
     resource_bindings: normalizeProjectPathList(value.resource_bindings, "configuration.resource_bindings"),
     ...(value.contexts === undefined ? {} : { contexts: normalizeProjectContexts(value.contexts) }),
     ownership: normalizeOptionalProjectRef(value.ownership, "configuration.ownership"),
   };
+}
+
+function assertProjectConfigFields(value, allowed, location) {
+  const unknown = Object.keys(value).find(key => !allowed.includes(key));
+  if (unknown === undefined) return;
+  const field = /^[A-Za-z0-9_]{1,80}$/.test(unknown) ? unknown : "[invalid key]";
+  const hint = location === "root" && unknown === "contexts" ? "; put contexts inside configuration.contexts" : "";
+  throw Object.assign(new Error(`unknown project config field ${location}.${field}${hint}`), { code: "ProjectConfigFieldUnknown" });
 }
 
 function normalizeProjectPathList(value, field) {
@@ -4418,9 +4470,10 @@ function inspectStubs({ stubs, diagnostics, actions, mode }) {
         if (source.includes("TOUBA_HANDLER_GENERATED_BY")) {
           for (const [name, expected] of Object.entries(stub.declared_contract)) {
             const match = source.match(new RegExp(`\\bconst ${name} = ([\\s\\S]*?);`));
-            if (!match) continue; // Custom code may compute its own contract.
+            const pythonMatch = stub.path.endsWith(".py") ? source.match(new RegExp(`^${name} = json\\.loads\\(("(?:\\\\.|[^"\\\\])*")\\)`, "m")) : null;
+            if (!match && !pythonMatch) continue; // Custom code may compute its own contract.
             let actual;
-            try { actual = JSON.parse(match[1]); } catch { continue; }
+            try { actual = pythonMatch ? JSON.parse(JSON.parse(pythonMatch[1])) : JSON.parse(match[1]); } catch { continue; }
             if (JSON.stringify(actual) === JSON.stringify(expected)) continue;
             const diagnostic = errorDiagnostic("HandlerDeclaredContractDrift",
               `${name} in ${stub.path} differs from AIR for ${stub.tool_ref}; review the handler contract explicitly`,

@@ -81,7 +81,7 @@ Un handler respecte `touba-tool-handler-v1`. Livrer un handler ne crée pas un
 binding approuvé : le consommateur choisit son chemin, ses grants, secrets,
 scopes et limites. L'intégrité d'une archive ne garantit pas l'innocuité du code.
 Pour un handler JavaScript important `@touba/sdk`, le consommateur suit le
-[guide SDK](sdk-touba.md). Aucun npm install caché n'a lieu pendant l'ajout.
+[guide SDK](sdk-javascript.md). Aucun npm install caché n'a lieu pendant l'ajout.
 
 ## Partager sans serveur
 

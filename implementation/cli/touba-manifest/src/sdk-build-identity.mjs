@@ -6,15 +6,25 @@ import { join } from "node:path";
 // dependencies. Packaging and installed-project inspection use the same bytes.
 export function sdkBuildIdentity(root) {
   const hash = createHash("sha256").update("touba-sdk-source-v1\0");
+  for (const relative of sdkSourceFiles(root)) {
+    const bytes = readFileSync(join(root, relative));
+    hash.update(`${relative}\0${bytes.length}\0`).update(bytes);
+  }
+  return `sha256:${hash.digest("hex")}`;
+}
+
+// Same regular-file inventory for identity and explicit sandbox manifests.
+export function sdkSourceFiles(root) {
+  const files = [];
   function visit(relative) {
     const path = join(root, relative), stat = lstatSync(path);
     if (stat.isDirectory()) {
       for (const name of readdirSync(path).sort()) visit(`${relative}/${name}`);
     } else if (stat.isFile()) {
-      const bytes = readFileSync(path);
-      hash.update(`${relative}\0${bytes.length}\0`).update(bytes);
+      files.push(relative);
+      if (files.length > 4095) throw new Error("SDK source inventory exceeds its file limit");
     } else throw new Error("SDK implementation must contain regular files and directories");
   }
   visit("src");
-  return `sha256:${hash.digest("hex")}`;
+  return files;
 }

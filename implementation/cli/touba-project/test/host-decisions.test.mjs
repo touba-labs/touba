@@ -45,6 +45,32 @@ function project(t) {
 const manifestAt = root => join(root, ".touba/build/dev/touba.manifest.json");
 const readManifest = root => JSON.parse(readFileSync(manifestAt(root), "utf8"));
 
+test("unknown project keys fail explicitly without writing preparation artifacts", async t => {
+  for (const extra of [{contexts: ["context.json"]}, {unknown_key: true}, {configuration: {contexts: [], typo: []}}]) {
+    const root = project(t);
+    const path = join(root, "touba.project.json");
+    const bytes = JSON.stringify({project_version: "touba-project-v1", artifact_layout: "touba-artifacts-v1", language: "javascript", sdk: "@touba/sdk", ...extra});
+    writeFileSync(path, bytes);
+    const result = await prepareProject({root, mode: "write"});
+    assert.equal(result.status, "error");
+    assert.ok(result.diagnostics.some(d => d.code === "ProjectConfigFieldUnknown"), JSON.stringify(result.diagnostics));
+    if (extra.contexts) assert.match(JSON.stringify(result.diagnostics), /configuration.contexts/);
+    assert.equal(readFileSync(path, "utf8"), bytes);
+    assert.equal(existsSync(manifestAt(root)), false);
+  }
+});
+
+test("sandbox host decisions preserve omitted inventory and reject invalid fields", () => {
+  const required = {bindings: {[tool]: {grants: [], secrets: []}}};
+  const current = {bindings: {[tool]: {sandbox: {required: true, code_paths: ["sdk.mjs"]}}}};
+  const changed = applyHostDecisions(current, {bindings: {[tool]: {sandbox: {read_paths: ["data.json"]}}}}, required);
+  assert.deepEqual(changed.manifest.bindings[tool].sandbox, {required: true, code_paths: ["sdk.mjs"], read_paths: ["data.json"]});
+  assert.equal(current.bindings[tool].sandbox.read_paths, undefined);
+  for (const sandbox of [{required: "true"}, {profile: "unrestricted"}, {code_paths: "file.mjs"}, {read_paths: [null]}, {allow_all: true}]) {
+    assert.throws(() => applyHostDecisions(current, {bindings: {[tool]: {sandbox}}}, required), /HostDecision/);
+  }
+});
+
 test("explicit host decisions plan, write, repeat and check compiled source without granting implicitly", async t => {
   const root = project(t);
   let report = await prepareProject({ root, mode: "plan", hostDecisions: decisions });

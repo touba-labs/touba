@@ -3734,7 +3734,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 if left_type == Some(BUILTIN_TEXT) && right_type == Some(BUILTIN_TEXT) {
                     Some(builtin_text())
                 } else {
-                    self.invalid_operand_type("operator `++` expects Text operands", source_ref);
+                    self.invalid_operand_type("Text concatenation or interpolation requires Text values; use text(value) to convert a non-text expression", source_ref);
                     None
                 }
             }

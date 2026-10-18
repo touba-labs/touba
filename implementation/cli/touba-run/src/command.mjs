@@ -2801,6 +2801,7 @@ function aggregateTriggerRunnerResults(document, triggerRef, runResults) {
       status: result.status, reason: result.reason, result: result.result ?? null })),
     messages: runResults.flatMap(({ result }) => result.messages ?? []),
     ...(last.pending_interaction ? { pending_interaction: last.pending_interaction } : {}),
+    ...(last.pending_interactions?.length ? { pending_interactions: last.pending_interactions } : {}),
     ...(last.checkpoint ? { checkpoint: last.checkpoint } : {}),
     trace: validateTraceMachineContract(trace.document()),
   };

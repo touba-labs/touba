@@ -57,8 +57,8 @@ test("installed archive supplies an independent SDK, provider dependencies, lice
     const client = join(venv, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
     run(client, ["-m", "pip", "install", "--disable-pip-version-check", "--no-index", "--no-deps", pythonArchive], workspace);
     writeFileSync(join(workspace, "python.tb"), 'module python_installed\nstrategy Echo\n    takes value as Text\n    gives Text\n    do\n        give value\n');
-    assert.match(run(client, ["-c", `from touba_sdk import Engine
-engine = Engine(project_root=${JSON.stringify(workspace)}, command=${JSON.stringify(node)}, command_args=[${JSON.stringify(cli)}])
+    assert.match(run(client, ["-c", `from touba_sdk import ToubaEngine
+engine = ToubaEngine(project_root=${JSON.stringify(workspace)}, command=${JSON.stringify(node)}, command_args=[${JSON.stringify(cli)}])
 assert engine.version()["build"]["id"] == ${JSON.stringify(metadata.build.id)}
 assert engine.run(source="python.tb", inputs={"value":"installed-python-ok"}).result == "installed-python-ok"
 print("PYTHON_ARCHIVE_OK")`], workspace, { PYTHONPATH: "" }), /PYTHON_ARCHIVE_OK/);

@@ -88,6 +88,19 @@ test("local opt-in records actual SDK exception location without secrets, messag
   assert.equal(JSON.parse(f.run(["--handler-diagnostics", link]).stdout).reason, "HandlerDiagnosticsUnavailable");
 });
 
+test("startup failures retain only class and selected source position before the SDK loads", async t => {
+  const f = await fixture(t);
+  writeFileSync(f.handlerPath, `throw new TypeError(${JSON.stringify(unknownSecret)});`);
+  const path = join(f.root, "startup.jsonl");
+  const run = f.run(["--handler-diagnostics", path]);
+  assert.equal(JSON.parse(run.stdout).reason, "ToolHandlerNonZeroExit");
+  const entry = JSON.parse(readFileSync(path, "utf8"));
+  assert.equal(entry.error_class, "TypeError");
+  assert.equal(entry.line, 1);
+  assert.equal(entry.handler_arg_index, 0);
+  assert.doesNotMatch(run.stdout + run.stderr + readFileSync(path, "utf8"), new RegExp(unknownSecret));
+});
+
 test("prod and locked runs refuse diagnostics before invoking the handler", async t => {
   const f = await fixture(t);
   const original = JSON.parse(readFileSync(f.plan, "utf8"));

@@ -64,6 +64,29 @@ test("warm Engine reuses one process but separates values and rereads authority 
   await assert.rejects(engine.run(echo), error => error.details.code === "EngineClosed");
 });
 
+test("saturated engine reports capacity, never a launch failure, and remains usable", async t => {
+  const { engine, root, airJson, handler } = await fixture(t);
+  const release = join(root, "release");
+  writeFileSync(join(root, "handler.mjs"), `import {existsSync} from 'node:fs';
+while (!existsSync(${JSON.stringify(release)})) await new Promise(resolve => setTimeout(resolve, 20));
+${handler}`);
+  const call = { airJson, entryRef: "strategy:worker/Call", manifest: "manifest.json", inputs: {value: "ok"} };
+  const runs = Array.from({length: 20}, () => engine.run(call));
+  const joined = Promise.all(runs);
+  try {
+    const deadline = Date.now() + 8000;
+    while (engine.transport.pending.size < 20 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(engine.transport.pending.size, 20);
+    await assert.rejects(engine.run(call), error => {
+      assert.equal(error.code, "EngineCapacityExceeded");
+      assert.match(error.message, /at capacity/);
+      assert.doesNotMatch(error.message, /could not be launched/);
+      return true;
+    });
+  } finally { writeFileSync(release, "release test handlers"); await joined; }
+  assert.equal((await engine.run(call)).result, "ok");
+});
+
 test("cancellation remains request-specific while another run finishes", async t => {
   const { engine, root, airJson } = await fixture(t);
   writeFileSync(join(root, "handler.mjs"), `let raw = ""; for await (const chunk of process.stdin) raw += chunk;

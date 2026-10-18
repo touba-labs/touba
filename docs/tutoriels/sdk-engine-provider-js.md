@@ -10,7 +10,7 @@ Le SDK ne remplace pas les contrôles d'autorité du runtime.
 ## 1. Installer le SDK du projet
 
 Dans un terminal macOS/Linux, installer l'archive livrée avec Touba, pas un
-paquet npm public inexistant. Voir [l'installation du SDK](../guides/sdk-touba.md).
+paquet npm public inexistant. Voir [l'installation du SDK](../guides/sdk-javascript.md).
 
 ```sh title="Terminal"
 mkdir -p sdk-engine-demo

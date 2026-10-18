@@ -66,6 +66,9 @@ fn templates_validate_escapes_and_keep_original_diagnostic_positions() {
         if expression == r#"f"{1}""# {
             let diagnostic = result.diagnostics.iter().find(|d| d.code == AirDiagnosticCode::InvalidExpressionOperandType).unwrap();
             assert_eq!(diagnostic.source_ref.as_ref().unwrap().start_line, 4);
+            assert!(diagnostic.message.contains("interpolation"));
+            assert!(diagnostic.message.contains("text(value)"));
+            assert!(!diagnostic.message.contains("++"));
         }
     }
     for expression in [r#"f"Échéance 📦 {text(5 // 2)}""#, r#"f"{f"nested"}""#, r#"f"{text(1)}{text(2)}""#] {

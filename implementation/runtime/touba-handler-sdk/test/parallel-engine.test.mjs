@@ -47,14 +47,18 @@ test("SDK persists and answers occurrence-specific parallel asks through the CLI
   const config = { source: "source.tb", entryRef: "strategy:industrial.parallel/Run", parallelCheckpointOut: "progress.json" };
   let result = await engine.run({ ...config, inputs: { incidents: ["one", "two", "three"] } });
   assert.equal(result.reason, "user_input_pending");
+  assert.ok(result.pendingInteractions.length > 0);
+  assert.deepEqual(result.pendingInteraction, result.pendingInteractions[0]);
   for (let i = 0; result.status === "stopped" && i < 6; i++) {
     const checkpoint = JSON.parse(readFileSync(join(root, "progress.json")));
-    const input = checkpoint.pending_interactions[0];
+    const input = result.pendingInteractions[0];
+    assert.deepEqual(result.pendingInteractions, checkpoint.pending_interactions.map(({ interaction_ref, prompt }) => ({ interaction_ref, prompt })));
     assert.ok(input.interaction_ref.includes("parallel"));
     result = await engine.run({ ...config, parallelResumeCheckpoint: "progress.json", userInputs: { [input.interaction_ref]: input.prompt + "!" } });
   }
   assert.equal(result.status, "success", JSON.stringify(result));
   assert.deepEqual(result.result, ["one!", "two!", "three!"]);
+  assert.deepEqual(result.pendingInteractions, []);
   const checkpoint = JSON.parse(readFileSync(join(root, "progress.json")));
   checkpoint.parallel_digest = "sha256:" + "0".repeat(64);
   writeFileSync(join(root, "corrupt.json"), JSON.stringify(checkpoint));

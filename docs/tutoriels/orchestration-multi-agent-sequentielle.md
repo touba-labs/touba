@@ -443,7 +443,7 @@ Résultat attendu : trois textes dans l'ordre billing, inventory, shipping.
 Le même bloc accepte une liste construite par un tool et des stratégies de
 révision ou de délégation ; la cible n'est jamais un nom arbitraire fourni par
 le modèle. Pour un modèle réel, utilisez le
-[provider du SDK](../guides/sdk-touba.md), avec ses coûts et limites explicites.
+[provider du SDK](../guides/sdk-javascript.md), avec ses coûts et limites explicites.
 
 ### Gouvernance et reprise
 

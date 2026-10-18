@@ -111,7 +111,7 @@ déterministe, avant la décision et l'éventuel redémarrage.
 Deux instructions d'approbation signifient deux décisions, pas nécessairement
 deux personnes distinctes. Un `while` reste borné par le budget d'itérations ;
 la composition des boucles n'autorise pas une exécution illimitée. Utilisez
-les aides [SDK de test](./sdk-touba.md) pour tester succès et refus, puis
+les aides [SDK de test](./sdk-javascript.md) pour tester succès et refus, puis
 vérifiez séparément les effets dans les services de test.
 
 ## Ce que chaque couche garantit

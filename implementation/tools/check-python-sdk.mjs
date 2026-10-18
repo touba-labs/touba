@@ -20,6 +20,6 @@ try {
   run(python, ["-m", "venv", venv]);
   const installed = join(venv, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
   run(installed, ["-m", "pip", "install", "--disable-pip-version-check", "--no-index", "--no-deps", join(temporary, metadata.archive)]);
-  run(installed, ["-c", "import touba_sdk; assert 'site-packages' in touba_sdk.__file__; print(touba_sdk.sdk_metadata())"]);
+  run(installed, ["-c", "import touba_sdk; assert 'site-packages' in touba_sdk.__file__; print(touba_sdk.touba_sdk_metadata())"]);
   run(installed, ["-m", "unittest", "discover", "-s", join(root, "runtime/touba-python-sdk/tests"), "-v"]);
 } finally { rmSync(temporary, { recursive: true, force: true }); }

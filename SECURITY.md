@@ -11,8 +11,7 @@ validation or traceability controls.
 Use one of these channels:
 
 - GitHub Security Advisories, when enabled for the repository;
-- direct contact with the principal maintainer, Khadim Lo:
-  `lokhadimpro@gmail.com`.
+- Touba Labs security contact: [contact@touba-labs.com](mailto:contact@touba-labs.com).
 
 Include:
 

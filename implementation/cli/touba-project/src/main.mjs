@@ -18,6 +18,7 @@ import {
   setProjectSecret,
 } from "./project.mjs";
 import { packageCommand } from "./package-command.mjs";
+import { sdkCommand } from "./sdk-command.mjs";
 import {
   checkRegistry,
   renderRegistryResolution,
@@ -74,6 +75,7 @@ const FEATURE_VERSIONS = Object.freeze({
   trace_output: "touba-trace-v1",
 });
 const PUBLIC_COMMANDS = Object.freeze({
+  sdk: true,
   package: true,
   compile: true,
   run: true,
@@ -204,6 +206,7 @@ async function dispatch(rawArgs) {
     throw new Error("usage: touba secret set|list|check|remove ...");
   }
   if (command === "package") return packageCommand(rest);
+  if (command === "sdk") return sdkCommand(rest);
   if (command === "skill") throw Object.assign(new Error("SkillCommandRemoved: use touba package new <name> --org <organization> --context; migrate skill.json to touba.package.json. No legacy pack is loaded."), { code: "SkillCommandRemoved" });
   if (command === "compile") {
     return compileCommand(rest);
@@ -1637,7 +1640,9 @@ function requiredValue(option, args, index) {
 
 function printUsage() {
   process.stdout.write(`Usage:
-  touba init [--root <path>] [--language javascript]
+  touba init [--root <path>] [--language javascript|python]
+  touba sdk install javascript|python [--root <path>] [--python <executable>]
+  touba sdk path javascript|python
   touba new module <domain.module> [--root <path>] [--force]
   touba package new|check|test|version|pack|add|list|remove ... (touba package --help)
   touba prepare [--root <path>] [--mode plan|check|write] [--source <file.tb>] [--air <file.air.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--host-decisions-json <json>] [--resource-bindings <resources.json>] [--require-resource-bindings] [--run-plan <path>] [--ownership <touba.ownership.json>] [--require-ownership] [--entry <air-ref>] [--profile pure|dev|prod] [--manifest <path>] [--handler-root <path>] [--handler-command <path>] [--json]

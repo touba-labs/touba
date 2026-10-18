@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pythonSdkSourceIdentity } from "../../touba-manifest/src/python-sdk-dependency.mjs";
 
 // Uses a provisioned builder; never installs build tools or downloads at release time.
 export function packagePythonSdk(implementationRoot, toolchainRoot) {
@@ -16,5 +17,5 @@ export function packagePythonSdk(implementationRoot, toolchainRoot) {
   const version = JSON.parse(readFileSync(join(implementationRoot, "runtime/touba-handler-sdk/package.json"))).version;
   const filename = `touba_sdk-${version}-py3-none-any.whl`;
   const sha256 = createHash("sha256").update(readFileSync(join(output, filename))).digest("hex");
-  return { name: "touba-sdk", version, archive: `sdk/${filename}`, sha256, requires_python: ">=3.11" };
+  return { name: "touba-sdk", version, archive: `sdk/${filename}`, sha256, build_sha256: pythonSdkSourceIdentity(join(source, "src/touba_sdk")), requires_python: ">=3.11" };
 }

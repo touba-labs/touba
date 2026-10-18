@@ -91,13 +91,9 @@ test("init creates project folders without creating a manifest", () => {
   }
 });
 
-test("init rejects reserved project languages until their SDKs are available", () => {
+test("init supports Python and refuses the reserved TypeScript generator", () => {
   const root = tempRoot();
   try {
-    assert.throws(
-      () => initProject({ root, language: "python" }),
-      /project language python is not available in this V1; choose javascript/,
-    );
     const result = spawnSync(process.execPath, [
       cliPath,
       "init",
@@ -109,6 +105,9 @@ test("init rejects reserved project languages until their SDKs are available", (
     assert.equal(result.status, 2);
     assert.match(result.stderr, /project language typescript is not available in this V1; choose javascript/);
     assert.equal(existsSync(join(root, "touba.project.json")), false);
+    const python = initProject({ root, language: "python" });
+    assert.equal(python.sdk, "touba-sdk");
+    assert.equal(python.language, "python");
   } finally {
     cleanup(root);
   }

@@ -309,6 +309,8 @@ test("parallel ask answers are occurrence-specific, journaled, and never silentl
   assert.equal(missing.status, "stopped");
   assert.equal(missing.reason, "user_input_pending");
   assert.ok(missing.checkpoint.pending_interactions.length);
+  assert.deepEqual(missing.pending_interactions, missing.checkpoint.pending_interactions.map(({ interaction_ref, prompt }) => ({ interaction_ref, prompt })));
+  assert.deepEqual(missing.pending_interaction, missing.pending_interactions[0]);
   let resumed = missing;
   for (let i = 0; resumed.checkpoint && i < 8; i++) {
     const checkpoint = JSON.parse(JSON.stringify(resumed.checkpoint));
@@ -319,6 +321,7 @@ test("parallel ask answers are occurrence-specific, journaled, and never silentl
   }
   assert.equal(resumed.status, "success", resumed.reason);
   assert.deepEqual(resumed.result, ["a?", "b?"]);
+  assert.equal(resumed.pending_interactions, undefined);
   const seen = [];
   const userInputProvider = async request => {
     seen.push(request.interactionRef); await delay(2); return request.prompt + "!";

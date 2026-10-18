@@ -25,7 +25,7 @@ export const SUPPLY_CHAIN_VALIDATION_SCHEMA_VERSION = "touba-supply-chain-valida
 const AIR_SCHEMA_VERSION = "touba-air-v1";
 const MANIFEST_VERSIONS = new Set([TOUBA_MANIFEST_V1]);
 const DIGEST_KIND = "sha256";
-const EXPECTED_HANDLER_SDK_NAME = "@touba/sdk";
+const EXPECTED_HANDLER_SDK_NAMES = new Set(["@touba/sdk", "touba-sdk"]);
 const HANDLER_SDK_PROTOCOL_V1 = "touba-tool-handler-v1";
 const SUPPORTED_HANDLER_SDK_VERSIONS = new Set(["0.1.0"]);
 const SUPPORTED_HANDLER_PACKAGE_KINDS = new Set(["local"]);
@@ -862,7 +862,7 @@ function sdkStatus(sdk, diagnostics, toolRef) {
     return "unsupported";
   }
   const unsupportedReasons = [];
-  if (sdk.name !== EXPECTED_HANDLER_SDK_NAME) {
+  if (!EXPECTED_HANDLER_SDK_NAMES.has(sdk.name)) {
     unsupportedReasons.push("name");
   }
   if (sdk.protocol !== HANDLER_SDK_PROTOCOL_V1 || Object.hasOwn(sdk, "protocols")) {

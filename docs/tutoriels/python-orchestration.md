@@ -6,8 +6,14 @@ Installez le [SDK Python](../guides/sdk-python.md) et, seulement pour cet
 exemple, les dépendances facultatives testées (licences MIT) :
 
 ```sh
+touba sdk install python
+source .venv/bin/activate
 python -m pip install langgraph==1.2.16 langchain-core==1.6.12
 ```
+
+Sous Windows, activez `.venv\Scripts\Activate.ps1` à la place de `source`.
+Le SDK Touba s'installe hors ligne ; le téléchargement des frameworks ci-dessus
+est facultatif et nécessite le réseau.
 
 ## Une frontière visible avant de poursuivre
 
@@ -28,9 +34,9 @@ strategy Review
 from typing import TypedDict
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
-from touba_sdk import Engine
+from touba_sdk import ToubaEngine
 
-engine = Engine(project_root=".")
+engine = ToubaEngine(project_root=".")
 
 @tool
 def review_invoice(value: str) -> dict:

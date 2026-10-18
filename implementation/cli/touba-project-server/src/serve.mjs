@@ -11563,6 +11563,7 @@ export function checkToubaProjectState(options = {}) {
   // Validate a private copy: SQLite configuration and validator caches cannot
   // change the original files. The caller must first stop all state writers.
   const temporary = mkdtempSync(join(tmpdir(), "touba-state-preflight-"));
+  const copies = {};
   try {
     for (const [key, fallback, load] of [
       ["sandboxCheckpointsPath", DEFAULT_SANDBOX_CHECKPOINTS_PATH, loadSandboxCheckpointStore],
@@ -11573,6 +11574,7 @@ export function checkToubaProjectState(options = {}) {
       ["interactionAssetsPath", DEFAULT_INTERACTION_ASSETS_PATH, auditInteractionAssets],
     ]) {
       const path = resolve(options[key] ?? join(projectRoot, fallback));
+      copies[key] = join(temporary, key + ".sqlite");
       if (!isPathInside(projectRoot, path)) { diagnostics.push({ code: "ToubaServeStateOutsideProject", store: key }); continue; }
       if (!existsSync(path)) {
         if (path.endsWith(".sqlite") && existsSync(path.slice(0, -7) + ".json")) diagnostics.push({ code: "ToubaStoreFormatIncompatible", store: key });
@@ -11586,7 +11588,7 @@ export function checkToubaProjectState(options = {}) {
         if (["-journal", "-wal", "-shm"].some(suffix => existsSync(path + suffix))) throw Object.assign(new Error(), { code: "ToubaServeStateSnapshotRequired" });
         const bytes = readFileSync(path);
         if (!bytes.subarray(0, 16).equals(Buffer.from("SQLite format 3\0"))) throw Object.assign(new Error(), { code: "ToubaStoreFormatIncompatible" });
-        const copy = join(temporary, key + ".sqlite");
+        const copy = copies[key];
         writeFileSync(copy, bytes, { mode: 0o600 });
         const value = load(copy);
         const records = value.records ?? value.decisions ?? value.entries ?? value.sessions ?? value.assets ?? [...(value.approvals ?? []), ...(value.reviews ?? [])];
@@ -11594,6 +11596,18 @@ export function checkToubaProjectState(options = {}) {
           records: Array.isArray(records) ? records.length : Object.keys(records).length,
           active_waits: Array.isArray(value.records) ? value.records.filter(record => record.record_kind === "human" && ["pending", "resolution_claimed"].includes(record.status)).length : 0 });
       } catch (error) { diagnostics.push({ code: error.code ?? "ToubaServeStoredStateInvalid", store: key }); }
+    }
+    if (diagnostics.length === 0) {
+      try {
+        // Same cross-store invariants as startup, but only on the private copies.
+        validateHumanWaitInteractionProjectionMarkers({
+          interactionSessionsPath: copies.interactionSessionsPath,
+          sandboxCheckpointsPath: copies.sandboxCheckpointsPath,
+        });
+      } catch (error) {
+        diagnostics.push({ code: error.code ?? "ToubaServeStoredStateInvalid",
+          store: "sandboxCheckpointsPath", related_store: "interactionSessionsPath" });
+      }
     }
   } finally { rmSync(temporary, { recursive: true, force: true }); }
   return { schema_version: "touba-state-preflight-v1", status: diagnostics.length ? "refused" : "structurally_valid",

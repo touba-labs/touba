@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { sdkBuildIdentity } from "./sdk-build-identity.mjs";
 
-export const SDK_INSTALL_HINT = 'Install the SDK tarball reported by `touba version --json` (distribution.sdk_archive) with `npm install --offline --ignore-scripts --save-exact <archive.tgz>` in the project. Do not link to the CLI installation.';
+export const SDK_INSTALL_HINT = 'Run `touba sdk install javascript` in the project, or use `touba sdk path javascript` with your package manager. Do not link to the CLI installation.';
 
 // Read-only resolution, never execute user modules or install anything.
 export function inspectSdkDependency(root, expectedVersion, expectedRoot) {

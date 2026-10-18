@@ -1,5 +1,8 @@
 # Authors
 
+Official Touba Labs contact: [contact@touba-labs.com](mailto:contact@touba-labs.com).
+The academic addresses below identify the individual authors.
+
 The Touba and PAP ecosystem is authored by:
 
 - Khadim Lo: principal maintainer and doctoral researcher, Electrical and Computer Engineering, LSSI, UQTR School of Engineering, `khadim.lo@uqtr.ca`

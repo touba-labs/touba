@@ -2,8 +2,8 @@
 
 import { spawn as spawnProcess } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
-import { realpathSync } from "node:fs";
-import { validatedHandlerDiagnostic } from "./handler-diagnostics.mjs";
+import { existsSync, realpathSync } from "node:fs";
+import { startupHandlerDiagnostic, validatedHandlerDiagnostic } from "./handler-diagnostics.mjs";
 import { macosHandlerPolicy } from "./handler-sandbox-policy.mjs";
 import {
   validateEffectReceipt,
@@ -133,7 +133,8 @@ export async function runProcessToolHandler(input) {
     const recordDiagnostic = reason => {
       if (!diagnostics) return;
       const detail = diagnosticSize > 0 && diagnosticSize <= 4096
-        ? validatedHandlerDiagnostic(Buffer.concat(diagnosticChunks).toString("utf8"), diagnosticSources) : null;
+        ? validatedHandlerDiagnostic(Buffer.concat(diagnosticChunks).toString("utf8"), diagnosticSources)
+        : reason === "completed" ? null : startupHandlerDiagnostic(Buffer.concat(stderrChunks).toString("utf8"), diagnosticSources);
       if (diagnosticSize > 0 && detail === null) diagnostics.markIncomplete();
       diagnostics.record({ run_id: input.runId ?? null, call_id: request.call_id ?? null,
         tool_ref: toolRef, reason, ...(detail ?? {}) });
@@ -236,6 +237,12 @@ export async function runProcessToolHandler(input) {
       const stderr = redactSecrets(Buffer.concat(stderrChunks).toString("utf8"), secretValues);
 
       if (code !== 0) {
+        if (sandboxPlan.enabled && /\b(?:EPERM|EACCES)\b|Operation not permitted/u.test(stderr)) {
+          finishReject(new RuntimeFailure(
+            "handler access was refused by the required sandbox; review sandbox code_paths and resource scopes, or use --handler-diagnostics for a private startup diagnostic",
+            { toolRef, exitCode: code, signal }, "ToolHandlerSandboxAccessDenied"));
+          return;
+        }
         const missingSdk = /Cannot find package ['"]@touba\/sdk['"]|Cannot find module ['"]@touba\/sdk['"]/u.test(stderr);
         const missingProviderDependency = /Cannot find package ['"](?:ai|@ai-sdk\/[^'"]+|zod)['"]/u.test(stderr);
         if (missingSdk || missingProviderDependency) {
@@ -335,7 +342,13 @@ export function buildHandlerSandboxPlan({
       enabled: true,
       mechanism: "sandbox-exec",
       command,
-      args: ["-p", policy, handlerCommand, ...binding.handler.args],
+      args: ["-p", policy, handlerCommand, ...binding.handler.args.map((arg, index) => {
+        // Resolve selected script paths before Node attempts process.cwd in confinement.
+        const file = resolvePath(binding.handler.cwd ?? process.cwd(), arg);
+        // Generated bindings put the entrypoint first. Never rewrite business
+        // arguments, or guess which values following interpreter flags are code.
+        return index === 0 && !arg.startsWith("-") && /\.(?:mjs|cjs|js|py)$/.test(arg) && existsSync(file) ? file : arg;
+      })],
     };
   }
   throw new RuntimeFailure(

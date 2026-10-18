@@ -8,7 +8,7 @@ import unittest
 
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
-from touba_sdk import Engine, EngineError
+from touba_sdk import ToubaEngine, ToubaEngineError
 
 
 class State(TypedDict, total=False):
@@ -24,7 +24,7 @@ class OrchestrationTests(unittest.TestCase):
             root = Path(directory)
             implementation = Path(__file__).resolve().parents[3]
             cli = os.environ.get("TOUBA_TEST_CLI", str(implementation / "cli/touba-project/src/main.mjs"))
-            engine = Engine(root, command=os.environ.get("TOUBA_TEST_NODE", shutil.which("node")), command_args=[cli])
+            engine = ToubaEngine(root, command=os.environ.get("TOUBA_TEST_NODE", shutil.which("node")), command_args=[cli])
             (root / "program.tb").write_text('''module integration
 strategy Review
     takes value as Text
@@ -55,7 +55,7 @@ strategy Review
                 self.assertEqual(result["reason"], "human_approval_pending")
                 self.assertIsNone(result["result"])
             # A framework invocation cannot bypass the Core input contract.
-            with self.assertRaises(EngineError):
+            with self.assertRaises(ToubaEngineError):
                 engine.run(source="program.tb", inputs={"value": 42})
 
 

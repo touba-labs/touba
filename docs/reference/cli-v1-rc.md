@@ -56,6 +56,7 @@ Ce document n'active pas le trigger à la place du manifest hôte.
 | Commande | Rôle |
 | --- | --- |
 | `touba init` | Initialise un dossier projet Touba |
+| `touba sdk` | Installe le SDK JavaScript ou Python du projet, ou indique son archive vérifiée |
 | `touba new module` | Crée un fichier source `.tb` selon la convention projet |
 | `touba package` | Créer, vérifier, archiver, installer et retirer des packages |
 | `touba prepare` | Prépare ou vérifie les artefacts dérivés du projet |
@@ -75,6 +76,26 @@ Ce document n'active pas le trigger à la place du manifest hôte.
 | `touba handler stub` | Génère un squelette de handler pour les tools |
 | `touba version` | Affiche la version Touba et la build ; détails avec `--json` |
 | `touba update` | Explique la politique de mise à jour du canal courant |
+
+## `touba sdk`
+
+```sh
+touba sdk install javascript
+touba sdk install python
+touba sdk install python --python python3.12
+touba sdk path javascript
+touba sdk path python
+```
+
+`install` travaille dans le dossier courant, ou celui de `--root <projet>`.
+Les archives sont vérifiées et copiées dans `vendor/touba-sdk`.
+JavaScript utilise npm hors ligne sans scripts ; Python crée/réutilise
+`.venv` sans installation globale. Un lockfile pnpm/Yarn/Bun est respecté :
+utilisez `path` et ce gestionnaire, sans créer un second lockfile.
+`path` est en lecture seule et imprime le chemin absolu vérifié.
+La distribution installée doit inclure les archives SDK ; un checkout source
+non packagé n'en fabrique pas implicitement.
+Détails : [choisir le SDK](../demarrer/installation.md#choisir-le-sdk-de-son-application).
 
 ## `touba init`
 
@@ -122,11 +143,17 @@ du projet et les profils de run :
 }
 ```
 
-JavaScript est le langage hôte disponible aujourd’hui :
+Choisissez le langage de vos handlers à la création du projet :
 
 ```sh title="Terminal"
 touba init --language javascript
+# ou, dans un autre projet :
+touba init --language python
 ```
+
+Installez ensuite le SDK correspondant avec `touba sdk install javascript`
+ou `touba sdk install python`. Le choix Python génère des handlers `.py`,
+leurs tests et un binding utilisant l'interpréteur local de `.venv`.
 
 Aujourd’hui, la CLI refuse les langages hôtes qui ne sont pas encore
 livrés.
@@ -1004,8 +1031,12 @@ pas des inputs Touba ni d’un fichier versionné.
 
 Utilisez `touba run program.air.json --output json` : l'enveloppe
 `touba-run-result-v1` contient `status`, `reason`, `result`, `messages` et
-`trace`. Une saisie attendue ajoute `pending_interaction` avec sa référence et
-son prompt. Les messages métier restent séparés de la trace ; aucun checkpoint
+`trace`. Les questions en attente sont dans `pending_interactions`, une liste
+d'objets `{interaction_ref, prompt}`. Pour `user_input_pending`,
+`pending_interaction` désigne aussi la première question. La liste peut être
+présente lors d'une pause mixte avec approbation humaine ; les branches non
+démarrées n'y figurent pas. Répondez par référence d'occurrence, puis reprenez
+avec le checkpoint sauvegardé. Les messages métier restent séparés de la trace ; aucun checkpoint
 privé n'est inclus. Ne parsez pas l'affichage humain.
 
 | Code | Signification |
@@ -1272,6 +1303,24 @@ Options :
 
 `touba audit` ne signe pas les artefacts, ne crée pas d’horodatage légal et ne
 déclare pas une conformité réglementaire.
+
+## `touba supply-chain generate`
+
+Calcule un verrou en attente de revue, sans écraser un verrou existant ni
+exécuter les handlers. Les imports locaux statiques JavaScript et Python sont
+inventoriés avec l'identité `package.json` ou `pyproject.toml`.
+
+```sh
+touba supply-chain generate --air program.air.json \
+  --manifest touba.manifest.json --out touba.lock.json
+```
+
+Options complémentaires : `--air` répétable, `--package-root`, `--file`
+répétable, `--entrypoint-arg <index|command>`, `--sdk-metadata-json`,
+`--python <interpréteur-de-confiance>` (analyse Python 3.11+ isolée).
+Les dépendances déclarées exigent le verrou de leur gestionnaire. Les octets
+des artefacts sont contrôlés, pas la résolution ni l'environnement installé.
+Voir le [guide supply chain](../guides/supply-chain-handlers.md).
 
 ## `touba supply-chain validate`
 
