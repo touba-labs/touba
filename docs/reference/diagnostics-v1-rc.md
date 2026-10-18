@@ -198,14 +198,10 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 
 | Code | Cause probable | Action |
 | --- | --- | --- |
-| `SkillPackDescriptorMissing` | Pack sans `skill.json` | Créer ou restaurer le descripteur |
-| `SkillPackSchemaMismatch` | Schéma, champ ou type de champ invalide | Corriger `skill.json` selon `touba-skill-pack-v1` |
 | `SkillPackRefInvalid` | Ref de pack ou de ressource invalide | Utiliser `skill_pack:<namespace>/<skill-id>` ou `resource:<skill-id>/<name>` |
-| `SkillPackLayoutInvalid` | Organisation du dossier incomplète | Recréer le layout avec `touba skill new` ou ajouter les dossiers attendus |
 | `SkillPackResourceKindInvalid` | Type de ressource non supporté | Utiliser `procedure`, `reference`, `example`, `template`, `sample` ou `script` |
 | `SkillPackResourcePathInvalid` | Chemin absent, absolu, sortant ou non fichier | Garder un chemin relatif interne au pack |
 | `SkillPackDigestMismatch` | Digest différent du contenu | Mettre à jour le digest après relecture du fichier |
-| `SkillPackResourceUndeclared` | Fichier sous `resources/` ou `scripts/` absent de `skill.json` | Ajouter l'entrée correspondante ou retirer le fichier |
 | `SkillPackAuthorityFieldForbidden` | Le pack tente de déclarer handler, command, grant, secret, scope ou caller | Retirer l'autorité du pack ; l'autorité reste dans Touba et le manifest |
 | `SkillPackScriptExecutionForbidden` | Script traité comme exécutable par le pack | Garder le script comme ressource et passer par un `tool` Touba |
 | `SkillPackExecutionLinkUnauthorized` | Lien vers une capacité absente de `agent.uses` | Ajouter la capacité au bon agent ou retirer le lien |
@@ -272,3 +268,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 Les erreurs propres au tool, au provider, à l'autorité ou au budget restent
 visibles : un échec de branche n'est pas remplacé par un succès partiel.
 Voir [Reprise](../guides/reprise-durable-bornee.md) et [Budgets](../guides/budgets-autonomie.md).
+
+## Distribution des packages
+
+Voir les [diagnostics de package](packages.md#vérifications-et-diagnostics). Les fichiers auteur utilisent un seul manifeste ; les contrôles contextuels runtime conservent leurs codes SkillPack.

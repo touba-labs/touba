@@ -7,6 +7,14 @@ instructions.
 
 ## Unreleased
 
+- Unified package authoring uses one manifest and a confirmed questionnaire.
+ Organization and name compose a qualified identity; the author directory
+ uses the normalized short name. Explicit check/test/version/pack commands
+ discover their root, and applications manage dependencies under reserved
+ `packages/`. Installed copies cannot be edited through author commands.
+ Registry continuity checks preserve published identities and version contents.
+ FR/EN guides and tutorials cover offline sharing and the native Explorer badge.
+
 - Conversation retention is independent from the sent context window. Complete
  retained exchanges survive compaction, within explicit storage/TTL limits.
  Official provider token preflights count the serialized request and reserve

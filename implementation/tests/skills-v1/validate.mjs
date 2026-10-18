@@ -10,9 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  validateSkillPacks,
-} from "../../cli/touba-project/src/skill-packs.mjs";
+import { readPackage, assertPackageUnchanged } from "../../cli/touba-project/src/package-contract.mjs";
 import {
   AIR_CAPABILITY_PROFILE,
   AIR_JSON_PROFILE,
@@ -348,28 +346,26 @@ async function runNegativeCases(root) {
   await check("SKILL-V1-N01", "unknown skill pack schema is rejected", () => {
     const fixture = createSkillPack(caseRoot(root, "n01"), "bad-schema", {
       mutateDescriptor: (descriptor) => {
-        descriptor.skill_pack_schema_version = "touba-skill-pack-v9";
+        descriptor.package_schema_version = "touba-package-v9";
       },
     });
-    expectProjectValidation(fixture.root, "bad-schema", ["SkillPackSchemaMismatch"]);
+    expectProjectValidation(fixture.root, "bad-schema", ["PackageSchemaMismatch"]);
   });
 
   await check("SKILL-V1-N02", "missing or invalid skill pack ref is rejected", () => {
     const fixture = createSkillPack(caseRoot(root, "n02"), "bad-ref", {
       mutateDescriptor: (descriptor) => {
-        descriptor.ref = "skillpack:bad";
+        descriptor.name = "invalid";
       },
     });
-    expectProjectValidation(fixture.root, "bad-ref", ["SkillPackRefInvalid"]);
+    expectProjectValidation(fixture.root, "bad-ref", ["PackageSchemaMismatch"]);
   });
 
-  await check("SKILL-V1-N03", "digest mismatch is rejected", () => {
-    const fixture = createSkillPack(caseRoot(root, "n03"), "bad-digest", {
-      mutateDescriptor: (descriptor) => {
-        descriptor.resources[0].digest = sha256("different content");
-      },
-    });
-    expectProjectValidation(fixture.root, "bad-digest", ["SkillPackDigestMismatch"]);
+  await check("SKILL-V1-N03", "content change after inventory is rejected", () => {
+    const fixture = createSkillPack(caseRoot(root, "n03"), "bad-digest");
+    const snapshot = readPackage(fixture.packPath);
+    writeFixtureFile(fixture.packPath, "SKILL.md", "Changed procedure");
+    assert.throws(() => assertPackageUnchanged(snapshot), { code: "PackageIntegrityMismatch" });
   });
 
   await check("SKILL-V1-N04", "activation budget overflow is refused", async () => {
@@ -413,7 +409,7 @@ async function runNegativeCases(root) {
         descriptor.grants = ["network"];
       },
     });
-    expectProjectValidation(fixture.root, "bad-grants", ["SkillPackAuthorityFieldForbidden"]);
+    expectProjectValidation(fixture.root, "bad-grants", ["PackageAuthorityFieldForbidden"]);
   });
 
   await check("SKILL-V1-N07", "callable_by declaration in a pack is rejected", () => {
@@ -422,7 +418,7 @@ async function runNegativeCases(root) {
         descriptor.callable_by = [{ caller_ref: "agent:test/Other" }];
       },
     });
-    expectProjectValidation(fixture.root, "bad-callers", ["SkillPackAuthorityFieldForbidden"]);
+    expectProjectValidation(fixture.root, "bad-callers", ["PackageAuthorityFieldForbidden"]);
   });
 
   await check("SKILL-V1-N08", "skill pack cannot be selected as executable AIR capability", async () => {
@@ -492,10 +488,10 @@ async function runNegativeCases(root) {
       ],
       skipWritingInvalidResourcePaths: true,
     });
-    expectProjectValidation(fixture.root, "bad-path", ["SkillPackResourcePathInvalid"]);
+    expectProjectValidation(fixture.root, "bad-path", ["PackagePathInvalid"]);
   });
 
-  await check("SKILL-V1-N14", "resource file absent from skill.json is rejected", () => {
+  await check("SKILL-V1-N14", "undeclared file is excluded from package inventory", () => {
     const fixture = createSkillPack(caseRoot(root, "n14"), "undeclared-resource", {
       extraFiles: [
         {
@@ -504,19 +500,19 @@ async function runNegativeCases(root) {
         },
       ],
     });
-    expectProjectValidation(fixture.root, "undeclared-resource", ["SkillPackResourceUndeclared"]);
+    const pkg = readPackage(fixture.packPath);
+    assert.equal(pkg.files.some(file => file.path === "resources/references/undeclared.md"), false);
   });
 
   await check("SKILL-V1-N15", "command, handler, secrets and callable_by fields are rejected", () => {
     const fixture = createSkillPack(caseRoot(root, "n15"), "bad-authority", {
       mutateDescriptor: (descriptor) => {
-        descriptor.command = "node scripts/run.mjs";
         descriptor.handler = { kind: "process" };
         descriptor.secrets = ["API_TOKEN"];
         descriptor.callable_by = [{ caller_ref: "agent:test/Other" }];
       },
     });
-    expectProjectValidation(fixture.root, "bad-authority", ["SkillPackAuthorityFieldForbidden"]);
+    expectProjectValidation(fixture.root, "bad-authority", ["PackageAuthorityFieldForbidden"]);
   });
 
   await check("SKILL-V1-N16", "direct script execution by pack is rejected", () => {
@@ -531,7 +527,7 @@ async function runNegativeCases(root) {
         },
       ],
     });
-    expectProjectValidation(fixture.root, "bad-script", ["SkillPackScriptExecutionForbidden"]);
+    expectProjectValidation(fixture.root, "bad-script", ["PackageSchemaMismatch"]);
   });
 
   await check("SKILL-V1-N17", "execution link outside agent uses is refused", async () => {
@@ -618,46 +614,23 @@ function createSkillPack(root, skillId, options = {}) {
   }
 
   const descriptor = {
-    skill_pack_schema_version: "touba-skill-pack-v1",
-    ref: `skill_pack:project/${skillId}`,
-    name: titleFromSkillId(skillId),
-    description: `Fixture for ${skillId}.`,
-    version: "0.1.0",
-    tags: ["skills-v1"],
-    source: "project",
-    activation: {
-      model_invocable: true,
-      user_invocable: true,
-    },
-    resources: declaredResources.map((resource) => ({
-      ref: resource.ref,
-      path: resource.path,
-      kind: resource.kind,
-      loadable_as_context: resource.loadable_as_context ?? true,
-      ...(resource.executable_by_pack !== undefined ? { executable_by_pack: resource.executable_by_pack } : {}),
-      digest: sha256(resource.content ?? ""),
-    })),
-    execution_links: options.execution_links ?? [],
+    package_schema_version: "touba-package-v1", name: "fixture.context", version: "0.1.0",
+    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=0.1.0 <0.2.0" }, exports: {},
+    contexts: [{ id: skillId, description: "Fixture for " + skillId, procedure: "SKILL.md",
+      resources: declaredResources.slice(1).map(resource => ({
+        name: resource.ref.split("/").at(-1), path: resource.path, kind: resource.kind, description: "Fixture resource",
+        loadable_as_context: resource.loadable_as_context ?? true,
+        ...(resource.executable_by_pack !== undefined ? { executable_by_pack: resource.executable_by_pack } : {}),
+      })), execution_links: (options.execution_links ?? []).map(link => ({ description: "Governed target", ...link })) }],
   };
-
   options.mutateDescriptor?.(descriptor);
-  writeFixtureFile(packPath, "skill.json", `${JSON.stringify(descriptor, null, 2)}\n`);
+  writeFixtureFile(packPath, "touba.package.json", JSON.stringify(descriptor, null, 2) + "\n");
   return { root: projectRoot, packPath, descriptor };
 }
 
 function expectProjectValidation(root, target, expectedCodes = []) {
-  const report = validateSkillPacks({ root, target });
-  const codes = report.diagnostics.map((diagnostic) => diagnostic.code);
-  if (expectedCodes.length === 0) {
-    assert.equal(report.status, "success", JSON.stringify(report.diagnostics, null, 2));
-    assert.equal(codes.length, 0);
-    return report;
-  }
-  assert.equal(report.status, "error");
-  for (const code of expectedCodes) {
-    assert.equal(codes.includes(code), true, `missing diagnostic ${code}; got ${codes.join(", ")}`);
-  }
-  return report;
+  if (expectedCodes.length === 0) return readPackage(join(root, "skills", target));
+  assert.throws(() => readPackage(join(root, "skills", target)), error => expectedCodes.includes(error.code), "expected " + expectedCodes.join(", "));
 }
 
 async function runAgentWithSkillPacks({

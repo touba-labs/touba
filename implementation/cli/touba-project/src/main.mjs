@@ -17,11 +17,9 @@ import {
   resolveProjectRunArgs,
   setProjectSecret,
 } from "./project.mjs";
+import { packageCommand } from "./package-command.mjs";
 import {
-  newSkillPack,
-  validateSkillPacks,
-} from "./skill-packs.mjs";
-import {
+  checkRegistry,
   renderRegistryResolution,
   resolveRegistryPackage,
 } from "./registry.mjs";
@@ -61,6 +59,7 @@ const SCHEMA_VERSIONS = Object.freeze({
   effective_project: "touba-effective-project-v1",
 });
 const FEATURE_VERSIONS = Object.freeze({
+  packages: "touba-package-v1",
   run_profiles: "touba-run-profile-v1",
   human_checkpoints: "touba-human-approval-checkpoint-v1",
   registry_static_resolve: "touba-static-registry-lock-v1",
@@ -75,6 +74,7 @@ const FEATURE_VERSIONS = Object.freeze({
   trace_output: "touba-trace-v1",
 });
 const PUBLIC_COMMANDS = Object.freeze({
+  package: true,
   compile: true,
   run: true,
   run_profile: true,
@@ -195,26 +195,7 @@ async function dispatch(rawArgs) {
     }
     throw new Error("usage: touba secret set|list|check|remove ...");
   }
-  if (command === "skill") {
-    const [action, target, ...tail] = rest;
-    if (action === "new" && target) {
-      const options = parseCommonOptions(tail);
-      const report = newSkillPack(target, options);
-      return { report, json: options.json, exitCode: 0 };
-    }
-    if (action === "validate") {
-      const options = parseSkillValidateOptions(target === undefined ? tail : [target, ...tail]);
-      const report = validateSkillPacks(options);
-      return { report, json: options.json, exitCode: report.status === "error" ? 1 : 0 };
-    }
-    if (action === undefined || action === "--help" || action === "-h") {
-      return {
-        text: "Usage: touba skill new <skill-id> [--root <path>] [--force]\n       touba skill validate [<skill-id|path>] [--root <path>] [--air <program.air.json>]",
-        exitCode: 0,
-      };
-    }
-    throw new Error("usage: touba skill new|validate ...");
-  }
+  if (command === "package") return packageCommand(rest);
   if (command === "compile") {
     return compileCommand(rest);
   }
@@ -803,6 +784,18 @@ function supplyChainCommand(rawArgs) {
 }
 
 async function registryCommand(rawArgs) {
+  if (rawArgs[0] === "check") {
+    const options = {};
+    for (let i = 1; i < rawArgs.length; i++) {
+      if (rawArgs[i] === "--json") options.json = true;
+      else if (["--registry", "--source-root", "--previous"].includes(rawArgs[i]) && rawArgs[i + 1] && !rawArgs[i + 1].startsWith("--")) {
+        const key = rawArgs[i] === "--registry" ? "registry" : rawArgs[i] === "--previous" ? "previous" : "sourceRoot";
+        options[key] = rawArgs[++i];
+      } else throw new Error("usage: touba registry check --registry <directory|URL> [--source-root <directory>] [--previous <prior-snapshot>] [--json]");
+    }
+    const report = await checkRegistry(options);
+    return { text: JSON.stringify(report, null, 2), exitCode: report.status === "error" ? 1 : 0 };
+  }
   const [subcommand, ...tail] = rawArgs;
   if (subcommand === "resolve") {
     const options = parseRegistryResolveOptions(tail);
@@ -1459,28 +1452,6 @@ function parseSecretOptions(rawArgs) {
   return options;
 }
 
-function parseSkillValidateOptions(rawArgs) {
-  const options = { json: false };
-  for (let index = 0; index < rawArgs.length; index += 1) {
-    const arg = rawArgs[index];
-    if (arg === "--air") {
-      options.air = requiredValue(arg, rawArgs, ++index);
-    } else if (arg.startsWith("--air=")) {
-      options.air = arg.slice("--air=".length);
-    } else if (arg === "--root") {
-      options.root = requiredValue(arg, rawArgs, ++index);
-    } else if (arg.startsWith("--root=")) {
-      options.root = arg.slice("--root=".length);
-    } else if (arg === "--json") {
-      options.json = true;
-    } else if (!arg.startsWith("--") && options.target === undefined) {
-      options.target = arg;
-    } else {
-      throw new Error(`unknown option ${arg}`);
-    }
-  }
-  return options;
-}
 
 function parseRegistryResolveOptions(rawArgs) {
   const options = {
@@ -1657,8 +1628,7 @@ function printUsage() {
   process.stdout.write(`Usage:
   touba init [--root <path>] [--language javascript]
   touba new module <domain.module> [--root <path>] [--force]
-  touba skill new <skill-id> [--root <path>] [--force]
-  touba skill validate [<skill-id|path>] [--root <path>] [--air <program.air.json>]
+  touba package new|check|test|version|pack|add|list|remove ... (touba package --help)
   touba prepare [--root <path>] [--mode plan|check|write] [--source <file.tb>] [--air <file.air.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--host-decisions-json <json>] [--resource-bindings <resources.json>] [--require-resource-bindings] [--run-plan <path>] [--ownership <touba.ownership.json>] [--require-ownership] [--entry <air-ref>] [--profile pure|dev|prod] [--manifest <path>] [--handler-root <path>] [--handler-command <path>] [--json]
   touba secret set <HANDLE> [--root <path>] [--store <path>] --value-stdin
   touba secret list [--root <path>] [--store <path>]

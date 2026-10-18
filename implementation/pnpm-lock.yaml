@@ -46,6 +46,12 @@ importers:
       '@touba/deployment':
         specifier: workspace:*
         version: link:../touba-deployment
+      semver:
+        specifier: 7.8.5
+        version: 7.8.5
+      tar:
+        specifier: 7.5.22
+        version: 7.5.22
 
   cli/touba-project-server:
     dependencies:
@@ -223,6 +229,10 @@ packages:
   '@isaacs/cliui@9.0.0':
     resolution: {integrity: sha512-AokJm4tuBHillT+FpMtxQ60n8ObyXBatq7jD2/JA9dxbDDokKQm8KMht5ibGzLVU9IJDIKK4TPKgMHEYMn3lMg==}
     engines: {node: '>=18'}
+
+  '@isaacs/fs-minipass@4.0.1':
+    resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
+    engines: {node: '>=18.0.0'}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -498,6 +508,10 @@ packages:
 
   chownr@1.1.4:
     resolution: {integrity: sha512-jJ0bqzaylmJtVnNgzTeSOs8DPavpbYgEr/b0YL8/2GO3xJEhInFmhKMUnEJQjZumK7KXGFhUy89PrsJWlakBVg==}
+
+  chownr@3.0.0:
+    resolution: {integrity: sha512-+IxzY9BZOQd/XuYPRmrvEVjF/nqj5kgT4kEq7VofrDoM1MxoRjEWkrCC3EtLi59TVawxTAn+orJwFQcrqEN1+g==}
+    engines: {node: '>=18'}
 
   cli-cursor@5.0.0:
     resolution: {integrity: sha512-aCj4O5wKyszjMmDT4tZj93kxyydN/K5zPWSCe6/0AV/AA1pqe5ZBIw0a2ZfPQV7lL5/yb5HsUreJ6UFAF1tEQw==}
@@ -992,6 +1006,10 @@ packages:
     resolution: {integrity: sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==}
     engines: {node: '>=16 || 14 >=14.17'}
 
+  minizlib@3.1.0:
+    resolution: {integrity: sha512-KZxYo1BUkWD2TVFLr0MQoM8vUUigWD3LlD83a/75BqC+4qE0Hb1Vo5v1FgcfaNXvfXzr+5EhQ6ing/CaBijTlw==}
+    engines: {node: '>= 18'}
+
   mkdirp-classic@0.5.3:
     resolution: {integrity: sha512-gKLcREMhtuZRwRAfqP3RFW+TK4JqApVBtOIftVgjuABpAtpxhPGaDcfvbhNvD0B8iD1oUr/txX35NjcaY6Ns/A==}
 
@@ -1182,8 +1200,8 @@ packages:
     resolution: {integrity: sha512-cBznnQ9KjJqU67B52RMC65CMarK2600WFnbkcaiwWq3xy/5haFJlshgnpjovMVJ+Hff49d8GEn0b87C5pDQ10g==}
     hasBin: true
 
-  semver@7.7.4:
-    resolution: {integrity: sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==}
+  semver@7.8.5:
+    resolution: {integrity: sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==}
     engines: {node: '>=10'}
     hasBin: true
 
@@ -1295,6 +1313,10 @@ packages:
   tar-stream@2.2.0:
     resolution: {integrity: sha512-ujeqbceABgwMZxEJnk2HDY2DlnUZ+9oEcb1KzTVfYHio0UE6dG71n60d8D2I4qNvleWrrXpmjpt7vZeF1LnMZQ==}
     engines: {node: '>=6'}
+
+  tar@7.5.22:
+    resolution: {integrity: sha512-MFO/QzvtAOmJbkhOaCTvbGcFN9L9b+JunIsDwaKljSOdcLMea3NJ1k9Usz/rjdfSXTq4dfzfeS7W4p4YOAAHeA==}
+    engines: {node: '>=18'}
 
   terminal-link@4.0.0:
     resolution: {integrity: sha512-lk+vH+MccxNqgVqSnkMVKx4VLJfnLjDBGzH16JVZjKE2DoxP57s6/vt6JmXV5I3jBcfGrxNrYtC+mPtU7WJztA==}
@@ -1432,6 +1454,10 @@ packages:
 
   yallist@4.0.0:
     resolution: {integrity: sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==}
+
+  yallist@5.0.0:
+    resolution: {integrity: sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==}
+    engines: {node: '>=18'}
 
   yauzl@3.3.0:
     resolution: {integrity: sha512-PtGEvEP30p7sbIBJKUBjUnqgTVOyMURc4dLo9iNyAJnNIEz9pm88cCXF21w94Kg3k6RXkeZh5DHOGS0qEONvNQ==}
@@ -1578,6 +1604,10 @@ snapshots:
 
   '@isaacs/cliui@9.0.0': {}
 
+  '@isaacs/fs-minipass@4.0.1':
+    dependencies:
+      minipass: 7.1.3
+
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
       '@nodelib/fs.stat': 2.0.5
@@ -1723,7 +1753,7 @@ snapshots:
       https-proxy-agent: 7.0.6
       jszip: 3.10.1
       ora: 8.2.0
-      semver: 7.7.4
+      semver: 7.8.5
     transitivePeerDependencies:
       - supports-color
 
@@ -1790,7 +1820,7 @@ snapshots:
       parse-semver: 1.1.1
       read: 1.0.7
       secretlint: 10.2.2
-      semver: 7.7.4
+      semver: 7.8.5
       tmp: 0.2.7
       typed-rest-client: 1.8.11
       url-join: 4.0.1
@@ -1937,6 +1967,8 @@ snapshots:
 
   chownr@1.1.4:
     optional: true
+
+  chownr@3.0.0: {}
 
   cli-cursor@5.0.0:
     dependencies:
@@ -2301,7 +2333,7 @@ snapshots:
       lodash.isstring: 4.0.1
       lodash.once: 4.1.1
       ms: 2.1.3
-      semver: 7.7.4
+      semver: 7.8.5
 
   jszip@3.10.1:
     dependencies:
@@ -2418,6 +2450,10 @@ snapshots:
 
   minipass@7.1.3: {}
 
+  minizlib@3.1.0:
+    dependencies:
+      minipass: 7.1.3
+
   mkdirp-classic@0.5.3:
     optional: true
 
@@ -2430,7 +2466,7 @@ snapshots:
 
   node-abi@3.92.0:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.5
     optional: true
 
   node-addon-api@4.3.0:
@@ -2444,7 +2480,7 @@ snapshots:
   normalize-package-data@6.0.2:
     dependencies:
       hosted-git-info: 7.0.2
-      semver: 7.7.4
+      semver: 7.8.5
       validate-npm-package-license: 3.0.4
 
   nth-check@2.1.1:
@@ -2645,7 +2681,7 @@ snapshots:
 
   semver@5.7.2: {}
 
-  semver@7.7.4: {}
+  semver@7.8.5: {}
 
   setimmediate@1.0.5: {}
 
@@ -2789,6 +2825,14 @@ snapshots:
       readable-stream: 3.6.2
     optional: true
 
+  tar@7.5.22:
+    dependencies:
+      '@isaacs/fs-minipass': 4.0.1
+      chownr: 3.0.0
+      minipass: 7.1.3
+      minizlib: 3.1.0
+      yallist: 5.0.0
+
   terminal-link@4.0.0:
     dependencies:
       ansi-escapes: 7.3.0
@@ -2857,7 +2901,7 @@ snapshots:
   vscode-languageclient@9.0.1:
     dependencies:
       minimatch: 5.1.9
-      semver: 7.7.4
+      semver: 7.8.5
       vscode-languageserver-protocol: 3.17.5
 
   vscode-languageserver-protocol@3.17.5:
@@ -2898,6 +2942,8 @@ snapshots:
   xmlbuilder@11.0.1: {}
 
   yallist@4.0.0: {}
+
+  yallist@5.0.0: {}
 
   yauzl@3.3.0:
     dependencies:

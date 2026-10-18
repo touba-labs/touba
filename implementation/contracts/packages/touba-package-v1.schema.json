@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://touba-labs.com/schemas/touba-package-v1.schema.json",
+  "title": "Touba package",
+  "description": "Single author manifest. The CLI additionally validates SemVer, paths, actual declarations, dependencies and file content.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "package_schema_version": {
+      "const": "touba-package-v1"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_-]*(\\.[a-z_][a-z0-9_-]*)+$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "root": {
+      "const": "."
+    },
+    "touba": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "air_profile": {
+          "const": "touba-air-json-canonical-v1"
+        },
+        "runtime_compatibility": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "air_profile",
+        "runtime_compatibility"
+      ]
+    },
+    "exports": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "types": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^type:[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)+/[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "defines": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^constant:[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)+/[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "functions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^function:[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)+/[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^tool:[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)+/[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "skills": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^skill:[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)+/[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "agents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^agent:[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)+/[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "strategies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^strategy:[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)+/[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "memories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^memory:[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)+/[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        }
+      },
+      "required": []
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "publisher": {
+      "type": "string",
+      "minLength": 1
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1
+    },
+    "readme": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9_./@+ -]+$"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "pattern": "^[A-Za-z0-9_./@+ -]+$"
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z_][a-z0-9_-]*(\\.[a-z_][a-z0-9_-]*)+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "contexts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "procedure": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "pattern": "^[A-Za-z0-9_./@+ -]+$"
+          },
+          "activation": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "model_invocable": {
+                "type": "boolean"
+              },
+              "user_invocable": {
+                "type": "boolean"
+              }
+            },
+            "required": []
+          },
+          "resources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*$"
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240,
+                  "pattern": "^[A-Za-z0-9_./@+ -]+$"
+                },
+                "kind": {
+                  "enum": [
+                    "procedure",
+                    "reference",
+                    "example",
+                    "template",
+                    "sample",
+                    "script",
+                    "fixture"
+                  ]
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "loadable_as_context": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "path",
+                "kind",
+                "description"
+              ]
+            }
+          },
+          "execution_links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "target_ref": {
+                  "type": "string",
+                  "pattern": "^(tool|skill):[a-z_][a-z0-9_.]*/[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "label",
+                "target_ref",
+                "description"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "procedure"
+        ]
+      }
+    },
+    "handlers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tool": {
+            "type": "string",
+            "pattern": "^tool:[a-z_][a-z0-9_.]*/[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "pattern": "^[A-Za-z0-9_./@+ -]+$"
+          },
+          "protocol": {
+            "const": "touba-tool-handler-v1"
+          },
+          "configuration": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "pattern": "^[A-Za-z0-9_./@+ -]+$"
+          },
+          "documentation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "pattern": "^[A-Za-z0-9_./@+ -]+$"
+          }
+        },
+        "required": [
+          "tool",
+          "path",
+          "protocol"
+        ]
+      }
+    },
+    "engines": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "darwin-arm64",
+              "darwin-x64",
+              "linux-arm64",
+              "linux-x64",
+              "win32-arm64",
+              "win32-x64"
+            ]
+          }
+        }
+      },
+      "required": []
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": []
+    },
+    "contract_tests": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "pattern": "^[A-Za-z0-9_./@+ -]+$"
+      }
+    }
+  },
+  "required": [
+    "package_schema_version",
+    "name",
+    "version",
+    "touba",
+    "exports"
+  ]
+}

@@ -305,25 +305,41 @@ without a validated release profile must be generated explicitly as
 experimental artifacts and remain non-public until their OS validation gates
 pass.
 
-## Static Registry Resolution
+## Reusable packages
 
-Touba can resolve static registry metadata into a local lock without installing
-or executing package content:
+One author manifest, touba.package.json, supports executable declarations,
+contextual procedures and mixed packages. Imports keep their typed Touba syntax.
 
 ```sh
-touba registry resolve \
-  --registry ../touba-registry \
-  --package pkg:touba-library/donnees-quebec-dataset-brief \
-  --version 0.1.0 \
-  --source-root ../touba-library \
-  --allow-draft \
-  --out donnees-quebec.lock.json
+touba package new review --org acme --license MIT --yes
+cd review
+touba package check --publishing
+touba package test
+touba package pack
+# From a separate initialized consumer project:
+touba package add /path/to/review/dist/acme.review-0.1.0.tar.gz
+touba package list
+touba prepare --mode write
 ```
 
-The command verifies the registry index, package metadata digest, requested
-version, protocol compatibility and status. When `--source-root` is provided,
-it also verifies source artifact digests. It does not provide a hosted registry
-service, package installation, signature verification or runtime authority.
+Use --context for a contextual procedure scaffold. A manual directory follows
+the same validation via `touba package add acme.review`. Author commands discover
+their root from subdirectories; `touba package version patch` updates only the
+canonical package version. Installed copies are not author workspaces.
+Installed files live in packages/<name> and
+are recorded in touba.packages.lock.json, separate from the execution lock.
+Dependencies are exact and bundled; no network lookup occurs during execution.
+A package cannot grant permissions, bind a handler or widen agent callers.
+
+The [package guide](docs/guides/creer-partager-package.md),
+[manifest reference](docs/reference/packages.md) and
+[complete tutorial](docs/tutoriels/package-reutilisable.md) explain both forms
+of skills, prerequisites, author tests, consumer authorization and refusals.
+
+A chosen static registry can provide an archive through package add with an
+explicit version and registry. Registry check validates the index; registry
+resolve inspects metadata without installing. Experimental Library and Registry
+contents have been removed; no business package is advertised until qualified.
 
 ## MCP Import
 

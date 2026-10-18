@@ -43,7 +43,10 @@ for (const file of walkMarkdown(docsRoot)) {
       continue;
     }
     for (const rule of forbidden) {
-      if (rule.pattern.test(line)) {
+      // `fixture` is also a documented package resource-kind literal, not an
+      // internal test path. Preserve all path checks and other vocabulary checks.
+      const checkedLine = rule.reason === "vocabulaire de test interne" ? line.replace(/`fixture`/g, "") : line;
+      if (rule.pattern.test(checkedLine)) {
         failures.push({
           file: relative(resolve(__dir, "../.."), file),
           line: index + 1,

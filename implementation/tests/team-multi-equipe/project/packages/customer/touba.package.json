@@ -27,8 +27,5 @@
   "provenance": {
     "kind": "local_path",
     "source": "."
-  },
-  "contract_tests": [
-    "validation/package/customer-contract.md"
-  ]
+  }
 }

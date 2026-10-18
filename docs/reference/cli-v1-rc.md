@@ -57,7 +57,7 @@ Ce document n'active pas le trigger à la place du manifest hôte.
 | --- | --- |
 | `touba init` | Initialise un dossier projet Touba |
 | `touba new module` | Crée un fichier source `.tb` selon la convention projet |
-| `touba skill` | Crée et valide des skill packs locaux |
+| `touba package` | Créer, vérifier, archiver, installer et retirer des packages |
 | `touba prepare` | Prépare ou vérifie les artefacts dérivés du projet |
 | `touba secret` | Gère le store de secrets de développement |
 | `touba compile` | Compile une source `.tb` vers AIR JSON |
@@ -167,57 +167,31 @@ touba new module examples.search --root mon-projet
 
 `--force` remplace le fichier s’il existe déjà.
 
-## `touba skill`
+## `touba package`
 
-Les dossiers de ressources sont optionnels. Pour vérifier les cibles des
-`execution_links`, passez `--air program.air.json` à `skill validate` ; sans
-AIR, le rapport annonce que ces cibles restent à vérifier.
+`new [nom] [--org <organisation>] [--context] [--yes]` crée le projet auteur
+dans un dossier portant son nom court ; sans arguments, un questionnaire confirme
+l'identité `organisation.nom` avant création.
+`check [dossier] [--publishing]` vérifie sources, fichiers et prérequis sans
+exécuter le code auteur.
+`test [dossier] [--env NOM]` lance uniquement les tests Node déclarés.
+`version [patch|minor|major|version]` met à jour la version canonique, sans Git.
+`pack [dossier] [--output <archive.tar.gz>]` crée par défaut
+`dist/<nom>-<version>.tar.gz`, sans écrasement.
+`add <nom|dossier|archive.tar.gz>` vérifie, installe et verrouille le contenu.
+`add org.nom@1.0.0 --registry <dossier|URL-HTTPS>` sélectionne une archive indexée.
+`list` vérifie et liste les dépendances ; `remove <nom>` retire une dépendance
+non requise par une autre. Sans cible dans une application, `check` vérifie
+les dépendances ; dans un projet auteur, il vérifie le package lui-même.
 
-À l'exécution, fournissez explicitement `--skill-pack <dossier>` (répétable)
-pour les hints, et `--activate-skill-pack <ref>` (répétable) pour charger le
-contexte. Les options `--skill-pack-discovery-max-bytes`,
-`--skill-pack-activation-max-bytes` et `--agent-model-input-max-bytes` bornent
-ce contexte. L'activation n'accorde aucun droit et exige `user_invocable: true`.
-Voir le [tutoriel complet](../tutoriels/skill-pack-script-tool.md).
+Toutes acceptent `--json` et `--root`. La racine est découverte depuis les
+sous-dossiers. `packages/` est réservé aux copies installées. Installation,
+check et pack n'exécutent aucun test ou hook et n'accordent aucune autorisation.
+Voir le [guide](../guides/creer-partager-package.md) et la [référence](packages.md).
 
-```sh title="Terminal"
-touba skill new research-review
-touba skill validate research-review
-touba skill validate
-```
-
-`touba skill new` crée un skill pack local dans `skills/<skill-id>/` :
-
-```text title="Structure"
-skills/research-review/
-  skill.json
-  SKILL.md
-```
-
-Les dossiers de ressources, scripts et tests sont optionnels et créés au besoin.
-
-Le descriptor `skill.json` utilise le schéma `touba-skill-pack-v1`. Il
-déclare les métadonnées, l’activation, les ressources et les liens informatifs
-vers des capacités Touba.
-
-`touba skill validate` vérifie notamment :
-
-- la version de schéma ;
-- la référence `skill_pack:<namespace>/<skill-id>` ;
-- le layout standard ;
-- les chemins relatifs confinés au dossier du pack ;
-- les digests `sha256` des ressources déclarées ;
-- l’absence de champs d’autorité runtime comme `handler`, `command`, `grants`,
- `secrets`, `callable_by`, `memory_scope`, `backend` ou `provider`.
-
-Le rapport expose les packs valides, leurs refs, leur version, le nombre de
-ressources déclarées, le nombre de liens informatifs et les diagnostics. Il
-n'affiche pas le contenu des ressources, n'exécute pas les scripts et ne résout
-aucun secret.
-
-Un script placé dans `scripts/` reste une ressource du pack. Pour l’exécuter, il
-faut le relier à un `tool` Touba gouverné par AIR, manifest, grants, limites,
-lock et traces.
+`touba registry check --registry <source> [--source-root <dossier>]` vérifie
+index, métadonnées et éventuellement archives. `--previous <snapshot-fiable>`
+vérifie aussi la continuité des identités et versions déjà publiées.
 
 ## `touba prepare`
 
@@ -272,7 +246,7 @@ Options fréquentes :
 ```sh title="Terminal"
 touba prepare --source src/examples/search.tb --mode write
 touba prepare --air program.air.json --mode check
-touba prepare --package packages/research/touba.package.json --mode write
+touba prepare --package authors/research/touba.package.json --mode write
 touba prepare --binding-fragment bindings/search.json --mode write
 touba prepare --resource-bindings touba.resources.json --require-resource-bindings --mode check
 touba prepare --run-plan touba.run-plan.json --entry strategy:examples.search/Run --mode write
@@ -1239,7 +1213,7 @@ Inspection multi-artefacts explicite :
 touba inspect \
   --air build/touba/project.air.json \
   --manifest build/touba/touba.manifest.json \
-  --package packages/research/touba.package.json \
+  --package authors/research/touba.package.json \
   --resource-bindings touba.resources.json \
   --run-plan touba.run-plan.json \
   --ownership touba.ownership.json
@@ -1367,57 +1341,28 @@ de conformité ou un statut `Verified / Unverified`.
 
 ## `touba registry resolve`
 
-```sh title="Terminal"
-touba registry resolve \
-  --registry ../touba-registry \
-  --package pkg:touba-library/donnees-quebec-dataset-brief \
-  --version 0.1.0 \
-  --source-root ../touba-library \
-  --allow-draft \
-  --out donnees-quebec.lock.json
+Cette commande d'inspection sélectionne une entrée exacte d'un registry local
+ou HTTPS choisi explicitement. Elle vérifie index, métadonnées, empreintes,
+version, protocoles et statut. Avec `--source-root`, elle vérifie aussi les
+empreintes des artefacts locaux. La référence est `pkg:<nom.qualifie>`.
+
+```sh title="Forme de la commande"
+touba registry resolve --registry ./registry --package pkg:acme.review \
+  --version 0.1.0 --source-root ./registry --json
 ```
 
-Résout une entrée d’un registry statique par fichier local ou URL brute.
+Votre registry doit contenir ce package. Aucun registry par défaut ni package
+métier d'exemple n'est installé. `--out <fichier.json>` sert uniquement à conserver
+le constat d'inspection (`touba-static-registry-lock-v1`), si vous en avez besoin.
 
-La commande lit `index.json`, le metadata package référencé, puis vérifie le
-digest du metadata. Si `--source-root` est fourni, elle vérifie aussi les
-digests des artefacts source listés dans le metadata.
+Les statuts draft et deprecated exigent respectivement `--allow-draft` et
+`--allow-deprecated` ; yanked est refusé. `registry check` peut auditer toutes les
+métadonnées, y compris retirées. Aucune de ces commandes n'accorde d'autorité.
 
-Elle produit un lock local `touba-static-registry-lock-v1`.
-
-Options principales :
-
-| Option | Rôle |
-| --- | --- |
-| `--registry` | dossier registry, fichier `index.json` ou URL brute vers un registry statique |
-| `--package` | référence `pkg:<namespace>/<name>` |
-| `--version` | version exacte à résoudre |
-| `--source-root` | checkout local utilisé pour vérifier les artefacts source |
-| `--allow-draft` | autorise explicitement une entrée `draft` |
-| `--allow-deprecated` | autorise explicitement une entrée `deprecated` |
-| `--out` | écrit le lock dans un fichier `.json` |
-| `--json` | affiche le lock JSON sur stdout |
-
-Comportement des statuts :
-
-- `reviewed` et `validated` peuvent être résolus ;
-- `draft` exige `--allow-draft` ;
-- `deprecated` exige `--allow-deprecated` ;
-- `yanked` est toujours refusé.
-
-Refus distingués :
-
-- schéma invalide ;
-- digest metadata différent de l’index ;
-- digest artefact différent de la source locale ;
-- version absente ;
-- protocole incompatible ;
-- statut non autorisé.
-
-`touba registry resolve` ne télécharge pas de package, n’installe rien et
-n’exécute aucun script. Un lock local vérifie des digests ; il ne constitue pas
-une signature, un audit de vulnérabilités, un endorsement ou une autorité
-runtime.
+Pour installer, utilisez `touba package add` : l'archive, les contrats source,
+la compatibilité et les dépendances exactes sont également vérifiés, puis un
+lock d'installation est enregistré. Le constat optionnel de registry ne le
+remplace pas.
 
 ## `touba manifest generate`
 

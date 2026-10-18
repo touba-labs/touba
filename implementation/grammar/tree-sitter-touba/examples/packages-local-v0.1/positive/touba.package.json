@@ -25,8 +25,5 @@
   "provenance": {
     "kind": "local_path",
     "source": "."
-  },
-  "contract_tests": [
-    "validation/package/research-contract.md"
-  ]
+  }
 }

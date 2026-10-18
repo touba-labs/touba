@@ -20,7 +20,7 @@ test("CLI registry resolve writes a verified draft static lock with explicit opt
       "--registry",
       fixture.registryRoot,
       "--package",
-      "pkg:touba-library/example-pack",
+      "pkg:example.package",
       "--version",
       "0.1.0",
       "--source-root",
@@ -54,7 +54,7 @@ test("CLI registry resolve refuses draft packages without explicit opt-in", () =
       "--registry",
       fixture.registryRoot,
       "--package",
-      "pkg:touba-library/example-pack",
+      "pkg:example.package",
       "--version",
       "0.1.0",
       "--source-root",
@@ -77,7 +77,7 @@ test("CLI registry resolve distinguishes missing versions", () => {
       "--registry",
       fixture.registryRoot,
       "--package",
-      "pkg:touba-library/example-pack",
+      "pkg:example.package",
       "--version",
       "9.9.9",
       "--allow-draft",
@@ -99,7 +99,7 @@ test("CLI registry resolve refuses metadata digest mismatches", () => {
       "--registry",
       fixture.registryRoot,
       "--package",
-      "pkg:touba-library/example-pack",
+      "pkg:example.package",
       "--version",
       "0.1.0",
       "--source-root",
@@ -123,7 +123,7 @@ test("CLI registry resolve refuses source artifact digest mismatches", () => {
       "--registry",
       fixture.registryRoot,
       "--package",
-      "pkg:touba-library/example-pack",
+      "pkg:example.package",
       "--version",
       "0.1.0",
       "--source-root",
@@ -147,7 +147,7 @@ test("CLI registry resolve refuses incompatible protocols", () => {
       "--registry",
       fixture.registryRoot,
       "--package",
-      "pkg:touba-library/example-pack",
+      "pkg:example.package",
       "--version",
       "0.1.0",
       "--source-root",
@@ -171,7 +171,7 @@ test("CLI registry resolve refuses yanked packages", () => {
       "--registry",
       fixture.registryRoot,
       "--package",
-      "pkg:touba-library/example-pack",
+      "pkg:example.package",
       "--version",
       "0.1.0",
       "--source-root",
@@ -194,51 +194,42 @@ function createRegistryFixture(options = {}) {
   const root = mkdtempSync(join(tmpdir(), "touba-registry-cli-"));
   const registryRoot = join(root, "registry");
   const sourceRoot = join(root, "touba-library");
-  const sourcePack = join(sourceRoot, "skills/example-pack");
-  const metadataDir = join(registryRoot, "packages/touba-library/example-pack/0.1.0");
+  const sourcePack = join(sourceRoot, "packages/example.package");
+  const metadataDir = join(registryRoot, "packages/example/package/0.1.0");
   mkdirSync(sourcePack, { recursive: true });
   mkdirSync(metadataDir, { recursive: true });
 
-  const descriptorPath = join(sourcePack, "skill.json");
+  const descriptorPath = join(sourcePack, "touba.package.json");
   writeJson(descriptorPath, {
-    skill_pack_schema_version: "touba-skill-pack-v1",
-    ref: "skill_pack:touba/example-pack",
-    name: "Example Pack",
-    description: "Example pack.",
-    version: "0.1.0",
-    tags: ["example"],
-    source: "project",
-    activation: {
-      model_invocable: true,
-      user_invocable: true,
-    },
-    resources: [],
-    execution_links: [],
+    package_schema_version: "touba-package-v1", name: "example.package", version: "0.1.0",
+    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=0.1.0 <0.2.0" },
+    exports: {}, contexts: [{ id: "review", description: "Review supplied evidence.", procedure: "SKILL.md" }],
   });
+  writeFileSync(join(sourcePack, "SKILL.md"), "# Review\nReview the supplied evidence.\n");
 
   const metadata = {
     schema_version: "touba-registry-package-v1",
-    package_ref: "pkg:touba-library/example-pack",
-    namespace: "touba-library",
-    name: "example-pack",
+    package_ref: "pkg:example.package",
+    namespace: "example",
+    name: "package",
     version: "0.1.0",
-    kind: "skill_pack",
+    kind: "touba_package",
     status: options.status ?? "draft",
     summary: "Example pack.",
     source: {
       type: "git",
       url: "https://github.com/pap-touba/touba-library",
-      path: "skills/example-pack",
+      path: "packages/example.package",
       revision: "main",
     },
     compatibility: {
       touba: ">=0.1.0 <1.0.0",
-      protocols: options.protocols ?? ["touba-skill-pack-v1"],
+      protocols: options.protocols ?? ["touba-package-v1"],
     },
     artifacts: [
       {
-        kind: "skill_pack_descriptor",
-        path: "skills/example-pack/skill.json",
+        kind: "package_manifest",
+        path: "packages/example.package/touba.package.json",
         digest: options.artifactDigest ?? digestFile(descriptorPath),
       },
     ],
@@ -261,7 +252,7 @@ function createRegistryFixture(options = {}) {
         version: metadata.version,
         kind: metadata.kind,
         status: metadata.status,
-        metadata_path: "packages/touba-library/example-pack/0.1.0/package.json",
+        metadata_path: "packages/example/package/0.1.0/package.json",
         metadata_digest: metadataDigest,
       },
     ],

@@ -1,4 +1,7 @@
 import crypto from "node:crypto";
+import { readPackageBytes } from "./package-fetch.mjs";
+import semver from "semver";
+import { PACKAGE_NAME, exactPackageVersion, packageFile, packagePath } from "./package-contract.mjs";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +11,7 @@ const PACKAGE_SCHEMA_VERSION = "touba-registry-package-v1";
 const LOCK_SCHEMA_VERSION = "touba-static-registry-lock-v1";
 
 const STATUSES = new Set(["draft", "reviewed", "validated", "deprecated", "yanked"]);
-const PACKAGE_KINDS = new Set(["skill_pack", "touba_package", "tool_handler", "manifest", "lock", "protocol_schema"]);
+const PACKAGE_KINDS = new Set(["touba_package"]);
 const SUPPORTED_PROTOCOLS = new Set([
   "touba-skill-pack-v1",
   "touba-package-v1",
@@ -43,7 +46,7 @@ export async function resolveRegistryPackage(options = {}) {
   if (metadata.kind !== indexEntry.kind || metadata.status !== indexEntry.status) {
     fail("RegistryMetadataStatusMismatch", `${packageRef}@${version} kind/status does not match index`, indexEntry.metadata_path);
   }
-  enforceStatus(metadata.status, options);
+  if (options.validationOnly !== true) enforceStatus(metadata.status, options);
   enforceProtocols(metadata.compatibility?.protocols ?? [], metadataDocument.ref);
 
   const artifacts = verifyArtifacts(metadata.artifacts ?? [], options.sourceRoot);
@@ -87,10 +90,49 @@ export function renderRegistryResolution(lock) {
   return `${lines.join("\n")}\n`;
 }
 
+export async function checkRegistry(options = {}) {
+  const location = registryLocation(requiredOption(options.registry, "registry"));
+  const document = await readJsonRef(location.indexRef, "RegistryIndexSchemaInvalid");
+  validateIndex(document.value, document.ref);
+  const diagnostics = [];
+  for (const entry of document.value.packages) {
+    try {
+      await resolveRegistryPackage({ ...options, packageRef: entry.package_ref, version: entry.version, validationOnly: true });
+    } catch (error) { diagnostics.push({ package: entry.package_ref, version: entry.version, message: error.message }); }
+  }
+  let preserved = 0;
+  if (options.previous) {
+    const priorLocation = registryLocation(options.previous);
+    const prior = await readJsonRef(priorLocation.indexRef, "RegistryIndexSchemaInvalid");
+    validateIndex(prior.value, prior.ref);
+    for (const entry of prior.value.packages) {
+      try {
+        await resolveRegistryPackage({ registry: options.previous, packageRef: entry.package_ref, version: entry.version, validationOnly: true });
+        const current = document.value.packages.find(item => item.package_ref === entry.package_ref && item.version === entry.version);
+        if (!current) fail("RegistryPublishedIdentityImmutable", `cannot remove or rename ${entry.package_ref}@${entry.version}; retain it with an explicit status`, entry.metadata_path);
+        const oldMeta = (await readJsonRef(resolveRegistryChild(priorLocation.rootRef, entry.metadata_path), "RegistryPackageSchemaInvalid")).value;
+        const newMeta = (await readJsonRef(resolveRegistryChild(location.rootRef, current.metadata_path), "RegistryPackageSchemaInvalid")).value;
+        const { status: oldStatus, ...oldContent } = oldMeta;
+        const { status: newStatus, ...newContent } = newMeta;
+        if (canonicalJson(oldContent) !== canonicalJson(newContent) || current.metadata_path !== entry.metadata_path) fail("RegistryPublishedVersionImmutable", `published content is immutable: ${entry.package_ref}@${entry.version}; publish a new version`, entry.metadata_path);
+        preserved++;
+      } catch (error) { diagnostics.push({ package: entry.package_ref, version: entry.version, message: error.message }); }
+    }
+  }
+  return { status: diagnostics.length ? "error" : "success", packages: document.value.packages.length, continuity: { checked: Boolean(options.previous), preserved }, diagnostics };
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
 function validateIndex(index, ref) {
   if (!isPlainObject(index) || index.index_schema_version !== INDEX_SCHEMA_VERSION || !Array.isArray(index.packages)) {
     fail("RegistryIndexSchemaInvalid", `index must use ${INDEX_SCHEMA_VERSION}`, ref);
   }
+  const seen = new Set();
   for (const entry of index.packages) {
     if (!isPlainObject(entry)) {
       fail("RegistryIndexSchemaInvalid", "index package entry must be an object", ref);
@@ -104,6 +146,10 @@ function validateIndex(index, ref) {
     if (!PACKAGE_KINDS.has(entry.kind) || !STATUSES.has(entry.status)) {
       fail("RegistryIndexSchemaInvalid", "index package entry kind/status is invalid", ref);
     }
+    if (!entry.package_ref.startsWith("pkg:") || !PACKAGE_NAME.test(entry.package_ref.slice(4)) || !exactPackageVersion(entry.version)) fail("RegistryIndexSchemaInvalid", "use a qualified package name and exact SemVer", ref);
+    const identity = `${entry.package_ref}@${entry.version}`;
+    if (seen.has(identity)) fail("RegistryIndexSchemaInvalid", "duplicate package version", ref);
+    seen.add(identity);
   }
 }
 
@@ -132,6 +178,8 @@ function validateMetadata(metadata, ref) {
     fail("RegistryPackageSchemaInvalid", "metadata compatibility.protocols must be an array", ref);
   }
   requireString(metadata.compatibility.touba, "compatibility.touba", ref, "RegistryPackageSchemaInvalid");
+  if (!semver.validRange(metadata.compatibility.touba) || !exactPackageVersion(metadata.version)) fail("RegistryPackageSchemaInvalid", "invalid SemVer compatibility or version", ref);
+  if (metadata.package_ref !== `pkg:${metadata.namespace}.${metadata.name}`) fail("RegistryPackageSchemaInvalid", "metadata identity fields disagree", ref);
   if (!Array.isArray(metadata.artifacts) || metadata.artifacts.length === 0) {
     fail("RegistryPackageSchemaInvalid", "metadata artifacts must be a non-empty array", ref);
   }
@@ -142,6 +190,7 @@ function validateMetadata(metadata, ref) {
     requireString(artifact.kind, "artifact.kind", ref, "RegistryPackageSchemaInvalid");
     requireString(artifact.path, "artifact.path", ref, "RegistryPackageSchemaInvalid");
     requireDigest(artifact.digest, "artifact.digest", ref, "RegistryPackageSchemaInvalid");
+    assertRelativePath(artifact.path, "artifact.path");
   }
 }
 
@@ -260,13 +309,16 @@ function resolveInside(root, path, label) {
   if (rel.startsWith("..") || isAbsolute(rel)) {
     fail("RegistryPathInvalid", `${label} escapes its root`, path);
   }
+  if (existsSync(resolved)) {
+    try { return packageFile(resolve(root), path); }
+    catch { fail("RegistryPathInvalid", `${label} must not traverse a link or special file`, path); }
+  }
   return resolved;
 }
 
 function assertRelativePath(path, label) {
-  if (typeof path !== "string" || path.trim() === "" || isAbsolute(path) || path.split(/[\\/]+/u).includes("..")) {
-    fail("RegistryPathInvalid", `${label} must be a relative path inside its root`, path ?? label);
-  }
+  try { packagePath(path); }
+  catch { fail("RegistryPathInvalid", `${label} must be a portable relative path inside its root`, label); }
 }
 
 async function readJsonRef(ref, schemaCode) {
@@ -283,17 +335,7 @@ async function readJsonRef(ref, schemaCode) {
 }
 
 async function readBytesRef(ref) {
-  if (isHttpUrl(ref)) {
-    const response = await fetch(ref, { redirect: "error" });
-    if (!response.ok) {
-      fail("RegistryFetchFailed", `GET ${ref} returned ${response.status}`, ref);
-    }
-    return Buffer.from(await response.arrayBuffer());
-  }
-  if (!existsSync(ref) || !statSync(ref).isFile()) {
-    fail("RegistryFileMissing", `${ref} does not exist`, ref);
-  }
-  return readFileSync(ref);
+  return readPackageBytes(ref, 1024 * 1024);
 }
 
 function requiredOption(value, name) {

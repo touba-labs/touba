@@ -11,7 +11,9 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@touba/deployment": "workspace:*"
+    "@touba/deployment": "workspace:*",
+    "semver": "7.8.5",
+    "tar": "7.5.22"
   },
   "engines": {
     "node": ">=24 <25"

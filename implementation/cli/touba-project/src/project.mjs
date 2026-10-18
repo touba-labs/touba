@@ -12,6 +12,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fileURLToPath } from "node:url";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
 import { applyHostDecisions } from "./host-decisions.mjs";
+import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, readPackage } from "./package-contract.mjs";
+import { PACKAGE_LOCK, assertPackageDirectory, verifyInstalledPackages } from "./package-store.mjs";
 
 import {
   generateHandlerContractTestFromAirTool,
@@ -48,7 +50,7 @@ export const TOUBA_PROJECT_CONFIG_VERSION = "touba-project-v1";
 export const TOUBA_LOCAL_SECRET_STORE_VERSION = "touba-secret-store-local-v1";
 export const TOUBA_SECRETS_VERSION = "touba-secrets-v1";
 export const DEFAULT_SUPPLY_CHAIN_LOCK_PATH = "touba.lock.json";
-export const TOUBA_PACKAGE_SCHEMA_VERSION = "touba-package-v1";
+export const TOUBA_PACKAGE_SCHEMA_VERSION = PACKAGE_SCHEMA;
 export const TOUBA_AIR_JSON_PROFILE = "touba-air-json-canonical-v1";
 export const TOUBA_RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v1";
 export const TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v1";
@@ -60,7 +62,6 @@ export const PROJECT_ARTIFACT_LAYOUT_VERSION = "touba-artifacts-v1";
 const MODULE_NAME_PATTERN = /^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$/;
 const SECRET_HANDLE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const RUN_PROFILE_PATTERN = /^[a-z][a-z0-9_-]*$/;
-const SEMVER_LIKE_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/;
 const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/;
 const NON_NEGATIVE_INTEGER_PATTERN = /^(0|[1-9][0-9]*)$/;
 const PAYLOAD_CONSTRAINT_PATH_PATTERN = /^(\$|[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*)$/;
@@ -164,19 +165,6 @@ const PACKAGE_EXPORT_COLLECTIONS = Object.freeze({
   agents: Object.freeze({ importKind: "agent", definitionCollection: "agents", refPrefix: "agent:" }),
   memories: Object.freeze({ importKind: "memory", definitionCollection: "memories", refPrefix: "memory:" }),
 });
-const PACKAGE_AUTHORITY_FIELDS = new Set([
-  "binding",
-  "bindings",
-  "grant",
-  "grants",
-  "handler",
-  "handlers",
-  "manifest",
-  "memory_scopes",
-  "permissions",
-  "secret_values",
-  "secrets",
-]);
 const PACKAGE_REGISTRY_FIELDS = new Set([
   "registries",
   "registry",
@@ -246,11 +234,13 @@ const DEFAULT_RUN_PROFILES = Object.freeze({
 
 export function initProject(options = {}) {
   const root = resolve(options.root ?? process.cwd());
+  assertPackageDirectory(root);
   const created = [];
   const preserved = [];
   const projectConfig = resolveProjectConfigForInit(root, options.language);
 
   for (const dir of [
+    "packages",
     DEFAULT_SOURCE_ROOT,
     DEFAULT_HANDLER_ROOT,
     DEFAULT_BUILD_ROOT,
@@ -403,6 +393,7 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
   if (projectConfig === null) {
     throw new Error(`--project requires ${DEFAULT_PROJECT_CONFIG_PATH} in ${projectRoot}`);
   }
+  verifyInstalledPackages(projectRoot, projectConfig.packages ?? []);
   if (projectConfig.artifact_layout !== PROJECT_ARTIFACT_LAYOUT_VERSION) {
     throw new Error(`project config artifact_layout must be ${PROJECT_ARTIFACT_LAYOUT_VERSION}; old layouts are not read or converted`);
   }
@@ -415,6 +406,13 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
     throw new Error(`prepared run plan is missing: ${runPlanPath}; run touba prepare --root ${JSON.stringify(projectRoot)} --mode write --profile ${profileName}, with --entry <air-ref> if the project has several entry points`);
   }
   const runPlan = JSON.parse(readFileSync(runPlanPath, "utf8"));
+  if (existsSync(join(projectRoot, PACKAGE_LOCK))) {
+    const effectivePath = join(dirname(runPlanPath), "touba.effective-project.json");
+    const effective = existsSync(effectivePath) ? JSON.parse(readFileSync(effectivePath, "utf8")) : null;
+    for (const [kind, path] of [["project", configPath], ["package_lock", join(projectRoot, PACKAGE_LOCK)]]) {
+      if (effective?.inputs?.find(input => input.kind === kind)?.digest_sha256 !== packageDigest(readFileSync(path))) throw packageError("PackagePreparationStale", "project packages changed since preparation; run touba prepare --mode write before running");
+    }
+  }
   const expectedEntry = entryRef ?? projectConfig.entry;
   if (expectedEntry !== undefined && runPlan.entry_ref !== expectedEntry) {
     throw new Error(`prepared run plan entry ${runPlan.entry_ref} conflicts with requested entry ${expectedEntry}`);
@@ -868,12 +866,6 @@ export function renderReport(report) {
   if (report.effective_project_path) {
     lines.push(`Effective project: ${report.effective_project_path}`);
   }
-  if (report.skill_pack_path) {
-    lines.push(`Skill pack: ${report.skill_pack_path}`);
-  }
-  if (report.skill_pack_ref) {
-    lines.push(`Skill pack ref: ${report.skill_pack_ref}`);
-  }
   if (report.ownership?.path) {
     lines.push(`Ownership: ${report.ownership.path}`);
   }
@@ -905,12 +897,6 @@ export function renderReport(report) {
     lines.push("Packages:");
     for (const item of report.packages) {
       lines.push(`- ${item.name}@${item.version} ${item.manifest_path}`);
-    }
-  }
-  if (report.skill_packs?.length > 0) {
-    lines.push("Skill packs:");
-    for (const item of report.skill_packs) {
-      lines.push(`- ${item.ref} ${item.path} (${item.resource_count} resources)`);
     }
   }
   if (report.binding_fragments?.length > 0) {
@@ -1057,6 +1043,9 @@ async function loadLocalPackages({
       modules: acceptedEntries.map((packageEntry) => packageEntry.document.module.name).sort(),
       exports: loaded.exports,
       contract_tests: loaded.contract_tests,
+      handlers: loaded.handlers,
+      contexts: loaded.contexts,
+      dependencies: loaded.dependencies,
     });
   }
 
@@ -1091,6 +1080,8 @@ export function compilerInputsForFile(sourcePath) {
 
 function collectPackageInputs({ root, projectPackageRecords, optionPackagePaths, diagnostics }) {
   const inputs = [];
+  try { verifyInstalledPackages(root, projectPackageRecords); }
+  catch (error) { diagnostics.push(errorDiagnostic(error.code ?? "PackageLockInvalid", error.message)); return inputs; }
   const loadedManifestPaths = new Set();
   const records = [
     ...projectPackageRecords.map((record, index) => ({
@@ -1125,6 +1116,20 @@ function collectPackageInputs({ root, projectPackageRecords, optionPackagePaths,
     if (metadata !== null) inputs.push({ manifestPath, metadata });
   }
 
+  const names = new Map(inputs.map(input => [input.metadata.name, input.metadata]));
+  const active = new Set(), visited = new Set();
+  function visit(pkg) {
+    if (active.has(pkg.name)) { diagnostics.push(errorDiagnostic("PackageDependencyCycle", `dependency cycle at ${pkg.name}`)); return; }
+    if (visited.has(pkg.name)) return;
+    active.add(pkg.name);
+    for (const [name, version] of Object.entries(pkg.dependencies)) {
+      const dependency = names.get(name);
+      if (!dependency || dependency.version !== version) diagnostics.push(errorDiagnostic("PackageDependencyMissing", `${pkg.name} requires ${name}@${version}; install it explicitly`));
+      else visit(dependency);
+    }
+    active.delete(pkg.name); visited.add(pkg.name);
+  }
+  for (const pkg of names.values()) visit(pkg);
   return inputs;
 }
 
@@ -1243,186 +1248,49 @@ async function loadOneLocalPackage({
   };
 }
 
-function validatePackageManifest(document, {
-  manifestPath,
-  record,
-  diagnostics,
-}) {
-  if (!document || typeof document !== "object" || Array.isArray(document)) {
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", "package manifest must be a JSON object", {
-      manifest_path: manifestPath,
-    }));
+function validatePackageManifest(document, { manifestPath, record, diagnostics }) {
+  try {
+    const pkg = readPackage(manifestPath, { runtimeVersion: PACKAGE_RUNTIME_VERSION });
+    if (!pkg.requirements.compatible) throw Object.assign(new Error(pkg.requirements.missing.join("; ")), { code: "PackageRequirementMissing" });
+    if (typeof record.version === "string" && record.version !== pkg.document.version) throw Object.assign(new Error("package version does not match requested version"), { code: "PackageVersionIncompatible" });
+    return packageMetadata(pkg);
+  } catch (error) {
+    diagnostics.push(errorDiagnostic(error.code ?? "PackageSchemaMismatch", error.message, { manifest_path: manifestPath }));
     return null;
   }
-  if (document.package_schema_version !== TOUBA_PACKAGE_SCHEMA_VERSION) {
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", `package_schema_version must be ${TOUBA_PACKAGE_SCHEMA_VERSION}`, {
-      manifest_path: manifestPath,
-      actual: document.package_schema_version,
-    }));
-    return null;
-  }
-  if (hasRegistryClaim(document)) {
-    diagnostics.push(errorDiagnostic("PackageRegistryForbidden", "package manifest cannot declare registry authority", {
-      manifest_path: manifestPath,
-    }));
-  }
-  const authorityField = firstAuthorityField(document);
-  if (authorityField !== null) {
-    diagnostics.push(errorDiagnostic("PackageAuthorityFieldForbidden", `package manifest cannot declare authority field ${authorityField}`, {
-      manifest_path: manifestPath,
-      field: authorityField,
-    }));
-  }
-
-  if (typeof document.name !== "string" || !MODULE_NAME_PATTERN.test(document.name)) {
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", "package name must be a qualified lowercase dotted identifier", {
-      manifest_path: manifestPath,
-      package_name: document.name,
-    }));
-    return null;
-  }
-  if (typeof document.version !== "string" || !SEMVER_LIKE_PATTERN.test(document.version)) {
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", "package version must be a semver-like string", {
-      manifest_path: manifestPath,
-      package_name: document.name,
-      version: document.version,
-    }));
-    return null;
-  }
-  if (typeof record.version === "string" && record.version !== document.version) {
-    diagnostics.push(errorDiagnostic("PackageVersionIncompatible", `package ${document.name} version ${document.version} does not match requested ${record.version}`, {
-      manifest_path: manifestPath,
-      package_name: document.name,
-      expected_version: record.version,
-      actual_version: document.version,
-    }));
-  }
-  if (typeof document.root !== "string" || document.root.trim() === "") {
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", "package root must be a non-empty string", {
-      manifest_path: manifestPath,
-      package_name: document.name,
-    }));
-    return null;
-  }
-  if (document.touba?.air_profile !== TOUBA_AIR_JSON_PROFILE) {
-    diagnostics.push(errorDiagnostic("PackageAirProfileIncompatible", `package ${document.name} must target AIR profile ${TOUBA_AIR_JSON_PROFILE}`, {
-      manifest_path: manifestPath,
-      package_name: document.name,
-      expected_air_profile: TOUBA_AIR_JSON_PROFILE,
-      actual_air_profile: document.touba?.air_profile,
-    }));
-    return null;
-  }
-  if (typeof document.touba?.runtime_compatibility !== "string" || document.touba.runtime_compatibility.trim() === "") {
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", "package touba.runtime_compatibility must be a non-empty string", {
-      manifest_path: manifestPath,
-      package_name: document.name,
-    }));
-    return null;
-  }
-
-  const packageRoot = resolve(dirname(manifestPath), document.root);
-  const exports = normalizePackageExports(document.exports, diagnostics, manifestPath, document.name);
-  const contractTests = normalizePackageContractTests(document.contract_tests, diagnostics, manifestPath, document.name);
-
-  return {
-    name: document.name,
-    version: document.version,
-    root: packageRoot,
-    exports,
-    exports_by_module: packageExportsByModule(exports),
-    contract_tests: contractTests.map((testPath) => resolve(packageRoot, testPath)),
-  };
 }
 
-function normalizePackageExports(exports, diagnostics, manifestPath, packageName) {
-  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", "package exports must be an object", {
-      manifest_path: manifestPath,
-      package_name: packageName,
-    }));
-    return emptyPackageExports();
-  }
-  const normalized = emptyPackageExports();
-  for (const [collectionName, descriptor] of Object.entries(PACKAGE_EXPORT_COLLECTIONS)) {
-    const refs = exports[collectionName] ?? [];
-    if (!Array.isArray(refs)) {
-      diagnostics.push(errorDiagnostic("PackageSchemaMismatch", `package exports.${collectionName} must be an array`, {
-        manifest_path: manifestPath,
-        package_name: packageName,
-      }));
-      continue;
-    }
-    const seenRefs = new Set();
-    for (const targetRef of refs) {
-      if (typeof targetRef !== "string" || targetRef.trim() === "") {
-        diagnostics.push(errorDiagnostic("PackageExportUnknownRef", `package exports.${collectionName} contains an invalid ref`, {
-          manifest_path: manifestPath,
-          package_name: packageName,
-          export_collection: collectionName,
-        }));
-        continue;
-      }
-      if (!targetRef.startsWith(descriptor.refPrefix)) {
-        diagnostics.push(errorDiagnostic("PackageExportUnknownRef", `package export ${targetRef} is not a canonical ${descriptor.refPrefix} AIR ref`, {
-          manifest_path: manifestPath,
-          package_name: packageName,
-          export_collection: collectionName,
-          target_ref: targetRef,
-        }));
-        continue;
-      }
-      if (seenRefs.has(targetRef)) {
-        diagnostics.push(errorDiagnostic("PackageNameConflict", `package export ${targetRef} is declared more than once`, {
-          manifest_path: manifestPath,
-          package_name: packageName,
-          export_collection: collectionName,
-          target_ref: targetRef,
-        }));
-        continue;
-      }
-      seenRefs.add(targetRef);
-      normalized[collectionName].push(targetRef);
-    }
-    normalized[collectionName].sort();
-  }
-  for (const key of Object.keys(exports)) {
-    if (PACKAGE_EXPORT_COLLECTIONS[key] === undefined) {
-      diagnostics.push(errorDiagnostic("PackageSchemaMismatch", `package exports.${key} is not supported`, {
-        manifest_path: manifestPath,
-        package_name: packageName,
-        export_collection: key,
-      }));
-    }
-  }
-  return normalized;
+function packageMetadata(pkg) {
+  const exports = Object.fromEntries(Object.keys(PACKAGE_EXPORT_COLLECTIONS).map(kind => [kind, pkg.document.exports[kind] ?? []]));
+  return { name: pkg.document.name, version: pkg.document.version, root: pkg.root, exports,
+    handlers: pkg.document.handlers ?? [], contexts: (pkg.document.contexts ?? []).map(context => context.id), dependencies: pkg.document.dependencies ?? {},
+    exports_by_module: packageExportsByModule(exports), contract_tests: (pkg.document.contract_tests ?? []).map(path => join(pkg.root, path)) };
 }
 
-function emptyPackageExports() {
-  return Object.fromEntries(Object.keys(PACKAGE_EXPORT_COLLECTIONS).map((collectionName) => [collectionName, []]));
-}
-
-function normalizePackageContractTests(contractTests, diagnostics, manifestPath, packageName) {
-  if (contractTests === undefined) {
-    return [];
-  }
-  if (!Array.isArray(contractTests)) {
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", "package contract_tests must be an array when present", {
-      manifest_path: manifestPath,
-      package_name: packageName,
-    }));
-    return [];
-  }
-  return contractTests.filter((testPath) => {
-    if (typeof testPath === "string" && testPath.trim() !== "") {
-      return true;
-    }
-    diagnostics.push(errorDiagnostic("PackageSchemaMismatch", "package contract_tests entries must be non-empty strings", {
-      manifest_path: manifestPath,
-      package_name: packageName,
-    }));
-    return false;
+export async function validatePackageSources(packages, options = {}) {
+  const compileOptions = { ...options,
+    sourceRoots: packages.map(pkg => join(pkg.root, "src")),
+    moduleSourcePaths: packages.flatMap(pkg => pkg.files.filter(file => file.path.startsWith("src/") && file.path.endsWith(".tb")).map(file => join(pkg.root, file.path))) };
+  const loaded = await loadLocalPackages({ root: packages[0].root, projectModuleNames: [], compileOptions,
+    packageInputs: packages.map(pkg => ({ manifestPath: pkg.manifestPath, metadata: packageMetadata(pkg) })) });
+  const assembly = assemblePrepareAirDocuments(loaded.entries, {
+    rootModuleNames: loaded.entries.map(entry => entry.document.module.name),
+    packageMembership: loaded.packageMembership, packageExportsByModule: loaded.packageExportsByModule,
   });
+  loaded.diagnostics.push(...assembly.diagnostics);
+  for (const pkg of packages) {
+    for (const handler of pkg.document.handlers ?? []) {
+      if (!loaded.entries.some(entry => declarationExists(entry.document, "tool", handler.tool))) loaded.diagnostics.push(errorDiagnostic("PackageHandlerInvalid", "handler target is not declared: " + handler.tool));
+    }
+    const compiled = new Set(loaded.entries.map(entry => entry.packageSourcePath));
+    for (const file of pkg.files.filter(file => file.path.startsWith("src/") && file.path.endsWith(".tb"))) {
+      const path = join(pkg.root, file.path);
+      if (compiled.has(path)) continue;
+      try { await compileSource(path, compileOptions); }
+      catch (error) { loaded.diagnostics.push(errorDiagnostic("PackageSourceInvalid", error.message)); }
+    }
+  }
+  return loaded.diagnostics;
 }
 
 function packageExportModuleNames(exports) {
@@ -1479,23 +1347,6 @@ function hasRegistryClaim(value) {
   return value.provenance?.kind === "registry";
 }
 
-function firstAuthorityField(value, path = []) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    if (PACKAGE_AUTHORITY_FIELDS.has(key)) {
-      return [...path, key].join(".");
-    }
-    if (key === "touba" || key === "exports" || key === "provenance") {
-      const nested = firstAuthorityField(child, [...path, key]);
-      if (nested !== null) {
-        return nested;
-      }
-    }
-  }
-  return null;
-}
 
 function findToubaSources(dir) {
   const entries = readdirSync(dir, { withFileTypes: true });

@@ -20,10 +20,7 @@ import {
   resolveProjectRunArgs,
   setProjectSecret,
 } from "../src/project.mjs";
-import {
-  newSkillPack,
-  validateSkillPacks,
-} from "../src/skill-packs.mjs";
+
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 import { createToubaProjectServer } from "../../touba-project-server/src/serve.mjs";
 
@@ -132,123 +129,7 @@ test("new module writes canonical dotted module under src", () => {
   }
 });
 
-test("skill new scaffolds a standard skill pack and validate accepts it", () => {
-  const root = tempRoot();
-  try {
-    const report = newSkillPack("research-review", { root });
-    const packPath = join(root, "skills/research-review");
-    assert.equal(report.command, "skill new");
-    assert.equal(report.skill_pack_ref, "skill_pack:project/research-review");
-    assert.equal(existsSync(join(packPath, "skill.json")), true);
-    assert.equal(existsSync(join(packPath, "SKILL.md")), true);
-    assert.equal(existsSync(join(packPath, "resources")), false, "empty optional directories are not required");
-    assert.equal(existsSync(join(packPath, "scripts")), false);
-    assert.equal(existsSync(join(packPath, "tests")), false);
-
-    const descriptor = JSON.parse(readFileSync(join(packPath, "skill.json"), "utf8"));
-    assert.equal(descriptor.skill_pack_schema_version, "touba-skill-pack-v1");
-    assert.equal(descriptor.resources[0].path, "SKILL.md");
-    assert.match(descriptor.resources[0].digest, /^sha256:[0-9a-f]{64}$/);
-
-    const validation = validateSkillPacks({ root });
-    assert.equal(validation.status, "success");
-    assert.equal(validation.skill_packs.length, 1);
-    assert.equal(validation.skill_packs[0].ref, "skill_pack:project/research-review");
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("skill validate reports structural diagnostics for invalid packs", () => {
-  const root = tempRoot();
-  try {
-    newSkillPack("research-review", { root });
-    const descriptorPath = join(root, "skills/research-review/skill.json");
-    const descriptor = JSON.parse(readFileSync(descriptorPath, "utf8"));
-    descriptor.grants = ["network"];
-    descriptor.resources[0].path = "../outside.md";
-    descriptor.resources[0].digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-    writeJson(descriptorPath, descriptor);
-
-    const validation = validateSkillPacks({ root, target: "research-review" });
-    assert.equal(validation.status, "error");
-    assert.equal(validation.diagnostics.some((item) => item.code === "SkillPackAuthorityFieldForbidden"), true);
-    assert.equal(validation.diagnostics.some((item) => item.code === "SkillPackResourcePathInvalid"), true);
-
-    descriptor.resources[0].path = "SKILL.md";
-    writeJson(descriptorPath, descriptor);
-    const digestValidation = validateSkillPacks({ root, target: "research-review" });
-    assert.equal(digestValidation.status, "error");
-    assert.equal(digestValidation.diagnostics.some((item) => item.code === "SkillPackDigestMismatch"), true);
-
-    const missingDescriptorRoot = join(root, "skills/missing-descriptor");
-    mkdirSync(join(missingDescriptorRoot, "resources/references"), { recursive: true });
-    mkdirSync(join(missingDescriptorRoot, "resources/examples"), { recursive: true });
-    mkdirSync(join(missingDescriptorRoot, "resources/templates"), { recursive: true });
-    mkdirSync(join(missingDescriptorRoot, "resources/samples"), { recursive: true });
-    mkdirSync(join(missingDescriptorRoot, "scripts"), { recursive: true });
-    mkdirSync(join(missingDescriptorRoot, "tests/fixtures"), { recursive: true });
-    writeFileSync(join(missingDescriptorRoot, "SKILL.md"), "# Missing Descriptor\n", "utf8");
-    const missingValidation = validateSkillPacks({ root, target: "missing-descriptor" });
-    assert.equal(missingValidation.status, "error");
-    assert.equal(missingValidation.diagnostics.some((item) => item.code === "SkillPackDescriptorMissing"), true);
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("CLI skill commands expose scaffold and validation reports", () => {
-  const root = tempRoot();
-  try {
-    const createResult = spawnSync(process.execPath, [
-      cliPath,
-      "skill",
-      "new",
-      "research-review",
-      "--root",
-      root,
-      "--json",
-    ], { encoding: "utf8" });
-    assert.equal(createResult.status, 0, createResult.stderr);
-    const createReport = JSON.parse(createResult.stdout);
-    assert.equal(createReport.skill_pack_ref, "skill_pack:project/research-review");
-
-    const validateResult = spawnSync(process.execPath, [
-      cliPath,
-      "skill",
-      "validate",
-      "research-review",
-      "--root",
-      root,
-      "--json",
-    ], { encoding: "utf8" });
-    assert.equal(validateResult.status, 0, validateResult.stderr);
-    const validateReport = JSON.parse(validateResult.stdout);
-    assert.equal(validateReport.status, "success");
-    assert.equal(validateReport.skill_packs.length, 1);
-
-    const descriptorPath = join(root, "skills/research-review/skill.json");
-    const descriptor = JSON.parse(readFileSync(descriptorPath, "utf8"));
-    descriptor.handler = { command: "node" };
-    writeJson(descriptorPath, descriptor);
-    const refusedResult = spawnSync(process.execPath, [
-      cliPath,
-      "skill",
-      "validate",
-      "research-review",
-      "--root",
-      root,
-      "--json",
-    ], { encoding: "utf8" });
-    assert.equal(refusedResult.status, 1);
-    const refusedReport = JSON.parse(refusedResult.stdout);
-    assert.equal(refusedReport.diagnostics.some((item) => item.code === "SkillPackAuthorityFieldForbidden"), true);
-    assert.match(renderReport(refusedReport), /skill validate \(error\)/);
-    assert.doesNotMatch(renderReport(refusedReport), /\(ok\)/);
-  } finally {
-    cleanup(root);
-  }
-});
+// Package authoring, refusal and CLI tests live in packages.test.mjs.
 
 test("secret store commands manage handles without printing values", () => {
   const root = tempRoot();
@@ -1762,10 +1643,10 @@ test("real prepare checks package signatures without granting private exports", 
   try {
     initProject({ root });
     writeLocalPackageFixture(root, { exports: { functions: ["function:org.example.research/Public"] } });
-    writeFileSync(join(root, "packages/research/src/org/example/research.tb"), 'module org.example.research\nfunction Public\n    gives Text\n    do\n        give "public"\nfunction Private\n    gives Text\n    do\n        give "private"\n');
+    writeFileSync(join(root, "authors/research/src/org/example/research.tb"), 'module org.example.research\nfunction Public\n    gives Text\n    do\n        give "public"\nfunction Private\n    gives Text\n    do\n        give "private"\n');
     const configPath = join(root, "touba.project.json");
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    config.packages = [{ manifest: "packages/research/touba.package.json" }];
+    config.packages = [{ editable: true, manifest: "authors/research/touba.package.json" }];
     writeFileSync(configPath, JSON.stringify(config));
     mkdirSync(join(root, "src/examples"), { recursive: true });
     const sourcePath = join(root, "src/examples/search.tb");
@@ -2169,7 +2050,7 @@ test("prepare assembles explicitly configured local package exports without pack
       sdk: "@touba/sdk",
       packages: [
         {
-          manifest: "packages/research/touba.package.json",
+          editable: true, manifest: "authors/research/touba.package.json",
           version: "0.1.0",
         },
       ],
@@ -2185,7 +2066,7 @@ test("prepare assembles explicitly configured local package exports without pack
     const report = await prepareProject({
       root,
       mode: "write",
-      compileSource: (sourcePath) => sourcePath.includes(join("packages", "research"))
+      compileSource: (sourcePath) => sourcePath.includes(join("authors", "research"))
         ? airDocumentPackageResearchTools()
         : airDocumentPackageResearchApp(),
     });
@@ -2231,7 +2112,7 @@ test("prepare refuses package declarations that are not explicitly exported", as
       artifact_layout: "touba-artifacts-v1",
       language: "javascript",
       sdk: "@touba/sdk",
-      packages: [{ manifest: "packages/research/touba.package.json" }],
+      packages: [{ editable: true, manifest: "authors/research/touba.package.json" }],
       run_profiles: {
         dev: { require_supply_chain_lock: false },
         prod: {
@@ -2244,7 +2125,7 @@ test("prepare refuses package declarations that are not explicitly exported", as
     const report = await prepareProject({
       root,
       mode: "plan",
-      compileSource: (sourcePath) => sourcePath.includes(join("packages", "research"))
+      compileSource: (sourcePath) => sourcePath.includes(join("authors", "research"))
         ? airDocumentPackageResearchTools()
         : airDocumentPackageResearchApp(),
     });
@@ -2279,7 +2160,7 @@ test("prepare reports local package export and compatibility diagnostics", async
       sdk: "@touba/sdk",
       packages: [
         {
-          manifest: "packages/research/touba.package.json",
+          editable: true, manifest: "authors/research/touba.package.json",
           version: "0.2.0",
         },
       ],
@@ -2292,19 +2173,20 @@ test("prepare reports local package export and compatibility diagnostics", async
       },
     }, null, 2), "utf8");
 
-    const report = await prepareProject({
-      root,
-      mode: "plan",
-      compileSource: (sourcePath) => sourcePath.includes(join("packages", "research"))
-        ? airDocumentPackageResearchTools()
-        : airDocumentPackageResearchApp(),
-    });
-
-    assert.equal(report.status, "error");
-    assert.equal(report.diagnostics.some((item) => item.code === "PackageRegistryForbidden"), true);
-    assert.equal(report.diagnostics.some((item) => item.code === "PackageAuthorityFieldForbidden"), true);
-    assert.equal(report.diagnostics.some((item) => item.code === "PackageVersionIncompatible"), true);
-    assert.equal(report.diagnostics.some((item) => item.code === "PackageAirProfileIncompatible"), true);
+    const fixturePath = join(root, "authors/research/touba.package.json");
+    const base = packageManifestDocument({ exports: { tools: ["tool:org.example.research/SearchDatasets"] } });
+    const cases = [
+      ["PackageRegistryForbidden", { registry: "https://registry.example.invalid" }],
+      ["PackageAuthorityFieldForbidden", { bindings: {} }],
+      ["PackageVersionIncompatible", {}],
+      ["PackageAirProfileIncompatible", { touba: { air_profile: "air-json-v9", runtime_compatibility: ">=0.1 <0.2" } }],
+    ];
+    for (const [code, patch] of cases) {
+      writeFileSync(fixturePath, JSON.stringify({ ...base, ...patch }));
+      const report = await prepareProject({ root, mode: "plan", compileSource: sourcePath => sourcePath.includes(join("packages", "research")) ? airDocumentPackageResearchTools() : airDocumentPackageResearchApp() });
+      assert.equal(report.status, "error");
+      assert.ok(report.diagnostics.some(item => item.code === code), JSON.stringify(report.diagnostics));
+    }
   } finally {
     cleanup(root);
   }
@@ -2325,7 +2207,7 @@ test("prepare reports package exports that do not exist in package sources", asy
       artifact_layout: "touba-artifacts-v1",
       language: "javascript",
       sdk: "@touba/sdk",
-      packages: [{ manifest: "packages/research/touba.package.json" }],
+      packages: [{ editable: true, manifest: "authors/research/touba.package.json" }],
       run_profiles: {
         dev: { require_supply_chain_lock: false },
         prod: {
@@ -2599,8 +2481,7 @@ test("CLI help prints usage without a synthetic report", () => {
   assert.match(result.stdout, /Usage:/);
   assert.match(result.stdout, /touba trigger run <program\.air\.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba\.trigger-state\.json>/);
   assert.match(result.stdout, /touba trigger serve <program\.air\.json> --manifest <path> --state <touba\.trigger-state\.json> --queue <touba\.trigger-queue\.json>/);
-  assert.match(result.stdout, /touba skill new <skill-id>/);
-  assert.match(result.stdout, /touba skill validate \[<skill-id\|path>\]/);
+  assert.match(result.stdout, /touba package new\|check\|test\|version\|pack\|add\|list\|remove/);
   assert.match(result.stdout, /--state <touba\.trigger-state\.json>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --out <touba\.manifest\.json>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --stdout/);
@@ -2638,10 +2519,10 @@ test("CLI trigger, manifest and handler help match current public options", () =
   assert.match(handlerResult.stdout, /--handler-root <path>/);
   assert.equal(handlerResult.stdout.includes("--out-dir"), false);
 
-  const skillResult = spawnSync(process.execPath, [cliPath, "skill", "--help"], { encoding: "utf8" });
+  const skillResult = spawnSync(process.execPath, [cliPath, "package", "--help"], { encoding: "utf8" });
   assert.equal(skillResult.status, 0, skillResult.stderr);
-  assert.match(skillResult.stdout, /touba skill new <skill-id>/);
-  assert.match(skillResult.stdout, /touba skill validate \[<skill-id\|path>\]/);
+  assert.match(skillResult.stdout, /touba package new \[name\]/);
+  assert.match(skillResult.stdout, /touba package check \[directory\]/);
   assert.equal(skillResult.stdout.includes("marketplace"), false);
 
   const auditResult = spawnSync(process.execPath, [cliPath, "audit", "--help"], { encoding: "utf8" });
@@ -4520,9 +4401,11 @@ function writeJson(filePath, value) {
 }
 
 function writeLocalPackageFixture(root, options = {}) {
-  const packageRoot = join(root, "packages/research");
+  const packageRoot = join(root, "authors/research");
   mkdirSync(join(packageRoot, "src/org/example"), { recursive: true });
   writeFileSync(join(packageRoot, "src/org/example/research.tb"), "module org.example.research\n", "utf8");
+  mkdirSync(join(packageRoot, "validation/package"), { recursive: true });
+  writeFileSync(join(packageRoot, "validation/package/research-contract.md"), "# Fixture contract\n");
   writeFileSync(join(packageRoot, "touba.package.json"), JSON.stringify(packageManifestDocument(options), null, 2), "utf8");
 }
 

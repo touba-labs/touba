@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { packageSdk } from "./package-sdk.mjs";
+import { copyDependency, packageSdk } from "./package-sdk.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -62,6 +62,16 @@ export function packageLocalToolchain(options = {}) {
   copyNodeRuntime();
   copyCompiler();
   copyToubaPackages();
+  const projectDependencies = new Map();
+  const projectSource = join(implementationRoot, "cli/touba-project");
+  const projectManifest = JSON.parse(readFileSync(join(projectSource, "package.json"), "utf8"));
+  for (const [name, version] of Object.entries(projectManifest.dependencies)) {
+    if (version.startsWith("workspace:")) continue;
+    const source = realpathSync(join(projectSource, "node_modules", name));
+    if (JSON.parse(readFileSync(join(source, "package.json"), "utf8")).version !== version) throw new Error(`project dependency ${name} does not match its exact version`);
+    copyDependency(source, join(toolchainRoot, "lib/cli/touba-project/node_modules", name), projectDependencies);
+  }
+  writeFileSync(join(toolchainRoot, "lib/cli/touba-project/DEPENDENCIES.json"), JSON.stringify([...projectDependencies.values()], null, 2) + "\n");
   copyRuntimeContracts();
   mkdirSync(join(toolchainRoot, "lib/tools"), { recursive: true });
   copyFileSync(join(implementationRoot, "tools/validate-product-surface-contracts.mjs"),
@@ -154,7 +164,7 @@ function copyRuntimeContracts() {
     copyFileSync(join(implementationRoot, "contracts/resource-bindings.mjs"), join(toolchainRoot, root, "resource-bindings.mjs"));
     copyFileSync(join(implementationRoot, "contracts/run-outcome.mjs"), join(toolchainRoot, root, "run-outcome.mjs"));
   }
-  for (const family of ["machine", "product-surfaces", "hardened"]) {
+  for (const family of ["machine", "product-surfaces", "hardened", "packages"]) {
     const source = join(implementationRoot, "contracts", family);
     for (const destination of [
       join(toolchainRoot, "lib", "contracts", family),

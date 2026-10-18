@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -10,9 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  validateSkillPacks,
-} from "../../cli/touba-project/src/skill-packs.mjs";
+import { loadSkillPack } from "../../cli/touba-project/src/skill-packs.mjs";
 import {
   AIR_CAPABILITY_PROFILE,
   AIR_JSON_PROFILE,
@@ -119,18 +116,14 @@ async function main() {
   const tempRoot = mkdtempSync(join(tmpdir(), "touba-skills-first-v1-"));
   try {
     const projectRoot = materializeSkillPackProject(tempRoot);
-    const validation = validateSkillPacks({ root: projectRoot });
-    assert.equal(validation.status, "success", JSON.stringify(validation.diagnostics, null, 2));
-    assert.equal(validation.skill_packs.length, 3);
-
-    const skillPacks = skillPackDefinitions.map(runtimePackFromDefinition);
+    const skillPacks = skillPackDefinitions.map(definition => loadSkillPack(join(projectRoot, "packages/fixture.context_" + definition.skillId.replaceAll("-", "_"))));
     await validateOrientation(skillPacks);
     const positive = await validateGovernedExecution(skillPacks);
     const refusal = await validateInvalidExecutionLink(skillPacks);
 
     assertTraceDoesNotContain(positive.trace, [SCRIPT_SENTINEL]);
     assertTraceDoesNotContain(refusal.trace, [SCRIPT_SENTINEL]);
-    console.log("skills-first-v1: status=success packs=3 active=skill_pack:project/dataset-brief checks=orientation,activation,governed_skill,refusal");
+    console.log("skills-first-v1: status=success packs=3 active=skill_pack:fixture.context_dataset_brief/dataset-brief checks=orientation,activation,governed_skill,refusal");
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -146,9 +139,9 @@ async function validateOrientation(skillPacks) {
       assert.deepEqual(
         request.model_input.skill_pack_hints.map((hint) => hint.ref),
         [
-          "skill_pack:project/literature-review",
-          "skill_pack:project/dataset-brief",
-          "skill_pack:project/release-checklist",
+          "skill_pack:fixture.context_literature_review/literature-review",
+          "skill_pack:fixture.context_dataset_brief/dataset-brief",
+          "skill_pack:fixture.context_release_checklist/release-checklist",
         ],
       );
       assert.equal(request.model_input.active_skill_packs, undefined);
@@ -174,9 +167,9 @@ async function validateGovernedExecution(skillPacks) {
       topic: "fire safety open data",
     },
     skillPacks,
-    activeSkillPackRefs: ["skill_pack:project/dataset-brief"],
+    activeSkillPackRefs: ["skill_pack:fixture.context_dataset_brief/dataset-brief"],
     skillPackActivationReasons: {
-      "skill_pack:project/dataset-brief": "user_task_dataset_brief",
+      "skill_pack:fixture.context_dataset_brief/dataset-brief": "user_task_dataset_brief",
     },
     agentDecisionProvider: (request) => {
       if (request.mode === "summary" && request.step_index === 1) {
@@ -191,7 +184,7 @@ async function validateGovernedExecution(skillPacks) {
         assert.equal(request.model_input.skill_pack_hints.length, 3);
         assert.equal(request.model_input.active_skill_packs.length, 1);
         const activePack = request.model_input.active_skill_packs[0];
-        assert.equal(activePack.ref, "skill_pack:project/dataset-brief");
+        assert.equal(activePack.ref, "skill_pack:fixture.context_dataset_brief/dataset-brief");
         assert.equal(activePack.execution_links[0].authority, "informative_only");
         const template = activePack.resources.find((resource) => resource.ref === "resource:dataset-brief/template");
         const script = activePack.resources.find((resource) => resource.ref === "resource:dataset-brief/normalizer");
@@ -231,7 +224,7 @@ async function validateGovernedExecution(skillPacks) {
   assert.equal(result.status, "success", JSON.stringify(result.trace, null, 2));
   assert.equal(result.result, "brief:fire safety open data");
   assert.deepEqual(handlerCalls, ["fire safety open data"]);
-  assert.equal(eventOf(result.trace, "skill_pack_activated").payload.skill_pack_ref, "skill_pack:project/dataset-brief");
+  assert.equal(eventOf(result.trace, "skill_pack_activated").payload.skill_pack_ref, "skill_pack:fixture.context_dataset_brief/dataset-brief");
   assert.equal(
     eventsOf(result.trace, "skill_pack_resource_loaded").some((event) =>
       event.payload.resource_ref === "resource:dataset-brief/template"
@@ -246,7 +239,7 @@ async function validateGovernedExecution(skillPacks) {
 
 async function validateInvalidExecutionLink(skillPacks) {
   const badPacks = skillPacks.map((pack) => {
-    if (pack.ref !== "skill_pack:project/dataset-brief") {
+    if (pack.ref !== "skill_pack:fixture.context_dataset_brief/dataset-brief") {
       return pack;
     }
     return {
@@ -264,7 +257,7 @@ async function validateInvalidExecutionLink(skillPacks) {
     entryRef: "strategy:test/RunSkillsFirst",
     skillPacks: badPacks,
     inputs: { topic: "fire safety open data" },
-    activeSkillPackRefs: ["skill_pack:project/dataset-brief"],
+    activeSkillPackRefs: ["skill_pack:fixture.context_dataset_brief/dataset-brief"],
     agentDecisionProvider: () => {
       providerCalled = true;
       return { action: "answer_directly", result: "unreachable" };
@@ -286,7 +279,7 @@ async function validateInvalidExecutionLink(skillPacks) {
 function materializeSkillPackProject(tempRoot) {
   const projectRoot = join(tempRoot, "project");
   for (const definition of skillPackDefinitions) {
-    const packPath = join(projectRoot, "skills", definition.skillId);
+    const packPath = join(projectRoot, "packages", "fixture.context_" + definition.skillId.replaceAll("-", "_"));
     for (const relativeDir of [
       "",
       "resources",
@@ -304,78 +297,20 @@ function materializeSkillPackProject(tempRoot) {
     for (const resource of definition.resources) {
       writeFile(packPath, resource.path, resource.content);
     }
-    writeFile(packPath, "skill.json", `${JSON.stringify(skillPackDescriptor(definition), null, 2)}\n`);
+    writeFile(packPath, "touba.package.json", `${JSON.stringify(skillPackDescriptor(definition), null, 2)}\n`);
   }
   return projectRoot;
 }
 
 function skillPackDescriptor(definition) {
-  return {
-    skill_pack_schema_version: "touba-skill-pack-v1",
-    ref: `skill_pack:project/${definition.skillId}`,
-    name: titleFromSkillId(definition.skillId),
-    description: definition.description,
-    version: "0.1.0",
-    tags: ["skills-first-v1"],
-    source: "project",
-    activation: {
-      model_invocable: true,
-      user_invocable: true,
-    },
-    resources: [
-      {
-        ref: `resource:${definition.skillId}/procedure`,
-        path: "SKILL.md",
-        kind: "procedure",
-        loadable_as_context: true,
-        digest: sha256(definition.procedure),
-      },
-      ...definition.resources.map((resource) => ({
-        ref: resource.ref,
-        path: resource.path,
-        kind: resource.kind,
-        loadable_as_context: resource.loadable_as_context ?? true,
-        digest: sha256(resource.content),
-      })),
-    ],
-    execution_links: definition.execution_links,
+  return { package_schema_version: "touba-package-v1", name: "fixture.context_" + definition.skillId.replaceAll("-", "_"), version: "0.1.0",
+    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=0.1.0 <0.2.0" }, exports: {},
+    contexts: [{ id: definition.skillId, description: definition.description, procedure: "SKILL.md",
+      resources: definition.resources.map(resource => ({ name: resource.ref.split("/").at(-1), path: resource.path,
+        kind: resource.kind, description: "Fixture resource", loadable_as_context: resource.loadable_as_context ?? true })),
+      execution_links: definition.execution_links }],
   };
 }
-
-function runtimePackFromDefinition(definition) {
-  return {
-    ref: `skill_pack:project/${definition.skillId}`,
-    name: titleFromSkillId(definition.skillId),
-    description: definition.description,
-    version: "0.1.0",
-    tags: ["skills-first-v1"],
-    source: "project",
-    activation: {
-      model_invocable: true,
-      user_invocable: true,
-    },
-    resources: [
-      {
-        ref: `resource:${definition.skillId}/procedure`,
-        path: "SKILL.md",
-        kind: "procedure",
-        loadable_as_context: true,
-        digest: sha256(definition.procedure),
-        content: definition.procedure,
-      },
-      ...definition.resources.map((resource) => ({
-        ref: resource.ref,
-        path: resource.path,
-        kind: resource.kind,
-        loadable_as_context: resource.loadable_as_context ?? true,
-        digest: sha256(resource.content),
-        content: resource.content,
-      })),
-    ],
-    execution_links: definition.execution_links,
-  };
-}
-
 function scenarioDocument() {
   return {
     air_schema_version: AIR_SCHEMA_VERSION,
@@ -571,18 +506,4 @@ function sourceRef() {
     end_line: 1,
     end_column: 0,
   };
-}
-
-function sha256(content) {
-  const hash = crypto.createHash("sha256");
-  hash.update(content);
-  return `sha256:${hash.digest("hex")}`;
-}
-
-function titleFromSkillId(skillId) {
-  return skillId
-    .split("-")
-    .filter(Boolean)
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
 }

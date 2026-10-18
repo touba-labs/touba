@@ -40,6 +40,7 @@ export function buildEffectiveProjectDocument(options) {
     declaredInput(root, "project", projectConfigPath) ?? {
       ...derivedInput(root, "project", projectConfigPath, projectConfig), provenance: "declared",
     },
+    declaredInput(root, "package_lock", resolve(root, "touba.packages.lock.json")),
     ...sources.map((source) => declaredInput(root, "source", source.path)),
     ...bindingFragmentPaths.map((item) => declaredInput(root, "binding_fragment", item)),
     ...resourceBindingsPaths.map((item) => declaredInput(root, "resource_bindings", item)),
