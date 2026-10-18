@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { packageLocalToolchain } from "./package-local-toolchain.mjs";
+import { unpackPackage } from "../../touba-project/src/packages.mjs";
 
 // Runs the published tutorial's actual source files with a copied distribution,
 // outside the checkout. No provider credentials or model calls are involved.
@@ -92,4 +93,87 @@ test("isolated distribution supports package creation, archive installation and 
   writeFileSync(join(project, "touba.manifest.json"), JSON.stringify(bindings));
   const refused = command(binary, args, project, 1);
   assert.match(refused, /ToolCapabilityNotGranted/);
+});
+
+test("published package lifecycle runs every documented command through upgrade, registry and manual registration", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-lifecycle-")));
+  try {
+    const binary = process.env.TOUBA_PACKAGE_TEST_CLI ?? join(packageLocalToolchain({ quiet: true }).toolchainRoot,
+      "bin", process.platform === "win32" ? "touba.cmd" : "touba");
+    const env = { PATH: [dirname(binary), process.env.PATH].join(delimiter), TMPDIR: root };
+    for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP"]) if (process.env[key]) env[key] = process.env[key];
+    const tutorial = readFileSync(new URL("../../../../docs/tutoriels/package-reutilisable.md", import.meta.url), "utf8");
+    const blocks = [...tutorial.matchAll(/```(\w+)(?: title="([^"]+)")?\n([\s\S]*?)\n```/g)]
+      .map(([, language, title, body]) => ({ language, title, body }));
+    function command(args, cwd, expected = 0) {
+      const result = spawnSync(binary, args, { cwd, env, encoding: "utf8", timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
+      assert.equal(result.status, expected, `${args.join(" ")}\n${result.stdout}\n${result.stderr}`);
+      return result.stdout;
+    }
+    let cwd = root, firstArchive, runs = 0, commands = 0;
+    for (const block of blocks) {
+      if (block.language === "touba") {
+        const file = join(cwd, block.title);
+        if (existsSync(file)) assert.equal(readFileSync(file, "utf8").trim(), block.body.trim());
+        else { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, block.body + "\n"); }
+      } else if (block.language === "sh" && block.title === "Terminal") {
+        for (const line of block.body.split("\n")) {
+          const args = [...line.matchAll(/'([^']*)'|"([^"]*)"|(\S+)/g)].map(match => match[1] ?? match[2] ?? match[3]);
+          const verb = args.shift();
+          if (verb === "cd") cwd = resolve(cwd, args[0]);
+          else if (verb === "mkdir") mkdirSync(resolve(cwd, args.at(-1)), { recursive: args.includes("-p") });
+          else {
+            assert.equal(verb, "touba", "The recipe runner only accepts documented filesystem and Touba commands");
+            const output = command(args, cwd); commands++;
+            if (args[0] === "run") {
+              const result = JSON.parse(output); runs++;
+              assert.equal(result.status, "success"); assert.equal(result.result, "Package import works");
+            }
+            if (args[0] === "package" && args[1] === "pack" && !firstArchive)
+              firstArchive = readFileSync(join(root, "package-demo/echo/dist/acme.echo-0.1.0.tar.gz"));
+          }
+        }
+      }
+    }
+    assert.equal(runs, 3); assert.ok(commands >= 25);
+    const author = join(root, "package-demo/echo"), consumer = join(root, "package-demo/consumer");
+    const archive = join(author, "dist/acme.echo-0.1.1.tar.gz");
+    assert.deepEqual(readFileSync(join(author, "dist/acme.echo-0.1.0.tar.gz")), firstArchive);
+    const listing = JSON.parse(command(["package", "list", "--json"], consumer));
+    assert.deepEqual(listing.packages.map(pkg => [pkg.name, pkg.version]), [["acme.echo", "0.1.1"]]);
+    assert.match(command(["package", "pack", "--json"], author, 2), /PackageAlreadyExists/);
+    assert.match(command(["package", "publish", "--registry", "../registry", "--json"], author, 2), /RegistryPublishedVersionImmutable/);
+
+    // Test the optional manual route with only distributed files from the archive.
+    const manual = join(root, "manual"); mkdirSync(manual);
+    command(["init"], manual);
+    const extracted = unpackPackage(archive, join(root, "archive-content"));
+    cpSync(extracted, join(manual, "packages/acme.echo"), { recursive: true });
+    const manualBlock = blocks.find(block => block.title === "Terminal (nouveau projet)");
+    assert.ok(manualBlock);
+    for (const line of manualBlock.body.split("\n")) command(line.split(" ").slice(1), manual);
+    cpSync(join(consumer, "src"), join(manual, "src"), { recursive: true });
+    command(["prepare", "--mode", "write", "--entry", "strategy:client.main/Run"], manual);
+    assert.equal(JSON.parse(command(["run", "--project", ".", "--inputs-json", '{"request":"Package import works"}', "--output", "json"], manual)).result, "Package import works");
+
+    // Refusals remain observable; neither a bad test nor altered installed code is accepted.
+    const testPath = join(author, "tests/echo.test.mjs"), testSource = readFileSync(testPath, "utf8");
+    const badTest = testSource.replace('assert.equal(run.result, "Package contract")', 'assert.equal(run.result, "wrong result")');
+    assert.notEqual(badTest, testSource); writeFileSync(testPath, badTest);
+    command(["package", "test"], author, 1); writeFileSync(testPath, testSource);
+    const source = join(manual, "packages/acme.echo/src/acme/echo.tb");
+    writeFileSync(source, readFileSync(source, "utf8").replace("give value", 'give "tampered"'));
+    assert.match(command(["prepare", "--mode", "check", "--json"], manual, 1), /PackageIntegrityMismatch/);
+    const draftConsumer = join(root, "draft-refusal"); mkdirSync(draftConsumer); command(["init"], draftConsumer);
+    const draft = spawnSync(binary, ["package", "add", "acme.echo@0.1.1", "--registry", join(root, "package-demo/registry"), "--json"],
+      { cwd: draftConsumer, env, encoding: "utf8", timeout: 30000 });
+    assert.equal(draft.status, 2); assert.match(draft.stdout, /draft/i);
+
+    // The reference example must be the actual generated manifest, not a plausible substitute.
+    command(["package", "new", "review", "--org", "acme", "--license", "MIT", "--yes"], root);
+    const guide = readFileSync(new URL("../../../../docs/guides/creer-partager-package.md", import.meta.url), "utf8");
+    const manifest = guide.match(/```json title="touba.package.json"\n([\s\S]*?)\n```/)[1];
+    assert.deepEqual(JSON.parse(manifest), JSON.parse(readFileSync(join(root, "review/touba.package.json"))));
+    console.log(`Published package recipe: ${commands} commands, ${runs} application runs, upgrade, registry, manual registration and refusal checks passed.`);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -5,6 +5,31 @@ exécutables, agents, stratégies, mémoires ou procédures contextuelles peuven
 cohabiter. Une intégration est un usage d'un package, pas un format supplémentaire.
 Library les rassemble, le Hub les présente, un registry indexe leurs versions.
 
+## Parcours complet
+
+Vous construisez un projet **auteur**, puis distribuez une archive à un projet
+**consommateur**. La CLI génère la structure et contrôle le contenu ; vous
+écrivez le contrat métier, ses tests et les instructions d'utilisation.
+Pour suivre toutes les commandes dans l'ordre, ouvrez le
+[tutoriel de création et d'utilisation](../tutoriels/package-reutilisable.md).
+
+Avant de commencer, installez Touba et vérifiez `touba version` et
+`touba doctor`. Un package de code Touba pur ne demande ni SDK hôte, ni clé
+modèle, ni serveur. Les SDK deviennent nécessaires si votre code hôte les
+importe ; le langage du handler ne change pas le format du package.
+
+| Contenu à partager | Contrat à déclarer | Utilisation dans l'application |
+| --- | --- | --- |
+| Type, constante, fonction ou skill exécutable | Références publiques dans `exports`, sources dans `files` | Import typé depuis le module, puis appel Touba |
+| Agent et workflow | `exports.agents` et `exports.strategies`, avec leurs dépendances | Import ; le workflow est une stratégie, pas un second format |
+| Intégration avec un service externe | Tool exporté, handler proposé et prérequis documentés | Binding revu par l'hôte, SDK éventuel et autorisations explicites |
+| Procédure contextuelle | Entrée `contexts` et procédure Markdown | Sélection et activation de contexte, pas un `import skill` |
+
+Le nom installé (`acme.review`), le module (`acme.review`) et la déclaration
+(`skill:acme.review/Echo`) ont des rôles distincts. Ils coïncident partiellement
+dans l'exemple généré ; l'import utilise le **module**, jamais un chemin vers
+`packages/`. Le répertoire géré reste unique dans chaque projet.
+
 ## Créer le projet auteur
 
 `touba package new` ouvre un questionnaire : organisation, nom, description,
@@ -47,6 +72,81 @@ dans un dossier auteur séparé, jamais dans une copie installée.
 
 Les commandes retrouvent le manifeste le plus proche depuis les sous-dossiers :
 pas de `../` à répéter pour vérifier, tester, versionner ou empaqueter.
+
+## Développer le contenu et le contrat public
+
+Le générateur fournit un point de départ fonctionnel. Dans `src/`, remplacez
+Echo par vos déclarations métier, puis alignez les références de `exports`
+et les assertions du test. Ajoutez chaque nouveau fichier de test à
+`contract_tests` : la commande n'invente pas les cas à vérifier.
+
+Voici le manifeste généré par la commande précédente. Vous n'avez pas à le
+recopier ; il montre les champs à maintenir quand le contenu évolue.
+
+```json title="touba.package.json"
+{
+  "package_schema_version": "touba-package-v1",
+  "name": "acme.review",
+  "version": "0.1.0",
+  "description": "Reusable acme.review package.",
+  "touba": {
+    "air_profile": "touba-air-json-canonical-v1",
+    "runtime_compatibility": ">=0.1.0 <0.2.0"
+  },
+  "exports": {
+    "skills": [
+      "skill:acme.review/Echo"
+    ]
+  },
+  "readme": "README.md",
+  "files": [
+    "src",
+    ".gitignore"
+  ],
+  "publisher": "acme",
+  "license": "MIT",
+  "contract_tests": [
+    "tests/echo.test.mjs"
+  ]
+}
+```
+
+- `exports` définit l'API publique. Renommer une déclaration exige de mettre
+  à jour son export et les consommateurs concernés. Les autres déclarations
+  restent internes au package.
+- `files` inventorie le contenu distribuable. Le manifeste, le README, les
+  tests déclarés, les handlers et ressources de contexte sont également pris
+  en compte par leur déclaration. Ajoutez explicitement vos autres ressources.
+  Vérifiez l'inventaire rendu par `touba package check --json` avant diffusion.
+- `touba.runtime_compatibility` exprime la plage réellement testée, pas une
+  promesse de compatibilité avec des versions futures.
+- `dependencies` contient des versions exactes ; utilisez `touba package add`
+  depuis le projet auteur pour faire enregistrer dépendance et lock ensemble.
+- `engines` vérifie actuellement la plage Node et les plateformes. Documentez
+  dans le README les autres prérequis, notamment Python, ses dépendances,
+  services et variables ; ne leur inventez pas de champ non reconnu.
+
+Le README doit permettre à un autre développeur d'installer, importer et
+exécuter un exemple sans vous contacter : entrées et sorties, exports,
+commandes, prérequis, permissions demandées, erreurs attendues et licence.
+Gardez identifiants, prompts et descriptions destinés aux modèles en anglais.
+Aucune clé, fichier `.env`, cache ou dépendance `node_modules` dans l'archive.
+
+### Ajouter un handler JavaScript ou Python
+
+Déclarez le tool dans le code Touba et son export, écrivez le handler suivant
+le parcours [JavaScript](../tutoriels/handlers-javascript.md) ou
+[Python](../tutoriels/handlers-python.md), puis déclarez son fichier dans
+`handlers` selon la [référence](../reference/packages.md). Indiquez les
+bibliothèques hôtes nécessaires et comment les installer. `package add`
+n'exécute ni `npm install`, ni `pip install`, ni script de post-installation.
+
+Le consommateur installe explicitement le SDK choisi avec
+`touba sdk install javascript` ou `touba sdk install python`. Il examine
+le plan de `touba prepare`, les handlers et les décisions hôtes avant
+exécution. Fournir du code ne fournit ni secret, ni grant, ni approbation.
+Les tests de package restent des tests Node déclarés dans `contract_tests` ;
+les tests de handlers Python ont leur propre commande, décrite dans leur tutoriel.
 
 ## Vérifier et tester
 
@@ -103,7 +203,7 @@ Dans une application créée avec `touba init`, ajoutez le chemin réel de
 l'archive ou d'un dossier auteur :
 
 ```sh title="Forme de la commande"
-touba package add /chemin/vers/acme.review-0.1.0.tar.gz
+touba package add /path/to/acme.review-0.1.0.tar.gz
 touba package list
 touba package check
 ```
@@ -198,6 +298,14 @@ les publications concurrentes sont refusées. Après un arrêt interrompu,
 inspectez le verrou `.touba-registry-publishing` et les fichiers non indexés
 avant récupération, sans les écraser. Pour diffuser le registry, hébergez
 séparément ce dossier sur HTTPS avec les contrôles d'accès appropriés.
+
+## Sélectionner un handler proposé
+
+Dans les décisions hôtes, `bindings[toolRef].package_handler` sélectionne
+l'identité du package, par exemple `"acme.billing"`. Cela choisit seulement
+le point d'entrée déclaré. L'hôte approuve séparément grants, secrets, contrat
+d'effet et limites. Aucun stub local inutilisé n'est créé pour le tool ainsi
+sélectionné. Examinez cette sélection dans le plan avant d'appliquer les décisions.
 
 ## Préserver la gouvernance
 
