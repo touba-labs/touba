@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ToubaEngine, ToubaEngineError } from "../src/index.mjs";
 
-test("SDK nested-loop checkpoints retain effect identities across three separate processes", async () => {
+for (const executionMode of ["process", "persistent"]) {
+test("SDK nested-loop checkpoints retain effect identities across three durable resumptions", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-sdk-nested-"));
   try {
     writeFileSync(join(root, "source.tb"), readFileSync(new URL("../../../grammar/tree-sitter-touba/examples/control-flow-v1/positive/nested-controls.tb", import.meta.url)));
@@ -22,7 +23,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
       "tool:control.nested/Write": { handler: { kind: "process", command: process.execPath, args: [join(root, "handler.mjs")], cwd: root },
         grants: [], timeout_ms: 5000, max_payload_bytes: 65536, effect_contract: { kind: "external_write", retry_mode: "none" } },
     } }));
-    const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+    const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
       commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
     const options = { source: "source.tb", manifest: "touba.manifest.json", entryRef: "strategy:control.nested/Review", effectJournal: "run.effect-journal.json" };
     let result = await engine.run({ ...options, inputs: { rows: [[1, 2], [3]] }, humanCheckpointOut: "pause-0.json" });
@@ -46,7 +47,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-for (const delegated of [false, true]) test(`SDK ${delegated ? "agent-selected" : "source"} calls resume across processes with one journal and unreplayed writes`, async t => {
+for (const delegated of [false, true]) test(`SDK ${delegated ? "agent-selected" : "source"} calls resume with durable checkpoints with one journal and unreplayed writes`, async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-sdk-call-stack-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, "source.tb"), readFileSync(new URL("../../../grammar/tree-sitter-touba/examples/agent-interface-v1/positive/tb-nested-human-continuation.tb", import.meta.url)));
@@ -62,7 +63,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: request.arguments.value, 
     "tool:agent.continuation/Record": { handler: { kind: "process", command: process.execPath, args: [join(root, "handler.mjs")] },
       grants: [], timeout_ms: 5000, max_payload_bytes: 65536, effect_contract: { kind: "external_write", retry_mode: "none" } },
   } }));
-  const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+  const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
     commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
   if (delegated) writeFileSync(join(root, "provider.mjs"), `import { appendFileSync } from "node:fs";
 export function decideAgentCapability(request) {
@@ -102,7 +103,7 @@ export function decideAgentCapability(request) {
 test("published request trigger accepts normalized event arguments and rejects missing data", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-guide-webhook-"));
   try {
-    const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+    const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
       commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
     for (const docUrl of [
       new URL("../../../../docs/guides/triggers-gouvernes.md", import.meta.url),
@@ -126,7 +127,7 @@ test("published request trigger accepts normalized event arguments and rejects m
 test("SDK runs a governed trigger with persistent deduplication and source validation", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-sdk-trigger-"));
   try {
-    const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+    const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
       commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
     writeFileSync(join(root, "program.tb"), `module sdk.trigger
 strategy Run
@@ -158,7 +159,7 @@ trigger Hourly
 test("real CLI and SDK distinguish completion, pauses, stops, human refusal, cancellation and errors", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-engine-outcomes-"));
   try {
-    const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+    const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
       commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
     const run = async (body, options = {}) => {
       writeFileSync(join(root, "program.tb"), `module outcomes\nstrategy Run\n    do\n${body}\n`);
@@ -232,7 +233,7 @@ strategy Run
       humanDecisions: { [saved.approval_ref]: "approved" } });
     assert.equal(nestedResult.status, "success");
     assert.equal(nestedResult.result, "approved");
-    const unavailable = new ToubaEngine({ projectRoot: root, command: join(root, "missing-cli") });
+    const unavailable = new ToubaEngine({ executionMode, projectRoot: root, command: join(root, "missing-cli") });
     await assert.rejects(unavailable.run({ airJson: {} }), error => error instanceof ToubaEngineError && error.details.code === "ENOENT");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -240,7 +241,7 @@ strategy Run
 test("SDK forwards an explicit durable journal, refuses unjournaled writes and preserves fresh-run identities", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-engine-effects-"));
   try {
-    const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+    const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
       commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
     writeFileSync(join(root, "write.tb"), `module sdk.effects
 tool Write
@@ -293,7 +294,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
 test("SDK resumes successive durable approvals without replaying earlier instructions", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-engine-successive-"));
   try {
-    const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+    const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
       commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
     writeFileSync(join(root, "program.tb"), `module sdk.successive
 tool Write
@@ -375,3 +376,5 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
     assert.ok(entries.every(entry => entry.state === "applied"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+}

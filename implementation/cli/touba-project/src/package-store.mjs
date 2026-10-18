@@ -75,9 +75,10 @@ export function assertPlainDirectory(path) {
   for (let current = resolve(path); ; current = dirname(current)) {
     let stat;
     try { stat = lstatSync(current); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) {
+    if (stat?.isSymbolicLink()) {
       throw packageError("PackageSymlinkForbidden", `package directory must not traverse a link: ${current}`);
     }
+    if (stat && !stat.isDirectory()) throw packageError("PackageDirectoryRequired", `expected a directory, found a file: ${current}`);
     if (dirname(current) === current) break;
   }
 }

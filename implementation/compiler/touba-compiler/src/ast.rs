@@ -275,6 +275,7 @@ pub enum AstStatement {
     Give(AstGiveStatement),
     Stop(AstStopStatement),
     If(AstIfStatement),
+    Match(AstMatchStatement),
     For(AstForStatement),
     While(AstWhileStatement),
 }
@@ -293,6 +294,7 @@ pub struct AstHumanApprovalStatement {
     pub mode: AstHumanApprovalMode,
     pub arguments: Vec<AstCallArgument>,
     pub result_binding: Option<AstResultBinding>,
+    pub expired_branch: Option<Vec<AstStatement>>,
     pub source_ref: SourceRef,
 }
 
@@ -371,6 +373,21 @@ pub struct AstIfStatement {
 pub struct AstForStatement {
     pub item: String,
     pub collection: AstExpression,
+    pub body: Vec<AstStatement>,
+    pub source_ref: SourceRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstMatchStatement {
+    pub value: AstExpression,
+    pub cases: Vec<AstMatchCase>,
+    pub source_ref: SourceRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstMatchCase {
+    pub type_name: String,
+    pub variant: String,
     pub body: Vec<AstStatement>,
     pub source_ref: SourceRef,
 }
@@ -466,6 +483,7 @@ pub enum AstBinaryOperator {
     Subtract,
     Multiply,
     Divide,
+    IntegerDivide,
     Modulo,
     TextConcat,
     Equal,

@@ -55,6 +55,7 @@ pub(crate) fn is_v1_capability_label(label: &str) -> bool {
     matches!(
         label,
         "network"
+            | "network_local"
             | "filesystem_read"
             | "filesystem_write"
             | "process"

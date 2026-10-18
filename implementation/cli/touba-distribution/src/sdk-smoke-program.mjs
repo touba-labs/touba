@@ -40,6 +40,15 @@ assert.equal(run.result, "installed-sdk-ok");
 assertRunSucceeded(run, "installed-sdk-ok");
 assertTraceEvents(run.trace, { kind: "run_completed", count: 1 });
 
+const persistent = new ToubaEngine({ command: process.execPath, commandArgs: [process.argv[2]], executionMode: "persistent" });
+try {
+  const { airJson } = await persistent.compile({ source: "hello.tb" });
+  assertRunSucceeded(await persistent.run({ airJson }), "installed-sdk-ok");
+  const pid = persistent.workerPid;
+  assertRunSucceeded(await persistent.run({ airJson }), "installed-sdk-ok");
+  assert.equal(persistent.workerPid, pid);
+} finally { await persistent.close(); }
+
 // Scripted decisions drive the installed runtime; the handler is a real child
 // process. Its test-only invocation journal is checked independently of traces.
 writeFileSync("testing.tb", `module archive_testing

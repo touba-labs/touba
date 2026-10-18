@@ -153,7 +153,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `HandlerStubMissing` | Stub handler attendu absent | Générer le stub ou fournir le handler attendu |
 | `ManifestBindingObsolete` | Binding présent pour un tool supprimé | Retirer le binding si le tool n'existe plus |
 | `PackageSchemaMismatch` | Manifeste de package local invalide ou version de schéma inconnue | Corriger `touba.package.json` |
-| `PackageExportMissing` | Import depuis un package vers une déclaration non exportée | Ajouter l’export au package ou corriger l’import |
+| `PackageExportMissing` | Import privé, module exporté absent de l’inventaire, ou package sans export ni contexte | Vérifier exports, fichiers inclus et contexts ; corriger l’import si nécessaire |
 | `PackageExportUnknownRef` | Export de package vers une déclaration absente | Corriger `exports` ou la source du package |
 | `PackageVersionIncompatible` | Version demandée différente de la version du package | Aligner `touba.project.json` et le package |
 | `PackageAirProfileIncompatible` | Profil AIR du package incompatible | Utiliser un package ciblant `touba-air-json-canonical-v1` |
@@ -272,3 +272,48 @@ Voir [Reprise](../guides/reprise-durable-bornee.md) et [Budgets](../guides/budge
 ## Distribution des packages
 
 Voir les [diagnostics de package](packages.md#vérifications-et-diagnostics). Les fichiers auteur utilisent un seul manifeste ; les contrôles contextuels runtime conservent leurs codes SkillPack.
+
+## Contraintes d'approbation
+
+| Code | Action |
+| --- | --- |
+| `InvalidHumanApprovalPolicy` | Fournir des littéraux valides pour rôle, délai et séparation. |
+| `HumanApprovalExpirationMustTerminate` | Terminer chaque chemin d'expiration par `give` ou `stop`. |
+| `HumanApprovalAuthorityRequired` / `HumanApprovalEvidenceRequired` | Fournir l'adaptateur hôte et la référence d'une preuve authentifiée. |
+| `HumanApprovalAuthorityUnavailable` | Rétablir le service d'identité ; aucune continuation n'a été autorisée. |
+| `HumanApprovalRoleRequired` / `HumanApprovalSignerConflict` | Choisir un signataire distinct possédant actuellement le rôle requis. |
+| `HumanApprovalAttestationInvalid` | Lier la preuve à cette demande, ce run et cette décision exacts. |
+| `HumanApprovalCheckpointIncompatible` | Conserver l'AIR original et le checkpoint privé complet ; ne pas inventer l'état d'autorité manquant. |
+| `HumanApprovalStateLimitExceeded` | Le run atteint sa borne de 10 000 demandes et reçus d'approbation. |
+
+## Provenance d’état et installation
+
+- `ToubaServeStateBuildMismatch` : utiliser la build conservée qui a créé l’état,
+ puis contrôler la transition ; ne pas réécrire son identité.
+- `ToubaServeStateProjectMismatch` : la provenance vise un autre chemin de projet.
+ Restaurer le projet à son emplacement d’origine ; aucune migration implicite.
+- `ToubaServeStateOriginInvalid` / `ToubaServeBuildIdentityInvalid` : métadonnées
+ invalides ; vérifier l’archive et la sauvegarde.
+- `ToubaServeStateSnapshotRequired` : journal SQLite présent ; arrêter les
+ écrivains et établir une sauvegarde cohérente avant le préflight.
+- `ToubaStoreFormatIncompatible` : format d’état non reconnu par cette build.
+- `InstallationBuildMismatch`, `InstallationArchiveConflict` : empreinte
+ incohérente ; l’installation active n’est pas remplacée.
+- `InstallationInProgress` : verrou d’installation présent. Vérifier le processus
+ propriétaire avant toute intervention ; pas de reprise concurrente implicite.
+- `InstallationPathUnsafe` / `InstallationPathsOverlap` : cible liée ou
+ recouvrant la source ; choisir des répertoires distincts.
+
+## Politiques hôtes et contrôle de contenu
+
+`SkillPackSensitiveContentForbidden` reconnaît les valeurs de secrets résolues
+pour le run et les catégories de contenu explicitement interdites. Il ne s'agit
+pas d'un détecteur générique de motifs de clés API. Aucun secret ne doit être
+distribué dans les ressources de package.
+
+`HandlerSandboxUnsupportedPolicy` refuse une sandbox obligatoire sur un backend
+non qualifié. `HandlerSandboxGrantMissing` demande le grant correspondant aux
+chemins sélectionnés. `HandlerSandboxPathInvalid` demande un interpréteur
+absolu existant et des fichiers `code_paths` individuels existants.
+`HardenedSandboxUnavailable` indique l'échec de la sonde hôte réelle ou une
+politique non qualifiée, sans autoriser une relance hors sandbox.

@@ -166,6 +166,39 @@ d'une version publiée. Un retrait de disponibilité conserve son enregistrement
 L'opérateur doit authentifier les éditeurs et protéger leurs espaces de noms ;
 ce contrôle local ne constitue pas un service d'identité.
 
+## Publier un registry statique local
+
+`publish` compile et empaquette le package, puis génère l'index et les
+métadonnées attendus par le lecteur Touba. Il n'exécute pas les tests auteur,
+ne téléverse rien et ne certifie pas l'organisation.
+
+```sh title="Publication locale"
+touba package test
+touba package publish --registry ./registry
+touba registry check --registry ./registry --source-root ./registry
+```
+
+Le dossier cible contient `index.json`, `metadata/<nom>-<version>.json` et
+`archives/<nom>-<version>.tar.gz`. L'index `touba-registry-index-v1` relie
+chaque identité/version à ses métadonnées et leur empreinte SHA-256.
+Les métadonnées `touba-registry-package-v1` décrivent identité, état,
+compatibilité et archive avec son empreinte. Ces fichiers sont générés :
+aucune reconstruction manuelle du format n'est nécessaire.
+
+Une publication locale commence en `draft`. Après revue du code, le
+consommateur peut explicitement l'accepter :
+
+```sh title="Installer un brouillon relu"
+touba package add acme.review@0.1.0 --registry ./registry --allow-draft
+```
+
+Une identité/version déjà présente est immuable. Publiez une nouvelle version
+pour changer le contenu. L'index est remplacé atomiquement après les artefacts ;
+les publications concurrentes sont refusées. Après un arrêt interrompu,
+inspectez le verrou `.touba-registry-publishing` et les fichiers non indexés
+avant récupération, sans les écraser. Pour diffuser le registry, hébergez
+séparément ce dossier sur HTTPS avec les contrôles d'accès appropriés.
+
 ## Préserver la gouvernance
 
 Les imports gardent leurs références. Un package n'élargit pas `uses`,

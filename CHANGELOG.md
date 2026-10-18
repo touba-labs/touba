@@ -7,6 +7,42 @@ instructions.
 
 ## Unreleased
 
+### Industrial report closure, 18 October 2026
+
+- Added exhaustive enum `match`/`case`, typed `f"…"` templates,
+ canonical `text(enum)`, and integer `//` truncating toward zero. Type
+ names cannot be returned as values; construct a record or return a binding.
+ Function descriptions now survive compilation and imports into agent catalogues.
+- Source approvals can require a host-attested role, a distinct signer and
+ a deadline. Explicit terminal `on expired` branches can escalate; expiration
+ never approves an effect. CLI, both JS Engine modes, Python and the server
+ preserve the same durable occurrence and signer history.
+- Added opt-in persistent JS Engine workers and a typed sync/async Python SDK,
+ shipped as an offline wheel. The default JS process mode remains unchanged.
+ Warm workers keep host modules loaded; recreate them after host-code changes.
+- Fixed parallel ask resume, checkpoint diagnostics, local history error
+ classification and private SQLite history files.
+- Package checks resolve transitive dependencies; author projects prepare and
+ test with imports. Contexts are bound to their installed lock and configurable
+ in serve. Direct AIR admission checks package handlers, and generated locks
+ include literal local JS imports. Host selection can use a proposed package
+ handler without inheriting grants. Local draft registry publication, actionable
+ diagnostics and migration from retired context packs are documented.
+- macOS handler sandboxing now confines data reads/writes, descendants and
+ named Unix sockets. Unqualified Linux/Windows required sandboxes fail closed.
+ Removed inactive box configuration and unknown profile names; the hardened
+ macOS probe launches a real bounded sandbox command.
+- Installers preserve prior content-identified builds. `serve --check-state`
+ validates private copies without recovery; known project/build mismatches
+ refuse. A real pending operation resumes using the preserved build with one
+ external test effect. No user state is migrated automatically.
+
+These are development-build changes under 0.1.0, not a public release.
+Existing human/execution checkpoints missing the required approval-state fields
+are refused unchanged. Retired `skill.json` must be recreated as an explicit
+package context. A same-version project SDK is checked against toolchain source
+identity; the digest-named archive must be installed explicitly after an update.
+
 - Unified package authoring uses one manifest and a confirmed questionnaire.
  Organization and name compose a qualified identity; the author directory
  uses the normalized short name. Explicit check/test/version/pack commands

@@ -141,7 +141,7 @@ impl<'a> ProjectAirAssembler<'a> {
                 self.diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::ImportModuleNotFound,
                     format!(
-                        "import `{}` references missing module `{}`",
+                        "import `{}` references missing module `{}`. If it belongs to a package copied into packages/, validate and register it with touba package add <organization.name>; copying alone does not activate imports.",
                         import.name, import.from_module
                     ),
                     Some(import.source_ref.clone()),

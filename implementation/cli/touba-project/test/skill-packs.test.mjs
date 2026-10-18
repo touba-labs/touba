@@ -4,9 +4,60 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, rmSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadSkillPack } from "../src/skill-packs.mjs";
-import { newPackage } from "../src/packages.mjs";
+import { execFileSync } from "node:child_process";
+import { loadSkillPack, loadProjectContexts } from "../src/skill-packs.mjs";
+import { newPackage, addPackage } from "../src/packages.mjs";
+import { initProject, prepareProject } from "../src/project.mjs";
 import { ToubaEngine } from "../../../runtime/touba-handler-sdk/src/index.mjs";
+
+test("configured project contexts are locked, explicit and enforced through Engine", async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-project-context-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const pkg = newPackage("acme.review", { root, context: true });
+  const project = join(root, "app"); initProject({ root: project });
+  await addPackage(pkg.path, { root: project });
+  const configFile = join(project, "touba.project.json");
+  const config = JSON.parse(readFileSync(configFile));
+  config.configuration = { ...config.configuration, contexts: [{ package: "acme.review", context: "review", active: true }] };
+  writeFileSync(configFile, JSON.stringify(config));
+  const projected = loadProjectContexts(project);
+  assert.equal(projected.skillPacks[0].source, "project");
+  assert.deepEqual(projected.activeSkillPackRefs, ["skill_pack:acme.review/review"]);
+  assert.throws(() => loadSkillPack(pkg.path, undefined, { projectRoot: project }), { code: "PackageNotInstalled" });
+  assert.equal(loadSkillPack(pkg.path).source, "author");
+  mkdirSync(join(project, "src/app"));
+  writeFileSync(join(project, "src/app/main.tb"), `module app.main
+agent Reviewer
+    responsibility "Review the request using the configured instructions."
+    gives Text
+    callable_by strategy Run
+strategy Run
+    gives Text
+    uses Reviewer
+    do
+        Reviewer
+            into answer
+        give answer
+`);
+  writeFileSync(join(project, "provider.mjs"), `import assert from 'node:assert/strict';
+export default function decide(request) {
+  assert.equal(request.model_input.active_skill_packs[0].ref, 'skill_pack:acme.review/review');
+  return { action: 'answer_directly', result: 'reviewed' };
+}`);
+  const prepared = await prepareProject({ root: project, mode: "write" });
+  assert.equal(prepared.status, "success", JSON.stringify(prepared));
+  const engine = new ToubaEngine({ projectRoot: project, command: process.execPath,
+    commandArgs: [fileURLToPath(new URL("../src/main.mjs", import.meta.url))] });
+  const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
+  const run = () => JSON.parse(execFileSync(process.execPath, [cli, "run", "--project", project,
+    "--agent-decision-provider", join(project, "provider.mjs"), "--output", "json"], { cwd: project, encoding: "utf8" }));
+  const result = run();
+  assert.equal(result.result, "reviewed");
+  writeFileSync(join(project, "packages/acme.review/SKILL.md"), "altered instructions");
+  assert.throws(() => loadProjectContexts(project), { code: "PackageIntegrityMismatch" });
+  await assert.rejects(engine.run({ source: "src/app/main.tb", entry: "strategy:app.main/Run", agentDecisionProvider: "provider.mjs",
+    skillPacks: ["packages/acme.review#review"], activeSkillPackRefs: ["skill_pack:acme.review/review"] }));
+});
 
 test("explicit CLI/SDK pack selection preserves discovery, activation, resources and authority", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-pack-public-"));
@@ -63,11 +114,11 @@ export default function decide(request) {
     const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
       commandArgs: [fileURLToPath(new URL("../src/main.mjs", import.meta.url))] });
     const options = { source: "program.tb", inputs: { request: "business value" },
-      agentDecisionProvider: "provider.mjs", skillPacks: ["review-check#review"] };
+      agentDecisionProvider: "provider.mjs", skillPacks: ["review-check#review-check"] };
     const discovered = await engine.run(options);
     assert.equal(discovered.result, "discovery only");
     assert.equal(discovered.trace.events.some(event => event.kind === "skill_pack_activated"), false);
-    const activeOptions = { ...options, activeSkillPackRefs: ["skill_pack:example-north.review-check/review"] };
+    const activeOptions = { ...options, activeSkillPackRefs: ["skill_pack:example-north.review-check/review-check"] };
     const activated = await engine.run(activeOptions);
     assert.equal(activated.result, "business value");
     for (const kind of ["skill_pack_discovery_listed", "skill_pack_activated", "skill_pack_resource_loaded", "skill_pack_resource_refused", "agent_capability_selected"]) {

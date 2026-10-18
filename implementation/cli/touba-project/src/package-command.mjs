@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { publishPackage } from "./package-publish.mjs";
 import { authorIdentity, newPackage, testPackage, versionPackage } from "./package-author.mjs";
 import { addPackage, addRegistryPackage, checkPackage, packPackage, removePackage } from "./packages.mjs";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, packageError } from "./package-contract.mjs";
@@ -11,8 +12,9 @@ export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organizati
        touba package test [directory] [--env <NAME> ...] [--root <author>]
        touba package version [patch|minor|major|version] [--root <author>]
        touba package pack [directory] [--output <archive.tar.gz>] [--root <author>]
+       touba package publish [directory] --registry <local-directory> [--root <author>]
        touba package add <name|directory|archive.tar.gz> [--root <workspace>]
-       touba package add <name>@<version> --registry <directory|URL> [--root <workspace>]
+       touba package add <name>@<version> --registry <directory|URL> [--allow-draft] [--root <workspace>]
        touba package list [--root <workspace>]
        touba package remove <name> [--root <workspace>]
 All commands support --json. new and version ask questions only in an interactive terminal.
@@ -20,7 +22,7 @@ Creation is offline. Package tests execute reviewed host code, never during chec
 
 function parse(args) {
   const [action, ...rest] = args;
-  const allowed = { new: ["context", "yes", "root", "org", "description", "publisher", "license", "version"], check: ["root", "publishing"], test: ["root", "env"], version: ["root"], pack: ["root", "output"], add: ["root", "registry", "version"], list: ["root"], remove: ["root"] };
+  const allowed = { new: ["context", "yes", "root", "org", "description", "publisher", "license", "version"], check: ["root", "publishing"], test: ["root", "env"], version: ["root"], pack: ["root", "output"], publish: ["root", "registry"], add: ["root", "registry", "version", "allow-draft"], list: ["root"], remove: ["root"] };
   if (!Object.hasOwn(allowed, action)) throw packageError("PackageCommandInvalid", PACKAGE_USAGE);
   let target;
   const options = {};
@@ -33,7 +35,7 @@ function parse(args) {
     const key = arg.slice(2);
     if (key !== "json" && !allowed[action].includes(key)) throw packageError("PackageOptionInvalid", `option not valid for package ${action}: ${arg}`);
     if (Object.hasOwn(options, key) && key !== "env") throw packageError("PackageOptionInvalid", `duplicate option ${arg}`);
-    if (["json", "context", "yes", "publishing"].includes(key)) options[key] = true;
+    if (["json", "context", "yes", "publishing", "allow-draft"].includes(key)) options[key] = true;
     else {
       if (!rest[i + 1] || rest[i + 1].startsWith("--")) throw packageError("PackageOptionInvalid", `missing value for ${arg}`);
       const value = rest[++i];
@@ -48,6 +50,7 @@ function parse(args) {
     [target, options.version] = target.split("@");
   }
   if (action === "add" && options.version && !options.registry) throw packageError("PackageOptionInvalid", "a version selection requires --registry; local content has its own exact version");
+  if (options["allow-draft"] && !options.registry) throw packageError("PackageOptionInvalid", "--allow-draft requires --registry");
   return { action, target, options };
 }
 
@@ -108,11 +111,11 @@ export async function packageCommand(args) {
     const lock = verifyInstalledPackages(root, workspace.records);
     const packages = [];
     for (const record of workspace.records) {
-      const checked = await checkPackage(join(root, record.manifest), options);
+      const checked = await checkPackage(join(root, record.manifest), { ...options, projectRoot: root });
       packages.push({ name: checked.package, version: checked.version, installed: lock.packages.some(pkg => pkg.name === checked.package) });
     }
     report = { status: "success", command: `package ${action}`, packages, notes: packages.length ? [] : ["No registered packages."] };
-  } else report = await ({ check: checkPackage, test: testPackage, pack: packPackage, add: options.registry ? addRegistryPackage : addPackage, remove: removePackage })[action](target, options);
+  } else report = await ({ check: checkPackage, test: testPackage, pack: packPackage, publish: publishPackage, add: options.registry ? addRegistryPackage : addPackage, remove: removePackage })[action](target, options);
   delete report.closure;
   const text = options.json ? JSON.stringify(report, null, 2) : [report.command + ": " + report.status, report.path ?? report.output ?? report.package ?? "", ...(report.previous ? [`${report.previous} -> ${report.version}`] : []), ...(report.notes ?? []), ...(Array.isArray(report.packages) ? report.packages.map(pkg => `${pkg.name}@${pkg.version}`) : []), report.stdout ?? "", report.stderr ?? ""].filter(Boolean).join("\n");
   return { text, exitCode: report.exitCode ?? (report.status === "success" ? 0 : 1) };

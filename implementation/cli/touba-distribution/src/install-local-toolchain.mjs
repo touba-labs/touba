@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 import {
   chmodSync,
-  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { installToolchainPayload } from "./install-toolchain-payload.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -30,10 +29,8 @@ export function installLocalToolchain(options) {
     throw new Error(`installation already exists at ${installRoot}; pass --force to replace it`);
   }
 
-  rmSync(installRoot, { recursive: true, force: true });
-  mkdirSync(prefix, { recursive: true });
+  const transition = installToolchainPayload({ source, prefix, force: options.force === true });
   mkdirSync(binRoot, { recursive: true });
-  cpSync(source, installRoot, { recursive: true });
   writeLaunchers(prefix);
   writeInstallationMetadata(source, prefix);
 
@@ -41,6 +38,7 @@ export function installLocalToolchain(options) {
     source,
     prefix,
     install_root: installRoot,
+    ...transition,
     cli_path: join(binRoot, process.platform === "win32" ? "touba.cmd" : "touba"),
   };
 }

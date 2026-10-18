@@ -17,6 +17,7 @@ le même format de distribution. Les imports `.tb` restent typés.
 | `touba package pack [dossier]` | Archive `dist/<nom>-<version>.tar.gz` ; `--output` facultatif, aucun écrasement |
 | `touba package add <nom\|dossier\|archive>` | Installation verrouillée ; un nom seul désigne le dossier copié dans `packages/` |
 | `touba package add org.nom@1.0.0 --registry <source>` | Version exacte depuis un registry choisi |
+| `touba package publish [dossier] --registry <dossier>` | Publication statique locale en draft, sans écrasement ni exécution |
 | `touba package list` | Liste et vérifie les dépendances enregistrées |
 | `touba package remove org.nom` | Retire une dépendance non requise par une autre |
 
@@ -24,7 +25,8 @@ Toutes acceptent `--json` et `--root`. La racine est découverte depuis les
 sous-dossiers ; pour `new`, `--root` est le parent du nouveau dossier. Sans cible,
 `check` vérifie le package auteur courant ou les dépendances d'une application.
 Code de sortie : `0` réussite, `1` test échoué/absent ou création annulée, `2`
-erreur de contrat/arguments. Aucun test tiers n'est exécuté par check/add/pack.
+erreur de contrat/arguments. Aucun test tiers n'est exécuté par check/add/pack/publish.
+`add --allow-draft` accepte explicitement une version draft du registry choisi.
 Un nom d'organisation local n'atteste ni disponibilité ni propriété publique.
 
 ### Champs du manifeste
@@ -96,6 +98,20 @@ décrivant la configuration. La CLI vérifie son inclusion, pas la disponibilit�
 du service métier. Le projet choisit le binding process, ses grants, ses
 secrets, son contrat d'effet et ses limites.
 
+Après revue, sélectionnez une proposition affichée par `prepare` dans les
+décisions hôte :
+
+```json title="Extrait de décisions hôte"
+{ "bindings": { "tool:acme.billing/ReadInvoice": {
+  "package_handler": "acme.billing"
+} } }
+```
+
+Cette sélection configure seulement le processus (`node` pour JS, `python3`
+pour Python) et évite un stub inutilisé. Elle n'accorde aucun grant, secret ou
+effet. Les autres formats demandent un binding explicite ; un handler existant
+n'est jamais supprimé automatiquement.
+
 ## Vérifications et diagnostics
 
 Les chemins sont relatifs et confinés ; liens symboliques et liens durs dans
@@ -119,3 +135,20 @@ Limites : 4 096 fichiers/entrées, 16 Mio par fichier, 64 Mio de contenu,
 
 Le lock d'installation ne remplace pas la [supply chain d'exécution](../guides/supply-chain-handlers.md).
 Voir le [guide auteur et consommateur](../guides/creer-partager-package.md).
+
+## Migrer un ancien contexte
+
+La distribution utilise uniquement `touba.package.json`. Pour remplacer un
+ancien `skill.json`, créez `touba package new acme.review --context --yes`,
+reprenez la procédure dans `SKILL.md`, puis déclarez ressources et liens dans
+`contexts`. Vérifiez avec `package check` avant `package add`. La commande
+retirée `touba skill` indique ce parcours ; aucun ancien manifeste n'est chargé.
+
+Les erreurs de `package ... --json` sont des objets JSON sur stdout, avec
+`status: "error"`, `diagnostics[].code`, `message` et un code de sortie non nul.
+Un fichier réservé à la place de `packages/` produit `PackageDirectoryRequired` ;
+un lien produit `PackageSymlinkForbidden`. Une ressource absente donne
+`PackageFileMissing`, avec son chemin relatif. `PackageExportMissing` concerne
+un import non exporté, un module exporté absent de l'inventaire ou un package
+sans export ni contexte ; `PackageExportUnknownRef` concerne un export
+vers une déclaration absente.

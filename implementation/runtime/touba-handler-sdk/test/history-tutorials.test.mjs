@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,11 +13,8 @@ const rewrite = text => text.replaceAll('"@touba/sdk"', JSON.stringify(sdk))
   .replaceAll('"@touba/sdk/history/sqlite"', JSON.stringify(sqlite));
 
 for (const name of ["historique-sqlite", "contexte-et-compaction"]) {
-  test(`${name}: published FR/EN JavaScript is identical, parses, and runs through real OpenAI serialization offline`, () => {
-    const paths = [`touba/docs/tutoriels/${name}.md`, `documentation-site/docs/tutoriels/${name}.md`,
-      `documentation-site/i18n/en/docusaurus-plugin-content-docs/current/tutoriels/${name}.md`];
-    const examples = paths.map(path => blocks(readFileSync(new URL(path, root), "utf8")));
-    assert.deepEqual(examples[0], examples[1]); assert.deepEqual(examples[0], examples[2]);
+  test(`${name}: canonical tutorial parses and runs through real OpenAI serialization offline`, () => {
+    const examples = [blocks(readFileSync(new URL(`../../../../docs/tutoriels/${name}.md`, import.meta.url), "utf8"))];
     for (const example of examples[0]) execFileSync(process.execPath, ["--input-type=module", "--check"], { input: example });
     const directory = mkdtempSync(join(tmpdir(), "touba-history-tutorial-"));
     try {
@@ -65,5 +62,17 @@ for (const name of ["historique-sqlite", "contexte-et-compaction"]) {
         execFileSync(process.execPath, ["refuse.mjs"], { cwd: directory, env, stdio: "pipe", timeout: 15000 });
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  const translations = [`documentation-site/docs/tutoriels/${name}.md`,
+    `documentation-site/i18n/en/docusaurus-plugin-content-docs/current/tutoriels/${name}.md`]
+    .map(path => new URL(path, root));
+  // Cross-repository parity is independent of executing the mandatory Core
+  // tutorial above. A standalone Core checkout does not contain the site.
+  test(`${name}: site FR/EN JavaScript matches the canonical tutorial`, {
+    skip: translations.every(path => existsSync(path)) ? false : "Separate documentation checkout is not present",
+  }, () => {
+    const canonical = blocks(readFileSync(new URL(`../../../../docs/tutoriels/${name}.md`, import.meta.url), "utf8"));
+    for (const path of translations) assert.deepEqual(blocks(readFileSync(path, "utf8")), canonical);
   });
 }

@@ -4013,7 +4013,7 @@ test("keeps skill pack scripts as non-executable resources without loading scrip
   assert.equal(result.status, "success");
   const refused = eventOf(result.trace, "skill_pack_resource_refused").payload;
   assert.equal(refused.resource_ref, "resource:research-review/extract-script");
-  assert.equal(refused.runtime_error_code, "SkillPackScriptExecutionForbidden");
+  assert.equal(refused.runtime_error_code, undefined, "describing a script without loading it is not a runtime error");
   assert.equal(JSON.stringify(result.trace).includes("must not be loaded"), false);
 });
 

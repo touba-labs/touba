@@ -10,10 +10,12 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
 import { applyHostDecisions } from "./host-decisions.mjs";
+import { loadSkillPack, projectContextSelections, normalizeProjectContexts } from "./skill-packs.mjs";
 import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, readPackage } from "./package-contract.mjs";
-import { PACKAGE_LOCK, assertPackageDirectory, verifyInstalledPackages } from "./package-store.mjs";
+import { PACKAGE_LOCK, assertPackageDirectory, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
 
 import {
   generateHandlerContractTestFromAirTool,
@@ -394,6 +396,15 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
     throw new Error(`--project requires ${DEFAULT_PROJECT_CONFIG_PATH} in ${projectRoot}`);
   }
   verifyInstalledPackages(projectRoot, projectConfig.packages ?? []);
+  for (const { selection, ref, active } of projectContextSelections(projectRoot)) {
+    args.push("--skill-pack", selection);
+    if (active) args.push("--activate-skill-pack", ref);
+  }
+  for (let index = 0; index < args.length; index++) {
+    const selection = args[index] === "--skill-pack" ? args[++index]
+      : args[index].startsWith("--skill-pack=") ? args[index].slice("--skill-pack=".length) : undefined;
+    if (selection !== undefined) loadSkillPack(selection, undefined, { projectRoot });
+  }
   if (projectConfig.artifact_layout !== PROJECT_ARTIFACT_LAYOUT_VERSION) {
     throw new Error(`project config artifact_layout must be ${PROJECT_ARTIFACT_LAYOUT_VERSION}; old layouts are not read or converted`);
   }
@@ -622,10 +633,14 @@ export async function prepareProject(options = {}) {
   });
   const expectedToolRefs = Object.keys(expectedManifest.bindings);
   const sdkDependency = expectedToolRefs.length > 0
-    ? inspectSdkDependency(root, JSON.parse(readFileSync(new URL("../../../runtime/touba-handler-sdk/package.json", import.meta.url), "utf8")).version)
+    ? inspectSdkDependency(root, JSON.parse(readFileSync(new URL("../../../runtime/touba-handler-sdk/package.json", import.meta.url), "utf8")).version,
+      fileURLToPath(new URL("../../../runtime/touba-handler-sdk", import.meta.url)))
     : null;
+  if (sdkDependency?.code === "HandlerSdkBuildMismatch" || sdkDependency?.code === "HandlerSdkInvalid") {
+    diagnostics.push(errorDiagnostic(sdkDependency.code, sdkDependency.message));
+  }
   const expectedSecretHandles = collectRequiredSecretHandles(preparedAirDocuments.map((entry) => entry.document));
-  const stubs = expectedStubs(preparedAirDocuments.map((entry) => entry.document), {
+  let stubs = expectedStubs(preparedAirDocuments.map((entry) => entry.document), {
     root,
     handlerRoot: options.handlerRoot ?? DEFAULT_HANDLER_ROOT,
     handlerExtension: options.handlerExtension ?? languageProfile.handlerExtension,
@@ -695,7 +710,7 @@ export async function prepareProject(options = {}) {
   if (!hasErrorDiagnostics(diagnostics)) {
     try {
       const proposal = applyHostDecisions(proposedManifest, options.hostDecisions, manifestRequirements,
-        bindingFragmentComposition.toolRefs);
+        bindingFragmentComposition.toolRefs, packageHandlerProposals(packageResolution.packages, root, manifestPath));
       proposedManifest = proposal.manifest;
       for (const change of proposal.changes) {
         actions.push(action(mode === "write" ? "apply_host_decision" : "would_apply_host_decision", manifestPath, change));
@@ -705,8 +720,8 @@ export async function prepareProject(options = {}) {
         { manifest_path: manifestPath }));
     } catch (error) {
       diagnostics.push(errorDiagnostic(error.code ?? "HostDecisionInvalid",
-        "host decisions are invalid or conflict with a binding fragment; no preparation changes were written",
-        { manifest_path: manifestPath }));
+        `invalid host decision${error.details?.path ? ` at ${error.details.path}` : ""}${error.details?.target_ref ? ` for ${error.details.target_ref}` : ""}${error.details?.field ? `, field ${error.details.field}` : ""}; no preparation changes were written`,
+        { manifest_path: manifestPath, ...error.details }));
     }
   }
   inspectManifest({
@@ -747,6 +762,10 @@ export async function prepareProject(options = {}) {
     actions.push(action("review_required_permission", manifestPath, { code: diagnostic.code,
       tool_ref: diagnostic.tool_ref, agent_ref: diagnostic.agent_ref, message: diagnostic.message }));
   }
+  // Stubs serve only the generated binding. Do not create unused executable
+  // placeholders alongside a reviewed host/package handler.
+  stubs = stubs.filter(stub => isDeepStrictEqual(proposedManifest.bindings[stub.tool_ref]?.handler,
+    manifestRequirements.bindings[stub.tool_ref]?.handler));
   inspectStubs({ stubs, diagnostics, actions, mode });
   inspectSecretProfiles({ secretProfiles, diagnostics, actions, mode });
   if (expectedRunPlan !== null) {
@@ -897,6 +916,9 @@ export function renderReport(report) {
     lines.push("Packages:");
     for (const item of report.packages) {
       lines.push(`- ${item.name}@${item.version} ${item.manifest_path}`);
+      for (const handler of item.handlers ?? []) {
+        lines.push(`  Proposed handler for ${handler.tool}: ${join(item.root, handler.path)} (${handler.protocol}); review, then select package_handler: ${item.name} in host decisions. Grants and effects require separate consent.`);
+      }
     }
   }
   if (report.binding_fragments?.length > 0) {
@@ -952,7 +974,9 @@ export function renderReport(report) {
   if (report.diagnostics?.length > 0) {
     lines.push("Diagnostics:");
     for (const diagnostic of report.diagnostics) {
-      lines.push(`- ${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}`);
+      const source = diagnostic.source_ref;
+      const location = source ? `${source.source_id}:${source.start_line + 1}:${source.start_column + 1}` : diagnostic.source_path;
+      lines.push(`- ${diagnostic.severity} ${diagnostic.code}${location ? ` (${location})` : ""}: ${diagnostic.message}`);
     }
   }
   return `${lines.join("\n")}\n`;
@@ -1062,7 +1086,7 @@ async function loadLocalPackages({
 // discovers source files and never grants runtime authority or loads secrets.
 export function compilerInputsForFile(sourcePath) {
   let root = dirname(resolve(sourcePath));
-  while (!existsSync(join(root, DEFAULT_PROJECT_CONFIG_PATH))) {
+  while (!existsSync(join(root, DEFAULT_PROJECT_CONFIG_PATH)) && !existsSync(join(root, "touba.package.json"))) {
     const parent = dirname(root);
     if (parent === root) return { sourceRoots: [], moduleSourcePaths: [], diagnostics: [] };
     root = parent;
@@ -1279,6 +1303,19 @@ export async function validatePackageSources(packages, options = {}) {
   });
   loaded.diagnostics.push(...assembly.diagnostics);
   for (const pkg of packages) {
+    for (const context of pkg.document.contexts ?? []) {
+      for (const link of context.execution_links ?? []) {
+        const kind = link.target_ref.split(":")[0];
+        // A context may link to a capability provided by its consumer. Check
+        // owned modules here; external prerequisites are checked against the
+        // consuming AIR by loadSkillPack, never silently granted.
+        const targetModule = moduleNameFromQualifiedRef(link.target_ref);
+        if ((targetModule === pkg.document.name || loaded.entries.some(entry => entry.document.module.name === targetModule))
+          && !loaded.entries.some(entry => declarationExists(entry.document, kind, link.target_ref))) {
+          loaded.diagnostics.push(errorDiagnostic("PackageContextTargetMissing", `context ${context.id} refers to an undeclared capability: ${link.target_ref}`));
+        }
+      }
+    }
     for (const handler of pkg.document.handlers ?? []) {
       if (!loaded.entries.some(entry => declarationExists(entry.document, "tool", handler.tool))) loaded.diagnostics.push(errorDiagnostic("PackageHandlerInvalid", "handler target is not declared: " + handler.tool));
     }
@@ -1515,6 +1552,10 @@ function resolveProjectConfigForPrepare(root, diagnostics) {
     const document = readProjectConfig(path);
     if (document === null) {
       const profile = projectLanguageProfile(DEFAULT_PROJECT_LANGUAGE);
+      if (existsSync(join(root, "touba.package.json"))) {
+        const workspace = readPackageWorkspace(root);
+        return { path: workspace.path, document: { ...expectedProjectConfigDocument(profile), packages: workspace.records }, profile };
+      }
       return { path, document: null, profile };
     }
     const profile = projectLanguageProfile(document.language);
@@ -1625,6 +1666,7 @@ function normalizeProjectConfiguration(value) {
   return {
     binding_fragments: normalizeProjectPathList(value.binding_fragments, "configuration.binding_fragments"),
     resource_bindings: normalizeProjectPathList(value.resource_bindings, "configuration.resource_bindings"),
+    ...(value.contexts === undefined ? {} : { contexts: normalizeProjectContexts(value.contexts) }),
     ownership: normalizeOptionalProjectRef(value.ownership, "configuration.ownership"),
   };
 }
@@ -2474,7 +2516,7 @@ function validateAirImports(document, byModule, diagnostics, activeModules, visi
     }
     const sourceDocument = byModule.get(item.from_module);
     if (!sourceDocument) {
-      diagnostics.push(errorDiagnostic("ImportModuleNotFound", `import ${item.name} references missing module ${item.from_module}`, {
+      diagnostics.push(errorDiagnostic("ImportModuleNotFound", `import ${item.name} references missing module ${item.from_module}. If this module belongs to a package copied into packages/, validate and register it with touba package add <organization.name>; copying alone does not activate imports.`, {
         module_name: moduleName,
         import_name: item.name,
         from_module: item.from_module,
@@ -4105,6 +4147,18 @@ function relativeRunPlanPath(runPlanPath, targetPath) {
   return toPosixPath(path === "" ? "." : path);
 }
 
+
+function packageHandlerProposals(packages, root, manifestPath) {
+  const proposals = new Map();
+  for (const pkg of packages) for (const handler of pkg.handlers ?? []) {
+    const command = /\.(?:mjs|cjs|js)$/.test(handler.path) ? process.execPath : handler.path.endsWith(".py") ? "python3" : null;
+    if (!proposals.has(handler.tool)) proposals.set(handler.tool, new Map());
+    proposals.get(handler.tool).set(pkg.name, command ? { kind: "process", command,
+      args: [toPosixPath(relative(root, join(pkg.root, handler.path)))],
+      cwd: toPosixPath(relative(dirname(manifestPath), root) || ".") } : { unsupported: true });
+  }
+  return proposals;
+}
 
 function expectedStubs(airDocuments, options) {
   const stubs = [];

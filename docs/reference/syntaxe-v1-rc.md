@@ -8,9 +8,11 @@ Cette page est une aide de consultation pour la syntaxe visible.
 
 ## Text, types et portée des liaisons
 
-Un littéral `Text` est entre guillemets doubles sur une ligne source. Les échappements JSON sont décodés une seule fois : `\n` (saut de ligne), `\r`, `\t`, `\b`, `\f`, `\"`, `\\`, `\/` et `\uXXXX` (Unicode, y compris paires valides). `"a\n\nb"` contient deux sauts de ligne ; `"\\n"` conserve un antislash suivi de n. Les échappements invalides et les contrôles bruts sont refusés. Les chaînes source multilignes restent non admises ; ni interpolation, ni évaluation JavaScript implicite.
+Un littéral `Text` est entre guillemets doubles sur une ligne source. Les échappements JSON sont décodés une seule fois : `\n` (saut de ligne), `\r`, `\t`, `\b`, `\f`, `\"`, `\\`, `\/` et `\uXXXX` (Unicode, y compris paires valides). `"a\n\nb"` contient deux sauts de ligne ; `"\\n"` conserve un antislash suivi de n. Les échappements invalides et les contrôles bruts sont refusés. Les chaînes source multilignes restent non admises ; aucune interpolation implicite ni évaluation JavaScript.
 
-`Int / Int` retourne un `Float`. Il n'existe pas de division entière ni de formatage monétaire implicite : gardez les cents en `Int` et confiez leur présentation à une fonction hôte adaptée.
+`Int / Int` retourne un `Float`. `Int // Int` retourne un `Int` tronqué vers zéro : `(0 - 7) // 2` vaut `-3`. Le diviseur zéro est refusé. Le formatage monétaire et les conventions locales relèvent d'un package, pas d'une conversion implicite.
+
+Un gabarit est explicitement marqué : `f"Dossier {reference}, quantité {text(quantity)}"`. Chaque expression entre accolades doit produire `Text`. Écrivez `{{` et `}}` pour des accolades littérales. Les échappements restent ceux des textes ordinaires ; les expressions sont pures et aucun code hôte n'est exécuté.
 
 Un nom de liaison est local à son bloc. Des branches distinctes peuvent réutiliser le même nom ; masquer un nom encore visible ou utiliser un nom hors de son bloc est refusé. Les contrôles `if`, `for` et `while` peuvent s'imbriquer dans les fonctions, skills et stratégies. Les éléments de liste restent typés, y compris avec `List of List of Int`.
 
@@ -196,7 +198,7 @@ listes et signatures peuvent utiliser ce type ; l'import est
 le nom exact du membre, par exemple `"high"`, vérifié dans le type attendu.
 Une valeur inconnue est refusée, jamais remplacée par un membre par défaut.
 Pour un argument statique de trigger, utiliser une constante `define`.
-Cette forme ne comporte ni payload associé ni instruction `match`.
+Les variantes ne portent pas de payload. `match value` puis des blocs `case Enum.member` sélectionnent une branche exhaustive : tous les membres doivent apparaître une seule fois, sans cas par défaut. Voir [Énumérations](../concepts/enumerations.md).
 
 ### Valeurs optionnelles explicites
 
@@ -304,7 +306,7 @@ function ReviewScore
 
 Expressions :
 
-- Arithmétique : `+`, `-`, `*`, `/`, `%`
+- Arithmétique : `+`, `-`, `*`, `/`, `//`, `%`
 - Booléens : `and`, `or`, `not`
 - Comparaisons : `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Concaténation texte : `++`

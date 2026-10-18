@@ -1540,3 +1540,13 @@ plafonds. Garder le journal d'effets avec le checkpoint lorsqu'un tool écrit.
 Une issue externe inconnue sans preuve de journal est refusée, pas rejouée.
 Ce mécanisme sauvegarde le groupe avant sa jointure, pas arbitrairement tout
 le workflow après celle-ci. Voir le [tutoriel](../tutoriels/orchestration-multi-agent-sequentielle.md).
+
+## Adaptateur d'approbation de confiance
+
+`touba run` et `touba serve` acceptent `--human-approval-host <host.mjs>`.
+Le module exporte `attestHumanApproval` et éventuellement `initiatorRef`.
+Une décision contrainte contient une référence opaque `evidence_ref`, pas
+des rôles fournis par le client. Voir le [tutoriel exécutable](../tutoriels/approbations-roles-delais.md).
+Une échéance source atteinte permet une reprise sans décision ; utiliser un
+chemin distinct `--human-checkpoint-out` pour conserver la nouvelle attente
+d'escalade.

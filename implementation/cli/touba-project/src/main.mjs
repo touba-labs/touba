@@ -140,12 +140,20 @@ try {
     process.kill(process.pid, result.signal);
   }
 } catch (error) {
-  process.stderr.write(`touba: ${error instanceof Error ? error.message : String(error)}\n`);
+  if (args[0] === "package" && args.includes("--json")) {
+    process.stdout.write(`${JSON.stringify({ status: "error", command: `package ${args[1] ?? ""}`.trim(), diagnostics: [{ code: error.code ?? "PackageCommandFailed", message: error instanceof Error ? error.message : String(error) }] })}\n`);
+  } else process.stderr.write(`touba: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 2;
 }
 
 async function dispatch(rawArgs) {
   const [command, ...rest] = rawArgs;
+  if (command === "engine-worker") {
+    if (rest.length !== 0) throw new Error("engine-worker accepts only the private SDK protocol");
+    const { startEngineWorker } = await import("../../touba-run/src/engine-worker.mjs");
+    await startEngineWorker();
+    return { passthrough: true, exitCode: 0 };
+  }
   if (command === undefined || command === "--help" || command === "-h") {
     printUsage();
     return { usage: true, exitCode: 0 };
@@ -196,6 +204,7 @@ async function dispatch(rawArgs) {
     throw new Error("usage: touba secret set|list|check|remove ...");
   }
   if (command === "package") return packageCommand(rest);
+  if (command === "skill") throw Object.assign(new Error("SkillCommandRemoved: use touba package new <name> --org <organization> --context; migrate skill.json to touba.package.json. No legacy pack is loaded."), { code: "SkillCommandRemoved" });
   if (command === "compile") {
     return compileCommand(rest);
   }
@@ -435,6 +444,7 @@ function runUsage() {
     "  --supply-chain-lock <touba.lock.json> [--require-supply-chain-lock]",
     "  --inputs-json <json-object>",
     "  --human-decisions <path> | --human-decisions-json <json-object>",
+    "  --human-approval-host <host.mjs> (trusted identity and role attestation)",
     "  --human-checkpoint-out <path> [--human-resume-checkpoint <path>]",
     "  On resume, checkpoint-out saves the next approval pause; earlier instructions are not replayed.",
     "  --user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs",
@@ -1109,13 +1119,14 @@ function toubaVersions() {
       channel: process.env.TOUBA_DISTRIBUTION_CHANNEL ?? "local-development",
       platform: `${process.platform}-${process.arch}`,
       sdk_archive: installedSdkArchive(metadata),
+      python_sdk_archive: installedSdkArchive(metadata, "python_sdk"),
     },
   };
 }
 
-function installedSdkArchive(metadata) {
-  if (!metadata?.sdk?.archive) return null;
-  const archive = resolve(implementationRoot, "..", metadata.sdk.archive);
+function installedSdkArchive(metadata, key = "sdk") {
+  if (!metadata?.[key]?.archive) return null;
+  const archive = resolve(implementationRoot, "..", metadata[key].archive);
   return existsSync(archive) ? archive : null;
 }
 

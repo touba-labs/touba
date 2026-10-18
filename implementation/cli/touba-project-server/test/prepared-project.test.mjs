@@ -8,6 +8,7 @@ import { once } from "node:events";
 import { initProject, prepareProject } from "../../touba-project/src/project.mjs";
 import { createToubaProjectServer } from "../src/serve.mjs";
 import { readPreparedProject } from "../src/prepared-project.mjs";
+import { newPackage, addPackage } from "../../touba-project/src/packages.mjs";
 
 test("unified serve CLI loads a provider and documented identity and routes triggers explicitly", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-server-provider-"));
@@ -15,6 +16,12 @@ test("unified serve CLI loads a provider and documented identity and routes trig
   let closed;
   try {
     initProject({ root });
+    const context = newPackage("acme.review", { root, context: true });
+    await addPackage(context.path, { root });
+    const configPath = join(root, "touba.project.json");
+    const config = JSON.parse(readFileSync(configPath));
+    config.configuration = { ...config.configuration, contexts: [{ package: "acme.review", context: "review", active: true }] };
+    writeFileSync(configPath, JSON.stringify(config));
     mkdirSync(join(root, "src/demo"), { recursive: true });
     writeFileSync(join(root, "src/demo/server.tb"), `module demo.server
 agent Answer
@@ -39,7 +46,9 @@ trigger Hourly
         max_runs_per_day as 10
         timeout_ms as 30000
 `);
-    writeFileSync(join(root, "provider.mjs"), `export function decideAgentCapability() {
+    writeFileSync(join(root, "provider.mjs"), `import assert from 'node:assert/strict';
+    export function decideAgentCapability(request) {
+      assert.equal(request.model_input.active_skill_packs[0].ref, 'skill_pack:acme.review/review');
       return { action: "answer_directly", source: "isolated-test", reason: "A direct answer is sufficient.", result: "served" };
     }`);
     const guide = readFileSync(new URL("../../../../docs/guides/api-serveur-projet.md", import.meta.url), "utf8");

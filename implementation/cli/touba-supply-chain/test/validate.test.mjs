@@ -517,6 +517,9 @@ test("CLI strict mode fails on warning", () => {
 
 test("generates real digests without approvals or overwriting review decisions", () => {
   withFixtureProject((fixture) => {
+    const imported = path.join(path.dirname(fixture.paths.handler), "helper.mjs");
+    writeFileSync(imported, "export const value = 1;\n");
+    writeFileSync(fixture.paths.handler, "import './helper.mjs';\n" + readFileSync(fixture.paths.handler, "utf8"));
     const output = path.join(fixture.root, "generated.lock.json");
     const options = { ...fixture.paths, out: output, packageRoot: "handlers" };
     const result = generateSupplyChainLock(options);
@@ -526,6 +529,7 @@ test("generates real digests without approvals or overwriting review decisions",
     assert.equal(generated.handlers[0].digest.value, sha256Text(readFileSync(fixture.paths.handler)));
     assert.equal(generated.handlers[0].handler_package.dependency_artifacts[0].digest.value, sha256Text(readFileSync(fixture.paths.dependencyLock)));
     assert.equal(generated.handlers[0].sdk, undefined);
+    assert.ok(generated.handlers[0].handler_package.files.some(file => file.path === "helper.mjs"));
     const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts({ ...fixture.paths, lock: output }), { requireReview: true });
     assert.equal(report.status, "error");
     assertDiagnostic(report, "SupplyChainReviewNotApproved");

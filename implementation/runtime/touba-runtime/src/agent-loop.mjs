@@ -83,7 +83,7 @@ export async function runAgentDecisionLoop(
     }
 
     if (decision.action === "request_human_review") {
-      const reviewResult = operations.executeAgentHumanReview(
+      const reviewResult = await operations.executeAgentHumanReview(
         agent,
         decision,
         context,

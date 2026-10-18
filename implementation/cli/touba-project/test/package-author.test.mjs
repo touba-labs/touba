@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { newPackage, testPackage, versionPackage } from "../src/package-author.mjs";
 import { packageSlug, readPackage } from "../src/package-contract.mjs";
 import { addPackage, checkPackage, packPackage, removePackage } from "../src/packages.mjs";
-import { initProject } from "../src/project.mjs";
+import { initProject, prepareProject } from "../src/project.mjs";
 
 const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 function workspace(t) { const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-author-"))); t.after(() => rmSync(root, { recursive: true, force: true })); return root; }
@@ -38,13 +38,66 @@ test("author identity normalizes spaces, keeps organization scope and creates th
 
 test("names cannot escape, use reserved paths or silently discard punctuation", t => {
   const root = workspace(t);
-  for (const name of ["../escape", "a/b", "a\\b", "", "été", "a--b", "packages", "CON", "billing@1", "x".repeat(81)]) assert.throws(() => newPackage(name, { root, org: "acme" }));
+  for (const name of ["../escape", "a/b", "a\\b", "", "a--b", "packages", "CON", "billing@1", "x".repeat(81)]) assert.throws(() => newPackage(name, { root, org: "acme" }));
   assert.equal(packageSlug("  Billing   tools "), "billing-tools");
   assert.equal(existsSync(join(root, "packages")), false);
   const noOrg = command(root, "new", "facturation", "--yes", "--json");
-  assert.equal(noOrg.status, 2); assert.match(noOrg.stderr, /PackageOrganizationRequired/);
+  assert.equal(noOrg.status, 2); assert.equal(JSON.parse(noOrg.stdout).diagnostics[0].code, "PackageOrganizationRequired");
+  assert.equal(noOrg.stderr, "");
   assert.equal(command(root, "new", "acme.a", "--org", "x", "--org", "y").status, 2);
   assert.equal(command(root, "new", "acme.a", "--unexpected").status, 2);
+});
+
+test("accented labels compose a portable identity and a package-specific context", t => {
+  const pkg = newPackage("Été à Québec", { root: workspace(t), org: "Équipe Nord", context: true });
+  const { document } = readPackage(pkg.path);
+  assert.equal(document.name, "equipe-nord.ete-a-quebec");
+  assert.equal(document.contexts[0].id, "ete-a-quebec");
+});
+
+test("transitive installed dependencies can be listed, checked and prepared in author and consumer projects", async t => {
+  const root = workspace(t), base = newPackage("acme.base", { root }), mid = newPackage("acme.mid", { root });
+  const childFile = join(base.path, "src/acme/base.tb");
+  writeFileSync(childFile, readFileSync(childFile, "utf8").replace("skill Echo", "skill BaseEcho"));
+  edit(base.path, m => { m.exports.skills = ["skill:acme.base/BaseEcho"]; });
+  await addPackage(base.path, { root: mid.path });
+  writeFileSync(join(mid.path, "src/acme/mid.tb"), `module acme.mid
+import skill BaseEcho from acme.base
+skill Echo
+    description "Return the text through the declared dependency."
+    takes value as Text
+    gives Text
+    uses BaseEcho
+    do
+        BaseEcho
+            with value as value
+            into answer
+        give answer
+`);
+  const prepared = await prepareProject({ root: mid.path, mode: "write", entryRef: "skill:acme.mid/Echo" });
+  assert.equal(prepared.status, "success", JSON.stringify(prepared.diagnostics));
+  const tested = await testPackage(mid.path);
+  assert.equal(tested.status, "success", JSON.stringify(tested));
+  const app = join(root, "consumer"); initProject({ root: app });
+  await addPackage(mid.path, { root: app });
+  for (const action of ["list", "check"]) {
+    const result = command(app, action, "--json");
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout).packages.map(p => p.name).sort(), ["acme.base", "acme.mid"]);
+  }
+});
+
+test("package checks reject absent resources and unresolved execution links without raw paths", async t => {
+  const root = workspace(t), pkg = newPackage("acme.context", { root, context: true });
+  edit(pkg.path, m => { m.contexts[0].procedure = "missing.md"; });
+  const missing = command(pkg.path, "check", "--json");
+  assert.equal(missing.status, 2);
+  assert.equal(JSON.parse(missing.stdout).diagnostics[0].code, "PackageFileMissing");
+  assert.ok(!missing.stdout.includes(root));
+  edit(pkg.path, m => { m.contexts[0].procedure = "SKILL.md"; m.contexts[0].execution_links = [{ label: "Missing", description: "Review the item.", target_ref: "skill:acme.context/Missing" }]; });
+  await assert.rejects(checkPackage(pkg.path), /PackageContextTargetMissing/);
+  edit(pkg.path, m => { m.contexts[0].execution_links[0].target_ref = "skill:consumer/Review"; });
+  await checkPackage(pkg.path); // Verified later against the consumer AIR, not invented here.
 });
 
 test("version is canonical, monotone, local and discoverable from a subdirectory", t => {
@@ -113,7 +166,7 @@ test("packages is reserved at the root, including case aliases and dangling link
     if (kind === "file") writeFileSync(join(project, "packages"), "business data");
     if (kind === "case") mkdirSync(join(project, "Packages"));
     if (kind === "link") symlinkSync(join(root, "absent"), join(project, "packages"), "dir");
-    assert.throws(() => initProject({ root: project }), /PackagePathCollision|PackageSymlinkForbidden/);
+    assert.throws(() => initProject({ root: project }), { code: kind === "file" ? "PackageDirectoryRequired" : kind === "case" ? "PackagePathCollision" : "PackageSymlinkForbidden" });
     assert.equal(existsSync(join(project, "touba.project.json")), false);
   }
 });

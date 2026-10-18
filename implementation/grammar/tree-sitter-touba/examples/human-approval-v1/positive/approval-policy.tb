@@ -1,0 +1,69 @@
+module approval_policy
+
+tool Commit
+    takes value as Text
+    gives Text
+
+strategy ApproveTwice
+    takes dossier as Text
+    gives Text
+    uses Commit
+    do
+        human.approve
+            with context as dossier
+            with role as "finance"
+            with timeout_ms as 60000
+            with distinct_from as "initiator_and_previous"
+            into first
+        human.approve
+            with context as dossier
+            with role as "finance"
+            with timeout_ms as 60000
+            with distinct_from as "initiator_and_previous"
+            into second
+        Commit
+            with value as dossier
+            into result
+        give result
+
+strategy Escalate
+    takes dossier as Text
+    gives Text
+    do
+        human.approve
+            with context as dossier
+            with role as "finance"
+            with timeout_ms as 20
+            into initial
+            on expired
+                human.approve
+                    with context as dossier
+                    with role as "finance_manager"
+                    with timeout_ms as 60000
+                    into escalation
+                give "escalation approved"
+        give "initial approved"
+
+skill ReviewItem
+    takes dossier as Text
+    gives Text
+    do
+        human.approve
+            with context as dossier
+            with role as "finance"
+            with timeout_ms as 60000
+            with distinct_from as "previous"
+            into approval
+        give dossier
+
+strategy ReviewBatch
+    takes dossiers as List of Text
+    gives List of Text
+    do
+        parallel ReviewItem
+            each dossier in dossiers
+            with dossier as dossier
+            max_concurrency 2
+            max_items 10
+            into results
+        give results

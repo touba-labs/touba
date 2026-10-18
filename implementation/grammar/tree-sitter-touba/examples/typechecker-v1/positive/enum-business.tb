@@ -1,5 +1,11 @@
 module orders
 
+function PriorityText
+    takes priority as Priority
+    gives Text
+    do
+        give text(priority)
+
 enum Priority
     low
     normal

@@ -80,6 +80,20 @@ test("explicit host decisions plan, write, repeat and check compiled source with
   assert.equal(report.status, "error");
 });
 
+test("prepare text diagnostics expose the actual compiler source position", t => {
+  const root = project(t);
+  writeFileSync(join(root, "src/orders/review.tb"), 'module orders.review\nfunction Wrong\n    gives Int\n    do\n        give "wrong"\n');
+  const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
+  const args = [cli, "prepare", "--root", root, "--mode", "check"];
+  const json = spawnSync(process.execPath, [...args, "--json"], { encoding: "utf8" });
+  assert.notEqual(json.status, 0);
+  const diagnostic = JSON.parse(json.stdout).diagnostics.find(d => d.source_ref);
+  assert.ok(diagnostic, json.stdout + json.stderr);
+  const text = spawnSync(process.execPath, args, { encoding: "utf8" });
+  const expected = diagnostic.source_ref.source_id + ":" + (diagnostic.source_ref.start_line + 1) + ":" + (diagnostic.source_ref.start_column + 1);
+  assert.ok((text.stdout + text.stderr).includes(expected), text.stdout + text.stderr);
+});
+
 test("explicit revocation is persisted without refilling authority from source", async t => {
   const root = project(t);
   await prepareProject({ root, mode: "write", hostDecisions: decisions });
@@ -99,6 +113,8 @@ test("invalid decisions reject the entire preparation before any write", async t
   } });
   assert.equal(report.status, "error");
   assert.ok(report.diagnostics.some(d => d.code === "HostDecisionFieldUnknown"));
+  assert.equal(report.diagnostics.find(d => d.code === "HostDecisionFieldUnknown").field, "password");
+  assert.ok(report.diagnostics.find(d => d.code === "HostDecisionFieldUnknown").message.includes(tool));
   assert.equal(JSON.stringify(report).includes("must-not-appear"), false);
   assert.equal(existsSync(join(root, ".touba")), false);
   assert.equal(existsSync(join(root, "handlers")), false);

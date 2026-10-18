@@ -15,6 +15,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { copyDependency, packageSdk } from "./package-sdk.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
+import { packagePythonSdk } from "./package-python-sdk.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -62,23 +63,28 @@ export function packageLocalToolchain(options = {}) {
   copyNodeRuntime();
   copyCompiler();
   copyToubaPackages();
-  const projectDependencies = new Map();
-  const projectSource = join(implementationRoot, "cli/touba-project");
-  const projectManifest = JSON.parse(readFileSync(join(projectSource, "package.json"), "utf8"));
-  for (const [name, version] of Object.entries(projectManifest.dependencies)) {
-    if (version.startsWith("workspace:")) continue;
-    const source = realpathSync(join(projectSource, "node_modules", name));
-    if (JSON.parse(readFileSync(join(source, "package.json"), "utf8")).version !== version) throw new Error(`project dependency ${name} does not match its exact version`);
-    copyDependency(source, join(toolchainRoot, "lib/cli/touba-project/node_modules", name), projectDependencies);
+  for (const packagePath of copiedPackages.filter(path => path !== "runtime/touba-handler-sdk")) {
+    const sourceRoot = join(implementationRoot, packagePath);
+    const dependencies = JSON.parse(readFileSync(join(sourceRoot, "package.json"), "utf8")).dependencies ?? {};
+    const destinations = [join(toolchainRoot, "lib", packagePath), ...nodeModuleAliases
+      .filter(([source]) => source === packagePath).map(([, alias]) => join(toolchainRoot, "lib/node_modules", alias))];
+    const inventory = new Map();
+    for (const [name, version] of Object.entries(dependencies)) {
+      if (version.startsWith("workspace:")) continue;
+      const source = realpathSync(join(sourceRoot, "node_modules", name));
+      if (JSON.parse(readFileSync(join(source, "package.json"), "utf8")).version !== version) throw new Error(`${packagePath} dependency ${name} does not match its exact version`);
+      for (const destination of destinations) copyDependency(source, join(destination, "node_modules", name), inventory);
+    }
+    if (inventory.size) for (const destination of destinations) writeFileSync(join(destination, "DEPENDENCIES.json"), JSON.stringify([...inventory.values()], null, 2) + "\n");
   }
-  writeFileSync(join(toolchainRoot, "lib/cli/touba-project/DEPENDENCIES.json"), JSON.stringify([...projectDependencies.values()], null, 2) + "\n");
   copyRuntimeContracts();
   mkdirSync(join(toolchainRoot, "lib/tools"), { recursive: true });
   copyFileSync(join(implementationRoot, "tools/validate-product-surface-contracts.mjs"),
     join(toolchainRoot, "lib/tools/validate-product-surface-contracts.mjs"));
   const sdk = packageSdk(implementationRoot, toolchainRoot);
+  const pythonSdk = packagePythonSdk(implementationRoot, toolchainRoot);
   writeLaunchers();
-  writeMetadata(sdk);
+  writeMetadata(sdk, pythonSdk);
 
   if (options.quiet !== true) {
     process.stdout.write(`TOOLCHAIN ${toolchainRoot}\n`);
@@ -201,11 +207,12 @@ set "PATH=%ROOT%\\bin;%PATH%"
   writeFileSync(join(toolchainRoot, "bin", "touba.cmd"), cmdLauncher, "utf8");
 }
 
-function writeMetadata(sdk) {
+function writeMetadata(sdk, pythonSdk) {
   const metadata = {
     toolchain_profile: "touba-local-toolchain-v1",
     platform,
     sdk,
+    python_sdk: pythonSdk,
     build: toolchainBuildIdentity(toolchainRoot),
     touba_version: readPackageVersion(join(implementationRoot, "cli", "touba-project", "package.json")),
     node_source: resolveNodeRuntimeSource(process.platform === "win32" ? "node.exe" : "node"),
@@ -222,6 +229,7 @@ function writeMetadata(sdk) {
       "Touba trigger ingress service",
       "Touba project server",
       "Installable SDK tarball with locked runtime dependencies and licenses",
+      "Installable Python SDK wheel without Python runtime dependencies",
       "Node runtime used to package the archive",
     ],
     excluded_prerequisites_for_users: [

@@ -26,6 +26,16 @@ test("editor consumes the native parallel node and completes its bounded source 
   for (const keyword of ["parallel", "each", "max_concurrency", "max_items"]) assert.ok(completions.includes(keyword));
 });
 
+test("editor compiles exhaustive matches and templates and completes enum cases", () => {
+  const source = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/match-templates.tb", import.meta.url));
+  const compiled = runToubaCompileJson(source);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled.diagnostics));
+  const labels = completionForPosition(compiled.air, "", { line: 0, character: 0 }).map(item => item.label);
+  for (const keyword of ["match", "case"]) assert.ok(labels.includes(keyword));
+  const prefix = "            case Status.w";
+  assert.deepEqual(completionForPosition(compiled.air, prefix, { line: 0, character: prefix.length }).map(item => item.label), ["waiting"]);
+});
+
 test("editor exposes compiled enum members, nominal hover and exact member definitions", () => {
   const source = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/enum-business.tb", import.meta.url));
   const compiled = runToubaCompileJson(source);
@@ -497,6 +507,13 @@ test("hoverForPosition renders human approval data from AIR only", () => {
   assert.match(rendered, /mode: required_approval/);
   assert.match(rendered, /context_refs:\n- value:draft/);
   assert.match(rendered, /decision_binding: approval/);
+  const air = hoverFixtureAir();
+  const approval = air.execution_graphs.flatMap(graph => graph.nodes).find(node => node.kind === "human_approval");
+  approval.approval_policy = { role: "finance", timeout_ms: 30000, distinct_from: "previous" };
+  const constrained = hoverForPosition(air, { line: 24, character: 8 });
+  assert.match(constrained, /role: finance/);
+  assert.match(constrained, /timeout_ms: 30000/);
+  assert.match(constrained, /distinct_from: previous/);
 });
 
 test("hoverForPosition renders user interaction data from AIR only", () => {

@@ -45,6 +45,7 @@
     "package:touba-release-macos": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution package:release:macos",
     "check:touba-release-macos": "node tools/check-node-version.mjs && pnpm --filter @touba/distribution check:release:macos",
     "test:sdk": "node tools/check-node-version.mjs && pnpm --filter @touba/sdk test",
+    "test:sdk-python": "node tools/check-python-sdk.mjs",
     "validate:native-decision-governance-v1": "node tools/check-node-version.mjs && node --test runtime/touba-handler-sdk/test/native-decision.test.mjs runtime/touba-handler-sdk/test/native-provider-runtime.test.mjs runtime/touba-handler-sdk/test/native-response-completion.test.mjs runtime/touba-handler-sdk/test/decision-history.test.mjs runtime/touba-handler-sdk/test/provider-context.test.mjs runtime/touba-handler-sdk/test/history-tutorials.test.mjs runtime/touba-handler-sdk/test/catalogue-completion.test.mjs",
     "validate:js-sdk-project": "node tools/check-node-version.mjs && pnpm --filter @touba/js-sdk-project-fixture test",
     "validate:js-sdk-engine-project": "node tools/check-node-version.mjs && pnpm --filter @touba/js-sdk-engine-project-fixture test",

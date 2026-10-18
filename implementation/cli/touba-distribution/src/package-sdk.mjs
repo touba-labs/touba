@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { npmCommand } from "./npm-command.mjs";
+import { sdkBuildIdentity } from "../../touba-manifest/src/sdk-build-identity.mjs";
 
 // Package the exact installed, locked dependency tree, including licenses.
 // No install, network access, lifecycle scripts or global project dependency.
@@ -46,13 +47,17 @@ export function packageSdk(implementationRoot, toolchainRoot) {
         cwd: root, encoding: "utf8", env: { ...process.env, npm_config_cache: join(staging, "cache") },
       });
     if (pack.error || pack.status !== 0) throw new Error(`SDK packaging failed: ${pack.error?.message ?? pack.stderr}`);
-    const filename = JSON.parse(pack.stdout)[0].filename;
+    const packedFilename = JSON.parse(pack.stdout)[0].filename;
+    const build = sdkBuildIdentity(root);
+    const archiveDigest = createHash("sha256").update(readFileSync(join(output, packedFilename))).digest("hex");
+    const filename = `touba-sdk-${manifest.version}-${archiveDigest.slice(0, 16)}.tgz`;
+    renameSync(join(output, packedFilename), join(output, filename));
     // The toolchain's SDK copy must also work when inspected directly. User
     // projects install the tarball, never link to this mutable installation.
     for (const destination of ["lib/runtime/touba-handler-sdk", "lib/node_modules/@touba/sdk"]) {
       cpSync(root, join(toolchainRoot, destination), { recursive: true });
     }
-    return { name: manifest.name, version: manifest.version, archive: `sdk/${filename}`,
+    return { name: manifest.name, version: manifest.version, build, archive: `sdk/${filename}`,
       sha256: createHash("sha256").update(readFileSync(join(output, filename))).digest("hex") };
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }

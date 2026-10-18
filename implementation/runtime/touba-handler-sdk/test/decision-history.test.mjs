@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat, chmod, symlink, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -9,6 +10,33 @@ import { createSqliteDecisionHistoryStore } from "../src/sqlite-decision-history
 import { nativeCapabilityName } from "../src/native-decision.mjs";
 
 const target = "tool:history/Write", toolName = nativeCapabilityName(target);
+
+test("SQLite filename storage is private on creation, reopen and WAL, and refuses links", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "touba-private-history-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = join(directory, "history.sqlite");
+  let store = createSqliteDecisionHistoryStore({ filename });
+  store.close();
+  if (process.platform !== "win32") {
+    assert.equal((await stat(filename)).mode & 0o777, 0o600);
+    await chmod(filename, 0o644);
+  }
+  const connection = new DatabaseSync(filename);
+  connection.exec("PRAGMA journal_mode=WAL");
+  store = createSqliteDecisionHistoryStore({ filename });
+  try {
+    await store.transact("test", () => ({ record: { value: "private" }, result: true }));
+    if (process.platform !== "win32") for (const suffix of ["", "-wal", "-shm"]) {
+      assert.equal((await stat(filename + suffix)).mode & 0o777, 0o600, suffix || "database");
+    }
+  } finally { store.close(); connection.close(); }
+  if (process.platform !== "win32") {
+    const target = join(directory, "target"); await writeFile(target, "untouched", { mode: 0o644 });
+    await symlink(target, join(directory, "linked.sqlite"));
+    assert.throws(() => createSqliteDecisionHistoryStore({ filename: join(directory, "linked.sqlite") }), { code: "DecisionHistoryStorageUnsafe" });
+    assert.equal((await stat(target)).mode & 0o777, 0o644);
+  }
+});
 function request(overrides = {}) {
   return { protocol: "touba-agent-decision-v1", mode: "capabilities", run_id: "run-history",
     invocation_id: "invocation-one", agent_ref: "agent:history/Writer", content_mode: "inline", step_index: 0,

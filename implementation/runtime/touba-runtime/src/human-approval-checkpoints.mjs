@@ -8,6 +8,7 @@ import { containsResolvedSecretValue } from "./execution-checkpoints.mjs";
 import { canonicalDigest } from "./execution-checkpoints.mjs";
 import { RUN_BUDGET_COUNTERS, RUN_BUDGET_KIND_SET } from "./runtime-budgets.mjs";
 import { validateParallelState, createParallelRuntime } from "./parallel-execution.mjs";
+import { validateApprovalState } from "./human-approval-policy.mjs";
 export { airDocumentDigest } from "./air-identity.mjs";
 
 export const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-human-approval-checkpoint-v1";
@@ -17,10 +18,25 @@ export const MAX_INVOCATION_FRAMES = 64;
  * AIR membership and authority must additionally be checked before execution.
  * @param {Record<string, any>} checkpoint */
 export function validateHumanCheckpointContinuation(checkpoint) {
-  const invalid = () => { throw new RuntimeFailure("human checkpoint continuation is incomplete or invalid", {}, "InvalidHumanApprovalCheckpoint"); };
+  try { validateCheckpointContinuationBody(checkpoint); }
+  catch (error) { throw checkpointKindError(checkpoint, error); }
+}
+
+/** @param {Record<string, any>} checkpoint @param {any} error */
+export function checkpointKindError(checkpoint, error) {
+  if (checkpoint.kind !== "parallel_group") return error;
+  if (error.code === "InvalidHumanApprovalCheckpoint") return new RuntimeFailure(error.message, error.details, "InvalidParallelCheckpoint");
+  if (error.code === "HumanApprovalCheckpointIncompatible") return new RuntimeFailure(error.message, error.details, "ParallelCheckpointIncompatible");
+  return error;
+}
+
+/** @param {Record<string, any>} checkpoint */
+function validateCheckpointContinuationBody(checkpoint) {
+  const invalid = () => { throw new RuntimeFailure("checkpoint continuation is incomplete or invalid", {}, checkpoint.kind === "parallel_group" ? "InvalidParallelCheckpoint" : "InvalidHumanApprovalCheckpoint"); };
   if (Object.hasOwn(checkpoint, "call_frame") || !Array.isArray(checkpoint.call_stack)
     || checkpoint.call_stack.length > MAX_INVOCATION_FRAMES) invalid();
   validateCheckpointScope(checkpoint);
+  if (checkpoint.approval_state !== undefined) validateApprovalState(checkpoint.approval_state);
   if (checkpoint.kind === "parallel_group") {
     const { parallel_digest, ...content } = checkpoint;
     if (parallel_digest !== canonicalDigest(content)) invalid();
@@ -106,6 +122,12 @@ export function validateCheckpointScope(scope) {
 /** Validate persisted governance, never default missing consumption to zero.
  * @param {Record<string, any>} checkpoint */
 export function validateHumanCheckpointBudgetState(checkpoint) {
+  try { validateCheckpointBudgetBody(checkpoint); }
+  catch (error) { throw checkpointKindError(checkpoint, error); }
+}
+
+/** @param {Record<string, any>} checkpoint */
+function validateCheckpointBudgetBody(checkpoint) {
   checkpointNonNegativeSafeInteger(checkpoint.active_elapsed_ms, "active_elapsed_ms");
   const limits = mapFromCheckpointObject(checkpoint.effective_limits, "effective_limits");
   for (const [kind, value] of limits) {
@@ -143,7 +165,7 @@ export function normalizeOptionalHumanApprovalCheckpoint(checkpoint) {
   const record = /** @type {CheckpointRecord} */ (checkpoint);
   if (record.checkpoint_schema_version !== HUMAN_APPROVAL_CHECKPOINT_VERSION) {
     throw new ToubaRuntimeError(
-      "InvalidHumanApprovalCheckpoint",
+      record.kind === "parallel_group" ? "InvalidParallelCheckpoint" : "InvalidHumanApprovalCheckpoint",
       `checkpoint_schema_version must be ${HUMAN_APPROVAL_CHECKPOINT_VERSION}`,
       { actual: record.checkpoint_schema_version },
     );
@@ -182,7 +204,7 @@ export function validateHumanApprovalCheckpointCompatibility(document, entryRef,
         approvalRef: checkpoint.approval_ref,
         compatibilityErrors,
       },
-      "HumanApprovalCheckpointIncompatible",
+      checkpoint.kind === "parallel_group" ? "ParallelCheckpointIncompatible" : "HumanApprovalCheckpointIncompatible",
     );
   }
 }

@@ -319,6 +319,7 @@ export default grammar({
       $.give_statement,
       $.stop_statement,
       $.if_statement,
+      $.match_statement,
       $.for_statement,
       $.while_statement,
       $.indent_error,
@@ -354,9 +355,12 @@ export default grammar({
       optional(indentedBlock($, choice(
         $.call_argument_clause,
         $.call_result_binding_clause,
+        $.approval_expired_clause,
         $.indent_error,
       ))),
     ),
+
+    approval_expired_clause: $ => seq("on", $._sp, "expired", indentedBlock($, $._statement)),
 
     human_approval_target: _ => token(choice("human.approve", "human.review")),
 
@@ -417,6 +421,12 @@ export default grammar({
 
     present_condition: $ => seq("present", $._sp, field("value", $.expression),
       $._sp, "as", $._sp, field("binding", $.value_identifier)),
+
+    match_statement: $ => seq("match", $._sp, field("value", $.expression),
+      indentedBlock($, $.match_case)),
+
+    match_case: $ => seq("case", $._sp, field("type", $.symbol_identifier),
+      ".", field("variant", $.value_identifier), $.block),
 
     for_statement: $ => seq(
       "for",
@@ -521,6 +531,7 @@ export default grammar({
       $.optional_none_expression,
       $.record_expression,
       $.text_conversion_expression,
+      $.interpolated_string,
       $.parenthesized_expression,
       $.symbol_identifier,
       $.value_identifier,
@@ -591,6 +602,14 @@ export default grammar({
     // Escapes are decoded and validated once by the CST -> AST compiler.
     string: _ => /"([^"\\\n\r]|\\[^\n\r])*"/,
 
+    interpolated_string: $ => seq('f"', repeat(choice(
+      $.interpolated_text, $.interpolation,
+    )), token.immediate('"')),
+
+    interpolated_text: _ => token.immediate(prec(1, /([^"\\{}\n\r]|\\[^\n\r]|\{\{|\}\})+/)),
+
+    interpolation: $ => seq(token.immediate("{"), field("value", $.expression), "}"),
+
     integer: _ => /0|[1-9]\d*/,
 
     float: _ => /(0|[1-9]\d*)\.\d+/,
@@ -605,7 +624,7 @@ export default grammar({
 
     additive_operator: _ => token(seq(/[ \t]*/, choice("++", "+", "-"), /[ \t]*/)),
 
-    multiplicative_operator: _ => token(seq(/[ \t]*/, choice("*", "/", "%"), /[ \t]*/)),
+    multiplicative_operator: _ => token(seq(/[ \t]*/, choice("*", "/", "//", "%"), /[ \t]*/)),
 
     not_operator: _ => token(seq("not", /[ \t]+/)),
 

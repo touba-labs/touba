@@ -1,0 +1,90 @@
+module selection
+
+enum Status
+    ready
+    waiting
+    refused
+
+function Label
+    takes status as Status
+    takes count as Int
+    gives Text
+    do
+        match status
+            case Status.ready
+                give f"Ready: {text(count)} {{items}}"
+            case Status.waiting
+                give f"Waiting: {text(status)}"
+            case Status.refused
+                give "Refused"
+
+function Quotient
+    takes amount as Int
+    takes divisor as Int
+    gives Int
+    do
+        give amount // divisor
+
+function Plain
+    gives Text
+    do
+        give "{text(count)}"
+
+function Escaped
+    takes value as Text
+    gives Text
+    do
+        give f"{{{value}}}\n\"quoted\" \\"
+
+function Empty
+    gives Text
+    do
+        give f""
+
+function Nested
+    takes status as Status
+    gives Text
+    do
+        match status
+            case Status.ready
+                match status
+                    case Status.waiting
+                        give "impossible"
+                    case Status.refused
+                        give "impossible"
+                    case Status.ready
+                        give "ready"
+            case Status.waiting
+                give "waiting"
+            case Status.refused
+                give "refused"
+
+skill AskThenLabel
+    takes status as Status
+    gives Text
+    do
+        match status
+            case Status.ready
+                ask
+                    with prompt as "Your label?"
+                    into label
+                give f"Ready: {label}"
+            case Status.waiting
+                give "waiting"
+            case Status.refused
+                give "refused"
+
+strategy ApproveThenLabel
+    takes status as Status
+    gives Text
+    do
+        match status
+            case Status.ready
+                human.approve
+                    with context as f"Status: {text(status)}"
+                    into approval
+                give "approved"
+            case Status.waiting
+                give "waiting"
+            case Status.refused
+                give "refused"

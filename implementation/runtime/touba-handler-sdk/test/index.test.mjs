@@ -680,6 +680,7 @@ test("ToubaEngine compiles a source and runs it through the Touba CLI facade", a
       projectRoot: workspace,
       command: process.execPath,
       commandArgs: [fakeCliPath],
+      executionMode: "process", // This fixture tests the ephemeral CLI facade.
       env: {
         TOUBA_FAKE_LOG: logPath,
         DEMO_API_KEY: "sdk-engine-secret",
@@ -809,6 +810,7 @@ test("ToubaEngine redacts known secret values from command failures", async () =
       projectRoot: workspace,
       command: process.execPath,
       commandArgs: [fakeCliPath],
+      executionMode: "process", // This fixture tests the ephemeral CLI facade.
       env: {
         TOUBA_FAKE_FAIL_RUN: "1",
         DEMO_API_KEY: "sdk-engine-secret",

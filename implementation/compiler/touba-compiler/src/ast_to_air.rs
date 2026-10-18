@@ -180,7 +180,7 @@ impl AirLowerer {
                 self.diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::ImportModuleNotFound,
                     format!(
-                        "import `{}` references missing module `{}`",
+                        "import `{}` references missing module `{}`. If it belongs to a package copied into packages/, validate and register it with touba package add <organization.name>; copying alone does not activate imports.",
                         import.name, import.from_module
                     ),
                     Some(import.source_ref.clone()),
@@ -745,14 +745,18 @@ impl AirLowerer {
                 self.statements_contain_effectful_call(&statement.then_branch, effectful)
                     || self.statements_contain_effectful_call(&statement.else_branch, effectful)
             }
+            AstStatement::Match(statement) => statement.cases.iter().any(|case| {
+                self.statements_contain_effectful_call(&case.body, effectful)
+            }),
             AstStatement::For(statement) => {
                 self.statements_contain_effectful_call(&statement.body, effectful)
             }
             AstStatement::While(statement) => {
                 self.statements_contain_effectful_call(&statement.body, effectful)
             }
+            AstStatement::HumanApproval(statement) => statement.expired_branch.as_ref()
+                .is_some_and(|body| self.statements_contain_effectful_call(body, effectful)),
             AstStatement::Bind(_)
-            | AstStatement::HumanApproval(_)
             | AstStatement::UserInteraction(_)
             | AstStatement::Give(_)
             | AstStatement::Stop(_) => false,
@@ -1011,6 +1015,7 @@ impl AirLowerer {
             AirFunction {
                 id,
                 name: declaration.name.clone(),
+                description: declaration.description.clone(),
                 signature,
                 body_graph_ref: graph_id,
                 source_ref: declaration.source_ref.clone(),
@@ -2252,6 +2257,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         kind: AirFlowNodeKind::Fallback,
                         approval_ref: None,
                         approval_mode: None,
+            approval_policy: None,
                         context_refs: Vec::new(),
                         interaction_ref: None,
                         interaction_mode: None,
@@ -2301,6 +2307,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         kind: AirFlowNodeKind::Stop,
                         approval_ref: None,
                         approval_mode: None,
+            approval_policy: None,
                         context_refs: Vec::new(),
                         interaction_ref: None,
                         interaction_mode: None,
@@ -2405,6 +2412,7 @@ impl<'a> FlowGraphBuilder<'a> {
             AstStatement::Give(statement) => self.lower_give(statement),
             AstStatement::Stop(statement) => self.lower_stop(statement),
             AstStatement::If(statement) => self.lower_if(statement),
+            AstStatement::Match(statement) => self.lower_match(statement),
             AstStatement::For(statement) => self.lower_for(statement),
             AstStatement::While(statement) => self.lower_while(statement),
         }
@@ -2456,6 +2464,7 @@ impl<'a> FlowGraphBuilder<'a> {
             kind: AirFlowNodeKind::Bind,
             approval_ref: None,
             approval_mode: None,
+            approval_policy: None,
             context_refs: Vec::new(),
             interaction_ref: None,
             interaction_mode: None,
@@ -2608,6 +2617,7 @@ impl<'a> FlowGraphBuilder<'a> {
             kind,
             approval_ref: None,
             approval_mode: None,
+            approval_policy: None,
             context_refs: Vec::new(),
             interaction_ref: None,
             interaction_mode: None,
@@ -2669,6 +2679,7 @@ impl<'a> FlowGraphBuilder<'a> {
             return FlowFragment::empty();
         }
         let context_refs = self.lower_human_approval_context_refs(statement);
+        let approval_policy = self.lower_human_approval_policy(statement);
         let result_binding = statement
             .result_binding
             .as_ref()
@@ -2698,6 +2709,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 AstHumanApprovalMode::RequiredApproval => AirHumanApprovalMode::RequiredApproval,
                 AstHumanApprovalMode::AgentReview => AirHumanApprovalMode::AgentReview,
             }),
+            approval_policy,
             context_refs,
             interaction_ref: None,
             interaction_mode: None,
@@ -2708,7 +2720,45 @@ impl<'a> FlowGraphBuilder<'a> {
             trace_point_refs: vec![trace_point],
             source_ref: statement.source_ref.clone(),
         });
+        if let Some(body) = &statement.expired_branch {
+            let branch = self.lower_branch(&node_id, AirFlowEdgeRole::Expired, body);
+            if !branch.exits.is_empty() || branch.terminal_reason.is_none() {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::HumanApprovalExpirationMustTerminate,
+                    "on expired must terminate explicitly on every path; it cannot authorize the protected continuation",
+                    Some(statement.source_ref.clone()),
+                ));
+            }
+        }
         FlowFragment::linear(node_id)
+    }
+
+    fn lower_human_approval_policy(&mut self, statement: &AstHumanApprovalStatement) -> Option<AirApprovalPolicy> {
+        let mut policy = AirApprovalPolicy::default();
+        for argument in &statement.arguments {
+            let valid = match (argument.name.as_str(), &argument.value) {
+                ("role", AstExpression::StringLiteral { value, .. }) if !value.is_empty() && value.trim() == value && value.len() <= 128 && !value.chars().any(char::is_control) => {
+                    policy.role = Some(value.clone()); true
+                }
+                ("timeout_ms", AstExpression::IntLiteral { value, .. }) => {
+                    policy.timeout_ms = value.parse::<u64>().ok().filter(|n| *n > 0 && *n <= 2_592_000_000);
+                    policy.timeout_ms.is_some()
+                }
+                ("distinct_from", AstExpression::StringLiteral { value, .. })
+                    if ["initiator", "previous", "initiator_and_previous"].contains(&value.as_str()) => {
+                    policy.distinct_from = Some(value.clone()); true
+                }
+                ("context", _) => true,
+                ("role" | "timeout_ms" | "distinct_from", _) => false,
+                _ => continue,
+            };
+            if !valid {
+                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::InvalidHumanApprovalPolicy,
+                    format!("human approval {} requires a valid static literal", argument.name),
+                    Some(argument.source_ref.clone())));
+            }
+        }
+        if policy == AirApprovalPolicy::default() { None } else { Some(policy) }
     }
 
     fn lower_human_approval_context_refs(
@@ -2717,11 +2767,12 @@ impl<'a> FlowGraphBuilder<'a> {
     ) -> Vec<String> {
         let mut context_ref = None;
         for argument in &statement.arguments {
+            if ["role", "timeout_ms", "distinct_from"].contains(&argument.name.as_str()) { continue; }
             if argument.name != "context" {
                 self.diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::UnknownHumanApprovalArgument,
                     format!(
-                        "human approval argument `{}` is not supported; V1 accepts only `context`",
+                        "human approval argument `{}` is not supported; expected context, role, timeout_ms or distinct_from",
                         argument.name
                     ),
                     Some(argument.source_ref.clone()),
@@ -2804,6 +2855,7 @@ impl<'a> FlowGraphBuilder<'a> {
             kind: AirFlowNodeKind::UserInteraction,
             approval_ref: None,
             approval_mode: None,
+            approval_policy: None,
             context_refs: Vec::new(),
             interaction_ref: Some(format!("interaction:{}:{}", self.graph_id, node_id)),
             interaction_mode: Some(match statement.mode {
@@ -3015,6 +3067,7 @@ impl<'a> FlowGraphBuilder<'a> {
             kind: AirFlowNodeKind::Give,
             approval_ref: None,
             approval_mode: None,
+            approval_policy: None,
             context_refs: Vec::new(),
             interaction_ref: None,
             interaction_mode: None,
@@ -3074,13 +3127,18 @@ impl<'a> FlowGraphBuilder<'a> {
                     vec![handle]
                 }
                 Some(symbol) if symbol.kind == SymbolKind::Type => {
-                    vec![format!("symbol:{value}")]
+                    self.diagnostics.push(AirDiagnostic::new(
+                        AirDiagnosticCode::InvalidGiveValue,
+                        format!("`{value}` is a type, not a value; construct a `record {value}` or return a bound value"),
+                        Some(source_ref.clone()),
+                    ));
+                    vec![format!("unresolved:symbol:{value}")]
                 }
                 _ => {
                     self.diagnostics.push(AirDiagnostic::new(
                             AirDiagnosticCode::InvalidGiveValue,
                             format!(
-                                "give symbol `{value}` must reference a local type declaration or module constant"
+                                "give symbol `{value}` must reference a module constant; a type is not a value"
                             ),
                             Some(source_ref.clone()),
                         ));
@@ -3299,10 +3357,11 @@ impl<'a> FlowGraphBuilder<'a> {
         let operand = self.lower_expression_atom_or_air(expression, ExpressionContext::Expression);
         if let Some(type_ref) = operand.type_ref.as_deref()
             && !is_text_renderable_type(type_ref)
+            && !self.type_variants.contains_key(type_ref)
         {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::InvalidExpressionOperandType,
-                format!("text(...) accepts only Text, Boolean, Int or Float, got `{type_ref}`"),
+                format!("text(...) accepts only Text, Boolean, Int, Float or an enum, got `{type_ref}`"),
                 Some(source_ref.clone()),
             ));
         }
@@ -3611,7 +3670,7 @@ impl<'a> FlowGraphBuilder<'a> {
             if right.literal_zero
                 && matches!(
                     operator,
-                    AstBinaryOperator::Divide | AstBinaryOperator::Modulo
+                    AstBinaryOperator::Divide | AstBinaryOperator::IntegerDivide | AstBinaryOperator::Modulo
                 )
             {
                 self.diagnostics.push(AirDiagnostic::new(
@@ -3656,18 +3715,18 @@ impl<'a> FlowGraphBuilder<'a> {
                     None
                 }
             }
-            AstBinaryOperator::Modulo => {
+            AstBinaryOperator::Modulo | AstBinaryOperator::IntegerDivide => {
                 if right.literal_zero {
                     self.diagnostics.push(AirDiagnostic::new(
                         AirDiagnosticCode::StaticExpressionDivisionByZero,
-                        "modulo by zero is statically detectable",
+                        "integer division or modulo by zero is statically detectable",
                         Some(source_ref.clone()),
                     ));
                 }
                 if left_type == Some(BUILTIN_INT) && right_type == Some(BUILTIN_INT) {
                     Some(builtin_int())
                 } else {
-                    self.invalid_operand_type("operator `%` expects Int operands", source_ref);
+                    self.invalid_operand_type("operators `%` and `//` expect Int operands", source_ref);
                     None
                 }
             }
@@ -3823,6 +3882,7 @@ impl<'a> FlowGraphBuilder<'a> {
             kind: AirFlowNodeKind::Stop,
             approval_ref: None,
             approval_mode: None,
+            approval_policy: None,
             context_refs: Vec::new(),
             interaction_ref: None,
             interaction_mode: None,
@@ -3834,6 +3894,70 @@ impl<'a> FlowGraphBuilder<'a> {
             source_ref: statement.source_ref.clone(),
         });
         FlowFragment::terminal(node_id, "stop")
+    }
+
+    fn lower_match(&mut self, statement: &AstMatchStatement) -> FlowFragment {
+        let value = self.lower_expression_atom_or_air(&statement.value, ExpressionContext::Condition);
+        let Some(variants) = value.type_ref.as_ref().and_then(|kind| self.type_variants.get(kind)).cloned() else {
+            self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::MatchRequiresEnum,
+                "match requires a nominal enum value", Some(statement.source_ref.clone())));
+            return FlowFragment::empty();
+        };
+        let mut seen = HashSet::new();
+        let mut valid = true;
+        for case in &statement.cases {
+            let kind = self.symbols.get(&case.type_name).filter(|symbol| symbol.kind == SymbolKind::Type);
+            if kind.map(|symbol| symbol.id.as_str()) != value.type_ref.as_deref() {
+                valid = false;
+                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::MatchCaseTypeMismatch,
+                    format!("case {}.{} does not belong to the matched enum", case.type_name, case.variant), Some(case.source_ref.clone())));
+            } else if !variants.contains(&case.variant) {
+                valid = false;
+                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::UnknownEnumVariant,
+                    format!("unknown enum member {}.{}", case.type_name, case.variant), Some(case.source_ref.clone())));
+            } else if !seen.insert(case.variant.clone()) {
+                valid = false;
+                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::DuplicateMatchCase,
+                    format!("duplicate case {}.{}", case.type_name, case.variant), Some(case.source_ref.clone())));
+            }
+        }
+        let mut missing: Vec<_> = variants.difference(&seen).cloned().collect();
+        missing.sort();
+        if !missing.is_empty() {
+            valid = false;
+            self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::NonExhaustiveMatch,
+                format!("match is missing cases: {}", missing.join(", ")), Some(statement.source_ref.clone())));
+        }
+        if !valid { return FlowFragment::empty(); }
+        // Names containing ':' cannot be written in source. The snapshot is
+        // evaluated once and cannot collide with a user binding.
+        let name = format!("match:temporary:{}", self.nodes.len());
+        let outer_values = self.local_values.clone();
+        let outer_types = self.local_value_types.clone();
+        let mut snapshot = self.lower_typed_binding(&name, value.type_ref.unwrap(), value.handle, &statement.source_ref);
+        let mut branches = statement.cases.last().unwrap().body.clone();
+        for case in statement.cases.iter().rev().skip(1) {
+            let member = AstExpression::FieldAccess {
+                target: Box::new(AstExpression::Symbol { value: case.type_name.clone(), source_ref: case.source_ref.clone() }),
+                field: case.variant.clone(), field_source_ref: case.source_ref.clone(), source_ref: case.source_ref.clone(),
+            };
+            branches = vec![AstStatement::If(AstIfStatement {
+                condition: AstExpression::Binary {
+                    left: Box::new(AstExpression::Value { value: name.clone(), source_ref: statement.source_ref.clone() }),
+                    operator: AstBinaryOperator::Equal, right: Box::new(member), source_ref: case.source_ref.clone(),
+                },
+                present_binding: None, then_branch: case.body.clone(), else_branch: branches, source_ref: case.source_ref.clone(),
+            })];
+        }
+        let first_node = self.nodes.len();
+        let lowered = self.lower_statement_sequence(&branches);
+        if let Some(entry) = self.nodes.get(first_node) {
+            self.edges.extend(connect_pending_exits(&mut snapshot.exits, &entry.id, statement.source_ref.clone()));
+        }
+        self.local_values = outer_values;
+        self.local_value_types = outer_types;
+        FlowFragment { entry_node_id: snapshot.entry_node_id, exits: lowered.exits,
+            terminal_reason: lowered.terminal_reason.map(|_| "match") }
     }
 
     fn lower_if(&mut self, statement: &AstIfStatement) -> FlowFragment {
@@ -3891,6 +4015,7 @@ impl<'a> FlowGraphBuilder<'a> {
             kind: AirFlowNodeKind::Branch,
             approval_ref: None,
             approval_mode: None,
+            approval_policy: None,
             context_refs: Vec::new(),
             interaction_ref: None,
             interaction_mode: None,
@@ -3961,6 +4086,7 @@ impl<'a> FlowGraphBuilder<'a> {
             kind: AirFlowNodeKind::Loop,
             approval_ref: None,
             approval_mode: None,
+            approval_policy: None,
             context_refs: Vec::new(),
             interaction_ref: None,
             interaction_mode: None,
@@ -4024,6 +4150,7 @@ impl<'a> FlowGraphBuilder<'a> {
             kind: AirFlowNodeKind::Loop,
             approval_ref: None,
             approval_mode: None,
+            approval_policy: None,
             context_refs: Vec::new(),
             interaction_ref: None,
             interaction_mode: None,
@@ -4450,6 +4577,7 @@ fn air_binary_operator(operator: AstBinaryOperator) -> AirExpressionOperator {
         AstBinaryOperator::Subtract => AirExpressionOperator::Subtract,
         AstBinaryOperator::Multiply => AirExpressionOperator::Multiply,
         AstBinaryOperator::Divide => AirExpressionOperator::Divide,
+        AstBinaryOperator::IntegerDivide => AirExpressionOperator::IntegerDivide,
         AstBinaryOperator::Modulo => AirExpressionOperator::Modulo,
         AstBinaryOperator::TextConcat => AirExpressionOperator::TextConcat,
         AstBinaryOperator::Equal => AirExpressionOperator::Equal,
@@ -4548,6 +4676,7 @@ fn statement_source_ref(statement: &AstStatement) -> SourceRef {
         AstStatement::Give(statement) => statement.source_ref.clone(),
         AstStatement::Stop(statement) => statement.source_ref.clone(),
         AstStatement::If(statement) => statement.source_ref.clone(),
+        AstStatement::Match(statement) => statement.source_ref.clone(),
         AstStatement::For(statement) => statement.source_ref.clone(),
         AstStatement::While(statement) => statement.source_ref.clone(),
     }

@@ -130,6 +130,8 @@ pub struct AirParameter {
 pub struct AirFunction {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub signature: AirSignature,
     pub body_graph_ref: String,
     pub source_ref: SourceRef,
@@ -305,6 +307,8 @@ pub struct AirFlowNode {
     pub approval_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_mode: Option<AirHumanApprovalMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<AirApprovalPolicy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -349,6 +353,17 @@ pub enum AirFlowNodeKind {
     Give,
     Stop,
     Fallback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct AirApprovalPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distinct_from: Option<String>,
 }
 
 impl AirFlowNodeKind {
@@ -445,6 +460,7 @@ pub enum AirExpressionOperator {
     Subtract,
     Multiply,
     Divide,
+    IntegerDivide,
     Modulo,
     TextConcat,
     Equal,
@@ -467,6 +483,7 @@ pub enum AirFlowEdgeRole {
     LoopExit,
     Failure,
     Fallback,
+    Expired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -572,6 +589,8 @@ pub enum AirDiagnosticCode {
     MissingHumanApprovalContextArgument,
     MissingHumanApprovalDecisionBinding,
     UnknownHumanApprovalArgument,
+    InvalidHumanApprovalPolicy,
+    HumanApprovalExpirationMustTerminate,
     HumanApprovalInFunction,
     MissingUserInteractionMessageArgument,
     MissingUserInteractionPromptArgument,
@@ -597,6 +616,10 @@ pub enum AirDiagnosticCode {
     OwnerMemoryScopeMissing,
     UnsupportedExpression,
     InvalidExpressionOperandType,
+    MatchRequiresEnum,
+    MatchCaseTypeMismatch,
+    DuplicateMatchCase,
+    NonExhaustiveMatch,
     UnknownExpressionField,
     UnknownRecordType,
     UnknownEnumVariant,

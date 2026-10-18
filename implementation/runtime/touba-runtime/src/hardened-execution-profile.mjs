@@ -79,19 +79,13 @@ export function enforceHardenedExecutionProfile(document, options) {
 
 /** @param {{platform?: string, env?: Record<string, string | undefined>}} [input] */
 export function probeHostSandbox({ platform = process.platform, env = process.env } = {}) {
-  const candidates = platform === "linux"
-    ? [{ mechanism: "bubblewrap", command: env.TOUBA_BWRAP_COMMAND || "bwrap", args: ["--version"] }]
-    : platform === "darwin"
-      ? [{ mechanism: "sandbox-exec", command: env.TOUBA_SANDBOX_EXEC_COMMAND || "/usr/bin/sandbox-exec", args: ["-h"] }]
-      : platform === "win32"
-        ? [{ mechanism: "sandboxie-plus", command: env.TOUBA_SANDBOXIE_START_COMMAND || "Start.exe", args: ["/version"] }]
-        : [];
-  if (candidates.length === 0) return { available: false, platform, mechanism: "unsupported", version: "0" };
-  const candidate = candidates[0];
+  if (platform !== "darwin") return { available: false, platform, mechanism: "unsupported", version: "0", reason: "policy_not_qualified" };
+  const candidate = { mechanism: "sandbox-exec", command: env.TOUBA_SANDBOX_EXEC_COMMAND || "/usr/bin/sandbox-exec", args: ["-p", '(version 1)(deny default)(allow process-exec (literal "/usr/bin/true"))(allow file-read*)(allow sysctl-read)', "/usr/bin/true"] };
   const result = spawnSync(candidate.command, candidate.args, { encoding: "utf8", timeout: 2000, windowsHide: true });
   const text = `${result.stdout ?? ""} ${result.stderr ?? ""}`;
   const version = text.match(/\d+(?:\.\d+){0,3}/u)?.[0] ?? (result.status === 0 ? "1" : "0");
-  return { available: result.status === 0, platform, mechanism: candidate.mechanism, version, command: candidate.command };
+  return { available: result.status === 0, platform, mechanism: candidate.mechanism, version, command: candidate.command,
+    ...(result.status !== 0 ? { probe_exit_code: result.status, probe_error: /** @type {NodeJS.ErrnoException | undefined} */ (result.error)?.code ?? null } : {}) };
 }
 
 /** @param {Record<string, any>} profile */

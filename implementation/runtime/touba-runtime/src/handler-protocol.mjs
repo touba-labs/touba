@@ -4,6 +4,7 @@ import { spawn as spawnProcess } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { realpathSync } from "node:fs";
 import { validatedHandlerDiagnostic } from "./handler-diagnostics.mjs";
+import { macosHandlerPolicy } from "./handler-sandbox-policy.mjs";
 import {
   validateEffectReceipt,
 } from "./effect-contract.mjs";
@@ -31,7 +32,7 @@ const EFFECT_ID_PATTERN = /^effect:sha256:[0-9a-f]{64}$/u;
  * @property {ProcessToolBindingHandler} handler
  * @property {ProcessToolBindingLimits} limits
  * @property {string[]=} grants
- * @property {{required?: boolean, profile?: string, box_name?: string}=} sandbox
+ * @property {{required?: boolean, profile?: string, code_paths?: string[], read_paths?: string[], write_paths?: string[], local_sockets?: string[]}=} sandbox
  *
  * @typedef {object} ToolHandlerResult
  * @property {unknown} value
@@ -322,56 +323,19 @@ export function buildHandlerSandboxPlan({
     };
   }
   const handlerCommand = resolveHandlerCommand(binding.handler.command);
-  const grants = Array.isArray(binding.grants) ? binding.grants : [];
-  if (platform === "linux") {
-    const command = env.TOUBA_BWRAP_COMMAND || "bwrap";
-    const args = [
-      "--die-with-parent",
-      "--unshare-pid",
-      "--unshare-ipc",
-      "--unshare-uts",
-      "--proc",
-      "/proc",
-      "--dev",
-      "/dev",
-      "--ro-bind",
-      "/",
-      "/",
-      "--tmpfs",
-      "/tmp",
-    ];
-    if (!grants.includes("network")) {
-      args.unshift("--unshare-net");
-    }
-    if (binding.handler.cwd) {
-      args.push(grants.includes("filesystem_write") ? "--bind" : "--ro-bind", binding.handler.cwd, binding.handler.cwd);
-    }
-    args.push(handlerCommand, ...binding.handler.args);
-    return {
-      enabled: true,
-      mechanism: "bubblewrap",
-      command,
-      args,
-    };
+  // A sandbox executable or externally configured box is not proof that
+  // this manifest's file/process/network grants are enforced.
+  if (platform === "linux" || platform === "win32") {
+    throw new RuntimeFailure("required handler sandbox policy is not qualified on this host", { platform }, "HandlerSandboxUnsupportedPolicy");
   }
   if (platform === "darwin") {
     const command = env.TOUBA_SANDBOX_EXEC_COMMAND || "sandbox-exec";
-    const policy = macosSeatbeltPolicy({ grants, cwd: binding.handler.cwd });
+    const policy = macosHandlerPolicy(binding, handlerCommand);
     return {
       enabled: true,
       mechanism: "sandbox-exec",
       command,
       args: ["-p", policy, handlerCommand, ...binding.handler.args],
-    };
-  }
-  if (platform === "win32") {
-    const command = env.TOUBA_SANDBOXIE_START_COMMAND || "Start.exe";
-    const boxName = sandbox.box_name || "ToubaHandler";
-    return {
-      enabled: true,
-      mechanism: "Sandboxie-Plus",
-      command,
-      args: [`/box:${boxName}`, handlerCommand, ...binding.handler.args],
     };
   }
   throw new RuntimeFailure(
@@ -389,28 +353,6 @@ function resolveHandlerCommand(command) {
   return command === "node" || command === "node.exe"
     ? process.execPath
     : command;
-}
-
-/**
- * @param {{grants: string[], cwd?: string | undefined}} input
- * @returns {string}
- */
-function macosSeatbeltPolicy({ grants, cwd }) {
-  const rules = [
-    "(version 1)",
-    "(deny default)",
-    "(allow process*)",
-    "(allow sysctl*)",
-    "(allow file-read*)",
-    "(allow file-write* (subpath \"/tmp\"))",
-  ];
-  if (cwd && grants.includes("filesystem_write")) {
-    rules.push(`(allow file-write* (subpath ${JSON.stringify(cwd)}))`);
-  }
-  if (grants.includes("network")) {
-    rules.push("(allow network*)");
-  }
-  return rules.join("\n");
 }
 
 /**

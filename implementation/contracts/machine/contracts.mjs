@@ -9,7 +9,7 @@ export const AIR_NODE_KINDS = Object.freeze([
   "human_approval", "user_interaction", "branch", "loop", "give", "stop", "fallback",
 ]);
 export const AIR_EDGE_ROLES = Object.freeze([
-  "next", "true", "false", "loop_next", "loop_exit", "failure", "fallback",
+  "next", "true", "false", "loop_next", "loop_exit", "failure", "fallback", "expired",
 ]);
 export const AIR_EXPRESSION_KINDS = Object.freeze([
   "optional_some", "optional_none", "optional_present", "optional_value",
@@ -275,6 +275,19 @@ function validateGraph(value, allIds, path) {
     if (nodeIds.has(id)) fail("DuplicateAirId", `duplicate AIR node id ${id}`, `${path}.nodes[${index}].id`);
     nodeIds.add(id);
     requireEnum(node.kind, AIR_NODE_KINDS, `${path}.nodes[${index}].kind`);
+    if (Object.hasOwn(node, "approval_policy")) {
+      const policyPath = `${path}.nodes[${index}].approval_policy`;
+      const policy = requireObject(node.approval_policy, policyPath, "approval policy");
+      const label = (/** @type {unknown} */ value) => typeof value === "string" && value.trim() === value && value.length > 0
+        && new TextEncoder().encode(value).length <= 128 && !/[\x00-\x1f\x7f]/u.test(value);
+      if (node.kind !== "human_approval" || Object.keys(policy).length === 0
+        || Object.keys(policy).some(key => !["role", "timeout_ms", "distinct_from"].includes(key))
+        || (Object.hasOwn(policy, "role") && !label(policy.role))
+        || (Object.hasOwn(policy, "timeout_ms") && (!Number.isSafeInteger(policy.timeout_ms) || policy.timeout_ms < 1 || policy.timeout_ms > 2592000000))
+        || (Object.hasOwn(policy, "distinct_from") && !["initiator", "previous", "initiator_and_previous"].includes(policy.distinct_from))) {
+        fail("InvalidHumanApprovalPolicy", "invalid static source approval constraints", policyPath);
+      }
+    }
     const parallelFields = ["collection_ref", "item_binding", "max_concurrency", "max_items"];
     if (node.kind === "parallel_call") {
       rejectUnknownFields(node, new Set(["id", "kind", "target_ref", "arguments", "result_binding",
@@ -297,6 +310,9 @@ function validateGraph(value, allIds, path) {
     requireNodeRef(item.from_node_id, nodeIds, `${path}.edges[${index}].from_node_id`);
     requireNodeRef(item.to_node_id, nodeIds, `${path}.edges[${index}].to_node_id`);
     requireEnum(item.role, AIR_EDGE_ROLES, `${path}.edges[${index}].role`);
+    if (item.role === "expired" && nodes.find(node => node.id === item.from_node_id)?.kind !== "human_approval") {
+      fail("InvalidHumanApprovalPolicy", "expired edge requires a human approval source", `${path}.edges[${index}]`);
+    }
   }
   for (const [index, expression] of (graph.expressions ?? []).entries()) {
     const item = requireObject(expression, `${path}.expressions[${index}]`, "AIR expression");
@@ -419,8 +435,11 @@ export function canonicalizeMachineValue(value) {
 /** @param {unknown} codeValue @param {unknown} [failureMode] @returns {string} */
 export function failureFamilyForRuntimeCode(codeValue, failureMode = undefined) {
   const code = String(codeValue ?? "RuntimeFailure");
+  if (/^HumanApproval(?:Authority|Evidence|Role|Signer|Identity|Initiator|Attestation|DecisionAlready|StateLimit|NotExpired)/u.test(code)
+    || code === "InvalidHumanApprovalPolicy") return "authority";
   if (/^(InvalidParallel|ParallelContinuation|ParallelOutcome|Parallel.*LimitExceeded)/u.test(code)) return "authority";
   if (code === "RuntimeCancelled") return "cancelled";
+  if (/^DecisionHistory/u.test(code) || code === "ProviderContextWindowExceeded") return "authority";
   if (code === "RuntimeStopped" || /human_approval|human_review/u.test(String(failureMode ?? ""))) {
     return "human_stop";
   }

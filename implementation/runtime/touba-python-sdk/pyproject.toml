@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "touba-sdk"
+version = "0.1.0"
+description = "Typed Python client for governed Touba execution"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{name = "Khadim Lo"}]
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/touba_sdk"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "pyproject.toml", "LICENSE"]

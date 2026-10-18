@@ -15,6 +15,17 @@ before(() => {
 });
 const run = (name, inputs = {}, options = {}) => executeAirDocument(air, { entryRef: `function:orders/${name}`, inputs, ...options });
 
+test("text(enum) returns the canonical declared variant and rejects unknown values", async () => {
+  for (const priority of ["low", "normal", "high"]) {
+    const output = await run("PriorityText", { priority });
+    assert.equal(output.status, "success");
+    assert.equal(output.result, priority);
+  }
+  for (const priority of ["HIGH", "unknown", null, {}]) {
+    assert.equal((await run("PriorityText", { priority })).status, "failure");
+  }
+});
+
 test("compiled enums execute nominal members, constants, record fields and lists", async () => {
   validateAirMachineContract(air);
   for (const [name, inputs, expected] of [

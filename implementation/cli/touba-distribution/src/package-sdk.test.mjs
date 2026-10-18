@@ -48,6 +48,20 @@ test("installed archive supplies an independent SDK, provider dependencies, lice
       assert.equal(corrupt.stdout, "");
     } finally { writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`); }
     assert.equal(createHash("sha256").update(readFileSync(archive)).digest("hex"), metadata.sdk.sha256);
+    const pythonArchive = version.distribution.python_sdk_archive;
+    assert.ok(pythonArchive && realpathSync(pythonArchive).startsWith(realpathSync(installed.install_root)));
+    assert.equal(createHash("sha256").update(readFileSync(pythonArchive)).digest("hex"), metadata.python_sdk.sha256);
+    const python = process.env.TOUBA_PYTHON_BUILD_BIN || "python3";
+    const venv = join(workspace, "python client");
+    run(python, ["-m", "venv", venv], workspace);
+    const client = join(venv, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+    run(client, ["-m", "pip", "install", "--disable-pip-version-check", "--no-index", "--no-deps", pythonArchive], workspace);
+    writeFileSync(join(workspace, "python.tb"), 'module python_installed\nstrategy Echo\n    takes value as Text\n    gives Text\n    do\n        give value\n');
+    assert.match(run(client, ["-c", `from touba_sdk import Engine
+engine = Engine(project_root=${JSON.stringify(workspace)}, command=${JSON.stringify(node)}, command_args=[${JSON.stringify(cli)}])
+assert engine.version()["build"]["id"] == ${JSON.stringify(metadata.build.id)}
+assert engine.run(source="python.tb", inputs={"value":"installed-python-ok"}).result == "installed-python-ok"
+print("PYTHON_ARCHIVE_OK")`], workspace, { PYTHONPATH: "" }), /PYTHON_ARCHIVE_OK/);
     if (process.platform !== "win32") {
       const implementationRoot = join(here, "../../..");
       for (const [locale, document] of [

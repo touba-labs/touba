@@ -49,7 +49,7 @@ export function packageClosure(path, { projectRoot, publishing = false } = {}) {
 
 export async function addRegistryPackage(name, options) {
   if (!PACKAGE_NAME.test(name) || !options.registry || !options.version) throw packageError("PackageRegistryOptionMissing", "use a qualified package name, --version and --registry");
-  const resolution = await resolveRegistryPackage({ registry: options.registry, version: options.version, packageRef: `pkg:${name}` });
+  const resolution = await resolveRegistryPackage({ registry: options.registry, version: options.version, packageRef: `pkg:${name}`, allowDraft: options["allow-draft"] === true });
   if (!semver.satisfies(runtimeVersion, resolution.compatibility.touba)) throw packageError("PackageVersionIncompatible", `registry requires Touba ${resolution.compatibility.touba}; installed ${runtimeVersion}`);
   if (resolution.package.kind !== "touba_package") throw packageError("PackageSchemaMismatch", "registry entry must describe a Touba package");
   const archives = resolution.artifacts.filter(artifact => artifact.kind === "package_archive");

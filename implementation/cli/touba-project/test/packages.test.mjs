@@ -48,10 +48,98 @@ strategy Run
   const engine = new ToubaEngine({ projectRoot: project, command: process.execPath, commandArgs: [cli] });
   const result = await engine.run({ air: ".touba/build/dev/air/client/main.air.json", inputs: { request: "Package import works" } });
   assert.equal(result.result, "Package import works");
+  const directManifest = join(project, "direct.manifest.json");
+  writeFileSync(directManifest, JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {} }));
   writeFileSync(join(project, "packages/example.echo/src/example/echo.tb"), "module example.echo\n");
   const refused = await prepareProject({ root: project, mode: "plan" });
   assert.ok(refused.diagnostics.some(d => d.code === "PackageIntegrityMismatch"));
   assert.ok(compilerInputsForFile(program).diagnostics.some(d => d.code === "PackageIntegrityMismatch"));
+  const direct = spawnSync(process.execPath, [cli, "run", join(project, ".touba/build/dev/air/client/main.air.json"),
+    "--manifest", directManifest, "--inputs-json", JSON.stringify({ request: "denied" }), "--output", "json"], { encoding: "utf8" });
+  assert.notEqual(direct.status, 0);
+  assert.match(direct.stderr, /PackageIntegrityMismatch/);
+});
+
+test("a manually copied unregistered package gives a registration hint and is never loaded implicitly", async t => {
+  const root = workspace(t), source = author(root), project = consumer(root);
+  cpSync(source, join(project, "packages/example.echo"), { recursive: true });
+  mkdirSync(join(project, "src/client"), { recursive: true });
+  writeFileSync(join(project, "src/client/main.tb"), `module client.main
+import skill Echo from example.echo
+strategy Run
+    gives Text
+    do
+        Echo
+            with value as "registered"
+            into result
+        give result
+`);
+  const before = await prepareProject({ root: project, mode: "plan", entryRef: "strategy:client.main/Run" });
+  const diagnostic = before.diagnostics.find(item => item.code === "ImportModuleNotFound");
+  assert.ok(diagnostic, JSON.stringify(before));
+  assert.match(diagnostic.message, /touba package add/);
+  await addPackage("example.echo", { root: project });
+  const after = await prepareProject({ root: project, mode: "write", entryRef: "strategy:client.main/Run" });
+  assert.equal(after.status, "success", JSON.stringify(after.diagnostics));
+});
+
+test("package handler selection is explicit, grants nothing and avoids unused stubs", async t => {
+  const root = workspace(t), source = author(root, "example.connector"), project = consumer(root);
+  writeFileSync(join(source, "src/example/connector.tb"), `module example.connector
+tool Fetch
+    takes value as Text
+    gives Text
+    requires network
+`);
+  mkdirSync(join(source, "handlers"));
+  writeFileSync(join(source, "handlers/fetch.mjs"), `let raw = ""; for await (const chunk of process.stdin) raw += chunk;
+const request = JSON.parse(raw); process.stdout.write(JSON.stringify({ ok: true, value: request.arguments.value }));
+`);
+  manifest(source, m => { m.exports = { tools: ["tool:example.connector/Fetch"] };
+    m.handlers = [{ tool: "tool:example.connector/Fetch", path: "handlers/fetch.mjs", protocol: "touba-tool-handler-v1" }]; });
+  await addPackage(source, { root: project });
+  mkdirSync(join(project, "src/client"), { recursive: true });
+  writeFileSync(join(project, "src/client/main.tb"), `module client.main
+import tool Fetch from example.connector
+strategy Run
+    takes value as Text
+    gives Text
+    uses Fetch
+    do
+        Fetch
+            with value as value
+            into result
+        give result
+`);
+  const options = { root: project, entryRef: "strategy:client.main/Run",
+    hostDecisions: { bindings: { "tool:example.connector/Fetch": { package_handler: "example.connector" } } } };
+  const plan = await prepareProject({ ...options, mode: "plan" });
+  assert.ok(plan.actions.some(action => action.field === "handler"));
+  assert.equal(existsSync(join(project, ".touba/build/dev/touba.manifest.json")), false);
+  const prepared = await prepareProject({ ...options, mode: "write" });
+  assert.notEqual(prepared.status, "error", JSON.stringify(prepared.diagnostics));
+  assert.ok(prepared.diagnostics.some(d => d.code === "ManifestGrantMissing"));
+  const file = join(project, ".touba/build/dev/touba.manifest.json");
+  const saved = JSON.parse(readFileSync(file));
+  const binding = saved.bindings["tool:example.connector/Fetch"];
+  assert.deepEqual(binding.grants, []);
+  assert.deepEqual(binding.handler.args, ["packages/example.connector/handlers/fetch.mjs"]);
+  assert.equal(prepared.actions.some(action => action.artifact_kind === "handler_stub" || action.kind === "create_handler_stub"), false);
+  assert.equal(existsSync(join(project, "handlers/example/connector/fetch.handler.mjs")), false);
+  const before = readFileSync(file, "utf8");
+  const refused = await prepareProject({ ...options, mode: "write", hostDecisions: {
+    bindings: { "tool:example.connector/Fetch": { package_handler: "not.installed" } } } });
+  assert.ok(refused.diagnostics.some(d => d.code === "HostDecisionPackageHandlerUnknown"));
+  assert.equal(readFileSync(file, "utf8"), before);
+  // Execution still refuses the missing grant; selection is not permission.
+  const result = spawnSync(process.execPath, [cli, "run", "--project", project, "--inputs-json", '{"value":"test"}', "--output", "json"], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  options.hostDecisions.bindings["tool:example.connector/Fetch"].grants = ["network"];
+  options.hostDecisions.bindings["tool:example.connector/Fetch"].effect_contract = { kind: "none" };
+  assert.equal((await prepareProject({ ...options, mode: "write" })).status, "success");
+  const authorized = spawnSync(process.execPath, [cli, "run", "--project", project, "--inputs-json", '{"value":"test"}', "--output", "json"], { encoding: "utf8" });
+  assert.equal(authorized.status, 0, authorized.stdout + authorized.stderr);
+  assert.equal(JSON.parse(authorized.stdout).result, "test");
 });
 
 test("an exported strategy composes a packaged agent without widening its callers or capabilities", async t => {
@@ -131,7 +219,7 @@ test("one author manifest covers contextual and executable skills, CLI check and
   assert.equal(JSON.parse(checked.stdout).packages[0].requirements.contexts[0], "review");
   await assert.rejects(packPackage(path, { output: join(root, "pack.tar.gz") }), { code: "PackagePublicationMetadataMissing" });
   const missing = join(root, "missing"); mkdirSync(missing);
-  await assert.rejects(checkPackage(missing), /ENOENT/);
+  await assert.rejects(checkPackage(missing), { code: "PackageFileMissing" });
   for (const [field, value, code] of [["grants", ["network"], "PackageAuthorityFieldForbidden"], ["files", {}, "PackageSchemaMismatch"], ["dependencies", { "acme.dep": "^1.0.0" }, "PackageDependencyInvalid"]]) {
     manifest(path, m => { m[field] = value; });
     await assert.rejects(checkPackage(path), { code });

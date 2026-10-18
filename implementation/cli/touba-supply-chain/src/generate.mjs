@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileS
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadSupplyChainArtifacts, resolveExecutable, sha256Text, SUPPLY_CHAIN_LOCK_SCHEMA_VERSION, validateSupplyChainArtifacts } from "./validate.mjs";
+import { localImportClosure } from "./local-imports.mjs";
 
 const dependencyNames = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"];
 const posix = (value) => value.split(path.sep).join("/");
@@ -65,7 +66,7 @@ export function generateSupplyChainLock(options) {
     const argument = index === "command" ? command : handler.args?.[index];
     if (typeof argument !== "string" || argument.startsWith("-")) throw new Error(`${toolRef}: select the actual entrypoint with --entrypoint-arg`);
     const entrypoint = path.resolve(cwd, argument);
-    files.add(entrypoint);
+    for (const file of localImportClosure(entrypoint)) files.add(file);
     lock.handlers.push({
       tool_ref: toolRef, path: relativeFile(root, entrypoint),
       command: handler.command, cwd: handler.cwd ?? ".", args: handler.args ?? [], digest: digest(entrypoint),
@@ -93,7 +94,7 @@ export function main(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help") {
-      process.stdout.write("Usage: touba supply-chain generate --air <program.air.json> [--air <module.air.json> ...] [--manifest <touba.manifest.json>] --out <touba.lock.json> [--package-root <relative-dir>] [--file <package-relative-file> ...] [--entrypoint-arg <index|command>] [--sdk-metadata-json <object>]\nThe lock remains pending review. No existing file is overwritten. Add imported local files with --file; no dependency audit or command semantics are inferred.\n");
+      process.stdout.write("Usage: touba supply-chain generate --air <program.air.json> [--air <module.air.json> ...] [--manifest <touba.manifest.json>] --out <touba.lock.json> [--package-root <relative-dir>] [--file <package-relative-file> ...] [--entrypoint-arg <index|command>] [--sdk-metadata-json <object>]\nThe lock remains pending review. No existing file is overwritten. Literal local JavaScript imports are included transitively; computed imports are refused. Add other assets with --file. Bare dependencies require their dependency lock; this is not a vulnerability audit.\n");
       return;
     }
     if (!keys[flag] && flag !== "--file") throw new Error(`unknown option ${flag}`);

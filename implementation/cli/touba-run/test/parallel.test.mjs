@@ -306,8 +306,19 @@ test("parallel ask answers are occurrence-specific, journaled, and never silentl
     "        ask\n            with prompt as request\n            into result\n"));
   const config = { entryRef: "strategy:parallel.review/Run", inputs: { incidents: ["a", "b"] } };
   const missing = await executeAirDocument(document, config);
-  assert.equal(missing.status, "failure");
-  assert.equal(missing.reason, "ParallelUserInputRequired");
+  assert.equal(missing.status, "stopped");
+  assert.equal(missing.reason, "user_input_pending");
+  assert.ok(missing.checkpoint.pending_interactions.length);
+  let resumed = missing;
+  for (let i = 0; resumed.checkpoint && i < 8; i++) {
+    const checkpoint = JSON.parse(JSON.stringify(resumed.checkpoint));
+    const input = checkpoint.pending_interactions?.[0];
+    resumed = await executeAirDocument(document, { ...config, inputs: undefined, parallelResumeCheckpoint: checkpoint,
+      userInputs: input ? { [input.interaction_ref]: input.prompt + "?" } : {},
+      humanApprovalDecisions: Object.fromEntries((checkpoint.pending_approvals ?? []).map(p => [p.approval_ref, "approved"])) });
+  }
+  assert.equal(resumed.status, "success", resumed.reason);
+  assert.deepEqual(resumed.result, ["a?", "b?"]);
   const seen = [];
   const userInputProvider = async request => {
     seen.push(request.interactionRef); await delay(2); return request.prompt + "!";

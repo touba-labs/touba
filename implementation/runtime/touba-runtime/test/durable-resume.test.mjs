@@ -958,6 +958,43 @@ test("requires a valid preavailable human decision and persists its bounded ledg
   assert.match(readyGive.decisions_consumed[0].decision_digest, /^sha256:[0-9a-f]{64}$/u);
 });
 
+test("durable execution preserves constrained signer history across a crash between approvals", async () => {
+  const document = humanDocument();
+  const graph = document.execution_graphs[0];
+  graph.nodes[0].approval_policy = { role: "finance", distinct_from: "previous" };
+  graph.nodes.splice(1, 0, { ...structuredClone(graph.nodes[0]), id: "approve_again", approval_ref: "approval:second" });
+  graph.edges = [{ from_node_id: "approve", to_node_id: "approve_again", role: "next" },
+    { from_node_id: "approve_again", to_node_id: "give", role: "next" }];
+  const journal = journalAdapter();
+  let checkpoint;
+  const authority = subject => ({ request, decision }) => ({ request_id: request.request_id,
+    run_id: request.run_id, decision, subject_ref: subject, roles: ["finance"] });
+  const options = { entryRef: "skill:test/ApproveFlow", runId: "run:signers", operationId: "operation:signers",
+    effectScopeId: "operation:signers",
+    effectJournal: journal.adapter, humanApprovalAuthority: authority("employee:one"),
+    humanApprovalDecisions: new Map(["approval:test", "approval:second"].map(ref =>
+      [ref, { decision: "approved", evidence_ref: "host-evidence" }])) };
+  await assert.rejects(executeAirDocument(document, { ...options, executionCheckpointObserver: snapshot => {
+    if (snapshot.checkpoint.cursor.node_id === "approve_again" && snapshot.checkpoint.cursor.phase === "ready") {
+      checkpoint = structuredClone(snapshot.checkpoint);
+      throw new Error("crash between signatures");
+    }
+  } }), /crash between signatures/u);
+  assert.equal(checkpoint.approval_state.receipts[0].subject_ref, "employee:one");
+  const denied = await executeAirDocument(document, { ...options, executionResumeCheckpoint: checkpoint,
+    executionCheckpointObserver: () => {} });
+  assert.equal(denied.reason, "HumanApprovalSignerConflict");
+  const accepted = await executeAirDocument(document, { ...options, executionResumeCheckpoint: checkpoint,
+    humanApprovalAuthority: authority("employee:two"), executionCheckpointObserver: () => {} });
+  assert.equal(accepted.status, "success", JSON.stringify(accepted));
+  const incomplete = structuredClone(checkpoint);
+  delete incomplete.approval_state;
+  const { checkpoint_digest, ...content } = incomplete;
+  incomplete.checkpoint_digest = canonicalDigest(content);
+  await assert.rejects(executeAirDocument(document, { ...options, executionResumeCheckpoint: incomplete,
+    executionCheckpointObserver: () => {} }), { code: "HumanApprovalCheckpointIncompatible" });
+});
+
 test("refuses a removed or changed consumed human decision as current authority", async () => {
   const initialJournal = journalAdapter();
   let initialCheckpoint;

@@ -256,7 +256,10 @@ for (const [retryMode, expectedSecondCode] of [
       const journal = journalAdapter();
       const manifest = effectManifest(timeoutHandlerScript(callsPath), {
         retryMode,
-        timeoutMs: 500,
+        // Include process startup under concurrent CI load; the handler stays
+        // alive indefinitely after recording dispatch, so this still proves
+        // a real timeout and the absence of a second external dispatch.
+        timeoutMs: 2000,
       });
       const options = {
         entryRef: "skill:test/CreateFlow",
@@ -290,7 +293,7 @@ test("retries an unknown idempotency_key effect with one identity and a new atte
     const journal = journalAdapter();
     const manifest = effectManifest(timeoutThenSuccessHandlerScript(callsPath), {
       retryMode: "idempotency_key",
-      timeoutMs: 500,
+      timeoutMs: 2000,
     });
     const options = {
       entryRef: "skill:test/CreateFlow",
@@ -725,7 +728,7 @@ function timeoutHandlerScript(callsPath) {
     process.stdin.on("end", () => {
       JSON.parse(input);
       fs.appendFileSync(${JSON.stringify(callsPath)}, "called\\n");
-      setTimeout(() => {}, 1000);
+      setInterval(() => {}, 1000);
     });
   `;
 }
@@ -742,7 +745,7 @@ function timeoutThenSuccessHandlerScript(callsPath) {
       try { count = fs.readFileSync(${JSON.stringify(callsPath)}, "utf8").trim().split("\\n").filter(Boolean).length; } catch {}
       fs.appendFileSync(${JSON.stringify(callsPath)}, "called\\n");
       if (count === 0) {
-        setTimeout(() => {}, 1000);
+        setInterval(() => {}, 1000);
         return;
       }
       process.stdout.write(JSON.stringify({

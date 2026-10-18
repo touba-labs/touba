@@ -15,6 +15,7 @@ tool ReadProjectKnowledge
     requires memory_read
 
 skill UseProjectKnowledge
+    description "Read project knowledge within the declared scope."
     takes query as Query
     gives KnowledgeResult
     uses ReadProjectKnowledge
@@ -26,13 +27,19 @@ skill UseProjectKnowledge
         give result
 
 agent Researcher
+    takes query as Query
+    gives KnowledgeResult
     responsibility "Fulfill the declared Researcher responsibility using only authorized capabilities."
     uses UseProjectKnowledge
     memory ProjectKnowledge read
     callable_by strategy RunResearch
 
 strategy RunResearch
+    takes query as Query
+    gives KnowledgeResult
     uses Researcher
     do
         Researcher
-        give KnowledgeResult
+            with query as query
+            into result
+        give result

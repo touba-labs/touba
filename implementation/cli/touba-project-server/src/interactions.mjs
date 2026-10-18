@@ -635,7 +635,7 @@ function loadInteractionAssetStore(path, filter) {
   }
 }
 
-export function auditInteractionAssets(path) { loadInteractionAssetStore(path); }
+export function auditInteractionAssets(path) { return loadInteractionAssetStore(path); }
 
 function assertAssetMetadata({ buffer, contentKind, mediaType, name }) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {

@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { canonicalizeMachineValue } from "../../../contracts/machine/contracts.mjs";
 import { RuntimeFailure, ToubaRuntimeError } from "./runtime-errors.mjs";
+import { validateApprovalState } from "./human-approval-policy.mjs";
 
 export const EXECUTION_CHECKPOINT_VERSION = "touba-run-checkpoint-v1";
 const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-human-approval-checkpoint-v1";
@@ -28,6 +29,7 @@ const ROOT_FIELDS = new Set([
   "runtime_state",
   "pending_dispatch",
   "decisions_consumed",
+  "approval_state",
   "trace_state",
 ]);
 
@@ -129,6 +131,10 @@ export function validateExecutionCheckpoint(value) {
   validateRuntimeState(checkpoint.runtime_state);
   validatePendingDispatch(checkpoint.pending_dispatch, checkpoint);
   validateDecisions(checkpoint.decisions_consumed);
+  if (checkpoint.approval_state !== undefined) {
+    try { validateApprovalState(checkpoint.approval_state); }
+    catch { throw invalidCheckpoint("approval_state is invalid"); }
+  }
   validateTraceState(checkpoint.trace_state);
 
   const expectedDigest = digestCheckpoint(checkpoint);

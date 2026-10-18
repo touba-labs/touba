@@ -306,6 +306,31 @@
         },
         "source_ref": {
           "type": "object"
+        },
+        "approval_policy": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "role": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Trimmed identifier, at most 128 UTF-8 bytes; byte length is checked by the machine validator."
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2592000000
+            },
+            "distinct_from": {
+              "enum": [
+                "initiator",
+                "previous",
+                "initiator_and_previous"
+              ]
+            }
+          }
         }
       },
       "allOf": [
@@ -350,6 +375,20 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "required": [
+              "approval_policy"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "const": "human_approval"
+              }
+            }
+          }
         }
       ]
     },
@@ -375,7 +414,8 @@
             "loop_next",
             "loop_exit",
             "failure",
-            "fallback"
+            "fallback",
+            "expired"
           ]
         }
       }

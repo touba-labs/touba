@@ -27,10 +27,10 @@ function keys(value, allowed, at) {
 export function packageDigest(bytes) { return `sha256:${createHash("sha256").update(bytes).digest("hex")}`; }
 
 // Display labels are not ownership credentials. Normalize only what the author
-// explicitly supplies; never silently transliterate or remove punctuation.
+// explicitly supplies. Normalize Latin accents; punctuation is still rejected.
 export function packageSlug(value) {
-  const slug = typeof value === "string" ? value.trim().toLowerCase().replace(/\s+/g, "-") : "";
-  requireValue(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(slug) && slug.length <= 80, "PackageNameInvalid", "use letters a-z, digits and single hyphens; spaces become hyphens");
+  const slug = typeof value === "string" ? value.trim().toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/\s+/g, "-") : "";
+  requireValue(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(slug) && slug.length <= 80, "PackageNameInvalid", "use letters a-z, digits and single hyphens; Latin accents are normalized and spaces become hyphens");
   packagePath(slug);
   requireValue(slug !== "packages", "PackageReservedName", "packages is reserved for managed dependencies");
   return slug;
@@ -49,7 +49,12 @@ export function packageFile(root, path) {
   let current = root;
   for (const part of path.split("/")) {
     current = join(current, part);
-    const stat = lstatSync(current);
+    let stat;
+    try { stat = lstatSync(current); }
+    catch (error) {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") throw packageError("PackageFileMissing", `declared package resource is missing: ${path}`);
+      throw error;
+    }
     requireValue(!stat.isSymbolicLink(), "PackageSymlinkForbidden", `symlinks are not package content: ${path}`);
     requireValue(stat.isDirectory() || stat.isFile(), "PackageFileTypeInvalid", `unsupported file type: ${path}`);
   }

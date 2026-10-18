@@ -71,7 +71,11 @@ importers:
         specifier: workspace:*
         version: link:../touba-supply-chain
 
-  cli/touba-supply-chain: {}
+  cli/touba-supply-chain:
+    dependencies:
+      acorn:
+        specifier: 8.19.0
+        version: 8.19.0
 
   cli/touba-trigger-service:
     dependencies:
@@ -389,6 +393,11 @@ packages:
   '@vscode/vsce@3.9.1':
     resolution: {integrity: sha512-MPn5p+DoudI+3GfJSpAZZraE1lgLv0LcwbH3+xy7RgEhty3UIkmUMUA+5jPTDaxXae00AnX5u77FxGM8FhfKKA==}
     engines: {node: '>= 20'}
+    hasBin: true
+
+  acorn@8.19.0:
+    resolution: {integrity: sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw==}
+    engines: {node: '>=0.4.0'}
     hasBin: true
 
   agent-base@7.1.4:
@@ -1831,6 +1840,8 @@ snapshots:
       keytar: 7.9.0
     transitivePeerDependencies:
       - supports-color
+
+  acorn@8.19.0: {}
 
   agent-base@7.1.4: {}
 

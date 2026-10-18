@@ -11,7 +11,7 @@ import { runAgentDecisionLoop, appendAgentCapabilityObservation } from "./agent-
 import { createInvocationScope, snapshotInvocationValue } from "./invocation-scope.mjs";
 import { createParallelRuntime, parallelBoundary, parallelBudget, parallelExternal,
   parallelHuman, parallelRecord, trackParallelTransport, runParallelGroup,
-  pendingParallelApprovals, validateParallelState, assertParallelOutcomesKnown, ParallelSuspend } from "./parallel-execution.mjs";
+  pendingParallelApprovals, pendingParallelInputs, validateParallelState, assertParallelOutcomesKnown, ParallelSuspend } from "./parallel-execution.mjs";
 import {
   AIR_CAPABILITY_PROFILE,
   AIR_JSON_PROFILE,
@@ -25,6 +25,8 @@ import {
 } from "./authority.mjs";
 import { normalizeInternalCompensationContext } from "./compensation-context.mjs";
 import { executeGraphTraversal } from "./graph-execution.mjs";
+import { createApprovalRuntime, approvalStateSnapshot, approvalRequest, approvalDeadlineDue,
+  authorizeApprovalDecision, completeApprovalOccurrence } from "./human-approval-policy.mjs";
 import {
   EFFECT_JOURNAL_SCHEMA_VERSION,
   assertJsonPortable,
@@ -72,6 +74,7 @@ import {
   validateHumanApprovalCheckpointCompatibility,
   validateHumanCheckpointBudgetState,
   validateHumanCheckpointContinuation,
+  checkpointKindError,
   validateCheckpointScope,
   MAX_INVOCATION_FRAMES,
 } from "./human-approval-checkpoints.mjs";
@@ -387,8 +390,9 @@ function createExecutionContext(document, entryRef, options = {}) {
     );
   }
   const containsParallel = document.execution_graphs.some(graph => graph.nodes.some(node => node.kind === "parallel_call"));
+  const containsApprovalPolicy = document.execution_graphs.some(graph => graph.nodes.some(node => node.approval_policy));
   const runId = options.runId ?? options.run_id ?? executionResumeCheckpoint?.run_id ?? humanApprovalResumeCheckpoint?.run_id
-    ?? (containsParallel ? `run-${randomUUID()}` : "run-1");
+    ?? (containsParallel || containsApprovalPolicy ? `run-${randomUUID()}` : "run-1");
   const trace = new TraceBuilder(
     document,
     entryRef,
@@ -422,6 +426,7 @@ function createExecutionContext(document, entryRef, options = {}) {
     humanApprovalDecisions: normalizeHumanApprovalDecisions(
       options.humanApprovalDecisions ?? options.humanApprovals ?? {},
     ),
+    approvalRuntime: createApprovalRuntime(document, options, humanApprovalResumeCheckpoint ?? executionResumeCheckpoint),
     userInputs: normalizeUserInputs(options.userInputs ?? options.interactionInputs ?? {}),
     userInputProvider: normalizeUserInputProvider(options.userInputProvider),
     dispatchAuthorityProvider: normalizeDispatchAuthorityProvider(
@@ -565,8 +570,10 @@ function validateConfiguredInteractionReferences(document, context) {
       throw new RuntimeFailure("approval decision must be approved, rejected, expired or cancelled", { approvalRef: ref }, "InvalidHumanApprovalDecision");
     }
   }
+  const parallelInputs = new Set(context.humanApprovalResumeCheckpoint?.kind === "parallel_group"
+    ? pendingParallelInputs(context.humanApprovalResumeCheckpoint.parallel_state).map(entry => entry.interaction_ref) : []);
   for (const ref of context.userInputs.keys()) {
-    if (!interactions.has(ref)) throw new RuntimeFailure("user input must reference a declared ask interaction", {}, "UnknownInteractionReference");
+    if (!interactions.has(ref) && !parallelInputs.has(ref)) throw new RuntimeFailure("user input must reference a declared ask interaction or a pending parallel occurrence", {}, "UnknownInteractionReference");
   }
   for (const ref of context.agentDecisions.keys()) {
     if (!context.indexes.agents.has(ref)) throw new RuntimeFailure("agent decision must reference an agent in the program", {}, "UnknownAgentDecisionReference");
@@ -1718,7 +1725,8 @@ async function executeHumanApprovalResumeCheckpoint(document, entryRef, context)
     );
   }
   if (checkpoint.kind === "parallel_group") {
-    return resumeParallelCheckpoint(document, entryRef, context, checkpoint);
+    try { return await resumeParallelCheckpoint(document, entryRef, context, checkpoint); }
+    catch (error) { throw checkpointKindError(checkpoint, error); }
   }
   if (checkpoint.kind === "agent_human_review") {
     return executeAgentHumanReviewResumeCheckpoint(document, entryRef, context, checkpoint);
@@ -1791,7 +1799,8 @@ function validateHumanApprovalResumeCheckpoint(document, entryRef, context, chec
       "HumanApprovalCheckpointIncompatible",
     );
   }
-  if (!context.humanApprovalDecisions.has(checkpoint.approval_ref)) {
+  if (!context.humanApprovalDecisions.has(checkpoint.approval_ref)
+    && !approvalDeadlineDue(context.approvalRuntime.state.requests[checkpoint.approval_ref])) {
     throw new RuntimeFailure(
       "human approval resume requires an explicit decision",
       { entryRef, approvalRef: checkpoint.approval_ref },
@@ -1889,7 +1898,7 @@ async function executeAgentHumanReviewResumeCheckpoint(document, entryRef, conte
 
   const agent = requireDefinition(context.indexes.agents, checkpoint.agent_ref);
   const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
-  const reviewResult = resumeAgentHumanReviewDecision(agent, checkpoint, context, loopState.stepIndex);
+  const reviewResult = await resumeAgentHumanReviewDecision(agent, checkpoint, context, loopState.stepIndex);
   const observations = [
     ...loopState.observations,
     {
@@ -2181,10 +2190,12 @@ async function resumeInvocationStack(context, executeLeaf) {
   return result;
 }
 
-function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
+async function resumeAgentHumanReviewDecision(agent, checkpoint, context, stepIndex) {
   const approvalRef = checkpoint.approval_ref;
-  const humanDecision = context.humanApprovalDecisions.get(approvalRef);
+  const request = approvalRequest(context.approvalRuntime, context.trace.runId, approvalRef, null);
+  const humanDecision = await authorizeApprovalDecision(context.approvalRuntime, request, context.humanApprovalDecisions.get(approvalRef), { replay: true });
   context.humanApprovalDecisions.delete(approvalRef);
+  completeApprovalOccurrence(context.approvalRuntime, approvalRef);
   const transition = classifyHumanApprovalDecision(humanDecision);
   if (!transition.valid) {
     const error = new RuntimeFailure(
@@ -2261,6 +2272,7 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
   const checkpoint = {
     checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
     kind: "human_approval",
+    ...(context.approvalRuntime.enabled ? { approval_state: approvalStateSnapshot(context.approvalRuntime) } : {}),
     scope: "graph_stack",
     run_id: context.trace.runId,
     entry_ref: context.entryRef,
@@ -2329,6 +2341,7 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
   const checkpoint = {
     checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
     kind: "agent_human_review",
+    ...(context.approvalRuntime.enabled ? { approval_state: approvalStateSnapshot(context.approvalRuntime) } : {}),
     scope: "agent_decision_loop",
     run_id: context.trace.runId,
     entry_ref: context.entryRef,
@@ -3424,15 +3437,15 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
   if (context.parallelBranch) {
     const ref = agentHumanReviewApprovalRef(agent.id, stepIndex);
     return parallelHuman(context, { approval_ref: ref, mode: "agent_review", agent_ref: agent.id,
-      review_prompt: decision.reviewPrompt ?? "Review the requested agent decision.", step_index: stepIndex }, value => {
+      review_prompt: decision.reviewPrompt ?? "Review the requested agent decision.", step_index: stepIndex }, (value, authorityRef) => {
       context.humanApprovalDecisions.set(ref, value);
-      return executeAgentHumanReviewBody(agent, decision, context, stepIndex, observations);
+      return executeAgentHumanReviewBody(agent, decision, context, stepIndex, observations, authorityRef);
     });
   }
   return executeAgentHumanReviewBody(agent, decision, context, stepIndex, observations);
 }
 
-function executeAgentHumanReviewBody(agent, decision, context, stepIndex, observations = []) {
+async function executeAgentHumanReviewBody(agent, decision, context, stepIndex, observations = [], authorityRef = null) {
   const approvalRef = agentHumanReviewApprovalRef(agent.id, stepIndex);
   const basePayload = compactPayload({
     approval_ref: approvalRef,
@@ -3452,7 +3465,9 @@ function executeAgentHumanReviewBody(agent, decision, context, stepIndex, observ
     payload: basePayload,
   });
 
-  const humanDecision = context.humanApprovalDecisions.get(approvalRef);
+  const request = approvalRequest(context.approvalRuntime, context.trace.runId, authorityRef ?? approvalRef, null);
+  const humanDecision = await authorizeApprovalDecision(context.approvalRuntime, request,
+    context.humanApprovalDecisions.get(approvalRef), { replay: authorityRef !== null });
   if (!humanDecision) {
     const checkpointSupport = agentHumanReviewCheckpointSupport(context, agent.id);
     if (
@@ -3497,6 +3512,7 @@ function executeAgentHumanReviewBody(agent, decision, context, stepIndex, observ
   });
   context.humanApprovalDecisions.delete(approvalRef);
   const transition = classifyHumanApprovalDecision(humanDecision);
+  if (authorityRef === null) completeApprovalOccurrence(context.approvalRuntime, approvalRef);
   if (!transition.valid) {
     throw new RuntimeFailure(
       `invalid human approval decision ${humanDecision} for ${approvalRef}`,
@@ -4345,7 +4361,6 @@ function activeSkillPackResourceRecord(context, pack, resource, agent, providerM
         resource_ref: resource.ref,
         resource_kind: resource.kind,
         reason: "script_content_not_loaded",
-        runtime_error_code: "SkillPackScriptExecutionForbidden",
       }),
     });
     return base;
@@ -4673,6 +4688,10 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
       error instanceof Error ? error.message : String(error),
       secretValuesForRedaction(context.secretStore),
     );
+    const localDecisionError = error?.name === "ToubaAgentDecisionProviderError"
+      && new Set(["DecisionHistoryBusy", "DecisionHistoryMismatch", "DecisionHistoryClosed",
+        "DecisionHistoryUnresolvedCall", "DecisionHistoryLimitExceeded", "ProviderContextWindowExceeded",
+        "DecisionHistorySummaryInvalid", "DecisionHistoryStorageUnsafe"]).has(error.code);
     const decisionError = error?.name === "ToubaAgentDecisionProviderError"
       && (new Set(["InvalidModelDecision", "IncompleteModelDecision", "InvalidAgentDecisionRequest",
         "UnsupportedDecisionTypeDescriptor", "DecisionHistoryBusy", "DecisionHistoryMismatch",
@@ -4687,9 +4706,9 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
         providerAttempt: attemptIndex,
         cause: message,
         provider_metadata: request.provider_metadata,
-        provider_error_code: decisionError ? error.code : outputError ? error.name : undefined,
+        provider_error_code: decisionError || localDecisionError ? error.code : outputError ? error.name : undefined,
       },
-      decisionError || outputError ? "AgentDecisionProviderSchemaViolation" : "AgentDecisionProviderUnavailable",
+      localDecisionError ? error.code : decisionError || outputError ? "AgentDecisionProviderSchemaViolation" : "AgentDecisionProviderUnavailable",
     );
   }
 }
@@ -7303,7 +7322,6 @@ function normalizeManifestBindingSandbox(toolRef, sandbox) {
     return Object.freeze({
       required: false,
       profile: "default",
-      box_name: "ToubaHandler",
     });
   }
   if (!sandbox || typeof sandbox !== "object" || Array.isArray(sandbox)) {
@@ -7311,7 +7329,7 @@ function normalizeManifestBindingSandbox(toolRef, sandbox) {
       toolRef,
     });
   }
-  const allowed = new Set(["required", "profile", "box_name"]);
+  const allowed = new Set(["required", "profile", "code_paths", "read_paths", "write_paths", "local_sockets"]);
   for (const key of Object.keys(sandbox)) {
     if (!allowed.has(key)) {
       throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding sandbox contains unknown fields", {
@@ -7325,20 +7343,24 @@ function normalizeManifestBindingSandbox(toolRef, sandbox) {
       toolRef,
     });
   }
-  if (sandbox.profile !== undefined && (typeof sandbox.profile !== "string" || sandbox.profile.trim() === "")) {
-    throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding sandbox.profile must be a non-empty string", {
+  if (sandbox.profile !== undefined && sandbox.profile !== "default") {
+    throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding sandbox.profile must be default", {
       toolRef,
     });
   }
-  if (sandbox.box_name !== undefined && (typeof sandbox.box_name !== "string" || sandbox.box_name.trim() === "")) {
-    throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding sandbox.box_name must be a non-empty string", {
-      toolRef,
-    });
+  const paths = {};
+  for (const key of ["code_paths", "read_paths", "write_paths", "local_sockets"]) {
+    if (sandbox[key] === undefined) continue;
+    if (!Array.isArray(sandbox[key]) || sandbox[key].length > 4096
+      || sandbox[key].some(path => typeof path !== "string" || !path || path.includes("\0") || path.length > 4096)) {
+      throw new ToubaRuntimeError("InvalidToolBindingManifest", `sandbox.${key} must be a bounded list of paths`, { toolRef });
+    }
+    paths[key] = Object.freeze([...new Set(sandbox[key])]);
   }
   return Object.freeze({
+    ...paths,
     required: sandbox.required === true,
     profile: sandbox.profile ?? "default",
-    box_name: sandbox.box_name ?? "ToubaHandler",
   });
 }
 
@@ -8170,6 +8192,7 @@ async function persistDurableExecutionCheckpoint(context, options = {}) {
     },
     pending_dispatch: durable.pendingDispatch,
     decisions_consumed: durable.decisionsConsumed,
+    ...(context.approvalRuntime.enabled ? { approval_state: approvalStateSnapshot(context.approvalRuntime) } : {}),
     trace_state: {
       prefix_digest: prefixDigest,
       next_sequence_index: context.trace.nextSequenceIndex(),
@@ -8239,9 +8262,11 @@ async function executeNode(graph, node, context) {
 
 function parallelCheckpoint(context, graph, node, state) {
   const pending = pendingParallelApprovals(state);
+  const inputs = pendingParallelInputs(state);
   const first = pending[0];
   const checkpoint = {
     checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION, kind: "parallel_group", scope: "parallel_group",
+    ...(context.approvalRuntime.enabled ? { approval_state: approvalStateSnapshot(context.approvalRuntime) } : {}),
     run_id: context.trace.runId, entry_ref: context.entryRef, module_ref: context.trace.airDocument.module.id,
     air_schema_version: context.trace.airDocument.air_schema_version, air_digest: airDocumentDigest(context.trace.airDocument),
     graph_ref: graph.id, node_id: node.id, call_stack: checkpointCallStack(context, first?.approval_ref ?? state.id),
@@ -8250,6 +8275,7 @@ function parallelCheckpoint(context, graph, node, state) {
     max_agent_steps: context.maxAgentSteps, max_loop_iterations: context.maxLoopIterations,
     ...(first ? { ...first.metadata, approval_ref: first.approval_ref,
       pending_approvals: pending.map(entry => ({ ...entry.metadata, approval_ref: entry.approval_ref })) } : {}),
+    ...(inputs.length ? { pending_interactions: inputs.map(({ interaction_ref, prompt }) => ({ interaction_ref, prompt })) } : {}),
     active_elapsed_ms: Math.ceil(activeElapsedMilliseconds(context)),
     effective_limits: Object.fromEntries([...context.budgetState.effectiveLimits].map(([kind, limit]) => [kind, limit.value])),
     budget_counters: { steps: context.budgetState.counters.steps, tool_calls: context.budgetState.counters.toolCalls,
@@ -8291,6 +8317,7 @@ async function resumeParallelCheckpoint(document, entryRef, context, checkpoint)
     context[key] = Math.min(context[key], checkpoint[field]);
   }
   const pending = pendingParallelApprovals(checkpoint.parallel_state);
+  const pendingInputs = pendingParallelInputs(checkpoint.parallel_state);
   for (const entry of pending) if (context.humanApprovalDecisions.has(entry.approval_ref)) {
     context.trace.push("human_approval_checkpoint_loaded", { payload: {
       checkpoint_schema_version: checkpoint.checkpoint_schema_version, kind: checkpoint.kind,
@@ -8298,13 +8325,18 @@ async function resumeParallelCheckpoint(document, entryRef, context, checkpoint)
       trace_prefix_digest: checkpoint.trace_prefix_digest,
     } });
   }
-  if (pending.length && !pending.some(entry => context.humanApprovalDecisions.has(entry.approval_ref))) {
+  if ((pending.length || pendingInputs.length) && !pending.some(entry => context.humanApprovalDecisions.has(entry.approval_ref)
+      || approvalDeadlineDue(context.approvalRuntime.state.requests[entry.approval_ref]))
+      && !pendingInputs.some(entry => context.userInputs.has(entry.interaction_ref))) {
     throw new RuntimeFailure("parallel resume requires a decision for a pending branch occurrence", {}, "HumanApprovalResumeDecisionRequired");
   }
-  // Refusal/expiry/cancellation terminates the group before any sibling starts.
+  // Validate every supplied decision before any sibling dispatches an effect.
+  const decisions = new Map();
   for (const entry of pending) {
-    const decision = context.humanApprovalDecisions.get(entry.approval_ref);
-    if (decision && decision !== "approved") {
+    const request = approvalRequest(context.approvalRuntime, context.trace.runId, entry.approval_ref, entry.metadata.approval_policy);
+    const decision = await authorizeApprovalDecision(context.approvalRuntime, request, context.humanApprovalDecisions.get(entry.approval_ref), { replay: true });
+    decisions.set(entry.approval_ref, decision);
+    if (decision && decision !== "approved" && !(decision === "expired" && entry.metadata.expiration_branch === true)) {
       context.trace.push("human_approval_decided", { payload: { approval_ref: entry.approval_ref, decision } });
       context.trace.push(classifyHumanApprovalDecision(decision).terminalEvent, { payload: { approval_ref: entry.approval_ref, decision } });
       throw new RuntimeStop("parallel approval refused", { reason: `human_approval_${decision}` });
@@ -8312,20 +8344,31 @@ async function resumeParallelCheckpoint(document, entryRef, context, checkpoint)
   }
   applyHumanApprovalResumeCheckpoint(context, checkpoint);
   for (const entry of pending) {
-    if (context.humanApprovalDecisions.get(entry.approval_ref) === "approved") {
-      context.trace.push("human_approval_decided", { payload: { approval_ref: entry.approval_ref, decision: "approved" } });
-      context.trace.push("human_approval_resumed", { payload: { approval_ref: entry.approval_ref, group_id: checkpoint.parallel_state.id } });
+    const decision = decisions.get(entry.approval_ref);
+    if (decision) {
+      context.trace.push("human_approval_decided", { payload: { approval_ref: entry.approval_ref, decision } });
+      context.trace.push(decision === "approved" ? "human_approval_resumed" : "human_approval_expired", { payload: { approval_ref: entry.approval_ref, group_id: checkpoint.parallel_state.id } });
       entry.state = "done";
-      entry.value = "approved";
+      entry.value = decision;
       context.humanApprovalDecisions.delete(entry.approval_ref);
     }
   }
-  if (pendingParallelApprovals(checkpoint.parallel_state).length) {
+  for (const entry of pendingInputs) {
+    if (!context.userInputs.has(entry.interaction_ref)) continue;
+    const answer = context.userInputs.get(entry.interaction_ref);
+    if (typeof answer !== "string") throw new RuntimeFailure("parallel ask input must be Text", {}, "InvalidUserInput");
+    assertNoSecretValueInUserInteraction(answer, context, entry.interaction_ref, "ask");
+    entry.value = { edgeRole: "next", result: answer };
+    entry.state = "done";
+    context.userInputs.delete(entry.interaction_ref);
+    context.trace.push("user_interaction_answered", { payload: { interaction_ref: entry.interaction_ref, mode: "ask" } });
+  }
+  if (pendingParallelApprovals(checkpoint.parallel_state).length || pendingParallelInputs(checkpoint.parallel_state).length) {
     context.pendingHumanApprovalCheckpoint = parallelCheckpoint(context, graph, node, checkpoint.parallel_state);
     if (context.parallelRuntime.observer) await context.parallelRuntime.observer({
       checkpoint: structuredClone(context.pendingHumanApprovalCheckpoint), trace: context.trace.document(),
     });
-    throw new RuntimeStop("parallel group awaits remaining approvals", { reason: "human_approval_pending" });
+    throw new RuntimeStop("parallel group awaits remaining human responses", { reason: pendingParallelApprovals(checkpoint.parallel_state).length ? "human_approval_pending" : "user_input_pending" });
   }
   return resumeInvocationStack(context, async () => {
     const outcome = await executeParallelNode(graph, node, context, checkpoint.parallel_state);
@@ -8437,7 +8480,7 @@ async function executeParallelNode(graph, node, context, restored = null) {
       const checkpoint = parallelCheckpoint(context, graph, node, state);
       context.pendingHumanApprovalCheckpoint = checkpoint;
       await control.persist();
-      throw new RuntimeStop("parallel group awaits approval", { reason: "human_approval_pending" });
+      throw new RuntimeStop("parallel group awaits a human response", { reason: pendingParallelApprovals(state).length ? "human_approval_pending" : "user_input_pending" });
     }
     context.trace.push("parallel_join_failed", { airRef: airRefForNode(graph, node), payload: { group_id: state.id,
       branch_id: control.failedBranch ?? null, runtime_error_code: (control.failure ?? error).code } });
@@ -8498,15 +8541,17 @@ function executeHumanApprovalNode(graph, node, context) {
     const ref = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
     return parallelHuman(context, { approval_ref: ref, mode: requiredApprovalMode(node),
       caller_ref: graph.owner_ref, context_refs: node.context_refs ?? [],
-      context_values: (node.context_refs ?? []).map(ref => resolveHandle(ref, context, graph)) }, value => {
+      ...(node.approval_policy ? { approval_policy: node.approval_policy } : {}),
+      ...(nextNodeId(graph, node.id, "expired") ? { expiration_branch: true } : {}),
+      context_values: (node.context_refs ?? []).map(ref => resolveHandle(ref, context, graph)) }, (value, authorityRef) => {
       context.humanApprovalDecisions.set(ref, value);
-      return executeHumanApprovalNodeBody(graph, node, context);
+      return executeHumanApprovalNodeBody(graph, node, context, authorityRef);
     });
   }
   return executeHumanApprovalNodeBody(graph, node, context);
 }
 
-function executeHumanApprovalNodeBody(graph, node, context) {
+async function executeHumanApprovalNodeBody(graph, node, context, authorityRef = null) {
   const approvalRef = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
   const mode = requiredApprovalMode(node);
   const contextRefs = node.context_refs ?? [];
@@ -8526,7 +8571,9 @@ function executeHumanApprovalNodeBody(graph, node, context) {
     payload: basePayload,
   });
 
-  const decision = context.humanApprovalDecisions.get(approvalRef);
+  const request = approvalRequest(context.approvalRuntime, context.trace.runId, authorityRef ?? approvalRef, node.approval_policy);
+  const decision = await authorizeApprovalDecision(context.approvalRuntime, request,
+    context.humanApprovalDecisions.get(approvalRef), { replay: authorityRef !== null || context.humanApprovalResumeCheckpoint?.approval_ref === approvalRef });
   if (!decision) {
     const pausePayload = compactPayload({
       ...basePayload,
@@ -8619,6 +8666,7 @@ function executeHumanApprovalNodeBody(graph, node, context) {
   // A host decision authorizes one occurrence, never future loop iterations
   // or later invocations of the same source approval node.
   context.humanApprovalDecisions.delete(approvalRef);
+  if (authorityRef === null) completeApprovalOccurrence(context.approvalRuntime, approvalRef);
   context.trace.push("human_approval_decided", {
     airRef: airRefForNode(graph, node),
     payload: {
@@ -8650,6 +8698,10 @@ function executeHumanApprovalNodeBody(graph, node, context) {
       decision,
     },
   });
+  if (decision === "expired" && nextNodeId(graph, node.id, "expired")) {
+    context.values.set(valueHandle(node.result_binding), decision);
+    return { edgeRole: "expired", result: decision };
+  }
   return {
     done: true,
     status: "stopped",
@@ -8795,7 +8847,11 @@ async function executeUserInteractionNode(graph, node, context) {
       });
     }
     if (context.parallelBranch) {
-      throw new RuntimeFailure("parallel ask requires an occurrence-specific host answer or userInputProvider", {}, "ParallelUserInputRequired");
+      context.parallelOperation.state = "waiting";
+      context.parallelOperation.interaction_ref = interactionRef;
+      context.parallelOperation.prompt = text;
+      context.parallelBranch.control.paused = true;
+      throw new ParallelSuspend();
     }
     context.pendingInteraction = { interaction_ref: interactionRef, prompt: text };
     return {
@@ -9689,7 +9745,10 @@ function evaluateTextConversion(expression, context, graph) {
   if (typeRef === BUILTIN_FLOAT) {
     return String(validateFloatResult(requireNumber(value, expression, "text"), expression));
   }
-  throw new RuntimeFailure("text(...) accepts only Text, Boolean, Int or Float values", {
+  if (Array.isArray(context.indexes.types.get(typeRef)?.variants) && isValueCompatibleWithType(value, typeRef, context)) {
+    return value;
+  }
+  throw new RuntimeFailure("text(...) accepts only Text, Boolean, Int, Float or valid enum values", {
     expressionId: expression.id,
     typeRef,
   });
@@ -9767,6 +9826,14 @@ function evaluateBinaryExpression(expression, context, graph) {
         throw new RuntimeFailure("division by zero", { expressionId: expression.id });
       }
       return validateFloatResult(requireNumber(left, expression, operator) / divisor, expression);
+    }
+    case "integer_divide": {
+      const dividend = requireInteger(left, expression, operator);
+      const divisor = requireInteger(right, expression, operator);
+      if (divisor === 0) {
+        throw new RuntimeFailure("integer division by zero", { expressionId: expression.id });
+      }
+      return validateIntResult(Number(BigInt(dividend) / BigInt(divisor)), expression);
     }
     case "modulo": {
       const dividend = requireInteger(left, expression, operator);
@@ -10110,9 +10177,6 @@ function normalizeAgentDecisionRecord(agentRef, decision, options = {}) {
 }
 
 function normalizeHumanApprovalDecisions(decisions) {
-  if (decisions instanceof Map) {
-    return new Map(decisions);
-  }
   if (!decisions || typeof decisions !== "object" || Array.isArray(decisions)) {
     throw new ToubaRuntimeError(
       "InvalidHumanApprovalDecisions",
@@ -10120,7 +10184,7 @@ function normalizeHumanApprovalDecisions(decisions) {
     );
   }
   const normalized = new Map();
-  for (const [approvalRef, record] of Object.entries(decisions)) {
+  for (const [approvalRef, record] of (decisions instanceof Map ? decisions : Object.entries(decisions))) {
     if (typeof approvalRef !== "string" || approvalRef.trim() === "") {
       throw new ToubaRuntimeError(
         "InvalidHumanApprovalDecisions",

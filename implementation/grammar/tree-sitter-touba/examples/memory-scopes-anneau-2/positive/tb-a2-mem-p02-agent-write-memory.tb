@@ -15,6 +15,7 @@ tool WriteProjectKnowledge
     requires memory_write
 
 skill StoreProjectKnowledge
+    description "Store project knowledge within the declared scope."
     takes entry as KnowledgeEntry
     gives WriteResult
     uses WriteProjectKnowledge
@@ -26,13 +27,19 @@ skill StoreProjectKnowledge
         give result
 
 agent Curator
+    takes entry as KnowledgeEntry
+    gives WriteResult
     responsibility "Fulfill the declared Curator responsibility using only authorized capabilities."
     uses StoreProjectKnowledge
     memory ProjectKnowledge write
     callable_by strategy RunCuration
 
 strategy RunCuration
+    takes entry as KnowledgeEntry
+    gives WriteResult
     uses Curator
     do
         Curator
-        give WriteResult
+            with entry as entry
+            into result
+        give result

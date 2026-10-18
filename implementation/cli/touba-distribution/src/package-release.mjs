@@ -67,6 +67,10 @@ export function packageRelease(options = {}) {
   rmSync(plan.releaseDir, { recursive: true, force: true });
   mkdirSync(plan.releaseRoot, { recursive: true });
   cpSync(toolchainRoot, join(plan.releaseDir, "touba-toolchain"), { recursive: true });
+  mkdirSync(join(plan.releaseDir, "support"));
+  for (const file of ["install-toolchain-payload.mjs", "build-identity.mjs"]) {
+    cpSync(join(currentDir, file), join(plan.releaseDir, "support", file));
+  }
   writeInstallScript(plan);
   writeUninstallScript(plan);
   writeInstallPowerShell(plan);
@@ -291,8 +295,9 @@ if [ -e "$PREFIX/touba-toolchain" ] && [ "$FORCE" != "1" ]; then
 fi
 
 mkdir -p "$PREFIX/bin"
-rm -rf "$PREFIX/touba-toolchain"
-cp -R "$SOURCE" "$PREFIX/touba-toolchain"
+set -- --source "$SOURCE" --prefix "$PREFIX"
+if [ "$FORCE" = "1" ]; then set -- "$@" --force; fi
+"$SOURCE/bin/node" "$SCRIPT_DIR/support/install-toolchain-payload.mjs" "$@"
 
 cat > "$PREFIX/bin/touba" <<EOF
 #!/bin/sh
@@ -453,10 +458,10 @@ if ((Test-Path $InstallRoot) -and -not $Force) {
 }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Prefix "bin") | Out-Null
-if (Test-Path $InstallRoot) {
-  Remove-Item -Recurse -Force $InstallRoot
-}
-Copy-Item -Recurse -Force $Source $InstallRoot
+$InstallArguments = @("--source", $Source, "--prefix", $Prefix)
+if ($Force) { $InstallArguments += "--force" }
+& (Join-Path $Source "bin\\node.exe") (Join-Path $ScriptDir "support\\install-toolchain-payload.mjs") @InstallArguments
+if ($LASTEXITCODE -ne 0) { throw "Touba payload transition refused; existing builds are preserved" }
 
 $Launcher = @"
 ${launcher}

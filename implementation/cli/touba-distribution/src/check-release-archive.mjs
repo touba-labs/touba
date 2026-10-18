@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { npmCommand } from "./npm-command.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
+import { installToolchainPayload } from "./install-toolchain-payload.mjs";
 
 import {
   createReleasePlan,
@@ -118,6 +119,32 @@ function checkReleaseArchive(plan) {
     if (!update.stdout.includes("Expected archive:")) {
       throw new Error("update command did not report the expected archive");
     }
+
+    const stateProject = join(workspace, "pending operation");
+    const stateProbe = fileURLToPath(new URL("./state-transition-smoke.mjs", import.meta.url));
+    runCommand(join(installedRoot, "bin", process.platform === "win32" ? "node.exe" : "node"),
+      [stateProbe, installedRoot, stateProject, "pause"], { env: sdkEnv });
+    const statePath = join(stateProject, ".touba/sandbox-checkpoints.sqlite");
+    const beforeTransition = readFileSync(statePath);
+    // A changed candidate payload has a distinct verified identity. No state
+    // or format is fabricated to make the new build accept the old wait.
+    const candidate = join(workspace, "second build");
+    cpSync(installedRoot, candidate, { recursive: true });
+    writeFileSync(join(candidate, "lib/qualification-build-marker.txt"), "isolated second build\n");
+    const candidateMetadataPath = join(candidate, "TOOLCHAIN.json");
+    const candidateMetadata = JSON.parse(readFileSync(candidateMetadataPath, "utf8"));
+    candidateMetadata.build = toolchainBuildIdentity(candidate);
+    writeFileSync(candidateMetadataPath, JSON.stringify(candidateMetadata));
+    const transition = installToolchainPayload({ source: candidate, prefix: installPrefix, force: true });
+    assertEqual(transition.preserved_build, join(installPrefix, "builds", expectedBuild.id), "preserved build location");
+    const refused = JSON.parse(runTouba(cliPath, ["serve", "--project-root", stateProject, "--check-state"], sdkEnv, 1).stdout);
+    assertEqual(refused.diagnostics[0].code, "ToubaServeStateBuildMismatch", "new-build preflight refusal");
+    assertEqual(readFileSync(statePath).equals(beforeTransition), true, "state unchanged after transition refusal");
+    assertEqual(existsSync(join(stateProject, "external-effect.txt")), false, "no premature effect");
+    runCommand(join(transition.preserved_build, "bin", process.platform === "win32" ? "node.exe" : "node"),
+      [stateProbe, transition.preserved_build, stateProject, "resume"], { env: sdkEnv });
+    assertEqual(toolchainBuildIdentity(transition.preserved_build).id, expectedBuild.id, "preserved payload remains exact");
+    process.stdout.write("CHECKED_RELEASE_TRANSITION real wait, new-build refusal, preserved-build resume, one effect\n");
 
     if (process.platform === "win32") {
       runCommand("powershell.exe", [

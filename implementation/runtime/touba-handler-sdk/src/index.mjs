@@ -20,6 +20,7 @@ export { createProviderContextFetch } from "./provider-context.mjs";
 export { createMemoryDecisionHistoryStore } from "./decision-history.mjs";
 import { providerBudgetFetch, validateProviderRequestBudget } from "./provider-request-budget.mjs";
 import { emitLocalHandlerDiagnostic } from "./handler-diagnostic.mjs";
+import { PersistentEngineTransport } from "./engine-transport.mjs";
 
 export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
 const PROTOCOL = TOOL_HANDLER_PROTOCOL_VERSION;
@@ -78,11 +79,23 @@ export class ToubaEngine {
       ...(options.env ?? {}),
     };
     this.redactValues = collectRedactionValues(this.env, options.redactValues ?? []);
+    this.executionMode = options.executionMode ?? "process";
+    if (!["persistent", "process"].includes(this.executionMode)) throw new ToubaEngineError("options", "executionMode must be persistent or process");
+    this.transport = this.executionMode === "persistent" ? new PersistentEngineTransport({
+      command: this.command, args: this.commandArgs, cwd: this.projectRoot, env: this.env,
+    }) : null;
+    this.closed = false;
   }
 
+  get workerPid() { return this.transport?.pid ?? null; }
+  get workerMetrics() { return this.transport?.metrics ? structuredClone(this.transport.metrics) : null; }
+
+  async close() { this.closed = true; await this.transport?.close(); }
+
   async compile(options = {}) {
+    if (this.closed) throw new ToubaEngineError("compile", "Engine is closed", { code: "EngineClosed" });
     const source = requireString(options.source, "compile.source");
-    const result = await this.#runCommand("compile", ["compile", source, "--stdout"]);
+    const result = await this.#runCommand("compile", ["compile", source, "--stdout"], { signal: options.signal });
     const airJson = result.stdout;
     let airDocument;
     try {
@@ -101,6 +114,7 @@ export class ToubaEngine {
   }
 
   async run(options = {}) {
+    if (this.closed) throw new ToubaEngineError("run", "Engine is closed", { code: "EngineClosed" });
     const tempRoot = await mkdtemp(join(tmpdir(), "touba-engine-"));
     try {
       const airPath = await this.#materializeAir(options, tempRoot);
@@ -115,6 +129,7 @@ export class ToubaEngine {
       appendOptionalPath(args, "--effect-journal", options.effectJournal, this.projectRoot);
       appendOptionalPath(args, "--human-checkpoint-out", options.humanCheckpointOut, this.projectRoot);
       appendOptionalPath(args, "--human-resume-checkpoint", options.humanResumeCheckpoint, this.projectRoot);
+      appendOptionalPath(args, "--human-approval-host", options.humanApprovalHost, this.projectRoot);
       appendOptionalPath(args, "--parallel-checkpoint-out", options.parallelCheckpointOut, this.projectRoot);
       appendOptionalPath(args, "--parallel-resume-checkpoint", options.parallelResumeCheckpoint, this.projectRoot);
       appendOptionalJson(args, "--parallel-limits-json", options.parallelLimits, "parallelLimits");
@@ -205,7 +220,7 @@ export class ToubaEngine {
         args.push("--entry", requireString(options.entryRef, "run.entryRef"));
       }
 
-      const result = await this.#runCommand("run", args, { allowFailure: true });
+      const result = await this.#runCommand("run", args, { allowFailure: true, signal: options.signal });
       const trace = await readOptionalJson(tracePath);
       let envelope;
       try { envelope = JSON.parse(result.stdout); } catch { /* Admission and launch failures may have no result. */ }
@@ -256,7 +271,7 @@ export class ToubaEngine {
     }
 
     if (options.source !== undefined) {
-      const { airJson } = await this.compile({ source: options.source });
+      const { airJson } = await this.compile({ source: options.source, signal: options.signal });
       const airPath = join(tempRoot, "program.air.json");
       await writeFile(airPath, airJson, "utf8");
       return airPath;
@@ -277,9 +292,12 @@ export class ToubaEngine {
   async #runCommand(phase, args, options = {}) {
     let result;
     try {
-      result = await runProcess(this.command, [...this.commandArgs, ...args], {
+      result = phase === "run" && this.transport
+        ? await this.transport.run(args.slice(1), { signal: options.signal })
+        : await runProcess(this.command, [...this.commandArgs, ...args], {
         cwd: this.projectRoot,
         env: this.env,
+        signal: options.signal,
       });
     } catch (error) {
       throw new ToubaEngineError(phase, "Touba command could not be launched", {
@@ -1730,25 +1748,43 @@ async function readStdin() {
 
 function runProcess(command, args, options) {
   return new Promise((resolveProcess, rejectProcess) => {
+    const failure = code => Object.assign(new Error(code), { code });
+    if (options.signal?.aborted) return rejectProcess(failure("EngineCancelled"));
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
       shell: false,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
+    let failureCode;
+    const stop = code => {
+      failureCode ??= code;
+      try {
+        if (process.platform !== "win32") process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch { child.kill("SIGKILL"); }
+    };
+    const onAbort = () => stop("EngineCancelled");
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
+      if (Buffer.byteLength(stdout) > 32 * 1024 * 1024) stop("EngineOutputLimitExceeded");
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
+      if (Buffer.byteLength(stderr) > 32 * 1024 * 1024) stop("EngineOutputLimitExceeded");
     });
     child.on("error", rejectProcess);
     child.on("close", (code, signal) => {
+      options.signal?.removeEventListener("abort", onAbort);
+      if (failureCode) return rejectProcess(failure(failureCode));
       resolveProcess({
         status: code ?? 1,
         signal,

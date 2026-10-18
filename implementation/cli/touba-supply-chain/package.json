@@ -4,6 +4,9 @@
   "private": true,
   "description": "Touba SC-1/SC-2 local supply chain lock validator.",
   "type": "module",
+  "dependencies": {
+    "acorn": "8.19.0"
+  },
   "exports": {
     ".": "./src/validate.mjs"
   },

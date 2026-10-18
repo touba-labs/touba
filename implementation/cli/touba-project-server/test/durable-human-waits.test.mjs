@@ -20,6 +20,7 @@ import { canonicalDigest } from "@touba/runtime";
 
 import {
   createToubaProjectServer,
+  checkToubaProjectState,
   loadSandboxCheckpointStore,
   readProjectEventJournal,
 } from "../src/serve.mjs";
@@ -86,6 +87,21 @@ strategy RunApproval
     const pending = await getJson(`${serverBaseUrl(service)}/approvals/pending/current`);
     await service.stop();
     const path = join(root, ".touba/sandbox-checkpoints.sqlite");
+    const originPath = join(root, ".touba/state-origin.json");
+    const originalOrigin = readFileSync(originPath, "utf8");
+    const beforePreflight = readFileSync(path);
+    const checked = checkToubaProjectState({ projectRoot: root });
+    assert.equal(checked.status, "structurally_valid");
+    assert.equal(checked.origin.status, "matching");
+    assert.equal(checked.stores.find(store => store.store === "sandboxCheckpointsPath").active_waits, 1);
+    assert.deepEqual(readFileSync(path), beforePreflight, "preflight must not terminalize or rewrite a wait");
+    const wrongBuild = { ...JSON.parse(originalOrigin), build_id: "0".repeat(64) };
+    writeFileSync(originPath, JSON.stringify(wrongBuild));
+    assert.equal(checkToubaProjectState({ projectRoot: root }).diagnostics[0].code, "ToubaServeStateBuildMismatch");
+    assert.throws(() => createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true }), { code: "ToubaServeStateBuildMismatch" });
+    writeFileSync(originPath, JSON.stringify({ ...wrongBuild, project_root: join(root, "different-project") }));
+    assert.equal(checkToubaProjectState({ projectRoot: root }).diagnostics[0].code, "ToubaServeStateProjectMismatch");
+    writeFileSync(originPath, originalOrigin);
     const stored = readStoreFixture(path);
     assert.equal(stored.records[0].checkpoint.call_stack.length, delegated ? 2 : 1);
     for (const corrupt of [f => { delete f.caller_scope; }, f => { delete f.caller_scope.values; },
@@ -1693,7 +1709,9 @@ test("WAIT completed projections survive bounded session retention without repla
   }
 });
 
-for (const historyCount of [0, 100]) test(`WAIT ${historyCount} completed approvals preserve restart and eight concurrent multi-handler sessions`, { timeout: 180000 }, async t => {
+// Include the exact retained-history sizes reported by the industrial pilot.
+// Histories are created through real decisions/resumes, never cloned as successes.
+for (const historyCount of [0, 16, 50, 100]) test(`WAIT ${historyCount} completed approvals preserve restart and eight concurrent multi-handler sessions`, { timeout: 180000 }, async t => {
   const root = createTestProject({ withSentinel: true });
   const marker = join(root, "concurrent-writes.txt");
   configureSentinelHandler(root, marker);
@@ -2108,6 +2126,93 @@ test("WAIT request and decision projections reject wrong collections and duplica
     }
   });
 });
+
+test("source approval roles are checked before claim and timely acceptance survives restart past its deadline", async t => {
+  const root = createTestProject(); t.after(() => rmSync(root, { recursive: true, force: true }));
+  compilePolicyProject(root, `        human.approve
+            with context as "invoice"
+            with role as "finance"
+            with timeout_ms as 1500
+            into approval
+        give "accepted"
+`);
+  let activeRole = false, verifications = 0;
+  const authority = ({ request, decision, hostDecision, evidenceRef }) => {
+    verifications++;
+    assert.equal(evidenceRef, hostDecision.request_id);
+    assert.equal(hostDecision.run_id, request.run_id);
+    return { request_id: request.request_id, run_id: request.run_id, decision, subject_ref: hostDecision.user_ref,
+      roles: activeRole ? ["finance"] : [] };
+  };
+  const options = { contractsRoot, projectRoot: root, port: 0, quiet: true, humanApprovalAuthority: authority };
+  let service = createToubaProjectServer(options);
+  try {
+    await service.start(); const base = serverBaseUrl(service);
+    await runSandbox(base, WAIT_TARGET);
+    const pending = await getJson(`${base}/approvals/pending/current`);
+    const record = humanRecord(root, pending.request_id);
+    const occurrence = record.checkpoint.approval_state.requests[record.approval_ref];
+    assert.equal(pending.expires_at, occurrence.deadline_at);
+    assert.equal(Date.parse(occurrence.deadline_at) - Date.parse(occurrence.created_at), 1500);
+    const denied = await postJson(`${base}/decisions`, decisionFor(pending));
+    assert.ok(denied.status >= 400, await denied.clone().text());
+    assert.equal(humanRecord(root, pending.request_id).human_wait.resolution, null);
+    activeRole = true;
+    const accepted = await postJson(`${base}/decisions`, decisionFor(pending));
+    assert.equal(accepted.status, 202, await accepted.clone().text());
+    assert.equal(humanRecord(root, pending.request_id).checkpoint.approval_state.receipts.length, 1);
+    await service.stop(); activeRole = false;
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(pending.expires_at) - Date.now() + 20)));
+    service = createToubaProjectServer(options); await service.start();
+    const resumed = await postJson(`${serverBaseUrl(service)}/runs/sandbox/resume`, { request_id: pending.request_id });
+    assert.equal(resumed.status, 200, await resumed.clone().text());
+    assert.equal((await resumed.json()).result, "accepted");
+    assert.equal(verifications, 2);
+  } finally { await service.stop(); }
+});
+
+test("source deadline creates a durable escalation instead of authorizing the expired path", async t => {
+  const root = createTestProject(); t.after(() => rmSync(root, { recursive: true, force: true }));
+  compilePolicyProject(root, `        human.approve
+            with context as "invoice"
+            with timeout_ms as 250
+            into approval
+            on expired
+                human.approve
+                    with context as "manager review"
+                    with role as "finance_manager"
+                    with timeout_ms as 60000
+                    into escalation
+                give "manager accepted"
+        give "initial accepted"
+`);
+  const options = { contractsRoot, projectRoot: root, port: 0, quiet: true };
+  let service = createToubaProjectServer(options);
+  try {
+    await service.start(); const base = serverBaseUrl(service);
+    const paused = await runSandbox(base, WAIT_TARGET);
+    assert.equal(paused.reason, "human_approval_pending");
+    const initial = await getJson(`${base}/approvals/pending/current`);
+    await new Promise(resolve => setTimeout(resolve, 350));
+    const nextResponse = await fetch(`${base}/approvals/pending/current`);
+    assert.equal(nextResponse.status, 200, JSON.stringify(humanRecord(root, initial.request_id)));
+    const next = await nextResponse.json();
+    assert.notEqual(next.request_id, initial.request_id, JSON.stringify(humanRecord(root, initial.request_id)));
+    assert.equal(humanRecord(root, initial.request_id).status, "superseded");
+    const record = humanRecord(root, next.request_id);
+    assert.equal(record.checkpoint.approval_state.requests[record.approval_ref].policy.role, "finance_manager");
+    await service.stop(); service = createToubaProjectServer(options); await service.start();
+    assert.equal((await getJson(`${serverBaseUrl(service)}/approvals/pending/current`)).request_id, next.request_id);
+  } finally { await service.stop(); }
+});
+
+function compilePolicyProject(root, body) {
+  const path = join(root, "src/demo/approval.tb");
+  writeFileSync(path, `module demo.approval\nstrategy RunApproval\n    gives Text\n    do\n${body}`);
+  const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
+    new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--", path], { encoding: "utf8" }));
+  writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
+}
 
 function createTestProject({ twoApprovals = false, withSentinel = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "touba-durable-human-waits-"));

@@ -2,6 +2,7 @@
 // Structured local concurrency. Journals are private continuations, not traces.
 import { RuntimeFailure, RuntimeStop } from "./runtime-errors.mjs";
 import { canonicalDigest } from "./execution-checkpoints.mjs";
+import { approvalRequest, authorizeApprovalDecision } from "./human-approval-policy.mjs";
 
 export class ParallelSuspend extends RuntimeStop {
   constructor() { super("parallel group suspended", { reason: "parallel_suspended" }); }
@@ -167,7 +168,7 @@ export async function parallelExternal(context, kind, identity, accesses, execut
     await context.parallelBranch.control.persist();
     return value;
   } catch (error) {
-    if (error instanceof ParallelSuspend && !entry.dispatched) entry.state = "ready";
+    if (error instanceof ParallelSuspend && !entry.dispatched && entry.state !== "waiting") entry.state = "ready";
     else if (!(error instanceof ParallelSuspend)) {
       entry.state = "failed";
       const failure = /** @type {any} */ (error);
@@ -185,8 +186,8 @@ export async function parallelExternal(context, kind, identity, accesses, execut
 }
 
 /** Human decisions address one branch occurrence, never a shared source node.
- * @param {any} context @param {any} metadata @param {(decision: string) => any} execute */
-export function parallelHuman(context, metadata, execute) {
+ * @param {any} context @param {any} metadata @param {(decision: string, authorityRef: string) => any} execute */
+export async function parallelHuman(context, metadata, execute) {
   const record = parallelRecord(context, "human", metadata);
   if (!record) throw new RuntimeFailure("parallel approval requires a branch", {}, "InvalidParallelCheckpoint");
   const { entry, index } = record;
@@ -194,8 +195,12 @@ export function parallelHuman(context, metadata, execute) {
   if (record.replay && entry.approval_ref !== ref) throw new RuntimeFailure("invalid parallel approval identity", {}, "InvalidParallelCheckpoint");
   entry.approval_ref = ref;
   entry.metadata = metadata;
-  if (entry.state === "done") return execute(entry.value);
-  const decision = context.parallelDecisions.get(ref);
+  const request = approvalRequest(context.approvalRuntime, context.trace.runId, ref, metadata.approval_policy);
+  if (entry.state === "done") {
+    await authorizeApprovalDecision(context.approvalRuntime, request, entry.value, { replay: true });
+    return execute(entry.value, ref);
+  }
+  const decision = await authorizeApprovalDecision(context.approvalRuntime, request, context.parallelDecisions.get(ref));
   if (!decision) {
     entry.state = "waiting";
     context.parallelBranch.control.paused = true;
@@ -207,7 +212,7 @@ export function parallelHuman(context, metadata, execute) {
   context.parallelDecisions.delete(ref);
   entry.value = decision;
   entry.state = "done";
-  return execute(decision);
+  return execute(decision, ref);
 }
 
 /** @param {any} group @returns {any[]} */
@@ -216,6 +221,16 @@ export function pendingParallelApprovals(group) {
   for (const branch of group.branches) for (const entry of branch.journal) {
     if (entry.kind === "human" && entry.state === "waiting") pending.push(entry);
     if (entry.kind === "group" && entry.group) pending.push(...pendingParallelApprovals(entry.group));
+  }
+  return pending;
+}
+
+/** @param {any} group @returns {any[]} */
+export function pendingParallelInputs(group) {
+  const pending = [];
+  for (const branch of group.branches) for (const entry of branch.journal) {
+    if (entry.kind === "input" && entry.state === "waiting") pending.push(entry);
+    if (entry.kind === "group" && entry.group) pending.push(...pendingParallelInputs(entry.group));
   }
   return pending;
 }
@@ -258,6 +273,8 @@ export function validateParallelState(state, limits) {
           || typeof entry.invocation_id !== "string" || !/^invocation:[0-9a-f-]{36}$/.test(entry.invocation_id))) invalid();
         if (entry.kind === "human" && (typeof entry.approval_ref !== "string" || !entry.metadata
           || (entry.state === "done" && !["approved", "rejected", "expired", "cancelled"].includes(entry.value)))) invalid();
+        if (entry.kind === "input" && entry.state === "waiting"
+          && (typeof entry.interaction_ref !== "string" || typeof entry.prompt !== "string")) invalid();
       }
     }
   };

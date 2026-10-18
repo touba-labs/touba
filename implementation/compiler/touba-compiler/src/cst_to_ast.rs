@@ -767,6 +767,7 @@ impl<'a> AstLowerer<'a> {
                 source_ref: self.source_ref(node),
             })),
             "if_statement" => self.lower_if_statement(node).map(AstStatement::If),
+            "match_statement" => self.lower_match_statement(node).map(AstStatement::Match),
             "for_statement" => self.lower_for_statement(node).map(AstStatement::For),
             "while_statement" => self.lower_while_statement(node).map(AstStatement::While),
             other => {
@@ -789,6 +790,21 @@ impl<'a> AstLowerer<'a> {
             value: self.lower_expression(value_node)?,
             source_ref: self.source_ref(node),
         })
+    }
+
+    fn lower_match_statement(&mut self, node: Node<'_>) -> Option<AstMatchStatement> {
+        let value = self.required_field(node, "value")?;
+        let mut cases = Vec::new();
+        for child in named_children(node).into_iter().filter(|child| child.kind() == "match_case") {
+            let body = named_children(child).into_iter().find(|child| child.kind() == "block")?;
+            cases.push(AstMatchCase {
+                type_name: self.required_field_text(child, "type")?,
+                variant: self.required_field_text(child, "variant")?,
+                body: self.lower_block_statements(body),
+                source_ref: self.source_ref(child),
+            });
+        }
+        Some(AstMatchStatement { value: self.lower_expression(value)?, cases, source_ref: self.source_ref(node) })
     }
 
     fn lower_human_approval_statement(
@@ -815,6 +831,7 @@ impl<'a> AstLowerer<'a> {
         for child in named_children(node) {
             match child.kind() {
                 "human_approval_target" => {}
+                "approval_expired_clause" => {}
                 "call_argument_clause" => {
                     if let Some(argument) = self.lower_call_argument_clause(child) {
                         if !seen_arguments.insert(argument.name.clone()) {
@@ -851,11 +868,21 @@ impl<'a> AstLowerer<'a> {
             }
         }
 
+        let expired_clauses: Vec<_> = named_children(node).into_iter()
+            .filter(|child| child.kind() == "approval_expired_clause").collect();
+        if expired_clauses.len() > 1 {
+            self.push_error(AstDiagnosticCode::UnsupportedCstNode, node,
+                "human approval accepts at most one on expired branch");
+        }
+        let expired_branch = expired_clauses.first().map(|clause|
+            named_children(*clause).into_iter()
+                .filter_map(|statement| self.lower_statement(statement)).collect());
         Some(AstHumanApprovalStatement {
             target,
             mode,
             arguments,
             result_binding,
+            expired_branch,
             source_ref: self.source_ref(node),
         })
     }
@@ -1190,6 +1217,30 @@ impl<'a> AstLowerer<'a> {
         }
     }
 
+    fn lower_interpolated_string(&mut self, node: Node<'_>) -> Option<AstExpression> {
+        let mut value = AstExpression::StringLiteral { value: String::new(), source_ref: self.source_ref(node) };
+        for child in named_children(node) {
+            let part = if child.kind() == "interpolation" {
+                let expression = self.required_field(child, "value")?;
+                self.lower_expression(expression)?
+            } else {
+                let raw = self.text(child).replace("{{", "{").replace("}}", "}");
+                let decoded = match serde_json::from_str::<String>(&format!("\"{raw}\"")) {
+                    Ok(decoded) => decoded,
+                    Err(_) => {
+                        self.push_error(AstDiagnosticCode::InvalidTextLiteral, child,
+                            "interpolated Text requires valid JSON escapes and no raw control characters");
+                        return None;
+                    }
+                };
+                AstExpression::StringLiteral { value: decoded, source_ref: self.source_ref(child) }
+            };
+            value = AstExpression::Binary { left: Box::new(value), operator: AstBinaryOperator::TextConcat,
+                right: Box::new(part), source_ref: self.source_ref(child) };
+        }
+        Some(value)
+    }
+
     fn lower_expression(&mut self, node: Node<'_>) -> Option<AstExpression> {
         if node.kind() == "expression" {
             let Some(child) = node.named_child(0) else {
@@ -1233,6 +1284,7 @@ impl<'a> AstLowerer<'a> {
                 value: self.lower_text_literal(node)?,
                 source_ref,
             }),
+            "interpolated_string" => self.lower_interpolated_string(node),
             "integer" => Some(AstExpression::IntLiteral { value, source_ref }),
             "float" => Some(AstExpression::FloatLiteral { value, source_ref }),
             "boolean" => Some(AstExpression::BooleanLiteral {
@@ -1334,6 +1386,7 @@ impl<'a> AstLowerer<'a> {
             "-" => Some(AstBinaryOperator::Subtract),
             "*" => Some(AstBinaryOperator::Multiply),
             "/" => Some(AstBinaryOperator::Divide),
+            "//" => Some(AstBinaryOperator::IntegerDivide),
             "%" => Some(AstBinaryOperator::Modulo),
             "++" => Some(AstBinaryOperator::TextConcat),
             "==" => Some(AstBinaryOperator::Equal),

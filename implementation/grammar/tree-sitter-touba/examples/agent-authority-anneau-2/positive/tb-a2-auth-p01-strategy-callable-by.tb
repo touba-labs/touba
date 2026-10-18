@@ -11,20 +11,29 @@ tool ApplyChange
     gives ReviewedChange
 
 skill MakeChange
+    description "Apply the authorized change and return its actual result."
     takes request as ChangeRequest
     gives ReviewedChange
     uses ApplyChange
     do
         ApplyChange
-        give ReviewedChange
+            with request as request
+            into result
+        give result
 
 agent Engineer
+    takes request as ChangeRequest
+    gives ReviewedChange
     responsibility "Fulfill the declared Engineer responsibility using only authorized capabilities."
     uses MakeChange
     callable_by strategy RunChange
 
 strategy RunChange
+    takes request as ChangeRequest
+    gives ReviewedChange
     uses Engineer
     do
         Engineer
-        give ReviewedChange
+            with request as request
+            into result
+        give result

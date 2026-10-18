@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
+import { loadProjectContexts } from "../../touba-project/src/skill-packs.mjs";
+import { verifyManifestPackages } from "../../touba-project/src/handler-packages.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  lstatSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -17,6 +21,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateHumanCheckpointBudgetState, validateHumanCheckpointContinuation } from "../../../runtime/touba-runtime/src/human-approval-checkpoints.mjs";
+import { createApprovalRuntime, approvalRequest, authorizeApprovalDecision } from "../../../runtime/touba-runtime/src/human-approval-policy.mjs";
+import { airDocumentDigest } from "../../../runtime/touba-runtime/src/air-identity.mjs";
+import { admitStateOrigin, inspectStateOrigin, currentStateBuild } from "./state-origin.mjs";
 
 import {
   PRODUCT_SURFACE_CONTRACTS,
@@ -71,6 +78,7 @@ import {
   INTERACTION_SESSION_CREATE_SCHEMA_VERSION,
   INTERACTION_SESSION_LIST_SCHEMA_VERSION,
   INTERACTION_SESSION_SCHEMA_VERSION,
+  INTERACTION_SESSION_STORE_SCHEMA_VERSION,
   listInteractionSessions,
   MAX_INTERACTION_ASSET_BYTES,
   readInteractionAsset,
@@ -243,8 +251,19 @@ if (isMainModule()) {
       process.stdout.write(`${usage()}\n`);
       process.exit(0);
     }
+    if (options.checkState === true) {
+      const report = checkToubaProjectState(options);
+      process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+      process.exit(report.status === "refused" ? 1 : 0);
+    }
     if (options.agentDecisionProviderPath !== undefined) {
       options.agentDecisionProvider = await loadAgentDecisionProviderFromPath(options.agentDecisionProviderPath);
+    }
+    if (options.humanApprovalHostPath !== undefined) {
+      const host = await import(pathToFileURL(resolve(options.humanApprovalHostPath)).href);
+      if (typeof host.attestHumanApproval !== "function") throw serviceError("HumanApprovalAuthorityUnavailable", "trusted host module must export attestHumanApproval");
+      options.humanApprovalAuthority = host.attestHumanApproval;
+      options.humanApprovalInitiator = host.initiatorRef;
     }
     const service = createToubaProjectServer(options);
     await service.start();
@@ -426,6 +445,9 @@ export function createToubaProjectServer(options = {}) {
         "previous-build state exists beside the configured indexed store; preserve it and finish or archive it with its original build before starting this build");
     }
   }
+  if (inspectStateOrigin(projectRoot).status === "different_build") {
+    throw serviceError("ToubaServeStateBuildMismatch", "state belongs to another build; use its preserved executable and run --check-state before changing builds");
+  }
   preflightServeOptions({
     contractsRoot,
     projectRoot,
@@ -446,6 +468,8 @@ export function createToubaProjectServer(options = {}) {
     eventJournalLimit,
     strict: options.strict === true,
   });
+  admitStateOrigin(projectRoot, [sandboxCheckpointsPath, humanRequestsPath, humanDecisionsPath,
+    effectJournalPath, interactionSessionsPath, interactionAssetsPath]);
   recoverProjectChangeTransactions({ projectRoot });
   // Stored waits must already satisfy the canonical contract; never rewrite
   // historical records or invent missing correlation/trace evidence.
@@ -617,6 +641,8 @@ export function createToubaProjectServer(options = {}) {
       agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
       agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+          humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalInitiator: options.humanApprovalInitiator,
       contractsRoot,
       effectJournalPath,
       humanRequestsPath,
@@ -920,6 +946,8 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
           agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+          humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalInitiator: options.humanApprovalInitiator,
           cancelRequestedProvider: () => controller.cancelRequested,
           contractsRoot,
           dispatchAuthorityProvider,
@@ -1240,6 +1268,8 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
           agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+          humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalInitiator: options.humanApprovalInitiator,
           contractsRoot,
           dispatchAuthorityProvider: executionDispatchAuthorityProvider({
             accessToken: request.headers["x-touba-identity-token"],
@@ -1885,6 +1915,8 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
           agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+          humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalInitiator: options.humanApprovalInitiator,
           contractsRoot,
           effectJournalPath,
           executionKind: "trigger",
@@ -2172,6 +2204,8 @@ export function createToubaProjectServer(options = {}) {
         const body = await readJsonBody(request);
         const accepted = await acceptDecisionWithHumanWait({
           contractsRoot,
+          projectRoot,
+          humanApprovalAuthority: options.humanApprovalAuthority,
           humanWaitClaimedObserver,
           humanDecisionsPath,
           humanRequestsPath,
@@ -2204,6 +2238,8 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderMaxRetries: options.agentDecisionProviderMaxRetries,
           agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+          humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalInitiator: options.humanApprovalInitiator,
           contractsRoot,
           dispatchAuthorityProvider: executionDispatchAuthorityProvider({
             accessToken: request.headers["x-touba-identity-token"],
@@ -2901,6 +2937,8 @@ export function acceptDecision({
 
 async function acceptDecisionWithHumanWait({
   contractsRoot,
+  projectRoot,
+  humanApprovalAuthority,
   decision,
   humanDecisionsPath,
   humanRequestsPath,
@@ -2970,10 +3008,29 @@ async function acceptDecisionWithHumanWait({
     productIdentityPath,
     requireProjectAuthorization,
   });
+  let approvalState;
+  if (record.checkpoint.approval_state && record.human_wait.resolution === null) {
+    const resolved = resolveSandboxAirDocument({ projectRoot, targetRef: record.target_ref });
+    if (airDocumentDigest(resolved.document) !== record.checkpoint.air_digest) {
+      throw serviceError("HumanApprovalCheckpointIncompatible", "AIR changed since this approval was requested");
+    }
+    const ref = record.approval_ref;
+    const runtime = createApprovalRuntime(resolved.document, {
+      humanApprovalAuthority: humanApprovalAuthority
+        ? args => humanApprovalAuthority({ ...args, hostDecision: structuredClone(decision) }) : undefined,
+      humanApprovalDecisions: { [ref]: { decision: runtimeDecisionFromStoredDecision(decision), evidence_ref: decision.request_id } },
+    }, record.checkpoint);
+    const saved = runtime.state.requests[ref];
+    if (!saved) throw serviceError("HumanApprovalCheckpointIncompatible", "approval occurrence is missing its source authority state");
+    const request = approvalRequest(runtime, record.run_id, ref, saved.policy);
+    await authorizeApprovalDecision(runtime, request, runtimeDecisionFromStoredDecision(decision));
+    approvalState = runtime.state;
+  }
   const acceptedAt = new Date(nowMs()).toISOString();
   const claim = claimHumanWaitDecision({
     acceptedAt,
     decision: { ...decision, accepted_at: acceptedAt },
+    approvalState,
     sandboxCheckpointsPath,
   });
   try {
@@ -3429,6 +3486,8 @@ export async function executeProjectSandboxRun({
   agentDecisionProviderMaxRetries,
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
+  humanApprovalAuthority,
+  humanApprovalInitiator,
   contractsRoot,
   cancelRequestedProvider,
   dispatchAuthorityProvider,
@@ -3511,12 +3570,15 @@ export async function executeProjectSandboxRun({
   let runtimeResult;
   try {
     const runtimeOptions = {
+      ...loadProjectContexts(projectRoot, resolved.document),
       agentDecisionProvider,
       agentDecisionProviderContentMode,
       agentDecisionProviderInitialMode,
       agentDecisionProviderMaxRetries,
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
+      humanApprovalAuthority,
+      humanApprovalInitiator,
       cancelRequestedProvider,
       dispatchAuthorityProvider,
       durableHumanApprovals: true,
@@ -3716,6 +3778,8 @@ export async function resumeProjectSandboxRun({
   agentDecisionProviderMaxRetries,
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
+  humanApprovalAuthority,
+  humanApprovalInitiator,
   contractsRoot,
   cancelRequestedProvider,
   dispatchAuthorityProvider,
@@ -3741,6 +3805,8 @@ export async function resumeProjectSandboxRun({
       agentDecisionProviderMaxRetries,
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
+      humanApprovalAuthority,
+      humanApprovalInitiator,
       cancelRequestedProvider,
       contractsRoot,
       dispatchAuthorityProvider,
@@ -3791,12 +3857,15 @@ export async function resumeProjectSandboxRun({
   let runtimeResult;
   try {
     const runtimeOptions = {
+      ...loadProjectContexts(projectRoot, resolved.document),
       agentDecisionProvider,
       agentDecisionProviderContentMode,
       agentDecisionProviderInitialMode,
       agentDecisionProviderMaxRetries,
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
+      humanApprovalAuthority,
+      humanApprovalInitiator,
       cancelRequestedProvider,
       dispatchAuthorityProvider,
       durableHumanApprovals: true,
@@ -3896,8 +3965,11 @@ async function terminalizeAutomaticHumanWait({
   agentDecisionProviderMaxRetries,
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
+  humanApprovalAuthority,
+  humanApprovalInitiator,
   contractsRoot,
   effectJournalPath,
+  humanRequestsPath,
   nowMs = Date.now,
   projectRoot,
   requestId,
@@ -3935,12 +4007,15 @@ async function terminalizeAutomaticHumanWait({
     });
     const startedMs = Date.now();
     const runtimeOptions = {
+      ...loadProjectContexts(projectRoot, resolved.document),
       agentDecisionProvider,
       agentDecisionProviderContentMode,
       agentDecisionProviderInitialMode,
       agentDecisionProviderMaxRetries,
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
+      humanApprovalAuthority,
+      humanApprovalInitiator,
       durableHumanApprovals: true,
       effectJournal,
       effectScopeId: record.operation_id,
@@ -3966,7 +4041,8 @@ async function terminalizeAutomaticHumanWait({
         ...runtimeOptions,
         entryRef: record.target_ref,
       }));
-    if (runtimeResult.checkpoint !== undefined || sandboxHumanTerminalDecision(runtimeResult) !== resolutionKind) {
+    if (sandboxHumanTerminalDecision(runtimeResult, record.approval_ref) !== resolutionKind
+      || (runtimeResult.checkpoint !== undefined && resolutionKind !== "expired")) {
       throw serviceError(
         "ToubaServeSandboxCheckpointStoreInvalid",
         "automatic human wait resolution did not stop at its claimed checkpoint",
@@ -3991,6 +4067,15 @@ async function terminalizeAutomaticHumanWait({
       errorCode: "ToubaServeSandboxResultInvalid",
       message: "automatic human wait result does not match touba-sandbox-run-result-v1",
     });
+    if (runtimeResult.checkpoint) {
+      const completed = completeHumanDecisionWithSuccessor({
+        automatic: true, checkpoint: runtimeResult.checkpoint, completedAt, createdAt: completedAt,
+        contractsRoot, effectPolicy: record.effect_policy, executionKind: record.execution_kind,
+        humanRequestsPath, operationId: record.operation_id, previousRequestId: requestId,
+        result, sandboxCheckpointsPath, targetRef: record.target_ref,
+      });
+      return { record: completed.previous, runtimeResult };
+    }
     const completedRecord = completeAutomaticHumanWaitTerminalization({
       completedAt,
       requestId,
@@ -4016,6 +4101,8 @@ async function resumeProjectDurableSandboxRun({
   agentDecisionProviderMaxRetries,
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
+  humanApprovalAuthority,
+  humanApprovalInitiator,
   cancelRequestedProvider,
   contractsRoot,
   dispatchAuthorityProvider,
@@ -4070,12 +4157,15 @@ async function resumeProjectDurableSandboxRun({
       return current?.status === "cancelled";
     };
     const runtimeOptions = {
+      ...loadProjectContexts(projectRoot, resolved.document),
       agentDecisionProvider,
       agentDecisionProviderContentMode,
       agentDecisionProviderInitialMode,
       agentDecisionProviderMaxRetries,
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
+      humanApprovalAuthority,
+      humanApprovalInitiator,
       cancelRequestedProvider: durableCancelRequestedProvider,
       dispatchAuthorityProvider,
       durableHumanApprovals: true,
@@ -4209,6 +4299,7 @@ function loadOptionalProjectManifest({ projectRoot }) {
   }
   try {
     const rawManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    verifyManifestPackages(manifestPath, rawManifest);
     const manifestDir = dirname(resolve(manifestPath));
     for (const binding of Object.values(rawManifest.bindings ?? {})) {
       if (binding?.handler?.cwd && !isAbsolute(binding.handler.cwd)) {
@@ -4574,7 +4665,8 @@ function sandboxHumanTerminalDecision(runtimeResult, approvalRef) {
       approvalRef === undefined
       || (
         (candidate.payload?.approval_ref ?? candidate.authority_ref) === approvalRef
-        && candidate.related_ref === `decision:${(candidate.kind ?? candidate.type).slice("human_approval_".length)}`
+        && (candidate.kind !== undefined
+          || candidate.related_ref === `decision:${candidate.type.slice("human_approval_".length)}`)
       )
     )
   ));
@@ -8564,7 +8656,8 @@ function persistSandboxCheckpoint({
   targetRef,
 }) {
   const durableCheckpoint = portableHumanCheckpointSnapshot(checkpoint);
-  const requestId = `${durableCheckpoint.approval_ref}:${durableCheckpoint.run_id}`;
+  const requestId = durableCheckpoint.approval_state?.requests[durableCheckpoint.approval_ref]?.request_id
+    ?? `${durableCheckpoint.approval_ref}:${durableCheckpoint.run_id}`;
   const humanRequest = humanRequestFromCheckpoint({
     checkpoint: durableCheckpoint,
     createdAt,
@@ -8634,6 +8727,7 @@ function persistSandboxCheckpoint({
 }
 
 function completeHumanDecisionWithSuccessor({
+  automatic = false,
   checkpoint,
   completedAt,
   contractsRoot,
@@ -8648,7 +8742,8 @@ function completeHumanDecisionWithSuccessor({
   targetRef,
 }) {
   const durableCheckpoint = portableHumanCheckpointSnapshot(checkpoint);
-  const requestId = `${durableCheckpoint.approval_ref}:${durableCheckpoint.run_id}`;
+  const requestId = durableCheckpoint.approval_state?.requests[durableCheckpoint.approval_ref]?.request_id
+    ?? `${durableCheckpoint.approval_ref}:${durableCheckpoint.run_id}`;
   const humanRequest = humanRequestFromCheckpoint({ checkpoint: durableCheckpoint, createdAt, requestId });
   validateContractPayload({
     contractsRoot,
@@ -8661,7 +8756,7 @@ function completeHumanDecisionWithSuccessor({
   const previous = store.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === previousRequestId
   ));
-  if (previous === undefined || previous.human_wait.resolution?.kind !== "decision") {
+  if (previous === undefined || previous.human_wait.resolution?.kind !== (automatic ? "expired" : "decision")) {
     throw serviceError("ToubaServeHumanWaitConflict", "previous durable decision claim is unavailable");
   }
   const existingSuccessor = store.records.find((candidate) => candidate.request_id === requestId);
@@ -8693,6 +8788,14 @@ function completeHumanDecisionWithSuccessor({
   previous.result = structuredClone(result);
   previous.human_wait.resolution.status = "completed";
   previous.human_wait.resolution.completed_at = completedAt;
+  if (automatic) {
+    const terminalization = previous.human_wait.terminalization;
+    if (!terminalization || terminalization.status !== "pending") throw serviceError("ToubaServeHumanWaitConflict", "expiration attempt is not pending");
+    terminalization.status = "completed";
+    terminalization.completed_at = completedAt;
+    terminalization.error = null;
+    terminalization.result = structuredClone(result);
+  }
   store.records.push({
     record_kind: "human",
     request_id: requestId,
@@ -9168,7 +9271,8 @@ function boundedResumeErrorText(value, maxLength) {
 
 function humanRequestFromCheckpoint({ checkpoint, createdAt, requestId }) {
   const createdAtMs = parseHumanWaitInstant(createdAt, "checkpoint created_at");
-  const expiresAt = new Date(createdAtMs + HUMAN_WAIT_TTL_MS).toISOString();
+  const expiresAt = checkpoint.approval_state?.requests[checkpoint.approval_ref]?.deadline_at
+    ?? new Date(createdAtMs + HUMAN_WAIT_TTL_MS).toISOString();
   const traceRef = `trace:${checkpoint.run_id}`;
   if (checkpoint.kind === "agent_human_review") {
     return {
@@ -9369,7 +9473,7 @@ function validateStoredDecisionSnapshot({ contractsRoot, decision }) {
   });
 }
 
-function claimHumanWaitDecision({ acceptedAt, decision, sandboxCheckpointsPath }) {
+function claimHumanWaitDecision({ acceptedAt, decision, approvalState, sandboxCheckpointsPath }) {
   const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: decision.request_id }]);
   const record = store.records.find((candidate) => (
     candidate.record_kind === "human" && candidate.request_id === decision.request_id
@@ -9394,6 +9498,13 @@ function claimHumanWaitDecision({ acceptedAt, decision, sandboxCheckpointsPath }
       });
     }
     record.status = "resolution_claimed";
+    if (approvalState) {
+      record.checkpoint.approval_state = structuredClone(approvalState);
+      if (record.checkpoint.kind === "parallel_group") {
+        const { parallel_digest, ...content } = record.checkpoint;
+        record.checkpoint.parallel_digest = canonicalDigest(content);
+      }
+    }
     record.human_wait.resolution = {
       resolution_id: `decision:${decision.schema_version}:${record.request_id}`,
       kind: "decision",
@@ -9660,7 +9771,7 @@ function automaticHumanWaitClaimIsEligible({ initialRecovery, nowMs, record }) {
 
 function isCompletedAutomaticHumanWait(record) {
   return record.record_kind === "human"
-    && record.status === "completed"
+    && ["completed", "superseded"].includes(record.status)
     && ["expired", "cancelled"].includes(record.human_wait.resolution?.kind)
     && record.human_wait.resolution.status === "completed"
     && record.human_wait.terminalization?.status === "completed"
@@ -9776,9 +9887,10 @@ function validateStoredHumanCheckpoint(record, index) {
     "review_reason", "step_index", "agent_loop_state", "call_stack", "values",
     "input_value_keys", "value_types", "budget_counters", "effect_state",
     "active_elapsed_ms", "effective_limits",
-    "next_call_index", "active_agent_ref", "active_caller_ref", "trace_prefix_digest", "loop_state",
+    "next_call_index", "agent_invocation_id", "active_agent_ref", "active_caller_ref", "trace_prefix_digest", "loop_state",
     "parallel_state", "parallel_limits", "next_parallel_group", "pending_approvals", "parallel_digest",
     "max_agent_steps", "max_loop_iterations",
+    "approval_state",
   ]);
   if (
     !isPlainObject(checkpoint)
@@ -9986,8 +10098,9 @@ function validateHumanWaitState(humanWait, record, index) {
   }
   const createdAtMs = parseCanonicalHumanWaitInstant(record.created_at, `${prefix}.created_at`);
   const deadlineAtMs = parseCanonicalHumanWaitInstant(humanWait.deadline_at, `${prefix}.deadline_at`);
-  if (deadlineAtMs !== createdAtMs + HUMAN_WAIT_TTL_MS) {
-    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix}.deadline_at diverges from the fixed V1 TTL`);
+  const sourceDeadline = record.checkpoint.approval_state?.requests[record.approval_ref]?.deadline_at;
+  if (deadlineAtMs !== (sourceDeadline ? Date.parse(sourceDeadline) : createdAtMs + HUMAN_WAIT_TTL_MS)) {
+    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix}.deadline_at diverges from the persisted source request or default TTL`);
   }
   validateHumanWaitRequestShape(humanWait.request, record, index);
   if (
@@ -11299,6 +11412,11 @@ function writeSse(response, event, data) {
 }
 
 function httpStatusForError(code) {
+  if (["HumanApprovalRoleRequired", "HumanApprovalSignerConflict", "HumanApprovalIdentityMismatch",
+    "HumanApprovalAttestationInvalid"].includes(code)) return 403;
+  if (["HumanApprovalAuthorityUnavailable", "HumanApprovalAuthorityRequired"].includes(code)) return 503;
+  if (["HumanApprovalDecisionAlreadyConsumed", "HumanApprovalCheckpointIncompatible"].includes(code)) return 409;
+  if (["HumanApprovalEvidenceRequired", "HumanApprovalNotExpired", "InvalidHumanApprovalPolicy"].includes(code)) return 400;
   if (code === "ToubaServeNativeTraceRunInvalid") return 400;
   if (code === "ToubaServeNativeTraceRunConflict") return 409;
   if (["ToubaServeNativeTraceStorageFull", "ToubaServeNativeTraceStorageUnavailable"].includes(code)) return 503;
@@ -11432,6 +11550,57 @@ function httpStatusForError(code) {
   return 500;
 }
 
+export function checkToubaProjectState(options = {}) {
+  const projectRoot = resolve(options.projectRoot ?? process.cwd());
+  const diagnostics = [], stores = [];
+  let origin = { status: "unrecorded", build_id: null };
+  let buildId = "unknown";
+  try {
+    if (!existsSync(projectRoot) || !statSync(projectRoot).isDirectory()) throw Object.assign(new Error(), { code: "ToubaServeProjectRootMissing" });
+    buildId = currentStateBuild(); origin = inspectStateOrigin(projectRoot);
+    if (origin.status === "different_build") diagnostics.push({ code: "ToubaServeStateBuildMismatch" });
+  } catch (error) { diagnostics.push({ code: error.code ?? "ToubaServeStateOriginInvalid" }); }
+  // Validate a private copy: SQLite configuration and validator caches cannot
+  // change the original files. The caller must first stop all state writers.
+  const temporary = mkdtempSync(join(tmpdir(), "touba-state-preflight-"));
+  try {
+    for (const [key, fallback, load] of [
+      ["sandboxCheckpointsPath", DEFAULT_SANDBOX_CHECKPOINTS_PATH, loadSandboxCheckpointStore],
+      ["humanRequestsPath", DEFAULT_HUMAN_REQUESTS_PATH, readHumanRequestStore],
+      ["humanDecisionsPath", DEFAULT_HUMAN_DECISIONS_PATH, loadHumanDecisionStore],
+      ["effectJournalPath", DEFAULT_EFFECT_JOURNAL_PATH, loadIndexedEffectJournal],
+      ["interactionSessionsPath", DEFAULT_INTERACTION_SESSIONS_PATH, path => ({ schema_version: INTERACTION_SESSION_STORE_SCHEMA_VERSION, sessions: readInteractionSessions(path) })],
+      ["interactionAssetsPath", DEFAULT_INTERACTION_ASSETS_PATH, auditInteractionAssets],
+    ]) {
+      const path = resolve(options[key] ?? join(projectRoot, fallback));
+      if (!isPathInside(projectRoot, path)) { diagnostics.push({ code: "ToubaServeStateOutsideProject", store: key }); continue; }
+      if (!existsSync(path)) {
+        if (path.endsWith(".sqlite") && existsSync(path.slice(0, -7) + ".json")) diagnostics.push({ code: "ToubaStoreFormatIncompatible", store: key });
+        stores.push({ store: key, exists: false }); continue;
+      }
+      try {
+        const stat = lstatSync(path);
+        if (stat.isSymbolicLink() || !stat.isFile() || !isPathInside(realpathSync(projectRoot), realpathSync(path))) throw Object.assign(new Error(), { code: "ToubaServeStatePathInvalid" });
+        // Current stores use DELETE journaling. An active journal/WAL means a
+        // stopped, consistent snapshot has not been established.
+        if (["-journal", "-wal", "-shm"].some(suffix => existsSync(path + suffix))) throw Object.assign(new Error(), { code: "ToubaServeStateSnapshotRequired" });
+        const bytes = readFileSync(path);
+        if (!bytes.subarray(0, 16).equals(Buffer.from("SQLite format 3\0"))) throw Object.assign(new Error(), { code: "ToubaStoreFormatIncompatible" });
+        const copy = join(temporary, key + ".sqlite");
+        writeFileSync(copy, bytes, { mode: 0o600 });
+        const value = load(copy);
+        const records = value.records ?? value.decisions ?? value.entries ?? value.sessions ?? value.assets ?? [...(value.approvals ?? []), ...(value.reviews ?? [])];
+        stores.push({ store: key, exists: true, schema_version: value.schema_version ?? null,
+          records: Array.isArray(records) ? records.length : Object.keys(records).length,
+          active_waits: Array.isArray(value.records) ? value.records.filter(record => record.record_kind === "human" && ["pending", "resolution_claimed"].includes(record.status)).length : 0 });
+      } catch (error) { diagnostics.push({ code: error.code ?? "ToubaServeStoredStateInvalid", store: key }); }
+    }
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+  return { schema_version: "touba-state-preflight-v1", status: diagnostics.length ? "refused" : "structurally_valid",
+    candidate_build_id: buildId, origin, stores, diagnostics,
+    scope: "offline structural check; no recovery, decision, expiration or handler; not a business compatibility guarantee" };
+}
+
 function parseArgs(rawArgs) {
   const options = {
     host: DEFAULT_HOST,
@@ -11444,6 +11613,8 @@ function parseArgs(rawArgs) {
     const arg = rawArgs[index];
     if (arg === "--help" || arg === "-h") {
       options.help = true;
+    } else if (arg === "--check-state") {
+      options.checkState = true;
     } else if (arg === "--identity") {
       options.productIdentityPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--contracts-root") {
@@ -11486,6 +11657,10 @@ function parseArgs(rawArgs) {
       options.deploymentTargetUrl = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--deployment-target-token-env") {
       options.deploymentTargetTokenEnv = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--human-approval-host") {
+      options.humanApprovalHostPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg.startsWith("--human-approval-host=")) {
+      options.humanApprovalHostPath = arg.slice("--human-approval-host=".length);
     } else if (arg === "--agent-decision-provider") {
       options.agentDecisionProviderPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg.startsWith("--agent-decision-provider=")) {
@@ -11607,9 +11782,10 @@ async function loadAgentDecisionProviderFromPath(providerPath) {
 
 function usage() {
   return [
-    "Usage: touba serve [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-decisions <human-decisions.sqlite>] [--human-requests <path>] [--effect-journal <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
+    "Usage: touba serve [--check-state] [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-approval-host <host.mjs>] [--human-decisions <human-decisions.sqlite>] [--human-requests <path>] [--effect-journal <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for authenticated project clients.",
+    "--check-state returns an offline structural preflight as JSON, without starting the server or loading host modules.",
     "Use --identity <project-identity.json> to load an explicit, schema-validated identity configuration inside the project root.",
     "",
     "Defaults:",
