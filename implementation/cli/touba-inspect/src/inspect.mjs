@@ -2696,18 +2696,21 @@ function validateSourceRefs(diagnostics, label, sourcePath, artifact) {
   }
 }
 
-function sourceIdMatchesPath(sourceId, normalizedSourcePath) {
+export function sourceIdMatchesPath(sourceId, normalizedSourcePath, paths = path) {
   const value = String(sourceId);
-  if (!path.isAbsolute(value) && !path.win32.isAbsolute(value)) {
+  if (!paths.isAbsolute(value) && !path.win32.isAbsolute(value)) {
     const parts = value.split("/");
     if (!parts.every(part => part && part !== "." && part !== ".." && !part.includes("\\"))) return false;
-    const expected = normalizedSourcePath.split(path.sep);
+    const expected = normalizedSourcePath.split(paths.sep);
     return parts.every((part, index) => part === expected[expected.length - parts.length + index]);
   }
-  return [
-    path.resolve(value),
-    path.resolve(implementationDir, value),
-  ].some((candidate) => candidate === normalizedSourcePath);
+  if (!paths.isAbsolute(value)) return false;
+  // VS Code's fsPath uses a lowercase Windows drive letter. Only that letter
+  // is case-insensitive here: folders may be configured as case-sensitive.
+  const identity = (candidate) => paths === path.win32
+    ? candidate.replace(/^[A-Z](?=:\\)/, (letter) => letter.toLowerCase())
+    : candidate;
+  return identity(paths.resolve(value)) === identity(normalizedSourcePath);
 }
 
 function collectSourceIds(value, result = new Set()) {

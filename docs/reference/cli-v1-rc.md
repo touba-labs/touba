@@ -1254,6 +1254,11 @@ Le fragment `touba-binding-fragment-v1` peut aussi être inspecté avec
 `--binding-fragment`, mais il reste affiché comme non autoritaire pour le
 runtime. Seul le manifest assemblé est une autorité d’exécution.
 
+Avec `--source`, l'inspection compare les références des artefacts au fichier
+fourni. Sous Windows, `D:\projet\main.tb` et `d:\projet\main.tb` désignent le
+même lecteur. Cette comparaison conserve la casse des noms de dossiers et de
+fichiers, ainsi que les références originales ; elle ne modifie pas les artefacts.
+
 ## `touba audit`
 
 ```sh title="Terminal"
