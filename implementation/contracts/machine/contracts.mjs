@@ -32,6 +32,7 @@ export const TRACE_EVENT_KINDS = Object.freeze([
   "agent_capability_refused", "agent_capability_result_returned", "agent_capability_selected",
   "agent_decision_catalog_requested", "agent_decision_provider_call_attempted",
   "agent_decision_provider_retry_scheduled", "agent_decision_provider_returned",
+  "provider_cost_recorded",
   "agent_decision_recorded", "agent_decision_requested", "agent_direct_answer_returned",
   "agent_human_review_requested", "agent_interface_entered", "agent_interface_refused",
   "agent_interface_result_returned", "agent_invocation_authorized", "agent_invocation_refused",

@@ -5,7 +5,7 @@ import { join, delimiter } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Execute the published examples against SDK archives from an installed release.
-// No provider, network service, source-tree SDK import or personal installation.
+// Offline providers only: no paid API, source-tree SDK import or personal install.
 export function checkSdkTutorials({ root, temp }) {
   const binary = join(root, "bin", process.platform === "win32" ? "node.exe" : "node");
   const cli = join(root, "lib/cli/touba-project/src/main.mjs");
@@ -34,7 +34,14 @@ export function checkSdkTutorials({ root, temp }) {
       assert.equal(run(language === "python" ? python : binary, [title], project),
         title.startsWith("refused.") ? "refused" : "Invoice 42", title);
     }
-    if (language === "python") continue; // Python handler + transitive lock tested by the caller.
+    if (language === "python") {
+      const providerTutorial = readFileSync(join(docs, "sdk-engine-provider-python.md"), "utf8");
+      for (const { title, body } of blocks(providerTutorial).filter(block => block.title && ["program.tb", "provider.py", "app.py"].includes(block.title))) {
+        writeFileSync(join(project, title), body + "\n");
+      }
+      assert.equal(run(python, ["app.py"], project), "Ready");
+      continue; // Python handler + transitive lock tested by the caller.
+    }
     command("init", "--language", language);
     const tutorial = readFileSync(join(docs, "handlers-javascript.md"), "utf8");
     const snippets = blocks(tutorial);

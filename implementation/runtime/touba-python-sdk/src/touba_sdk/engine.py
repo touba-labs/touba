@@ -12,6 +12,7 @@ import signal
 import tempfile
 from threading import Event
 from typing import Any, Literal, Mapping, Sequence, TypedDict, Unpack
+from ._engine_command import resolve_engine_command
 
 MAX_OUTPUT = 32 * 1024 * 1024
 
@@ -184,9 +185,19 @@ def _result(raw: bytes, exit_code: int) -> RunResult:
 
 def touba_sdk_metadata() -> dict[str, str]:
     digest = hashlib.sha256()
-    for path in sorted(Path(__file__).parent.glob("*.py")):
-        digest.update(path.name.encode()); digest.update(b"\0"); digest.update(path.read_bytes())
-    return {"name": "touba-sdk", "version": "0.1.0", "build_sha256": digest.hexdigest(),
+    root = Path(__file__).parent
+    paths = []
+    for directory, subdirs, files in os.walk(root, followlinks=False):
+        subdirs[:] = [name for name in subdirs if name != "__pycache__"]
+        for name in subdirs + files:
+            if (Path(directory) / name).is_symlink():
+                raise ToubaEngineError("identity", "HandlerSdkInvalid")
+        paths.extend(Path(directory) / name for name in files if name.endswith(".py"))
+    for path in sorted(paths, key=lambda file: file.relative_to(root).as_posix()):
+        if not path.is_file() or path.stat().st_nlink != 1:
+            raise ToubaEngineError("identity", "HandlerSdkInvalid")
+        digest.update(path.relative_to(root).as_posix().encode()); digest.update(b"\0"); digest.update(path.read_bytes())
+    return {"name": "touba-sdk", "version": "1.0.0", "build_sha256": digest.hexdigest(),
             "protocol": "touba-tool-handler-v1", "status": "ok"}
 
 
@@ -209,6 +220,11 @@ class AsyncToubaEngine:
             raise ToubaEngineError("options", "InvalidCommandArguments")
         self.command_args = tuple(_text(arg) for arg in command_args)
         self.env = {**os.environ, **dict(env or {})}
+        try:
+            self.command, self.command_args, self.env = resolve_engine_command(
+                self.command, self.command_args, self.project_root, self.env)
+        except ValueError:
+            raise ToubaEngineError("options", "EngineBatchLauncherUnsupported") from None
 
     def _path(self, value: str) -> str:
         path = Path(_text(value))

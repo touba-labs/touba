@@ -5,7 +5,57 @@ notes remain the source of truth for version deltas, validation evidence,
 downloadable artifacts, checksums and platform-specific installation
 instructions.
 
-## Unreleased
+## 1.0.0 - Unreleased candidate
+
+This is the version being qualified, not a published release. Core, compiler,
+runtime, CLI, both SDKs and the editor extension use the same target version.
+Package authors keep independent package versions and declare compatibility
+with Touba `>=1.0.0 <2.0.0`. The withdrawn private prototype is not a public
+download or a supported alternative installation path.
+
+Release preparation now requires four native archives and four graphical
+installers in the exact candidate checksum manifest. Installed SDK commands on
+Windows resolve the bundled CLI without evaluating batch scripts. Release gates
+cover both SDKs, native GUI sessions, the current FR/EN tutorial inventory,
+industrial qualification, security/signatures and production restoration.
+These gates remain open until their actual evidence is supplied.
+
+### Provider accounting, Python adapters and Linux confinement, 19 October 2026
+
+- Dated host token-tariff adapters support OpenAI Responses/Chat, Anthropic
+ Messages and Gemini content generation. Reservations and usage correlate with
+ Core invocations and `provider_cost_recorded` trace events. Unknown usage keeps
+ its reservation; no vendor price or model-specific business logic is embedded.
+- Python host modules, structured/native providers and RAM/SQLite history reuse
+ the shipped decision backend. Python MCP handlers enforce bounded stdio and
+ explicit secret forwarding. A dedicated installed-wheel tutorial covers a
+ Python provider and durable history without a paid API call.
+- Linux x64 required confinement combines bubblewrap, seccomp and Landlock.
+ Native Ubuntu checks cover read/write separation, child restrictions, Node,
+ Python and descendant termination on timeout. Exact Unix socket permissions
+ require Landlock ABI 9. Windows native confinement remains in progress.
+
+### Durable host-side provider budgets, 18 October 2026
+
+- JavaScript and Python share an exact, integer micro-unit SQLite ledger.
+ Reservations precede dispatch; restarts retain them and reopening only
+ tightens a ceiling. Unknown/estimated usage never frees reserved funds.
+- The JavaScript HTTP wrapper covers each fetch attempt, including retries,
+ refuses unknown upper bounds and prevents automatic redirects. Reported
+ usage above its bound is recorded and blocks further calls.
+- Host tariff adapters must establish the actual request bound and interpret
+ provider usage. No provider price is embedded, no new language syntax is
+ introduced, and this ledger does not imply complete Python provider parity.
+
+### Distribution preparation, 18 October 2026
+
+- Updated active repository links to the renamed `touba-labs` organization.
+- Native installer packaging preserves previous output, records artifact size
+ and checksum, and verifies disk-image integrity on macOS. Isolated installation
+ tests read the payload version instead of assuming a development version.
+- The manual candidate workflow supports one target at a time with short artifact
+ retention. A built candidate remains unsigned and is not a published release;
+ graphical installation and platform-specific signing require qualification.
 
 ### Industrial report closure, 18 October 2026
 

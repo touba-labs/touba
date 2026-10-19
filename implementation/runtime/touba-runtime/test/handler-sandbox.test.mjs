@@ -43,8 +43,8 @@ test("handler sandbox plan resolves node handlers to the current executable", ()
 });
 
 test("required handler sandbox refuses unqualified Linux policy", () => {
-  assert.throws(() => buildHandlerSandboxPlan({ binding, platform: "linux", env: {} }),
-    error => error.code === "HandlerSandboxUnsupportedPolicy");
+  assert.throws(() => buildHandlerSandboxPlan({ binding, platform: "linux", env: { TOUBA_SANDBOX_LAUNCHER: "/touba-missing-sandbox-launcher" } }),
+    error => error.code === (process.platform === "linux" ? "HandlerSandboxUnavailable" : "HandlerSandboxUnsupportedPolicy"));
 });
 test("handler sandbox plan wraps process handlers on macOS", () => {
   const plan = buildHandlerSandboxPlan({
@@ -61,9 +61,9 @@ test("handler sandbox plan wraps process handlers on macOS", () => {
   assert.deepEqual(plan.args.slice(-2), [process.execPath, "handler.mjs"]);
 });
 
-test("required handler sandbox refuses unqualified Windows policy", () => {
-  assert.throws(() => buildHandlerSandboxPlan({ binding, platform: "win32", env: {} }),
-    error => error.code === "HandlerSandboxUnsupportedPolicy");
+test("required Windows sandbox refuses a missing backend or a foreign host", () => {
+  assert.throws(() => buildHandlerSandboxPlan({ binding, platform: "win32", env: { TOUBA_SANDBOX_LAUNCHER: "/touba-missing-sandbox-launcher" } }),
+    error => error.code === (process.platform === "win32" ? "HandlerSandboxUnavailable" : "HandlerSandboxUnsupportedPolicy"));
 });
 test("handler sandbox refuses unsupported required platforms", () => {
   assert.throws(
@@ -74,7 +74,7 @@ test("handler sandbox refuses unsupported required platforms", () => {
 
 test("an unqualified backend is never advertised as hardened by a version probe", () => {
   for (const platform of ["linux", "win32", "freebsd"]) {
-    assert.equal(probeHostSandbox({ platform, env: {} }).available, false);
+    assert.equal(probeHostSandbox({ platform, env: { TOUBA_SANDBOX_LAUNCHER: "/touba-missing-sandbox-launcher" } }).available, false);
   }
 });
 

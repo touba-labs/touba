@@ -2,6 +2,8 @@
 
 import { spawnSync } from "node:child_process";
 import { ToubaRuntimeError } from "./runtime-errors.mjs";
+import { probeLinuxSandbox } from "./linux-handler-sandbox.mjs";
+import { probeWindowsSandbox } from "./windows-handler-sandbox.mjs";
 
 export const HARDENED_EXECUTION_PROFILE_VERSION = "touba-hardened-execution-profile-v1";
 // Only fixed structural codes may cross the public admission boundary. Never
@@ -79,6 +81,8 @@ export function enforceHardenedExecutionProfile(document, options) {
 
 /** @param {{platform?: string, env?: Record<string, string | undefined>}} [input] */
 export function probeHostSandbox({ platform = process.platform, env = process.env } = {}) {
+  if (platform === "linux") return probeLinuxSandbox(env);
+  if (platform === "win32") return probeWindowsSandbox(env);
   if (platform !== "darwin") return { available: false, platform, mechanism: "unsupported", version: "0", reason: "policy_not_qualified" };
   const candidate = { mechanism: "sandbox-exec", command: env.TOUBA_SANDBOX_EXEC_COMMAND || "/usr/bin/sandbox-exec", args: ["-p", '(version 1)(deny default)(allow process-exec (literal "/usr/bin/true"))(allow file-read*)(allow sysctl-read)', "/usr/bin/true"] };
   const result = spawnSync(candidate.command, candidate.args, { encoding: "utf8", timeout: 2000, windowsHide: true });

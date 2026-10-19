@@ -231,7 +231,9 @@ async function validateGovernedExecution(skillPacks) {
     ),
     true,
   );
-  assert.equal(eventOf(result.trace, "skill_pack_resource_refused").payload.runtime_error_code, "SkillPackScriptExecutionForbidden");
+  const excluded = eventOf(result.trace, "skill_pack_resource_refused").payload;
+  assert.equal(excluded.reason, "script_content_not_loaded");
+  assert.equal(excluded.runtime_error_code, undefined, "only the declared Touba tool executes; pack metadata is not a failed dispatch");
   assert.equal(eventOf(result.trace, "agent_capability_selected").payload.selected_ref, "skill:test/BuildDatasetBrief");
   assert.equal(eventOf(result.trace, "tool_binding_authorized").payload.tool_ref, "tool:test/RenderDatasetBrief");
   return result;
@@ -304,7 +306,7 @@ function materializeSkillPackProject(tempRoot) {
 
 function skillPackDescriptor(definition) {
   return { package_schema_version: "touba-package-v1", name: "fixture.context_" + definition.skillId.replaceAll("-", "_"), version: "0.1.0",
-    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=0.1.0 <0.2.0" }, exports: {},
+    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=1.0.0 <2.0.0" }, exports: {},
     contexts: [{ id: definition.skillId, description: definition.description, procedure: "SKILL.md",
       resources: definition.resources.map(resource => ({ name: resource.ref.split("/").at(-1), path: resource.path,
         kind: resource.kind, description: "Fixture resource", loadable_as_context: resource.loadable_as_context ?? true })),

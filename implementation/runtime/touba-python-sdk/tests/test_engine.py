@@ -48,7 +48,7 @@ class EngineTests(unittest.TestCase):
         (self.root / "source.tb").write_text(SOURCE)
 
     def test_installed_identity_and_sync_async_typed_values(self):
-        self.assertEqual(touba_sdk_metadata()["version"], "0.1.0")
+        self.assertEqual(touba_sdk_metadata()["version"], "1.0.0")
         self.assertEqual(len(touba_sdk_metadata()["build_sha256"]), 64)
         self.assertEqual(self.engine.version()["schemas"]["air"], "touba-air-v1")
         air = self.engine.compile("source.tb").air_document
@@ -169,7 +169,7 @@ process.stdout.write(JSON.stringify(outcomes));''')
             py.append(dict(status=run.status, reason=run.reason, result=run.result))
         self.assertEqual(py, js)
 
-    def test_approval_host_separation_resume_and_effect_journal(self):
+    def test_approval_host_separation_resume_and_effect_journal(self, language="javascript"):
         fixture = IMPLEMENTATION / "grammar/tree-sitter-touba/examples/human-approval-v1/positive/approval-policy.tb"
         (self.root / "source.tb").write_bytes(fixture.read_bytes())
         (self.root / "authority.mjs").write_text('''import {readFileSync} from "node:fs";
@@ -179,6 +179,16 @@ export function attestHumanApproval({request,decision,evidenceRef}) {
  if (evidenceRef !== "receipt") throw new Error("Evidence unavailable");
  return {request_id:request.request_id,run_id:request.run_id,decision,...signer};
 }''')
+        if language == "python":
+            (self.root / "authority.py").write_text('''import json
+from pathlib import Path
+initiator_ref = "initiator"
+def attest_human_approval(payload):
+    if payload["evidenceRef"] != "receipt": raise ValueError("unavailable evidence")
+    signer = json.loads((Path(__file__).parent / "signer.json").read_text())
+    request = payload["request"]
+    return {"request_id":request["request_id"], "run_id":request["run_id"], "decision":payload["decision"], **signer}
+''')
         marker = self.root / "effects.txt"
         (self.root / "handler.py").write_text(f'''import asyncio
 from touba_sdk import define_tool, create_tool_result
@@ -193,7 +203,8 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
                        timeout_ms=2000, max_payload_bytes=65536, effect_contract=dict(kind="external_write", retry_mode="none"))
         (self.root / "manifest.json").write_text(json.dumps(dict(manifest_version="touba-manifest-v1", bindings={"tool:approval_policy/Commit": binding})))
         options = dict(source="source.tb", entry_ref="strategy:approval_policy/ApproveTwice", manifest="manifest.json",
-                       human_approval_host="authority.mjs", human_checkpoint_out="waiting.json", effect_journal="run.effect-journal.json")
+                       human_approval_host="authority.py" if language == "python" else "authority.mjs",
+                       human_checkpoint_out="waiting.json", effect_journal="run.effect-journal.json")
         self.assertEqual(self.engine.run(**options, inputs={"dossier": "invoice"}).reason, "human_approval_pending")
         for index, signer in enumerate(["one", "two"]):
             checkpoint = json.loads((self.root / "waiting.json").read_text())
@@ -213,6 +224,9 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
         except ToubaEngineError:
             pass
         self.assertEqual(marker.read_text(), "invoice\n")
+
+    def test_python_approval_host_preserves_roles_separation_and_replay(self):
+        self.test_approval_host_separation_resume_and_effect_journal(language="python")
 
     def test_large_output_and_errors_do_not_leak_stderr(self):
         payload = "é🙂" * 200000

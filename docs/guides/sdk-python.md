@@ -40,6 +40,13 @@ donne le chemin vérifié de la wheel ; installez-la avec
 `python -m pip install --no-index --no-deps --force-reinstall <wheel>`.
 Ne commitez pas `.venv` ; conservez l'archive dans `vendor/touba-sdk`.
 
+Sous Windows, le SDK reconnaît le lanceur `touba.cmd` de l’installation et
+appelle directement le Node embarqué avec l’entrée CLI, sans interpréteur de
+commandes. Les chemins avec espaces et les arguments restent des valeurs
+littérales. Un script `.cmd` ou `.bat` personnalisé est refusé : utilisez un
+exécutable avec ses arguments séparés. Cette résolution ne constitue pas une
+vérification de signature éditeur.
+
 ## Mise à jour
 
 Après une mise à jour de Touba, mettez explicitement le SDK du projet à jour :
@@ -178,9 +185,89 @@ Pour reprendre une attente, transmettez le checkpoint de l’opération, le mêm
 
 `timeout=30` borne le transport ; `cancel_event=threading.Event()` annule un appel synchrone. Avec asyncio, annulez la tâche. Aucun rejeu automatique. POSIX termine le groupe de processus ; Windows termine la CLI sans garantie équivalente sur ses descendants. Un effet peut déjà avoir eu lieu : inspectez le journal avant la reprise.
 
+## Budgets financiers
+
+Le registre `create_sqlite_provider_budget` s’importe depuis `touba_sdk.budget.sqlite`.
+Il partage le format SQLite et les refus du SDK JavaScript, avec des options
+`snake_case` et des montants entiers en micro-unités. Le branchement aux transports
+modèle est distinct. Voir le [guide des coûts fournisseurs](./couts-fournisseurs.md)
+et le [tutoriel sans appel payant](../tutoriels/budget-financier.md).
+
 ## Capacités complémentaires
 
-Le client Python utilise un processus neuf par appel. Les adaptateurs de modèles, l’historique conversationnel, le bridge MCP et le transport persistant du [SDK JavaScript](./sdk-javascript.md) n’ont pas encore d’API Python équivalente. Les mêmes noms de concepts ne signifient donc pas une parité fonctionnelle complète.
+Le moteur Python utilise un processus neuf par run. Les adaptateurs de modèles,
+l'historique et le bridge MCP disposent d'API Python ; le transport persistant
+du moteur entre plusieurs runs reste propre au SDK JavaScript.
+
+## Providers et historique
+
+`create_ai_sdk_decision_provider`, `create_open_ai_decision_provider` et
+`create_ollama_decision_provider` suivent les mêmes contrats de décision que
+leurs équivalents JavaScript. Ils sont appelables avec `await provider(request)`.
+`decision_interface="structured"` est la forme par défaut ; `"native"`
+demande des appels de fonctions natifs, toujours admis par le Core avant effet.
+
+```python
+from touba_sdk import create_open_ai_decision_provider
+from touba_sdk.history.sqlite import create_sqlite_decision_history_store
+
+store = create_sqlite_decision_history_store(filename="history.sqlite")
+decide_agent_capability = create_open_ai_decision_provider(
+    model="YOUR_MODEL_ID",
+    decision_interface="native",
+    history={"store": store, "namespace": "support"},
+    max_output_tokens=512,
+    max_retries=0,
+)
+```
+
+Cet extrait configure un provider, sans lancer d'appel. Choisissez un modèle
+disponible et une clé hôte. Passez le module `.py` à
+`agent_decision_provider` ou `--agent-decision-provider`.
+La CLI choisit la `.venv` du projet ; `TOUBA_HOST_PYTHON` permet un chemin
+d'interpréteur explicite. Le module exporte `decide_agent_capability` ou `decide`.
+Un module d'attestation exporte `attest_human_approval` et `initiator_ref`.
+Ces modules sont de confiance : leurs chemins ne viennent jamais du modèle.
+
+Les adaptateurs réutilisent le backend Node déjà livré avec Touba, par un
+canal privé stdio. La wheel n'installe aucun SDK fournisseur supplémentaire.
+Le provider générique accepte les callbacks Python `generate_text`,
+`generate_object` et `json_schema` conformes au contrat AI SDK ; un SDK
+fournisseur Python brut nécessite l'adaptation explicite de ses messages/résultats.
+
+Sans callback `json_schema`, le schéma JSON est transmis directement à la
+fonction Python de génération. Les adaptateurs HTTP acceptent aussi `fetch`
+et `count_fetch` : chaque callback reçoit `{url, method, headers, body}` et
+renvoie `{status, headers, body}`, avec corps texte et en-têtes chaîne/chaîne.
+Ces échanges sont bornés à 8 Mio et restent privés au transport hôte.
+Ne journalisez pas leurs en-têtes : ils peuvent contenir les clés fournisseur.
+
+RAM est le stockage par défaut. Pour un store explicite, importez
+`create_memory_decision_history_store` de `touba_sdk`. Les options historiques
+emploient `max_bytes`, `max_messages`, `max_retained_bytes`,
+`max_summary_bytes`, `summarize` et `on_event`. La compaction structurelle
+est locale ; seul le callback hôte `summarize`, si fourni, produit un résumé.
+Les identifiants d'invocation et les messages natifs restent cohérents avec JS.
+SQLite assure la persistance ; RAM ne survit pas à la fermeture du module.
+Fermez les providers et stores créés directement avec `close()`.
+
+Le contrôle `context` de l'adaptateur OpenAI expose notamment
+`context_window_tokens`, `safety_margin_tokens` et `timeout_ms`.
+Contexte et budget monétaire sont deux contrôles distincts. Si vous activez
+les deux, le transport de comptage exige son propre tarif explicite.
+Une panne du canal n'est jamais rejouée automatiquement.
+
+Voir le [tutoriel provider Python](../tutoriels/sdk-engine-provider-python.md)
+et les règles communes d'[historique](./historique-conversationnel.md).
+
+## MCP
+
+`create_mcp_stdio_tool_bridge(mcp_tool_name=..., config=...)` retourne
+un handler async `bridge(request, context)`. Le format
+`touba-mcp-bridge-config-v1` reste identique à JavaScript.
+Python utilise directement un sous-processus stdio borné : pas de serveur Node
+supplémentaire dans le handler. Les handles de secrets, limites de temps/taille
+et refus sont conservés. L'appel reste derrière l'admission du tool par le Core.
 
 Le verrou supply-chain suit les imports Python statiques et les fichiers de verrouillage du gestionnaire sans exécuter les handlers ni auditer le venv installé. Voir [supply chain](./supply-chain-handlers.md). Pour une application utilisant un framework, voir [orchestration Python](../tutoriels/python-orchestration.md).
 

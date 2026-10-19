@@ -9,9 +9,23 @@ export const projectPythonCommand = () => process.platform === "win32" ? "./.ven
 
 export function pythonSdkSourceIdentity(root) {
   const digest = createHash("sha256");
-  for (const name of readdirSync(root).filter(name => name.endsWith(".py")).sort()) {
+  const names = [];
+  const visit = (directory, prefix = "") => {
+    for (const name of readdirSync(directory)) {
+      if (name === "__pycache__") continue;
+      const relative = prefix + name, file = join(directory, name), stat = lstatSync(file);
+      if (stat.isSymbolicLink()) throw new Error("Python SDK source must not contain links");
+      if (stat.isDirectory()) visit(file, relative + "/");
+      else if (name.endsWith(".py")) {
+        if (!stat.isFile()) throw new Error("Python SDK source must contain regular files");
+        names.push(relative);
+      }
+    }
+  };
+  visit(root);
+  for (const name of names.sort()) {
     const file = join(root, name), stat = lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Python SDK source must contain regular files");
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error("Python SDK source must contain regular files without links");
     digest.update(name); digest.update("\0"); digest.update(readFileSync(file));
   }
   return digest.digest("hex");

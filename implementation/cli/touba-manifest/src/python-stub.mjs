@@ -14,7 +14,7 @@ from touba_sdk import ToubaHandlerError, define_tool, touba_sdk_metadata
 
 ${constants(tool)}
 TOUBA_HANDLER_SDK = touba_sdk_metadata()
-TOUBA_HANDLER_GENERATED_BY = {"tool": "touba handler stub", "version": "0.1.0"}
+TOUBA_HANDLER_GENERATED_BY = {"tool": "touba handler stub", "version": "1.0.0"}
 
 
 async def run(request, context):

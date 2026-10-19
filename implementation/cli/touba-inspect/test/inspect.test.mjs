@@ -1452,7 +1452,7 @@ test("inspects a SC-1 supply chain lock without reading handler content", () => 
     assert.match(rendered, /handler tool:examples\.sc1\/Search/);
     assert.match(rendered, /protocol=touba-tool-handler-v1/);
     assert.match(rendered, /digest=sha256:cccc/);
-    assert.match(rendered, /sdk=@touba\/sdk@0\.1\.0 protocol=touba-tool-handler-v1 status=ok/);
+    assert.match(rendered, /sdk=@touba\/sdk@1\.0\.0 protocol=touba-tool-handler-v1 status=ok/);
     assert.match(rendered, /package=examples\.sc1\.handlers@0\.1\.0 kind=local entrypoint=handlers\/search\.handler\.mjs package_root=handlers files=2 dependencies=1/);
     assert.doesNotMatch(rendered, /raw handler|secret value|compliant|Verified|risk score/i);
   } finally {
@@ -2021,7 +2021,7 @@ function memoryPackageFixture() {
     root: "../packages/memory",
     touba: {
       air_profile: "touba-air-json-canonical-v1",
-      runtime_compatibility: ">=0.1 <0.2",
+      runtime_compatibility: ">=1.0 <2.0",
     },
     exports: {
       tools: ["tool:examples.memory/ReadProjectKnowledge"],
@@ -2532,7 +2532,7 @@ function supplyChainLockFixture() {
         },
         sdk: {
           name: "@touba/sdk",
-          version: "0.1.0",
+          version: "1.0.0",
           protocol: "touba-tool-handler-v1",
           status: "ok",
         },

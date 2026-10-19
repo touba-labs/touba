@@ -38,6 +38,13 @@ dépendance fournisseur absente et dépendance non déclarée. Son statut de
 génération ne remplace pas cette vérification de disponibilité.
 Un stub non complété refuse l'exécution avec `HandlerNotImplemented`.
 
+Sous Windows, le SDK reconnaît le lanceur `touba.cmd` de l’installation et
+appelle directement le Node embarqué avec l’entrée CLI, sans interpréteur de
+commandes. Les chemins avec espaces et les arguments restent des valeurs
+littérales. Un script `.cmd` ou `.bat` personnalisé est refusé : utilisez un
+exécutable avec ses arguments séparés. Cette résolution ne constitue pas une
+vérification de signature éditeur.
+
 ## Mise à jour
 
 Mettre à jour la CLI ne remplace pas les copies de `@touba/sdk` dans les projets. Vérifiez depuis chaque application :
@@ -54,7 +61,7 @@ touba sdk install javascript
 ```
 
 Les archives sont distinguées par leur empreinte, y compris lorsque la version
-V1 reste 0.1.0. La nouvelle dépendance utilise la copie du projet ; les autres
+du candidat V1 reste 1.0.0. La nouvelle dépendance utilise la copie du projet ; les autres
 applications conservent leur SDK.
 
 Vérifiez et conservez le lockfile mis à jour, puis relancez vos tests métier. Ne supprimez pas les checkpoints ni les données du projet. Pour les triggers, utilisez `triggerEvent` et `triggerState` ; la référence d'entrée se nomme `entryRef`, pas `entry`.
@@ -468,6 +475,14 @@ durable concurrente, contrairement à `human.approve`.
 Voir le [tutoriel complet](../tutoriels/orchestration-multi-agent-sequentielle.md).
 
 Pour un parcours exécutable de succès et de refus, voir [Tester un programme Touba](./tests-metier.md).
+
+## Budgets financiers
+
+Le registre `createSqliteProviderBudget` s’importe depuis `@touba/sdk/budget/sqlite`.
+`createProviderCostFetch`, depuis `@touba/sdk`, réserve une borne avant chaque
+tentative HTTP. Utilisez un tarif hôte vérifié, un identifiant stable et le même
+registre pour les descendants et reprises. Voir le [guide des coûts fournisseurs](./couts-fournisseurs.md)
+et le [tutoriel sans appel payant](../tutoriels/budget-financier.md).
 
 ## Capacités complémentaires
 
@@ -896,6 +911,34 @@ Vérifiez le journal d’effets avant une reprise ; un effet externe peut déjà
 avoir eu lieu. Appelez `close()` lors de l’arrêt de l’application.
 
 Pour les applications Python, consultez le [SDK Python](sdk-python.md).
+
+## Providers et historique
+
+Les factories `createAiSdkDecisionProvider`, `createOpenAiDecisionProvider`
+et `createOllamaDecisionProvider` ont leurs équivalents Python, avec les mêmes
+contrats et `decisionInterface: "structured"` ou `"native"`.
+`createMemoryDecisionHistoryStore` vient de `@touba/sdk` ;
+`createSqliteDecisionHistoryStore` de `@touba/sdk/history/sqlite`.
+RAM est le stockage par défaut ; SQLite conserve les mêmes identifiants
+d'invocation et exigences de reprise dans les deux SDK.
+La compaction structurelle est locale. Un résumé textuel est produit seulement
+par le callback hôte `summarize` s'il est fourni.
+Voir [historique et contexte](./historique-conversationnel.md).
+
+Les coûts se branchent au transport final par `cost: { budget, ...adapter }`
+dans `createOpenAiDecisionProvider`. Le contrôle de contexte et le budget
+financier sont distincts ; leur combinaison exige `cost.counting` avec
+`quote` et `readUsage` explicites pour les requêtes de comptage.
+Voir les [adaptateurs tarifaires](./couts-fournisseurs.md).
+
+## MCP
+
+`createMcpStdioToolBridge({ mcpToolName, config })` retourne un handler
+`bridge({ request, context })`. La configuration
+`touba-mcp-bridge-config-v1` est la même en Python. Le bridge lance le serveur
+stdio après admission du tool par le Core, applique les limites de temps/taille,
+ne transmet que les secrets liés et ferme le processus serveur.
+Le grant `process` reste nécessaire lorsqu'un confinement OS l'exige.
 
 ## Frontière d’autorité
 

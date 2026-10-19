@@ -5,7 +5,7 @@
   "root": ".",
   "touba": {
     "air_profile": "touba-air-json-canonical-v1",
-    "runtime_compatibility": ">=0.1 <0.2"
+    "runtime_compatibility": ">=1.0 <2.0"
   },
   "exports": {
     "types": [

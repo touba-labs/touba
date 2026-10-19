@@ -20,9 +20,9 @@ what a system can do, reviewers see who is allowed to invoke it, and operators
 get observable refusals instead of silent failures. It is the executable path
 of the PAP research program (`Probabilistic Agentic Programming`).
 
-Documentation: https://pap-touba.github.io/documentation-site/
+Documentation: https://touba-labs.com/
 
-Benchmarks: https://pap-touba.github.io/documentation-site/benchmarks/
+Benchmarks: https://touba-labs.com/benchmarks/
 
 Benchmark evidence separates shared behavioral cases, source/runtime
 conformance and structural checks. Historical live-model runs are development
@@ -50,7 +50,7 @@ are Touba's implementation choices. Neither the proof nor the tests establish
 the correctness of arbitrary model answers or unmediated external effects.
 
 Public summaries are available from the benchmark page:
-https://pap-touba.github.io/documentation-site/benchmarks/
+https://touba-labs.com/benchmarks/
 
 ## Why Touba
 
@@ -96,13 +96,13 @@ and operate governed agent systems.
 
 ## Quick Start
 
-Install Touba from [Touba Hub](https://pap-touba.github.io/documentation-site/hub/) or
-from the [GitHub Releases](https://github.com/pap-touba/touba/releases/tag/v0.1.0)
-page. Release archives are available for macOS Apple Silicon, macOS Intel,
-Linux x64 and Windows x64.
+Touba `1.0.0` is an unpublished release candidate. Once qualified, its archives
+and graphical installers will be available from
+[Touba Hub](https://touba-labs.com/hub/) for macOS Apple Silicon, macOS Intel,
+Linux x64 and Windows x64. The instructions below apply to an installed build.
 
 Follow the
-[installation guide](https://pap-touba.github.io/documentation-site/docs/demarrer/installation)
+[installation guide](https://touba-labs.com/docs/demarrer/installation)
 for browser downloads, terminal downloads, checksum verification and platform
 commands. After installation, check the CLI:
 
@@ -134,19 +134,23 @@ The run prints `Touba ready`. Add `--output trace` to see the structured
 execution trace, or `--output run-summary` to emit the compact
 `touba-run-summary-v1` contract used by product integrations.
 
+Applications can connect to `touba serve` to inspect a project, run governed
+tests and manage immutable deployment revisions. The host application supplies
+its identity and access-control boundary independently of model outputs.
+
 ## Installation And Updates
 
 The primary installation surface is Touba Hub:
-https://pap-touba.github.io/documentation-site/hub/
+https://touba-labs.com/hub/
 
-The CLI archives are published as versioned GitHub Release assets:
+The planned CLI archives are versioned GitHub Release assets:
 
 | Platform | Archive |
 | --- | --- |
-| macOS Apple Silicon | `touba-v0.1.0-darwin-arm64.tar.gz` |
-| macOS Intel | `touba-v0.1.0-darwin-x64.tar.gz` |
-| Linux x64 | `touba-v0.1.0-linux-x64.tar.gz` |
-| Windows x64 | `touba-v0.1.0-win32-x64.tar.gz` |
+| macOS Apple Silicon | `touba-v1.0.0-darwin-arm64.tar.gz` |
+| macOS Intel | `touba-v1.0.0-darwin-x64.tar.gz` |
+| Linux x64 | `touba-v1.0.0-linux-x64.tar.gz` |
+| Windows x64 | `touba-v1.0.0-win32-x64.tar.gz` |
 
 `touba update` is an update-policy command in V1. It reports the installed
 version, channel, platform, Hub URL, expected archive and reinstall commands.
@@ -399,15 +403,15 @@ trusted by default.
 
 | Platform | Status | Artifact |
 | --- | --- | --- |
-| macOS Apple Silicon | Release archive published | `touba-v0.1.0-darwin-arm64.tar.gz` |
-| macOS Intel | Release archive published | `touba-v0.1.0-darwin-x64.tar.gz` |
-| Linux x64 | Release archive published | `touba-v0.1.0-linux-x64.tar.gz` |
-| Windows x64 | Release archive published | `touba-v0.1.0-win32-x64.tar.gz` |
-| VS Code extension | VSIX published from `touba-ide` | `touba-vscode-0.1.0.vsix` |
+| macOS Apple Silicon | Candidate under qualification | `touba-v1.0.0-darwin-arm64.tar.gz` |
+| macOS Intel | Candidate under qualification | `touba-v1.0.0-darwin-x64.tar.gz` |
+| Linux x64 | Candidate under qualification | `touba-v1.0.0-linux-x64.tar.gz` |
+| Windows x64 | Candidate under qualification | `touba-v1.0.0-win32-x64.tar.gz` |
+| VS Code extension | Unpublished candidate | `touba-vscode-1.0.0.vsix` |
 
-Downloads are available through Touba Hub and GitHub Releases. Signed
-installers, package-manager channels and marketplace publication are the next
-distribution layers.
+Downloads are not open yet. Four native graphical installers belong to the V1
+qualification scope. Publisher signatures and human installation checks remain
+publication gates; package-manager channels are a separate distribution track.
 
 ## Use This Repository For
 
@@ -422,7 +426,7 @@ distribution layers.
 
 Touba grew out of the PAP research program. The public research overview and
 the citation reference are maintained in the official documentation:
-https://pap-touba.github.io/documentation-site/recherche/
+https://touba-labs.com/recherche/
 
 ## Contributing And Feedback
 
@@ -439,8 +443,8 @@ Read `CONTRIBUTING.md`, `FEEDBACK.md`, `SECURITY.md` and
   author  = {Lo, Khadim and Dessureault, Jean-S{\'e}bastien and Alaoui Ismaili, Soukaina},
   title   = {Touba: A Programming Language and Runtime for Governed Agentic Systems},
   year    = {2026},
-  url     = {https://github.com/pap-touba/touba},
-  version = {0.1.0}
+  url     = {https://github.com/touba-labs/touba},
+  version = {1.0.0}
 }
 ```
 

@@ -98,9 +98,9 @@ const PUBLIC_COMMANDS = Object.freeze({
   update_policy: true,
 });
 const REQUIRED_COMPONENTS = Object.freeze(["cli", "runtime", "inspect", "audit", "supply_chain", "manifest"]);
-const TOUBA_HUB_URL = "https://pap-touba.github.io/documentation-site/hub/";
-const TOUBA_INSTALLATION_GUIDE_URL = "https://pap-touba.github.io/documentation-site/docs/demarrer/installation";
-const TOUBA_RELEASE_BASE_URL = "https://github.com/pap-touba/touba/releases/download";
+const TOUBA_HUB_URL = "https://touba-labs.com/hub/";
+const TOUBA_INSTALLATION_GUIDE_URL = "https://touba-labs.com/docs/demarrer/installation";
+const TOUBA_RELEASE_BASE_URL = "https://github.com/touba-labs/touba/releases/download";
 const UPDATE_PLATFORM_PROFILES = Object.freeze({
   "darwin-arm64": Object.freeze({
     label: "macOS Apple Silicon",
@@ -206,6 +206,13 @@ async function dispatch(rawArgs) {
     throw new Error("usage: touba secret set|list|check|remove ...");
   }
   if (command === "package") return packageCommand(rest);
+  if (command === "sdk" && rest.length === 1 && rest[0] === "service") {
+    const { servePythonSdk } = await import("../../../runtime/touba-handler-sdk/src/python-service.mjs");
+    await servePythonSdk();
+    // This private subcommand is a dedicated worker, not an embedded service.
+    // EOF closes resources and must not leave an in-flight HTTP client alive.
+    process.exit(0);
+  }
   if (command === "sdk") return sdkCommand(rest);
   if (command === "skill") throw Object.assign(new Error("SkillCommandRemoved: use touba package new <name> --org <organization> --context; migrate skill.json to touba.package.json. No legacy pack is loaded."), { code: "SkillCommandRemoved" });
   if (command === "compile") {
@@ -320,8 +327,8 @@ function compileCommandSpec(rawArgs) {
 
   const localCompiler = newestExistingCompiler([
     join(implementationRoot, "..", "bin", process.platform === "win32" ? "touba-compile.exe" : "touba-compile"),
-    join(implementationRoot, "target", "release", "touba-compile"),
-    join(implementationRoot, "target", "debug", "touba-compile"),
+    join(implementationRoot, "target", "release", process.platform === "win32" ? "touba-compile.exe" : "touba-compile"),
+    join(implementationRoot, "target", "debug", process.platform === "win32" ? "touba-compile.exe" : "touba-compile"),
   ]);
   if (existsSync(localCompiler)) {
     return { command: localCompiler, args: rawArgs };

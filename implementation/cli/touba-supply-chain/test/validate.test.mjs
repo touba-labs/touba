@@ -35,7 +35,7 @@ test("validates coherent AIR, manifest and handler artifacts", () => {
     assert.equal(report.artifacts.manifest.drift_status, "ok");
     assert.equal(report.handlers[0].drift_status, "ok");
     assert.equal(report.handlers[0].sdk_name, "@touba/sdk");
-    assert.equal(report.handlers[0].sdk_version, "0.1.0");
+    assert.equal(report.handlers[0].sdk_version, "1.0.0");
     assert.equal(report.handlers[0].sdk_protocol, "touba-tool-handler-v1");
     assert.equal(report.handlers[0].handler_package_status, "ok");
     assert.equal(report.handlers[0].handler_package_kind, "local");
@@ -554,7 +554,7 @@ test("Python lock inventories real local imports, preserves review, and refuses 
     const dependency = path.join(fixture.root, "handlers/pylock.toml");
     writeFileSync(handler, "from helper import answer\nraise RuntimeError('never execute during generation')\n");
     writeFileSync(helper, "answer = 42\n");
-    writeFileSync(project, '[project]\nname = "example-python"\nversion = "0.1.0"\ndependencies = ["touba-sdk==0.1.0"]\n');
+    writeFileSync(project, '[project]\nname = "example-python"\nversion = "0.1.0"\ndependencies = ["touba-sdk==1.0.0"]\n');
     const binding = fixture.manifest.bindings["tool:examples.sc1/Search"];
     binding.handler = { kind: "process", command: process.platform === "win32" ? "python" : "python3", cwd: ".", args: ["handlers/search.py"] };
     writeJson(fixture.paths.manifest, fixture.manifest);
@@ -563,7 +563,7 @@ test("Python lock inventories real local imports, preserves review, and refuses 
     assert.throws(() => generateSupplyChainLock(options), /Python package dependencies require a real dependency lockfile/);
     assert.equal(existsSync(output), false);
     // This test checks artifact drift, not resolution/installation of this package.
-    writeFileSync(dependency, 'lock-version = "1.0"\n[[packages]]\nname = "touba-sdk"\nversion = "0.1.0"\n');
+    writeFileSync(dependency, 'lock-version = "1.0"\n[[packages]]\nname = "touba-sdk"\nversion = "1.0.0"\n');
     generateSupplyChainLock(options);
     const lock = JSON.parse(readFileSync(output, "utf8"));
     assert.equal(lock.handlers[0].handler_package.name, "example-python");
@@ -837,7 +837,7 @@ function withFixtureProject(callback) {
           },
           sdk: {
             name: "@touba/sdk",
-            version: "0.1.0",
+            version: "1.0.0",
             protocol: "touba-tool-handler-v1",
             status: "ok",
           },

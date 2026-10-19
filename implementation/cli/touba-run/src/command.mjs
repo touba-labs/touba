@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { openCliEffectJournal } from "./effect-journal.mjs";
 import { writeParallelCheckpoint } from "./parallel-checkpoint-file.mjs";
+import { loadPythonHost } from "./python-host.mjs";
 import { openLocalHandlerDiagnostics } from "../../../runtime/touba-runtime/src/handler-diagnostics.mjs";
 import { resolvedSecretEntries } from "../../../runtime/touba-runtime/src/secret-redaction.mjs";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
@@ -95,9 +96,11 @@ class ResourceBindingsCliError extends Error {
 }
 
 const parsedArgs = parseArgs(args);
+const pythonHosts = [];
 
 // Flush this invocation's output before returning its explicit exit status.
 async function exitAfterFlush(code) {
+  for (const host of pythonHosts) host.close();
   await Promise.all([stdout, stderr].map(stream =>
     new Promise((resolve, reject) => stream.write("", error => error ? reject(error) : resolve()))));
   return code;
@@ -355,9 +358,15 @@ let agentDecisionProvider;
 let humanApprovalHost = {};
 if (parsedArgs.humanApprovalHostPath !== undefined) {
   try {
-    const host = await import(pathToFileURL(resolve(parsedArgs.humanApprovalHostPath)).href);
-    if (typeof host.attestHumanApproval !== "function") throw new Error("host must export attestHumanApproval");
-    humanApprovalHost = { humanApprovalAuthority: host.attestHumanApproval, humanApprovalInitiator: host.initiatorRef };
+    if (parsedArgs.humanApprovalHostPath.endsWith(".py")) {
+      const host = await loadPythonHost(parsedArgs.humanApprovalHostPath); pythonHosts.push(host);
+      if (!host.metadata.attest) throw new Error("host must export attest_human_approval");
+      humanApprovalHost = { humanApprovalAuthority: host.attest, humanApprovalInitiator: host.metadata.initiator_ref ?? undefined };
+    } else {
+      const host = await import(pathToFileURL(resolve(parsedArgs.humanApprovalHostPath)).href);
+      if (typeof host.attestHumanApproval !== "function") throw new Error("host must export attestHumanApproval");
+      humanApprovalHost = { humanApprovalAuthority: host.attestHumanApproval, humanApprovalInitiator: host.initiatorRef };
+    }
   } catch {
     stderr.write("error: trusted human approval host module could not be loaded\n");
     return await refuseAdmission("HumanApprovalAuthorityUnavailable", "human_authority", 1);
@@ -1047,6 +1056,11 @@ function loadSecretsFromPath(secretsPath) {
 }
 
 async function loadAgentDecisionProviderFromPath(providerPath) {
+  if (providerPath.endsWith(".py")) {
+    const host = await loadPythonHost(providerPath); pythonHosts.push(host);
+    if (!host.metadata.decide) throw new Error("host must export decide_agent_capability or decide");
+    return host.metadata.provider_metadata == null ? host.decide : { decide: host.decide, metadata: host.metadata.provider_metadata };
+  }
   const moduleUrl = pathToFileURL(resolve(providerPath)).href;
   const providerModule = await import(moduleUrl);
   const provider =

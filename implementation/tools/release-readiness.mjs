@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,13 +47,44 @@ export const OBSERVED_RELEASE_GATES = Object.freeze([
   "fresh_v1_local_validation", "installed_sdk_distribution", "published_tutorial_recipes",
   "p0_delivery", "multi_os_ci_observation", "external_user_validation",
   "public_release_artifacts", "public_distribution_channel", "public_docs_site_deployment",
+  "industrial_qualification", "desktop_installers", "dependency_security",
+  "publisher_signatures", "documentation_review",
 ]);
 const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"];
-const P0_TASKS = ["javascript_sdk_distribution","sdk_project_handlers","sdk_tutorials","lexical_runtime_scopes","compiler_lsp_import_diagnostics","air_trace_admission","runtime_secret_redaction","agent_cycle_finalization","skill_pack_workflows","project_manifest_locks","input_admission_boundaries","cli_sdk_inspection_contracts","unified_v1_workflows"];
+export const REQUIRED_V1_TASKS = Object.freeze([
+  ...["javascript_sdk_distribution","sdk_project_handlers","sdk_tutorials","lexical_runtime_scopes","compiler_lsp_import_diagnostics","air_trace_admission","runtime_secret_redaction","agent_cycle_finalization","skill_pack_workflows","project_manifest_locks","input_admission_boundaries","cli_sdk_inspection_contracts","unified_v1_workflows"],
+  "history_independent_serving", "execution_cost_budgets", "typed_multi_agent_coordination", "executable_adoption_recipes", "industrial_v1_qualification", "sdk_choice_graphical_installers", "python_javascript_sdk_parity",
+]);
+// Only these tasks have explicitly approved V2 slices. An uncompleted V1
+// slice cannot be hidden by marking the whole task deferred.
+const SPLIT_V1_TASKS = new Set(["typed_multi_agent_coordination", "industrial_v1_qualification", "python_javascript_sdk_parity"]);
+export const INDUSTRIAL_CHECKS = Object.freeze([
+  "http_load_matrix", "durability_recovery", "backup_restore", "python_process_performance",
+  "shared_provider_budgets", "multi_agent_authority_isolation", "parallel_cancel_resume",
+  "installed_industrial_paths",
+]);
+export const INSTALLER_CHECKS = Object.freeze(["install", "update", "cancel", "corruption_refusal", "path", "sdk_javascript", "sdk_python", "uninstall", "graphical_session"]);
+
+function tutorialInventory(implementationRoot) {
+  try { return readdirSync(resolve(implementationRoot, "../docs/tutoriels"))
+    .filter(name => name.endsWith(".md") && name !== "README.md").sort(); }
+  catch { return []; }
+}
+
+function completeTutorials(observation, documents) {
+  if (!documents.length || observation.scope !== "all" || observation.live !== true) return false;
+  const expected = ["fr", "en"].flatMap(locale => documents.map(document => `${locale}/${document}`)).sort();
+  const results = observation.results;
+  return Array.isArray(results) && results.length === expected.length
+    && observation.total === expected.length && observation.passed === expected.length && observation.failed === 0
+    && ["fr", "en"].every(locale => observation.locales?.includes(locale))
+    && results.every(row => row.status === "passed" && Number.isInteger(row.commands) && row.commands > 0)
+    && results.map(row => `${row.locale}/${row.document}`).sort().every((id, index) => id === expected[index]);
+}
 
 // Qualification observations are inputs to this existing report, not a second registry.
 // They must be reviewed; structural validation cannot establish that a human test occurred.
-function observedGates({ qualification, candidate, implementationVersion, now = Date.now() }) {
+function observedGates({ qualification, candidate, implementationVersion, tutorialDocuments, now = Date.now() }) {
   return OBSERVED_RELEASE_GATES.map(id => {
     const observation = qualification?.observations?.[id];
     const gate = { id, required: true, evidence: observation?.evidence ?? [] };
@@ -67,11 +98,20 @@ function observedGates({ qualification, candidate, implementationVersion, now = 
     if (!Number.isFinite(time) || time > now || now - time > 7 * 86400000) reason = "observation is missing, future-dated or older than seven days";
     if (!Array.isArray(gate.evidence) || !gate.evidence.length || gate.evidence.some(item => typeof item !== "string" || !item.trim())) reason = "missing evidence references";
     if (observation.status !== "satisfied") reason = "observation did not pass";
-    if (id === "p0_delivery" && P0_TASKS.some(task => observation.tasks?.[task] !== "completed")) reason = "a required P0 task is not delivered";
+    if (id === "p0_delivery" && REQUIRED_V1_TASKS.some(task => observation.tasks?.[task] !== "completed"
+      && !(SPLIT_V1_TASKS.has(task) && observation.tasks?.[task] === "v1_completed"))) reason = "a required V1 task or V1 slice is not delivered";
     if (["multi_os_ci_observation", "public_release_artifacts"].includes(id)
       && PLATFORMS.some(platform => observation.platforms?.[platform] !== "passed")) reason = "a claimed platform remains unqualified";
-    if (id === "published_tutorial_recipes" && !(observation.total >= 56 && observation.passed === observation.total
-      && observation.failed === 0 && observation.live === true && ["fr", "en"].every(locale => observation.locales?.includes(locale)))) reason = "the complete FR/EN live tutorial campaign is not qualified";
+    if (id === "installed_sdk_distribution" && PLATFORMS.some(platform => ["javascript", "python"].some(language =>
+      observation.sdks?.[platform]?.[language] !== "passed"))) reason = "an installed SDK/platform pair remains unqualified";
+    if (id === "published_tutorial_recipes" && !completeTutorials(observation, tutorialDocuments)) reason = "the exact current FR/EN tutorial inventory is not qualified";
+    if (id === "industrial_qualification" && INDUSTRIAL_CHECKS.some(check => observation.checks?.[check] !== "passed")) reason = "an industrial qualification check remains open";
+    if (id === "desktop_installers" && PLATFORMS.some(platform => INSTALLER_CHECKS.some(check =>
+      observation.platforms?.[platform]?.[check] !== "passed"))) reason = "a native installer or graphical session remains unqualified";
+    if (id === "publisher_signatures" && ["darwin-arm64", "darwin-x64", "win32-x64"].some(platform =>
+      observation.platforms?.[platform] !== "passed")) reason = "a publisher signature/notarization check remains open";
+    if (id === "documentation_review" && ["fr", "en"].some(locale => observation.locales?.[locale] !== "passed")) reason = "a documentation review remains open";
+    if (id === "public_docs_site_deployment" && observation.restore_test !== "passed") reason = "production backup restoration remains unqualified";
     return { ...gate, status: reason ? "failed" : "satisfied", ...(reason ? { reason } : {}), details: observation };
   });
 }
@@ -81,14 +121,25 @@ export function identifyReleaseCandidate(path, sourceRevision) {
   const manifest = JSON.parse(bytes);
   const assets = manifest.assets ?? manifest.artifacts;
   if (!Array.isArray(assets) || assets.length === 0) throw new Error("Candidate checksums contain no artifacts");
+  const version = manifest.version ?? manifest.touba_version;
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(version ?? "")) throw new Error("Invalid candidate version");
+  const expected = new Set(PLATFORMS.flatMap(platform => [
+    `touba-v${version}-${platform}.tar.gz`,
+    `touba-v${version}-${platform}-setup.${platform.startsWith("darwin") ? "dmg" : platform === "win32-x64" ? "exe" : "deb"}`,
+  ]));
+  const seen = new Set();
   for (const asset of assets) {
     const name = asset.name ?? asset.path;
-    if (typeof name !== "string" || !/^[A-Za-z0-9._-]+\.tar\.gz$/.test(name)) throw new Error("Invalid candidate artifact name");
-    const hash = createHash("sha256").update(readFileSync(resolve(dirname(path), name))).digest("hex");
+    if (!expected.has(name) || seen.has(name)) throw new Error("Invalid or duplicate candidate artifact name");
+    seen.add(name);
+    const file = resolve(dirname(path), name);
+    if (!lstatSync(file).isFile()) throw new Error("Candidate artifact must be a regular file");
+    const hash = createHash("sha256").update(readFileSync(file)).digest("hex");
     if (hash !== asset.sha256) throw new Error("Candidate artifact checksum mismatch: " + name);
   }
+  if (seen.size !== expected.size) throw new Error("Candidate must contain all four archives and graphical installers");
   return { sha256: createHash("sha256").update(bytes).digest("hex"), source_revision: sourceRevision,
-    version: manifest.version ?? manifest.touba_version };
+    version };
 }
 
 /**
@@ -111,7 +162,8 @@ export function buildReleaseReadinessReport(options = {}) {
     ...fileGates(pathExists),
     currentReleaseNoteGate(packageJson, pathExists),
     packageVersionGate(readJson),
-    ...observedGates({ ...options, implementationVersion: packageJson.version }),
+    ...observedGates({ ...options, implementationVersion: packageJson.version,
+      tutorialDocuments: options.tutorialDocuments ?? tutorialInventory(implementationRoot) }),
   ];
   const counts = countGateStatuses(gates);
 

@@ -6,10 +6,13 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import { defineTool, ToubaEngine, toubaSdkMetadata, createOpenAiDecisionProvider, createOllamaDecisionProvider } from "@touba/sdk";
 import { assertRunSucceeded, assertRunRefused, assertTraceEvents } from "@touba/sdk/testing";
 import { createSqliteDecisionHistoryStore } from "@touba/sdk/history/sqlite";
 import { createProviderContextFetch } from "@touba/sdk";
+import { createSqliteProviderBudget } from "@touba/sdk/budget/sqlite";
 
 const historyStore = createSqliteDecisionHistoryStore({ filename: ":memory:" });
 await historyStore.transact("archive-check", async () => ({ record: { retained: true }, result: true }));
@@ -39,6 +42,71 @@ assert.equal(run.status, "success");
 assert.equal(run.result, "installed-sdk-ok");
 assertRunSucceeded(run, "installed-sdk-ok");
 assertTraceEvents(run.trace, { kind: "run_completed", count: 1 });
+await checkInstalledProviderAccounting(engine);
+
+async function checkInstalledProviderAccounting(installedEngine) {
+  const received = [], filename = join(process.cwd(), "installed-budget.sqlite");
+  const budget = createSqliteProviderBudget({ filename, budgetId: "installed-check", currency: "USD", limitMicros: 1000n });
+  const server = createServer(async (request, response) => {
+    let raw = ""; for await (const chunk of request) raw += chunk;
+    const body = JSON.parse(raw); received.push(body);
+    assert.equal(budget.snapshot().attempts.pending, 1, "reserve before each actual dispatch");
+    const native = body.tools?.some(tool => tool.name === "touba_finish");
+    const output = native ? [{ type: "function_call", id: "fc_local", call_id: "call_local", name: "touba_finish",
+      arguments: JSON.stringify({ reason: "Complete.", result: "done" }), status: "completed" }]
+      : [{ type: "message", id: "msg_local", role: "assistant", status: "completed", content: [{ type: "output_text", annotations: [],
+        text: JSON.stringify({ decision: { action: "answer_directly", source: "offline_fixture", result: "done" } }) }] }];
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ id: "resp_local", created_at: 1, model: "fixture-model", status: "completed", output,
+      usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 } }));
+  });
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  try {
+    writeFileSync("accounting.tb", `module installed.accounting
+agent Worker
+    gives Text
+    responsibility "Return the requested result."
+    callable_by strategy Run
+strategy Run
+    gives Text
+    uses Worker
+    do
+        Worker
+            into result
+        give result
+`);
+    const provider = (mode, limit) => writeFileSync("accounting.provider.mjs", `
+import {createOpenAiDecisionProvider,createProviderTokenCostAdapter} from '@touba/sdk';
+import {createSqliteProviderBudget} from '@touba/sdk/budget/sqlite';
+process.env.TOUBA_INSTALLED_COST_FIXTURE='offline-fixture-not-a-key';
+const budget=createSqliteProviderBudget({filename:${JSON.stringify(filename)},budgetId:'installed-check',currency:'USD',limitMicros:${limit}n});
+const tariff={id:'offline-fixture',date:'2026-10-19',currency:'USD',rates:{input:1000000n,output:1000000n}};
+const adapter=createProviderTokenCostAdapter({protocol:'openai-responses',model:'fixture-model',tariff,inputTokenBound:()=>({basis:'upper_bound',tokens:100})});
+export default createOpenAiDecisionProvider({model:'fixture-model',decisionInterface:${JSON.stringify(mode)},history:false,maxRetries:0,maxOutputTokens:64,
+ apiKeyEnvNames:['TOUBA_INSTALLED_COST_FIXTURE'],baseURL:'http://127.0.0.1:${server.address().port}/v1',cost:{budget,...adapter}});
+`);
+    const options = { source: "accounting.tb", entryRef: "strategy:installed.accounting/Run",
+      agentDecisionProvider: "accounting.provider.mjs", agentDecisionProviderInitialMode: "capabilities" };
+    for (const mode of ["structured", "native"]) {
+      provider(mode, 1000);
+      const result = await installedEngine.run(options);
+      assertRunSucceeded(result, "done");
+      const evidence = result.trace.events.filter(event => event.kind === "provider_cost_recorded");
+      assert.deepEqual(evidence.map(event => event.payload.status), ["pending", "reported"]);
+      assert.equal(evidence[1].payload.cost_micros, "3");
+      const attempt = budget.listAttempts().find(value => value.id === evidence[0].payload.attempt_id);
+      assert.equal(attempt.context.invocation_id, evidence[0].payload.invocation_id);
+      assert.equal(JSON.stringify(result.trace).includes("offline-fixture-not-a-key"), false);
+    }
+    assert.equal(budget.snapshot().committedMicros, 6n);
+    provider("native", 6); // fresh process, same durable ledger, tightened ceiling
+    await assertRunRefused(() => installedEngine.run(options), "ProviderCostBudgetExceeded");
+    assert.equal(received.length, 2, "refusal must precede a third HTTP request");
+    assert.equal(budget.snapshot().committedMicros, 6n);
+  } finally {
+    server.closeAllConnections(); await new Promise(done => server.close(done)); budget.close();
+  }
+}
 
 const persistent = new ToubaEngine({ command: process.execPath, commandArgs: [process.argv[2]], executionMode: "persistent" });
 try {

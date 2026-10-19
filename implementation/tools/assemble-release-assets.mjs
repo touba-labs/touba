@@ -2,11 +2,12 @@
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
@@ -20,6 +21,7 @@ export const PUBLIC_RELEASE_PLATFORMS = Object.freeze([
   "win32-x64",
 ]);
 const DEFAULT_IMPLEMENTATION_ROOT = resolve(new URL("..", import.meta.url).pathname);
+const INSTALLER_FORMATS = { "darwin-arm64": "dmg", "darwin-x64": "dmg", "linux-x64": "deb", "win32-x64": "exe" };
 
 export function assembleReleaseAssets(options = {}) {
   const inputDir = resolveRequiredDir(options.inputDir, "inputDir");
@@ -29,7 +31,8 @@ export function assembleReleaseAssets(options = {}) {
   const releaseNotesPath = resolve(options.releaseNotesPath ?? join(DEFAULT_IMPLEMENTATION_ROOT, "release", "notes", `${tag}.md`));
   const canonicalReleaseNotes = readCanonicalReleaseNotes(releaseNotesPath, version);
 
-  const tarballs = collectFiles(inputDir)
+  const files = collectFiles(inputDir);
+  const tarballs = files
     .filter((path) => basename(path).startsWith(`touba-v${version}-`) && basename(path).endsWith(".tar.gz"))
     .map((path) => ({
       path,
@@ -39,15 +42,23 @@ export function assembleReleaseAssets(options = {}) {
     .sort((left, right) => left.filename.localeCompare(right.filename));
 
   validateTarballs(tarballs, version);
-
-  rmSync(outputDir, { recursive: true, force: true });
+  const installers = PUBLIC_RELEASE_PLATFORMS.map(platform => {
+    const filename = `touba-v${version}-${platform}-setup.${INSTALLER_FORMATS[platform]}`;
+    const matches = files.filter(path => basename(path) === filename);
+    if (matches.length !== 1) throw new Error(`${matches.length ? "duplicate" : "missing"} public installer ${filename}`);
+    return { path: matches[0], filename, platform };
+  });
+  // Never destroy a prior candidate, even when a caller reuses the default.
+  if (existsSync(outputDir) && (lstatSync(outputDir).isSymbolicLink() || !lstatSync(outputDir).isDirectory() || readdirSync(outputDir).length)) {
+    throw new Error("Release output directory must be empty and not a symlink; preserve previous candidates");
+  }
   mkdirSync(outputDir, { recursive: true });
 
   const assets = [];
   const checksumLines = [];
-  for (const item of tarballs) {
+  for (const item of [...tarballs, ...installers]) {
     const target = join(outputDir, item.filename);
-    copyFileSync(item.path, target);
+    copyFileSync(item.path, target, constants.COPYFILE_EXCL);
     const sha256 = sha256File(target);
     checksumLines.push(`${sha256}  ${item.filename}`);
     assets.push({
@@ -73,9 +84,9 @@ export function assembleReleaseAssets(options = {}) {
     },
   };
 
-  writeFileSync(join(outputDir, "SHA256SUMS"), `${checksumLines.join("\n")}\n`, "utf8");
-  writeFileSync(join(outputDir, "CHECKSUMS.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  writeFileSync(join(outputDir, "GITHUB_RELEASE_NOTES.md"), renderReleaseNotes(manifest, canonicalReleaseNotes), "utf8");
+  writeFileSync(join(outputDir, "SHA256SUMS"), `${checksumLines.join("\n")}\n`, { encoding: "utf8", flag: "wx" });
+  writeFileSync(join(outputDir, "CHECKSUMS.json"), `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  writeFileSync(join(outputDir, "GITHUB_RELEASE_NOTES.md"), renderReleaseNotes(manifest, canonicalReleaseNotes), { encoding: "utf8", flag: "wx" });
 
   return {
     output_dir: outputDir,
@@ -137,7 +148,7 @@ function renderReleaseNotes(manifest, canonicalReleaseNotes) {
     "Download `SHA256SUMS` or `CHECKSUMS.json` from this release and compare the SHA-256 digest of the archive before installation.",
     "",
     "Installation instructions are maintained in the Touba documentation:",
-    "https://pap-touba.github.io/documentation-site/docs/demarrer/installation",
+    "https://touba-labs.com/docs/demarrer/installation",
     "",
   ].join("\n");
 }

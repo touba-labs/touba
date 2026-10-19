@@ -8,6 +8,9 @@ import { join } from "node:path";
 import {
   RELEASE_READINESS_SCHEMA_VERSION,
   OBSERVED_RELEASE_GATES,
+  REQUIRED_V1_TASKS,
+  INDUSTRIAL_CHECKS,
+  INSTALLER_CHECKS,
   identifyReleaseCandidate,
   buildReleaseReadinessReport,
   parseReleaseReadinessArgs,
@@ -47,7 +50,7 @@ test("builds a stable blocked V1 release readiness report", () => {
   assert.deepEqual(report.counts, {
     satisfied: 19,
     pending: 0,
-    blocked: 9,
+    blocked: 14,
     failed: 0,
   });
   assert.equal(report.gates.find((gate) => gate.id === "external_user_validation")?.status, "blocked");
@@ -100,11 +103,17 @@ function qualificationFixture() {
   const qualification = { candidate_sha256: candidate.sha256, source_revision: candidate.source_revision,
     version: candidate.version, observations: Object.fromEntries(OBSERVED_RELEASE_GATES.map(id => [id, {
       status: "satisfied", observed_at: "2026-10-15T11:00:00Z", evidence: ["test-fixture-only"],
-      tasks: Object.fromEntries(Array.from({ length: 14 }, (_, index) => ["TASK-" + String(903 + index).padStart(4, "0"), "completed"])),
+      tasks: Object.fromEntries(REQUIRED_V1_TASKS.map(id => [id, "completed"])),
       platforms: Object.fromEntries(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].map(platform => [platform, "passed"])),
-      total: 56, passed: 56, failed: 0, live: true, locales: ["fr", "en"],
+      sdks: Object.fromEntries(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].map(platform => [platform, { javascript: "passed", python: "passed" }])),
+      checks: Object.fromEntries(INDUSTRIAL_CHECKS.map(check => [check, "passed"])),
+      total: 4, passed: 4, failed: 0, live: true, scope: "all", locales: ["fr", "en"], restore_test: "passed",
+      results: ["fr", "en"].flatMap(locale => ["first.md", "second.md"].map(document => ({ locale, document, status: "passed", commands: 1 }))),
     }])) };
-  return { candidate, qualification, now, packageJson: { version: "0.1.0", scripts: requiredScripts },
+  qualification.observations.documentation_review.locales = { fr: "passed", en: "passed" };
+  qualification.observations.desktop_installers.platforms = Object.fromEntries(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].map(platform =>
+    [platform, Object.fromEntries(INSTALLER_CHECKS.map(check => [check, "passed"]))]));
+  return { candidate, qualification, now, tutorialDocuments: ["first.md", "second.md"], packageJson: { version: "0.1.0", scripts: requiredScripts },
     pathExists: () => true, readJson: () => ({ version: "0.1.0" }) };
 }
 
@@ -123,6 +132,18 @@ test("only fresh complete evidence for the exact candidate can qualify release r
     o => { o.qualification.observations.installed_sdk_distribution.evidence = []; },
     o => { o.qualification.observations.published_tutorial_recipes.passed = 55; },
     o => { o.qualification.observations.published_tutorial_recipes.live = false; },
+    o => { o.qualification.observations.published_tutorial_recipes.results[1].document = "first.md"; },
+    o => { o.tutorialDocuments.push("new-tutorial.md"); },
+    o => { o.qualification.observations.published_tutorial_recipes.scope = "selected"; },
+    o => { o.qualification.observations.p0_delivery.tasks["execution_cost_budgets"] = "in_progress"; },
+    o => { o.qualification.observations.p0_delivery.tasks["history_independent_serving"] = "v1_completed"; },
+    o => { o.qualification.observations.installed_sdk_distribution.sdks["win32-x64"].python = "not_tested"; },
+    o => { o.qualification.observations.industrial_qualification.checks.http_load_matrix = "not_tested"; },
+    o => { o.qualification.observations.desktop_installers.platforms["darwin-x64"].graphical_session = "not_tested"; },
+    o => { o.qualification.observations.publisher_signatures.platforms["win32-x64"] = "not_tested"; },
+    o => { o.qualification.observations.dependency_security.status = "deferred"; },
+    o => { o.qualification.observations.documentation_review.locales.en = "not_tested"; },
+    o => { delete o.qualification.observations.public_docs_site_deployment.restore_test; },
   ]) {
     const options = qualificationFixture(); mutate(options);
     assert.notEqual(buildReleaseReadinessReport(options).overall_status, "ready", mutate.toString());
@@ -140,16 +161,25 @@ test("qualification flags are explicit and missing values are refused", () => {
 test("candidate identity verifies real archive bytes and refuses missing, altered or escaping assets", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-readiness-"));
   try {
-    const file = join(root, "candidate.tar.gz");
+    const names = ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].flatMap(platform => [
+      `touba-v1.0.0-${platform}.tar.gz`,
+      `touba-v1.0.0-${platform}-setup.${platform.startsWith("darwin") ? "dmg" : platform === "win32-x64" ? "exe" : "deb"}`,
+    ]);
+    const file = join(root, names[0]);
     const manifest = join(root, "CHECKSUMS.json");
-    writeFileSync(file, "qualification-test-only");
-    const asset = { name: "candidate.tar.gz", sha256: createHash("sha256").update("qualification-test-only").digest("hex") };
-    const value = { version: "0.1.0", assets: [asset] };
+    for (const name of names) writeFileSync(join(root, name), "qualification-test-only");
+    const asset = { name: names[0], sha256: createHash("sha256").update("qualification-test-only").digest("hex") };
+    const value = { version: "1.0.0", assets: names.map(name => ({ ...asset, name })) };
     writeFileSync(manifest, JSON.stringify(value));
     const candidate = identifyReleaseCandidate(manifest, "source-commit");
-    assert.equal(candidate.version, "0.1.0");
+    assert.equal(candidate.version, "1.0.0");
     assert.equal(candidate.source_revision, "source-commit");
     assert.match(candidate.sha256, /^[a-f0-9]{64}$/);
+    for (const assets of [value.assets.slice(0, 4), [...value.assets, asset]]) {
+      writeFileSync(manifest, JSON.stringify({ ...value, assets }));
+      assert.throws(() => identifyReleaseCandidate(manifest, "source-commit"), /all four|duplicate/);
+    }
+    writeFileSync(manifest, JSON.stringify(value));
     writeFileSync(file, "changed");
     assert.throws(() => identifyReleaseCandidate(manifest, "source-commit"), /checksum mismatch/);
     for (const name of ["../candidate.tar.gz", "missing.tar.gz", "C:\\candidate.tar.gz"]) {

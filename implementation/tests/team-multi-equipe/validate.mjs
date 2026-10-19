@@ -235,7 +235,7 @@ function writeSupplyChainLock(projectRoot, handlerPath) {
         digest: digestForFile(handlerPath),
         sdk: {
           name: "@touba/sdk",
-          version: "0.1.0",
+          version: "1.0.0",
           protocol: "touba-tool-handler-v1",
           status: "ok",
         },

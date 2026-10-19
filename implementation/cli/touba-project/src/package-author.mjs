@@ -27,7 +27,7 @@ export function newPackage(name, { root = process.cwd(), org, context = false, d
   if (readdirSync(root).some(entry => entry.toLowerCase() === shortName.toLowerCase())) throw packageError("PackageAlreadyExists", `refusing to replace ${path}`);
   const document = { package_schema_version: PACKAGE_SCHEMA, name, version,
     description: description ?? `Reusable ${name} package.`,
-    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=0.1.0 <0.2.0" }, exports: {}, readme: "README.md", files: context ? [".gitignore"] : ["src", ".gitignore"] };
+    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=1.0.0 <2.0.0" }, exports: {}, readme: "README.md", files: context ? [".gitignore"] : ["src", ".gitignore"] };
   if (publisher ?? org) document.publisher = publisher ?? org.trim();
   if (license) document.license = license;
   const staging = mkdtempSync(join(root, ".touba-package-new-"));

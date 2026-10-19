@@ -74,6 +74,33 @@ test("requires retired releases to carry maintainer decision metadata", () => {
   }
 });
 
+test("rejects Rust and Python component version drift", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
+  const implementationRoot = join(repoRoot, "implementation");
+  try {
+    writeFixtureRepo({ repoRoot, implementationRoot, version: "1.2.3" });
+    writeFileSync(join(implementationRoot, "compiler/touba-compiler/Cargo.toml"), '[package]\nversion = "1.2.2"\n');
+    writeFileSync(join(implementationRoot, "runtime/touba-python-sdk/pyproject.toml"), '[project]\nversion = "1.2.2"\n');
+    const report = buildReleaseVersioningReport({ repoRoot, implementationRoot });
+    assert.equal(report.status, "failed");
+    assert.equal(report.diagnostics.filter(item => item.code === "ComponentVersionMismatch").length, 2);
+  } finally { rmSync(repoRoot, { recursive: true, force: true }); }
+});
+
+test("requires all four graphical installers in active releases", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
+  const implementationRoot = join(repoRoot, "implementation");
+  try {
+    writeFixtureRepo({ repoRoot, implementationRoot, version: "1.2.3" });
+    const index = releaseIndex("1.2.3", false);
+    index.versions[0].artifacts = index.versions[0].artifacts.filter(name => !name.endsWith(".exe"));
+    writeJson(join(implementationRoot, "release/releases.json"), index);
+    const report = buildReleaseVersioningReport({ repoRoot, implementationRoot });
+    assert.equal(report.status, "failed");
+    assert.equal(report.diagnostics.filter(item => item.code === "ReleaseInstallerMissing").length, 1);
+  } finally { rmSync(repoRoot, { recursive: true, force: true }); }
+});
+
 test("requires structured release notes for each managed version", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
   try {
@@ -127,6 +154,15 @@ test("release validator rejects asset replacement", () => {
 });
 
 function writeFixtureRepo({ repoRoot, implementationRoot, version, childVersion = version, retiredCurrent = false, omitReleaseNote = false }) {
+  for (const [directory, file, section] of [
+    ["compiler/touba-compiler", "Cargo.toml", "package"],
+    ["cli/touba-cli", "Cargo.toml", "package"],
+    ["runtime/touba-sandbox", "Cargo.toml", "package"],
+    ["runtime/touba-python-sdk", "pyproject.toml", "project"],
+  ]) {
+    mkdirSync(join(implementationRoot, directory), { recursive: true });
+    writeFileSync(join(implementationRoot, directory, file), `[${section}]\nversion = "${version}"\n`);
+  }
   mkdirSync(join(implementationRoot, "release", "notes"), { recursive: true });
   mkdirSync(join(implementationRoot, "runtime", "touba-runtime"), { recursive: true });
   mkdirSync(join(repoRoot, ".github", "workflows"), { recursive: true });
@@ -175,6 +211,10 @@ function releaseIndex(version, retiredCurrent) {
           `touba-v${version}-darwin-x64.tar.gz`,
           `touba-v${version}-linux-x64.tar.gz`,
           `touba-v${version}-win32-x64.tar.gz`,
+          `touba-v${version}-darwin-arm64-setup.dmg`,
+          `touba-v${version}-darwin-x64-setup.dmg`,
+          `touba-v${version}-linux-x64-setup.deb`,
+          `touba-v${version}-win32-x64-setup.exe`,
           "SHA256SUMS",
           "CHECKSUMS.json",
         ],

@@ -395,7 +395,7 @@ test("archive parser refuses traversal, symlinks, duplicate entries and oversize
 test("selected static registry installs the exact archive and rejects changed digests and yanked versions", async t => {
   const root = workspace(t), source = author(root), project = consumer(root), registry = join(root, "registry"); mkdirSync(registry);
   const packed = await packPackage(source, { output: join(registry, "echo.tar.gz") });
-  const metadata = { schema_version: "touba-registry-package-v1", package_ref: "pkg:example.echo", namespace: "example", name: "echo", version: "0.1.0", kind: "touba_package", status: "validated", summary: "Contract test package", source: { type: "archive", url: "https://example.invalid/echo.tar.gz", path: "echo.tar.gz", revision: packed.digest }, compatibility: { touba: ">=0.1.0 <0.2.0", protocols: ["touba-package-v1"] }, artifacts: [{ kind: "package_archive", path: "echo.tar.gz", digest: packed.digest }] };
+  const metadata = { schema_version: "touba-registry-package-v1", package_ref: "pkg:example.echo", namespace: "example", name: "echo", version: "0.1.0", kind: "touba_package", status: "validated", summary: "Contract test package", source: { type: "archive", url: "https://example.invalid/echo.tar.gz", path: "echo.tar.gz", revision: packed.digest }, compatibility: { touba: ">=1.0.0 <2.0.0", protocols: ["touba-package-v1"] }, artifacts: [{ kind: "package_archive", path: "echo.tar.gz", digest: packed.digest }] };
   const save = () => {
     const bytes = JSON.stringify(metadata); writeFileSync(join(registry, "package.json"), bytes);
     writeFileSync(join(registry, "index.json"), JSON.stringify({ index_schema_version: "touba-registry-index-v1", packages: [{ package_ref: metadata.package_ref, version: metadata.version, kind: metadata.kind, status: metadata.status, metadata_path: "package.json", metadata_digest: packageDigest(bytes) }] }));
@@ -403,7 +403,7 @@ test("selected static registry installs the exact archive and rejects changed di
   await addRegistryPackage("example.echo", { root: project, registry, version: "0.1.0" });
   metadata.compatibility.touba = ">=99.0.0"; save();
   await assert.rejects(addRegistryPackage("example.echo", { root: project, registry, version: "0.1.0" }), { code: "PackageVersionIncompatible" });
-  metadata.compatibility.touba = ">=0.1.0 <0.2.0";
+  metadata.compatibility.touba = ">=1.0.0 <2.0.0";
   metadata.artifacts[0].digest = `sha256:${"0".repeat(64)}`; save();
   await assert.rejects(addRegistryPackage("example.echo", { root: project, registry, version: "0.1.0" }), { code: "PackageIntegrityMismatch" });
   metadata.status = "yanked"; save();

@@ -2144,7 +2144,7 @@ test("prepare reports local package export and compatibility diagnostics", async
         version: "0.1.0",
         touba: {
           air_profile: "air-json-v9",
-          runtime_compatibility: ">=0.1 <0.2",
+          runtime_compatibility: ">=1.0 <2.0",
         },
         registry: "https://registry.example.invalid",
         bindings: {},
@@ -2178,7 +2178,7 @@ test("prepare reports local package export and compatibility diagnostics", async
       ["PackageRegistryForbidden", { registry: "https://registry.example.invalid" }],
       ["PackageAuthorityFieldForbidden", { bindings: {} }],
       ["PackageVersionIncompatible", {}],
-      ["PackageAirProfileIncompatible", { touba: { air_profile: "air-json-v9", runtime_compatibility: ">=0.1 <0.2" } }],
+      ["PackageAirProfileIncompatible", { touba: { air_profile: "air-json-v9", runtime_compatibility: ">=1.0 <2.0" } }],
     ];
     for (const [code, patch] of cases) {
       writeFileSync(fixturePath, JSON.stringify({ ...base, ...patch }));
@@ -2561,7 +2561,7 @@ test("CLI version keeps human output concise and does not claim an environment-s
   const env = { ...process.env, TOUBA_BUILD_ID: "spoofed-build", GITHUB_SHA: "a".repeat(40) };
   const result = spawnSync(process.execPath, [cliPath, "version"], { encoding: "utf8", env });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, "touba 0.1.0\nbuild source-local\n");
+  assert.equal(result.stdout, "touba 1.0.0\nbuild source-local\n");
   assert.equal(result.stderr, "");
   const json = spawnSync(process.execPath, [cliPath, "version", "--json"], { encoding: "utf8", env });
   assert.equal(json.status, 0, json.stderr);
@@ -2572,13 +2572,13 @@ test("CLI version reports public command and schema versions", () => {
   const result = spawnSync(process.execPath, [cliPath, "version", "--json"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
-  assert.equal(report.cli, "0.1.0");
-  assert.equal(report.runtime, "0.1.0");
-  assert.equal(report.inspect, "0.1.0");
-  assert.equal(report.audit, "0.1.0");
-  assert.equal(report.supply_chain, "0.1.0");
-  assert.equal(report.manifest, "0.1.0");
-  assert.equal(report.sdk, "0.1.0");
+  assert.equal(report.cli, "1.0.0");
+  assert.equal(report.runtime, "1.0.0");
+  assert.equal(report.inspect, "1.0.0");
+  assert.equal(report.audit, "1.0.0");
+  assert.equal(report.supply_chain, "1.0.0");
+  assert.equal(report.manifest, "1.0.0");
+  assert.equal(report.sdk, "1.0.0");
   assert.equal(report.schemas.air, "touba-air-v1");
   assert.equal(report.schemas.trace, "touba-trace-v1");
   assert.equal(report.schemas.manifest, "touba-manifest-v1");
@@ -2610,7 +2610,7 @@ test("CLI doctor reports installation health and public feature surface", () => 
   const report = JSON.parse(result.stdout);
   assert.equal(report.doctor_schema_version, "touba-doctor-v1");
   assert.equal(report.status, "ok");
-  assert.equal(report.version.cli, "0.1.0");
+  assert.equal(report.version.cli, "1.0.0");
   assert.equal(report.version.commands.supply_chain_validate, true);
   assert.equal(report.version.commands.registry_resolve, true);
   assert.equal(report.version.commands.run_profile, true);
@@ -2623,10 +2623,10 @@ test("CLI update reports the manual reinstall policy", () => {
   const result = spawnSync(process.execPath, [cliPath, "update"], { encoding: "utf8" });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /Status: manual_reinstall_required/);
-  assert.match(result.stdout, /Installed version: 0\.1\.0/);
+  assert.match(result.stdout, /Installed version: 1\.0\.0/);
   assert.match(result.stdout, /Channel: local-development/);
   assert.match(result.stdout, new RegExp(`Platform: ${process.platform}-${process.arch}`));
-  assert.match(result.stdout, /Hub: https:\/\/pap-touba\.github\.io\/documentation-site\/hub\//);
+  assert.match(result.stdout, /Hub: https:\/\/touba-labs\.com\/hub\//);
   assert.match(result.stdout, /Expected archive:/);
   assert.match(result.stdout, /No automatic update was performed/);
 });
@@ -2638,11 +2638,11 @@ test("CLI update can render a machine-readable reinstall policy", () => {
   assert.equal(report.update_schema_version, "touba-update-policy-v1");
   assert.equal(report.status, "manual_reinstall_required");
   assert.equal(report.automatic_update, false);
-  assert.equal(report.installed_version, "0.1.0");
+  assert.equal(report.installed_version, "1.0.0");
   assert.equal(report.channel, "local-development");
   assert.equal(report.platform, `${process.platform}-${process.arch}`);
-  assert.equal(report.hub_url, "https://pap-touba.github.io/documentation-site/hub/");
-  assert.equal(report.installation_guide_url, "https://pap-touba.github.io/documentation-site/docs/demarrer/installation");
+  assert.equal(report.hub_url, "https://touba-labs.com/hub/");
+  assert.equal(report.installation_guide_url, "https://touba-labs.com/docs/demarrer/installation");
 });
 
 test("CLI update help is available without reporting a failed update", () => {
@@ -2943,7 +2943,7 @@ test("CLI supply-chain delegates to Touba Supply Chain validation", () => {
           },
           sdk: {
             name: "@touba/sdk",
-            version: "0.1.0",
+            version: "1.0.0",
             protocol: "touba-tool-handler-v1",
             status: "ok",
           },
@@ -3036,7 +3036,7 @@ function processRunFixture(root) {
   const lockPath = join(root, "touba.lock.json");
   writeJson(join(root, "package.json"), { name: "project-cli-test", version: "0.1.0" });
   generateSupplyChainLock({ air: airPath, manifest, out: lockPath, sdkMetadataJson: JSON.stringify({
-    name: "@touba/sdk", version: "0.1.0", protocol: "touba-tool-handler-v1", status: "ok",
+    name: "@touba/sdk", version: "1.0.0", protocol: "touba-tool-handler-v1", status: "ok",
   }) });
   // Test-host review is explicit and separate from lock generation.
   const lock = JSON.parse(readFileSync(lockPath, "utf8"));
@@ -4416,7 +4416,7 @@ function packageManifestDocument(options = {}) {
     root: ".",
     touba: {
       air_profile: "touba-air-json-canonical-v1",
-      runtime_compatibility: ">=0.1 <0.2",
+      runtime_compatibility: ">=1.0 <2.0",
     },
     exports: {
       types: [],

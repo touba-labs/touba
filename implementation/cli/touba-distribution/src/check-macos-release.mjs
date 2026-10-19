@@ -42,12 +42,13 @@ function checkRelease(release) {
 
     const version = runTouba(["version", "--json"], env, 0);
     const versionReport = JSON.parse(version.stdout);
-    assertEqual(versionReport.cli, "0.1.0", "CLI version");
-    assertEqual(versionReport.runtime, "0.1.0", "runtime version");
-    assertEqual(versionReport.inspect, "0.1.0", "inspect version");
-    assertEqual(versionReport.audit, "0.1.0", "audit version");
-    assertEqual(versionReport.supply_chain, "0.1.0", "supply chain version");
-    assertEqual(versionReport.manifest, "0.1.0", "manifest version");
+    const expectedVersion = JSON.parse(readFileSync(join(release.release_dir, "RELEASE.json"), "utf8")).touba_version;
+    assertEqual(versionReport.cli, expectedVersion, "CLI version");
+    assertEqual(versionReport.runtime, expectedVersion, "runtime version");
+    assertEqual(versionReport.inspect, expectedVersion, "inspect version");
+    assertEqual(versionReport.audit, expectedVersion, "audit version");
+    assertEqual(versionReport.supply_chain, expectedVersion, "supply chain version");
+    assertEqual(versionReport.manifest, expectedVersion, "manifest version");
     assertEqual(versionReport.distribution.channel, "macos-local-release", "distribution channel");
     assertEqual(versionReport.distribution.platform, "darwin-arm64", "distribution platform");
     assertEqual(versionReport.commands.doctor, true, "doctor command manifest");

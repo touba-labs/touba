@@ -827,7 +827,7 @@ export function exportTraceToOpenTelemetry(trace, options = {}) {
     "service.name": "touba",
     "telemetry.sdk.name": "touba.inspect.otel",
     "telemetry.sdk.language": "javascript",
-    "telemetry.sdk.version": "0.1.0",
+    "telemetry.sdk.version": "1.0.0",
     "touba.trace.protocol_version": trace.trace_protocol_version,
     "touba.run.id": runId,
     "touba.module.ref": trace.run?.module_ref,
@@ -848,7 +848,7 @@ export function exportTraceToOpenTelemetry(trace, options = {}) {
             schemaUrl: OTEL_SEMCONV_SCHEMA_URL,
             scope: {
               name: "touba.inspect.otel",
-              version: "0.1.0",
+              version: "1.0.0",
             },
             spans,
           },

@@ -1520,7 +1520,7 @@ L'identifiant ne dépend ni du dossier d'installation ni d'une variable
 d'environnement. Il identifie le contenu au moment de l'assemblage ; ce n'est
 ni une signature ni une revérification des fichiers à chaque appel.
 
-La source courante affiche les packages Touba en `0.1.0`. Les champs de schémas
+La source courante affiche les composants du langage en `1.0.0`. Les champs de schémas
 restent versionnés séparément, par exemple `touba-air-v1` ou
 `touba-trace-v1`.
 

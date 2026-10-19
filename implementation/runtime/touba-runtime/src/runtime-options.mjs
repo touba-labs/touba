@@ -32,7 +32,7 @@ const SKILL_PACK_BUDGET_FIELDS = Object.freeze({
  * @typedef {Record<string, any>} RuntimeOptionRecord
  *
  * @typedef {object} NormalizedAgentDecisionProvider
- * @property {(request: any) => unknown | Promise<unknown>} decide
+ * @property {(request: any, execution?: any) => unknown | Promise<unknown>} decide
  * @property {Readonly<Record<string, string>> | null} metadata
  *
  * @typedef {object} NormalizedSkillPackResource
@@ -83,7 +83,7 @@ export function normalizeAgentDecisionProvider(provider, options = {}) {
   if (typeof provider === "function") {
     const providerRecord = /** @type {RuntimeOptionRecord} */ (provider);
     return Object.freeze({
-      decide: /** @type {(request: any) => unknown | Promise<unknown>} */ (provider),
+      decide: /** @type {(request: any, execution?: any) => unknown | Promise<unknown>} */ (provider),
       metadata: metadataOverride
         ?? normalizeAgentDecisionProviderMetadata(providerRecord.metadata, "agentDecisionProvider.metadata", { optional: true }),
     });

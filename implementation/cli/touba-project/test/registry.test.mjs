@@ -202,7 +202,7 @@ function createRegistryFixture(options = {}) {
   const descriptorPath = join(sourcePack, "touba.package.json");
   writeJson(descriptorPath, {
     package_schema_version: "touba-package-v1", name: "example.package", version: "0.1.0",
-    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=0.1.0 <0.2.0" },
+    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=1.0.0 <2.0.0" },
     exports: {}, contexts: [{ id: "review", description: "Review supplied evidence.", procedure: "SKILL.md" }],
   });
   writeFileSync(join(sourcePack, "SKILL.md"), "# Review\nReview the supplied evidence.\n");
@@ -218,12 +218,12 @@ function createRegistryFixture(options = {}) {
     summary: "Example pack.",
     source: {
       type: "git",
-      url: "https://github.com/pap-touba/touba-library",
+      url: "https://example.com/packages",
       path: "packages/example.package",
       revision: "main",
     },
     compatibility: {
-      touba: ">=0.1.0 <1.0.0",
+      touba: ">=1.0.0 <2.0.0",
       protocols: options.protocols ?? ["touba-package-v1"],
     },
     artifacts: [

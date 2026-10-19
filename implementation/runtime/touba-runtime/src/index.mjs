@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { failureFamilyForRuntimeCode } from "../../../contracts/machine/contracts.mjs";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
+import { createProviderCostRecorder } from "./provider-cost-evidence.mjs";
 import {
   agentDecisionProviderContent,
   agentProviderObservationBudgetReport,
@@ -4634,9 +4635,11 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
       request_digest: sha256Json(agentDecisionRequestRedactedEvidence(request)),
     }),
   });
+  const costEvidence = createProviderCostRecorder(request, context, value => assertResultHasNoResolvedSecret(value, context.secretStore));
   try {
     const response = snapshotInvocationValue(await withAgentDecisionProviderTimeout(
-      trackParallelTransport(context, Promise.resolve().then(() => context.agentDecisionProvider.decide(snapshotInvocationValue(request)))),
+      trackParallelTransport(context, Promise.resolve().then(() => context.agentDecisionProvider.decide(snapshotInvocationValue(request),
+        Object.freeze({ recordProviderCost: costEvidence.recordProviderCost })))),
       context.agentDecisionProviderTimeoutMs,
       request,
     ), "AgentDecisionProviderSchemaViolation");
@@ -4689,7 +4692,10 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
       secretValuesForRedaction(context.secretStore),
     );
     const localDecisionError = error?.name === "ToubaAgentDecisionProviderError"
-      && new Set(["DecisionHistoryBusy", "DecisionHistoryMismatch", "DecisionHistoryClosed",
+      && new Set(["ProviderCostBoundUnavailable", "ProviderCostBudgetExceeded", "ProviderBudgetBlocked", "ProviderCostBoundViolated",
+        "ProviderBudgetStorageUnsafe", "ProviderBudgetStorageUnavailable", "ProviderRequestAborted", "ProviderCostEvidenceInvalid",
+        "InvalidProviderBudgetOptions", "ProviderBudgetMismatch", "ProviderBudgetSettlementConflict",
+        "DecisionHistoryBusy", "DecisionHistoryMismatch", "DecisionHistoryClosed",
         "DecisionHistoryUnresolvedCall", "DecisionHistoryLimitExceeded", "ProviderContextWindowExceeded",
         "DecisionHistorySummaryInvalid", "DecisionHistoryStorageUnsafe"]).has(error.code);
     const decisionError = error?.name === "ToubaAgentDecisionProviderError"
@@ -4710,7 +4716,7 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
       },
       localDecisionError ? error.code : decisionError || outputError ? "AgentDecisionProviderSchemaViolation" : "AgentDecisionProviderUnavailable",
     );
-  }
+  } finally { costEvidence.close(); }
 }
 
 function normalizeAgentDecisionProviderResponse(agentRef, response) {

@@ -1,13 +1,14 @@
 {
   "name": "@touba/sdk",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Touba JavaScript SDK. Current V1 support covers process tool handlers and a local CLI-backed engine.",
   "type": "module",
   "exports": {
     ".": "./src/index.mjs",
     "./testing": "./src/testing.mjs",
-    "./history/sqlite": "./src/sqlite-decision-history.mjs"
+    "./history/sqlite": "./src/sqlite-decision-history.mjs",
+    "./budget/sqlite": "./src/sqlite-provider-budget.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installDesktop } from "./desktop-install.mjs";
 import { checkSdkTutorials } from "./check-sdk-tutorials.mjs";
@@ -11,6 +11,7 @@ import { checkSdkTutorials } from "./check-sdk-tutorials.mjs";
 if (process.argv.length !== 3) throw new Error("Usage: check-desktop-install.mjs <extracted-release-directory>");
 const release = resolve(process.argv[2]);
 const source = join(release, "touba-toolchain");
+const expected = JSON.parse(readFileSync(join(source, "TOOLCHAIN.json"), "utf8"));
 const temp = mkdtempSync(join(tmpdir(), "touba-desktop-smoke-"));
 const project = join(temp, "project with spaces"); mkdirSync(project);
 const prefix = join(temp, "installation with spaces");
@@ -29,7 +30,17 @@ try {
   const cli = join(root, "lib/cli/touba-project/src/main.mjs");
   const command = (...args) => run(binary, [cli, ...args]);
   assert.equal(JSON.parse(command("version", "--json")).build.id, installed.build_id);
-  if (process.platform !== "win32") assert.match(run(installed.cli_path, ["version"]), /touba 0\.1\.0/);
+  if (process.platform !== "win32") assert.equal(run(installed.cli_path, ["version"]).split(/\r?\n/)[0], `touba ${expected.touba_version}`);
+  else {
+    // Exercise the actual installed .cmd launcher; only a fixed command is
+    // passed to the shell, with its path provided through an environment value.
+    const launched = spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", '""%TOUBA_TEST_LAUNCHER%" version --json"'], {
+      cwd: project, env: { ...process.env, TOUBA_TEST_LAUNCHER: installed.cli_path },
+      windowsVerbatimArguments: true, encoding: "utf8", timeout: 30_000,
+    });
+    assert.equal(launched.status, 0, launched.error?.message ?? launched.stderr);
+    assert.equal(JSON.parse(launched.stdout).build.id, installed.build_id);
+  }
   assert.match(command("sdk", "path", "javascript"), /\.tgz$/);
   assert.match(command("sdk", "path", "python"), /\.whl$/);
   command("sdk", "install", "javascript");
@@ -40,9 +51,29 @@ try {
   const python = join(project, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
   writeFileSync(join(project, "program.tb"), "module test.sdk\nstrategy Echo\n    gives Text\n    do\n        give \"sdk-ok\"\n");
   const env = { ...process.env, TOUBA_COMPILE_BIN: join(root, "bin", process.platform === "win32" ? "touba-compile.exe" : "touba-compile") };
+  env.PATH = join(prefix, "bin") + delimiter + process.env.PATH;
+  for (const key of ["NODE_PATH", "PYTHONPATH", "TOUBA_IMPLEMENTATION_DIR", "TOUBA_SDK_SERVICE_COMMAND"]) delete env[key];
   const script = `from touba_sdk import ToubaEngine\ne = ToubaEngine(command=${JSON.stringify(join(root, "bin", process.platform === "win32" ? "touba.cmd" : "touba"))}, project_root=${JSON.stringify(project)})\nr = e.run(source="program.tb")\nassert r.result == "sdk-ok", r\nprint(r.status)\n`;
   const result = spawnSync(python, ["-I", "-c", script], { cwd: project, env, encoding: "utf8", timeout: 60_000 });
   assert.equal(result.status, 0, result.stderr);
+  // Default public SDK commands must use the installed PATH, not a test-only
+  // Node/CLI override. Literal metacharacters must survive with no shell.
+  writeFileSync(join(project, "echo.tb"), 'module installed_echo\nstrategy Echo\n    takes value as Text\n    gives Text\n    do\n        give value\n');
+  const literal = 'équipe & | %PATH% ! "quotes" \\ folder';
+  const defaultPython = spawnSync(python, ["-I", "-c", `from touba_sdk import ToubaEngine, create_memory_decision_history_store\nengine = ToubaEngine()\nassert engine.version()["build"]["id"] == ${JSON.stringify(installed.build_id)}\nvalue = ${JSON.stringify(literal)}\nassert engine.run(source="echo.tb", inputs={"value":value}).result == value\nstore = create_memory_decision_history_store()\nstore.close()\n`], { cwd: project, env, encoding: "utf8", timeout: 60_000 });
+  assert.equal(defaultPython.status, 0, defaultPython.stderr);
+  writeFileSync(join(project, "default-engine.mjs"), `import assert from "node:assert/strict";
+import { ToubaEngine } from "@touba/sdk";
+const value = ${JSON.stringify(literal)};
+for (const executionMode of ["process", "persistent"]) {
+  const engine = new ToubaEngine({ executionMode });
+  try {
+    assert.equal((await engine.run({source:"echo.tb",inputs:{value}})).result, value);
+  } finally { await engine.close(); }
+}
+`);
+  const defaultJs = spawnSync(binary, ["default-engine.mjs"], { cwd: project, env, encoding: "utf8", timeout: 60_000 });
+  assert.equal(defaultJs.status, 0, defaultJs.stderr);
   assert.equal(existsSync(join(project, "node_modules/@touba/sdk")), true);
   // A real Python tool: generated source, explicit host admission and runtime
   // process dispatch, with no PYTHONPATH or source-checkout dependency.

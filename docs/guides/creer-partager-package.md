@@ -91,7 +91,7 @@ recopier ; il montre les champs à maintenir quand le contenu évolue.
   "description": "Reusable acme.review package.",
   "touba": {
     "air_profile": "touba-air-json-canonical-v1",
-    "runtime_compatibility": ">=0.1.0 <0.2.0"
+    "runtime_compatibility": ">=1.0.0 <2.0.0"
   },
   "exports": {
     "skills": [

@@ -9,6 +9,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporary = mkdtempSync(join(tmpdir(), "touba-python-install-check-"));
 const python = process.env.TOUBA_PYTHON_BUILD_BIN || "python3";
 const env = { ...process.env, PYTHONPATH: "", TOUBA_TEST_NODE: process.execPath,
+  TOUBA_SDK_SERVICE_COMMAND: JSON.stringify([process.execPath, join(root, "runtime/touba-handler-sdk/src/python-service.mjs")]),
+  TOUBA_OFFLINE_FIXTURE_KEY: "offline-test-not-a-credential",
   TOUBA_TEST_CLI: process.env.TOUBA_TEST_CLI || join(root, "cli/touba-project/src/main.mjs") };
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: temporary, env, stdio: "inherit" });
@@ -19,6 +21,7 @@ try {
   const venv = join(temporary, "venv");
   run(python, ["-m", "venv", venv]);
   const installed = join(venv, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+  env.TOUBA_HOST_PYTHON = installed;
   run(installed, ["-m", "pip", "install", "--disable-pip-version-check", "--no-index", "--no-deps", join(temporary, metadata.archive)]);
   run(installed, ["-c", "import touba_sdk; assert 'site-packages' in touba_sdk.__file__; print(touba_sdk.touba_sdk_metadata())"]);
   run(installed, ["-m", "unittest", "discover", "-s", join(root, "runtime/touba-python-sdk/tests"), "-v"]);

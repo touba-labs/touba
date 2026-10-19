@@ -5,6 +5,8 @@ import { resolve as resolvePath } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import { startupHandlerDiagnostic, validatedHandlerDiagnostic } from "./handler-diagnostics.mjs";
 import { macosHandlerPolicy } from "./handler-sandbox-policy.mjs";
+import { linuxHandlerSandboxPlan, linuxSandboxOptions } from "./linux-handler-sandbox.mjs";
+import { windowsHandlerSandboxPlan, windowsSandboxOptions } from "./windows-handler-sandbox.mjs";
 import {
   validateEffectReceipt,
 } from "./effect-contract.mjs";
@@ -45,6 +47,9 @@ const EFFECT_ID_PATTERN = /^effect:sha256:[0-9a-f]{64}$/u;
  * @property {string | null} mechanism
  * @property {string} command
  * @property {string[]} args
+ * @property {Buffer=} seccomp
+ * @property {Buffer=} policy
+ * @property {Record<string, string | undefined>=} environment
  *
  * @typedef {object} RunProcessToolHandlerInput
  * @property {string} toolRef
@@ -80,6 +85,7 @@ export async function runProcessToolHandler(input) {
     binding,
     platform: input.platform ?? process.platform,
     env: input.env ?? process.env,
+    diagnostic: Boolean(input.localHandlerDiagnostics),
   });
   const isCompensation = request.operation === "compensate";
   const preparedChildEnv = isCompensation
@@ -92,6 +98,17 @@ export async function runProcessToolHandler(input) {
     await input.beforeSpawn();
   }
   const childEnv = preparedChildEnv ?? buildHandlerEnv(secretHandles, secretStore);
+  if (sandboxPlan.environment) {
+    if (Object.keys(childEnv).some(key => ["TEMP", "TMP"].includes(key.toUpperCase()))) {
+      throw new RuntimeFailure("a secret handle conflicts with a reserved sandbox temporary location", {}, "HandlerSandboxEnvironmentInvalid");
+    }
+    for (const [name, value] of Object.entries(sandboxPlan.environment)) {
+      if (Object.keys(childEnv).some(key => key.toLowerCase() === name.toLowerCase())) {
+        throw new RuntimeFailure("a secret handle conflicts with a reserved sandbox environment variable", {}, "HandlerSandboxEnvironmentInvalid");
+      }
+      if (value !== undefined) childEnv[name] = value;
+    }
+  }
   const diagnostics = input.localHandlerDiagnostics;
   /** @param {string} arg */
   const diagnosticSourcePath = arg => {
@@ -105,22 +122,49 @@ export async function runProcessToolHandler(input) {
     childEnv.TOUBA_LOCAL_DIAGNOSTIC_FD = "3";
     childEnv.TOUBA_LOCAL_DIAGNOSTIC_SOURCES = JSON.stringify(diagnosticSources);
   }
-  const child = spawnProcess(sandboxPlan.command, sandboxPlan.args, {
+  if (sandboxPlan.mechanism === "windows-lpac-job" && sandboxPlan.policy) {
+    const policy = JSON.parse(sandboxPlan.policy.toString("utf8"));
+    policy.env_keys = Object.keys(childEnv).filter(key => !["SYSTEMROOT", "LOCALAPPDATA", "TEMP", "TMP"].includes(key.toUpperCase()));
+    sandboxPlan.policy = Buffer.from(JSON.stringify(policy));
+  }
+  const child = /** @type {import('node:child_process').ChildProcessWithoutNullStreams} */ (spawnProcess(sandboxPlan.command, sandboxPlan.args, {
     cwd: binding.handler.cwd,
     env: childEnv,
-    stdio: diagnostics ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
+    stdio: sandboxPlan.policy ? ["pipe", "pipe", "pipe", diagnostics ? "pipe" : "ignore", "pipe", "pipe"]
+      : sandboxPlan.seccomp ? ["pipe", "pipe", "pipe", diagnostics ? "pipe" : "ignore", "pipe"]
+      : diagnostics ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
     shell: false,
     windowsHide: true,
-  });
+  }));
+  if (sandboxPlan.seccomp) {
+    const filter = /** @type {import('node:stream').Writable} */ (child.stdio[4]);
+    filter.on("error", () => { /* the process failure is handled below */ });
+    filter.end(sandboxPlan.seccomp);
+  }
+  if (sandboxPlan.policy) {
+    const extra = /** @type {Array<import('node:stream').Readable | import('node:stream').Writable | null | undefined>} */ (child.stdio);
+    const policy = /** @type {import('node:stream').Writable} */ (extra[5]);
+    policy.on("error", () => { /* process failure is handled below */ });
+    policy.end(sandboxPlan.policy);
+  }
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    /** @type {RuntimeFailure | null} */
+    let terminationError = null;
     let stdoutSize = 0;
     let stderrSize = 0;
     /** @type {Buffer[]} */
     const stdoutChunks = [];
     /** @type {Buffer[]} */
     const stderrChunks = [];
+    let sandboxResultSize = 0;
+    /** @type {Buffer[]} */
+    const sandboxResultChunks = [];
+    if (sandboxPlan.mechanism === "windows-lpac-job") child.stdio[4]?.on("data", chunk => {
+      sandboxResultSize += chunk.length;
+      if (sandboxResultSize <= 1024) sandboxResultChunks.push(chunk);
+    });
     let diagnosticSize = 0;
     /** @type {Buffer[]} */
     const diagnosticChunks = [];
@@ -180,6 +224,15 @@ export async function runProcessToolHandler(input) {
      * @param {RuntimeFailure} error
      */
     const failAndKill = (error) => {
+      if (["bubblewrap-seccomp-landlock", "windows-lpac-job"].includes(sandboxPlan.mechanism ?? "")) {
+        // Killing bubblewrap tears down its PID namespace. Wait for the child
+        // pipes to close before reporting timeout: no detached descendant may
+        // keep running after the failed handler is reported as stopped.
+        if (terminationError) return;
+        terminationError = error;
+        child.kill("SIGKILL");
+        return;
+      }
       if (!child.killed) {
         child.kill("SIGTERM");
       }
@@ -232,6 +285,20 @@ export async function runProcessToolHandler(input) {
     child.on("close", (code, signal) => {
       if (settled) {
         return;
+      }
+      if (terminationError) { finishReject(terminationError); return; }
+      if (sandboxPlan.mechanism === "windows-lpac-job") {
+        let result;
+        try { result = sandboxResultSize <= 1024 ? JSON.parse(Buffer.concat(sandboxResultChunks).toString("utf8")) : null; } catch { result = null; }
+        if (result?.protocol !== "touba-windows-sandbox-result-v1"
+          || (result.ok !== true && result.ok !== false)
+          || (result.ok === true && result.exit_code !== code)) {
+          finishReject(new RuntimeFailure("native sandbox returned no valid completion evidence", { toolRef }, "HandlerSandboxResultInvalid")); return;
+        }
+        if (result.ok === false) {
+          const errorCode = typeof result.code === "string" && /^HandlerSandbox[A-Za-z]+$/u.test(result.code) ? result.code : "HandlerSandboxResultInvalid";
+          finishReject(new RuntimeFailure("native sandbox admission or cleanup failed; check the selected paths and host permissions", { toolRef }, errorCode)); return;
+        }
       }
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = redactSecrets(Buffer.concat(stderrChunks).toString("utf8"), secretValues);
@@ -312,13 +379,14 @@ export async function runProcessToolHandler(input) {
 }
 
 /**
- * @param {{binding: ProcessToolBinding, platform?: string, env?: Record<string, string | undefined>}} input
+ * @param {{binding: ProcessToolBinding, platform?: string, env?: Record<string, string | undefined>, diagnostic?: boolean}} input
  * @returns {HandlerSandboxPlan}
  */
 export function buildHandlerSandboxPlan({
   binding,
   platform = process.platform,
   env = process.env,
+  diagnostic = false,
 }) {
   const sandbox = binding?.sandbox;
   if (sandbox?.required !== true) {
@@ -332,6 +400,12 @@ export function buildHandlerSandboxPlan({
   const handlerCommand = resolveHandlerCommand(binding.handler.command);
   // A sandbox executable or externally configured box is not proof that
   // this manifest's file/process/network grants are enforced.
+  if (platform === "linux" && process.platform === "linux") {
+    return linuxHandlerSandboxPlan(binding, handlerCommand, linuxSandboxOptions(env));
+  }
+  if (platform === "win32" && process.platform === "win32") {
+    return windowsHandlerSandboxPlan(binding, handlerCommand, { ...windowsSandboxOptions(env), diagnostic });
+  }
   if (platform === "linux" || platform === "win32") {
     throw new RuntimeFailure("required handler sandbox policy is not qualified on this host", { platform }, "HandlerSandboxUnsupportedPolicy");
   }

@@ -24,7 +24,7 @@ const MANIFEST_VERSIONS = new Set([
 ]);
 const DIGEST_KIND = "sha256";
 const RUNTIME_NAME = "touba-audit";
-const RUNTIME_VERSION = "0.1.0";
+const RUNTIME_VERSION = "1.0.0";
 const TRACE_AUDIT_REPORT_SUFFIX = ".trace-audit-report.json";
 const TRACE_TIMELINE_SUFFIX = ".trace-timeline.json";
 

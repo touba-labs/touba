@@ -3918,7 +3918,7 @@ function writeFixtureManifest(workspace, fileName) {
 
 function writeProjectToolRuntimeFixture(workspace, { sdk = {
   name: "@touba/sdk",
-  version: "0.1.0",
+  version: "1.0.0",
   protocol: "touba-tool-handler-v1",
   status: "ok",
 } } = {}) {
@@ -4018,7 +4018,7 @@ function writeImportedToolRuntimeFixture(workspace) {
   writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ name: "examples.data_tools.handlers", version: "0.1.0" }));
   const lockPath = join(projectRoot, "touba.lock.json");
   generateSupplyChainLock({ air: airPath, manifest: manifestPath, out: lockPath,
-    sdkMetadataJson: JSON.stringify({ name: "@touba/sdk", version: "0.1.0", protocol: "touba-tool-handler-v1", status: "ok" }) });
+    sdkMetadataJson: JSON.stringify({ name: "@touba/sdk", version: "1.0.0", protocol: "touba-tool-handler-v1", status: "ok" }) });
   approveFixtureLock(lockPath);
 
   return {

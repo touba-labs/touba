@@ -40,6 +40,7 @@ export function buildReleaseVersioningReport(options = {}) {
   validateReleaseIndex(releaseIndex, diagnostics, implementationRoot);
   validateExpectedVersion({ expectedVersion, rootPackage, releaseIndex, diagnostics });
   validatePackageVersions({ packageVersions, currentVersion: releaseIndex?.current_version, diagnostics });
+  validateNativeAndPythonVersions(implementationRoot, releaseIndex?.current_version, diagnostics);
   validateChangelog({ repoRoot, currentVersion: releaseIndex?.current_version, diagnostics });
   validateWorkflow({ repoRoot, diagnostics });
 
@@ -56,6 +57,22 @@ export function buildReleaseVersioningReport(options = {}) {
       public_platforms: PUBLIC_PLATFORMS,
     },
   };
+}
+
+function validateNativeAndPythonVersions(root, version, diagnostics) {
+  for (const [path, section] of [
+    ["compiler/touba-compiler/Cargo.toml", "package"],
+    ["cli/touba-cli/Cargo.toml", "package"],
+    ["runtime/touba-sandbox/Cargo.toml", "package"],
+    ["runtime/touba-python-sdk/pyproject.toml", "project"],
+  ]) {
+    let source;
+    try { source = readFileSync(join(root, path), "utf8"); }
+    catch { diagnostics.push(error("ComponentVersionMissing", `cannot read ${path}`, path)); continue; }
+    const block = source.split(`[${section}]`)[1]?.split(/^\[/mu)[0];
+    const declared = block?.match(/^version\s*=\s*"([^"]+)"\s*$/mu)?.[1];
+    if (declared !== version) diagnostics.push(error("ComponentVersionMismatch", `${path} version ${declared ?? "missing"} must match ${version}`, path));
+  }
 }
 
 export function parseReleaseVersioningArgs(rawArgs) {
@@ -202,6 +219,12 @@ function validateArtifacts(entry, label, diagnostics) {
   for (const artifact of ["SHA256SUMS", "CHECKSUMS.json"]) {
     if (!entry.artifacts.includes(artifact)) {
       diagnostics.push(error("ReleaseArtifactMissing", `${label}.artifacts must include ${artifact}`, "release/releases.json"));
+    }
+  }
+  if (entry.status !== "retired" && entry.status !== "yanked") {
+    for (const [platform, extension] of [["darwin-arm64", "dmg"], ["darwin-x64", "dmg"], ["linux-x64", "deb"], ["win32-x64", "exe"]]) {
+      const expected = `touba-v${entry.version}-${platform}-setup.${extension}`;
+      if (!entry.artifacts.includes(expected)) diagnostics.push(error("ReleaseInstallerMissing", `${label}.artifacts must include ${expected}`, "release/releases.json"));
     }
   }
 }

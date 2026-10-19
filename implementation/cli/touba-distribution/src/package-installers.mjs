@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
@@ -48,6 +48,8 @@ export function packageInstallers({ releaseDir, outputDir }) {
   const source = join(releaseDir, "touba-toolchain");
   const metadata = JSON.parse(readFileSync(join(source, "TOOLCHAIN.json"), "utf8"));
   if (metadata.platform !== plan.platform || metadata.touba_version !== plan.version || metadata.build?.id !== toolchainBuildIdentity(source).id) throw new Error("Installer payload metadata or build identity mismatch");
+  // A partial prior build must not be relabelled by overwriting its manifest.
+  if (existsSync(outputDir) && readdirSync(outputDir).length !== 0) throw new Error("Installer output directory must be empty; preserve previous candidates.");
   mkdirSync(outputDir, { recursive: true });
   const destination = join(outputDir, plan.filename);
   if (existsSync(destination)) throw new Error("Installer artifact already exists; use a fresh output directory.");
@@ -66,6 +68,7 @@ export function packageInstallers({ releaseDir, outputDir }) {
       run("swiftc", [join(templates, "Installer.swift"), "-module-cache-path", join(staging, "swift-cache"), "-o", join(contents, "MacOS/ToubaInstaller"), "-framework", "AppKit"]);
       write(join(volume, "Read me.txt"), "Open Install Touba.app to install for this account. No admin password.\nThis local candidate is not a signed/notarized public release. Do not disable Gatekeeper.\nThe installer does not install Python or npm, or change project SDKs.\n");
       run("hdiutil", ["create", "-volname", "Touba Installer", "-srcfolder", volume, "-format", "UDZO", destination]);
+      run("hdiutil", ["verify", destination]);
       // Keep an inspectable .app beside the DMG for native smoke/UI qualification.
       cpSync(app, join(outputDir, "Install Touba.app"), { recursive: true, force: false, errorOnExist: true });
     } else if (plan.format === "exe") {
@@ -83,8 +86,9 @@ export function packageInstallers({ releaseDir, outputDir }) {
       run("dpkg-deb", ["--root-owner-group", "--build", deb, destination]);
       run("dpkg-deb", ["--info", destination]);
     }
-    const report = { ...plan, build: metadata.build.id, path: destination,
-      sha256: createHash("sha256").update(readFileSync(destination)).digest("hex"),
+    const bytes = readFileSync(destination);
+    const report = { ...plan, build: metadata.build.id, path: destination, size_bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
       prerequisite: plan.format === "deb" ? "Ubuntu 24.04+ or compatible Debian with glibc >= 2.39, x64" : plan.platform,
     };
     write(join(outputDir, "INSTALLER.json"), JSON.stringify(report, null, 2) + "\n");

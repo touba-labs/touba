@@ -16,7 +16,7 @@ test("prepared relative handler boots its SDK inside macOS sandbox without openi
   cpSync(join(sdkRoot, "src"), join(installed, "src"), {recursive: true});
   cpSync(join(sdkRoot, "package.json"), join(installed, "package.json"));
   symlinkSync(join(sdkRoot, "node_modules"), join(installed, "node_modules"), "dir");
-  writeFileSync(join(root, "package.json"), JSON.stringify({type: "module", dependencies: {"@touba/sdk": "0.1.0"}}));
+  writeFileSync(join(root, "package.json"), JSON.stringify({type: "module", dependencies: {"@touba/sdk": "1.0.0"}}));
   mkdirSync(join(root, "src/isolated"), {recursive: true});
   writeFileSync(join(root, "src/isolated/main.tb"), `module isolated.main
 tool Read

@@ -74,7 +74,12 @@ test("internal extraction preserves the public error constructor and package exp
     assert.equal(Object.hasOwn(sdk, name), false);
   }
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-  assert.deepEqual(pkg.exports, { ".": "./src/index.mjs", "./testing": "./src/testing.mjs", "./history/sqlite": "./src/sqlite-decision-history.mjs" });
+  assert.deepEqual(pkg.exports, { ".": "./src/index.mjs", "./testing": "./src/testing.mjs",
+    "./history/sqlite": "./src/sqlite-decision-history.mjs", "./budget/sqlite": "./src/sqlite-provider-budget.mjs" });
+  assert.equal(typeof sdk.createProviderCostFetch, "function");
+  for (const internal of ["validateCostQuote", "validateCostUsage", "preparePrivateSqliteFile"]) {
+    assert.equal(Object.hasOwn(sdk, internal), false);
+  }
 });
 
 test("shared signature schemas preserve records, lists and every supported scalar", () => {

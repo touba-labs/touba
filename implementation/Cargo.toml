@@ -2,5 +2,6 @@
 members = [
     "compiler/touba-compiler",
     "cli/touba-cli",
+    "runtime/touba-sandbox",
 ]
 resolver = "3"

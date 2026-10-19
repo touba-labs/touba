@@ -1,7 +1,7 @@
 {
   "schema_version": "touba-release-index-v1",
   "product": "touba",
-  "current_version": "0.1.0",
+  "current_version": "1.0.0",
   "policy": {
     "versioning": "semver",
     "canonical_public_channel": "github_release",
@@ -17,11 +17,43 @@
   ],
   "versions": [
     {
+      "version": "1.0.0",
+      "tag": "v1.0.0",
+      "status": "candidate",
+      "summary": "First public Touba release candidate; native archives, graphical installers and both SDKs are under qualification. Publication remains gated.",
+      "release_notes": "release/notes/v1.0.0.md",
+      "breaking_changes": [],
+      "migration_guide": null,
+      "evidence": [
+        "implementation/tools/release-readiness.mjs"
+      ],
+      "compare_url": null,
+      "channels": [
+        "github_release",
+        "touba_hub"
+      ],
+      "artifacts": [
+        "touba-v1.0.0-darwin-arm64.tar.gz",
+        "touba-v1.0.0-darwin-x64.tar.gz",
+        "touba-v1.0.0-linux-x64.tar.gz",
+        "touba-v1.0.0-win32-x64.tar.gz",
+        "touba-v1.0.0-darwin-arm64-setup.dmg",
+        "touba-v1.0.0-darwin-x64-setup.dmg",
+        "touba-v1.0.0-linux-x64-setup.deb",
+        "touba-v1.0.0-win32-x64-setup.exe",
+        "SHA256SUMS",
+        "CHECKSUMS.json"
+      ],
+      "retirement": {
+        "status": "active"
+      }
+    },
+    {
       "version": "0.1.0",
       "tag": "v0.1.0",
-      "status": "published",
-      "released_on": "2026-06-22",
-      "summary": "Initial public release with the Touba language surface, AIR generation, runtime execution, CLI distribution, traces, triggers, registry resolution and reusable package foundations.",
+      "status": "retired",
+      "released_on": "2026-06-16",
+      "summary": "Withdrawn private prototype. Its release assets and tags were removed by maintainer decision; it is not a public supported distribution.",
       "release_notes": "release/notes/v0.1.0.md",
       "breaking_changes": [],
       "migration_guide": null,
@@ -45,7 +77,10 @@
         "CHECKSUMS.json"
       ],
       "retirement": {
-        "status": "active"
+        "status": "retired",
+        "decided_by": "Khadim Lo",
+        "decided_on": "2026-10-18",
+        "reason": "Remove private prototype releases and tags before the first official public release."
       }
     }
   ]

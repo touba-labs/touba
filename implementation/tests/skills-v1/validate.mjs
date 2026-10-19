@@ -300,7 +300,11 @@ async function runPositiveCases(root) {
       },
     });
     assert.equal(JSON.stringify(result.trace).includes(scriptContent), false);
-    assert.equal(eventOf(result.trace, "skill_pack_resource_refused").payload.runtime_error_code, "SkillPackScriptExecutionForbidden");
+    assert.equal(result.status, "success");
+    const excluded = eventOf(result.trace, "skill_pack_resource_refused").payload;
+    assert.equal(excluded.resource_ref, "resource:research-review/script");
+    assert.equal(excluded.reason, "script_content_not_loaded");
+    assert.equal(excluded.runtime_error_code, undefined, "listing non-executable metadata is not a failed execution attempt");
   });
 
   await check("SKILL-V1-P14", "script-backed action executes only through governed Touba tool", async () => {
@@ -615,7 +619,7 @@ function createSkillPack(root, skillId, options = {}) {
 
   const descriptor = {
     package_schema_version: "touba-package-v1", name: "fixture.context", version: "0.1.0",
-    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=0.1.0 <0.2.0" }, exports: {},
+    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=1.0.0 <2.0.0" }, exports: {},
     contexts: [{ id: skillId, description: "Fixture for " + skillId, procedure: "SKILL.md",
       resources: declaredResources.slice(1).map(resource => ({
         name: resource.ref.split("/").at(-1), path: resource.path, kind: resource.kind, description: "Fixture resource",

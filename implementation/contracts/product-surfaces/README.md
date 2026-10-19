@@ -108,8 +108,8 @@ payloads, prompts, memory content or secret values.
 The resource repositories currently emit:
 
 ```bash
-https://raw.githubusercontent.com/pap-touba/touba-library/main/resources.json
-https://raw.githubusercontent.com/pap-touba/touba-registry/main/resources.json
+https://raw.githubusercontent.com/touba-labs/touba-library/main/resources.json
+https://raw.githubusercontent.com/touba-labs/touba-registry/main/resources.json
 ```
 
 Those files contain arrays of `touba-registry-resource-v1` entries for Hub and

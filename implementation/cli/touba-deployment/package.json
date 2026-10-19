@@ -1,6 +1,6 @@
 {
   "name": "@touba/deployment",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Deterministic Touba deployment bundles and immutable revision target.",
   "type": "module",

@@ -56,6 +56,7 @@ un profil inconnu ou un payload sensible interdit sont refusés avant rendu.
 | `agent_decision_catalog_requested` | Catalogue complet demandé par le provider |
 | `agent_decision_provider_retry_scheduled` | Retry borné planifié après échec provider éligible |
 | `agent_decision_provider_returned` | Réponse structurée du provider |
+| `provider_cost_recorded` | Réservation ou règlement du coût hôte, corrélé à l'invocation d'agent ; un usage inconnu conserve sa borne |
 | `agent_decision_recorded` | Décision d'agent reçue par le runtime |
 | `agent_direct_answer_returned` | Réponse directe retournée sans présentation du catalogue |
 | `skill_pack_discovery_listed` | Skill packs disponibles listés comme hints courts, sans contenu brut |

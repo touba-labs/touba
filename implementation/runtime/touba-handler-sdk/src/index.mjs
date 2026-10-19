@@ -16,11 +16,16 @@ import {
 import { decideNativeCapability } from "./native-decision.mjs";
 import { createDecisionHistory } from "./decision-history.mjs";
 import { createProviderContextFetch } from "./provider-context.mjs";
+import { bindProviderCostContext } from "./provider-cost-context.mjs";
+import { createProviderCostFetch } from "./provider-cost.mjs";
 export { createProviderContextFetch } from "./provider-context.mjs";
+export { createProviderCostFetch } from "./provider-cost.mjs";
+export { createProviderTokenCostAdapter } from "./provider-token-cost.mjs";
 export { createMemoryDecisionHistoryStore } from "./decision-history.mjs";
 import { providerBudgetFetch, validateProviderRequestBudget } from "./provider-request-budget.mjs";
 import { emitLocalHandlerDiagnostic } from "./handler-diagnostic.mjs";
 import { PersistentEngineTransport } from "./engine-transport.mjs";
+import { resolveEngineCommand } from "./engine-command.mjs";
 
 export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
 const PROTOCOL = TOOL_HANDLER_PROTOCOL_VERSION;
@@ -38,7 +43,7 @@ const DEFAULT_MCP_MAX_PAYLOAD_BYTES = 1048576;
 
 export const TOUBA_SDK_METADATA = Object.freeze({
   name: "@touba/sdk",
-  version: "0.1.0",
+  version: "1.0.0",
   protocol: PROTOCOL,
   status: "ok",
 });
@@ -79,6 +84,12 @@ export class ToubaEngine {
       ...process.env,
       ...(options.env ?? {}),
     };
+    try {
+      const launch = resolveEngineCommand({ command: this.command, args: this.commandArgs, cwd: this.projectRoot, env: this.env });
+      this.command = launch.command; this.commandArgs = launch.args; this.env = launch.env;
+    } catch (error) {
+      throw new ToubaEngineError("options", error.message, { code: error.code });
+    }
     this.redactValues = collectRedactionValues(this.env, options.redactValues ?? []);
     this.executionMode = options.executionMode ?? "process";
     if (!["persistent", "process"].includes(this.executionMode)) throw new ToubaEngineError("options", "executionMode must be persistent or process");
@@ -337,6 +348,9 @@ export class ToubaEngine {
 
 export function createAiSdkDecisionProvider(options = {}) {
   const normalized = normalizeAiSdkDecisionProviderOptions(options);
+  if (options.cost !== undefined) {
+    throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "configure createProviderCostFetch on the supplied model transport; cost is supported directly by createOpenAiDecisionProvider");
+  }
   if (normalized.context !== undefined) {
     throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "configure createProviderContextFetch on the supplied model transport; context is supported directly by createOpenAiDecisionProvider");
   }
@@ -345,7 +359,7 @@ export function createAiSdkDecisionProvider(options = {}) {
     throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "maxProviderRequestBytes requires an HTTP provider factory; configure the supplied model transport for a generic AI SDK provider");
   }
 
-  return async function decideAgentCapability(request) {
+  return bindProviderCostContext(async function decideAgentCapability(request) {
     validateAgentDecisionRequest(request);
     const model = await modelForDecisionRequest(normalized, request);
     const allowHumanReview = await valueForRequest(normalized.allowHumanReview, request) !== false;
@@ -395,7 +409,7 @@ export function createAiSdkDecisionProvider(options = {}) {
       });
     };
     return history ? history.run(request, model, execute) : execute();
-  };
+  });
 }
 
 async function historyObjectGenerator(options) {
@@ -412,9 +426,15 @@ async function historyObjectGenerator(options) {
 
 export function createOpenAiDecisionProvider(options = {}) {
   validateProviderRequestBudget(options);
-  const { maxProviderRequestBytes: _httpBudget, context, ...providerOptions } = options;
-  const contextFetch = context === undefined ? options.fetch : createProviderContextFetch({
-    ...context, provider: "openai", fetch: options.fetch, countFetch: options.countFetch ?? options.fetch,
+  const { maxProviderRequestBytes: _httpBudget, context, cost, ...providerOptions } = options;
+  if (context !== undefined && cost !== undefined && !cost.counting) {
+    throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "cost.counting must price context-count requests explicitly; both transports use the same budget");
+  }
+  const costFetch = cost === undefined ? options.fetch : createProviderCostFetch({ ...cost, fetch: options.fetch });
+  const countFetch = cost?.counting === undefined ? options.countFetch ?? options.fetch
+    : createProviderCostFetch({ ...cost.counting, budget: cost.budget, fetch: options.countFetch ?? options.fetch });
+  const contextFetch = context === undefined ? costFetch : createProviderContextFetch({
+    ...context, provider: "openai", fetch: costFetch, countFetch,
   });
   const normalized = {
     ...providerOptions,
@@ -838,10 +858,9 @@ function createMcpJsonRpcClient(child, options) {
           return;
         }
         const timer = setTimeout(() => {
-          if (!child.killed) {
-            child.kill("SIGTERM");
-          }
-          resolveClose();
+          // killed only means a signal was sent, not that the process exited.
+          // A server ignoring SIGTERM must not outlive this bounded bridge.
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
         }, 200);
         child.once("close", () => {
           clearTimeout(timer);

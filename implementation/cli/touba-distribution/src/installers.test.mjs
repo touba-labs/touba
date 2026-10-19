@@ -3,8 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { debianControl, installerPlan } from "./package-installers.mjs";
+import { debianControl, installerPlan, packageInstallers } from "./package-installers.mjs";
 import { desktopLauncher, installDesktop } from "./desktop-install.mjs";
+import { toolchainBuildIdentity } from "./build-identity.mjs";
 
 test("native formats cover the four release targets without claiming native qualification", () => {
   for (const [platform, format] of [["darwin-arm64", "dmg"], ["darwin-x64", "dmg"], ["win32-x64", "exe"], ["linux-x64", "deb"]]) {
@@ -69,4 +70,22 @@ test("Windows wizard is per user, keeps project data, and reports child failures
   assert.match(source, /UninstallDelete/);
   assert.doesNotMatch(source, /Type: filesandordirs; Name: "\{app\}"/);
   assert.doesNotMatch(source, /ExecutionPolicy Bypass|https?:\/\//);
+});
+
+test("packaging preserves existing candidate output and refuses altered payloads", t => {
+  const temp = mkdtempSync(join(tmpdir(), "touba-installer-candidate-"));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const releaseDir = join(temp, "release"), source = join(releaseDir, "touba-toolchain");
+  for (const dir of ["bin", "lib", "sdk"]) mkdirSync(join(source, dir), { recursive: true });
+  const metadata = { platform: `${process.platform}-${process.arch}`, touba_version: "1.0.0", build: toolchainBuildIdentity(source) };
+  writeFileSync(join(source, "TOOLCHAIN.json"), JSON.stringify(metadata));
+  writeFileSync(join(releaseDir, "RELEASE.json"), JSON.stringify(metadata));
+  const outputDir = join(temp, "output"); mkdirSync(outputDir);
+  writeFileSync(join(outputDir, "INSTALLER.json"), "previous candidate\n");
+  assert.throws(() => packageInstallers({ releaseDir, outputDir }), /output directory must be empty/);
+  assert.equal(readFileSync(join(outputDir, "INSTALLER.json"), "utf8"), "previous candidate\n");
+  writeFileSync(join(source, "lib", "changed.mjs"), "altered payload\n");
+  const fresh = join(temp, "fresh");
+  assert.throws(() => packageInstallers({ releaseDir, outputDir: fresh }), /build identity mismatch/);
+  assert.equal(existsSync(fresh), false);
 });
