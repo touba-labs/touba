@@ -6,6 +6,14 @@ sidebar_position: 1
 
 Cette page est une aide de consultation pour la syntaxe visible.
 
+## Fichiers et indentation
+
+Les fichiers `.tb` acceptent les fins de ligne LF (Linux/macOS) et CRLF
+(Windows). Indentez chaque niveau avec quatre espaces, sans tabulation.
+Les diagnostics pointent vers les lignes et positions du fichier original ;
+aucune conversion manuelle en LF n'est nécessaire. Un retour chariot isolé
+(`CR` sans `LF`) ne constitue pas une fin de ligne.
+
 ## Text, types et portée des liaisons
 
 Un littéral `Text` est entre guillemets doubles sur une ligne source. Les échappements JSON sont décodés une seule fois : `\n` (saut de ligne), `\r`, `\t`, `\b`, `\f`, `\"`, `\\`, `\/` et `\uXXXX` (Unicode, y compris paires valides). `"a\n\nb"` contient deux sauts de ligne ; `"\\n"` conserve un antislash suivi de n. Les échappements invalides et les contrôles bruts sont refusés. Les chaînes source multilignes restent non admises ; aucune interpolation implicite ni évaluation JavaScript.

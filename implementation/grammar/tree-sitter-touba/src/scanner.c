@@ -132,14 +132,22 @@ static void update_indent(Scanner *scanner, uint32_t indent) {
 }
 
 static bool scan_newline(Scanner *scanner, TSLexer *lexer) {
-  if (lexer->lookahead != '\n') {
+  if (lexer->lookahead != '\n' && lexer->lookahead != '\r') {
     return false;
   }
 
   uint32_t indent = 0;
 
   for (;;) {
-    while (lexer->lookahead == '\n') {
+    while (lexer->lookahead == '\n' || lexer->lookahead == '\r') {
+      // Consume CR only as part of CRLF. Keeping the original source bytes
+      // preserves compiler/LSP locations; a lone CR is still a syntax error.
+      if (lexer->lookahead == '\r') {
+        lexer->advance(lexer, true);
+        if (lexer->lookahead != '\n') {
+          return false;
+        }
+      }
       lexer->advance(lexer, true);
       indent = 0;
     }
@@ -200,8 +208,10 @@ bool tree_sitter_touba_external_scanner_scan(
     return true;
   }
 
-  if (valid_symbols[NEWLINE] && scan_newline(scanner, lexer)) {
-    return true;
+  if (valid_symbols[NEWLINE] && (lexer->lookahead == '\n' || lexer->lookahead == '\r')) {
+    // On malformed CRLF, return false directly so Tree-sitter rewinds the
+    // lookahead; do not consume a bare CR through the EOF dedent path below.
+    return scan_newline(scanner, lexer);
   }
 
   if (lexer->eof(lexer) && scanner->indent_count > 1 && valid_symbols[DEDENT]) {
