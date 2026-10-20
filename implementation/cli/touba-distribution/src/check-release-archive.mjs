@@ -66,7 +66,22 @@ function checkReleaseArchive(plan) {
 
     const cliPath = join(installPrefix, "bin", process.platform === "win32" ? "touba.cmd" : "touba");
     assertFile(cliPath);
-    const version = runTouba(cliPath, ["version", "--json"], releaseEnv(workspace, installPrefix));
+    const cliEnv = releaseEnv(workspace, installPrefix);
+    if (process.platform === "win32") {
+      // Verify the real archive launcher before using literal-argument Node
+      // calls. Read its actual channel instead of injecting the expected one.
+      const launched = spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", '""%TOUBA_ARCHIVE_LAUNCHER%" version --json"'], {
+        env: { ...cliEnv, TOUBA_ARCHIVE_LAUNCHER: cliPath },
+        windowsVerbatimArguments: true, encoding: "utf8", timeout: 30_000,
+      });
+      if (launched.error || launched.status !== 0) throw new Error(`Archive launcher failed: ${launched.error?.message ?? launched.stderr}`);
+      const launcherVersion = JSON.parse(launched.stdout);
+      assertEqual(launcherVersion.distribution.channel, plan.channel, "archive launcher channel");
+      cliEnv.TOUBA_DISTRIBUTION_CHANNEL = launcherVersion.distribution.channel;
+      cliEnv.TOUBA_COMPILE_BIN = join(installPrefix, "touba-toolchain/bin/touba-compile.exe");
+      cliEnv.PATH = join(installPrefix, "touba-toolchain/bin") + delimiter + cliEnv.PATH;
+    }
+    const version = runTouba(cliPath, ["version", "--json"], cliEnv);
     const versionReport = JSON.parse(version.stdout);
     assertEqual(versionReport.cli, plan.toubaVersion, "CLI version");
     assertEqual(versionReport.distribution.channel, plan.channel, "distribution channel");
@@ -77,10 +92,10 @@ function checkReleaseArchive(plan) {
     assertEqual(versionReport.build.id, expectedBuild.id, "installed payload build identity");
     assertEqual(versionReport.build.algorithm, expectedBuild.algorithm, "build identity algorithm");
     assertEqual(versionReport.build.identity_scope, expectedBuild.identity_scope, "build identity scope");
-    const humanVersion = runTouba(cliPath, ["version"], releaseEnv(workspace, installPrefix));
+    const humanVersion = runTouba(cliPath, ["version"], cliEnv);
     assertEqual(humanVersion.stdout, `touba ${plan.toubaVersion}\nbuild ${expectedBuild.id.slice(0, 12)}\n`, "concise version output");
 
-    const doctor = runTouba(cliPath, ["doctor", "--json"], releaseEnv(workspace, installPrefix));
+    const doctor = runTouba(cliPath, ["doctor", "--json"], cliEnv);
     const doctorReport = JSON.parse(doctor.stdout);
     assertEqual(doctorReport.status, "ok", "doctor status");
     assertEqual(doctorReport.version.cli, plan.toubaVersion, "doctor CLI version");
@@ -91,7 +106,7 @@ function checkReleaseArchive(plan) {
     writeFileSync(join(project, "package.json"), JSON.stringify({ name: "release-sdk-check", private: true }));
     const sdkArchive = versionReport.distribution.sdk_archive;
     assertFile(sdkArchive);
-    const sdkEnv = releaseEnv(workspace, installPrefix);
+    const sdkEnv = { ...cliEnv };
     sdkEnv.npm_config_cache = join(workspace, "empty npm cache");
     const npm = npmCommand(["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", sdkArchive]);
     runCommand(npm.command, npm.args,
@@ -112,7 +127,7 @@ function checkReleaseArchive(plan) {
       process.stdout.write("CHECKED_RELEASE_SIGNALS launcher PID, group, child exit and port reuse\n");
     }
 
-    const update = runTouba(cliPath, ["update"], releaseEnv(workspace, installPrefix), 1);
+    const update = runTouba(cliPath, ["update"], cliEnv, 1);
     if (!update.stdout.includes("Status: manual_reinstall_required")) {
       throw new Error("update command did not explain the release update policy");
     }
