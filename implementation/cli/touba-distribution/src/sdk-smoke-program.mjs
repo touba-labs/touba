@@ -46,7 +46,11 @@ await checkInstalledProviderAccounting(engine);
 
 async function checkInstalledProviderAccounting(installedEngine) {
   const received = [], filename = join(process.cwd(), "installed-budget.sqlite");
-  const budget = createSqliteProviderBudget({ filename, budgetId: "installed-check", currency: "USD", limitMicros: 1000n });
+  // The full smoke runs again after reinstall in the same project. Each smoke
+  // has its own workload, while all subprocesses within it share one ledger.
+  // Reusing a previously tightened budget would correctly refuse the new test.
+  const budgetId = `installed-check-${randomUUID()}`;
+  const budget = createSqliteProviderBudget({ filename, budgetId, currency: "USD", limitMicros: 1000n });
   const server = createServer(async (request, response) => {
     let raw = ""; for await (const chunk of request) raw += chunk;
     const body = JSON.parse(raw); received.push(body);
@@ -79,7 +83,7 @@ strategy Run
 import {createOpenAiDecisionProvider,createProviderTokenCostAdapter} from '@touba/sdk';
 import {createSqliteProviderBudget} from '@touba/sdk/budget/sqlite';
 process.env.TOUBA_INSTALLED_COST_FIXTURE='offline-fixture-not-a-key';
-const budget=createSqliteProviderBudget({filename:${JSON.stringify(filename)},budgetId:'installed-check',currency:'USD',limitMicros:${limit}n});
+const budget=createSqliteProviderBudget({filename:${JSON.stringify(filename)},budgetId:${JSON.stringify(budgetId)},currency:'USD',limitMicros:${limit}n});
 const tariff={id:'offline-fixture',date:'2026-10-19',currency:'USD',rates:{input:1000000n,output:1000000n}};
 const adapter=createProviderTokenCostAdapter({protocol:'openai-responses',model:'fixture-model',tariff,inputTokenBound:()=>({basis:'upper_bound',tokens:100})});
 export default createOpenAiDecisionProvider({model:'fixture-model',decisionInterface:${JSON.stringify(mode)},history:false,maxRetries:0,maxOutputTokens:64,
@@ -103,6 +107,9 @@ export default createOpenAiDecisionProvider({model:'fixture-model',decisionInter
     await assertRunRefused(() => installedEngine.run(options), "ProviderCostBudgetExceeded");
     assert.equal(received.length, 2, "refusal must precede a third HTTP request");
     assert.equal(budget.snapshot().committedMicros, 6n);
+    provider("native", 1000); // reopening must not silently raise the stored ceiling
+    await assertRunRefused(() => installedEngine.run(options), "ProviderCostBudgetExceeded");
+    assert.equal(received.length, 2, "reopening must preserve refusal before HTTP dispatch");
   } finally {
     server.closeAllConnections(); await new Promise(done => server.close(done)); budget.close();
   }

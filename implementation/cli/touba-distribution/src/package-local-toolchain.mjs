@@ -126,6 +126,14 @@ function copyNodeRuntime() {
   const nodeSource = resolveNodeRuntimeSource(nodeName);
   copyFileSync(nodeSource, join(toolchainRoot, "bin", nodeName));
   chmodSync(join(toolchainRoot, "bin", nodeName), 0o755);
+  // Homebrew and other system builds can depend on libraries outside the
+  // executable. Test the relocated binary, not its original installation.
+  const copied = spawnSync(join(toolchainRoot, "bin", nodeName), ["--version"], {
+    encoding: "utf8", timeout: 10000, windowsHide: true,
+  });
+  if (copied.error || copied.status !== 0 || copied.stdout.trim() !== "v24.15.0") {
+    throw new Error(`Bundled Node must run independently as v24.15.0; provision the official native distribution in .toolchains/node-v24.15.0-${platform} before packaging`);
+  }
 }
 
 function resolveNodeRuntimeSource(nodeName) {
