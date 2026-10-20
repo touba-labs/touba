@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { npmCommand } from "./npm-command.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
@@ -214,10 +214,15 @@ function releaseEnv(workspace, installPrefix) {
 }
 
 function runTouba(cliPath, args, env, expectedStatus = 0) {
-  const result = spawnSync(cliPath, args, {
+  // The .cmd launcher is exercised by check-desktop-install. Here use the
+  // installed Node directly so paths and JSON arguments stay literal on Windows.
+  const toolchain = join(dirname(dirname(cliPath)), "touba-toolchain");
+  const command = process.platform === "win32" ? join(toolchain, "bin/node.exe") : cliPath;
+  const argv = process.platform === "win32" ? [join(toolchain, "lib/cli/touba-project/src/main.mjs"), ...args] : args;
+  const result = spawnSync(command, argv, {
     env,
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
   });
   if (result.error) {
     throw result.error;

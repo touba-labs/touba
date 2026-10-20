@@ -183,14 +183,27 @@ writeFileSync("testing.air.json", (await engine.compile({ source: "testing.tb" }
 writeFileSync("testing.run-plan.json", JSON.stringify({ run_plan_schema_version: "touba-run-plan-v1",
   profile: "dev", entry_ref: testingOptions.entryRef, air: "testing.air.json", manifest: "testing.manifest.json" }));
 const diagnosticPath = `testing.diagnostics.${process.pid}.jsonl`;
+const callsBeforeDiagnostics = readFileSync("testing-calls.log", "utf8");
 const diagnosed = spawnSync(process.execPath, [process.argv[2], "run", "--run-plan", "testing.run-plan.json",
   "--agent-decision-provider", "testing.provider.mjs", "--agent-decision-provider-initial-mode", "capabilities",
   "--inputs-json", '{"ticket":"T-1"}', "--output", "json", "--handler-diagnostics", diagnosticPath], { encoding: "utf8" });
-assert.equal(diagnosed.status, 1, diagnosed.stdout + diagnosed.stderr);
-assert.equal(JSON.parse(diagnosed.stdout).reason, "ToolHandlerReportedError");
-const diagnostic = JSON.parse(readFileSync(diagnosticPath, "utf8"));
-assert.equal(diagnostic.error_class, "TypeError");
-assert.ok(diagnostic.line > 0);
+if (process.platform === "win32") {
+  // The private diagnostic channel is POSIX-only. Windows must reject this
+  // option at admission, before invoking the handler or creating a report.
+  assert.equal(diagnosed.status, 2, diagnosed.stdout + diagnosed.stderr);
+  const refusal = JSON.parse(diagnosed.stdout);
+  assert.equal(refusal.reason, "HandlerDiagnosticsForbidden");
+  assert.deepEqual(refusal.trace.events.map(event => event.kind), ["admission_refused"]);
+  assert.equal(readFileSync("testing-calls.log", "utf8"), callsBeforeDiagnostics);
+  assert.equal(existsSync(diagnosticPath), false);
+} else {
+  assert.equal(diagnosed.status, 1, diagnosed.stdout + diagnosed.stderr);
+  assert.equal(JSON.parse(diagnosed.stdout).reason, "ToolHandlerReportedError");
+  const diagnostic = JSON.parse(readFileSync(diagnosticPath, "utf8"));
+  assert.equal(diagnostic.error_class, "TypeError");
+  assert.ok(diagnostic.line > 0);
+  assert.equal(readFileSync("testing-calls.log", "utf8"), callsBeforeDiagnostics + "invoked\n");
+}
 assert.equal(diagnosed.stdout.includes("handler_arg_index"), false);
 writeFileSync("testing.handler.mjs", testingHandler("return request.trim();"));
 
