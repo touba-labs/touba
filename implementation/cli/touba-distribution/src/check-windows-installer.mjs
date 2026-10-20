@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -9,7 +10,8 @@ import { setTimeout } from "node:timers/promises";
 assert.equal(process.platform, "win32", "Native Windows installer qualification required");
 const installerRoot = resolve(process.argv[2]);
 const report = JSON.parse(readFileSync(join(installerRoot, "INSTALLER.json"), "utf8"));
-const root = mkdtempSync(join(tmpdir(), "touba-installer-check-"));
+// Resolve Windows 8.3 aliases before passing this path across native processes.
+const root = realpathSync.native(mkdtempSync(join(tmpdir(), "touba-installer-check-")));
 const prefix = join(root, "account install");
 const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, { encoding: "utf8", timeout: 120000, ...options });
@@ -39,7 +41,17 @@ try {
   for (let attempt = 0; attempt < 30 && existsSync(launcher); attempt++) await setTimeout(1000);
   for (const file of ["bin/touba.cmd", "touba-toolchain", "INSTALLATION.json"]) assert.equal(existsSync(join(prefix, file)), false, `removed ${file}`);
   for (const file of kept) assert.equal(readFileSync(join(prefix, file), "utf8"), "retained");
-  console.log("CHECKED_WINDOWS_INSTALLER exact payload, real launcher, isolated install/uninstall, user data retained");
 } finally {
-  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  // Inno's temporary uninstaller can still hold files after its parent exits.
+  // Yield to process/handle cleanup; retain a bounded failure, never ignore it.
+  try {
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  } catch (error) {
+    const diagnostic = spawnSync("powershell.exe", ["-NoProfile", "-Command", "Get-ChildItem -LiteralPath $env:TOUBA_CHECK_ROOT -Force -Recurse | Select-Object FullName,Attributes; Get-Acl -LiteralPath $env:TOUBA_CHECK_ROOT | Format-List"], {
+      encoding: "utf8", timeout: 10000, env: { ...process.env, TOUBA_CHECK_ROOT: root },
+    });
+    console.error(diagnostic.stdout, diagnostic.stderr);
+    throw error;
+  }
 }
+console.log("CHECKED_WINDOWS_INSTALLER exact payload, real launcher, isolated install/uninstall, user data retained, temporary files removed");
