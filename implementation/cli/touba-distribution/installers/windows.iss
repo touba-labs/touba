@@ -4,7 +4,7 @@ AppId=Touba.User.Toolchain
 AppName=Touba
 AppVersion={#ToubaVersion}
 AppPublisher=Touba Labs
-DefaultDirName={userprofile}\.touba
+DefaultDirName={%USERPROFILE}\.touba
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -39,7 +39,7 @@ Type: filesandordirs; Name: "{app}\touba-toolchain"
 function InitializeSetup(): Boolean;
 begin
   Result := True;
-  if DirExists(ExpandConstant('{userprofile}\.touba\touba-toolchain')) and not WizardSilent then
+  if DirExists(ExpandConstant('{%USERPROFILE}\.touba\touba-toolchain')) and not WizardSilent then
     Result := MsgBox('Touba is already installed. Stop its services before updating. The previous build is preserved; projects and their SDKs are not changed. Continue?', mbConfirmation, MB_YESNO) = IDYES;
 end;
 

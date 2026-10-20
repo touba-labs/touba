@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { debianControl, installerPlan, packageInstallers, macosInstallerTarget } from "./package-installers.mjs";
 import { desktopLauncher, installDesktop } from "./desktop-install.mjs";
@@ -72,10 +74,24 @@ test("desktop installer refuses a foreign launcher and a redirected bin before p
 test("Windows wizard is per user, keeps project data, and reports child failures", () => {
   const source = readFileSync(new URL("../installers/windows.iss", import.meta.url), "utf8");
   assert.match(source, /PrivilegesRequired=lowest/);
+  assert.match(source, /DefaultDirName=\{%USERPROFILE\}\\\.touba/);
+  assert.doesNotMatch(source, /\{userprofile\}/i);
   assert.match(source, /if ExitCode <> 0 then\s+RaiseException/);
   assert.match(source, /UninstallDelete/);
   assert.doesNotMatch(source, /Type: filesandordirs; Name: "\{app\}"/);
   assert.doesNotMatch(source, /ExecutionPolicy Bypass|https?:\/\//);
+});
+
+test("Windows wizard template compiles with native Inno Setup", { skip: process.platform !== "win32" }, t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-inno-syntax-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // Syntax fixture only. Never execute or publish this incomplete installer.
+  for (const name of ["payload", "support", "out"]) mkdirSync(join(root, name));
+  for (const name of ["payload/fixture", "support/fixture", "Welcome.txt"]) writeFileSync(join(root, name), "syntax test");
+  const compiler = process.env.TOUBA_ISCC ?? join(process.env["ProgramFiles(x86)"], "Inno Setup 6/ISCC.exe");
+  const result = spawnSync(compiler, ["/DToubaVersion=1.0.0", `/DPayloadDir=${join(root, "payload")}`, `/DSupportDir=${join(root, "support")}`, `/DWelcomeFile=${join(root, "Welcome.txt")}`, `/DOutputDir=${join(root, "out")}`, "/DOutputName=syntax-only", fileURLToPath(new URL("../installers/windows.iss", import.meta.url))], { encoding: "utf8", timeout: 30000 });
+  assert.equal(result.status, 0, result.error?.message ?? result.stdout + result.stderr);
+  assert.ok(existsSync(join(root, "out/syntax-only.exe")));
 });
 
 test("packaging preserves existing candidate output and refuses altered payloads", t => {

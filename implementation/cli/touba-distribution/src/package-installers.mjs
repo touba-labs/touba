@@ -29,7 +29,7 @@ export function installerPlan(release) {
 
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
-  if (result.error || result.status !== 0) throw new Error(`${command} failed: ${result.error?.message ?? result.stderr}`);
+  if (result.error || result.status !== 0) throw new Error(`${command} failed: ${result.error?.message ?? result.stdout + result.stderr}`);
   return result.stdout;
 }
 function write(path, content, executable = false) {
