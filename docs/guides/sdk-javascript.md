@@ -467,11 +467,13 @@ const outcome = await engine.run({
 Configurer le provider et les bindings exigés par la source comme pour un appel
 séquentiel. À la reprise, remplacer `inputs` par `parallelResumeCheckpoint`
 et fournir `humanDecisions` pour les occurrences réellement en attente.
-Les résultats terminés et budgets consommés sont conservés. Pour `ask`, `engine.run()` accepte `userInputs`, un objet de réponses par
-référence d'occurrence. `userInputProvider` est un callback du runtime intégré,
-pas une option callback de cette façade CLI. La réponse est isolée et journalisée ;
-sans réponse, le groupe échoue avec `ParallelUserInputRequired`. Les questions `ask` ne disposent pas ici d'une file
-durable concurrente, contrairement à `human.approve`.
+Une question `ask` sans réponse suspend le groupe avec `user_input_pending`.
+L’hôte lit `pendingInteractions` (JavaScript) ou `pending_interactions` (Python),
+conserve le checkpoint parallèle et fournit une réponse par référence
+avec `userInputs` / `user_inputs`. La reprise conserve les branches terminées
+et les budgets consommés. Chaque réponse concerne une seule occurrence.
+`userInputProvider` reste le callback du runtime intégré ; l’Engine utilise
+les réponses explicites de `userInputs`.
 Voir le [tutoriel complet](../tutoriels/orchestration-multi-agent-sequentielle.md).
 
 Pour un parcours exécutable de succès et de refus, voir [Tester un programme Touba](./tests-metier.md).
@@ -486,7 +488,7 @@ et le [tutoriel sans appel payant](../tutoriels/budget-financier.md).
 
 ## Capacités complémentaires
 
-Les adaptateurs de modèles, l’historique conversationnel, le bridge MCP et le transport persistant possèdent leurs propres API JavaScript. Consultez la section correspondante du SDK Python avant de porter une application : ces API n’y sont pas encore disponibles.
+Les adaptateurs de modèles, l’historique conversationnel et le bridge MCP ont des API dans les deux SDK. Le transport persistant de l’Engine entre plusieurs runs est propre à JavaScript ; Python utilise un processus neuf par run. Le [guide Python](./sdk-python.md) présente les noms et options correspondants.
 
 ### Provider de décision agentique
 

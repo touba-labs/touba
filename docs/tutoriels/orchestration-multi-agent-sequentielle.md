@@ -490,7 +490,8 @@ monétaires ne sont pas déduits de ces compteurs ; les prix et coûts inconnus
 restent à traiter explicitement. Il s'agit de concurrence asynchrone locale,
 pas d'un ordonnanceur distribué ni de parallélisation CPU de JavaScript synchrone.
 
-Dans une branche, `ask` attend une réponse hôte propre à l'occurrence (ou un
-`userInputProvider` asynchrone), puis la journalise. Sans réponse, le groupe
-échoue explicitement, sans résultat partiel. La file durable de questions
-`ask` concurrentes est distincte des validations `human.approve` couvertes ici.
+Une question `ask` sans réponse suspend le groupe avec `user_input_pending`.
+L’hôte lit `pendingInteractions` (JavaScript) ou `pending_interactions` (Python),
+conserve le checkpoint parallèle et fournit une réponse par référence
+avec `userInputs` / `user_inputs`. La reprise conserve les branches terminées
+et les budgets consommés. Chaque réponse concerne une seule occurrence.
