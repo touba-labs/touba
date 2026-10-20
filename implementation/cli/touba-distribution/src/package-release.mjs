@@ -524,9 +524,10 @@ if (!(Test-Path -LiteralPath $Metadata -PathType Leaf)) {
 }
 $Installation = Get-Content -LiteralPath $Metadata -Raw | ConvertFrom-Json
 $Profiles = @("touba-local-release-install-v1", "touba-local-release-install-experimental-v1", "touba-github-release-install-v1")
-if ($Installation.installation_profile -notin $Profiles -or $Installation.platform -ne "win32-x64" -or $Installation.prefix -ne $Prefix -or $Installation.cli_path -ne $Launcher) {
-  throw "Touba installation metadata does not match this directory"
-}
+if ($Installation.installation_profile -notin $Profiles) { throw "Unrecognized Touba installation profile: $($Installation.installation_profile)" }
+if ($Installation.platform -ne "win32-x64") { throw "Touba installation platform mismatch: $($Installation.platform)" }
+if ($Installation.prefix -ne $Prefix) { throw "Touba installation prefix mismatch: registered '$($Installation.prefix)', selected '$Prefix'" }
+if ($Installation.cli_path -ne $Launcher) { throw "Touba installation launcher mismatch: registered '$($Installation.cli_path)', expected '$Launcher'" }
 if (Test-Path -LiteralPath $Payload) {
   $Links = @(Get-ChildItem -LiteralPath $Payload -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })
   if ($Links.Count -gt 0) { throw "Refusing to uninstall a payload containing reparse points" }
