@@ -79,11 +79,13 @@ export function packageInstallers({ releaseDir, outputDir }) {
       // Keep an inspectable .app beside the DMG for native smoke/UI qualification.
       cpSync(app, join(outputDir, "Install Touba.app"), { recursive: true, force: false, errorOnExist: true });
     } else if (plan.format === "exe") {
+      const compiler = process.env.TOUBA_ISCC ?? "ISCC.exe";
+      if (!/(?:^|\s)7\.\d+\.\d+(?:\s|$)/m.test(run(compiler, ["--version"]).trim())) throw new Error("Inno Setup 7 is required for long dependency paths");
       const payload = join(staging, "payload"); cpSync(source, payload, { recursive: true });
       const support = join(staging, "support"); copySupport(support);
       const welcome = join(staging, "Welcome.txt");
       write(welcome, "Install Touba for this account without an administrator password.\r\nCompiler, runtime and both SDK archives are included.\r\nStop Touba services before updating. No project data or SDK is modified.\r\nAfter installation, open a new terminal. In your project choose:\r\n  touba sdk install javascript\r\n  touba sdk install python\r\nPython 3.11+ or npm is required only for the SDK you choose.\r\nThis is an unsigned local candidate, not a public release.\r\n");
-      run(process.env.TOUBA_ISCC ?? "ISCC.exe", [`/DToubaVersion=${plan.version}`, `/DPayloadDir=${payload}`, `/DSupportDir=${support}`, `/DWelcomeFile=${welcome}`, `/DOutputDir=${outputDir}`, `/DOutputName=${plan.filename.slice(0, -4)}`, join(templates, "windows.iss")]);
+      run(compiler, [`/DToubaVersion=${plan.version}`, `/DPayloadDir=${payload}`, `/DSupportDir=${support}`, `/DWelcomeFile=${welcome}`, `/DOutputDir=${outputDir}`, `/DOutputName=${plan.filename.slice(0, -4)}`, join(templates, "windows.iss")]);
     } else {
       const deb = join(staging, "deb");
       cpSync(source, join(deb, "opt/touba/toolchain"), { recursive: true });
