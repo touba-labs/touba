@@ -5,6 +5,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
+import { sealMacApp, signMacDiskImage, signMacPayload, validateMacSigningIdentity } from "./macos-signing.mjs";
 
 const sourceDir = dirname(fileURLToPath(import.meta.url));
 const templates = resolve(sourceDir, "../installers");
@@ -47,7 +48,7 @@ export function debianControl(version) {
   return `Package: touba\nVersion: ${version}\nSection: devel\nPriority: optional\nArchitecture: amd64\nMaintainer: Touba Labs\nDepends: libc6 (>= 2.39), libstdc++6, libgcc-s1\nDescription: Touba language and governed execution runtime\n Includes the compiler, runtime and offline JavaScript/Python SDK archives.\n SDKs are installed explicitly per project.\n`;
 }
 
-export function packageInstallers({ releaseDir, outputDir }) {
+export function packageInstallers({ releaseDir, outputDir, macosSignIdentity }) {
   releaseDir = resolve(releaseDir); outputDir = resolve(outputDir);
   const release = JSON.parse(readFileSync(join(releaseDir, "RELEASE.json"), "utf8"));
   const plan = installerPlan(release);
@@ -55,13 +56,17 @@ export function packageInstallers({ releaseDir, outputDir }) {
   const source = join(releaseDir, "touba-toolchain");
   const metadata = JSON.parse(readFileSync(join(source, "TOOLCHAIN.json"), "utf8"));
   if (metadata.platform !== plan.platform || metadata.touba_version !== plan.version || metadata.build?.id !== toolchainBuildIdentity(source).id) throw new Error("Installer payload metadata or build identity mismatch");
+  if (macosSignIdentity !== undefined) {
+    if (plan.format !== "dmg") throw new Error("macOS signing is only supported for DMG installers");
+    validateMacSigningIdentity(macosSignIdentity);
+  }
   // A partial prior build must not be relabelled by overwriting its manifest.
   if (existsSync(outputDir) && readdirSync(outputDir).length !== 0) throw new Error("Installer output directory must be empty; preserve previous candidates.");
   mkdirSync(outputDir, { recursive: true });
   const destination = join(outputDir, plan.filename);
   if (existsSync(destination)) throw new Error("Installer artifact already exists; use a fresh output directory.");
   const staging = mkdtempSync(join(outputDir, ".installer-build-"));
-  let app;
+  let app, signing;
   try {
     if (plan.format === "dmg") {
       const volume = join(staging, "volume");
@@ -70,12 +75,16 @@ export function packageInstallers({ releaseDir, outputDir }) {
       mkdirSync(join(contents, "MacOS"), { recursive: true });
       mkdirSync(join(contents, "Resources"));
       cpSync(source, join(contents, "Resources/payload"), { recursive: true });
+      if (macosSignIdentity) signing = signMacPayload(join(contents, "Resources/payload"), macosSignIdentity);
       copySupport(join(contents, "Resources/support"));
       write(join(contents, "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.touba-labs.installer</string><key>CFBundleName</key><string>Install Touba</string><key>CFBundleExecutable</key><string>ToubaInstaller</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${plan.version}</string><key>CFBundleVersion</key><string>${plan.version}</string><key>LSMinimumSystemVersion</key><string>${macosMinimum}</string><key>NSHighResolutionCapable</key><true/></dict></plist>\n`);
       run("swiftc", [join(templates, "Installer.swift"), "-target", macosInstallerTarget(plan.platform), "-module-cache-path", join(staging, "swift-cache"), "-o", join(contents, "MacOS/ToubaInstaller"), "-framework", "AppKit"]);
-      write(join(volume, "Read me.txt"), "Open Install Touba.app to install for this account. No admin password.\nThis local candidate is not a signed/notarized public release. Do not disable Gatekeeper.\nThe installer does not install Python or npm, or change project SDKs.\n");
+      sealMacApp(app, macosSignIdentity);
+      write(join(volume, "Read me.txt"), "Open Install Touba.app to install Touba for this account.\nThe compiler, runtime and JavaScript/Python SDK archives are included.\nIn your project, choose: touba sdk install javascript or touba sdk install python.\nSupport: contact@touba-labs.com\n");
       run("hdiutil", ["create", "-volname", "Touba Installer", "-srcfolder", volume, "-format", "UDZO", destination]);
       run("hdiutil", ["verify", destination]);
+      if (macosSignIdentity) signMacDiskImage(destination, macosSignIdentity);
+      plan.signing_status = macosSignIdentity ? "developer_id_signed" : "adhoc_local_candidate";
       // Keep an inspectable .app beside the DMG for native smoke/UI qualification.
       cpSync(app, join(outputDir, "Install Touba.app"), { recursive: true, force: false, errorOnExist: true });
     } else if (plan.format === "exe") {
@@ -84,7 +93,7 @@ export function packageInstallers({ releaseDir, outputDir }) {
       const payload = join(staging, "payload"); cpSync(source, payload, { recursive: true });
       const support = join(staging, "support"); copySupport(support);
       const welcome = join(staging, "Welcome.txt");
-      write(welcome, "Install Touba for this account without an administrator password.\r\nCompiler, runtime and both SDK archives are included.\r\nStop Touba services before updating. No project data or SDK is modified.\r\nAfter installation, open a new terminal. In your project choose:\r\n  touba sdk install javascript\r\n  touba sdk install python\r\nPython 3.11+ or npm is required only for the SDK you choose.\r\nThis is an unsigned local candidate, not a public release.\r\n");
+      write(welcome, "Install Touba for this account without an administrator password.\r\nCompiler, runtime and both SDK archives are included.\r\nStop Touba services before updating. No project data or SDK is modified.\r\nAfter installation, open a new terminal. In your project choose:\r\n  touba sdk install javascript\r\n  touba sdk install python\r\nPython 3.11+ or npm is required only for the SDK you choose.\r\nWindows publisher signing is planned; Windows may display a security warning.\r\n");
       run(compiler, [`/DToubaVersion=${plan.version}`, `/DPayloadDir=${payload}`, `/DSupportDir=${support}`, `/DWelcomeFile=${welcome}`, `/DOutputDir=${outputDir}`, `/DOutputName=${plan.filename.slice(0, -4)}`, join(templates, "windows.iss")]);
     } else {
       const deb = join(staging, "deb");
@@ -96,7 +105,9 @@ export function packageInstallers({ releaseDir, outputDir }) {
       run("dpkg-deb", ["--info", destination]);
     }
     const bytes = readFileSync(destination);
-    const report = { ...plan, build: metadata.build.id, path: destination, size_bytes: bytes.length,
+    const report = { ...plan, build: signing?.build ?? metadata.build.id,
+      ...(signing ? { source_build: signing.source_build, signing_identity: macosSignIdentity.toUpperCase(), signed_native_files: signing.native_files, notarization_status: "not_submitted" } : {}),
+      path: destination, size_bytes: bytes.length,
       sha256: createHash("sha256").update(bytes).digest("hex"),
       prerequisite: plan.format === "deb" ? "Ubuntu 24.04+ or compatible Debian with glibc >= 2.39, x64"
         : plan.format === "dmg" ? `macOS ${macosMinimum}+ (${plan.platform})` : plan.platform,
@@ -111,11 +122,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   try {
     const options = {};
     const args = process.argv.slice(2);
-    if (args.includes("--help")) process.stdout.write("Usage: package-installers.mjs --release-dir <extracted-release> --out <new-output-directory>\nBuilds an unsigned native candidate on the current OS only.\n");
+    if (args.includes("--help")) process.stdout.write("Usage: package-installers.mjs --release-dir <extracted-release> --out <new-output-directory> [--macos-sign-identity <Developer-ID-SHA1>]\nBuilds on the target OS only. macOS signing uses the local keychain; notarization is a separate step.\n");
     else {
       for (let i = 0; i < args.length; i++) {
-        if (!["--release-dir", "--out"].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith("--")) throw new Error("Invalid installer builder option");
-        const key = args[i] === "--release-dir" ? "releaseDir" : "outputDir";
+        const key = { "--release-dir": "releaseDir", "--out": "outputDir", "--macos-sign-identity": "macosSignIdentity" }[args[i]];
+        if (!key || options[key] !== undefined || !args[i + 1] || args[i + 1].startsWith("--")) throw new Error("Invalid installer builder option");
         options[key] = args[++i];
       }
       if (!options.releaseDir || !options.outputDir) throw new Error("--release-dir and --out are required");

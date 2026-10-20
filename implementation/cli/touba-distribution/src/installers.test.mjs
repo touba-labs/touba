@@ -107,6 +107,10 @@ test("packaging preserves existing candidate output and refuses altered payloads
   const metadata = { platform: `${process.platform}-${process.arch}`, touba_version: "1.0.0", build: toolchainBuildIdentity(source) };
   writeFileSync(join(source, "TOOLCHAIN.json"), JSON.stringify(metadata));
   writeFileSync(join(releaseDir, "RELEASE.json"), JSON.stringify(metadata));
+  const refused = join(temp, "invalid-signing");
+  assert.throws(() => packageInstallers({ releaseDir, outputDir: refused, macosSignIdentity: "-" }), /fingerprint|only supported for DMG/);
+  assert.equal(existsSync(refused), false);
+  assert.equal(toolchainBuildIdentity(source).id, metadata.build.id);
   const outputDir = join(temp, "output"); mkdirSync(outputDir);
   writeFileSync(join(outputDir, "INSTALLER.json"), "previous candidate\n");
   assert.throws(() => packageInstallers({ releaseDir, outputDir }), /output directory must be empty/);

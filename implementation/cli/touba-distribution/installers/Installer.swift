@@ -36,7 +36,7 @@ final class Installer: NSObject, NSApplicationDelegate {
         pathChoice = NSButton(checkboxWithTitle: "Add Touba to PATH for new zsh terminals", target: nil, action: nil)
         pathChoice.state = .on
         stack.addArrangedSubview(pathChoice)
-        status = NSTextField(wrappingLabelWithString: "Location: ~/.touba • Local build, not a signed public release")
+        status = NSTextField(wrappingLabelWithString: "Location: ~/.touba")
         status.textColor = .secondaryLabelColor
         stack.addArrangedSubview(status)
         status.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
