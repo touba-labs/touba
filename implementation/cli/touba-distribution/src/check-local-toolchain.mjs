@@ -22,6 +22,8 @@ try {
 }
 
 function checkToolchain(toolchainRoot) {
+  assertEqual(readFileSync(join(toolchainRoot, "LICENSE"), "utf8"),
+    readFileSync(join(implementationRoot, "../LICENSE"), "utf8"), "distributed Apache license");
   const workspace = mkdtempSync(join(tmpdir(), "touba-toolchain-check-"));
   try {
     const toubaBin = join(toolchainRoot, "bin", process.platform === "win32" ? "touba.cmd" : "touba");

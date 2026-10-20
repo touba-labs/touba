@@ -2,7 +2,8 @@
   "name": "@touba/implementation",
   "version": "1.0.0",
   "private": true,
-  "description": "Minimal Touba implementation workspace.",
+  "description": "Touba compiler, runtime, CLI and SDK implementation workspace.",
+  "license": "Apache-2.0",
   "bin": {
     "touba": "./cli/touba-project/src/main.mjs"
   },

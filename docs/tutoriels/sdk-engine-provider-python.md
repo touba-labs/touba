@@ -47,7 +47,7 @@ store = create_sqlite_decision_history_store(
 )
 
 async def generate(options):
-    # Deterministic teaching fixture, not a model call.
+    # Deterministic teaching example, not a model call.
     return {
         "finishReason": "stop",
         "object": {"decision": {
@@ -59,7 +59,7 @@ async def generate(options):
     }
 
 decide_agent_capability = create_ai_sdk_decision_provider(
-    model="offline-fixture",
+    model="offline-demo",
     generate_object=generate,
     json_schema=lambda schema: schema,
     history={"store": store, "namespace": "tutorial"},

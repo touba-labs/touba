@@ -1,16 +1,18 @@
-# Installateurs natifs : candidats de développement
+# Construire les installateurs Touba
 
 Les installateurs consomment une toolchain vérifiée, avec compilateur, Node,
 CLI et archives SDK. Aucune installation Python/npm globale et aucun SDK de
 projet ne sont modifiés. L'utilisateur choisit ensuite `touba sdk install
 javascript` ou `touba sdk install python` dans son projet.
 
-| Cible | Format et installation | Qualification de ce lot |
-| --- | --- | --- |
-| macOS ARM64 | DMG, assistant AppKit, compte courant dans `~/.touba` | compilation et backend réel testés localement ; parcours graphique/signature à qualifier |
-| macOS Intel | même assistant, build native requise | non exécutée sur cet hôte |
-| Windows x64 | EXE Inno Setup, sans droits admin, compte courant | source préparée, compilation et parcours natif non exécutés |
-| Linux x64 | DEB, gestionnaire système, `/opt/touba/toolchain` | source préparée, build/installation native non exécutées |
+| Cible | Format et installation |
+| --- | --- |
+| macOS ARM64 | DMG, assistant AppKit, compte courant dans `~/.touba` |
+| macOS Intel | Même assistant, compilé nativement pour Intel |
+| Windows x64 | EXE Inno Setup, compte courant, sans droits administrateur |
+| Linux x64 | DEB, gestionnaire système, `/opt/touba/toolchain` |
+
+Chaque fichier doit être qualifié sur sa plateforme avant publication.
 
 Le DEB cible Ubuntu 24.04+ ou une distribution compatible avec glibc >= 2.39,
 pas toute distribution Linux. L'ouverture graphique dépend du gestionnaire
@@ -23,8 +25,8 @@ du builder Python décrit dans `runtime/touba-python-sdk/build-requirements.txt`
 
 ```sh
 node cli/touba-distribution/src/package-release.mjs --release-root /chemin/candidat --json
-node cli/touba-distribution/src/check-desktop-install.mjs /chemin/candidat/touba-v0.1.0-darwin-arm64
-node cli/touba-distribution/src/package-installers.mjs --release-dir /chemin/candidat/touba-v0.1.0-darwin-arm64 --out /chemin/installateur-neuf
+node cli/touba-distribution/src/check-desktop-install.mjs /chemin/candidat/touba-v1.0.0-darwin-arm64
+node cli/touba-distribution/src/package-installers.mjs --release-dir /chemin/candidat/touba-v1.0.0-darwin-arm64 --out /chemin/installateur-neuf
 ```
 
 Le contrôle installe dans un répertoire temporaire, vérifie la réinstallation,
@@ -57,7 +59,7 @@ de qualification de son interface ou d'acceptation par l'OS.
 
 Pour l'assistant macOS distribué hors App Store, vérifier un certificat
 **Developer ID Application** avec sa clé privée dans le trousseau du signataire.
-Un compte Apple Developer utilisé pour TestFlight ne prouve pas sa présence.
+Un certificat de distribution App Store ne remplace pas un Developer ID.
 Le titulaire peut le créer dans Certificates, Identifiers & Profiles ; conserver
 la clé privée localement ou dans le dispositif de signature approuvé, jamais
 dans Git ou un message. Developer ID Installer concerne un PKG, pas cet

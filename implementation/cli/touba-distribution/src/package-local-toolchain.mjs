@@ -59,6 +59,7 @@ export function packageLocalToolchain(options = {}) {
   rmSync(toolchainRoot, { recursive: true, force: true });
   mkdirSync(join(toolchainRoot, "bin"), { recursive: true });
   mkdirSync(join(toolchainRoot, "lib"), { recursive: true });
+  copyFileSync(join(implementationRoot, "../LICENSE"), join(toolchainRoot, "LICENSE"));
 
   copyNodeRuntime();
   copyCompiler();

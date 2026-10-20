@@ -2,7 +2,8 @@
   "name": "@touba/sdk",
   "version": "1.0.0",
   "private": true,
-  "description": "Touba JavaScript SDK. Current V1 support covers process tool handlers and a local CLI-backed engine.",
+  "description": "Touba JavaScript SDK for typed handlers, governed execution and agent decision providers.",
+  "license": "Apache-2.0",
   "type": "module",
   "exports": {
     ".": "./src/index.mjs",

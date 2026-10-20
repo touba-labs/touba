@@ -1,52 +1,50 @@
 # Touba Python SDK
 
-Python 3.11+ client for an installed Touba toolchain, using its governed CLI
-and JSON contracts. No Python runtime dependencies, no network service and
-no direct bypass of Core admission. Choose the SDK from your project root:
+Python 3.11+ integration for Touba applications and tool handlers.
+
+The SDK connects Python code to Touba's runtime: it does not implement a
+second language runtime. Typed handlers, execution events and governance
+decisions follow the same contracts as the JavaScript SDK.
+
+## Install in your application
+
+With a Touba toolchain installed:
 
 ```sh
 touba sdk install python
-source .venv/bin/activate
 ```
 
-```python
-from touba_sdk import ToubaEngine
+This installs the bundled wheel in the application's `.venv`. For a new
+project with Python handler scaffolding:
 
-engine = ToubaEngine(project_root=".")
-run = engine.run(source="src/program.tb", inputs={"value": "Invoice 42"})
-print(run.status, run.reason, run.result)
+```sh
+touba init --language python --root my-project
 ```
 
-Use `await AsyncToubaEngine(...).run(...)` inside asyncio. `ToubaEngineError` carries
-`phase`, `code` and safe structured details. Pauses, explicit stops and human
-refusals remain `RunResult` outcomes. See the Touba Python SDK guide for
-checkpoint resumes, host authority, cancellation and orchestrator examples.
+See the [Python SDK guide](https://touba-labs.com/docs/guides/sdk-python)
+and [handler tutorial](https://touba-labs.com/docs/tutoriels/handlers-python).
 
-For Python tool handlers, create the project with `touba init --language python`.
-`touba prepare --mode write` generates Python handlers and contract tests after
-you declare tools. Implement `run(request, context)` as a sync or async function;
-the generated `define_tool` entry point keeps the JSON process protocol.
-The SDK also provides controlled errors, memory provenance, effect and
-compensation receipts, and testing helpers in `touba_sdk.testing`.
+## Integration model
 
-`touba_sdk.budget.sqlite.create_sqlite_provider_budget` provides the same
-durable monetary ledger as the JavaScript SDK, with integer micro-units and
-the same SQLite schema. Host tariff adapters establish bounds; unknown usage
-retains its reservation. See the provider-cost guide and monetary-budget tutorial.
+- Python handlers run as bounded processes under Touba's execution contract.
+- Engine APIs invoke the installed Touba CLI and expose its results and events.
+- Approval and decision-provider modules are supplied explicitly by the host.
+- Model adapters and bounded RAM/SQLite conversation history use the SDK backend
+  included with the toolchain over private stdio.
+- MCP stdio integration uses the Python standard library.
 
-For SDK development, `node tools/check-python-sdk.mjs` from the implementation
-directory builds and installs a wheel in an isolated temporary environment,
-then runs the suite. Provision the offline builder via `TOUBA_PYTHON_BUILD_BIN`.
-A source-only `PYTHONPATH` invocation does not qualify tool handlers: the Core
-intentionally does not pass that environment variable into handler processes.
+Python API options use `snake_case`; model messages and runtime wire keys
+retain their protocol spelling. Installing a handler does not grant tools,
+secrets or caller permissions.
 
-Model adapters (`create_ai_sdk_decision_provider`, `create_open_ai_decision_provider`,
-`create_ollama_decision_provider`) and RAM/SQLite conversation history reuse the
-SDK backend included with the installed toolchain over private bounded stdio.
-Options use snake_case; model messages and runtime wire keys remain unchanged.
-MCP stdio uses the Python standard library directly. Trusted `.py` provider and
-approval modules are supported by the CLI. Persistent Engine transport across
-runs remains separate from this per-provider lifecycle. Supply-chain generation follows
-static Python imports and dependency lock files, without executing project code
-or auditing the installed venv. Do not infer full JS SDK parity from
-the availability of Python handlers. See `docs/tutoriels/handlers-python.md`.
+## Development
+
+From the implementation workspace, run `node tools/check-python-sdk.mjs`.
+It builds and installs a wheel in a temporary environment before running the
+suite. Configure the offline builder with `TOUBA_PYTHON_BUILD_BIN`; its pinned
+requirements are in `build-requirements.txt`.
+
+## License and support
+
+[Apache License 2.0](LICENSE).
+Contact [Touba Labs](mailto:contact@touba-labs.com).

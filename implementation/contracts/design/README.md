@@ -1,8 +1,7 @@
 # Touba Design Tokens
 
 This directory contains the versioned visual token contract shared by Touba
-public documentation, Touba Hub, project client, mobile client, and the Touba IDE
-extension.
+documentation site, Touba Hub and the Touba IDE extension.
 
 The source contract is `touba-design-tokens-v1.json`. The CSS file is a direct
 web export for Docusaurus, Tauri, and other web-based surfaces. Flutter and
@@ -15,8 +14,6 @@ Current consumers:
  when the full workspace is available.
 - Touba IDE uses the same brand token family for icons and maps semantic roles
  to VS Code light and dark themes.
-- client and Mobile prototypes must consume this contract before introducing
- custom components.
 
 ## Themes
 

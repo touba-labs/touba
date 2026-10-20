@@ -28,6 +28,19 @@ const forbidden = [
 
 const failures = [];
 
+// Repository entry points may include contributor commands, but not private
+// products, machine-specific paths or internal research/task identifiers.
+for (const name of ["README.md", "implementation/runtime/touba-python-sdk/README.md",
+  "implementation/contracts/design/README.md", "implementation/contracts/product-surfaces/README.md",
+  "implementation/cli/touba-distribution/installers/README.md"]) {
+  const path = resolve(docsRoot, "..", name);
+  readFileSync(path, "utf8").split(/\r?\n/).forEach((line, index) => {
+    if (/\/Users\//.test(line)) {
+      failures.push({ file: name, line: index + 1, reason: "private content in repository introduction", text: line.trim() });
+    }
+  });
+}
+
 for (const file of walkMarkdown(docsRoot)) {
   const content = readFileSync(file, "utf8");
   const lines = content.split(/\r?\n/);
