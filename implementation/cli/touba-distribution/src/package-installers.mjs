@@ -10,6 +10,13 @@ const sourceDir = dirname(fileURLToPath(import.meta.url));
 const templates = resolve(sourceDir, "../installers");
 const formats = { "darwin-arm64": "dmg", "darwin-x64": "dmg", "win32-x64": "exe", "linux-x64": "deb" };
 
+// Match the minimum OS of the bundled Node 24 binary, not the builder's OS.
+const macosMinimum = "13.5";
+export function macosInstallerTarget(platform) {
+  if (!["darwin-arm64", "darwin-x64"].includes(platform)) throw new Error("A native macOS target is required");
+  return `${platform === "darwin-arm64" ? "arm64" : "x86_64"}-apple-macos${macosMinimum}`;
+}
+
 export function installerPlan(release) {
   if (!formats[release.platform]) throw new Error("Unsupported desktop installer platform");
   if (!/^\d+\.\d+\.\d+$/.test(release.touba_version ?? "")) throw new Error("Installer version must be a numeric three-part version");
@@ -64,8 +71,8 @@ export function packageInstallers({ releaseDir, outputDir }) {
       mkdirSync(join(contents, "Resources"));
       cpSync(source, join(contents, "Resources/payload"), { recursive: true });
       copySupport(join(contents, "Resources/support"));
-      write(join(contents, "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.touba-labs.installer</string><key>CFBundleName</key><string>Install Touba</string><key>CFBundleExecutable</key><string>ToubaInstaller</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${plan.version}</string><key>CFBundleVersion</key><string>${plan.version}</string><key>NSHighResolutionCapable</key><true/></dict></plist>\n`);
-      run("swiftc", [join(templates, "Installer.swift"), "-module-cache-path", join(staging, "swift-cache"), "-o", join(contents, "MacOS/ToubaInstaller"), "-framework", "AppKit"]);
+      write(join(contents, "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.touba-labs.installer</string><key>CFBundleName</key><string>Install Touba</string><key>CFBundleExecutable</key><string>ToubaInstaller</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${plan.version}</string><key>CFBundleVersion</key><string>${plan.version}</string><key>LSMinimumSystemVersion</key><string>${macosMinimum}</string><key>NSHighResolutionCapable</key><true/></dict></plist>\n`);
+      run("swiftc", [join(templates, "Installer.swift"), "-target", macosInstallerTarget(plan.platform), "-module-cache-path", join(staging, "swift-cache"), "-o", join(contents, "MacOS/ToubaInstaller"), "-framework", "AppKit"]);
       write(join(volume, "Read me.txt"), "Open Install Touba.app to install for this account. No admin password.\nThis local candidate is not a signed/notarized public release. Do not disable Gatekeeper.\nThe installer does not install Python or npm, or change project SDKs.\n");
       run("hdiutil", ["create", "-volname", "Touba Installer", "-srcfolder", volume, "-format", "UDZO", destination]);
       run("hdiutil", ["verify", destination]);
@@ -89,7 +96,8 @@ export function packageInstallers({ releaseDir, outputDir }) {
     const bytes = readFileSync(destination);
     const report = { ...plan, build: metadata.build.id, path: destination, size_bytes: bytes.length,
       sha256: createHash("sha256").update(bytes).digest("hex"),
-      prerequisite: plan.format === "deb" ? "Ubuntu 24.04+ or compatible Debian with glibc >= 2.39, x64" : plan.platform,
+      prerequisite: plan.format === "deb" ? "Ubuntu 24.04+ or compatible Debian with glibc >= 2.39, x64"
+        : plan.format === "dmg" ? `macOS ${macosMinimum}+ (${plan.platform})` : plan.platform,
     };
     write(join(outputDir, "INSTALLER.json"), JSON.stringify(report, null, 2) + "\n");
     write(join(outputDir, "SHA256SUMS"), `${report.sha256}  ${plan.filename}\n`);

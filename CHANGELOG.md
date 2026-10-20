@@ -29,6 +29,10 @@ These gates remain open until their actual evidence is supplied.
  descendant-process checks with an explicit gate instead of a child timer.
 - Candidate archives and installers are verified on their native platforms
  and retained in private storage with their source commit and checksums.
+- Offline npm installation has a five-minute bound and a separate import
+ check. Installation errors identify the failed phase.
+- macOS graphical installers target macOS 13.5, matching the bundled Node
+ binary, instead of inheriting the OS version of the build machine.
 
 ### Provider accounting, Python adapters and Linux confinement, 19 October 2026
 

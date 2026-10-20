@@ -17,7 +17,8 @@ const project = join(temp, "project with spaces"); mkdirSync(project);
 const prefix = join(temp, "installation with spaces");
 const node = process.platform === "win32" ? "node.exe" : "node";
 function run(command, args, cwd = project) {
-  const result = spawnSync(command, args, { cwd, env: { ...process.env, npm_config_cache: join(temp, "npm-cache") }, encoding: "utf8", timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
+  const installsSdk = args[1] === "sdk" && args[2] === "install";
+  const result = spawnSync(command, args, { cwd, env: { ...process.env, npm_config_cache: join(temp, "npm-cache") }, encoding: "utf8", timeout: installsSdk ? 360_000 : 180_000, maxBuffer: 8 * 1024 * 1024 });
   assert.equal(result.status, 0, `${command}: ${result.error ?? result.stderr}\n${result.stdout}`);
   return result.stdout.trim();
 }

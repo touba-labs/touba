@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { debianControl, installerPlan, packageInstallers } from "./package-installers.mjs";
+import { debianControl, installerPlan, packageInstallers, macosInstallerTarget } from "./package-installers.mjs";
 import { desktopLauncher, installDesktop } from "./desktop-install.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
 
@@ -29,6 +29,12 @@ test("Debian package declares its actual baseline and architecture", () => {
   assert.match(debianControl("0.1.0"), /Architecture: amd64/);
   assert.match(debianControl("0.1.0"), /libc6 \(>= 2.39\)/);
   assert.throws(() => debianControl("0.1.0\n"), /Invalid/);
+});
+
+test("macOS installers target the bundled runtime minimum rather than the build host OS", () => {
+  assert.equal(macosInstallerTarget("darwin-arm64"), "arm64-apple-macos13.5");
+  assert.equal(macosInstallerTarget("darwin-x64"), "x86_64-apple-macos13.5");
+  assert.throws(()=>macosInstallerTarget("win32-x64"),/macOS/);
 });
 
 test("desktop installer refuses a different platform before creating a prefix", t => {

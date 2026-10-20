@@ -50,12 +50,12 @@ export function bundledSdk(language, root = toolchainRoot) {
   return { ...entry, path };
 }
 
-function run(command, args, root, env = {}) {
+function run(command, args, root, env = {}, { timeout = 120_000, phase = basename(command) } = {}) {
   const result = spawnSync(command, args, {
     cwd: root, encoding: "utf8", maxBuffer: 8 * 1024 * 1024,
-    env: { ...process.env, ...env }, windowsHide: true, timeout: 120_000,
+    env: { ...process.env, ...env }, windowsHide: true, timeout,
   });
-  if (result.error || result.status !== 0) fail(`SDK command failed (${basename(command)}): ${result.error?.message ?? result.stderr?.trim() ?? result.status}`);
+  if (result.error || result.status !== 0) fail(`SDK command failed (${phase}): ${result.error?.message ?? result.stderr?.trim() ?? result.status}`);
   return result.stdout.trim();
 }
 
@@ -99,8 +99,10 @@ export function installSdk(language, { root = process.cwd(), python, distributio
     const archive = preserveArchive(root, sdk);
     const manifest = join(root, "package.json");
     if (!existsSync(manifest)) writeFileSync(manifest, '{"private":true}\n', { flag: "wx" });
-    run(process.execPath, [npm, "install", "--prefix", root, "--offline", "--ignore-scripts", "--save-exact", "--no-audit", "--no-fund", "--workspaces=false", "--", archive], root);
-    run(process.execPath, ["--input-type=module", "-e", 'import { ToubaEngine } from "@touba/sdk"; if (typeof ToubaEngine !== "function") process.exit(1);'], root);
+    // Offline extraction still depends on disk speed and OS file scanning.
+    // Allow a bounded installation window; keep the import check separate.
+    run(process.execPath, [npm, "install", "--prefix", root, "--offline", "--ignore-scripts", "--save-exact", "--no-audit", "--no-fund", "--workspaces=false", "--", archive], root, {}, {timeout:300_000,phase:"offline npm installation"});
+    run(process.execPath, ["--input-type=module", "-e", 'import { ToubaEngine } from "@touba/sdk"; if (typeof ToubaEngine !== "function") process.exit(1);'], root, {}, {phase:"JavaScript SDK import"});
     return { language, archive, root, package: sdk.name, version: sdk.version, verify: 'node --input-type=module -e \'import { ToubaEngine } from "@touba/sdk"; console.log(typeof ToubaEngine)\'' };
   }
   const venv = join(root, ".venv");

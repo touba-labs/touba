@@ -64,3 +64,9 @@ test("SDK project vendor symlink is refused before npm runs", t => {
   assert.throws(() => installSdk("javascript", { root: project, distributionRoot: root }), /regular directory|npm is required/);
   assert.equal(existsSync(join(project, "package.json")), false);
 });
+
+test("an invalid npm archive reports the installation phase rather than the Node executable", t => {
+  const {root}=fixture(t);
+  const project=join(root,"invalid-archive-project");mkdirSync(project);
+  assert.throws(()=>installSdk("javascript",{root:project,distributionRoot:root}),/SDK command failed \(offline npm installation\)/);
+});

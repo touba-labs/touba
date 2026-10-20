@@ -14,7 +14,11 @@ export function checkSdkTutorials({ root, temp }) {
     TOUBA_COMPILE_BIN: join(root, "bin", process.platform === "win32" ? "touba-compile.exe" : "touba-compile") };
   const docs = fileURLToPath(new URL("../../../../docs/tutoriels/", import.meta.url));
   function run(command, args, cwd) {
-    const result = spawnSync(command, args, { cwd, env, encoding: "utf8", timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
+    const installsSdk = args[1] === "sdk" && args[2] === "install";
+    const started = Date.now();
+    if (installsSdk) console.log(`Installed tutorial: installing ${args[3]} SDK`);
+    const result = spawnSync(command, args, { cwd, env, encoding: "utf8", timeout: installsSdk ? 360_000 : 180_000, maxBuffer: 8 * 1024 * 1024 });
+    if (installsSdk) console.log(`Installed tutorial: SDK installation completed in ${Date.now()-started} ms (exit ${result.status})`);
     assert.equal(result.status, 0, `${command}: ${result.error ?? result.stderr}\n${result.stdout}`);
     return result.stdout.trim();
   }
