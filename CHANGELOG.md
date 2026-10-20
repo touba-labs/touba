@@ -8,7 +8,8 @@ instructions.
 ## 1.0.0 - Unreleased candidate
 
 This is the version being qualified, not a published release. Core, compiler,
-runtime, CLI, both SDKs and the editor extension use the same target version.
+runtime, CLI and both SDKs use the same target version. The editor extension
+has its own release cycle.
 Package authors keep independent package versions and declare compatibility
 with Touba `>=1.0.0 <2.0.0`. The withdrawn private prototype is not a public
 download or a supported alternative installation path.
@@ -19,6 +20,15 @@ Windows resolve the bundled CLI without evaluating batch scripts. Release gates
 cover both SDKs, native GUI sessions, the current FR/EN tutorial inventory,
 industrial qualification, security/signatures and production restoration.
 These gates remain open until their actual evidence is supplied.
+
+### Native distribution qualification, 20 October 2026
+
+- Parallel checkpoints retain file flushing and atomic replacement on Windows;
+ directory flushing is performed on POSIX, where it is supported.
+- Installed Python SDK tests write Unicode fixtures as UTF-8 and synchronize
+ descendant-process checks with an explicit gate instead of a child timer.
+- Candidate archives and installers are verified on their native platforms
+ and retained in private storage with their source commit and checksums.
 
 ### Provider accounting, Python adapters and Linux confinement, 19 October 2026
 

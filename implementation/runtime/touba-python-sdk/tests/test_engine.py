@@ -8,9 +8,10 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from touba_sdk import AsyncToubaEngine, ToubaEngine, ToubaEngineError, CompileResult, touba_sdk_metadata
-from touba_sdk.engine import _result
+from touba_sdk.engine import _result, _kill
 
 IMPLEMENTATION = Path(__file__).resolve().parents[3]
 NODE = os.environ.get("TOUBA_TEST_NODE", shutil.which("node"))
@@ -230,7 +231,7 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
 
     def test_large_output_and_errors_do_not_leak_stderr(self):
         payload = "é🙂" * 200000
-        (self.root / "large.tb").write_text(f'module large\ndefine Payload as Text = {json.dumps(payload, ensure_ascii=False)}\nstrategy Run\n    gives Text\n    do\n        give Payload\n')
+        (self.root / "large.tb").write_text(f'module large\ndefine Payload as Text = {json.dumps(payload, ensure_ascii=False)}\nstrategy Run\n    gives Text\n    do\n        give Payload\n', encoding="utf-8")
         self.assertEqual(self.engine.run(source="large.tb").result, payload)
         (self.root / "invalid.tb").write_text("SECRET_COMPILER_INPUT not Touba")
         with self.assertRaises(ToubaEngineError) as error:
@@ -280,14 +281,33 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
     @unittest.skipUnless(os.name == "posix", "dedicated POSIX process groups")
     def test_timeout_reaps_descendant_when_parent_already_exited(self):
         marker = self.root / "escaped.txt"
+        ready = self.root / "ready.txt"
+        release = self.root / "release.txt"
+        # The descendant may act only after the SDK has returned. A wall-clock
+        # delay inside the child races with scheduling on shared native runners.
+        child_code = f'''const fs=require("node:fs");
+fs.writeFileSync({json.dumps(str(ready))},String(process.pid));
+const poll=setInterval(()=>{{if(fs.existsSync({json.dumps(str(release))})){{
+fs.writeFileSync({json.dumps(str(marker))},"orphan");process.exit(0);}}}},20);
+setTimeout(()=>process.exit(0),10000);'''
         (self.root / "descendant.mjs").write_text(f'''import {{spawn}} from "node:child_process";
-spawn(process.execPath, ["-e", {json.dumps('setTimeout(()=>require("node:fs").writeFileSync(' + json.dumps(str(marker)) + ',"orphan"),800)')}], {{stdio:["ignore",1,2]}});
-process.exit(0);''')
+import {{existsSync}} from "node:fs";
+spawn(process.execPath,["-e",{json.dumps(child_code)}],{{stdio:["ignore",1,2]}});
+setInterval(()=>{{if(existsSync({json.dumps(str(ready))}))process.exit(0);}},10);
+setTimeout(()=>process.exit(2),10000);''', encoding="utf-8")
         engine = ToubaEngine(self.root, command=NODE, command_args=[str(self.root / "descendant.mjs")])
-        with self.assertRaises(ToubaEngineError) as error:
-            engine.run(air_json={}, timeout=.2)
+        parent_codes = []
+        def kill_and_record(child):
+            parent_codes.append(child.returncode)
+            _kill(child)
+        with patch("touba_sdk.engine._kill", side_effect=kill_and_record):
+            with self.assertRaises(ToubaEngineError) as error:
+                engine.run(air_json={}, timeout=2)
         self.assertEqual(error.exception.code, "EngineTimeout")
-        threading.Event().wait(.9)
+        self.assertTrue(ready.exists(), "descendant must be running before the timeout")
+        self.assertEqual(parent_codes, [0], "the parent must already have exited when its group is killed")
+        release.write_text("continue", encoding="utf-8")
+        threading.Event().wait(.5)
         self.assertFalse(marker.exists())
 
 

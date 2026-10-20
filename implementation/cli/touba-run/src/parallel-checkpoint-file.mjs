@@ -14,8 +14,13 @@ export function writeParallelCheckpoint(path, checkpoint) {
     writeFileSync(fd, JSON.stringify(checkpoint) + "\n");
     fsyncSync(fd); closeSync(fd); fd = undefined;
     renameSync(temporary, target);
-    const directory = openSync(dirname(target), "r");
-    try { fsyncSync(directory); } finally { closeSync(directory); }
+    // Node cannot open directories with `r` on Windows (EISDIR). The file is
+    // flushed before the atomic replacement on every platform; POSIX also
+    // supports flushing the directory entry after the rename.
+    if (process.platform !== "win32") {
+      const directory = openSync(dirname(target), "r");
+      try { fsyncSync(directory); } finally { closeSync(directory); }
+    }
   } finally {
     if (fd !== undefined) closeSync(fd);
     try { unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
