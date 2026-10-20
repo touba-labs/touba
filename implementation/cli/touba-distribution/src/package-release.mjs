@@ -504,11 +504,43 @@ if ([string]::IsNullOrWhiteSpace($Prefix)) {
 }
 
 $Prefix = [System.IO.Path]::GetFullPath($Prefix)
-Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Prefix "bin\\touba"), (Join-Path $Prefix "bin\\touba.cmd")
-Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $Prefix "touba-toolchain")
-Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Prefix "INSTALLATION.json")
-Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Prefix "bin")
-Remove-Item -Force -ErrorAction SilentlyContinue $Prefix
+$Root = [System.IO.Path]::GetPathRoot($Prefix)
+if ($Prefix.TrimEnd('\\') -eq $Root.TrimEnd('\\') -or $Prefix.TrimEnd('\\') -eq $HOME.TrimEnd('\\')) {
+  throw "Refusing to uninstall from a filesystem root or home directory"
+}
+if (!(Test-Path -LiteralPath $Prefix)) { return }
+$Metadata = Join-Path $Prefix "INSTALLATION.json"
+$Bin = Join-Path $Prefix "bin"
+$Payload = Join-Path $Prefix "touba-toolchain"
+$Launcher = Join-Path $Prefix "bin\\touba.cmd"
+# Validate all owned paths before removing anything. Never follow a junction.
+foreach ($Path in @($Prefix, $Metadata, $Bin, $Payload, $Launcher)) {
+  if ((Test-Path -LiteralPath $Path) -and ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw "Refusing to uninstall through a reparse point: $Path"
+  }
+}
+if (!(Test-Path -LiteralPath $Metadata -PathType Leaf)) {
+  throw "No Touba installation metadata at $Prefix"
+}
+$Installation = Get-Content -LiteralPath $Metadata -Raw | ConvertFrom-Json
+$Profiles = @("touba-local-release-install-v1", "touba-local-release-install-experimental-v1", "touba-github-release-install-v1")
+if ($Installation.installation_profile -notin $Profiles -or $Installation.platform -ne "win32-x64" -or $Installation.prefix -ne $Prefix -or $Installation.cli_path -ne $Launcher) {
+  throw "Touba installation metadata does not match this directory"
+}
+if (Test-Path -LiteralPath $Payload) {
+  $Links = @(Get-ChildItem -LiteralPath $Payload -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })
+  if ($Links.Count -gt 0) { throw "Refusing to uninstall a payload containing reparse points" }
+}
+if (Test-Path -LiteralPath $Launcher) { Remove-Item -LiteralPath $Launcher -Force }
+if (Test-Path -LiteralPath $Payload) { Remove-Item -LiteralPath $Payload -Recurse -Force }
+Remove-Item -LiteralPath $Metadata -Force
+# Saved builds and user files stay intact. Delete containers only when empty;
+# Remove-Item on a nonempty directory can prompt in Windows PowerShell 5.1.
+foreach ($Directory in @($Bin, $Prefix)) {
+  if ((Test-Path -LiteralPath $Directory -PathType Container) -and @(Get-ChildItem -LiteralPath $Directory -Force).Count -eq 0) {
+    [IO.Directory]::Delete($Directory, $false)
+  }
+}
 Write-Output "Removed Touba files from $Prefix"
 `;
 }

@@ -177,6 +177,12 @@ function checkReleaseArchive(plan) {
       });
     }
 
+    assertEqual(existsSync(cliPath), false, "uninstall removed launcher");
+    assertEqual(existsSync(installedRoot), false, "uninstall removed active payload");
+    assertEqual(existsSync(join(installPrefix, "INSTALLATION.json")), false, "uninstall removed metadata");
+    assertEqual(toolchainBuildIdentity(transition.preserved_build).id, expectedBuild.id, "uninstall preserved recovery build");
+    assertFile(statePath);
+    assertFile(join(stateProject, "external-effect.txt"));
     process.stdout.write(`CHECKED_RELEASE_ARCHIVE ${plan.tarballPath}\n`);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
