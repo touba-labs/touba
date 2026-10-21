@@ -1,4 +1,4 @@
-import { visibleGraph, layoutGraph } from './view.mjs';
+import { visibleGraph, layoutGraph, viewForNode } from './view.mjs';
 
 const strings = {
   en: { readonly:'Read-only',theme:'Theme',diagnostics:'Diagnostics',resources:'Project resources',search:'Search resources',kind:'Kind',module:'Module',package:'Package',architecture:'Architecture',flow:'Flow',governance:'Governance',group:'Group modules and packages',focus:'Focus',all:'All',both:'Both directions',incoming:'Incoming',outgoing:'Outgoing',depth:'Depth',reset:'Reset',empty:'No resources in this view. Adjust the filters.',fit:'Fit',fullscreen:'Full screen',export:'Export SVG',details:'Resource details',select:'Select a resource or a relationship to explore its contract and source.',close:'Close',loading:'Reading project sources…',ready:'Up to date · compiled sources',stale:'Source errors · showing the last valid graph',error:'The project could not be compiled',source:'Open source',expand:'Explore contents',signature:'Signature',relations:'Relationships',origin:'Origin',description:'Description',responsibility:'Responsibility',count:'resources',limited:'Graph limited to 200 nodes. Refine the filters; the list includes all matches.',sourceError:'Source unavailable. Refresh the project and try again.',connection:'Connection lost. Reconnecting…',legend:'Solid: structure / flow · Dashed: declared authority',aggregate:'Grouped relationships',boundary:'External handler',budgets:'Run budgets',noFlows:'Choose a strategy, skill or function to inspect its source-defined flow.' },
@@ -27,7 +27,6 @@ const stored = vscode?.getState() ?? {};
 let lang = stored.lang ?? (navigator.language.startsWith('fr') ? 'fr' : 'en');
 let state = { status:'loading',graph:null,diagnostics:[] }, selected = stored.selected ?? null, selectedEdge = null;
 let view = stored.view ?? 'architecture', box = stored.box ?? null, layout, rendered, revision;
-let sourceRequest = 0;
 const token = vscode ? '' : location.hash.slice(1) || sessionStorage.getItem('touba-explorer-token') || '';
 if (!vscode && token) { sessionStorage.setItem('touba-explorer-token', token); history.replaceState(null, '', location.pathname); }
 const text = key => strings[lang][key] ?? key;
@@ -60,6 +59,12 @@ function renderStatus() {
   $('project-name').textContent = state.graph?.name ?? '';
 }
 function selectNode(id, center = false) { selected = id; selectedEdge = null; render(); if (center) centerSelection(); save(); }
+function revealNode(id) {
+  const node=state.graph?.nodes.find(n=>n.id===id); if (!node) return;
+  for (const field of ['search','kind','module','package']) $(field).value='';
+  $('direction').value='all'; $('group').checked=false; $('diagnostic-only').checked=false;
+  view=viewForNode(node); box=null; selectNode(id,true);
+}
 function centerSelection() {
   const p = layout?.positions.get(selected); if (!p) return;
   const r = $('graph').getBoundingClientRect(); box = { x:p.x + 120 - r.width / 2, y:p.y + 35 - r.height / 2, w:r.width, h:r.height }; applyBox();
@@ -92,7 +97,7 @@ function render() {
     const bend = y2 > y1 ? (y2 - y1) / 2 : 65 + lane * 18;
     const path = `M${x1} ${y1} C${x1} ${y1+bend},${x2} ${y2-bend},${x2} ${y2}`;
     const g = svg('g', { class:`edge${selectedEdge?.id === e.id ? ' selected' : ''}`,'data-kind':e.kind,tabindex:0,role:'button','aria-label':`${e.from} ${edgeText(e)} ${e.to}` });
-    g.append(svg('path', { d:path,'marker-end':'url(#arrow)' }), svg('text', { x:(x1+x2)/2+(lane?65:-60),y:(y1+y2)/2-5+lane*12 }, edgeText(e)));
+    g.append(svg('path', { d:path,'marker-end':'url(#arrow)' }), svg('text', { x:x1*.25+x2*.75+(lane%2?65:-60),y:y1*.25+y2*.75-5+lane*12 }, edgeText(e)));
     const pick = () => { selectedEdge = e; selected = null; renderDetails(); };
     g.addEventListener('click', pick); g.addEventListener('keydown', event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); pick(); } }); drawing.append(g);
   }
@@ -122,7 +127,7 @@ function renderDetails() {
   if (selectedEdge) {
     panel.append(el('h2', edgeText(selectedEdge)), el('p', `${selectedEdge.from} → ${selectedEdge.to}`));
     if (selectedEdge.aggregated) panel.append(el('p', text('aggregate')));
-    for (const id of [selectedEdge.from, selectedEdge.to]) panel.append(button(state.graph.nodes.find(n => n.id === id)?.name ?? id, () => selectNode(id)));
+    for (const id of [selectedEdge.from, selectedEdge.to]) panel.append(button(state.graph.nodes.find(n => n.id === id)?.name ?? id, () => revealNode(id)));
     return;
   }
   if (!node) { panel.append(el('h2', text('details')), el('p', text('select'), 'muted')); return; }
@@ -141,7 +146,7 @@ function renderDetails() {
   const list = el('ul');
   for (const e of state.graph.edges.filter(e => e.from === node.id || e.to === node.id)) {
     const target = state.graph.nodes.find(n => n.id === (e.from === node.id ? e.to : e.from));
-    const li = el('li'); li.append(el('small', `${e.from === node.id ? '→' : '←'} ${edgeText(e)}`), button(target?.name ?? '?', () => selectNode(target.id))); list.append(li);
+    const li = el('li'); li.append(el('small', `${e.from === node.id ? '→' : '←'} ${edgeText(e)}`), button(target?.name ?? '?', () => revealNode(target.id))); list.append(li);
   }
   panel.append(list);
 }
@@ -180,7 +185,7 @@ $('theme').addEventListener('click', () => { document.documentElement.dataset.th
 document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 for (const id of ['search','kind','module','package','group','direction','depth','diagnostic-only']) $(id).addEventListener(id === 'search' ? 'input' : 'change', () => { box=null; render(); });
 for (const b of document.querySelectorAll('[data-view]')) b.addEventListener('click', () => { view=b.dataset.view; selectedEdge=null; box=null; render(); save(); });
-$('reset').addEventListener('click', () => { for (const id of ['search','kind','module','package']) $(id).value=''; $('direction').value='all'; $('group').checked=true; box=null; render(); });
+$('reset').addEventListener('click', () => { for (const id of ['search','kind','module','package']) $(id).value=''; $('direction').value='all'; $('group').checked=true; $('diagnostic-only').checked=false; box=null; render(); });
 $('fit').addEventListener('click', fit); $('zoom-in').addEventListener('click', () => zoom(.8)); $('zoom-out').addEventListener('click', () => zoom(1.25));
 $('fullscreen').addEventListener('click', async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.querySelector('.workspace').requestFullscreen(); fit(); } catch { $('fullscreen').disabled=true; } });
 $('close-source').addEventListener('click', () => $('source-dialog').close());
@@ -204,7 +209,7 @@ if (vscode) {
   window.addEventListener('message', event => {
     const message=event.data;
     if (message?.type==='state') receive(message.state);
-    if (message?.type==='select') { selected=message.id; $('group').checked=false; view='architecture'; box=null; render(); }
+    if (message?.type==='select') revealNode(message.id);
     if (message?.type==='source') showSource(message.source);
   });
   vscode.postMessage({type:'ready'});

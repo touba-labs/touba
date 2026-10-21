@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, realpath, readdir, readFile, open, mkdir, mkdtemp, writeFile, rm, stat } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { lstat, realpath, readdir, open, mkdir, mkdtemp, writeFile, rm, stat } from 'node:fs/promises';
+import path, { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { compilerInputsForFile } from '../../../touba-project/src/project.mjs';
@@ -14,6 +14,17 @@ const MAX_FILES = 512, MAX_BYTES = 8 * 1024 * 1024, MAX_FILE = 1024 * 1024;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const portable = path => path.split(sep).join('/');
 const inside = (root, file) => { const rel = relative(root, file); return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel)); };
+
+export function snapshotSourceId(sourceId, sourceRoot, snapshotRoot, paths = path) {
+  // Rust canonicalization uses the extended Windows namespace; Node realpath may not.
+  const root = paths.toNamespacedPath(paths.resolve(snapshotRoot));
+  const file = paths.toNamespacedPath(paths.resolve(sourceRoot ?? snapshotRoot, sourceId));
+  const rel = paths.relative(root, file);
+  if (!rel || paths.isAbsolute(rel) || rel === '..' || rel.startsWith(`..${paths.sep}`)) {
+    throw new Error('ExplorerSourceOutsideSnapshot');
+  }
+  return rel.split(paths.sep).join('/');
+}
 
 export async function findProject(input = process.cwd()) {
   const path = await realpath(resolve(input));
@@ -45,6 +56,7 @@ async function safeRead(root, path) {
     return buffer.subarray(0,length);
   } finally { await fd.close(); }
 }
+export { safeRead as readProjectSource };
 
 export async function captureProject(root) {
   const files = [], metadata = [], roots = [], diagnostics = [], packages = [];
@@ -149,10 +161,8 @@ export async function compileCapture(capture, { signal } = {}) {
       }));
       const remap = value => {
         if (!value || typeof value !== 'object') return;
-        if (typeof value.source_id === 'string') {
-          const absolute = resolve(result.source_root ?? temporary, value.source_id);
-          if (!inside(temporary, absolute)) throw new Error('ExplorerSourceOutsideSnapshot');
-          value.source_id = portable(relative(temporary, absolute));
+        if (typeof value.source_ref?.source_id === 'string') {
+          value.source_ref.source_id = snapshotSourceId(value.source_ref.source_id, result.source_root, temporary);
         }
         for (const child of Object.values(value)) remap(child);
       };

@@ -65,7 +65,7 @@ elle n’exécute aucun traitement métier.
 
 Le service écoute uniquement sur `127.0.0.1`. L’adresse affichée contient une clé
 temporaire d’accès à ce projet. Fermez le terminal pour fermer cet accès.
-Les valeurs de secrets et les fichiers `.env` restent hors du visualiseur.
+L’explorateur ne charge ni fichiers `.env` ni valeurs du gestionnaire de secrets.
 
 L’analyse est bornée à 512 sources, 8 Mio au total et 1 Mio par fichier.
 Au-delà de 200 nœuds dans une vue, la liste reste complète et un message invite

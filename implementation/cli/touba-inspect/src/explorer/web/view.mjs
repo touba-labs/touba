@@ -1,5 +1,8 @@
 const governanceEdges = new Set(['uses', 'callable_by', 'memory_scope', 'memory_access', 'requires', 'approval_site']);
 const architectureEdges = new Set(['imports', 'invokes', 'dispatches', 'contains', 'context_link']);
+export function viewForNode(node) {
+  return node?.graph ? 'flow' : ['capability', 'secret_handle'].includes(node?.kind) ? 'governance' : 'architecture';
+}
 export function visibleGraph(graph, options) {
   if (!graph) return { nodes: [], edges: [], total: 0 };
   const flowEndpoints = new Set(graph.edges.flatMap(e => e.kind === 'entry' ? [e.from] : e.kind === 'calls' ? [e.to] : []));

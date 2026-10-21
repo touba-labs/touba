@@ -4,10 +4,10 @@ import { request } from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, cp, writeFile, readFile, rm, realpath, mkdir, symlink, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { captureProject, compileCapture, ExplorerSession, implementationRoot, findProject } from '../src/explorer/project.mjs';
+import path, { join } from 'node:path';
+import { captureProject, compileCapture, ExplorerSession, implementationRoot, snapshotSourceId } from '../src/explorer/project.mjs';
 import { startExplorer, explorerHtml } from '../src/explorer/server.mjs';
-import { visibleGraph, layoutGraph } from '../src/explorer/web/view.mjs';
+import { visibleGraph, layoutGraph, viewForNode } from '../src/explorer/web/view.mjs';
 import { projectExplorer } from '../src/explorer/model.mjs';
 import { initProject } from '../../touba-project/src/project.mjs';
 import { newPackage, packPackage, addPackage } from '../../touba-project/src/packages.mjs';
@@ -21,6 +21,21 @@ async function project(t) {
 }
 async function analyse(t) { const root = await project(t), capture = await captureProject(root), result = await compileCapture(capture); assert.ok(result.graph, JSON.stringify(result.diagnostics)); return { root, capture, ...result }; }
 const options = { view:'architecture',direction:'all',group:false,depth:2 };
+
+test('snapshot paths reconcile Windows canonical namespaces and refuse escapes', () => {
+  for (const [root, canonical] of [
+    [String.raw`C:\Users\runner\Temp\touba-explore`,String.raw`\\?\C:\Users\runner\Temp\touba-explore`],
+    [String.raw`\\server\share\touba-explore`,String.raw`\\?\UNC\server\share\touba-explore`],
+  ]) {
+    assert.equal(snapshotSourceId('src/review.tb',canonical,root,path.win32),'src/review.tb');
+    assert.equal(snapshotSourceId(path.win32.join(canonical,'src/review.tb'),canonical,root,path.win32),'src/review.tb');
+    for (const outside of ['../other/file.tb',String.raw`D:\outside.tb`,String.raw`\\other\share\file.tb`]) {
+      assert.throws(()=>snapshotSourceId(outside,canonical,root,path.win32),/ExplorerSourceOutsideSnapshot/);
+    }
+  }
+  assert.equal(snapshotSourceId('src/review.tb','/tmp/project','/tmp/project',path.posix),'src/review.tb');
+  assert.throws(()=>snapshotSourceId('../project-other/source.tb','/tmp/project','/tmp/project',path.posix),/ExplorerSourceOutsideSnapshot/);
+});
 
 test('real compiler: responsibilities, authority, secrets names, approval and bounded parallel call', async t => {
   const { graph, root } = await analyse(t);
@@ -116,6 +131,9 @@ test('views preserve semantic edges; grouping and focus remain explicit', async 
   const focused=visibleGraph(graph,{...options,view:'governance',selected:'agent:review/Specialist',direction:'outgoing',depth:1});
   assert.ok(focused.nodes.some(n=>n.kind==='tool')); assert.ok(!focused.nodes.some(n=>n.kind==='strategy'));
   assert.equal(visibleGraph(graph,{...options,search:'no such resource'}).nodes.length,0);
+  for (const node of graph.nodes) {
+    assert.ok(visibleGraph(graph,{...options,view:viewForNode(node)}).nodes.some(n=>n.id===node.id),`source navigation must reveal ${node.id}`);
+  }
 });
 
 test('cyclic layout is deterministic and finite', () => {

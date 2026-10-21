@@ -29,7 +29,14 @@ try {
     assert.equal(await page.locator('#resource-list button').evaluate(node=>document.activeElement===node),true);
     await page.locator('#detail button').filter({hasText:language==='fr'?'Ouvrir la source':'Open source'}).click();
     await page.locator('#source-dialog[open]').waitFor(); assert.match(await page.locator('#source-code').innerText(),/agent Specialist/); await page.locator('#close-source').click();
-    await page.locator('#reset').click(); await page.locator('[data-view="governance"]').click();
+    await page.locator('#diagnostic-only').check(); assert.equal(await page.locator('.node').count(),0);
+    await page.locator('#reset').click(); assert.equal(await page.locator('#diagnostic-only').isChecked(),false);
+    await page.locator('[data-view="governance"]').click();
+    await page.locator('#resource-list button').filter({hasText:/^Review$/}).click();
+    await page.locator('#detail li button').filter({hasText:/^human_approval$/}).first().click();
+    assert.equal(await page.locator('[data-view="flow"]').getAttribute('aria-pressed'),'true');
+    assert.equal(await page.locator('.node.selected').count(),1);
+    await page.locator('[data-view="governance"]').click();
     assert.ok(await page.locator('.node[data-id="secret_handle:INCIDENT_API_KEY"]').count());
     await page.locator('#kind').selectOption('agent'); assert.equal(await page.locator('.node').count(),1);
     await page.locator('#kind').selectOption(''); await page.locator('[data-view="flow"]').click();
@@ -52,4 +59,18 @@ try {
     await context.close(); count++; console.log(`PASS explorer ${width}px ${theme} ${language}`);
   }
   console.log(`Explorer browser qualification: ${count}/8 configurations passed.`);
+  const started=performance.now();
+  await writeFile(join(root,'src/catalog.tb'), 'module catalog\n'+Array.from({length:300},(_,i)=>`function Entry${i}\n    takes value as Text\n    gives Text\n    do\n        give value\n`).join('\n'));
+  const context=await browser.newContext({viewport:{width:1440,height:950}}), page=await context.newPage();
+  await page.goto(server.url);
+  await page.waitForFunction(()=>document.querySelector('#module').options.length===3 && document.querySelector('#status').dataset.status==='ready');
+  await page.locator('#group').uncheck();
+  assert.ok(await page.locator('#resource-list button').count()>300);
+  assert.equal(await page.locator('.node').count(),200);
+  await page.locator('#resource-list button').filter({hasText:/^Entry299$/}).click();
+  assert.ok(await page.locator('.node.selected').count());
+  await page.locator('#search').fill('Entry299'); assert.equal(await page.locator('.node').count(),1);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  console.log(`PASS real 300-function project: capped graph, complete list, last-node selection and search (${Math.round(performance.now()-started)} ms).`);
+  await context.close();
 } finally { await browser?.close(); await server?.close(); await rm(root,{recursive:true,force:true}); }
