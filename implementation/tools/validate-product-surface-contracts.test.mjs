@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import test from "node:test";
 
 import { buildAirInputContract } from "../contracts/product-surfaces/input-contracts.mjs";
@@ -170,7 +169,7 @@ test("accepts media only through canonical typed handles", () => {
 });
 
 function readJson(relativePath) {
-  return JSON.parse(readFileSync(join(contractsRoot.pathname, relativePath), "utf8"));
+  return JSON.parse(readFileSync(new URL(relativePath, contractsRoot), "utf8"));
 }
 
 test("retains enum members through nested list and record input contracts", () => {
