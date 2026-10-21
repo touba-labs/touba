@@ -84,6 +84,6 @@ actualisé. Introduisez temporairement une erreur de syntaxe et sauvegardez :
 les diagnostics apparaissent et le dernier graphe valide reste identifié.
 Corrigez le fichier pour retrouver l’état **À jour**.
 
-Terminez avec **Exporter SVG**, puis fermez le service avec **Ctrl+C**.
+Terminez avec l’export **SVG** ou **PNG**, puis fermez le service avec **Ctrl+C**.
 Pour explorer un traitement parallèle, poursuivez avec le
 [tutoriel parallèle](./traitement-parallele.md).

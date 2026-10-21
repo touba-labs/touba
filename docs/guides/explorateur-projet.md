@@ -46,8 +46,23 @@ pendant l’exécution ; la jointure restitue les résultats dans l’ordre d’
    l’extrait dans le navigateur.
 
 La liste de ressources est utilisable au clavier. Le graphe propose zoom,
-déplacement, cadrage et export SVG. Les interfaces française et anglaise
+déplacement, cadrage et export en SVG ou en PNG. Les interfaces française et anglaise
 partagent les mêmes vues, en thème clair ou sombre.
+
+## Adapter l’affichage
+
+Le bouton **Affichage** règle la présentation du graphe. Vos choix sont conservés :
+
+- **Étiquettes des relations** : toujours visibles, seulement autour de la sélection, ou masquées ;
+- **Orientation** : verticale ou horizontale ;
+- **Densité** : confortable ou compacte.
+
+Les panneaux des ressources et des détails se masquent pour agrandir le graphe.
+Raccourcis clavier : `[` pour les ressources, `]` pour les détails, `\` pour le
+graphe seul, `0` pour cadrer, `+` et `-` pour zoomer, **Échap** pour désélectionner.
+Un second clic sur la ressource sélectionnée, ou **Réinitialiser**, la désélectionne
+et réaffiche l’ensemble du graphe.
+La molette zoome autour du pointeur ; un double-clic sur le fond recadre le graphe.
 
 ## Actualisation
 

@@ -7,6 +7,52 @@ import { implementationRoot } from '../cli/touba-inspect/src/explorer/project.mj
 
 // The qualification host supplies Playwright; it is not a distributed runtime dependency.
 const { chromium } = await import(process.env.TOUBA_PLAYWRIGHT_MODULE || 'playwright');
+
+async function checkDisplayControls(page) {
+  await page.locator('#hide-resources').click(); assert.equal(await page.locator('#resources-panel').isVisible(),false);
+  await page.locator('#show-resources').click(); assert.equal(await page.locator('#resources-panel').isVisible(),true);
+  await page.locator('#hide-detail').click(); assert.equal(await page.locator('#detail-panel').isVisible(),false);
+  await page.locator('#show-detail').click(); assert.equal(await page.locator('#detail-panel').isVisible(),true);
+  await page.locator('#theme').focus();
+  await page.keyboard.press('['); assert.equal(await page.locator('#resources-panel').isVisible(),false);
+  await page.keyboard.press('['); assert.equal(await page.locator('#resources-panel').isVisible(),true);
+  await page.keyboard.press(']'); assert.equal(await page.locator('#detail-panel').isVisible(),false);
+  await page.keyboard.press(']'); assert.equal(await page.locator('#detail-panel').isVisible(),true);
+  await page.keyboard.press('\\'); assert.equal(await page.locator('#focus-mode').getAttribute('aria-pressed'),'true');
+  await page.keyboard.press('\\'); assert.equal(await page.locator('#focus-mode').getAttribute('aria-pressed'),'false');
+  await page.locator('#search').focus(); await page.keyboard.press('[');
+  assert.equal(await page.locator('#search').inputValue(),'['); assert.equal(await page.locator('#resources-panel').isVisible(),true);
+  await page.locator('#search').fill('');
+
+  await page.locator('[data-view="governance"]').click();
+  await page.locator('#display-toggle').click();
+  await page.locator('[data-pref="labels"] [data-value="none"]').click();
+  assert.equal(await page.locator('#graph').getAttribute('data-labels'),'none');
+  assert.ok(await page.locator('.edge-label').count());
+  assert.ok(await page.locator('.edge-label').evaluateAll(nodes=>nodes.every(n=>getComputedStyle(n).opacity==='0')));
+  await page.locator('[data-pref="labels"] [data-value="auto"]').click();
+  await page.locator('[data-pref="orientation"] [data-value="horizontal"]').click();
+  await page.locator('[data-pref="density"] [data-value="compact"]').click();
+  assert.equal(await page.locator('.node .card').first().getAttribute('width'),'196');
+  await page.locator('[data-pref="panels"] [data-value="detail"]').click();
+  await page.keyboard.press('Escape'); assert.equal(await page.locator('#display-panel').isVisible(),false);
+  assert.equal(await page.locator('#display-toggle').evaluate(n=>n===document.activeElement),true);
+  await page.locator('#filters summary').click();
+  await page.waitForFunction(()=>JSON.parse(localStorage.getItem('touba-explorer-preferences')).filters===false);
+  await page.reload(); await page.locator('#status[data-status="ready"]').waitFor();
+  assert.equal(await page.locator('#graph').getAttribute('data-labels'),'auto');
+  assert.equal(await page.locator('#graph').getAttribute('data-density'),'compact');
+  assert.equal(await page.locator('#detail-panel').isVisible(),false);
+  assert.equal(await page.locator('#filters').evaluate(n=>n.open),false);
+  await page.locator('#filters summary').click();
+  await page.locator('#show-detail').click();
+  await page.locator('#display-toggle').click();
+  assert.equal(await page.locator('[data-pref="orientation"] [data-value="horizontal"]').getAttribute('aria-pressed'),'true');
+  for (const [pref,value] of [['labels','all'],['orientation','vertical'],['density','comfortable']]) await page.locator(`[data-pref="${pref}"] [data-value="${value}"]`).click();
+  await page.keyboard.press('Escape');
+  await page.locator('[data-view="architecture"]').click();
+}
+
 const root = await realpath(await mkdtemp(join(tmpdir(), 'touba-explorer-browser-')));
 let browser, server;
 try {
@@ -14,8 +60,8 @@ try {
   server=await startExplorer({root,openBrowser:false,interval:200}); await server.ready;
   browser=await chromium.launch({headless:true,...(process.env.TOUBA_BROWSER_CHANNEL ? {channel:process.env.TOUBA_BROWSER_CHANNEL} : {})});
   let count=0;
-  for (const width of [390,1440]) for (const theme of ['light','dark']) for (const language of ['fr','en']) {
-    const context=await browser.newContext({viewport:{width,height:950},locale:language,colorScheme:theme,acceptDownloads:true});
+  for (const width of [320,390,1440,1920]) for (const theme of ['light','dark']) for (const language of ['fr','en']) {
+    const context=await browser.newContext({viewport:{width,height:width===320 ? 640 : 950},locale:language,colorScheme:theme,reducedMotion:'reduce',acceptDownloads:true});
     const page=await context.newPage(), errors=[];
     page.on('pageerror',error=>errors.push(error.message));
     page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
@@ -23,6 +69,7 @@ try {
     assert.equal(await page.locator('html').getAttribute('lang'),language);
     await page.locator('#theme').click(); assert.equal(await page.locator('html').getAttribute('data-theme'),theme==='light'?'dark':'light'); await page.locator('#theme').click();
     await page.locator('#language').selectOption(language==='fr'?'en':'fr'); await page.locator('#language').selectOption(language);
+    await checkDisplayControls(page);
     assert.equal(await page.locator('.node').count(),1);
     await page.locator('#group').uncheck(); assert.equal(await page.locator('.node').count(),4);
     await page.locator('#module').selectOption('module:review'); assert.equal(await page.locator('.node').count(),4); await page.locator('#module').selectOption('');
@@ -36,7 +83,7 @@ try {
     await page.locator('#reset').click(); assert.equal(await page.locator('#diagnostic-only').isChecked(),false);
     await page.locator('[data-view="governance"]').click();
     await page.locator('#resource-list button').filter({hasText:/^Review$/}).click();
-    await page.locator('#detail li button').filter({hasText:/^human_approval$/}).first().click();
+    await page.locator('#detail li button').filter({hasText:/^(Approbation humaine|Human approval)$/}).first().click();
     assert.equal(await page.locator('[data-view="flow"]').getAttribute('aria-pressed'),'true');
     assert.equal(await page.locator('.node.selected').count(),1);
     await page.locator('[data-view="governance"]').click();
@@ -58,6 +105,21 @@ try {
     await page.locator('#fullscreen').click(); await page.waitForFunction(()=>!document.fullscreenElement);
     const pending=page.waitForEvent('download'); await page.locator('#export').click(); const download=await pending; assert.equal(download.suggestedFilename(),'touba-project.svg');
     const exported=await readFile(await download.path(),'utf8'); assert.match(exported,/<svg/); assert.match(exported,/parallel_call/); assert.ok(!exported.includes('<script'));
+    const pendingPng=page.waitForEvent('download'); await page.locator('#export-png').click(); const image=await pendingPng; assert.equal(image.suggestedFilename(),'touba-project.png');
+    const png=await readFile(await image.path());
+    assert.deepEqual([...png.subarray(0,8)],[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]);
+    assert.ok(png.readUInt32BE(16)>0 && png.readUInt32BE(16)<=8000 && png.readUInt32BE(20)>0 && png.readUInt32BE(20)<=8000);
+    const dimensions=await page.evaluate(async base64=>{
+      const url=URL.createObjectURL(new Blob([Uint8Array.from(atob(base64),c=>c.charCodeAt(0))],{type:'image/png'}));
+      try {const image=new Image();image.src=url;await image.decode();return [image.naturalWidth,image.naturalHeight];}
+      finally {URL.revokeObjectURL(url);}
+    },png.toString('base64'));
+    assert.deepEqual(dimensions,[png.readUInt32BE(16),png.readUInt32BE(20)]);
+    await page.locator('#reset').click(); assert.equal(await page.locator('.node.selected').count(),0);
+    await page.locator('[data-view="governance"]').click();
+    await page.locator('#resource-list button').filter({hasText:/^Specialist$/}).click(); assert.equal(await page.locator('.node.selected').count(),1);
+    await page.locator('.node.selected').click(); assert.equal(await page.locator('.node.selected').count(),0); assert.equal(await page.locator('.node.muted').count(),0);
+    await page.locator('#resource-list button').filter({hasText:/^Specialist$/}).click(); await page.locator('#reset').click(); assert.equal(await page.locator('.node.selected').count(),0);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await page.reload(); await page.locator('#status[data-status="ready"]').waitFor();
     await page.locator('[data-view="governance"]').click();
@@ -71,7 +133,7 @@ try {
     assert.deepEqual(errors,[]);
     await context.close(); count++; console.log(`PASS explorer ${width}px ${theme} ${language}`);
   }
-  console.log(`Explorer browser qualification: ${count}/8 configurations passed.`);
+  console.log(`Explorer browser qualification: ${count}/16 configurations passed.`);
   const started=performance.now();
   await writeFile(join(root,'src/catalog.tb'), 'module catalog\n'+Array.from({length:300},(_,i)=>`function Entry${i}\n    takes value as Text\n    gives Text\n    do\n        give value\n`).join('\n'));
   const context=await browser.newContext({viewport:{width:1440,height:950}}), page=await context.newPage();

@@ -142,6 +142,34 @@ test('cyclic layout is deterministic and finite', () => {
   assert.deepEqual(a,b); assert.equal(a.positions.size,4); assert.ok(a.width<2000); assert.ok(a.positions.get('d').y>a.positions.get('c').y);
 });
 
+test('empty layouts have positive finite extents in each orientation and density', () => {
+  for (const direction of ['vertical','horizontal']) for (const density of ['comfortable','compact']) {
+    const result=layoutGraph([],[],{direction,density});
+    assert.equal(result.positions.size,0);
+    assert.ok(Number.isFinite(result.width) && result.width>0);
+    assert.ok(Number.isFinite(result.height) && result.height>0);
+    assert.equal(result.direction,direction);
+  }
+});
+
+test('wrapped layouts contain every card without overlap in both directions and densities', () => {
+  const nodes=Array.from({length:31},(_,i)=>({id:`node-${i}`}));
+  const edges=nodes.slice(1,26).map(n=>({from:nodes[0].id,to:n.id}));
+  edges.push({from:'node-1',to:'node-2'},{from:'node-2',to:'node-1'},{from:'node-2',to:'node-26'});
+  for (const direction of ['vertical','horizontal']) for (const density of ['comfortable','compact']) for (const wrap of [1,3,8]) {
+    const result=layoutGraph(nodes,edges,{direction,density,wrap});
+    assert.deepEqual(result,layoutGraph(nodes,edges,{direction,density,wrap}));
+    assert.equal(result.positions.size,nodes.length);
+    const positions=[...result.positions.values()];
+    for (const [i,a] of positions.entries()) {
+      assert.ok(a.x>=0 && a.y>=0 && a.x+result.nodeWidth<=result.width && a.y+result.nodeHeight<=result.height);
+      for (const b of positions.slice(i+1)) assert.ok(a.x+result.nodeWidth<=b.x || b.x+result.nodeWidth<=a.x || a.y+result.nodeHeight<=b.y || b.y+result.nodeHeight<=a.y);
+    }
+    const a=result.positions.get('node-2'),b=result.positions.get('node-26');
+    assert.ok(direction==='vertical' ? b.y>a.y : b.x>a.x);
+  }
+});
+
 test('public CLI exposes explorer and rejects invalid options before starting a listener',()=>{
   const cli=join(implementationRoot,'cli/touba-project/src/main.mjs');
   const help=spawnSync(process.execPath,[cli,'explore','--help'],{encoding:'utf8'});

@@ -46,8 +46,15 @@ export function visibleGraph(graph, options) {
   return { nodes, edges, total: nodes.length };
 }
 
+export const LAYOUT_SIZES = {
+  comfortable: { width: 240, height: 72, rankGap: 88, rowGap: 40, sideRankGap: 120, sideRowGap: 32, lineGap: 28, wrap: 6 },
+  compact: { width: 196, height: 56, rankGap: 64, rowGap: 32, sideRankGap: 84, sideRowGap: 22, lineGap: 20, wrap: 8 },
+};
+
 // Strongly connected components keep loops together; the component DAG gives stable ranks.
-export function layoutGraph(nodes, edges) {
+export function layoutGraph(nodes, edges, { direction = 'vertical', density = 'comfortable', wrap } = {}) {
+  const size = LAYOUT_SIZES[density] ?? LAYOUT_SIZES.comfortable;
+  if (!nodes.length) return { positions:new Map(), width:80, height:80, nodeWidth:size.width, nodeHeight:size.height, direction:direction === 'horizontal' ? 'horizontal' : 'vertical' };
   const adjacency = new Map(nodes.map(n => [n.id, []]));
   for (const e of edges) if (adjacency.has(e.from) && adjacency.has(e.to)) adjacency.get(e.from).push(e.to);
   const indices = new Map(), low = new Map(), stack = [], active = new Set(), components = [];
@@ -70,12 +77,41 @@ export function layoutGraph(nodes, edges) {
   for (const e of edges) { const a = componentOf.get(e.from), b = componentOf.get(e.to); if (a !== b && a !== undefined && b !== undefined) incoming[b].add(a); }
   const ranks = new Map();
   function rank(i) { if (!ranks.has(i)) ranks.set(i, Math.max(0, ...[...incoming[i]].map(p => rank(p) + 1))); return ranks.get(i); }
-  const rows = new Map(), positions = new Map();
+  const byRank = new Map();
   for (let i = 0; i < components.length; i++) {
     const r = rank(i);
-    for (const id of components[i]) { const row = rows.get(r) ?? 0; positions.set(id, { x: 40 + row * 280, y: 40 + r * 160 }); rows.set(r, row + 1); }
+    if (!byRank.has(r)) byRank.set(r, []);
+    byRank.get(r).push(...components[i]);
   }
-  const columns = Math.max(1, ...rows.values());
-  for (const [id, position] of positions) position.x += (columns - rows.get(rank(componentOf.get(id)))) * 140;
-  return { positions, width: 40 + columns * 280, height: (Math.max(0, ...ranks.values()) + 1) * 160 };
+  const predecessors = new Map(nodes.map(n => [n.id, []]));
+  for (const e of edges) if (predecessors.has(e.to) && predecessors.has(e.from) && e.from !== e.to) predecessors.get(e.to).push(e.from);
+  const breadth = Math.max(1, ...[...byRank.values()].map(list => list.length));
+  const slot = new Map();
+  // One barycentre sweep orders each rank under its predecessors, which removes most avoidable crossings.
+  for (const r of [...byRank.keys()].sort((a, b) => a - b)) {
+    const list = byRank.get(r);
+    const centre = id => { const placed = predecessors.get(id).filter(p => slot.has(p)); return placed.length ? placed.reduce((sum, p) => sum + slot.get(p), 0) / placed.length : null; };
+    const ordered = list.map((id, index) => ({ id, index, centre: centre(id) }))
+      .sort((a, b) => (a.centre ?? a.index + (breadth - list.length) / 2) - (b.centre ?? b.index + (breadth - list.length) / 2) || a.index - b.index);
+    ordered.forEach(({ id }, index) => slot.set(id, index + (breadth - list.length) / 2));
+    byRank.set(r, ordered.map(item => item.id));
+  }
+  const positions = new Map(), vertical = direction !== 'horizontal';
+  const pitchMain = vertical ? size.height + size.rankGap : size.width + size.sideRankGap;
+  const pitchCross = vertical ? size.width + size.rowGap : size.height + size.sideRowGap;
+  const linePitch = vertical ? size.height + size.lineGap : size.width + size.lineGap;
+  // Wide ranks wrap onto extra lines so a module with many declarations stays readable.
+  const columns = Math.min(breadth, Math.max(1, wrap ?? size.wrap));
+  let main = 40;
+  for (const r of [...byRank.keys()].sort((a, b) => a - b)) {
+    const list = byRank.get(r), lines = Math.ceil(list.length / columns);
+    list.forEach((id, index) => {
+      const line = Math.floor(index / columns), inLine = Math.min(columns, list.length - line * columns);
+      const cross = 40 + (index % columns + (columns - inLine) / 2) * pitchCross, along = main + line * linePitch;
+      positions.set(id, vertical ? { x: cross, y: along } : { x: along, y: cross });
+    });
+    main += (lines - 1) * linePitch + pitchMain;
+  }
+  const crossExtent = 40 + columns * pitchCross, mainExtent = main - pitchMain + (vertical ? size.height : size.width) + 40;
+  return { positions, width: vertical ? crossExtent : mainExtent, height: vertical ? mainExtent : crossExtent, nodeWidth: size.width, nodeHeight: size.height, direction: vertical ? 'vertical' : 'horizontal' };
 }
