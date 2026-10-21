@@ -75,6 +75,7 @@ const FEATURE_VERSIONS = Object.freeze({
   trace_output: "touba-trace-v1",
 });
 const PUBLIC_COMMANDS = Object.freeze({
+  explore: true,
   sdk: true,
   package: true,
   compile: true,
@@ -150,6 +151,11 @@ try {
 
 async function dispatch(rawArgs) {
   const [command, ...rest] = rawArgs;
+  if (command === "explore") {
+    const { exploreCommand } = await import("../../touba-inspect/src/explorer/server.mjs");
+    await exploreCommand(rest);
+    return { passthrough: true, exitCode: 0 };
+  }
   if (command === "engine-worker") {
     if (rest.length !== 0) throw new Error("engine-worker accepts only the private SDK protocol");
     const { startEngineWorker } = await import("../../touba-run/src/engine-worker.mjs");
@@ -1666,6 +1672,7 @@ function printUsage() {
   touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>
   touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]
   touba inspect <artifact> [inspect options] [--report-out <report.inspect.txt>]
+  touba explore [project] [--port <number>] [--no-open]
   touba audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--timeline-out <timeline.trace-timeline.json>] [--output text|json]
   touba supply-chain validate --lock <touba.lock.json> --air <program.air.json> [--manifest <touba.manifest.json>] [--report-out <report.supply-chain-report.json>] [--output text|json] [--strict] [--require-review]
   touba supply-chain generate --air <program.air.json> [--air <module.air.json> ...] --manifest <touba.manifest.json> --out <touba.lock.json> [--package-root <relative-dir>] [--file <file> ...] [--entrypoint-arg <index|command>]

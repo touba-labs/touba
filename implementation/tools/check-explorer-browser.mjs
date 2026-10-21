@@ -1,0 +1,55 @@
+import assert from 'node:assert/strict';
+import { cp, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startExplorer } from '../cli/touba-inspect/src/explorer/server.mjs';
+import { implementationRoot } from '../cli/touba-inspect/src/explorer/project.mjs';
+
+// The qualification host supplies Playwright; it is not a distributed runtime dependency.
+const { chromium } = await import(process.env.TOUBA_PLAYWRIGHT_MODULE || 'playwright');
+const root = await realpath(await mkdtemp(join(tmpdir(), 'touba-explorer-browser-')));
+let browser, server;
+try {
+  await cp(join(implementationRoot,'examples/explorer-project'),root,{recursive:true});
+  server=await startExplorer({root,openBrowser:false,interval:200}); await server.ready;
+  browser=await chromium.launch({headless:true,...(process.env.TOUBA_BROWSER_CHANNEL ? {channel:process.env.TOUBA_BROWSER_CHANNEL} : {})});
+  let count=0;
+  for (const width of [390,1440]) for (const theme of ['light','dark']) for (const language of ['fr','en']) {
+    const context=await browser.newContext({viewport:{width,height:950},locale:language,colorScheme:theme,acceptDownloads:true});
+    const page=await context.newPage(), errors=[];
+    page.on('pageerror',error=>errors.push(error.message));
+    page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
+    await page.goto(server.url); await page.locator('#status[data-status="ready"]').waitFor();
+    assert.equal(await page.locator('html').getAttribute('lang'),language);
+    assert.equal(await page.locator('.node').count(),1);
+    await page.locator('#group').uncheck(); assert.equal(await page.locator('.node').count(),4);
+    await page.locator('#search').fill('Specialist'); assert.equal(await page.locator('#resource-list button').count(),1);
+    await page.locator('#resource-list button').focus(); await page.keyboard.press('Enter');
+    assert.match(await page.locator('#detail').innerText(),/Diagnose the supplied incident/);
+    assert.equal(await page.locator('#resource-list button').evaluate(node=>document.activeElement===node),true);
+    await page.locator('#detail button').filter({hasText:language==='fr'?'Ouvrir la source':'Open source'}).click();
+    await page.locator('#source-dialog[open]').waitFor(); assert.match(await page.locator('#source-code').innerText(),/agent Specialist/); await page.locator('#close-source').click();
+    await page.locator('#reset').click(); await page.locator('[data-view="governance"]').click();
+    assert.ok(await page.locator('.node[data-id="secret_handle:INCIDENT_API_KEY"]').count());
+    await page.locator('#kind').selectOption('agent'); assert.equal(await page.locator('.node').count(),1);
+    await page.locator('#kind').selectOption(''); await page.locator('[data-view="flow"]').click();
+    assert.ok(await page.locator('.node[aria-label*="parallel"],.node[aria-label*="parallèle"]').count());
+    const initial=await page.locator('#graph').getAttribute('viewBox'); await page.locator('#zoom-in').click(); assert.notEqual(await page.locator('#graph').getAttribute('viewBox'),initial);
+    await page.locator('#fit').click();
+    const pending=page.waitForEvent('download'); await page.locator('#export').click(); const download=await pending; assert.equal(download.suggestedFilename(),'touba-project.svg');
+    const exported=await readFile(await download.path(),'utf8'); assert.match(exported,/<svg/); assert.match(exported,/parallel_call/); assert.ok(!exported.includes('<script'));
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.reload(); await page.locator('#status[data-status="ready"]').waitFor();
+    await page.locator('[data-view="governance"]').click();
+    await page.locator('#resource-list button').filter({hasText:'Specialist'}).click();
+    const selected=await page.locator('#detail h2').innerText(), viewport=await page.locator('#graph').getAttribute('viewBox');
+    const file=join(root,'src/review.tb'), original=await readFile(file,'utf8');
+    await writeFile(file,'invalid Touba source'); await page.locator('#status[data-status="stale"]').waitFor();
+    assert.equal(await page.locator('#detail h2').innerText(),selected); assert.ok(await page.locator('.node').count()>0);
+    await writeFile(file,original+'\n'); await page.locator('#status[data-status="ready"]').waitFor();
+    assert.equal(await page.locator('#detail h2').innerText(),selected); assert.equal(await page.locator('#graph').getAttribute('viewBox'),viewport);
+    assert.deepEqual(errors,[]);
+    await context.close(); count++; console.log(`PASS explorer ${width}px ${theme} ${language}`);
+  }
+  console.log(`Explorer browser qualification: ${count}/8 configurations passed.`);
+} finally { await browser?.close(); await server?.close(); await rm(root,{recursive:true,force:true}); }

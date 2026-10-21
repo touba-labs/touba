@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src __CSP_SOURCE__; style-src __CSP_SOURCE__; connect-src 'self'; img-src __CSP_SOURCE__ blob:; font-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Touba Explorer</title>
+  <link rel="stylesheet" href="__ASSET_tokens.css__">
+  <link rel="stylesheet" href="__ASSET_style.css__">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">T</span><div><strong>Touba Explorer</strong><small id="project-name"></small></div></div>
+    <div class="header-actions"><span class="badge" data-i18n="readonly"></span><select id="language" aria-label="Language"><option value="en">English</option><option value="fr">Français</option></select><button id="theme" data-i18n="theme"></button></div>
+  </header>
+  <div id="status" role="status" aria-live="polite"></div>
+  <details id="diagnostics"><summary data-i18n="diagnostics"></summary><ul></ul></details>
+  <main>
+    <aside class="resources" aria-labelledby="resources-title">
+      <h2 id="resources-title" data-i18n="resources"></h2>
+      <label for="search" data-i18n="search"></label><input id="search" type="search" autocomplete="off">
+      <label for="kind" data-i18n="kind"></label><select id="kind"></select>
+      <label for="module" data-i18n="module"></label><select id="module"></select>
+      <label for="package" data-i18n="package"></label><select id="package"></select>
+      <label class="check"><input id="diagnostic-only" type="checkbox"><span data-i18n="diagnosticOnly"></span></label>
+      <p id="count" class="muted"></p><ul id="resource-list" aria-label="Resources"></ul>
+    </aside>
+    <section class="workspace" aria-label="Graph">
+      <nav class="views" aria-label="Views"><button data-view="architecture" aria-pressed="true" data-i18n="architecture"></button><button data-view="flow" aria-pressed="false" data-i18n="flow"></button><button data-view="governance" aria-pressed="false" data-i18n="governance"></button></nav>
+      <div class="toolbar">
+        <label class="check"><input id="group" type="checkbox" checked><span data-i18n="group"></span></label>
+        <label for="direction" data-i18n="focus"></label><select id="direction"><option value="all" data-i18n="all"></option><option value="both" data-i18n="both"></option><option value="incoming" data-i18n="incoming"></option><option value="outgoing" data-i18n="outgoing"></option></select>
+        <label for="depth" data-i18n="depth"></label><select id="depth"><option>1</option><option selected>2</option><option>3</option></select>
+        <button id="reset" data-i18n="reset"></button>
+      </div>
+      <div id="canvas-wrap"><svg id="graph" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="graph-title"><title id="graph-title">Touba project graph</title><g id="drawing"></g></svg><p id="empty" data-i18n="empty"></p></div>
+      <div class="graph-footer"><span id="legend" class="muted"></span><div class="graph-actions"><button id="zoom-out" aria-label="Zoom out">−</button><button id="fit" data-i18n="fit"></button><button id="zoom-in" aria-label="Zoom in">+</button><button id="fullscreen" data-i18n="fullscreen"></button><button id="export" data-i18n="export"></button></div></div>
+    </section>
+    <aside id="detail" aria-live="polite"><h2 data-i18n="details"></h2><p class="muted" data-i18n="select"></p></aside>
+  </main>
+  <dialog id="source-dialog"><header><strong id="source-title"></strong><button id="close-source" data-i18n="close"></button></header><pre id="source-code"></pre></dialog>
+  <script type="module" src="__ASSET_app.mjs__"></script>
+</body>
+</html>

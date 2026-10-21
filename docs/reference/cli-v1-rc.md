@@ -1,5 +1,17 @@
 # Référence CLI
 
+## Explorateur de projet
+
+```sh
+touba explore [projet] [--port <nombre>] [--no-open]
+```
+
+Ouvre les vues Architecture, Parcours et Gouvernance dans le navigateur local.
+Le projet courant est utilisé par défaut ; `--port` fixe le port et
+`--no-open` affiche l’adresse sans ouvrir le navigateur. Les sauvegardes
+actualisent le graphe. **Ctrl+C** ferme le service.
+Voir le [guide de l’explorateur](../guides/explorateur-projet.md).
+
 ## Sorties et diagnostics
 
 `--output json` écrit l’enveloppe complète avant de terminer, y compris via un tube ou une redirection. Le SDK consomme cette enveloppe ; une sortie JSON invalide reste une erreur, jamais un succès reconstitué depuis la trace. Les codes de sortie distinguent succès (0), échec (1), attente (3), arrêt ou rejet (4) et annulation (5).

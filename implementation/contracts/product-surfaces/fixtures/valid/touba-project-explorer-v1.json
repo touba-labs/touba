@@ -1,0 +1,14 @@
+{
+  "schema_version": "touba-project-explorer-v1",
+  "name": "Example",
+  "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "nodes": [
+    {
+      "id": "module:example",
+      "kind": "module",
+      "name": "example"
+    }
+  ],
+  "edges": [],
+  "files": []
+}

@@ -17,6 +17,7 @@ Lists and optionals recursively retain reachable record/enum definitions.
 
 | Contract | Primary consumers | Purpose |
 | --- | --- | --- |
+| `touba-project-explorer-v1` | CLI browser, VS Code webview | Read-only project graph compiled from a bounded source snapshot: inventory, source-defined flow, declared authority and relative source coordinates. |
 | `touba-auth-session-v1` | host applications, project server | Authenticated human identity, organization membership, permissions and bounded session metadata. |
 | `touba-identity-directory-v1` | project clients | Organization members and role definitions without devices, sessions or credentials. |
 | `touba-device-pairing-v1` | host applications | One-time, expiring identity pairing issued for a specific user. |

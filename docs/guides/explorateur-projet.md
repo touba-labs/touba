@@ -1,0 +1,83 @@
+# Explorer un projet Touba
+
+L’explorateur donne une vue graphique des ressources, des parcours et des autorisations
+déclarées dans votre code. Il aide à comprendre un projet, à relire une modification
+et à retrouver la source d’une relation, y compris lorsque le code a été écrit avec
+un assistant.
+
+## Ouvrir l’explorateur
+
+Depuis le dossier du projet :
+
+```sh
+touba explore
+```
+
+Le navigateur s’ouvre sur une adresse locale. Gardez le terminal ouvert ;
+**Ctrl+C** ferme le service. Dans VS Code, lancez **Touba: Explore Project**.
+Le menu contextuel d’un fichier `.tb` propose **Touba: View in Graph** pour
+sélectionner l’élément situé sous le curseur.
+
+## Choisir une vue
+
+| Vue | Ce qu’elle montre | Question utile |
+| --- | --- | --- |
+| Architecture | Modules, packages, déclarations, imports et appels écrits | Quelles ressources composent ce projet ? |
+| Parcours | Entrées, appels, conditions, boucles, approbations, opérations parallèles et reprises | Comment ce traitement est-il organisé ? |
+| Gouvernance | Responsabilités, `uses`, `callable_by`, accès mémoire, capacités et noms de secrets requis | Quels droits le programme déclare-t-il ? |
+
+Les flèches portent leur relation. **Peut utiliser** correspond à `uses` ;
+**peut appeler l’agent** correspond à `callable_by`. Un appel écrit dans le
+code apparaît dans Architecture et Parcours. Les décisions prises pendant
+une exécution se consultent dans ses traces.
+
+Une opération `parallel` présente sa cible et les bornes `max_concurrency`
+et `max_items`. Le nombre effectif de branches dépend de la liste reçue
+pendant l’exécution ; la jointure restitue les résultats dans l’ordre d’entrée.
+
+## Se repérer
+
+1. Ouvrez un module ou un package regroupé avec **Explorer le contenu**.
+2. Recherchez un nom ou filtrez par type, module et package.
+3. Sélectionnez une ressource : le panneau de droite présente sa signature,
+   sa responsabilité, ses contraintes et ses relations.
+4. Utilisez **Voisinage** et **Profondeur** pour suivre les liens entrants ou sortants.
+5. Choisissez **Ouvrir la source** pour atteindre le code dans VS Code ou lire
+   l’extrait dans le navigateur.
+
+La liste de ressources est utilisable au clavier. Le graphe propose zoom,
+déplacement, cadrage et export SVG. Les interfaces française et anglaise
+partagent les mêmes vues, en thème clair ou sombre.
+
+## Actualisation
+
+Les fichiers sauvegardés sont analysés automatiquement. La sélection et le
+cadrage sont conservés. Une erreur de compilation affiche ses diagnostics et,
+lorsqu’il existe, le dernier graphe valide avec l’indication **dernier graphe
+valide affiché**. Sa source reste celle du snapshot compilé.
+
+L’analyse utilise les fichiers `.tb` et les métadonnées des packages enregistrés.
+Les outils apparaissent comme des contrats vers leurs handlers JavaScript ou
+Python. L’ouverture de l’explorateur effectue une compilation en lecture seule ;
+elle n’exécute aucun traitement métier.
+
+## Accès local et taille du projet
+
+Le service écoute uniquement sur `127.0.0.1`. L’adresse affichée contient une clé
+temporaire d’accès à ce projet. Fermez le terminal pour fermer cet accès.
+Les valeurs de secrets et les fichiers `.env` restent hors du visualiseur.
+
+L’analyse est bornée à 512 sources, 8 Mio au total et 1 Mio par fichier.
+Au-delà de 200 nœuds dans une vue, la liste reste complète et un message invite
+à affiner les filtres. Les chemins sources doivent rester dans le projet ;
+les liens symboliques sont refusés. Les packages sont vérifiés avec les mêmes
+règles d’intégrité que les commandes de projet.
+
+Pour choisir un port ou ouvrir le navigateur vous-même :
+
+```sh
+touba explore . --port 4180 --no-open
+```
+
+Voir le [tutoriel guidé](../tutoriels/explorer-un-projet.md) et la
+[référence CLI](../reference/cli-v1-rc.md).

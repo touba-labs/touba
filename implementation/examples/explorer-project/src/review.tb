@@ -1,0 +1,34 @@
+module review
+
+tool Diagnose
+    description "Read the incident details and return a diagnosis."
+    takes request as Text
+    gives Text
+    requires network
+    requires secret_read
+    secrets INCIDENT_API_KEY
+
+agent Specialist
+    takes request as Text
+    gives Text
+    responsibility "Diagnose the supplied incident using the authorized diagnostic capability."
+    uses Diagnose
+    callable_by strategy Review
+
+strategy Review
+    takes incidents as List of Text
+    gives List of Text
+    uses Specialist
+    do
+        human.approve
+            with context as "Review the incident batch before external diagnosis."
+            with role as "incident_manager"
+            with timeout_ms as 60000
+            into approval
+        parallel Specialist
+            each incident in incidents
+            with request as incident
+            max_concurrency 4
+            max_items 32
+            into diagnoses
+        give diagnoses

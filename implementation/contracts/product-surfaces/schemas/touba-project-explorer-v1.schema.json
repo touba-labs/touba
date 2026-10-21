@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-explorer-v1.schema.json",
+  "title": "touba-project-explorer-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "name",
+    "revision",
+    "nodes",
+    "edges",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "touba-project-explorer-v1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "module",
+              "package",
+              "context",
+              "type",
+              "constant",
+              "function",
+              "skill",
+              "agent",
+              "tool",
+              "memory",
+              "strategy",
+              "trigger",
+              "capability",
+              "secret_handle",
+              "call_function",
+              "call_skill",
+              "call_agent",
+              "call_tool",
+              "call_strategy",
+              "parallel_call",
+              "human_approval",
+              "user_interaction",
+              "branch",
+              "loop",
+              "give",
+              "stop",
+              "bind",
+              "fallback"
+            ]
+          },
+          "module": {
+            "type": "string"
+          },
+          "package": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_ref": {
+            "$ref": "#/$defs/source"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "graph": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "contains",
+              "context_link",
+              "imports",
+              "uses",
+              "callable_by",
+              "memory_scope",
+              "memory_access",
+              "requires",
+              "dispatches",
+              "entry",
+              "calls",
+              "invokes",
+              "flow",
+              "recovery",
+              "approval_site"
+            ]
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "source_ref": {
+            "$ref": "#/$defs/source"
+          },
+          "target_ref": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "digest",
+          "package"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "package": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "start_line",
+        "start_column",
+        "end_line",
+        "end_column",
+        "start_byte",
+        "end_byte"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string"
+        },
+        "start_line": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "start_column": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_column": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "start_byte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_byte": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
