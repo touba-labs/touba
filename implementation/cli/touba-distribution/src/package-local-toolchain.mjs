@@ -11,7 +11,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { copyDependency, packageSdk } from "./package-sdk.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
@@ -43,10 +43,6 @@ const copiedPackages = [
 
 const nodeModuleAliases = [
   ["runtime/touba-runtime", "@touba/runtime"],
-  ["runtime/touba-handler-sdk", "@touba/sdk"],
-  // Preserve the source-relative dependency used by the aliased supply-chain
-  // package: ../../touba-manifest resolves to this sibling directory.
-  ["cli/touba-manifest", "@touba/touba-manifest"],
   ["cli/touba-supply-chain", "@touba/supply-chain"],
   ["cli/touba-deployment", "@touba/deployment"],
 ];
@@ -67,8 +63,7 @@ export function packageLocalToolchain(options = {}) {
   for (const packagePath of copiedPackages.filter(path => path !== "runtime/touba-handler-sdk")) {
     const sourceRoot = join(implementationRoot, packagePath);
     const dependencies = JSON.parse(readFileSync(join(sourceRoot, "package.json"), "utf8")).dependencies ?? {};
-    const destinations = [join(toolchainRoot, "lib", packagePath), ...nodeModuleAliases
-      .filter(([source]) => source === packagePath).map(([, alias]) => join(toolchainRoot, "lib/node_modules", alias))];
+    const destinations = [join(toolchainRoot, "lib", packagePath)];
     const inventory = new Map();
     for (const [name, version] of Object.entries(dependencies)) {
       if (version.startsWith("workspace:")) continue;
@@ -167,7 +162,26 @@ function copyToubaPackages() {
   }
 
   for (const [relativePackage, alias] of nodeModuleAliases) {
-    copyPackage(relativePackage, join(toolchainRoot, "lib", "node_modules", ...alias.split("/")));
+    // Forward named imports to the canonical source tree. Relocating source
+    // under node_modules breaks sibling CLI and contract imports.
+    const destination = join(toolchainRoot, "lib/node_modules", alias);
+    const source = join(toolchainRoot, "lib", relativePackage);
+    const manifest = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
+    const exports = typeof manifest.exports === "string" ? { ".": manifest.exports } : manifest.exports;
+    const forwarded = {};
+    mkdirSync(destination, { recursive: true });
+    for (const [name, entry] of Object.entries(exports)) {
+      if (typeof entry !== "string" || !/^\.\/src\/[A-Za-z0-9_-]+\.mjs$/.test(entry)) {
+        throw new Error(`unsupported distribution entrypoint: ${alias}/${name}`);
+      }
+      const filename = `entry-${Object.keys(forwarded).length}.mjs`;
+      const reference = relative(destination, join(source, entry)).split(sep).join("/");
+      writeFileSync(join(destination, filename), `export * from ${JSON.stringify(reference)};\n`);
+      forwarded[name] = `./${filename}`;
+    }
+    writeFileSync(join(destination, "package.json"), JSON.stringify({
+      name: manifest.name, version: manifest.version, type: "module", exports: forwarded,
+    }, null, 2) + "\n");
   }
 }
 
@@ -185,7 +199,7 @@ function copyPackage(relativePackage, destination) {
 }
 
 function copyRuntimeContracts() {
-  for (const root of ["lib/contracts", "lib/node_modules/contracts"]) {
+  for (const root of ["lib/contracts"]) {
     mkdirSync(join(toolchainRoot, root), { recursive: true });
     copyFileSync(join(implementationRoot, "contracts/resource-bindings.mjs"), join(toolchainRoot, root, "resource-bindings.mjs"));
     copyFileSync(join(implementationRoot, "contracts/run-outcome.mjs"), join(toolchainRoot, root, "run-outcome.mjs"));
@@ -194,7 +208,6 @@ function copyRuntimeContracts() {
     const source = join(implementationRoot, "contracts", family);
     for (const destination of [
       join(toolchainRoot, "lib", "contracts", family),
-      join(toolchainRoot, "lib", "node_modules", "contracts", family),
     ]) {
       mkdirSync(destination, { recursive: true });
       cpSync(source, destination, { recursive: true });

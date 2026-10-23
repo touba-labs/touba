@@ -28,6 +28,18 @@ test("installed archive supplies an independent SDK, provider dependencies, lice
     const archive = version.distribution.sdk_archive;
     assert.ok(archive && realpathSync(archive).startsWith(realpathSync(installed.install_root)));
     const metadata = JSON.parse(readFileSync(join(installed.install_root, "TOOLCHAIN.json"), "utf8"));
+    const aliases = join(installed.install_root, "lib/node_modules/@touba");
+    assert.match(run(node, ["--input-type=module", "-e", `
+      import assert from 'node:assert/strict';
+      import {pathToFileURL} from 'node:url';
+      const root = ${JSON.stringify(installed.install_root)};
+      const canonical = await import(pathToFileURL(root + '/lib/runtime/touba-runtime/src/index.mjs'));
+      const alias = await import(pathToFileURL(${JSON.stringify(aliases + "/runtime/entry-0.mjs")}));
+      assert.equal(alias.executeAirDocument, canonical.executeAirDocument);
+      await import(pathToFileURL(${JSON.stringify(aliases + "/supply-chain/entry-0.mjs")}));
+      await import(pathToFileURL(${JSON.stringify(aliases + "/deployment/entry-0.mjs")}));
+      console.log('CANONICAL_MODULES_OK');
+    `], workspace), /CANONICAL_MODULES_OK/);
     assert.deepEqual(metadata.build, toolchainBuildIdentity(installed.install_root));
     assert.deepEqual(metadata.build, toolchainBuildIdentity(toolchainRoot));
     assert.equal(version.build.id, metadata.build.id);
