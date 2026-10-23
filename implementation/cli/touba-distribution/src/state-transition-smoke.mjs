@@ -30,6 +30,7 @@ strategy Run
 `);
   const air = execFileSync(process.execPath, [join(toolchain, "lib/cli/touba-project/src/main.mjs"), "compile", source, "--stdout"], { encoding: "utf8" });
   writeFileSync(join(root, ".touba/air/transition.air.json"), air);
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entry: "strategy:transition/Run" }));
   writeFileSync(join(root, "handler.mjs"), `import {appendFileSync} from "node:fs";
 let raw="";for await(const chunk of process.stdin)raw+=chunk;const r=JSON.parse(raw);
 appendFileSync(${JSON.stringify(marker)},"applied\\n");
@@ -54,6 +55,12 @@ try {
   const base = `http://127.0.0.1:${service.server.address().port}`;
   const post = async (path, value) => fetch(base + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
   if (mode === "pause") {
+    const denied = await post("/runs/sandbox", { schema_version: "touba-sandbox-run-request-v1", execution_kind: "entrypoint",
+      target_ref: "tool:transition/Commit", effect_policy: "allow_declared_external_effects", inputs: {},
+      requested_by: { kind: "studio", id: "isolated-transition" }, reason: "Check undeclared entry refusal." });
+    assert.equal(denied.status, 403, await denied.clone().text());
+    assert.equal((await denied.json()).code, "ProjectEntrypointNotAllowed");
+    assert.equal(existsSync(marker), false);
     const response = await post("/runs/sandbox", { schema_version: "touba-sandbox-run-request-v1", execution_kind: "entrypoint",
       target_ref: "strategy:transition/Run", effect_policy: "allow_declared_external_effects", inputs: {},
       requested_by: { kind: "studio", id: "isolated-transition" }, reason: "Check installed-build preservation." });
