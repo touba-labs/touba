@@ -1416,6 +1416,8 @@ test("deployment plans verify immutable project bundles and block dirty prod sou
     writeFileSync(join(root, "touba.project.json"), `${JSON.stringify({
       project_version: "touba-project-v1",
       language: "javascript",
+      sdk: "@touba/sdk",
+      artifact_layout: "touba-artifacts-v1",
     })}\n`, "utf8");
     writeFileSync(join(root, "touba.manifest.json"), `${JSON.stringify({
       manifest_version: "touba-manifest-v1",
@@ -2315,6 +2317,10 @@ test("HTTP project server rejects invalid client and Mobile contract payloads", 
 
 test("HTTP project server exposes live state, events and decisions", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: [
+    "strategy:demo.main/RunReview", "function:demo.main/FormatReview", "tool:demo.main/StoreReview",
+    "skill:demo.main/ReviewDraft", "trigger:demo.main/ReviewWebhook",
+  ] }));
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "main.tb"), "module demo.main\n", "utf8");
@@ -2469,7 +2475,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
 
     const state = await getJson(`${baseUrl}/state`);
     assert.equal(state.schema_version, "touba-project-live-state-v1");
-    assert.equal(state.project_server.refresh.summary.artifact_count, 3);
+    assert.equal(state.project_server.refresh.summary.artifact_count, 4);
     assert.equal(state.project.project.name, basename(root));
     assert.equal(state.project.entrypoints.some((entrypoint) => entrypoint.kind === "strategy"), true);
 
@@ -2496,11 +2502,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     });
     assert.match(project.packages[0].digest, /^sha256:[0-9a-f]{64}$/u);
     const agentEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "agent");
-    assert.equal(agentEntrypoint.input_contract.mode, "declared");
-    assert.deepEqual(agentEntrypoint.input_contract.fields, [
-      { name: "request", type_ref: "type:demo.main/ReviewRequest", required: true },
-    ]);
-    assert.equal(agentEntrypoint.effect_policy_requirement, "declared_external_effects_required");
+    assert.equal(agentEntrypoint, undefined, "agents remain inspectable but require an authorized caller");
     const functionEntrypoint = project.entrypoints.find((entrypoint) => entrypoint.kind === "function");
     assert.equal(functionEntrypoint.input_contract.mode, "declared");
     assert.equal(functionEntrypoint.effect_policy_requirement, "runtime_only_compatible");
@@ -2769,6 +2771,7 @@ test("HTTP project server validates, reviews and applies semantic governance edi
 
 test("HTTP project server executes sandbox entrypoints and triggers through the runtime", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunReady","strategy:demo.sandbox/EchoInput","function:demo.sandbox/FormatReady","trigger:demo.sandbox/ManualCheck"] }));
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
@@ -2879,6 +2882,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
 for (const surface of ["sandbox", "interaction"]) {
   test(`initial durable ${surface} execution revalidates control-plane authority before handler spawn`, async () => {
     const root = mkdtempSync(join(tmpdir(), `touba-project-server-initial-authority-${surface}-`));
+    writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunTool"] }));
     const accessToken = `identity-initial-${surface}-token`;
     const serviceToken = "identity-initial-service-token-at-least-32-characters";
     const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
@@ -3060,6 +3064,7 @@ for (const surface of ["sandbox", "interaction"]) {
 
 test("HTTP durable resume reconstructs the terminal result and coalesces one claimed revision", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-durable-resume-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunReady"] }));
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
@@ -3166,6 +3171,7 @@ test("HTTP durable resume reconstructs the terminal result and coalesces one cla
 
 test("SIGKILL after an applied effect resumes explicitly without redispatching the mutation", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sigkill-resume-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunTool"] }));
   const effectRequests = [];
   const appliedEffects = new Set();
   const effectService = createHttpServer(async (request, response) => {
@@ -3337,6 +3343,7 @@ test("SIGKILL after an applied effect resumes explicitly without redispatching t
 
 test("SIGKILL after the external mutation but before its receipt retries one logical effect idempotently", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sigkill-unknown-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunTool"] }));
   const effectRequests = [];
   const appliedEffects = new Set();
   const effectService = createHttpServer(async (request, response) => {
@@ -3551,6 +3558,7 @@ for (const crashWindow of [
 ]) {
   test(crashWindow.name, async () => {
     const root = mkdtempSync(join(tmpdir(), `touba-project-server-${crashWindow.mode}-`));
+    writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunTool"] }));
     const effectRequests = [];
     const appliedEffects = new Set();
     let observeEffectRequest;
@@ -4019,6 +4027,7 @@ for (const crashWindow of [
 
 test("HTTP project server persists adaptive interaction sessions and governed assets", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-interactions-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunReady"] }));
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "main.tb"), "module demo.sandbox\n", "utf8");
@@ -4128,6 +4137,7 @@ test("HTTP project server persists adaptive interaction sessions and governed as
 
 test("HTTP project server refuses sandbox runtime-only runs that may dispatch tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-effects-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunTool", "tool:demo.sandbox/ReadExternal"] }));
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "main.tb"), "module demo.effects\n", "utf8");
@@ -4174,6 +4184,7 @@ test("HTTP project server refuses sandbox runtime-only runs that may dispatch to
 
 test("HTTP project server runs sandbox agents through a configured decision provider", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-agent-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.agent/RunAgent"] }));
   mkdirSync(join(root, "src", "demo"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "demo", "agent.tb"), "module demo.agent\n", "utf8");
@@ -4230,6 +4241,7 @@ test("HTTP project server runs sandbox agents through a configured decision prov
 
 test("HTTP interaction cancellation stops an active agent before capability dispatch", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-interaction-cancel-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.agent/RunAgent"] }));
   mkdirSync(join(root, "src", "demo"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "demo", "agent.tb"), "module demo.agent\n", "utf8");
@@ -4267,9 +4279,9 @@ test("HTTP interaction cancellation stops an active agent before capability disp
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const sessionResponse = await postJson(`${baseUrl}/interactions/sessions`, {
       schema_version: "touba-interaction-session-create-v1",
-      target_ref: "agent:demo.agent/StudioAgent",
-      target_kind: "agent",
-      presentation: "conversation",
+      target_ref: "strategy:demo.agent/RunAgent",
+      target_kind: "strategy",
+      presentation: "workflow",
       effect_policy: "runtime_only",
       requested_by: { kind: "studio", id: "test-suite" },
     });
@@ -4327,6 +4339,7 @@ test("HTTP interaction cancellation stops an active agent before capability disp
 for (const decisionKind of ["approve", "reject"]) {
 test(`HTTP interaction ${decisionKind} preserves its terminal outcome without replay`, async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sandbox-approval-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.approval/RunApproval"] }));
   mkdirSync(join(root, "src", "demo"), { recursive: true });
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   writeFileSync(join(root, "src", "demo", "approval.tb"), "module demo.approval\n", "utf8");
@@ -4456,7 +4469,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
     assert.equal(resumedSession.operations[0].status, expectedOperationStatus);
     assert.equal(resumedSession.messages.length, 3);
     assert.equal(resumed.status, decisionKind === "approve" ? "success" : "stopped");
-    assert.equal(resumed.result, decisionKind === "approve" ? "approved" : null);
+    assert.equal(resumed.result?.decision ?? null, decisionKind === "approve" ? "approved" : null);
     assert.equal(resumed.run_id, paused.run_id);
     assert.ok(resumed.trace.event_count > paused.trace.event_count);
     assert.equal(
@@ -4564,6 +4577,7 @@ test(`HTTP interaction ${decisionKind} preserves its terminal outcome without re
 
 test("HTTP successive checkpoints retain both pauses and never replay a superseded checkpoint", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-interaction-successive-checkpoints-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.approval/RunApproval"] }));
   mkdirSync(join(root, ".touba", "air", "demo"), { recursive: true });
   const document = sandboxApprovalAirDocument();
   const flow = document.execution_graphs[0];
@@ -4647,6 +4661,7 @@ test("HTTP successive checkpoints retain both pauses and never replay a supersed
 for (const decision of ["rejected", "expired", "cancelled"]) {
 test(`real runtime ${decision} projects a terminal interaction and retains both outcomes`, async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-interaction-human-terminal-"));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.approval/RunApproval"] }));
   const sessionsPath = join(root, "sessions.json");
   const targetRef = "strategy:demo.approval/RunApproval";
   const document = sandboxApprovalAirDocument();
@@ -4920,6 +4935,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
   writeFileSync(join(root, "touba.project.json"), `${JSON.stringify({
     project_version: "touba-project-v1",
     language: "javascript",
+    sdk: "@touba/sdk",
     artifact_layout: "touba-artifacts-v1",
     run_profiles: {
       dev: { require_supply_chain_lock: false },
@@ -5065,8 +5081,8 @@ test("client authoring and deployment routes complete a governed project lifecyc
       profile: "dev",
       actor: "user:reviewer",
     });
-    assert.equal(planResponse.status, 200);
     const plan = await planResponse.json();
+    assert.equal(planResponse.status, 200, JSON.stringify(plan));
     assert.equal(plan.status, "ready");
     assertMatchesSchema("touba-deployment-plan-v1", plan);
 
@@ -5559,7 +5575,7 @@ function sandboxApprovalAirDocument() {
         id: "strategy:demo.approval/RunApproval",
         name: "RunApproval",
         description: "Pauses at a durable human approval boundary.",
-        signature: { inputs: [], output_type: "builtin:Text" },
+        signature: { inputs: [], output_type: "builtin:Approval" },
         flow_graph_ref: "graph:strategy:demo.approval/RunApproval",
         source_ref: sourceRef(),
       }],

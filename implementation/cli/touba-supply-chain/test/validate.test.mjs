@@ -603,6 +603,37 @@ test("mixed Python/JavaScript handlers retain their own package identities", () 
   });
 });
 
+test("Python -m handlers run shared modules and the lock detects shared source drift", () => {
+  withFixtureProject(fixture => {
+    for (const group of ["common", "invoices", "payments"]) {
+      mkdirSync(path.join(fixture.root, "handlers", group), {recursive: true});
+      writeFileSync(path.join(fixture.root, "handlers", group, "__init__.py"), "");
+    }
+    writeFileSync(path.join(fixture.root, "handlers/__init__.py"), "");
+    const shared = path.join(fixture.root, "handlers/common/ledger.py");
+    writeFileSync(shared, "ANSWER = 42\n");
+    writeFileSync(path.join(fixture.root, "pyproject.toml"), '[project]\nname = "shared-handlers"\nversion = "1.0.0"\n');
+    for (const group of ["invoices", "payments"]) {
+      writeFileSync(path.join(fixture.root, "handlers", group, "apply.py"), "from ..common.ledger import ANSWER\nprint(ANSWER)\n");
+      const binding = fixture.manifest.bindings["tool:examples.sc1/Search"];
+      binding.handler = {kind: "process", command: process.platform === "win32" ? "python" : "python3", cwd: ".", args: ["-m", `handlers.${group}.apply`]};
+      writeJson(fixture.paths.manifest, fixture.manifest);
+      const output = path.join(fixture.root, `${group}.lock.json`);
+      generateSupplyChainLock({...fixture.paths, out: output});
+      const lock = JSON.parse(readFileSync(output, "utf8"));
+      assert.ok(lock.handlers[0].handler_package.files.some(file => file.path === "handlers/common/ledger.py"));
+      const run = spawnSync(binding.handler.command, binding.handler.args, {cwd: fixture.root, encoding: "utf8"});
+      assert.equal(run.status, 0, run.stderr);
+      assert.equal(run.stdout.trim(), "42");
+      const check = () => validateSupplyChainArtifacts(loadSupplyChainArtifacts({...fixture.paths, lock: output}));
+      assert.notEqual(check().status, "error", JSON.stringify(check()));
+      writeFileSync(shared, "ANSWER = 43\n");
+      assert.equal(check().status, "error");
+      writeFileSync(shared, "ANSWER = 42\n");
+    }
+  });
+});
+
 test("one project lock covers multiple explicit AIRs and refuses any artifact drift", () => {
   withFixtureProject(fixture => {
     const otherAir = path.join(fixture.root, "other.air.json");

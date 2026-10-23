@@ -15,6 +15,14 @@ import {
   tryParseCompilerEnvelopeFromExecError,
 } from "../src/server.mjs";
 
+test("editor accepts pure list transformations and completes their builtins", () => {
+  const source = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/list-transformations.tb", import.meta.url));
+  const compiled = runToubaCompileJson(source);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled.diagnostics));
+  const labels = completionForPosition(compiled.air, "", { line: 0, character: 0 }).map(item => item.label);
+  for (const word of ["concat", "join", "for", "if"]) assert.ok(labels.includes(word));
+});
+
 test("editor consumes the native parallel node and completes its bounded source clauses", () => {
   const source = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/parallel-v1/positive/diagnostics.tb", import.meta.url));
   const compiled = runToubaCompileJson(source);

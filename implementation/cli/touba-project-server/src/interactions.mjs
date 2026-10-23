@@ -691,7 +691,7 @@ export function boundedResultText(value, maxBytes = MAX_INTERACTION_DISPLAY_TEXT
   return new StringDecoder("utf8").write(bytes.subarray(0, maxBytes - suffix.length)) + suffix;
 }
 
-function operationStatusForRun(result) {
+export function operationStatusForRun(result) {
   if (result.status === "success") return "succeeded";
   if (result.status === "cancelled") return "cancelled";
   if (result.status === "stopped") {

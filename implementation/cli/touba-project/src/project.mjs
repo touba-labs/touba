@@ -34,6 +34,8 @@ import {
   buildEffectiveProjectDocument,
 } from "./effective-project.mjs";
 
+import { projectEntrypoints, assertProjectEntrypoint } from "./project-entrypoints.mjs";
+
 export const PROJECT_MANIFEST_VERSION = "touba-project-workflow-v1";
 export const TOUBA_MANIFEST_VERSION = TOUBA_MANIFEST_V1;
 export const DEFAULT_SOURCE_ROOT = "src";
@@ -427,9 +429,10 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
       if (effective?.inputs?.find(input => input.kind === kind)?.digest_sha256 !== packageDigest(readFileSync(path))) throw packageError("PackagePreparationStale", "project packages changed since preparation; run touba prepare --mode write before running");
     }
   }
-  const expectedEntry = entryRef ?? projectConfig.entry;
-  if (expectedEntry !== undefined && runPlan.entry_ref !== expectedEntry) {
-    throw new Error(`prepared run plan entry ${runPlan.entry_ref} conflicts with requested entry ${expectedEntry}`);
+  const expectedEntry = entryRef ?? projectConfig.entry ?? runPlan.entry_ref;
+  assertProjectEntrypoint(projectRoot, expectedEntry);
+  if (runPlan.entry_ref !== expectedEntry && !runPlan.entries?.some(entry => entry.entry_ref === expectedEntry)) {
+    throw new Error(`requested entry ${expectedEntry} has no prepared run plan; run touba prepare --mode write`);
   }
   const withProfile = profile === undefined
     ? [...args, "--profile", profileName]
@@ -479,7 +482,8 @@ export async function prepareProject(options = {}) {
     : configured?.resource_bindings ?? [];
   const configuredOwnershipPath = options.ownershipPath
     ?? configured?.ownership;
-  let entryRef = options.entryRef ?? projectConfigResolution.document?.entry;
+  let entryRef = options.entryRef ?? projectConfigResolution.document?.entry
+    ?? projectConfigResolution.document?.entrypoints?.[0];
   const packageInputs = collectPackageInputs({
     root,
     projectPackageRecords: projectConfigResolution.document?.packages ?? [],
@@ -605,6 +609,21 @@ export async function prepareProject(options = {}) {
     else if (preparedAirDocuments.some(({ document }) => entryRefsForDocument(document).length > 0)) {
       actions.push(action("select_entry", projectConfigPath, { instruction: "Set entry in touba.project.json or pass --entry <air-ref> to prepare; no run plan was created." }));
     }
+  }
+
+  // Preparation records its selected entry in the author configuration. This
+  // is a reviewed write, never an execution-time inference from all AIR nodes.
+  let projectConfigWrite;
+  if (entryRef !== undefined && projectEntrypoints(projectConfigResolution.document ?? {}).length === 0) {
+    const original = existsSync(projectConfigPath)
+      ? JSON.parse(readFileSync(projectConfigPath, "utf8"))
+      : projectConfigResolution.document ?? expectedProjectConfigDocument(languageProfile);
+    const configured = { ...original, entry: entryRef };
+    try { projectEntrypoints(configured); }
+    catch (error) { diagnostics.push(errorDiagnostic(error.code, error.message)); }
+    projectConfigWrite = `${JSON.stringify(configured, null, 2)}\n`;
+    actions.push(action(mode === "write" ? "declare_project_entry" : "would_declare_project_entry", projectConfigPath, { entry_ref: entryRef }));
+    if (mode === "check") diagnostics.push(errorDiagnostic("ProjectEntryMissing", "declare the project entry with touba prepare --mode write"));
   }
 
   let expectedManifest = buildManifestRequirements(preparedAirDocuments.map((entry) => entry.document), {
@@ -792,6 +811,10 @@ export async function prepareProject(options = {}) {
       evidenceRoot: resolve(root, DEFAULT_EVIDENCE_ROOT),
     }));
   const permissionDiagnostics = [];
+  if (expectedEffectiveProject && projectConfigWrite !== undefined) {
+    const input = expectedEffectiveProject.inputs.find(item => item.kind === "project");
+    if (input) input.digest_sha256 = packageDigest(Buffer.from(projectConfigWrite));
+  }
   for (const [toolRef, required] of Object.entries(manifestRequirements.bindings)) {
     validateBindingCoverage(proposedManifest.bindings?.[toolRef], required, permissionDiagnostics, manifestPath, toolRef, { reviewEffects: true });
   }
@@ -828,7 +851,9 @@ export async function prepareProject(options = {}) {
   }
 
   if (mode === "write" && !hasErrorDiagnostics(diagnostics)) {
-    if (projectConfigResolution.document === null) {
+    if (projectConfigWrite !== undefined) {
+      writeFileSync(projectConfigPath, projectConfigWrite, "utf8");
+    } else if (projectConfigResolution.document === null) {
       writeProjectConfig(projectConfigPath, expectedProjectConfigDocument(languageProfile));
     }
     for (const { document, sourcePath } of preparedAirDocuments) {
@@ -839,7 +864,7 @@ export async function prepareProject(options = {}) {
       mkdirSync(dirname(outputPath), { recursive: true });
       writeFileSync(outputPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
     }
-    if (expectedToolRefs.length > 0) {
+    if (expectedToolRefs.length > 0 || currentManifest !== null) {
       const mergedManifest = proposedManifest;
       if (!hasErrorDiagnostics(diagnostics) && JSON.stringify(mergedManifest) !== JSON.stringify(currentManifest)) {
         mkdirSync(dirname(manifestPath), { recursive: true });
@@ -1658,7 +1683,8 @@ function readProjectConfig(path) {
   if (!document || typeof document !== "object" || Array.isArray(document)) {
     throw new Error(`project config must be an object: ${path}`);
   }
-  assertProjectConfigFields(document, ["project_version", "language", "sdk", "run_profiles", "packages", "artifact_layout", "entry", "configuration"], "root");
+  assertProjectConfigFields(document, ["project_version", "language", "sdk", "run_profiles", "packages", "artifact_layout", "entry", "entrypoints", "configuration"], "root");
+  projectEntrypoints(document);
   if (document.project_version !== TOUBA_PROJECT_CONFIG_VERSION) {
     throw new Error(`project config project_version must be ${TOUBA_PROJECT_CONFIG_VERSION}`);
   }
@@ -1677,6 +1703,7 @@ function readProjectConfig(path) {
     packages: normalizeProjectPackages(document.packages),
     artifact_layout: normalizeArtifactLayout(document.artifact_layout),
     entry: normalizeOptionalProjectRef(document.entry, "entry"),
+    ...(document.entrypoints === undefined ? {} : { entrypoints: [...document.entrypoints] }),
     configuration: normalizeProjectConfiguration(document.configuration),
   };
 }
@@ -2025,7 +2052,7 @@ function assemblePrepareAirDocuments(entries, options = {}) {
 
   return {
     entries: assembledEntries,
-    imports: imports.sort((left, right) => {
+    imports: [...new Map(imports.map(item => [JSON.stringify([item.module_name, item.from_module, item.target_ref, item.import_name, item.import_kind]), item])).values()].sort((left, right) => {
       const moduleCompare = left.module_name.localeCompare(right.module_name);
       return moduleCompare === 0 ? left.target_ref.localeCompare(right.target_ref) : moduleCompare;
     }),
@@ -2048,18 +2075,6 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
   }
 
   const assembled = cloneJson(entryDocument);
-  // Match the compiler: entry provenance wins ties, then lexical module order.
-  // Unimported modules cannot change the entry's run budget.
-  for (const moduleName of [...visitedModules].sort()) {
-    const budgets = byModule.get(moduleName).budgets;
-    if (!budgets) continue;
-    assembled.budgets ??= { run: {} };
-    for (const [kind, limit] of Object.entries(budgets.run)) {
-      if (!assembled.budgets.run[kind] || limit.value < assembled.budgets.run[kind].value) {
-        assembled.budgets.run[kind] = cloneJson(limit);
-      }
-    }
-  }
   if (!Array.isArray(assembled.imports)) {
     assembled.imports = [];
   }
@@ -2078,8 +2093,9 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
   const seenImports = new Set((assembled.imports ?? []).map((item) => item.target_ref));
   const activeRefs = [];
 
-  function includeModuleImports(document) {
+  function includeModuleImports(document, includeDeclarations = false) {
     for (const item of document.imports ?? []) {
+      if (!includeDeclarations && !seenDefinitions.has(item.target_ref)) continue;
       if (seenImports.has(item.target_ref) === false) {
         seenImports.add(item.target_ref);
         assembled.imports.push(cloneJson(item));
@@ -2092,11 +2108,7 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
         from_module: item.from_module,
         target_ref: item.target_ref,
       });
-      includeRef(item.target_ref, item.source_ref);
-      const sourceDocument = byModule.get(item.from_module);
-      if (sourceDocument) {
-        includeModuleImports(sourceDocument);
-      }
+      if (includeDeclarations) includeRef(item.target_ref, item.source_ref);
     }
   }
 
@@ -2240,6 +2252,7 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
       pushMissingDependency(diagnostics, targetRef, sourceRef);
       return;
     }
+    if (located.definition.signature) includeSignature(located.definition.signature, located.definition.source_ref);
     includeUseRefs(located.definition.use_refs ?? []);
     includeMemoryScopes(located.definition.memory_scopes ?? []);
     validateCallableByRefs(located.definition);
@@ -2466,10 +2479,10 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
 
   function includeGraphDependencies(graph) {
     for (const node of graph.nodes ?? []) {
-      if (node.kind === "call_agent" && typeof node.target_ref === "string") {
+      if ((node.kind === "call_agent" || node.kind === "parallel_call" && node.target_ref?.startsWith("agent:")) && typeof node.target_ref === "string") {
         validateAgentCallAuthority(graph.owner_ref, node.target_ref, node.source_ref);
       }
-      if (node.kind === "call_tool" && typeof node.target_ref === "string") {
+      if ((node.kind === "call_tool" || node.kind === "parallel_call" && node.target_ref?.startsWith("tool:")) && typeof node.target_ref === "string") {
         validateToolMemoryAccess(graph.owner_ref, node.target_ref, node.source_ref);
       }
       includeValueRef(node.target_ref, node.source_ref);
@@ -2477,12 +2490,16 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
         includeValueRef(argument, node.source_ref);
       }
       includeValueRef(node.condition_ref, node.source_ref);
+      includeValueRef(node.collection_ref, node.source_ref);
     }
     for (const expression of graph.expressions ?? []) {
       includeValueRef(expression.value_ref, expression.source_ref);
       includeTypeRef(expression.type_ref, expression.source_ref);
       for (const operand of expression.operands ?? []) {
         includeValueRef(operand, expression.source_ref);
+      }
+      for (const field of expression.record_fields ?? []) {
+        includeValueRef(field.value_ref, expression.source_ref);
       }
     }
   }
@@ -2504,8 +2521,8 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
     if (typeof typeRef !== "string") {
       return;
     }
-    if (typeRef.startsWith("list:")) {
-      includeTypeRef(typeRef.slice("list:".length), sourceRef);
+    if (typeRef.startsWith("list:") || typeRef.startsWith("optional:")) {
+      includeTypeRef(typeRef.slice(typeRef.indexOf(":") + 1), sourceRef);
       return;
     }
     if (typeRef.startsWith("type:")) {
@@ -2531,13 +2548,32 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
     }
   }
 
-  includeModuleImports(entryDocument);
+  includeModuleImports(entryDocument, true);
   for (const graph of entryDocument.execution_graphs ?? []) {
     includeGraphDependencies(graph);
   }
   for (const trigger of entryDocument.definitions?.triggers ?? []) {
     includeRef(trigger.target_ref, trigger.source_ref);
     validateTriggerArguments(trigger);
+  }
+
+  // Same linked executable boundary as the compiler. Pure data imports do
+  // not bring in another module's run policy.
+  const executableModules = new Set([entryDocument.module.name]);
+  for (const collection of ["functions", "tools", "skills", "agents", "strategies"]) {
+    for (const declaration of assembled.definitions[collection]) {
+      executableModules.add(declaration.id.split(":")[1].split("/")[0]);
+    }
+  }
+  for (const moduleName of [...executableModules].sort()) {
+    const budgets = byModule.get(moduleName)?.budgets;
+    if (!budgets) continue;
+    assembled.budgets ??= { run: {} };
+    for (const [kind, limit] of Object.entries(budgets.run)) {
+      if (!assembled.budgets.run[kind] || limit.value < assembled.budgets.run[kind].value) {
+        assembled.budgets.run[kind] = cloneJson(limit);
+      }
+    }
   }
 
   return {
@@ -4094,6 +4130,19 @@ function buildExpectedRunPlan({
     },
   };
 
+  const declaredEntries = projectEntrypoints(projectConfig);
+  if (declaredEntries.length > 0 && !declaredEntries.includes(entry.ref)) {
+    diagnostics.push(errorDiagnostic("ProjectEntrypointNotAllowed", "selected entry is not declared in the project", { entry_ref: entry.ref }));
+    return null;
+  }
+  if (declaredEntries.length > 1) {
+    document.entries = declaredEntries.map(ref => {
+      const selected = resolveRunPlanEntry(preparedAirDocuments, ref, diagnostics, runPlanPath);
+      return selected === null ? null : { entry_ref: ref,
+        air: relativeRunPlanPath(runPlanPath, runPlanAirPathForEntry(root, selected.entry, airRoot)) };
+    }).filter(Boolean);
+  }
+
   if (expectedToolRefs.length > 0) {
     document.manifest = relativeRunPlanPath(runPlanPath, manifestPath);
   }
@@ -4149,7 +4198,7 @@ function resolveRunPlanEntry(entries, entryRef, diagnostics, runPlanPath) {
       strategyCandidates.push({ ref: strategy.id, entry });
       executableCandidates.push({ ref: strategy.id, entry });
     }
-    for (const collection of ["skills", "agents", "functions"]) {
+    for (const collection of ["skills", "functions", "tools", "triggers"]) {
       for (const declaration of entry.document.definitions?.[collection] ?? []) {
         executableCandidates.push({ ref: declaration.id, entry });
       }
@@ -4174,7 +4223,7 @@ function resolveRunPlanEntry(entries, entryRef, diagnostics, runPlanPath) {
 
 function entryRefsForDocument(document) {
   const refs = [];
-  for (const collection of ["strategies", "skills", "agents", "functions"]) {
+  for (const collection of ["strategies", "skills", "tools", "functions", "triggers"]) {
     for (const declaration of document.definitions?.[collection] ?? []) {
       if (typeof declaration.id === "string") {
         refs.push(declaration.id);
@@ -4203,7 +4252,7 @@ function relativeRunPlanPath(runPlanPath, targetPath) {
 function packageHandlerProposals(packages, root, manifestPath) {
   const proposals = new Map();
   for (const pkg of packages) for (const handler of pkg.handlers ?? []) {
-    const command = /\.(?:mjs|cjs|js)$/.test(handler.path) ? process.execPath : handler.path.endsWith(".py") ? "python3" : null;
+    const command = /\.(?:mjs|cjs|js)$/.test(handler.path) ? process.execPath : handler.path.endsWith(".py") ? projectPythonCommand() : null;
     if (!proposals.has(handler.tool)) proposals.set(handler.tool, new Map());
     proposals.get(handler.tool).set(pkg.name, command ? { kind: "process", command,
       args: [toPosixPath(relative(root, join(pkg.root, handler.path)))],
@@ -4289,7 +4338,7 @@ function inspectEffectiveProject({ path, expected, diagnostics, actions, mode })
 function inspectManifest({ currentManifest, reviewedManifest = currentManifest, fragmentToolRefs = new Set(), expectedManifest, manifestPath, diagnostics, actions, mode }) {
   const expectedToolRefs = Object.keys(expectedManifest.bindings);
   if (expectedToolRefs.length === 0) {
-    if (currentManifest?.bindings && Object.keys(currentManifest.bindings).length > 0) {
+    if (reviewedManifest?.bindings && Object.keys(reviewedManifest.bindings).length > 0) {
       diagnostics.push(errorDiagnostic("ManifestHasUnexpectedBindings", "manifest has bindings but project AIR declares no tools", {
         manifest_path: manifestPath,
       }));
@@ -4324,7 +4373,7 @@ function inspectManifest({ currentManifest, reviewedManifest = currentManifest, 
 
   const expectedSet = new Set(expectedToolRefs);
   for (const toolRef of Object.keys(currentManifest.bindings).sort()) {
-    if (!expectedSet.has(toolRef)) {
+    if (!expectedSet.has(toolRef) && Object.hasOwn(reviewedManifest?.bindings ?? {}, toolRef)) {
       diagnostics.push(errorDiagnostic("ManifestBindingObsolete", `manifest binding ${toolRef} is not declared by current project AIR`, {
         manifest_path: manifestPath,
         tool_ref: toolRef,
@@ -4753,6 +4802,7 @@ function canonicalRunPlan(document) {
     run_plan_schema_version: document.run_plan_schema_version,
     entry_ref: document.entry_ref,
     air: document.air,
+    ...(document.entries === undefined ? {} : { entries: document.entries }),
     ...(document.manifest !== undefined ? { manifest: document.manifest } : {}),
     ...(document.secrets_profile !== undefined ? { secrets_profile: document.secrets_profile } : {}),
     profile: document.profile,

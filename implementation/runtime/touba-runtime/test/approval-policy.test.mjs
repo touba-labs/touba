@@ -19,6 +19,25 @@ const resume = (checkpoint, options = {}) => executeAirDocument(air, { ...base,
   humanApprovalResumeCheckpoint: copy(checkpoint),
   humanApprovalDecisions: { [checkpoint.approval_ref]: { decision: "approved", evidence_ref: "receipt-from-host" } }, ...options });
 
+test("trusted initiator resolution is isolated per run and persisted across resume", async () => {
+  const observed = [];
+  const resolver = async ({ run_id, entry_ref }) => {
+    observed.push(run_id);
+    assert.equal(entry_ref, base.entryRef);
+    return `employee:${run_id}`;
+  };
+  const results = await Promise.all(["one", "two"].map(runId => executeAirDocument(air, {
+    ...base, runId, inputs: { dossier: "invoice" }, humanApprovalInitiator: resolver,
+  })));
+  assert.deepEqual(results.map(result => result.checkpoint.approval_state.initiator), ["employee:one", "employee:two"]);
+  const denied = await resume(results[0].checkpoint, { humanApprovalInitiator: resolver, humanApprovalAuthority: attest("employee:one") });
+  assert.equal(denied.reason, "HumanApprovalSignerConflict");
+  assert.deepEqual(observed.sort(), ["one", "two"]);
+  const unavailable = await executeAirDocument(air, { ...base, inputs: { dossier: "invoice" }, humanApprovalInitiator: () => { throw new Error("private host detail"); } });
+  assert.equal(unavailable.reason, "HumanApprovalAuthorityUnavailable");
+  assert.equal(JSON.stringify(unavailable).includes("private host detail"), false);
+});
+
 test("parallel occurrences share signer separation, with partial durable decisions and no second verification of accepted evidence", async () => {
   const entryRef = "strategy:approval_policy/ReviewBatch";
   const first = await executeAirDocument(air, { ...base, entryRef, inputs: { dossiers: ["one", "two"] } });
@@ -47,6 +66,12 @@ test("source roles and signer separation survive two real pauses and guard the e
   assert.equal(second.status, "stopped", JSON.stringify(second));
   assert.notEqual(second.checkpoint.approval_ref, first.checkpoint.approval_ref);
   assert.equal(second.checkpoint.approval_state.receipts[0].subject_ref, "employee:one");
+  for (const roles of [undefined, [], ["finance", "finance"]]) {
+    const damaged = copy(second.checkpoint.approval_state);
+    damaged.requests[first.checkpoint.approval_ref] = copy(first.checkpoint.approval_state.requests[first.checkpoint.approval_ref]);
+    damaged.receipts[0].attested_roles = roles;
+    assert.throws(() => validateApprovalState(damaged), { code: "InvalidHumanApprovalCheckpoint" });
+  }
   assert.equal(calls, 0);
   for (const [authority, expected] of [[attest(), "HumanApprovalSignerConflict"], [attest("employee:initiator"), "HumanApprovalSignerConflict"], [attest("employee:two", []), "HumanApprovalRoleRequired"], [undefined, "HumanApprovalAuthorityRequired"]]) {
     const denied = await resume(second.checkpoint, { humanApprovalAuthority: authority, toolHandlers: handlers });

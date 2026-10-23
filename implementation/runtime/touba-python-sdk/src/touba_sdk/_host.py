@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 import threading
-from .provider_errors import ToubaAgentDecisionProviderError
+from .provider_errors import ToubaAgentDecisionProviderError, provider_diagnostic_details
 from ._host_context import execution_context
 
 MAX_BYTES = 8 * 1024 * 1024
@@ -33,8 +33,9 @@ def main():
     spec.loader.exec_module(module)
     decide = getattr(module, "decide_agent_capability", getattr(module, "decide", None))
     attest = getattr(module, "attest_human_approval", None)
+    resolve_initiator = getattr(module, "resolve_initiator", None)
 
-    def record_cost(request_id, value):
+    def record_cost(request_id, value, event="provider_cost"):
         nonlocal event_next
         with lock:
             event_next += 1
@@ -42,7 +43,7 @@ def main():
             state = {"event": threading.Event(), "accepted": False}
             event_waiters[event_id] = state
         try:
-            send({"protocol": "touba-python-host-v1", "id": request_id, "event": "provider_cost", "event_id": event_id, "value": value})
+            send({"protocol": "touba-python-host-v1", "id": request_id, "event": event, "event_id": event_id, "value": value})
             if not state["event"].wait(180):
                 raise ToubaAgentDecisionProviderError("PythonHostTimeout", "host evidence response timed out")
             return state["accepted"]
@@ -52,14 +53,16 @@ def main():
 
     def perform(message):
         request_id = message["id"]
-        token = execution_context.set(lambda value: record_cost(request_id, value))
+        token = execution_context.set(lambda value, event="provider_cost": record_cost(request_id, value, event))
         try:
             if message["method"] == "describe":
                 result = {"decide": callable(decide), "attest": callable(attest),
+                          "resolve_initiator": callable(resolve_initiator),
                           "initiator_ref": getattr(module, "initiator_ref", None),
+                          "initial_modes": getattr(module, "initial_modes", None),
                           "provider_metadata": getattr(module, "provider_metadata", None)}
             else:
-                function = {"decide": decide, "attest": attest}.get(message["method"])
+                function = {"decide": decide, "attest": attest, "resolve_initiator": resolve_initiator}.get(message["method"])
                 if not callable(function):
                     raise ValueError("host function unavailable")
                 result = function(message["request"])
@@ -68,7 +71,8 @@ def main():
             send({"protocol": "touba-python-host-v1", "id": request_id, "result": result})
         except BaseException as error:
             code = error.code if isinstance(error, ToubaAgentDecisionProviderError) else "PythonHostUnavailable"
-            send({"protocol": "touba-python-host-v1", "id": request_id, "error": {"code": code}})
+            send({"protocol": "touba-python-host-v1", "id": request_id, "error": {"code": code,
+                "details": provider_diagnostic_details(getattr(error, "details", None))}})
         finally:
             execution_context.reset(token)
             active.release()

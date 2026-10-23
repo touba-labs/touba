@@ -1,9 +1,10 @@
 import { validateAirMachineContract } from '../../../../contracts/machine/contracts.mjs';
+import { expressionFormatter } from './expressions.mjs';
 
 export const EXPLORER_VERSION = 'touba-project-explorer-v1';
 const collections = { types: 'type', constants: 'constant', functions: 'function', tools: 'tool', memories: 'memory', skills: 'skill', agents: 'agent', strategies: 'strategy', triggers: 'trigger' };
 // This is a display projection. AIR remains the authority for every relationship.
-export function projectExplorer(airs, { name, revision, files, packages = [] }) {
+export function projectExplorer(airs, { name, revision, files, packages = [], entrypoints = [] }) {
   const nodes = new Map(), edges = new Map();
   const add = node => { if (!nodes.has(node.id)) nodes.set(node.id, node); };
   const edge = (kind, from, to, source_ref, extra = {}) => {
@@ -13,7 +14,8 @@ export function projectExplorer(airs, { name, revision, files, packages = [] }) 
   };
   for (const pkg of packages) {
     const id = `package:${pkg.name}`;
-    add({ id, kind:'package', name:pkg.name, package:pkg.name, details:{ version:pkg.version, description:pkg.description } });
+    const details = Object.fromEntries(['version', 'description', 'publisher', 'license', 'touba', 'exports', 'dependencies', 'engines', 'hosts'].filter(key => pkg[key] !== undefined).map(key => [key, pkg[key]]));
+    add({ id, kind:'package', name:pkg.name, package:pkg.name, details });
     for (const context of pkg.contexts) {
       const contextId = `context:${pkg.name}/${context.id}`;
       add({ id:contextId, name:context.id, kind:'context', package:pkg.name, details:{ description:context.description, activation:context.activation } });
@@ -30,14 +32,19 @@ export function projectExplorer(airs, { name, revision, files, packages = [] }) 
       add({ id: `package:${packageName}`, kind: 'package', name: packageName, package: packageName });
       edge('contains', `package:${packageName}`, module);
     }
-    add({ ...common, ...air.module, kind: 'module', details: { budgets: air.budgets?.run } });
+    const moduleEntries = entrypoints.filter(ref => Object.values(air.definitions).some(list => list.some(d => d.id === ref && d.source_ref?.source_id === air.module.source_ref?.source_id)));
+    add({ ...common, ...air.module, kind: 'module', details: { budgets: air.budgets?.run, ...(moduleEntries.length ? { entrypoints: moduleEntries } : {}) } });
+    const formatConstant = expressionFormatter({}, air.definitions.constants);
     for (const [collection, kind] of Object.entries(collections)) {
       for (const d of air.definitions[collection] ?? []) {
         const details = {};
-        for (const key of ['signature', 'description', 'responsibility', 'fields', 'variants', 'type_ref', 'limits', 'memory_scopes', 'memory_accesses', 'event', 'required_capabilities', 'required_secrets']) {
+        for (const key of ['signature', 'description', 'responsibility', 'fields', 'variants', 'type_ref', 'limits', 'memory_scopes', 'memory_accesses', 'event', 'payload', 'required_capabilities', 'required_secrets']) {
           if (d[key] !== undefined) details[key] = d[key];
         }
         if (kind === 'tool') details.boundary = 'External handler (JavaScript or Python)';
+        if (kind === 'constant') details.value = { expression: formatConstant(d.id) };
+        if (d.arguments?.length) details.arguments = Object.fromEntries(d.arguments.map(arg => [arg.input, { expression: formatConstant(arg.value_ref) }]));
+        if (entrypoints.includes(d.id)) details.entrypoint = true;
         add({ ...common, id: d.id, name: d.name, kind, source_ref: d.source_ref, details });
         edge('contains', module, d.id, d.source_ref);
         for (const target of d.uses ?? []) edge('uses', d.id, target, d.use_refs?.find(r => r.target_ref === target)?.source_ref ?? d.source_ref);
@@ -60,10 +67,17 @@ export function projectExplorer(airs, { name, revision, files, packages = [] }) 
       edge('imports', module, `module:${i.from_module}`, i.source_ref, { target_ref: i.target_ref });
     }
     for (const graph of air.execution_graphs ?? []) {
+      const format = expressionFormatter(graph, air.definitions.constants);
       for (const n of graph.nodes) {
         const details = {};
         for (const key of ['target_ref', 'result_binding', 'condition_ref', 'collection_ref', 'item_binding', 'max_concurrency', 'max_items', 'approval_policy', 'interaction_mode']) {
           if (n[key] !== undefined) details[key] = n[key];
+        }
+        for (const key of ['condition_ref', 'collection_ref']) if (n[key]) details[key] = { expression: format(n[key]) };
+        if (n.context_refs?.length) details.context = n.context_refs.map(ref => ({ expression: format(ref) }));
+        if (n.arguments?.length) {
+          const target = Object.values(air.definitions).flat().find(d => d.id === n.target_ref);
+          details.arguments = Object.fromEntries(n.arguments.map((arg, index) => [target?.signature?.inputs?.[index]?.name ?? String(index + 1), { expression: format(arg) }]));
         }
         add({ ...common, id: n.id, kind: n.kind, name: n.kind, owner: graph.owner_ref, graph: graph.id, source_ref: n.source_ref, details });
         if (n.kind === 'human_approval') edge('approval_site', graph.owner_ref, n.id, n.source_ref);

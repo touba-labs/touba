@@ -35,6 +35,9 @@
         "admission": {
           "const": "refused"
         },
+        "pure_function_detail": {
+          "enum": ["full", "calls"]
+        },
         "air_schema_version": {
           "enum": [
             "touba-air-v1",
@@ -87,6 +90,7 @@
             "type": "integer",
             "minimum": 0
           },
+          "observed_at": { "type": "string", "format": "date-time" },
           "kind": {
             "type": "string"
           },

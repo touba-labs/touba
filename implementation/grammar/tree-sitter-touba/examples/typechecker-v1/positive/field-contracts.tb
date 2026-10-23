@@ -1,0 +1,55 @@
+module fields
+
+type Account
+    institution is Text format "digits" length 3
+    transit is Text format "digits" length 5
+    account is Text format "digits" length 5..12
+
+type Status
+    id is Text length 1..20
+    code is Int min 0 max 999 default 0
+    reason is Optional of Text default none(Text)
+    tags is List of Text length 0..5 default []
+
+type Defaults
+    day is Date default date("2024-02-29")
+    label is Text length 1 default "💡"
+    active is Boolean default true
+    amount is Float min 0 default 0
+
+function NewStatus
+    takes id as Text
+    gives Status
+    do
+        give record Status { id as id }
+
+function Change
+    takes original as Status
+    takes code as Int
+    gives Status
+    do
+        give copy original { code as code, reason as some("changed") }
+
+function AllDefaults
+    gives Defaults
+    do
+        give record Defaults {}
+
+function Bank
+    takes number as Text
+    gives Account
+    do
+        give record Account { institution as "815", transit as "00001", account as number }
+
+tool Echo
+    takes account as Account
+    gives Account
+
+strategy Check
+    takes account as Account
+    gives Account
+    do
+        Echo
+            with account as account
+            into result
+        give result

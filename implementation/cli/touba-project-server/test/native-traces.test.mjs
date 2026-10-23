@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, statSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { canonicalDigest } from "@touba/runtime";
+import { canonicalDigest, executeAirDocument } from "@touba/runtime";
 import { NATIVE_TRACE_LIMITS, withNativeTrace, readNativeTraceExport, validateNativeTraceExport } from "../src/native-traces.mjs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 
@@ -19,6 +19,31 @@ function result(runId, paused = false) {
 }
 function files(root) { const path = join(root, ".touba/native-traces"); return readdirSync(path).map(name => join(path, name)); }
 function temporary(t) { const root = mkdtempSync(join(tmpdir(), "touba-native-traces-")); t.after(() => rmSync(root, { recursive: true, force: true })); return root; }
+
+test("a real approval resume retains sealed observation times and detects timestamp tampering", async t => {
+  const projectRoot = temporary(t), runId = "run:timestamp-resume";
+  const air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path", new URL("../../../Cargo.toml", import.meta.url).pathname,
+    "-p", "touba-cli", "--bin", "touba-compile", "--", new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/typed-approval.tb", import.meta.url).pathname], { encoding: "utf8" }));
+  const options = { entryRef: "strategy:approval_result/Receipt", runId, inputs: { dossier: "invoice" }, durableHumanApprovals: true };
+  const paused = await withNativeTrace({ projectRoot, runId, phase: "initial" }, () => executeAirDocument(air, options));
+  assert.equal(paused.reason, "human_approval_pending");
+  const initial = readNativeTraceExport(projectRoot, runId).segments[0];
+  assert.ok(initial.trace.events.every(event => new Date(event.observed_at).toISOString() === event.observed_at));
+  const resumedAt = Date.now();
+  const resumed = await withNativeTrace({ projectRoot, runId, phase: "human_resume" }, () => executeAirDocument(air, {
+    ...options, inputs: undefined, humanApprovalResumeCheckpoint: structuredClone(paused.checkpoint),
+    humanApprovalDecisions: { [paused.checkpoint.approval_ref]: { decision: "approved", evidence_ref: "proof" } },
+    humanApprovalAuthority: ({ request, decision }) => ({ request_id: request.request_id, run_id: request.run_id, decision,
+      subject_ref: "employee:test", roles: ["finance"] }),
+  }));
+  assert.equal(resumed.status, "success", JSON.stringify(resumed));
+  const completed = readNativeTraceExport(projectRoot, runId);
+  assert.deepEqual(completed.segments[0], initial);
+  assert.equal(completed.segments[1].previous_digest, initial.digest);
+  assert.ok(completed.segments[1].trace.events.every(event => Date.parse(event.observed_at) >= resumedAt));
+  completed.segments[0].trace.events[0].observed_at = "2000-01-01T00:00:00.000Z";
+  assert.throws(() => validateNativeTraceExport(completed), { code: "ToubaServeNativeTraceStoreInvalid" });
+});
 
 test("native segments retain exact events and AIR identity, with independent concurrent runs and no private envelope", async t => {
   const projectRoot = temporary(t);

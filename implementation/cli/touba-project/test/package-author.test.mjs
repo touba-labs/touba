@@ -9,11 +9,24 @@ import { newPackage, testPackage, versionPackage } from "../src/package-author.m
 import { packageSlug, readPackage } from "../src/package-contract.mjs";
 import { addPackage, checkPackage, packPackage, removePackage } from "../src/packages.mjs";
 import { initProject, prepareProject } from "../src/project.mjs";
+import { publishPackage } from "../src/package-publish.mjs";
+import { publishRemotePackage } from "../src/package-publish-remote.mjs";
 
 const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 function workspace(t) { const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-author-"))); t.after(() => rmSync(root, { recursive: true, force: true })); return root; }
 function command(cwd, ...args) { return spawnSync(process.execPath, [cli, "package", ...args], { cwd, encoding: "utf8", timeout: 90000, maxBuffer: 4 * 1024 * 1024 }); }
 function edit(root, fn) { const file = join(root, "touba.package.json"), data = JSON.parse(readFileSync(file)); fn(data); writeFileSync(file, JSON.stringify(data)); }
+
+test("Cloud presentation can follow packing, while direct publication requires a README", async t => {
+  const root = workspace(t), pkg = newPackage("acme.presentation", { root, publisher: "Acme", license: "MIT" });
+  edit(pkg.path, manifest => { delete manifest.readme; });
+  const checked = await checkPackage(pkg.path, { publishing: true });
+  assert.equal(checked.publishing.ready, true);
+  const packed = await packPackage(pkg.path, { output: join(root, 'package.tar.gz') });
+  assert.equal(packed.status, 'success');
+  await assert.rejects(publishPackage(pkg.path, { registry: join(root, 'registry') }), { code: 'PackagePresentationRequired' });
+  await assert.rejects(publishRemotePackage(pkg.path, { registry: 'http://127.0.0.1:4180/registry' }), { code: 'PackagePresentationRequired' });
+});
 
 test("author identity normalizes spaces, keeps organization scope and creates the short directory", async t => {
   const root = workspace(t);

@@ -1,5 +1,25 @@
 # SDK JavaScript
 
+## Packages hôtes et options d'exécution
+
+Les deux SDK acceptent un chemin de module ou un sélecteur
+`pkg:organisation.package/identifiant`. Le module doit être déclaré dans
+`hosts` du package installé. L'installation vérifie le contenu ; son activation
+est un choix explicite de l'application.
+
+| Réglage | JavaScript | Python |
+| --- | --- | --- |
+| Attestation | `humanApprovalHost` | `human_approval_host` |
+| Décisions agent | `agentDecisionProvider` | `agent_decision_provider` |
+| Délai d'attestation, ms | `humanApprovalAuthorityTimeoutMs` | `human_approval_authority_timeout_ms` |
+| Détail des fonctions pures | `tracePureFunctions` | `trace_pure_functions` |
+
+Le délai vaut 5 000 ms par défaut, entre 1 et 60 000 ms. Le détail vaut
+`full` par défaut ; `calls` conserve les appels et la gouvernance avec moins
+d'événements internes. Voir les [packages](../reference/packages.md) et les
+[traces](../reference/traces-v1-rc.md).
+
+
 Le SDK JavaScript appelle la même CLI gouvernée que le SDK Python. Les deux guides suivent le même parcours, avec les mêmes concepts et exemples de départ.
 
 ## Installation
@@ -1015,3 +1035,69 @@ Les noms des classes et les concepts sont communs. Les fonctions et options suiv
 JavaScript utilise `await` ; Python propose `ToubaEngine` synchrone et `AsyncToubaEngine` avec `await`. Les fonctions métier reçoivent `run({ request, context })` en JavaScript et `run(request, context)` en Python. Ce sont des différences d’appel, pas de responsabilités.
 
 Retrouvez les mêmes étapes dans le [SDK JavaScript](./sdk-javascript.md), le [SDK Python](./sdk-python.md), les tutoriels [Engine JavaScript](../tutoriels/engine-javascript.md) / [Engine Python](../tutoriels/engine-python.md) et [handlers JavaScript](../tutoriels/handlers-javascript.md) / [handlers Python](../tutoriels/handlers-python.md).
+
+## Sorties typées et diagnostics fournisseur
+
+Les contrats `Date`, `format`, `length`, `min` et `max` suivent le même
+chemin dans les deux SDK : schéma fournisseur, validation de la réponse,
+puis validation runtime. Les données invalides sont refusées avant utilisation.
+
+| Réglage | JavaScript | Python |
+| --- | --- | --- |
+| Encodage du schéma | `schemaEncoding` | `schema_encoding` |
+| Choix automatique (défaut) | `"auto"` | `"auto"` |
+| Représentation Touba | `"canonical"` | `"canonical"` |
+| Optionnels aplatis | `"flat_optionals"` | `"flat_optionals"` |
+
+En mode automatique, le SDK adapte les champs `Optional` pour les modèles
+Anthropic : il réduit les unions du schéma transmis, vérifie la réponse reçue,
+puis restitue l’encodage Touba `{present, value}`. Les deux validations restent
+actives, en interface `structured` comme `native`. Une valeur mal formée
+n’est jamais convertie en absence. Les limites de schéma restent propres au
+modèle choisi ; qualifiez les types métier avec ce modèle.
+
+Dans le module hôte, exportez `initialModes` (JS) ou `initial_modes` (Python)
+pour choisir `summary` ou `capabilities` par référence d’agent :
+
+```js
+export const initialModes = {
+  "agent:app.invoices/Reader": "capabilities",
+};
+```
+
+```python
+initial_modes = {"agent:app.invoices/Reader": "capabilities"}
+```
+
+Sans choix explicite, un agent sans capacité démarre directement avec son
+contrat de résultat. Pour un routage par agent, le SDK transmet les métadonnées
+du modèle résolu ; l’événement `agent_decision_provider_model_resolved`
+identifie le fournisseur et le modèle effectivement sélectionnés.
+
+Les échecs de comptage conservent le statut HTTP et un diagnostic borné.
+Une génération interrompue expose `finish_reason` et, lorsqu’elle est fournie,
+`incomplete_reason`. Aucun résultat partiel n’est exécuté.
+
+Pour un handler d’écriture, le code public de l’erreur est conservé ; un reçu
+absent ou invalide est signalé séparément. Voir
+[Effets externes](effets-idempotents.md#erreur-du-handler-et-état-de-leffet).
+
+### Router plusieurs providers
+
+Un routeur hôte transmet les deux arguments à l’adaptateur choisi :
+
+```js
+import { providers } from "./models.mjs";
+
+export function decideAgentCapability(request, execution) {
+  const provider = providers.get(request.agent_ref);
+  if (!provider) throw new Error("No provider configured for this agent");
+  return provider(request, execution);
+}
+```
+
+`providers` est une Map configurée par l’hôte. `execution` transporte notamment
+l’annulation et la remontée des coûts. Conservez cet objet tel quel, séparément
+du prompt. Gardez les instances de providers entre les décisions pour préserver
+leur historique. Le guide Python présente le même routage avec le contexte
+propagé par son canal hôte.

@@ -51,12 +51,20 @@ fn nested_controls_compile_without_syntax_recovery() {
                 "module flow.check\nstrategy Run\n    takes items as List of Int\n    takes ready as Boolean\n    do\n        {outer}\n            {inner}\n                stop\n"
             );
             let compiled = compile_source_to_air("nested.tb", &source);
-            assert!(compiled.document.is_some(), "{outer}/{inner}: {:?}", compiled.diagnostics);
+            assert!(
+                compiled.document.is_some(),
+                "{outer}/{inner}: {:?}",
+                compiled.diagnostics
+            );
         }
     }
     let source = "module flow.check\nstrategy Run\n    do\n        if true\n            stop\n        else\n            if true\n                stop\n";
     assert!(compile_source_to_air("else.tb", source).document.is_some());
     // Keywords in comments or quoted strings must not masquerade as controls.
     let source = "module flow.check\nstrategy Run\n    do\n        if true\n            show\n                with message as \"if true\"\n        ???\n";
-    assert!(compile_source_to_air("not-nested.tb", source).document.is_none());
+    assert!(
+        compile_source_to_air("not-nested.tb", source)
+            .document
+            .is_none()
+    );
 }

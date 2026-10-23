@@ -793,6 +793,7 @@ function summarizeTrace(trace, sourcePath = undefined) {
     chronology: events.filter(event => noteworthy.has(event.kind)).map(event => ({
       index: event.sequence_index,
       kind: event.kind,
+      ...(event.observed_at ? { observed_at: event.observed_at } : {}),
       ...Object.fromEntries(Object.entries(event.payload ?? {}).filter(([key, value]) =>
         ["repeated_from_step", "identical_invocation_number"].includes(key)
         && Number.isSafeInteger(value) && value >= 0)),
@@ -859,7 +860,9 @@ export function exportTraceToOpenTelemetry(trace, options = {}) {
 }
 
 function toubaEventToOtelSpan(event, trace, traceId) {
-  const startTimeUnixNano = syntheticEventTimeUnixNano(event.sequence_index ?? 0);
+  const observed = typeof event.observed_at === "string" && Number.isFinite(Date.parse(event.observed_at));
+  const startTimeUnixNano = observed ? (BigInt(Date.parse(event.observed_at)) * 1000000n).toString()
+    : syntheticEventTimeUnixNano(event.sequence_index ?? 0);
   const endTimeUnixNano = (BigInt(startTimeUnixNano) + 1n).toString();
   const semantic = toubaEventSemanticMapping(event, trace);
   const errorType = otelErrorType(event);
@@ -875,6 +878,7 @@ function toubaEventToOtelSpan(event, trace, traceId) {
       "touba.event.id": event.event_id,
       "touba.event.kind": event.kind,
       "touba.event.sequence_index": event.sequence_index,
+      "touba.event.time_source": observed ? "runtime_observation" : "sequence_projection",
       "touba.run.id": event.run_id,
       "touba.air.flow_graph_ref": event.air_ref?.flow_graph_ref,
       "touba.air.owner_ref": event.air_ref?.owner_ref,
@@ -2674,7 +2678,7 @@ function collectLogicalResourceRefs(airDocument) {
 
 function collectExecutableEntryRefs(airDocument) {
   const refs = new Set();
-  for (const key of ["functions", "skills", "agents", "strategies"]) {
+  for (const key of ["functions", "skills", "agents", "strategies", "tools"]) {
     for (const declaration of airDocument?.definitions?.[key] ?? []) {
       if (typeof declaration.id === "string") refs.add(declaration.id);
     }

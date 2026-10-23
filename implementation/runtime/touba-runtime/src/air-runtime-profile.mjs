@@ -191,7 +191,7 @@ export function validateAirBudgets(budgets) {
 export function indexAirDocument(document) {
   const definitions = /** @type {AirRecord} */ (document.definitions);
   return {
-    types: indexById(definitions.types ?? []),
+    types: new Map([...indexById(definitions.types ?? []), [APPROVAL_TYPE.id, APPROVAL_TYPE]]),
     constants: indexById(definitions.constants ?? []),
     functions: indexById(definitions.functions ?? []),
     tools: indexById(definitions.tools ?? []),
@@ -226,3 +226,4 @@ export function indexById(items) {
   }
   return index;
 }
+import { APPROVAL_TYPE } from "../../../contracts/machine/value-contracts.mjs";

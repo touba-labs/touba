@@ -94,6 +94,20 @@ async function setup(t, { limit = 1000n, delay = 0, context = false } = {}) {
     } } : {}) } }) };
 }
 
+test("a host router forwards the execution channel without exposing it to model input", async t => {
+  const { provider, received } = await setup(t);
+  const providers = new Map([["agent:tests.cost_runtime/Worker", provider("native")]]);
+  const router = (request, execution) => {
+    assert.equal(typeof execution.recordProviderCost, "function");
+    assert.equal(request.execution, undefined);
+    return providers.get(request.agent_ref)(request, execution);
+  };
+  const result = await executeAirDocument(air, { entryRef, agentDecisionProvider: router, agentDecisionProviderInitialMode: "capabilities" });
+  assert.equal(result.status, "success", JSON.stringify(result.trace));
+  assert.deepEqual(result.trace.events.filter(e => e.kind === "provider_cost_recorded").map(e => e.payload.status), ["pending", "reported"]);
+  assert.equal(JSON.stringify(received).includes("recordProviderCost"), false);
+});
+
 test("token counting and generation share one budget and correlate both attempts", async t => {
   const { provider, budget, received } = await setup(t, { context: true });
   const result = await executeAirDocument(air, { entryRef, agentDecisionProvider: provider("native"), agentDecisionProviderInitialMode: "capabilities" });

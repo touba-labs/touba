@@ -6,10 +6,11 @@ import { createAiSdkDecisionProvider, createOpenAiDecisionProvider, createOllama
   createMemoryDecisionHistoryStore, createProviderTokenCostAdapter } from "./index.mjs";
 import { createSqliteDecisionHistoryStore } from "./sqlite-decision-history.mjs";
 import { createSqliteProviderBudget } from "./sqlite-provider-budget.mjs";
+import { providerDiagnosticDetails } from "./provider-diagnostics.mjs";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const scope = new AsyncLocalStorage();
-const failure = code => Object.assign(new Error("SDK backend operation failed"), { name: "ToubaAgentDecisionProviderError", code });
+const failure = (code, details) => Object.assign(new Error("SDK backend operation failed"), { name: "ToubaAgentDecisionProviderError", code, details: providerDiagnosticDetails(details) });
 
 export async function servePythonSdk({ input = process.stdin, output = process.stdout } = {}) {
   const objects = new Map(), callbacks = new Map(), active = new Set();
@@ -139,14 +140,15 @@ export async function servePythonSdk({ input = process.stdin, output = process.s
         if (!item || !item.methods.includes(message.operation) || !Array.isArray(args)) throw failure("InvalidDecisionProviderOptions");
         if (message.operation === "invoke") {
           // The execution hook is transported separately from the model request.
-          const execution = message.execution ? { recordProviderCost: value => callback("cost", [value]) } : undefined;
+          const execution = message.execution ? { recordProviderCost: value => callback("cost", [value]),
+            recordProviderMetadata: value => callback("provider_metadata", [value]) } : undefined;
           result = await item.value(...args, ...(execution ? [execution] : []));
         } else result = await item.value[message.operation](...args);
       } else throw failure("PythonHostPayloadInvalid");
       write({ id, result: encode(result) });
     } catch (error) {
       const code = typeof error?.code === "string" && /^[A-Za-z][A-Za-z0-9]{0,100}$/.test(error.code) ? error.code : "PythonHostUnavailable";
-      write({ id, error: { code } });
+      write({ id, error: { code, details: providerDiagnosticDetails(error?.details) } });
     } finally { active.delete(id); }
   }
   await new Promise((resolveDone, reject) => {
@@ -163,7 +165,7 @@ export async function servePythonSdk({ input = process.stdin, output = process.s
             const item = callbacks.get(message.callback_reply);
             if (!item) throw failure("PythonHostPayloadInvalid");
             callbacks.delete(message.callback_reply); clearTimeout(item.timer);
-            if (message.error) item.reject(failure(message.error.code ?? "PythonHostUnavailable")); else item.resolve(decode(message.result));
+            if (message.error) item.reject(failure(message.error.code ?? "PythonHostUnavailable", message.error.details)); else item.resolve(decode(message.result));
           } else {
             if (!Number.isSafeInteger(message.id) || active.has(message.id) || active.size >= 32) throw failure("PythonHostPayloadInvalid");
             active.add(message.id);

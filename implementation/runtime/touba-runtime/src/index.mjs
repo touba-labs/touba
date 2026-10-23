@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { isIsoDate, matchesFieldConstraints } from "../../../contracts/machine/value-contracts.mjs";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { failureFamilyForRuntimeCode } from "../../../contracts/machine/contracts.mjs";
@@ -26,8 +27,8 @@ import {
 } from "./authority.mjs";
 import { normalizeInternalCompensationContext } from "./compensation-context.mjs";
 import { executeGraphTraversal } from "./graph-execution.mjs";
-import { createApprovalRuntime, approvalStateSnapshot, approvalRequest, approvalDeadlineDue,
-  authorizeApprovalDecision, completeApprovalOccurrence } from "./human-approval-policy.mjs";
+import { createApprovalRuntime, initializeApprovalInitiator, approvalStateSnapshot, approvalRequest, approvalDeadlineDue,
+  authorizeApprovalDecision, approvalResult, completeApprovalOccurrence } from "./human-approval-policy.mjs";
 import {
   EFFECT_JOURNAL_SCHEMA_VERSION,
   assertJsonPortable,
@@ -158,6 +159,7 @@ const BUILTIN_TEXT = "builtin:Text";
 const BUILTIN_BOOLEAN = "builtin:Boolean";
 const BUILTIN_INT = "builtin:Int";
 const BUILTIN_FLOAT = "builtin:Float";
+const BUILTIN_DATE = "builtin:Date";
 const TOOL_BINDING_MANIFEST_VERSION = "touba-manifest-v1";
 const COMPENSATION_ENTRY_REF_PATTERN = /^strategy:[A-Za-z0-9_.-]+\/[A-Za-z][A-Za-z0-9_]*$/u;
 const NORMALIZED_TOOL_BINDING_MANIFESTS = new WeakSet();
@@ -307,6 +309,9 @@ export async function executeAirDocument(document, options = {}) {
   return executeRunLifecycle(
     context,
     async () => {
+      // An entry has no structural caller. The host cannot impersonate a
+      // strategy by naming its agent directly, including on checkpoint resume.
+      if (entryRef.startsWith("agent:")) authorizeAgentInvocationByCaller(null, entryRef, context);
       validateConfiguredInteractionReferences(document, context);
       if (!context.humanApprovalResumeCheckpoint && !context.executionDurability.resumeCheckpoint) {
         const entry = Object.values(document.definitions).flat().find(item => item.id === entryRef);
@@ -314,6 +319,7 @@ export async function executeAirDocument(document, options = {}) {
       } else if (options.inputs && Object.keys(options.inputs).length) {
         throw new RuntimeFailure("resume restores checkpoint inputs; do not supply replacement inputs", {}, "ResumeInputsNotAllowed");
       }
+      await initializeApprovalInitiator(context.approvalRuntime, { run_id: context.trace.runId, entry_ref: entryRef, inputs: options.inputs ?? {} });
       if (context.executionDurability.enabled) {
         return executeDurableEntry(document, entryRef, context);
       }
@@ -341,6 +347,7 @@ export async function executeTriggerEvent(document, event, options = {}) {
     context,
     async () => {
       validateConfiguredInteractionReferences(document, context);
+      await initializeApprovalInitiator(context.approvalRuntime, { run_id: context.trace.runId, entry_ref: entryRef, inputs: triggerEvent.payload ?? {} });
       return context.humanApprovalResumeCheckpoint
         ? await executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, context)
         : executeNormalizedTriggerEvent(triggerEvent, context);
@@ -394,6 +401,9 @@ function createExecutionContext(document, entryRef, options = {}) {
   const containsApprovalPolicy = document.execution_graphs.some(graph => graph.nodes.some(node => node.approval_policy));
   const runId = options.runId ?? options.run_id ?? executionResumeCheckpoint?.run_id ?? humanApprovalResumeCheckpoint?.run_id
     ?? (containsParallel || containsApprovalPolicy ? `run-${randomUUID()}` : "run-1");
+  if (options.tracePureFunctions !== undefined && !["full", "calls"].includes(options.tracePureFunctions)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", "tracePureFunctions must be full or calls");
+  }
   const trace = new TraceBuilder(
     document,
     entryRef,
@@ -402,6 +412,7 @@ function createExecutionContext(document, entryRef, options = {}) {
     executionResumeCheckpoint?.trace_state.next_sequence_index
       ?? internalCompensation?.trace_state?.next_sequence_index
       ?? 0,
+    options.tracePureFunctions ?? "full",
   );
   const initialValues = normalizeInputs(options.inputs ?? {});
   const toolBindingManifest = normalizeOptionalToolBindingManifest(options.toolBindingManifest);
@@ -2892,6 +2903,7 @@ function validateTriggerArgumentValue(input, value, context, trigger) {
 }
 
 function isValueCompatibleWithType(value, typeRef, context) {
+  if (typeRef === BUILTIN_DATE) return isIsoDate(value);
   if (typeRef === BUILTIN_TEXT) {
     return typeof value === "string";
   }
@@ -2933,6 +2945,7 @@ function isValueCompatibleWithType(value, typeRef, context) {
   return type.fields.every((field) =>
     Object.hasOwn(value, field.name)
     && isValueCompatibleWithType(value[field.name], field.type_ref, context)
+    && matchesFieldConstraints(value[field.name], field.constraints)
   );
 }
 
@@ -3796,6 +3809,7 @@ function typeFieldsDescriptor(typeRef, context, ancestors = new Set()) {
     name: field.name,
     type_ref: field.type_ref,
     fields: typeFieldsDescriptor(field.type_ref, context, nestedAncestors),
+    constraints: field.constraints,
     enum_values: typeEnumValues(field.type_ref, context),
   }));
 }
@@ -3876,7 +3890,8 @@ async function requestAgentDecisionFromProvider(agent, capabilityRefs, context, 
   }
 
   if (
-    context.agentDecisionProviderInitialMode === "capabilities"
+    (capabilityRefs.length === 0
+      || (context.agentDecisionProvider?.initialModes[agent.id] ?? context.agentDecisionProviderInitialMode) === "capabilities")
     && (loopState?.observations?.length ?? 0) === 0
   ) {
     const catalogRequest = agentDecisionProviderRequest(agent, capabilityRefs, context, "capabilities", loopState);
@@ -4639,7 +4654,7 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
   try {
     const response = snapshotInvocationValue(await withAgentDecisionProviderTimeout(
       trackParallelTransport(context, Promise.resolve().then(() => context.agentDecisionProvider.decide(snapshotInvocationValue(request),
-        Object.freeze({ recordProviderCost: costEvidence.recordProviderCost })))),
+        Object.freeze({ recordProviderCost: costEvidence.recordProviderCost, recordProviderMetadata: costEvidence.recordProviderMetadata })))),
       context.agentDecisionProviderTimeoutMs,
       request,
     ), "AgentDecisionProviderSchemaViolation");
@@ -4697,7 +4712,7 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
         "InvalidProviderBudgetOptions", "ProviderBudgetMismatch", "ProviderBudgetSettlementConflict",
         "DecisionHistoryBusy", "DecisionHistoryMismatch", "DecisionHistoryClosed",
         "DecisionHistoryUnresolvedCall", "DecisionHistoryLimitExceeded", "ProviderContextWindowExceeded",
-        "DecisionHistorySummaryInvalid", "DecisionHistoryStorageUnsafe"]).has(error.code);
+        "DecisionHistorySummaryInvalid", "DecisionHistoryStorageUnsafe", "ProviderContextCountUnavailable"]).has(error.code);
     const decisionError = error?.name === "ToubaAgentDecisionProviderError"
       && (new Set(["InvalidModelDecision", "IncompleteModelDecision", "InvalidAgentDecisionRequest",
         "UnsupportedDecisionTypeDescriptor", "DecisionHistoryBusy", "DecisionHistoryMismatch",
@@ -4713,6 +4728,15 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
         cause: message,
         provider_metadata: request.provider_metadata,
         provider_error_code: decisionError || localDecisionError ? error.code : outputError ? error.name : undefined,
+        provider_http_status: error?.name === "ToubaAgentDecisionProviderError"
+          && Number.isInteger(error.details?.http_status) && error.details.http_status >= 100 && error.details.http_status <= 599
+          ? error.details.http_status : undefined,
+        provider_finish_reason: error?.name === "ToubaAgentDecisionProviderError"
+          && ["stop", "length", "content-filter", "tool-calls", "error", "other", "unknown"].includes(error.details?.finish_reason)
+          ? error.details.finish_reason : undefined,
+        provider_incomplete_reason: error?.name === "ToubaAgentDecisionProviderError"
+          && ["max_output_tokens", "content_filter", "unknown"].includes(error.details?.incomplete_reason)
+          ? error.details.incomplete_reason : undefined,
       },
       localDecisionError ? error.code : decisionError || outputError ? "AgentDecisionProviderSchemaViolation" : "AgentDecisionProviderUnavailable",
     );
@@ -8342,7 +8366,8 @@ async function resumeParallelCheckpoint(document, entryRef, context, checkpoint)
     const request = approvalRequest(context.approvalRuntime, context.trace.runId, entry.approval_ref, entry.metadata.approval_policy);
     const decision = await authorizeApprovalDecision(context.approvalRuntime, request, context.humanApprovalDecisions.get(entry.approval_ref), { replay: true });
     decisions.set(entry.approval_ref, decision);
-    if (decision && decision !== "approved" && !(decision === "expired" && entry.metadata.expiration_branch === true)) {
+    if (decision && decision !== "approved" && !(decision === "expired" && entry.metadata.expiration_branch === true)
+      && !(decision === "rejected" && entry.metadata.rejection_branch === true)) {
       context.trace.push("human_approval_decided", { payload: { approval_ref: entry.approval_ref, decision } });
       context.trace.push(classifyHumanApprovalDecision(decision).terminalEvent, { payload: { approval_ref: entry.approval_ref, decision } });
       throw new RuntimeStop("parallel approval refused", { reason: `human_approval_${decision}` });
@@ -8353,7 +8378,7 @@ async function resumeParallelCheckpoint(document, entryRef, context, checkpoint)
     const decision = decisions.get(entry.approval_ref);
     if (decision) {
       context.trace.push("human_approval_decided", { payload: { approval_ref: entry.approval_ref, decision } });
-      context.trace.push(decision === "approved" ? "human_approval_resumed" : "human_approval_expired", { payload: { approval_ref: entry.approval_ref, group_id: checkpoint.parallel_state.id } });
+      context.trace.push(decision === "approved" ? "human_approval_resumed" : classifyHumanApprovalDecision(decision).terminalEvent, { payload: { approval_ref: entry.approval_ref, group_id: checkpoint.parallel_state.id } });
       entry.state = "done";
       entry.value = decision;
       context.humanApprovalDecisions.delete(entry.approval_ref);
@@ -8549,6 +8574,7 @@ function executeHumanApprovalNode(graph, node, context) {
       caller_ref: graph.owner_ref, context_refs: node.context_refs ?? [],
       ...(node.approval_policy ? { approval_policy: node.approval_policy } : {}),
       ...(nextNodeId(graph, node.id, "expired") ? { expiration_branch: true } : {}),
+      ...(nextNodeId(graph, node.id, "rejected") ? { rejection_branch: true } : {}),
       context_values: (node.context_refs ?? []).map(ref => resolveHandle(ref, context, graph)) }, (value, authorityRef) => {
       context.humanApprovalDecisions.set(ref, value);
       return executeHumanApprovalNodeBody(graph, node, context, authorityRef);
@@ -8671,6 +8697,9 @@ async function executeHumanApprovalNodeBody(graph, node, context, authorityRef =
 
   // A host decision authorizes one occurrence, never future loop iterations
   // or later invocations of the same source approval node.
+  const result = approvalResult(context.approvalRuntime, request);
+  context.values.set(valueHandle(node.result_binding), result);
+  context.valueTypes.set(valueHandle(node.result_binding), "builtin:Approval");
   context.humanApprovalDecisions.delete(approvalRef);
   if (authorityRef === null) completeApprovalOccurrence(context.approvalRuntime, approvalRef);
   context.trace.push("human_approval_decided", {
@@ -8682,7 +8711,6 @@ async function executeHumanApprovalNodeBody(graph, node, context, authorityRef =
   });
 
   if (transition.approved) {
-    context.values.set(valueHandle(node.result_binding), decision);
     context.trace.push("human_approval_resumed", {
       airRef: airRefForNode(graph, node),
       payload: compactPayload({
@@ -8693,7 +8721,7 @@ async function executeHumanApprovalNodeBody(graph, node, context, authorityRef =
     });
     return {
       edgeRole: successEdgeRole(graph, node.id),
-      result: decision,
+      result,
     };
   }
 
@@ -8704,9 +8732,8 @@ async function executeHumanApprovalNodeBody(graph, node, context, authorityRef =
       decision,
     },
   });
-  if (decision === "expired" && nextNodeId(graph, node.id, "expired")) {
-    context.values.set(valueHandle(node.result_binding), decision);
-    return { edgeRole: "expired", result: decision };
+  if (["expired", "rejected"].includes(decision) && nextNodeId(graph, node.id, decision)) {
+    return { edgeRole: decision, result };
   }
   return {
     done: true,
@@ -8777,7 +8804,7 @@ async function executeUserInteractionNode(graph, node, context) {
       }),
     });
     return {
-      edgeRole: "next",
+      edgeRole: successEdgeRole(graph, node.id),
     };
   }
 
@@ -8902,7 +8929,7 @@ async function executeUserInteractionNode(graph, node, context) {
   });
 
   return {
-    edgeRole: "next",
+    edgeRole: successEdgeRole(graph, node.id),
     result: value,
   };
 }
@@ -9644,10 +9671,52 @@ function evaluateExpression(expression, context, graph) {
       });
     case "text_conversion":
       return evaluateTextConversion(expression, context, graph);
+    case "date_conversion": {
+      const handle = expression.operands[0];
+      const value = resolveHandle(handle, context, graph);
+      if (resolveHandleType(handle, context, graph) !== BUILTIN_TEXT || !isIsoDate(value)) {
+        throw new RuntimeFailure("date(...) requires a valid YYYY-MM-DD civil date", { expressionId: expression.id }, "DateValueInvalid");
+      }
+      return value;
+    }
     case "field_access":
       return evaluateFieldAccess(expression, context, graph);
     case "construct_record":
+    case "copy_record":
       return evaluateRecordExpression(expression, context, graph);
+    case "construct_list":
+      return (expression.operands ?? []).map(handle => {
+        const type = resolveHandleType(handle, context, graph);
+        const expected = expression.type_ref.slice(5);
+        const value = resolveHandle(handle, context, graph);
+        if ((type !== expected && !(type === BUILTIN_INT && expected === BUILTIN_FLOAT))
+          || !isValueCompatibleWithType(value, expected, context)) {
+          throw new RuntimeFailure("list element violates its declared type", { expressionId: expression.id }, "ListElementTypeMismatch");
+        }
+        return value;
+      });
+    case "list_comprehension":
+      return evaluateListComprehension(expression, context, graph);
+    case "list_concat": {
+      const lists = expression.operands.map(handle => {
+        const value = resolveHandle(handle, context, graph);
+        if (resolveHandleType(handle, context, graph) !== expression.type_ref || !isValueCompatibleWithType(value, expression.type_ref, context)) {
+          throw new RuntimeFailure("concat requires compatible typed lists", { expressionId: expression.id }, "ListElementTypeMismatch");
+        }
+        return value;
+      });
+      return lists[0].concat(lists[1]);
+    }
+    case "text_join": {
+      const [valuesHandle, separatorHandle] = expression.operands;
+      const values = resolveHandle(valuesHandle, context, graph), separator = resolveHandle(separatorHandle, context, graph);
+      if (resolveHandleType(valuesHandle, context, graph) !== "list:builtin:Text"
+        || resolveHandleType(separatorHandle, context, graph) !== BUILTIN_TEXT
+        || !Array.isArray(values) || values.some(value => typeof value !== "string") || typeof separator !== "string") {
+        throw new RuntimeFailure("join requires a list of Text and a Text separator", { expressionId: expression.id }, "ListElementTypeMismatch");
+      }
+      return values.join(separator);
+    }
     case "unary_op":
       return evaluateUnaryExpression(expression, context, graph);
     case "binary_op":
@@ -9658,6 +9727,41 @@ function evaluateExpression(expression, context, graph) {
         kind: expression.kind,
       });
   }
+}
+
+function evaluateListComprehension(expression, context, graph) {
+  const [collectionHandle, elementHandle, predicateHandle] = expression.operands;
+  const collectionType = resolveHandleType(collectionHandle, context, graph);
+  const collection = resolveHandle(collectionHandle, context, graph);
+  if (!collectionType?.startsWith("list:") || !isValueCompatibleWithType(collection, collectionType, context)) {
+    throw new RuntimeFailure("comprehension requires a typed list", { expressionId: expression.id }, "ListElementTypeMismatch");
+  }
+  const scoped = { ...context, values: new Map(context.values), valueTypes: new Map(context.valueTypes) };
+  scoped.valueTypes.set(expression.value_ref, collectionType.slice(5));
+  const expected = expression.type_ref.slice(5), actual = resolveHandleType(elementHandle, scoped, graph);
+  if ((actual !== expected && !(actual === BUILTIN_INT && expected === BUILTIN_FLOAT))
+    || predicateHandle !== undefined && resolveHandleType(predicateHandle, scoped, graph) !== BUILTIN_BOOLEAN) {
+    throw new RuntimeFailure("comprehension output or predicate has an incompatible type", { expressionId: expression.id }, "ListElementTypeMismatch");
+  }
+  const result = [];
+  for (let index = 0; index < collection.length; index++) {
+    assertRunCanContinue(context);
+    if (index >= context.maxLoopIterations) {
+      throw new RuntimeFailure("comprehension exceeded runtime iteration limit", { expressionId: expression.id, maxLoopIterations: context.maxLoopIterations }, "LoopIterationLimitExceeded");
+    }
+    scoped.values.set(expression.value_ref, collection[index]);
+    if (predicateHandle !== undefined) {
+      const predicate = resolveHandle(predicateHandle, scoped, graph);
+      if (typeof predicate !== "boolean") throw new RuntimeFailure("comprehension predicate must be Boolean", { expressionId: expression.id }, "ListElementTypeMismatch");
+      if (!predicate) continue;
+    }
+    const value = resolveHandle(elementHandle, scoped, graph);
+    if (!isValueCompatibleWithType(value, expected, context)) {
+      throw new RuntimeFailure("comprehension element violates its declared type", { expressionId: expression.id }, "ListElementTypeMismatch");
+    }
+    result.push(value);
+  }
+  return result;
 }
 
 function evaluateOptionalExpression(expression, context, graph) {
@@ -9687,6 +9791,17 @@ function evaluateRecordExpression(expression, context, graph) {
     });
   }
   const result = {};
+  if (expression.kind === "copy_record") {
+    const handle = expression.operands[0];
+    const base = resolveHandle(handle, context, graph);
+    if (resolveHandleType(handle, context, graph) !== expression.type_ref
+      || !isValueCompatibleWithType(base, expression.type_ref, context)) {
+      throw new RuntimeFailure("record copy requires a valid base of the same nominal type", { expressionId: expression.id }, "RecordCopyInvalid");
+    }
+    for (const [name, value] of Object.entries(base)) Object.defineProperty(result, name, {
+      value: structuredClone(value), enumerable: true, writable: true, configurable: true,
+    });
+  }
   let previousName = null;
   for (const field of expression.record_fields) {
     if (
@@ -9708,6 +9823,14 @@ function evaluateRecordExpression(expression, context, graph) {
       writable: true,
     });
     previousName = field.name;
+  }
+  if (!context.indexes.types.has(expression.type_ref) || !isValueCompatibleWithType(result, expression.type_ref, context)) {
+    for (const field of context.indexes.types.get(expression.type_ref)?.fields ?? []) {
+      const failed = Object.entries(field.constraints ?? {}).find(([key, limit]) => !matchesFieldConstraints(result[field.name], { [key]: limit }));
+      if (failed) throw new RuntimeFailure(`record field ${field.name}: constraint ${failed[0]} requires ${JSON.stringify(failed[1])}`,
+        { expressionId: expression.id, field: field.name, constraint: failed[0], constraintLimitValue: failed[1] }, "RecordValueInvalid");
+    }
+    throw new RuntimeFailure("record violates its declared fields or constraints", { expressionId: expression.id }, "RecordValueInvalid");
   }
   return result;
 }
@@ -9739,6 +9862,7 @@ function evaluateTextConversion(expression, context, graph) {
   }
   const value = resolveHandle(operandHandle, context, graph);
   const typeRef = resolveHandleType(operandHandle, context, graph);
+  if (typeRef === BUILTIN_DATE && isIsoDate(value)) return value;
   if (typeRef === BUILTIN_TEXT) {
     return requireText(value, expression, "text");
   }
@@ -9809,6 +9933,21 @@ function evaluateBinaryExpression(expression, context, graph) {
 
   const left = resolveHandle(operands[0], context, graph);
   const right = resolveHandle(operands[1], context, graph);
+
+  if (operandTypes.includes(BUILTIN_DATE)) {
+    if (!operandTypes.every(type => type === BUILTIN_DATE) || !isIsoDate(left) || !isIsoDate(right)) {
+      throw new RuntimeFailure("date comparisons require two valid Date operands", { expressionId: expression.id }, "DateValueInvalid");
+    }
+    switch (operator) {
+      case "equal": return left === right;
+      case "not_equal": return left !== right;
+      case "less_than": return left < right;
+      case "greater_than": return left > right;
+      case "less_than_or_equal": return left <= right;
+      case "greater_than_or_equal": return left >= right;
+      default: throw new RuntimeFailure("Date supports comparisons only", { expressionId: expression.id }, "DateOperationInvalid");
+    }
+  }
 
   switch (operator) {
     case "add":
@@ -10435,6 +10574,8 @@ function runtimeFailureTracePayload(error, context) {
     allowed_refs: error.details?.allowedRefs,
     tool_ref: error.details?.toolRef,
     effect_id: error.details?.effectId,
+    handler_error_code: error.details?.handlerErrorCode,
+    receipt_error_code: error.details?.receiptErrorCode,
     request_digest: error.details?.requestDigest,
     effect_state: error.details?.state,
     effect_retry_mode: error.details?.retryMode,
@@ -10446,6 +10587,9 @@ function runtimeFailureTracePayload(error, context) {
     provider_cause: error.details?.cause,
     provider_cause_code: error.details?.providerCauseCode ?? error.details?.causeCode,
     provider_error_code: error.details?.provider_error_code,
+    provider_http_status: error.details?.provider_http_status,
+    provider_finish_reason: error.details?.provider_finish_reason,
+    provider_incomplete_reason: error.details?.provider_incomplete_reason,
     provider_metadata: error.details?.provider_metadata,
     retry_limit: error.details?.retryLimit,
     missing_capability: error.details?.missingCapability,

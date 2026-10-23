@@ -10,9 +10,9 @@ Touba means **Thinking Orchestration Using Bounded Agency**. Programs use the
 `.tb` extension and compile to AIR, the intermediate representation executed
 by the runtime.
 
-[Documentation](https://touba-labs.com/) ·
-[Downloads](https://touba-labs.com/hub/) ·
-[Research](https://touba-labs.com/recherche/) ·
+[Documentation](https://toubalang.org/) ·
+[Downloads](https://toubalang.org/hub/) ·
+[Research](https://toubalang.org/recherche/) ·
 [Contact Touba Labs](mailto:contact@touba-labs.com)
 
 ## What you can build
@@ -37,7 +37,7 @@ The first public release, `1.0.0`, is being qualified. Public downloads are not
 open yet. The instructions below apply to a Touba build supplied by the
 maintainers.
 
-The [installation guide](https://touba-labs.com/docs/demarrer/installation)
+The [installation guide](https://toubalang.org/docs/demarrer/installation)
 covers archives, graphical installers and checksum verification. The release
 targets macOS Apple Silicon, macOS Intel, Linux x64 and Windows x64.
 
@@ -95,7 +95,7 @@ PyPI. Both use Touba's runtime and governance contracts.
 Strategies and skills can also execute directly. Traces preserve the actual
 structural caller instead of attributing those operations to an invented agent.
 
-The [concepts](https://touba-labs.com/docs/concepts/composants-touba),
+The [concepts](https://toubalang.org/docs/concepts/composants-touba),
 [guides](docs/guides/) and [tutorials](docs/tutoriels/) explain the language,
 handler integration, multi-agent composition, parallelism and execution history.
 
@@ -141,10 +141,10 @@ Touba implements **Probabilistic Agentic Programming (PAP)**. The paradigm's
 responsibility-boundary principles are distinct from Touba's syntax and runtime
 implementation.
 
-The [benchmark page](https://touba-labs.com/benchmarks/) presents the current
+The [benchmark page](https://toubalang.org/benchmarks/) presents the current
 multi-provider interface study, including business outcomes and governance
 evidence. Deterministic invariant tests are reported separately from model
-performance. The [research page](https://touba-labs.com/recherche/) links the
+performance. The [research page](https://toubalang.org/recherche/) links the
 manuscripts and explains the scope of their formal results.
 
 ## Building from source
@@ -161,7 +161,7 @@ pnpm validate:v1-local
 
 Source checks do not by themselves qualify a downloadable release. Platform
 installation checks apply to the actual archives. Release maintenance is
-described in the [version and release reference](https://touba-labs.com/docs/reference/versions-releases).
+described in the [version and release reference](https://toubalang.org/docs/reference/versions-releases).
 
 ## Contributing and feedback
 

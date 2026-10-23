@@ -119,3 +119,18 @@ test("Python root aliases preserve caller paths and source encodings", t => {
   const result = pythonImportClosure(join(alias, "main.py"), { packageRoot: alias });
   assert.deepEqual(result.files, [join(alias, "main.py"), join(alias, "pyproject.toml")]);
 });
+
+test("module handlers inventory one shared implementation across sibling packages", t => {
+  const { root, write } = fixture(t);
+  write("handlers/__init__.py", "from . import common\n");
+  write("handlers/common/__init__.py", "");
+  write("handlers/common/ledger.py", "ANSWER = 42\n");
+  for (const group of ["invoices", "payments"]) {
+    write(`handlers/${group}/__init__.py`, "");
+    const entry = write(`handlers/${group}/apply.py`, "from ..common.ledger import ANSWER\n");
+    const result = pythonImportClosure(entry, {packageRoot: root, searchRoot: root, moduleName: `handlers.${group}.apply`});
+    assert.deepEqual(result.files.map(file => relative(root, file)), ["handlers/__init__.py", "handlers/common/__init__.py",
+      "handlers/common/ledger.py", `handlers/${group}/__init__.py`, `handlers/${group}/apply.py`, "pyproject.toml"]);
+    assert.throws(() => pythonImportClosure(entry, {packageRoot: root, searchRoot: root, moduleName: "handlers.wrong"}), {code: "HandlerImportInvalid"});
+  }
+});

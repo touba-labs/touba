@@ -23,6 +23,32 @@ def request(**values):
 
 
 class HandlerTests(unittest.TestCase):
+    def test_real_python_effect_error_keeps_cause_through_core_process_protocol(self):
+        with tempfile.TemporaryDirectory(prefix="touba-python-effect-error-") as folder:
+            handler = Path(folder) / "handler.py"
+            module = (ROOT / "runtime/touba-runtime/src/handler-protocol.mjs").as_uri()
+            for failure, expected in [("ToubaHandlerError('ExternalServiceDown', 'Database unavailable')", "ExternalServiceDown"),
+                                      ("RuntimeError('private database details')", "UnhandledHandlerError")]:
+                handler.write_text(f'''import asyncio
+from touba_sdk import ToubaHandlerError, define_tool
+def run(request, context):
+    raise {failure}
+asyncio.run(define_tool(tool_ref="tool:python/Read", run=run))
+''')
+                script = f'''import {{runProcessToolHandler}} from {json.dumps(module)};
+try {{ await runProcessToolHandler({{
+ toolRef:{json.dumps(TOOL)}, binding:{{handler:{{command:{json.dumps(sys.executable)},args:[{json.dumps(str(handler))}]}},
+ limits:{{timeout_ms:5000,max_payload_bytes:65536}}}},
+ request:{{protocol:"touba-tool-handler-v1",operation:"invoke",tool_ref:{json.dumps(TOOL)},call_id:"test",arguments:{{}},effect:{json.dumps(EFFECT)}}},
+ secretHandles:[],secretStore:null
+}}); throw new Error("unexpected success"); }} catch(error) {{ console.log(JSON.stringify({{code:error.code,details:error.details}})); }}'''
+                result = json.loads(subprocess.check_output([NODE, "--input-type=module", "-e", script]))
+                self.assertEqual(result["code"], "ToolHandlerReportedError")
+                self.assertEqual(result["details"]["handlerErrorCode"], expected)
+                self.assertEqual(result["details"]["receiptErrorCode"], "EffectReceiptInvalid")
+                self.assertEqual(result["details"]["state"], "unknown")
+                self.assertNotIn("private database details", json.dumps(result))
+
     def invoke(self, value, run, **options):
         handler = create_tool_handler(tool_ref=TOOL, run=run, input_signature=[{"name": "value", "type_ref": "builtin:Text"}], **options)
         return asyncio.run(handle_tool_request(json.dumps(value), TOOL, handler,

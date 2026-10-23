@@ -231,9 +231,56 @@ Touba contrôle ses chemins avant extraction.
 | `PackageIntegrityMismatch` | Comparer la copie au contenu approuvé ; restaurer une copie fiable, sans réécrire le lock pour cacher la dérive |
 | Aucun test déclaré | Ajouter de vrais tests ; `no_tests` n'est pas une validation métier |
 
+## 10. Soumettre un brouillon pour relecture
+
+Avec un service de publication compatible et un espace `acme` dont vous êtes
+mainteneur, revenez dans le dossier auteur `echo` :
+
+```sh
+touba package submit --registry https://registry.example.org/registry
+```
+
+Cette adresse est un exemple à remplacer par celle de votre service.
+Confirmez le code du terminal dans le navigateur. À la fin de la vérification,
+ouvrez le lien renvoyé : le README sert de présentation par défaut. Vous pouvez
+le conserver, téléverser un autre README ou rédiger des sections dans le service.
+Prévisualisez la page, puis publiez cette version.
+
+Pour reprendre ce brouillon sur une autre machine, utilisez son identifiant
+dans un dossier parent libre :
+
+```sh
+touba package checkout 11111111-1111-4111-8111-111111111111 --registry https://registry.example.org/registry
+cd echo
+touba package check
+touba package test
+touba package submit
+```
+
+Remplacez l’identifiant d’exemple par celui renvoyé lors de votre soumission.
+Touba crée `echo/` et mémorise le lien au brouillon ; les prochaines soumissions
+utilisent ce lien. La présentation et les images enregistrées dans le service
+sont conservées. Après publication, changez la version avant de soumettre
+du nouveau code. Ce parcours est identique avec les deux SDK.
+
 Vous avez maintenant un package testable, une archive réutilisable et une
 application qui l'importe réellement. Pour aller plus loin :
 [guide complet](../guides/creer-partager-package.md),
 [référence du manifeste](../reference/packages.md),
 [contexte de package et tool gouverné](skill-pack-script-tool.md),
 [handlers JavaScript](handlers-javascript.md) et [Python](handlers-python.md).
+
+## Variante GitHub Actions
+
+Avec une autorisation de soumission créée par le propriétaire de votre espace,
+le même package peut devenir un brouillon depuis le job CI :
+
+```sh
+touba package submit --ci 11111111-1111-4111-8111-111111111111 --registry https://registry.example.org/registry
+```
+
+Le job doit disposer de `id-token: write` et de l’environnement autorisé.
+Remplacez les valeurs d’exemple par celles du service. Ouvrez ensuite le lien
+renvoyé, vérifiez la présentation et publiez la version depuis l’interface.
+Le [guide](../guides/creer-partager-package.md#préparer-un-brouillon-depuis-github-actions)
+détaille le périmètre de cette autorisation.

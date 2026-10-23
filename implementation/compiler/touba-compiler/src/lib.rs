@@ -6,6 +6,7 @@ mod air_json;
 mod ast_to_air;
 mod cst_to_ast;
 mod declaration_lowering;
+mod field_contracts;
 mod graph_lowering;
 mod parser;
 mod project_air;

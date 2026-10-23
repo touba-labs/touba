@@ -2,19 +2,25 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { publishPackage } from "./package-publish.mjs";
+import { publishRemotePackage } from "./package-publish-remote.mjs";
+import { checkoutPackageDraft, submitPackageDraft } from "./package-drafts.mjs";
+import { submitCiPackage } from "./package-ci.mjs";
 import { authorIdentity, newPackage, testPackage, versionPackage } from "./package-author.mjs";
-import { addPackage, addRegistryPackage, checkPackage, packPackage, removePackage } from "./packages.mjs";
+import { addPackage, addRegistryPackage, checkPackage, checkPackageArchive, packPackage, removePackage } from "./packages.mjs";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, packageError } from "./package-contract.mjs";
 import { findPackageWorkspace, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
 
 export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organization>] [--description <text>] [--publisher <text>] [--license <license>] [--version <version>] [--context] [--yes] [--root <parent>]
-       touba package check [directory] [--publishing] [--root <workspace>]
+       touba package check [directory|archive.tar.gz] [--publishing] [--root <workspace>]
        touba package test [directory] [--env <NAME> ...] [--root <author>]
        touba package version [patch|minor|major|version] [--root <author>]
        touba package pack [directory] [--output <archive.tar.gz>] [--root <author>]
-       touba package publish [directory] --registry <local-directory> [--root <author>]
+       touba package publish [directory] --registry <directory|URL> [--no-browser] [--root <author>]
+       touba package checkout <draft-id> --registry <URL> [--no-browser] [--root <parent>]
+       touba package submit [directory] [--registry <URL>] [--draft <draft-id>] [--no-browser] [--root <author>]
+       touba package submit [directory] --ci <authorization-id> --registry <URL> [--root <author>]
        touba package add <name|directory|archive.tar.gz> [--root <workspace>]
-       touba package add <name>@<version> --registry <directory|URL> [--allow-draft] [--root <workspace>]
+       touba package add <name>@<version> --registry <directory|URL> [--trust <keys.json>] [--allow-draft] [--root <workspace>]
        touba package list [--root <workspace>]
        touba package remove <name> [--root <workspace>]
 All commands support --json. new and version ask questions only in an interactive terminal.
@@ -22,7 +28,7 @@ Creation is offline. Package tests execute reviewed host code, never during chec
 
 function parse(args) {
   const [action, ...rest] = args;
-  const allowed = { new: ["context", "yes", "root", "org", "description", "publisher", "license", "version"], check: ["root", "publishing"], test: ["root", "env"], version: ["root"], pack: ["root", "output"], publish: ["root", "registry"], add: ["root", "registry", "version", "allow-draft"], list: ["root"], remove: ["root"] };
+  const allowed = { new: ["context", "yes", "root", "org", "description", "publisher", "license", "version"], check: ["root", "publishing"], test: ["root", "env"], version: ["root"], pack: ["root", "output"], publish: ["root", "registry", "no-browser"], checkout: ["root", "registry", "no-browser"], submit: ["root", "registry", "draft", "no-browser", "ci"], add: ["root", "registry", "trust", "version", "allow-draft"], list: ["root"], remove: ["root"] };
   if (!Object.hasOwn(allowed, action)) throw packageError("PackageCommandInvalid", PACKAGE_USAGE);
   let target;
   const options = {};
@@ -35,7 +41,7 @@ function parse(args) {
     const key = arg.slice(2);
     if (key !== "json" && !allowed[action].includes(key)) throw packageError("PackageOptionInvalid", `option not valid for package ${action}: ${arg}`);
     if (Object.hasOwn(options, key) && key !== "env") throw packageError("PackageOptionInvalid", `duplicate option ${arg}`);
-    if (["json", "context", "yes", "publishing", "allow-draft"].includes(key)) options[key] = true;
+    if (["json", "context", "yes", "publishing", "allow-draft", "no-browser"].includes(key)) options[key] = true;
     else {
       if (!rest[i + 1] || rest[i + 1].startsWith("--")) throw packageError("PackageOptionInvalid", `missing value for ${arg}`);
       const value = rest[++i];
@@ -44,7 +50,7 @@ function parse(args) {
     }
   }
   if (action === "list" && target !== undefined) throw packageError("PackageOptionInvalid", "package list does not take a target");
-  if (["add", "remove"].includes(action) && !target) throw packageError("PackageTargetRequired", `package ${action} needs a target`);
+  if (["add", "remove", "checkout"].includes(action) && !target) throw packageError("PackageTargetRequired", `package ${action} needs a target`);
   if (action === "add" && target.includes("@") && !target.includes("/") && !target.includes("\\")) {
     if (options.version || target.split("@").length !== 2 || target.endsWith("@")) throw packageError("PackageOptionInvalid", "specify exactly one nonempty version");
     [target, options.version] = target.split("@");
@@ -97,6 +103,8 @@ export async function packageCommand(args) {
   const { action, target, options } = parse(args);
   let report;
   if (action === "new") report = await create(target, options);
+  else if (action === "checkout") report = await checkoutPackageDraft(target, options);
+  else if (action === "submit") report = await (options.ci ? submitCiPackage : submitPackageDraft)(target, options);
   else if (action === "version") {
     const root = findPackageWorkspace(options.root, { author: true });
     let next = target;
@@ -115,7 +123,7 @@ export async function packageCommand(args) {
       packages.push({ name: checked.package, version: checked.version, installed: lock.packages.some(pkg => pkg.name === checked.package) });
     }
     report = { status: "success", command: `package ${action}`, packages, notes: packages.length ? [] : ["No registered packages."] };
-  } else report = await ({ check: checkPackage, test: testPackage, pack: packPackage, publish: publishPackage, add: options.registry ? addRegistryPackage : addPackage, remove: removePackage })[action](target, options);
+  } else report = await ({ check: target?.endsWith(".tar.gz") ? checkPackageArchive : checkPackage, test: testPackage, pack: packPackage, publish: /^https?:\/\//.test(options.registry ?? '') ? publishRemotePackage : publishPackage, add: options.registry ? addRegistryPackage : addPackage, remove: removePackage })[action](target, options);
   delete report.closure;
   const text = options.json ? JSON.stringify(report, null, 2) : [report.command + ": " + report.status, report.path ?? report.output ?? report.package ?? "", ...(report.previous ? [`${report.previous} -> ${report.version}`] : []), ...(report.notes ?? []), ...(Array.isArray(report.packages) ? report.packages.map(pkg => `${pkg.name}@${pkg.version}`) : []), report.stdout ?? "", report.stderr ?? ""].filter(Boolean).join("\n");
   return { text, exitCode: report.exitCode ?? (report.status === "success" ? 0 : 1) };

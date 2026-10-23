@@ -22,7 +22,10 @@ def inspect(options):
     root = original_root.resolve(strict=True)
     entry = root / Path(options["entrypoint"]).absolute().relative_to(original_root)
     # Python executes a script with its directory as the first import location.
-    search_root = entry.parent
+    module_name = options.get("module_name")
+    search_root = root / Path(options["search_root"]).absolute().relative_to(original_root) if module_name else entry.parent
+    if not search_root.resolve(strict=True).is_relative_to(root):
+        fail("HandlerImportInvalid", "Python module search root escapes the handler package.")
     files, visited, total = set(), set(), 0
     max_files, max_bytes = options["max_files"], options["max_bytes"]
     if type(max_files) is not int or type(max_bytes) is not int or min(max_files, max_bytes) <= 0:
@@ -147,7 +150,17 @@ def inspect(options):
                         if item.name != "*" and ((target / (item.name + ".py")).exists() or (target / item.name).is_dir()):
                             resolve_module(parts + [item.name], required=True)
 
-    visit(entry, [])
+    if module_name:
+        if not isinstance(module_name, str) or not all(part.isidentifier() for part in module_name.split(".")):
+            fail("HandlerImportInvalid", "Invalid Python module name.")
+        parts = module_name.split(".")
+        if search_root.joinpath(*parts).with_suffix(".py") != entry:
+            fail("HandlerImportInvalid", "Python module name does not match its entrypoint.")
+        for count in range(1, len(parts)):
+            visit(search_root.joinpath(*parts[:count], "__init__.py"), parts[:count])
+        visit(entry, parts[:-1])
+    else:
+        visit(entry, [])
     return {"files": sorted(str(original_root / Path(file).relative_to(root)) for file in files), "name": project["name"], "version": project["version"], "has_dependencies": bool(dependencies or any(optional.values()))}
 
 

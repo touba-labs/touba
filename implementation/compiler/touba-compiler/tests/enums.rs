@@ -12,10 +12,19 @@ fn text_accepts_imported_enums_but_not_wrapped_or_structured_values() {
     ]);
     assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
     for declared in ["List of Priority", "Optional of Priority"] {
-        let source = format!("module label\nenum Priority\n    high\nfunction Label\n    takes value as {declared}\n    gives Text\n    do\n        give text(value)\n");
+        let source = format!(
+            "module label\nenum Priority\n    high\nfunction Label\n    takes value as {declared}\n    gives Text\n    do\n        give text(value)\n"
+        );
         let result = compile_source_to_air("label.tb", &source);
         assert!(result.document.is_none());
-        assert!(result.diagnostics.iter().any(|d| d.code == AirDiagnosticCode::InvalidExpressionOperandType), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == AirDiagnosticCode::InvalidExpressionOperandType),
+            "{:?}",
+            result.diagnostics
+        );
     }
 }
 

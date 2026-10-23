@@ -108,8 +108,56 @@ fn linked_limits_take_minimum_without_importing_unrelated_constraints() {
     );
     assert_eq!(result.diagnostics, []);
     let limits = result.document.unwrap().budgets.unwrap().run;
-    assert_eq!(limits["max_steps"].value, 25);
-    assert_eq!(limits["max_steps"].source_ref.source_id, "common.tb");
+    assert_eq!(limits["max_steps"].value, 100);
+    assert_eq!(limits["max_steps"].source_ref.source_id, "main.tb");
     assert_eq!(limits["max_tool_calls"].source_ref.source_id, "main.tb");
-    assert_eq!(limits["max_provider_calls"].value, 3);
+    assert!(!limits.contains_key("max_provider_calls"));
+}
+
+#[test]
+fn executable_imports_keep_their_limits_but_type_only_dependencies_do_not() {
+    let entry = "module job.main\nimport skill Read from job.worker\nlimits run\n    max_steps as 100\nstrategy Run\n    gives Text\n    uses Read\n    do\n        Read\n            into answer\n        give answer\n";
+    let worker = "module job.worker\nimport type Request from job.types\nlimits run\n    max_steps as 25\nskill Read\n    gives Text\n    do\n        give \"ready\"\n";
+    let types = "module job.types\nimport tool Dangerous from job.unrelated\nlimits run\n    max_steps as 1\ntype Request\n    text is Text\n";
+    let unrelated = "module job.unrelated\nlimits run\n    max_provider_calls as 1\ntool Dangerous\n    gives Text\n";
+    let sources = vec![
+        ("main.tb".into(), entry.into()),
+        ("worker.tb".into(), worker.into()),
+        ("types.tb".into(), types.into()),
+        ("unrelated.tb".into(), unrelated.into()),
+    ];
+    let result = compile_project_sources("main.tb", &sources);
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.unwrap();
+    assert!(document.definitions.tools.is_empty());
+    let limits = document.budgets.unwrap().run;
+    assert_eq!(limits["max_steps"].value, 25);
+    assert_eq!(limits["max_steps"].source_ref.source_id, "worker.tb");
+    assert!(!limits.contains_key("max_provider_calls"));
+}
+
+#[test]
+fn selected_record_constructors_retain_their_imported_field_constants() {
+    let entry = "module job.main\nimport function Draft from job.records\nfunction Run\n    gives Text\n    do\n        give \"ready\"\n";
+    let records = "module job.records\nimport define Label from job.labels\ntype Item\n    label is Text\nfunction Draft\n    gives Item\n    do\n        give record Item { label as Label }\n";
+    let labels =
+        "module job.labels\nlimits run\n    max_steps as 1\ndefine Label as Text = \"label\"\n";
+    let result = compile_project_sources(
+        "main.tb",
+        &[
+            ("main.tb".into(), entry.into()),
+            ("records.tb".into(), records.into()),
+            ("labels.tb".into(), labels.into()),
+        ],
+    );
+    assert_eq!(result.diagnostics, []);
+    let document = result.document.unwrap();
+    assert!(
+        document
+            .definitions
+            .constants
+            .iter()
+            .any(|constant| constant.id == "constant:job.labels/Label")
+    );
+    assert!(document.budgets.is_none());
 }

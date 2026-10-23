@@ -405,10 +405,13 @@ test("refuses dispatch after cancellation with stable trace payload", () => {
       && error.details.authoritySource === "host",
   );
 
-  assert.deepEqual(context.trace.document().events[0], {
+  const event = context.trace.document().events[0];
+  assert.equal(new Date(event.observed_at).toISOString(), event.observed_at);
+  assert.deepEqual(event, {
     event_id: "event:run-control-test:1",
     run_id: "run-control-test",
     sequence_index: 0,
+    observed_at: event.observed_at,
     kind: "dispatch_refused_cancelled",
     air_ref: { node_id: "n1" },
     payload: {

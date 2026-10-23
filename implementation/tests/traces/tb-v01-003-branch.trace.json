@@ -13,6 +13,7 @@
       "event_id": "event:run-1:1",
       "run_id": "run-1",
       "sequence_index": 0,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
       "payload": {
         "entry_ref": "strategy:examples.branch/RunReview",
@@ -23,6 +24,7 @@
       "event_id": "event:run-1:2",
       "run_id": "run-1",
       "sequence_index": 1,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.branch/RunReview",
@@ -33,6 +35,7 @@
       "event_id": "event:run-1:3",
       "run_id": "run-1",
       "sequence_index": 2,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.branch/RunReview",
@@ -58,6 +61,7 @@
       "event_id": "event:run-1:4",
       "run_id": "run-1",
       "sequence_index": 3,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_invocation_authorized",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.branch/RunReview",
@@ -83,6 +87,7 @@
       "event_id": "event:run-1:5",
       "run_id": "run-1",
       "sequence_index": 4,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capabilities_listed",
       "payload": {
         "agent_ref": "agent:examples.branch/Reviewer",
@@ -144,6 +149,7 @@
       "event_id": "event:run-1:6",
       "run_id": "run-1",
       "sequence_index": 5,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_decision_recorded",
       "payload": {
         "agent_ref": "agent:examples.branch/Reviewer",
@@ -156,6 +162,7 @@
       "event_id": "event:run-1:7",
       "run_id": "run-1",
       "sequence_index": 6,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capability_selected",
       "payload": {
         "agent_ref": "agent:examples.branch/Reviewer",
@@ -169,6 +176,7 @@
       "event_id": "event:run-1:8",
       "run_id": "run-1",
       "sequence_index": 7,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.branch/ReviewDraft",
@@ -179,6 +187,7 @@
       "event_id": "event:run-1:9",
       "run_id": "run-1",
       "sequence_index": 8,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.branch/ReviewDraft",
@@ -204,6 +213,7 @@
       "event_id": "event:run-1:10",
       "run_id": "run-1",
       "sequence_index": 9,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:function:examples.branch/IsAcceptable",
@@ -214,6 +224,7 @@
       "event_id": "event:run-1:11",
       "run_id": "run-1",
       "sequence_index": 10,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:function:examples.branch/IsAcceptable",
@@ -228,6 +239,7 @@
       "event_id": "event:run-1:12",
       "run_id": "run-1",
       "sequence_index": 11,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.branch/ReviewDraft",
@@ -253,6 +265,7 @@
       "event_id": "event:run-1:13",
       "run_id": "run-1",
       "sequence_index": 12,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "branch_evaluated",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.branch/ReviewDraft",
@@ -278,6 +291,7 @@
       "event_id": "event:run-1:14",
       "run_id": "run-1",
       "sequence_index": 13,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.branch/ReviewDraft",
@@ -292,6 +306,7 @@
       "event_id": "event:run-1:15",
       "run_id": "run-1",
       "sequence_index": 14,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.branch/RunReview",
@@ -316,6 +331,7 @@
       "event_id": "event:run-1:16",
       "run_id": "run-1",
       "sequence_index": 15,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.branch/RunReview",
@@ -330,6 +346,7 @@
       "event_id": "event:run-1:17",
       "run_id": "run-1",
       "sequence_index": 16,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",
       "payload": {
         "status": "success",

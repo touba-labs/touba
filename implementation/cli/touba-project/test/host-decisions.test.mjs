@@ -5,8 +5,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyHostDecisions } from "../src/host-decisions.mjs";
+import { applyHostDecisions, readHostDecisionsFile } from "../src/host-decisions.mjs";
 import { prepareProject } from "../src/project.mjs";
+import { inspectExplicitArtifacts } from "../../touba-inspect/src/inspect.mjs";
 
 const tool = "tool:orders.review/ReadOrder";
 const agent = "agent:orders.review/Reviewer";
@@ -44,6 +45,150 @@ function project(t) {
 }
 const manifestAt = root => join(root, ".touba/build/dev/touba.manifest.json");
 const readManifest = root => JSON.parse(readFileSync(manifestAt(root), "utf8"));
+
+test("obsolete bindings require an explicit removal and active resources cannot be removed", async t => {
+  const root = project(t);
+  const initial = await prepareProject({ root, mode: "write", hostDecisions: decisions });
+  assert.equal(initial.status, "success", JSON.stringify(initial.diagnostics));
+  const before = readFileSync(manifestAt(root), "utf8");
+  writeFileSync(join(root, "src/orders/review.tb"), "module orders.review\nstrategy Review\n    takes request as Text\n    gives Text\n    do\n        give request\n");
+  assert.equal((await prepareProject({ root, mode: "write" })).status, "error");
+  assert.equal(readFileSync(manifestAt(root), "utf8"), before);
+  const removal = { remove_bindings: [tool] };
+  const plan = await prepareProject({ root, mode: "plan", hostDecisions: removal });
+  assert.equal(plan.diagnostics.some(d => d.severity === "error"), false, JSON.stringify(plan.diagnostics));
+  assert.ok(plan.actions.some(action => action.field === "remove_binding"));
+  assert.equal(readFileSync(manifestAt(root), "utf8"), before);
+  const written = await prepareProject({ root, mode: "write", hostDecisions: removal });
+  assert.equal(written.status, "success", JSON.stringify(written.diagnostics));
+  assert.deepEqual(readManifest(root).bindings, {});
+  const absent = { bindings: {} };
+  assert.deepEqual(applyHostDecisions(absent, removal, absent).changes, []);
+  assert.throws(() => applyHostDecisions({ bindings: { [tool]: {} } }, removal, { bindings: { [tool]: {} } }), /HostDecisionRemovalConflict/);
+  assert.throws(() => applyHostDecisions(absent, { remove_bindings: [tool, tool] }, absent), /HostDecisionRemovalInvalid/);
+});
+
+test("module decisions grant only the explicit intersection and exact bindings can revoke", () => {
+  const second = "tool:orders.review/Pure";
+  const foreign = "tool:orders.review_extra/Write";
+  const required = { bindings: { [tool]: { grants: ["network", "secret_read"], secrets: ["TOKEN"] },
+    [second]: { grants: [], secrets: [] }, [foreign]: { grants: ["network"] } } };
+  const current = { bindings: Object.fromEntries(Object.keys(required.bindings).map(ref => [ref, {grants: [], secrets: []}])) };
+  const patch = { modules: { "orders.review": {grants: ["network"], secrets: ["TOKEN"], timeout_ms: 9000} },
+    bindings: {[tool]: {grants: []}} };
+  const result = applyHostDecisions(current, patch, required);
+  assert.deepEqual(result.manifest.bindings[tool].grants, []);
+  assert.deepEqual(result.manifest.bindings[second].grants, []);
+  assert.deepEqual(result.manifest.bindings[second].secrets, []);
+  assert.equal(result.manifest.bindings[second].timeout_ms, 9000);
+  assert.equal(result.manifest.bindings[foreign].timeout_ms, undefined);
+  assert.equal(current.bindings[second].timeout_ms, undefined);
+  for (const modules of [{"orders": {}}, {"orders.review": {grants: ["filesystem_write"]}},
+    {"orders.review": {effect_contract: {kind: "none"}}}, {"orders.review": {grants: ["network", "network"]}}]) {
+    assert.throws(() => applyHostDecisions(current, {modules}, required), /HostDecision/);
+  }
+  assert.throws(() => applyHostDecisions(current, patch, required, new Set([second])), /HostDecisionFragmentConflict/);
+});
+
+test("explicit process handlers are atomic, validated and independent of grants", () => {
+  const required = { bindings: { [tool]: { grants: ["network"], secrets: [] } } };
+  const current = { bindings: { [tool]: { grants: [], handler: { kind: "process", command: "old", args: [] } } } };
+  const handler = { kind: "process", command: "./.venv/bin/python", args: ["-B", "-m", "handlers.review"], cwd: "../../.." };
+  const decisions = { bindings: { [tool]: { handler } } };
+  const selected = applyHostDecisions(current, decisions, required);
+  assert.deepEqual(selected.manifest.bindings[tool].handler, handler);
+  assert.deepEqual(selected.manifest.bindings[tool].grants, []);
+  assert.equal(current.bindings[tool].handler.command, "old");
+  assert.equal(applyHostDecisions(selected.manifest, decisions, required).changes.length, 0);
+  for (const bad of [null, [], { ...handler, kind: "shell" }, { ...handler, command: " " },
+    { ...handler, command: "python\0" }, { ...handler, args: [1] }, { ...handler, args: ["x\0"] },
+    { ...handler, cwd: "" }, { ...handler, env: { SECRET: "not allowed" } }]) {
+    assert.throws(() => applyHostDecisions(current, { bindings: { [tool]: { handler: bad } } }, required), /HostDecision/);
+  }
+  assert.throws(() => applyHostDecisions(current, { bindings: { [tool]: { handler, package_handler: "example.python" } } }, required), /HostDecisionHandlerConflict/);
+  assert.throws(() => applyHostDecisions(current, decisions, required, new Set([tool])), /HostDecisionFragmentConflict/);
+});
+
+test("prepare persists an explicit process command without creating an unused stub", async t => {
+  const root = project(t);
+  const handler = { kind: "process", command: "./.venv/bin/python", args: ["-B", "-m", "handlers.review"], cwd: "../../.." };
+  const selected = structuredClone(decisions);
+  selected.bindings[tool].handler = handler;
+  const result = await prepareProject({ root, mode: "write", hostDecisions: selected });
+  assert.notEqual(result.status, "error", JSON.stringify(result.diagnostics));
+  assert.deepEqual(readManifest(root).bindings[tool].handler, handler);
+  assert.equal(result.actions.some(action => action.kind === "create_handler_stub"), false);
+  assert.equal(existsSync(join(root, "handlers/orders/review/read_order.handler.mjs")), false);
+});
+
+test("an explicit python -m handler runs in a spaced project path without bytecode", async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba module handler "));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, "src/examples"), { recursive: true });
+  writeFileSync(join(root, "src/examples/module_handler.tb"), `module examples.module_handler
+tool Echo
+    takes value as Text
+    gives Text
+`);
+  mkdirSync(join(root, "handlers"));
+  writeFileSync(join(root, "handlers/__init__.py"), "");
+  writeFileSync(join(root, "handlers/helper.py"), "def echo(value):\n    return value\n");
+  writeFileSync(join(root, "handlers/echo.py"), `import json, sys
+from .helper import echo
+assert sys.dont_write_bytecode
+request = json.load(sys.stdin)
+print(json.dumps({"ok": True, "value": echo(request["arguments"]["value"])}))
+`);
+  const python = process.env.TOUBA_TEST_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
+  const resolved = spawnSync(python, ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" });
+  assert.equal(resolved.status, 0, resolved.stderr);
+  const prepared = await prepareProject({
+    root, mode: "write", entryRef: "tool:examples.module_handler/Echo",
+    hostDecisions: {
+      bindings: {
+        "tool:examples.module_handler/Echo": {
+          handler: { kind: "process", command: resolved.stdout.trim(), args: ["-m", "handlers.echo"], cwd: "../../.." },
+          effect_contract: { kind: "none" },
+        },
+      },
+    },
+  });
+  assert.equal(prepared.status, "success", JSON.stringify(prepared.diagnostics));
+  const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
+  const run = spawnSync(process.execPath, [cli, "run", "--project", root, "--inputs-json", '{"value":"module works"}', "--output", "json"], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.equal(JSON.parse(run.stdout).result, "module works");
+  assert.equal(existsSync(join(root, "handlers/__pycache__")), false);
+  const inspection = inspectExplicitArtifacts({
+    air: join(root, ".touba/build/dev/air/examples/module_handler.air.json"),
+    run_plan: join(root, ".touba/build/dev/touba.run-plan.json"),
+  });
+  assert.equal(inspection.run_plan.entry_ref, "tool:examples.module_handler/Echo");
+  assert.doesNotMatch(JSON.stringify(inspection), /RunPlanEntryUnknown/);
+});
+
+test("host decision files are bounded JSON objects and resolve against the project root", t => {
+  const root = project(t);
+  const path = join(root, "host-decisions.json");
+  const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
+  const args = [cli, "prepare", "--host-decisions", "host-decisions.json", "--root", root, "--mode", "write", "--json"];
+  for (const input of ["[]", "null", '{"secret":"do-not-echo', " ".repeat(65537)]) {
+    writeFileSync(path, input);
+    assert.throws(() => readHostDecisionsFile(path), /HostDecisionFileInvalid/);
+    const failed = spawnSync(process.execPath, args, {encoding: "utf8"});
+    assert.notEqual(failed.status, 0);
+    assert.equal((failed.stdout + failed.stderr).includes("do-not-echo"), false);
+    assert.equal(existsSync(manifestAt(root)), false);
+  }
+  assert.throws(() => readHostDecisionsFile(root), /HostDecisionFileInvalid/);
+  writeFileSync(path, JSON.stringify(decisions));
+  for (const extra of [["--host-decisions", path], ["--host-decisions-json", "{}"]]) {
+    assert.notEqual(spawnSync(process.execPath, [...args, ...extra], {encoding: "utf8"}).status, 0);
+  }
+  const result = spawnSync(process.execPath, args, {encoding: "utf8"});
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(readManifest(root).bindings[tool].grants, decisions.bindings[tool].grants);
+});
 
 test("unknown project keys fail explicitly without writing preparation artifacts", async t => {
   for (const extra of [{contexts: ["context.json"]}, {unknown_key: true}, {configuration: {contexts: [], typo: []}}]) {

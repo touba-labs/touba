@@ -58,6 +58,8 @@ class RunOptions(TypedDict, total=False):
     human_checkpoint_out: str
     human_resume_checkpoint: str
     human_approval_host: str
+    human_approval_authority_timeout_ms: int
+    trace_pure_functions: Literal["full", "calls"]
     human_decisions: dict[str, Any]
     parallel_checkpoint_out: str
     parallel_resume_checkpoint: str
@@ -104,9 +106,9 @@ JSON_OPTIONS = {
     ]
 }
 BOOL_OPTIONS = ("require_resource_bindings", "require_supply_chain_lock", "cancel_before_dispatch", "cancel_on_pause")
-INT_OPTIONS = ("agent_decision_provider_timeout_ms", "agent_decision_provider_max_retries", "max_agent_steps",
+INT_OPTIONS = ("human_approval_authority_timeout_ms", "agent_decision_provider_timeout_ms", "agent_decision_provider_max_retries", "max_agent_steps",
                "max_provider_calls", "skill_pack_discovery_max_bytes", "skill_pack_activation_max_bytes", "agent_model_input_max_bytes")
-MODES = {"agent_decision_provider_initial_mode": ("summary", "capabilities"),
+MODES = {"trace_pure_functions": ("full", "calls"), "agent_decision_provider_initial_mode": ("summary", "capabilities"),
          "agent_decision_provider_content_mode": ("inline", "opaque_refs")}
 
 
@@ -335,7 +337,9 @@ class AsyncToubaEngine:
             args = ["run", air, "--output", "json"]
             for key, flag in PATHS.items():
                 if key in options:
-                    args.extend(["--" + flag, self._path(options[key])])
+                    selected = _text(options[key])
+                    host = key in ("human_approval_host", "agent_decision_provider")
+                    args.extend(["--" + flag, selected if host and selected.startswith("pkg:") else self._path(selected)])
             for key, flag in JSON_OPTIONS.items():
                 if key in options:
                     if not isinstance(options[key], dict):
@@ -349,7 +353,8 @@ class AsyncToubaEngine:
             for key in INT_OPTIONS:
                 if key in options:
                     minimum = 0 if key.endswith("max_retries") else 1
-                    if type(options[key]) is not int or not minimum <= options[key] <= 9007199254740991:
+                    maximum = 60000 if key == "human_approval_authority_timeout_ms" else 9007199254740991
+                    if type(options[key]) is not int or not minimum <= options[key] <= maximum:
                         raise ToubaEngineError("options", "IntegerOptionInvalid")
                     args.extend(["--" + key.replace("_", "-"), str(options[key])])
             for key, allowed in MODES.items():

@@ -73,9 +73,61 @@ impl<'a> ProjectAirAssembler<'a> {
         }
 
         let mut assembled = entry.clone();
+        let mut collector = ProjectAirCollector::new(&self.modules, &mut assembled);
+        collector.collect_module_imports(entry);
+        collector.collect_graph_dependencies(entry);
+        collector.validate_agent_catalog_memory();
+        self.diagnostics.extend(collector.diagnostics);
+
         // A source limit constrains the whole linked run, never a fresh allowance
-        // for each imported call. Entry provenance wins ties, then lexical order.
-        let mut budget_modules: Vec<_> = visited_modules.iter().collect();
+        // for each imported call. Type/data imports do not import executable
+        // policy. Entry provenance wins ties, then lexical order.
+        let executable_refs: HashSet<_> = assembled
+            .definitions
+            .functions
+            .iter()
+            .map(|item| item.id.as_str())
+            .chain(
+                assembled
+                    .definitions
+                    .tools
+                    .iter()
+                    .map(|item| item.id.as_str()),
+            )
+            .chain(
+                assembled
+                    .definitions
+                    .skills
+                    .iter()
+                    .map(|item| item.id.as_str()),
+            )
+            .chain(
+                assembled
+                    .definitions
+                    .agents
+                    .iter()
+                    .map(|item| item.id.as_str()),
+            )
+            .chain(
+                assembled
+                    .definitions
+                    .strategies
+                    .iter()
+                    .map(|item| item.id.as_str()),
+            )
+            .collect();
+        let mut budget_modules: Vec<_> = visited_modules
+            .iter()
+            .filter(|name| {
+                name.as_str() == self.entry_module
+                    || executable_refs.iter().any(|reference| {
+                        reference
+                            .split_once(':')
+                            .and_then(|(_, rest)| rest.split_once('/'))
+                            .is_some_and(|(module, _)| module == name.as_str())
+                    })
+            })
+            .collect();
         budget_modules.sort();
         for name in budget_modules {
             if let Some(budgets) = &self.modules[name].budgets {
@@ -93,12 +145,6 @@ impl<'a> ProjectAirAssembler<'a> {
                 }
             }
         }
-        let mut collector = ProjectAirCollector::new(&self.modules, &mut assembled);
-        collector.collect_module_imports(entry);
-        collector.collect_graph_dependencies(entry);
-        collector.validate_agent_catalog_memory();
-        self.diagnostics.extend(collector.diagnostics);
-
         if self.diagnostics.is_empty() {
             self.finish(Some(assembled))
         } else {
@@ -255,9 +301,6 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
                 self.assembled.imports.push(import.clone());
             }
             self.include_ref(import.target_ref.as_str(), Some(&import.source_ref));
-            if let Some(source_module) = self.modules.get(&import.from_module).copied() {
-                self.collect_module_imports(source_module);
-            }
         }
     }
 
@@ -620,6 +663,9 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
             for operand in &expression.operands {
                 self.include_value_ref(operand, Some(&expression.source_ref));
             }
+            for field in &expression.record_fields {
+                self.include_value_ref(&field.value_ref, Some(&expression.source_ref));
+            }
         }
     }
 
@@ -668,7 +714,16 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
 
     fn collect_module_imports_by_name(&mut self, module_name: &str) {
         if let Some(document) = self.modules.get(module_name).copied() {
-            self.collect_module_imports(document);
+            // Dependencies have already been followed from the selected
+            // declaration's signature, graph and capability catalogue. Keep
+            // their provenance without pulling unrelated module imports in.
+            for import in &document.imports {
+                if self.seen_definitions.contains(&import.target_ref)
+                    && self.seen_imports.insert(import.target_ref.clone())
+                {
+                    self.assembled.imports.push(import.clone());
+                }
+            }
         }
     }
 

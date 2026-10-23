@@ -29,6 +29,14 @@ test("local CLI publication produces a valid draft registry, installable only wi
   assert.equal(JSON.parse(published.stdout).status, "success");
   const checked = await checkRegistry({ registry, sourceRoot: registry });
   assert.equal(checked.status, "success", JSON.stringify(checked));
+  const cliCheck = spawnSync(process.execPath, [cli, "registry", "check", "--registry", registry, "--source-root", registry, "--json"], { encoding: "utf8" });
+  assert.equal(cliCheck.status, 0, cliCheck.stderr);
+  assert.equal(JSON.parse(cliCheck.stdout).status, "success");
+  for (const args of [["registry", "--help"], ["registry", "check", "--help"]]) {
+    const help = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" });
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /touba registry check/u);
+  }
   const before = readFileSync(join(registry, "index.json"), "utf8");
   const index = JSON.parse(before);
   assert.equal(index.packages[0].status, "draft");

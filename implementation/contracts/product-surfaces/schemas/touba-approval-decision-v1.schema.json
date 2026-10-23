@@ -15,7 +15,8 @@
     "decision": { "enum": ["approve", "reject", "request_review"] },
     "decided_by": { "type": "string" },
     "decided_at": { "type": "string" },
-    "comment": { "type": ["string", "null"] },
-    "client_ref": { "type": "string" }
+    "comment": { "type": ["string", "null"], "maxLength": 4096 },
+    "client_ref": { "type": "string" },
+    "evidence_ref": { "type": "string", "minLength": 1, "maxLength": 512 }
   }
 }

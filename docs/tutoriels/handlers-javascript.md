@@ -1,5 +1,17 @@
 # SDK JavaScript : écrire un handler
 
+## Utiliser un handler installé par package
+
+Installez le SDK dans le projet consommateur avec
+`touba sdk install javascript`, puis ses dépendances métier avec le gestionnaire
+du projet. Sélectionnez le handler proposé dans les décisions hôte de
+`touba prepare`. L'application fournit les grants et les secrets nécessaires.
+
+Gardez tests et fichiers temporaires hors de la copie installée dans
+`packages/`, dont l'inventaire est vérifié à chaque préparation.
+Le [guide des packages](../guides/creer-partager-package.md) détaille
+l'installation et la sélection explicite des modules hôtes.
+
 Objectif : déclarer un tool dans Touba, générer son handler JavaScript et l’exécuter sous le contrôle du Core. Aucun modèle ni service externe n’est nécessaire.
 
 ## 1. Installer le SDK

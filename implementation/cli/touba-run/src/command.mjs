@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { openCliEffectJournal } from "./effect-journal.mjs";
 import { writeParallelCheckpoint } from "./parallel-checkpoint-file.mjs";
-import { loadPythonHost } from "./python-host.mjs";
+import { createHostModuleLoader } from "./host-modules.mjs";
 import { openLocalHandlerDiagnostics } from "../../../runtime/touba-runtime/src/handler-diagnostics.mjs";
 import { resolvedSecretEntries } from "../../../runtime/touba-runtime/src/secret-redaction.mjs";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
@@ -12,7 +12,6 @@ import { loadSkillPack } from "../../touba-project/src/skill-packs.mjs";
 import { verifyManifestPackages } from "../../touba-project/src/handler-packages.mjs";
 import { createInterface } from "node:readline/promises";
 import { setTimeout as sleep } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 import { TraceBuilder } from "../../../runtime/touba-runtime/src/trace-builder.mjs";
 import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { createAdmissionRefusalTrace } from "../../../runtime/touba-runtime/src/admission-trace.mjs";
@@ -96,11 +95,11 @@ class ResourceBindingsCliError extends Error {
 }
 
 const parsedArgs = parseArgs(args);
-const pythonHosts = [];
+const hostModules = createHostModuleLoader();
 
 // Flush this invocation's output before returning its explicit exit status.
 async function exitAfterFlush(code) {
-  for (const host of pythonHosts) host.close();
+  hostModules.close();
   await Promise.all([stdout, stderr].map(stream =>
     new Promise((resolve, reject) => stream.write("", error => error ? reject(error) : resolve()))));
   return code;
@@ -358,15 +357,8 @@ let agentDecisionProvider;
 let humanApprovalHost = {};
 if (parsedArgs.humanApprovalHostPath !== undefined) {
   try {
-    if (parsedArgs.humanApprovalHostPath.endsWith(".py")) {
-      const host = await loadPythonHost(parsedArgs.humanApprovalHostPath); pythonHosts.push(host);
-      if (!host.metadata.attest) throw new Error("host must export attest_human_approval");
-      humanApprovalHost = { humanApprovalAuthority: host.attest, humanApprovalInitiator: host.metadata.initiator_ref ?? undefined };
-    } else {
-      const host = await import(pathToFileURL(resolve(parsedArgs.humanApprovalHostPath)).href);
-      if (typeof host.attestHumanApproval !== "function") throw new Error("host must export attestHumanApproval");
-      humanApprovalHost = { humanApprovalAuthority: host.attestHumanApproval, humanApprovalInitiator: host.initiatorRef };
-    }
+    humanApprovalHost = await hostModules.approvalHost(parsedArgs.humanApprovalHostPath,
+      { projectRoot: parsedArgs.runPlanPath ? dirname(resolve(parsedArgs.runPlanPath)) : undefined });
   } catch {
     stderr.write("error: trusted human approval host module could not be loaded\n");
     return await refuseAdmission("HumanApprovalAuthorityUnavailable", "human_authority", 1);
@@ -374,7 +366,8 @@ if (parsedArgs.humanApprovalHostPath !== undefined) {
 }
 if (parsedArgs.agentDecisionProviderPath !== undefined) {
   try {
-    agentDecisionProvider = await loadAgentDecisionProviderFromPath(parsedArgs.agentDecisionProviderPath);
+    agentDecisionProvider = await hostModules.decisionProvider(parsedArgs.agentDecisionProviderPath,
+      { projectRoot: parsedArgs.runPlanPath ? dirname(resolve(parsedArgs.runPlanPath)) : undefined });
   } catch (e) {
     stderr.write(`error: invalid agent decision provider ${parsedArgs.agentDecisionProviderPath}: ${e.message}\n`);
     return await refuseAdmission("DecisionProviderInvalid", "provider", 1);
@@ -450,6 +443,8 @@ try {
     secretStore,
     humanApprovalDecisions,
     ...humanApprovalHost,
+    humanApprovalAuthorityTimeoutMs: parsedArgs.humanApprovalAuthorityTimeoutMs,
+    tracePureFunctions: parsedArgs.tracePureFunctions,
     userInputs,
     userInputProvider: interactiveUserInputSession?.provider,
     agentDecisions,
@@ -609,7 +604,16 @@ function applyRunPlan(parsed, runPlan) {
     throw new RunPlanCliError("RunPlanSchemaMismatch", "--run-plan cannot be combined with a positional AIR path");
   }
   const plan = runPlan.document;
-  const airPath = resolveRunPlanPath(runPlan, plan.air);
+  const selectedRef = parsed.entryRef ?? plan.entry_ref;
+  const entries = plan.entries ?? [{ entry_ref: plan.entry_ref, air: plan.air }];
+  if (!Array.isArray(entries) || entries.length > 1024 || entries.some(entry =>
+    !entry || typeof entry.entry_ref !== "string" || typeof entry.air !== "string" || !entry.air.trim())
+    || new Set(entries.map(entry => entry.entry_ref)).size !== entries.length) {
+    throw new RunPlanCliError("RunPlanSchemaMismatch", "run plan entries must be unique explicit AIR references and paths");
+  }
+  const selected = entries.find(entry => entry.entry_ref === selectedRef);
+  if (!selected) throw new RunPlanCliError("RunPlanEntryUnknown", "requested entry is not declared by the prepared run plan");
+  const airPath = resolveRunPlanPath(runPlan, selected.air);
   if (!existsSync(airPath)) {
     throw new RunPlanCliError("RunPlanAirMissing", `AIR file does not exist: ${airPath}`);
   }
@@ -829,7 +833,7 @@ function airEntryExists(document, entryRef) {
   if (typeof entryRef !== "string") {
     return false;
   }
-  for (const collection of ["functions", "skills", "agents", "strategies"]) {
+  for (const collection of ["functions", "skills", "agents", "strategies", "tools"]) {
     if ((document.definitions?.[collection] ?? []).some((item) => item.id === entryRef)) {
       return true;
     }
@@ -1055,33 +1059,6 @@ function loadSecretsFromPath(secretsPath) {
   });
 }
 
-async function loadAgentDecisionProviderFromPath(providerPath) {
-  if (providerPath.endsWith(".py")) {
-    const host = await loadPythonHost(providerPath); pythonHosts.push(host);
-    if (!host.metadata.decide) throw new Error("host must export decide_agent_capability or decide");
-    return host.metadata.provider_metadata == null ? host.decide : { decide: host.decide, metadata: host.metadata.provider_metadata };
-  }
-  const moduleUrl = pathToFileURL(resolve(providerPath)).href;
-  const providerModule = await import(moduleUrl);
-  const provider =
-    providerModule.decideAgentCapability
-    ?? providerModule.decide
-    ?? providerModule.default;
-  if (typeof provider !== "function") {
-    throw new Error("provider module must export decideAgentCapability, decide, or a default function");
-  }
-  const metadata = providerModule.provider_metadata
-    ?? providerModule.providerMetadata
-    ?? provider.metadata
-    ?? providerModule.default?.metadata;
-  return metadata === undefined
-    ? provider
-    : {
-      decide: provider,
-      metadata,
-    };
-}
-
 function parseArgs(rawArgs) {
   const parsed = {
     runPlanPath: undefined,
@@ -1199,6 +1176,16 @@ function parseArgs(rawArgs) {
       parsed.inputsJson = rawArgs[index];
     } else if (arg.startsWith("--inputs-json=")) {
       parsed.inputsJson = arg.slice("--inputs-json=".length);
+    } else if (arg === "--trace-pure-functions" || arg.startsWith("--trace-pure-functions=")) {
+      const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : rawArgs[++index];
+      if (!["full", "calls"].includes(value)) return { ...parsed, error: "--trace-pure-functions must be full or calls" };
+      parsed.tracePureFunctions = value;
+    } else if (arg === "--human-approval-authority-timeout-ms" || arg.startsWith("--human-approval-authority-timeout-ms=")) {
+      const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : rawArgs[++index];
+      if (typeof value !== "string" || !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 60000) {
+        return { ...parsed, error: "--human-approval-authority-timeout-ms must be an integer between 1 and 60000" };
+      }
+      parsed.humanApprovalAuthorityTimeoutMs = Number(value);
     } else if (arg === "--human-approval-host") {
       index += 1;
       if (index >= rawArgs.length || rawArgs[index].startsWith("--")) return { ...parsed, error: "--human-approval-host requires a trusted module path" };
@@ -1754,6 +1741,8 @@ function parseArgs(rawArgs) {
 }
 
 function printUsage() {
+  stderr.write("--trace-pure-functions full|calls selects pure function detail (default full).\n");
+  stderr.write("--human-approval-authority-timeout-ms <1..60000> bounds each identity attestation call (default 5000 ms).\n");
   stderr.write("Local development only: --handler-diagnostics <new-private-file.jsonl> requires a dev run plan on POSIX; unavailable in production.\n");
   stderr.write(
     "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.json>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-approval-host <host.mjs>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path>] [--human-resume-checkpoint <path>] [--parallel-checkpoint-out <path>] [--parallel-resume-checkpoint <path>] [--parallel-limits-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",

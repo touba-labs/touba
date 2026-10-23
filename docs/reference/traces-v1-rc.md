@@ -4,6 +4,22 @@ sidebar_position: 4
 
 # Référence traces
 
+## Choisir le détail des fonctions pures
+
+`--trace-pure-functions full` conserve le détail complet, actif par défaut.
+Avec `calls`, les branches, boucles, bindings et scopes réussis internes aux
+fonctions pures sont omis. Les appels, retours, erreurs, budgets et événements
+de gouvernance restent enregistrés. Le scope de la fonction d'entrée est conservé.
+
+```sh
+touba run --project . --trace-pure-functions calls --trace-out trace.json
+```
+
+La trace indique `run.pure_function_detail: "calls"`. Le filtrage précède la
+numérotation, les observateurs et la persistance : tous reçoivent la même trace.
+La CLI `serve` et les deux SDK exposent aussi ce réglage.
+
+
 ## Provenance et décisions
 
 Les nouveaux AIR produits par la CLI utilisent des identités de source relatives à une racine commune aux fichiers compilés, sans enregistrer le chemin absolu de cette racine dans l’AIR. Les traces héritent de ces identités. Le résultat technique de compilation `--json` fournit séparément `source_root` à l’éditeur ; les diagnostics locaux gardent leurs chemins pour ouvrir le fichier. Avant de partager un artefact, vérifiez aussi les données et métadonnées applicatives : ce changement n’est pas un anonymiseur général.
@@ -205,3 +221,14 @@ Les événements descendants portent `group_id`, `branch_id` et
 local des événements ne constitue pas un ordre total des systèmes externes.
 Les résultats et journaux de continuation privés ne sont pas des payloads
 publics de trace. Les messages `show` sont restitués dans l'ordre d'entrée.
+
+## Temps d’observation
+
+Chaque nouvel événement natif contient `observed_at`, au format UTC
+`YYYY-MM-DDTHH:mm:ss.sssZ`. L’horodatage fait partie du contenu couvert par
+les empreintes de trace et de checkpoint. Une reprise conserve les événements
+déjà enregistrés et horodate les nouveaux à leur exécution.
+L’ordre causal reste donné par `sequence_index` ; l’heure provient de l’hôte.
+
+L’export OpenTelemetry reprend ces instants. Pour une trace antérieure sans
+horodatage, l’export indique explicitement sa projection temporelle synthétique.

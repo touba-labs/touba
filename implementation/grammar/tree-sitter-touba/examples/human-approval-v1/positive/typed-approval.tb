@@ -1,0 +1,66 @@
+module approval_result
+
+tool Commit
+    gives Text
+
+tool Notify
+    takes receipt as Approval
+    gives Text
+
+function Comment
+    takes receipt as Approval
+    gives Optional of Text
+    do
+        give receipt.comment
+
+strategy Decide
+    takes dossier as Text
+    gives Text
+    do
+        human.approve
+            with context as dossier
+            into receipt
+            on rejected
+                Notify
+                    with receipt as receipt
+                    into notice
+                give receipt.decision
+            on expired
+                give receipt.decision
+        Commit
+            into committed
+        give receipt.decision
+
+strategy Receipt
+    takes dossier as Text
+    gives Approval
+    do
+        human.approve
+            with context as dossier
+            with role as "finance"
+            into receipt
+        give receipt
+
+strategy Parallel
+    takes dossiers as List of Text
+    gives List of Text
+    do
+        parallel Decide
+            each dossier in dossiers
+            with dossier as dossier
+            max_concurrency 2
+            max_items 10
+            into results
+        give results
+
+strategy SuccessiveReceipts
+    takes dossier as Text
+    gives Approval
+    do
+        human.approve
+            with context as dossier
+            into first
+        human.approve
+            with context as dossier
+            into second
+        give first

@@ -19,7 +19,8 @@ const forbidden = [
   { pattern: /cargo\s+run\s+-p/, reason: "commande de monorepo interne" },
   { pattern: /node\s+cli\//, reason: "commande de chemin interne" },
   { pattern: /\/Users\//, reason: "chemin machine local" },
-  { pattern: /\bd[ée]p[ôo]t\b/i, reason: "vocabulaire de depot interne" },
+  // Users configure their own GitHub repository for verified package drafts.
+  { pattern: /\bd[ée]p[ôo]t\b(?! GitHub\b)/i, reason: "vocabulaire de depot interne" },
   { pattern: /monorepo/i, reason: "vocabulaire de depot interne" },
   { pattern: /organisation interne/i, reason: "mention de structure interne" },
   { pattern: /chemins internes/i, reason: "mention de chemins internes" },

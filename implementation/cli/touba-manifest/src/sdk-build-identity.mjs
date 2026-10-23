@@ -7,7 +7,12 @@ import { join } from "node:path";
 export function sdkBuildIdentity(root) {
   const hash = createHash("sha256").update("touba-sdk-source-v1\0");
   for (const relative of sdkSourceFiles(root)) {
-    const bytes = readFileSync(join(root, relative));
+    let bytes = readFileSync(join(root, relative));
+    // Compare workspace and installed SDKs using the exact contract bytes
+    // materialized by packageSdk, rather than the workspace forwarding module.
+    if (relative === "src/value-contracts.mjs" && bytes.toString("utf8").trim() === 'export * from "../../../contracts/machine/value-contracts.mjs";') {
+      bytes = readFileSync(join(root, "../../contracts/machine/value-contracts.mjs"));
+    }
     hash.update(`${relative}\0${bytes.length}\0`).update(bytes);
   }
   return `sha256:${hash.digest("hex")}`;

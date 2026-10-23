@@ -20,6 +20,8 @@ test("unified serve CLI loads a provider and documented identity and routes trig
     await addPackage(context.path, { root });
     const configPath = join(root, "touba.project.json");
     const config = JSON.parse(readFileSync(configPath));
+    config.entry = "strategy:demo.server/Run";
+    config.entrypoints = ["trigger:demo.server/Hourly"];
     config.configuration = { ...config.configuration, contexts: [{ package: "acme.review", context: "review", active: true }] };
     writeFileSync(configPath, JSON.stringify(config));
     mkdirSync(join(root, "src/demo"), { recursive: true });

@@ -458,12 +458,15 @@ export function renderHoverHumanApproval({ graph, node }) {
   pushIfPresent(lines, "graph_ref", graph?.id);
   pushList(lines, "context_refs", node.context_refs);
   pushIfPresent(lines, "decision_binding", node.result_binding);
-  for (const key of ["role", "timeout_ms", "distinct_from"]) {
+  for (const key of ["role", "timeout_ms", "distinct_from", "exclude_signers"]) {
     const value = node.approval_policy?.[key];
     pushIfPresent(lines, key, value === undefined ? undefined : String(value));
   }
   if (graph?.edges?.some(edge => edge.from_node_id === node.id && edge.role === "expired")) {
     lines.push("on expired: explicit source branch");
+  }
+  if (graph?.edges?.some(edge => edge.from_node_id === node.id && edge.role === "rejected")) {
+    lines.push("on rejected: explicit source branch");
   }
   return lines.join("\n");
 }
@@ -825,9 +828,20 @@ const TOUBA_V01_KEYWORDS = Object.freeze([
   "human.approve",
   "human.review",
   "on expired",
+  "on rejected",
   "show",
   "ask",
   "text",
+  "concat",
+  "join",
+  "date",
+  "record",
+  "copy",
+  "format",
+  "length",
+  "min",
+  "max",
+  "default",
   "some",
   "none",
   "present",
@@ -869,6 +883,8 @@ const TOUBA_V01_KEYWORDS = Object.freeze([
   "as",
   "List",
   "Optional",
+  "Date",
+  "Approval",
   "of",
   "true",
   "false",

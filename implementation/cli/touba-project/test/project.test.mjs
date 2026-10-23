@@ -216,6 +216,7 @@ test("CLI deploy exposes revision operations and stable content-bound plans", ()
       project_version: "touba-project-v1",
       artifact_layout: "touba-artifacts-v1",
       language: "javascript",
+      sdk: "@touba/sdk",
       run_profiles: {
         dev: { require_supply_chain_lock: false },
         prod: { require_supply_chain_lock: true, supply_chain_lock: "touba.lock.json" },
@@ -279,6 +280,7 @@ test("CLI deployment refuses a dirty production source before contacting its tar
       project_version: "touba-project-v1",
       artifact_layout: "touba-artifacts-v1",
       language: "javascript",
+      sdk: "@touba/sdk",
     });
     writeJson(join(root, "touba.lock.json"), {
       lock_version: "touba-lock-v1",
@@ -1085,8 +1087,7 @@ test("multiple strategies share an explicit project entry across write and check
     assert.equal((await prepareProject({ ...options, mode: "write" })).status, "success");
     assert.equal((await prepareProject({ ...options, mode: "check" })).status, "success");
     const drift = await prepareProject({ root, runProfile: "pure", mode: "check" });
-    assert.equal(drift.status, "error");
-    assert.ok(drift.diagnostics.some(diagnostic => diagnostic.code === "EffectiveProjectDrift"), JSON.stringify(drift));
+    assert.equal(drift.status, "success", JSON.stringify(drift));
     const configPath = join(root, "touba.project.json");
     const config = JSON.parse(readFileSync(configPath, "utf8"));
     config.entry = options.entryRef;
@@ -1365,7 +1366,7 @@ test("project run resolution passes an explicit prepared run plan to the low-lev
     );
     assert.throws(
       () => resolveProjectRunArgs(["--project", root, "--entry", "strategy:local.run/Other"]),
-      /conflicts with requested entry/,
+      /not a declared project entrypoint/,
     );
   } finally {
     cleanup(root);
@@ -1629,11 +1630,18 @@ test("real prepare resolves imported fields and signatures before expression typ
     mkdirSync(join(root, "src/examples"), { recursive: true });
     writeFileSync(join(root, "src/examples/common.tb"), 'module examples.common\ntype Request\n    query is Text\nfunction Normalize\n    takes query as Text\n    gives Text\n    do\n        give query ++ "!"\n');
     writeFileSync(join(root, "src/examples/search.tb"), 'module examples.search\nimport type Request from examples.common\nimport function Normalize from examples.common\nfunction Label\n    takes request as Request\n    gives Text\n    do\n        Normalize\n            with query as request.query\n            into normalized\n        give normalized ++ " done"\n');
+    writeFileSync(join(root, "src/examples/consumer.tb"), 'module examples.consumer\nimport function Label from examples.search\nimport function Normalize from examples.common\nfunction Ready\n    gives Text\n    do\n        give "ready"\n');
     const report = await prepareProject({ root, mode: "write", entryRef: "function:examples.search/Label" });
     assert.equal(report.status, "success", JSON.stringify(report.diagnostics));
     const air = JSON.parse(readFileSync(join(root, ".touba/build/dev/air/examples/search.air.json"), "utf8"));
     assert.ok(air.definitions.functions.some(f => f.id === "function:examples.common/Normalize"));
     assert.ok(air.definitions.types.some(f => f.id === "type:examples.common/Request"));
+    // Traversing search directly and through consumer must not duplicate its
+    // import edges; consumer's own import of Normalize remains distinct.
+    const normalizeImports = report.imports.filter(item => item.target_ref === "function:examples.common/Normalize");
+    assert.deepEqual(normalizeImports.map(item => item.module_name).sort(), ["examples.consumer", "examples.search"]);
+    const importKeys = report.imports.map(item => JSON.stringify([item.module_name, item.from_module, item.target_ref, item.import_name, item.import_kind]));
+    assert.equal(new Set(importKeys).size, importKeys.length);
   } finally { cleanup(root); }
 });
 
@@ -2480,7 +2488,7 @@ test("CLI help prints usage without a synthetic report", () => {
   assert.match(result.stdout, /Usage:/);
   assert.match(result.stdout, /touba trigger run <program\.air\.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba\.trigger-state\.json>/);
   assert.match(result.stdout, /touba trigger serve <program\.air\.json> --manifest <path> --state <touba\.trigger-state\.json> --queue <touba\.trigger-queue\.json>/);
-  assert.match(result.stdout, /touba package new\|check\|test\|version\|pack\|add\|list\|remove/);
+  assert.match(result.stdout, /touba package new\|check\|test\|version\|pack\|checkout\|submit\|publish\|add\|list\|remove/);
   assert.match(result.stdout, /--state <touba\.trigger-state\.json>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --out <touba\.manifest\.json>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --stdout/);
@@ -2521,7 +2529,7 @@ test("CLI trigger, manifest and handler help match current public options", () =
   const skillResult = spawnSync(process.execPath, [cliPath, "package", "--help"], { encoding: "utf8" });
   assert.equal(skillResult.status, 0, skillResult.stderr);
   assert.match(skillResult.stdout, /touba package new \[name\]/);
-  assert.match(skillResult.stdout, /touba package check \[directory\]/);
+  assert.match(skillResult.stdout, /touba package check \[directory\|archive\.tar\.gz\]/);
   assert.equal(skillResult.stdout.includes("marketplace"), false);
 
   const auditResult = spawnSync(process.execPath, [cliPath, "audit", "--help"], { encoding: "utf8" });
@@ -2626,7 +2634,7 @@ test("CLI update reports the manual reinstall policy", () => {
   assert.match(result.stdout, /Installed version: 1\.0\.0/);
   assert.match(result.stdout, /Channel: local-development/);
   assert.match(result.stdout, new RegExp(`Platform: ${process.platform}-${process.arch}`));
-  assert.match(result.stdout, /Hub: https:\/\/touba-labs\.com\/hub\//);
+  assert.match(result.stdout, /Hub: https:\/\/toubalang\.org\/hub\//);
   assert.match(result.stdout, /Expected archive:/);
   assert.match(result.stdout, /No automatic update was performed/);
 });
@@ -2641,8 +2649,8 @@ test("CLI update can render a machine-readable reinstall policy", () => {
   assert.equal(report.installed_version, "1.0.0");
   assert.equal(report.channel, "local-development");
   assert.equal(report.platform, `${process.platform}-${process.arch}`);
-  assert.equal(report.hub_url, "https://touba-labs.com/hub/");
-  assert.equal(report.installation_guide_url, "https://touba-labs.com/docs/demarrer/installation");
+  assert.equal(report.hub_url, "https://toubalang.org/hub/");
+  assert.equal(report.installation_guide_url, "https://toubalang.org/docs/demarrer/installation");
 });
 
 test("CLI update help is available without reporting a failed update", () => {

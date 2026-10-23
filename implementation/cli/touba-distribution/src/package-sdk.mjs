@@ -15,6 +15,9 @@ export function packageSdk(implementationRoot, toolchainRoot) {
     const root = join(staging, "package");
     mkdirSync(root);
     cpSync(join(source, "src"), join(root, "src"), { recursive: true });
+    // Materialize the canonical pure contract in the independently installed SDK.
+    // Source uses a forwarding module; no maintained copy or external dependency.
+    cpSync(join(implementationRoot, "contracts/machine/value-contracts.mjs"), join(root, "src/value-contracts.mjs"));
     cpSync(join(implementationRoot, "../LICENSE"), join(root, "LICENSE"));
     const manifest = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
     const inventory = new Map();

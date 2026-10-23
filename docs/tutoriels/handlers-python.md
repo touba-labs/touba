@@ -1,5 +1,25 @@
 # SDK Python : écrire un handler
 
+## Utiliser un handler installé par package
+
+Le handler proposé par un package utilise l'interpréteur de `.venv` du projet
+consommateur, où `touba sdk install python` installe le SDK. Installez aussi
+ses dépendances métier dans cet environnement.
+
+Touba définit `PYTHONDONTWRITEBYTECODE=1` pour ses processus handlers et lance
+ses modules hôtes Python avec `-I -B`. Pour un handler personnalisé avec
+`-I` ou `-E`, ajoutez explicitement `-B` : ces modes ignorent les variables
+`PYTHON*`. Pour vos tests séparés :
+
+```sh
+.venv/bin/python -B -m unittest discover -s tests
+```
+
+Sous Windows, remplacez l'exécutable par `.venv/Scripts/python.exe`.
+Les caches d'un outil externe ne doivent pas modifier la copie installée
+dans `packages/` ; son inventaire est vérifié à chaque préparation.
+
+
 Objectif : déclarer un tool dans Touba, générer son handler Python et l'exécuter
 sous le contrôle du Core. Aucun modèle ni service externe n'est nécessaire.
 

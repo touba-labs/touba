@@ -72,17 +72,25 @@ export function createProviderContextFetch({ provider, contextWindowTokens,
     headers.set("content-type", "application/json");
     headers.delete("content-length");
     headers.delete("accept");
-    let counted;
+    let counted, httpStatus;
     try {
       const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
       const timeout = AbortSignal.timeout(timeoutMs);
       const response = await countFetch(endpoint.href, { method: "POST", headers, body: JSON.stringify(payload),
         redirect: "error", signal: callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout });
+      httpStatus = response.status;
       if (!response.ok) throw new Error();
       const result = await response.json();
       counted = result.input_tokens ?? result.totalTokens;
       if (!Number.isSafeInteger(counted) || counted < 0) throw new Error();
-    } catch { fail("ProviderContextCountUnavailable", "provider input token count unavailable; generation was not sent"); }
+    } catch {
+      // Status is sufficient to distinguish credentials, rate limits, missing
+      // models and service errors. Never echo provider bodies or auth headers.
+      const status = Number.isInteger(httpStatus) ? httpStatus : undefined;
+      fail("ProviderContextCountUnavailable",
+        `provider input token count unavailable${status === undefined ? "" : ` (HTTP ${status})`}; generation was not sent`,
+        { provider, http_status: status });
+    }
     const reservedInputTokens = Math.ceil(counted * inputTokenMultiplier) + safetyMarginTokens;
     const details = { input_tokens: counted, reserved_input_tokens: reservedInputTokens,
       output_tokens: outputTokens, context_window_tokens: contextWindowTokens };

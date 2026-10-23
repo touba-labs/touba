@@ -1,0 +1,38 @@
+module lists
+
+type Batch
+    names is List of Text
+
+function Empty
+    gives List of Text
+    do
+        give []
+
+function Nested
+    gives List of List of Int
+    do
+        give [[], [1, 2 + 3], []]
+
+function MaybeEmpty
+    gives Optional of List of Text
+    do
+        give some(([]))
+
+function Record
+    gives Batch
+    do
+        give record Batch { names as [] }
+
+function Values
+    takes value as Int
+    gives List of Float
+    do
+        bind numbers as List of Float = [value, 2.5]
+        give numbers
+
+function First
+    gives Text
+    do
+        for value in ["one", "two"]
+            give value
+        give "empty"

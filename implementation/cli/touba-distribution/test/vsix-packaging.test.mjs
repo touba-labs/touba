@@ -33,11 +33,35 @@ test("native VSIX names distinguish all four supported targets", () => {
   for (const target of ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]) {
     const [platform, arch] = target.split("-");
     assert.equal(nativeVsixTarget(platform, arch), target);
-    names.add(vsixFilename({ name: "touba-vscode", version: "1.0.0" }, target));
+    const filename = `touba-vscode-v1.0.0-${target}.vsix`;
+    for (const identity of [{name: "touba-vscode", publisher: "old-publisher"}, {name: "touba-tools", publisher: "touba"}]) {
+      assert.equal(vsixFilename({ ...identity, version: "1.0.0" }, target), filename);
+    }
+    names.add(filename);
   }
   assert.equal(names.size, 4);
   assert.throws(() => nativeVsixTarget("linux", "arm64"), /Unsupported/);
   assert.throws(() => nativeVsixTarget("freebsd", "x64"), /Unsupported/);
+});
+
+test("VSIX naming rejects nonfinal versions, traversal and unknown targets", () => {
+  for (const version of [undefined, null, 1, "", "1.0", "v1.0.0", "01.0.0", "1.00.0", "1.0.01",
+    "1.0.0-rc.1", "1.0.0+build.1", "1.0.0\n", "1.0.0 ", "../1.0.0"]) {
+    assert.throws(() => vsixFilename({version}, "darwin-arm64"), /version/);
+  }
+  for (const target of ["universal", "linux-arm64", "windows-x64", "darwin-arm64\n", "../darwin-arm64", null]) {
+    assert.throws(() => vsixFilename({version: "1.0.0"}, target), /target/);
+  }
+});
+
+test("VSIX receipt refuses a filename derived from a publisher package name", t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-vsix-name-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const manifest = { name: "touba-tools", publisher: "touba", version: "1.0.1", license: "Apache-2.0", engines: { vscode: "^1.119.0" } };
+  const build = { version: "1.0.1", platform: "darwin", arch: "arm64", target: "darwin-arm64", build_id: "a".repeat(64) };
+  const oldName = join(root, "touba-tools-1.0.1-darwin-arm64.vsix");
+  writeFileSync(oldName, "receipt fixture, not a qualification");
+  assert.throws(() => writeVsixReceipt(oldName, manifest, build), /mismatch/);
 });
 
 test("compiler headers must agree with their VSIX target", t => {

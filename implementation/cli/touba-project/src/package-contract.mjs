@@ -9,7 +9,7 @@ export const PACKAGE_RUNTIME_VERSION = JSON.parse(readFileSync(new URL("../packa
 export const PACKAGE_LIMITS = Object.freeze({ files: 4096, fileBytes: 16 * 1024 * 1024, totalBytes: 64 * 1024 * 1024, manifestBytes: 1024 * 1024, depth: 32 });
 export const EXPORT_KINDS = Object.freeze({ types: "type", defines: "constant", functions: "function", tools: "tool", skills: "skill", agents: "agent", strategies: "strategy", memories: "memory" });
 export const PACKAGE_NAME = /^[a-z_][a-z0-9_-]*(\.[a-z_][a-z0-9_-]*)+$/;
-const FIELDS = new Set(["package_schema_version", "name", "version", "root", "touba", "exports", "description", "publisher", "license", "readme", "files", "dependencies", "contexts", "handlers", "engines", "provenance", "contract_tests"]);
+const FIELDS = new Set(["package_schema_version", "name", "version", "root", "touba", "exports", "description", "publisher", "license", "readme", "files", "dependencies", "contexts", "handlers", "hosts", "engines", "provenance", "contract_tests"]);
 const CONTEXT_ID = /^[a-z][a-z0-9-]*$/;
 const RESOURCE_KINDS = new Set(["procedure", "reference", "example", "template", "sample", "script", "fixture"]);
 const AUTHORITY = new Set(["binding", "bindings", "grant", "grants", "handler", "manifest", "secrets", "secret_values", "callable_by", "memory_scopes", "permissions", "authority", "hooks", "postinstall"]);
@@ -118,7 +118,18 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
       requireValue(text(link.label) && text(link.description) && /^(tool|skill):[a-z_][a-z0-9_.]*\/[A-Za-z_][A-Za-z0-9_]*$/.test(link.target_ref ?? ""), "PackageContextInvalid", "execution links must identify a governed tool or skill");
     }
   }
-  requireValue(exportCount + contexts.length > 0, "PackageExportMissing", "export at least one declaration or context");
+  const hosts = document.hosts === undefined ? [] : document.hosts;
+  requireValue(Array.isArray(hosts), "PackageHostInvalid", "hosts must be an array");
+  const hostIds = new Set();
+  for (const host of hosts) {
+    keys(host, ["id", "kind", "path"], "host");
+    requireValue(typeof host.id === "string" && CONTEXT_ID.test(host.id) && !hostIds.has(host.id), "PackageHostInvalid", "host IDs must be distinct lowercase identifiers");
+    hostIds.add(host.id);
+    requireValue(["human_approval", "decision_provider"].includes(host.kind), "PackageHostInvalid", "unsupported host kind");
+    packagePath(host.path);
+    requireValue(/\.(?:mjs|cjs|js|py)$/.test(host.path), "PackageHostInvalid", "host must be a JavaScript or Python module");
+  }
+  requireValue(exportCount + contexts.length + hosts.length > 0, "PackageExportMissing", "export at least one declaration, context or host module");
   if (document.dependencies !== undefined) {
     requireValue(object(document.dependencies), "PackageDependencyInvalid", "dependencies must map package names to exact versions");
     for (const [name, version] of Object.entries(document.dependencies)) requireValue(PACKAGE_NAME.test(name) && name !== document.name && exactPackageVersion(version), "PackageDependencyInvalid", `invalid dependency ${name}; use exact versions`);
@@ -143,8 +154,7 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
     if (document.engines.platforms !== undefined) requireValue(Array.isArray(document.engines.platforms) && document.engines.platforms.length > 0 && document.engines.platforms.every(p => /^(darwin|linux|win32)-(arm64|x64)$/.test(p)), "PackageRequirementInvalid", "unsupported platform requirement");
   }
   if (publishing) {
-    for (const field of ["description", "publisher", "license", "readme"]) requireValue(text(document[field]), "PackagePublicationMetadataMissing", `${field} is required for sharing`);
-    packagePath(document.readme);
+    for (const field of ["description", "publisher", "license"]) requireValue(text(document[field]), "PackagePublicationMetadataMissing", `${field} is required for sharing`);
   }
   if (document.provenance !== undefined) {
     keys(document.provenance, ["kind", "source", "revision"], "provenance");
@@ -159,7 +169,7 @@ export function packageRequirements(document) {
   const missing = [];
   if (document.engines?.node && !semver.satisfies(process.versions.node, document.engines.node)) missing.push(`Node ${document.engines.node} required; found ${process.versions.node}`);
   if (document.engines?.platforms && !document.engines.platforms.includes(`${process.platform}-${process.arch}`)) missing.push(`platform ${process.platform}-${process.arch} is not supported`);
-  return { compatible: missing.length === 0, missing, handlers: document.handlers ?? [], contexts: (document.contexts ?? []).map(c => c.id), authority: "The consuming project authorizes execution; installing a package grants nothing." };
+  return { compatible: missing.length === 0, missing, handlers: document.handlers ?? [], hosts: document.hosts ?? [], contexts: (document.contexts ?? []).map(c => c.id), authority: "The consuming project authorizes execution; installing a package grants nothing." };
 }
 
 export function readPackage(path, options = {}) {
@@ -201,6 +211,7 @@ export function readPackage(path, options = {}) {
     for (const resource of context.resources ?? []) include(resource.path);
   }
   for (const handler of document.handlers ?? []) for (const key of ["path", "configuration", "documentation"]) if (handler[key]) include(handler[key]);
+  for (const host of document.hosts ?? []) include(host.path);
   if (document.readme) include(document.readme);
   for (const path of document.contract_tests ?? []) include(path);
   for (const refs of Object.values(document.exports)) for (const ref of refs) {

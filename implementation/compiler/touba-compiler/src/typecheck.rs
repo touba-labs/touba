@@ -4,6 +4,17 @@ pub(crate) const BUILTIN_TEXT: &str = "builtin:Text";
 pub(crate) const BUILTIN_BOOLEAN: &str = "builtin:Boolean";
 pub(crate) const BUILTIN_INT: &str = "builtin:Int";
 pub(crate) const BUILTIN_FLOAT: &str = "builtin:Float";
+pub(crate) const BUILTIN_DATE: &str = "builtin:Date";
+pub(crate) const BUILTIN_APPROVAL: &str = "builtin:Approval";
+pub(crate) const APPROVAL_FIELDS: [(&str, &str); 7] = [
+    ("decision", BUILTIN_TEXT),
+    ("subject_ref", "optional:builtin:Text"),
+    ("attested_roles", "list:builtin:Text"),
+    ("request_id", BUILTIN_TEXT),
+    ("run_id", BUILTIN_TEXT),
+    ("accepted_at", BUILTIN_TEXT),
+    ("comment", "optional:builtin:Text"),
+];
 
 pub(crate) fn builtin_text() -> String {
     BUILTIN_TEXT.to_string()
@@ -32,7 +43,7 @@ pub(crate) fn is_numeric_pair(left_type: Option<&str>, right_type: Option<&str>)
 pub(crate) fn is_text_renderable_type(type_ref: &str) -> bool {
     matches!(
         type_ref,
-        BUILTIN_TEXT | BUILTIN_BOOLEAN | BUILTIN_INT | BUILTIN_FLOAT
+        BUILTIN_TEXT | BUILTIN_BOOLEAN | BUILTIN_INT | BUILTIN_FLOAT | BUILTIN_DATE
     )
 }
 
@@ -48,7 +59,43 @@ pub(crate) fn is_assignable_to(actual_type: &str, expected_type: &str) -> bool {
 }
 
 pub(crate) fn is_builtin_type_ref(raw: &str) -> bool {
-    matches!(raw, "Text" | "Boolean" | "Int" | "Float")
+    matches!(
+        raw,
+        "Text" | "Boolean" | "Int" | "Float" | "Date" | "Approval"
+    )
+}
+
+pub(crate) fn is_iso_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes
+            .iter()
+            .enumerate()
+            .any(|(i, b)| i != 4 && i != 7 && !b.is_ascii_digit())
+    {
+        return false;
+    }
+    let year: u32 = value[0..4].parse().unwrap();
+    let month: usize = value[5..7].parse().unwrap();
+    let day: u32 = value[8..10].parse().unwrap();
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    year > 0 && (1..=12).contains(&month) && day > 0 && day <= days[month - 1]
 }
 
 pub(crate) fn is_v1_capability_label(label: &str) -> bool {

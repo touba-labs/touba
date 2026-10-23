@@ -3,10 +3,13 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import queue
+import urllib.request
 import unittest
 from unittest.mock import patch
 
@@ -205,6 +208,8 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
         (self.root / "manifest.json").write_text(json.dumps(dict(manifest_version="touba-manifest-v1", bindings={"tool:approval_policy/Commit": binding})))
         options = dict(source="source.tb", entry_ref="strategy:approval_policy/ApproveTwice", manifest="manifest.json",
                        human_approval_host="authority.py" if language == "python" else "authority.mjs",
+                       human_approval_authority_timeout_ms=12000,
+                       trace_pure_functions="calls",
                        human_checkpoint_out="waiting.json", effect_journal="run.effect-journal.json")
         self.assertEqual(self.engine.run(**options, inputs={"dossier": "invoice"}).reason, "human_approval_pending")
         for index, signer in enumerate(["one", "two"]):
@@ -218,6 +223,7 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
             (self.root / "signer.json").write_text(json.dumps(dict(subject_ref=signer, roles=["finance"])))
             result = ToubaEngine(**self.options).run(**resumed)
             self.assertEqual(result.status, "stopped" if index == 0 else "success")
+            self.assertEqual(result.trace["run"]["pure_function_detail"], "calls")
         self.assertEqual(marker.read_text(), "invoice\n")
         # Replaying this completed checkpoint must not duplicate its external write.
         try:
@@ -228,6 +234,63 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
 
     def test_python_approval_host_preserves_roles_separation_and_replay(self):
         self.test_approval_host_separation_resume_and_effect_journal(language="python")
+
+    def test_serve_loads_shared_python_host_and_closes_it(self):
+        (self.root / "source.tb").write_text('''module python.host
+agent Reader
+    gives Text
+    responsibility "Return the supplied document summary."
+    callable_by strategy Run
+strategy Run
+    gives Text
+    uses Reader
+    do
+        Reader
+            into result
+        give result
+''')
+        air = self.engine.compile("source.tb").air_document
+        air_dir = self.root / ".touba" / "air"
+        air_dir.mkdir(parents=True)
+        (air_dir / "host.air.json").write_text(json.dumps(air))
+        (self.root / "touba.project.json").write_text(json.dumps({"entry": "strategy:python.host/Run"}))
+        (self.root / "host.py").write_text('''from pathlib import Path
+import os
+with (Path(__file__).parent / "host-loads.txt").open("a") as stream: stream.write(str(os.getpid()) + "\\n")
+initiator_ref = "test-initiator"
+def decide_agent_capability(request):
+    return {"action":"answer_directly", "result":"served by Python", "reason":"Summary complete.", "source":"test"}
+def attest_human_approval(payload):
+    request = payload["request"]
+    return {"request_id":request["request_id"], "run_id":request["run_id"], "decision":payload["decision"], "subject_ref":"reviewer", "roles":["finance"]}
+''')
+        child = subprocess.Popen([NODE, str(CLI), "serve", "--project-root", str(self.root), "--port", "0",
+            "--agent-decision-provider", str(self.root / "host.py"), "--human-approval-host", str(self.root / "host.py")],
+            cwd=self.root, env={**os.environ, "TOUBA_HOST_PYTHON": sys.executable},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        lines = queue.Queue()
+        def collect():
+            for line in child.stdout: lines.put(line)
+        reader = threading.Thread(target=collect, daemon=True)
+        reader.start()
+        try:
+            while True:
+                event = json.loads(lines.get(timeout=15))
+                if event.get("event") == "touba_project_server_started": break
+            body = {"schema_version":"touba-sandbox-run-request-v1", "execution_kind":"entrypoint",
+                "target_ref":"strategy:python.host/Run", "inputs":{}, "effect_policy":"runtime_only",
+                "requested_by":{"kind":"service", "id":"python-host-test"}, "reason":"Verify Python host integration"}
+            request = urllib.request.Request(f'http://127.0.0.1:{event["port"]}/runs/sandbox',
+                data=json.dumps(body).encode(), headers={"Content-Type":"application/json"})
+            with urllib.request.urlopen(request, timeout=15) as response:
+                result = json.load(response)
+            self.assertEqual(result["result"], "served by Python", result)
+            self.assertEqual(len((self.root / "host-loads.txt").read_text().splitlines()), 1)
+        finally:
+            child.terminate()
+            _, error = child.communicate(timeout=10)
+            reader.join(timeout=2)
+        self.assertEqual(child.returncode, 0 if os.name == "nt" else -signal.SIGTERM, error)
 
     def test_large_output_and_errors_do_not_leak_stderr(self):
         payload = "é🙂" * 200000

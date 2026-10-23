@@ -13,6 +13,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { pythonModuleEntrypoint } from "./python-module.mjs";
+import { PACKAGE_LOCK, readPackageWorkspace, verifyInstalledPackages } from "../../touba-project/src/package-store.mjs";
 
 import {
   TOUBA_MANIFEST_V1,
@@ -128,6 +130,7 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
   scanLockForForbiddenData(lock, diagnostics);
   const provenanceReport = validateSupplyChainProvenance(lock?.provenance, diagnostics);
   const reviewReport = validateSupplyChainReview(lock?.review, artifacts, fs, diagnostics, requireReview);
+  const packageInstallationChecked = validatePackageInstallation(artifacts, fs, diagnostics);
 
   const artifactStatus = {
     air: { drift_status: "unknown" },
@@ -270,6 +273,7 @@ export function validateSupplyChainArtifacts(artifacts, options = {}) {
       handler_packages: handlers.length > 0,
       handler_package_files: handlers.some((handler) => Array.isArray(handler?.handler_package?.files)),
       handler_dependency_artifacts: handlers.some((handler) => Array.isArray(handler?.handler_package?.dependency_artifacts)),
+      package_installation: packageInstallationChecked,
       effect_contracts: Boolean(artifacts.manifest),
       provenance_metadata: provenanceReport.status !== "unknown",
       review_metadata: reviewReport.status !== "unknown",
@@ -645,6 +649,31 @@ function validateProjectAir(artifacts, fs, diagnostics) {
   return documents;
 }
 
+function validatePackageInstallation(artifacts, fs, diagnostics) {
+  if (!artifacts.lock) return false;
+  const record = artifacts.lock.json?.package_installation;
+  const root = path.dirname(artifacts.lock.path);
+  if (record === undefined) {
+    if (fs.existsSync(path.join(root, PACKAGE_LOCK))) diagnostics.push(error("SupplyChainPackageInstallationMissing", "the installation lock must be pinned in the supply-chain lock", "lock", "package_installation"));
+    return false;
+  }
+  const file = typeof record?.path === "string" ? path.resolve(root, record.path) : root;
+  if (typeof record?.path !== "string" || path.isAbsolute(record.path) || hasUnsafeRelativeSegments(record.path)
+    || path.basename(file) !== PACKAGE_LOCK || !safeContainedFile(root, file, fs)) {
+    diagnostics.push(error("SupplyChainPackageInstallationInvalid", "package_installation must identify an installation lock inside the lock directory", "lock", "package_installation"));
+    return false;
+  }
+  if (!validateArtifactDigest("lock", record.digest, sha256Text(fs.readFileSync(file)), diagnostics)) return false;
+  try {
+    const workspace = readPackageWorkspace(path.dirname(file));
+    verifyInstalledPackages(path.dirname(file), workspace.records);
+    return true;
+  } catch (failure) {
+    diagnostics.push(error("SupplyChainPackageInstallationChanged", `installed packages failed integrity validation (${failure.code ?? "invalid"})`, "lock", "package_installation"));
+    return false;
+  }
+}
+
 function validateLockShape(lock, diagnostics) {
   if (!isPlainObject(lock)) {
     diagnostics.push(error("SupplyChainLockSchemaMismatch", "lock must be an object", "lock"));
@@ -664,6 +693,7 @@ function validateLockShape(lock, diagnostics) {
     validateLockArtifact("air", artifact, true, diagnostics);
   }
   validateLockArtifact("manifest", lock.manifest, false, diagnostics);
+  validateLockArtifact("package_installation", lock.package_installation, false, diagnostics);
   if (!Array.isArray(lock.handlers)) {
     diagnostics.push(error("SupplyChainLockSchemaMismatch", "handlers must be an array", "lock", "handlers"));
   }
@@ -811,6 +841,12 @@ function validateExecutableIdentity(handler, manifestHandler, artifacts, fs, rep
   const arguments_ = Array.isArray(manifestHandler.args) ? manifestHandler.args : [];
   const candidates = arguments_.filter((arg) => typeof arg === "string" && !arg.startsWith("-"))
     .map((arg) => path.resolve(cwd, arg));
+  try {
+    const module = pythonModuleEntrypoint(executable ?? manifestHandler.command, arguments_, cwd, fs);
+    if (module) candidates.push(module.entrypoint);
+  } catch {
+    addHandlerDiagnostic(report, diagnostics, error("HandlerPathMismatch", "Python module entrypoint cannot be resolved locally", "handler", "path", handler.tool_ref));
+  }
   if (executable) candidates.push(executable);
   if (!candidates.some((candidate) => sameFilePath(candidate, declared, fs))) {
     addHandlerDiagnostic(report, diagnostics, error("HandlerPathMismatch", "lock handler path is neither the executable nor an explicit manifest argument path", "handler", "path", handler.tool_ref));

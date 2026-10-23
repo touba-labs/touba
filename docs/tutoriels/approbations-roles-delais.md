@@ -1,5 +1,21 @@
 # Approbations avec rôles, délais et escalade
 
+## Délai du service d'attestation
+
+La réponse technique de l'adaptateur est attendue pendant 5 000 ms par défaut.
+Pour un service d'identité plus lent, réglez ce délai entre 1 et 60 000 ms :
+
+```sh
+touba run --project . --human-approval-host host/approval.mjs --human-approval-authority-timeout-ms 12000
+touba serve --project-root . --human-approval-host host/approval.mjs --human-approval-authority-timeout-ms 12000
+```
+
+Le SDK JavaScript expose `humanApprovalAuthorityTimeoutMs`, Python
+`human_approval_authority_timeout_ms`. Un dépassement refuse l'attestation ;
+une réponse tardive ne libère pas l'opération.
+Le délai métier accordé à l'approbateur reste celui déclaré dans le programme.
+
+
 Ce tutoriel local utilise Touba et Node.js 24, sans modèle ni service payant.
 Il sépare la règle métier dans Touba de l'identité vérifiée par l'hôte.
 
@@ -130,8 +146,9 @@ texte de réussite du chemin initial. La CLI constate l'expiration à la reprise
 - Runtime embarqué : `humanApprovalAuthority` reçoit la fonction ;
   `humanApprovalInitiator` porte l'identité opaque de l'initiateur.
 - L'adaptateur reçoit `request`, `decision`, `evidenceRef` et `signal`.
-  Il retourne exactement `request_id`, `run_id`, `decision`, `subject_ref`,
-  `roles`. Sa durée est bornée à 5 secondes par défaut.
+  Il retourne `request_id`, `run_id`, `decision`, `subject_ref` et `roles`,
+  ainsi que `excluded_signers` lorsqu'une règle d'exclusion inter-runs est
+  déclarée. Sa durée est bornée à 5 secondes par défaut.
 - Le serveur vérifie l'attestation avant de persister l'acceptation. Une décision
   acceptée à temps reste valable pour cette occurrence après redémarrage.
   Une nouvelle demande vérifie à nouveau les droits.
@@ -141,3 +158,113 @@ restent des états de l'hôte de confiance, pas des signatures contre cet hôte.
 Une approbation ne remplace ni grants, ni contrat d'effet, ni journal d'effets.
 Un service d'identité indisponible ou une preuve incorrecte arrête la décision
 avant la continuation protégée.
+
+## Résultat typé et branche de refus
+
+`human.approve … into approval` produit une valeur `Approval`, dont les champs
+sont vérifiés à la compilation. Utilisez `approval.decision`,
+`approval.subject_ref`, `approval.attested_roles`, `approval.request_id`,
+`approval.run_id`, `approval.accepted_at` et `approval.comment`.
+
+<!-- touba-example: compile -->
+```touba
+module examples.approval_outcomes
+
+strategy Review
+    takes invoice as Text
+    gives Text
+    do
+        human.approve
+            with context as invoice
+            with role as "finance"
+            with timeout_ms as 30000
+            into approval
+            on rejected
+                give approval.decision
+            on expired
+                give approval.decision
+        give approval.decision
+```
+
+Les branches `on rejected` et `on expired` terminent leur parcours par
+`give` ou `stop`. Elles peuvent appeler un tool de notification avec ses
+grants habituels. Elles ne rejoignent pas le chemin réservé à l’approbation.
+
+## Initiateur par run et séparation entre runs
+
+Le module hôte peut exporter `resolveInitiator({run_id, entry_ref, inputs, signal})`
+en JavaScript, ou `resolve_initiator(request)` en Python. Il vérifie la preuve
+de soumission dans son stockage applicatif et renvoie un identifiant opaque.
+Touba le résout une seule fois et le conserve dans le checkpoint.
+Le champ client `requested_by` n’est pas une attestation.
+
+Pour exclure les signataires d’autres dossiers, ajoutez
+`with exclude_signers as "invoice_approvers"` à l’approbation.
+L’hôte relit les preuves des factures du lot et complète son attestation :
+
+```json
+{
+  "request_id": "request:example",
+  "run_id": "run:example",
+  "decision": "approved",
+  "subject_ref": "employee:treasurer",
+  "roles": ["finance"],
+  "excluded_signers": {
+    "rule": "invoice_approvers",
+    "subject_refs": ["employee:reviewer"]
+  }
+}
+```
+
+La liste provient des preuves vérifiées par l’hôte. Touba exige la règle exacte
+déclarée, refuse une preuve absente et bloque un signataire présent dans cette
+liste. Cette attestation est privée ; le modèle ne la produit pas.
+
+## Décision envoyée au serveur
+
+`POST /decisions` accepte `evidence_ref`, référence opaque à la preuve hôte.
+L’adaptateur reçoit aussi `hostDecision` dans les deux SDK,
+le document de décision complet. Il doit lier le signataire attesté à
+`user_ref` et `decided_by`, ainsi qu’à la demande, au run et à la décision.
+Sans `evidence_ref`, la référence transmise vaut `request_id`.
+La demande publique contient `policy`, pour présenter le rôle et les règles
+de séparation à l’utilisateur. Voir [API du serveur](../guides/api-serveur-projet.md).
+
+## Commenter une décision et partager le traitement du refus
+
+Le corps de décision accepte `comment`, texte facultatif de 4 096 caractères
+maximum. `approval.comment` est un `Optional of Text` : `some` porte le commentaire,
+l’absence est explicite. Ce texte libre ne fournit aucun rôle ni preuve d’identité.
+
+Pour partager la réponse de plusieurs branches `on rejected`, utilisez une
+fonction pure, ou un skill avec ses propres effets déclarés :
+
+<!-- touba-example: compile -->
+```touba
+module examples.shared_refusal
+
+function RefusalMessage
+    takes approval as Approval
+    gives Text
+    do
+        if present approval.comment as message
+            give message
+        give "Request rejected"
+
+strategy Review
+    takes invoice as Text
+    gives Text
+    do
+        human.approve
+            with context as invoice
+            into approval
+            on rejected
+                RefusalMessage
+                    with approval as approval
+                    into message
+                give message
+        give "Request approved"
+```
+
+La même fonction peut servir dans plusieurs branches. La décision et ses données
+restent explicites à chaque appel.

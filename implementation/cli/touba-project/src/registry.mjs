@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { readPackageBytes } from "./package-fetch.mjs";
+import { readSignedRegistry } from "./registry-trust.mjs";
 import semver from "semver";
 import { PACKAGE_NAME, exactPackageVersion, packageFile, packagePath } from "./package-contract.mjs";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -23,12 +24,15 @@ const SUPPORTED_PROTOCOLS = new Set([
 ]);
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
+const readIndex = (ref, trust) => /^https?:\/\//.test(ref)
+  ? readSignedRegistry(ref, trust) : readJsonRef(ref, "RegistryIndexSchemaInvalid");
+
 export async function resolveRegistryPackage(options = {}) {
   const packageRef = requiredOption(options.packageRef, "package");
   const version = requiredOption(options.version, "version");
   const registry = registryLocation(requiredOption(options.registry, "registry"));
 
-  const indexDocument = await readJsonRef(registry.indexRef, "RegistryIndexSchemaInvalid");
+  const indexDocument = await readIndex(registry.indexRef, options.trust);
   validateIndex(indexDocument.value, indexDocument.ref);
   const indexEntry = findIndexEntry(indexDocument.value, packageRef, version);
   const metadataRef = resolveRegistryChild(registry.rootRef, indexEntry.metadata_path);
@@ -57,6 +61,7 @@ export async function resolveRegistryPackage(options = {}) {
       mode: registry.kind,
       index_ref: registry.publicIndexRef,
       index_schema_version: indexDocument.value.index_schema_version,
+      ...(indexDocument.signingKey ? { signing_key: indexDocument.signingKey } : {}),
     },
     package: {
       package_ref: metadata.package_ref,
@@ -70,9 +75,9 @@ export async function resolveRegistryPackage(options = {}) {
     compatibility: metadata.compatibility,
     artifacts,
     limits: [
-      "Static registry resolution only; no hosted registry service is contacted unless --registry is a raw URL.",
       "No package content is installed and no script is executed.",
-      "Digest verification is integrity metadata, not a signature, vulnerability scan or runtime permission.",
+      indexDocument.signingKey ? "The remote index signature was verified against the selected local trust file." : "Local registry metadata was checked against its recorded digests.",
+      "Package installation and runtime permissions remain separate operations.",
     ],
   };
 }
@@ -92,7 +97,7 @@ export function renderRegistryResolution(lock) {
 
 export async function checkRegistry(options = {}) {
   const location = registryLocation(requiredOption(options.registry, "registry"));
-  const document = await readJsonRef(location.indexRef, "RegistryIndexSchemaInvalid");
+  const document = await readIndex(location.indexRef, options.trust);
   validateIndex(document.value, document.ref);
   const diagnostics = [];
   for (const entry of document.value.packages) {
@@ -103,11 +108,11 @@ export async function checkRegistry(options = {}) {
   let preserved = 0;
   if (options.previous) {
     const priorLocation = registryLocation(options.previous);
-    const prior = await readJsonRef(priorLocation.indexRef, "RegistryIndexSchemaInvalid");
+    const prior = await readIndex(priorLocation.indexRef, options.trust);
     validateIndex(prior.value, prior.ref);
     for (const entry of prior.value.packages) {
       try {
-        await resolveRegistryPackage({ registry: options.previous, packageRef: entry.package_ref, version: entry.version, validationOnly: true });
+        await resolveRegistryPackage({ registry: options.previous, trust: options.trust, packageRef: entry.package_ref, version: entry.version, validationOnly: true });
         const current = document.value.packages.find(item => item.package_ref === entry.package_ref && item.version === entry.version);
         if (!current) fail("RegistryPublishedIdentityImmutable", `cannot remove or rename ${entry.package_ref}@${entry.version}; retain it with an explicit status`, entry.metadata_path);
         const oldMeta = (await readJsonRef(resolveRegistryChild(priorLocation.rootRef, entry.metadata_path), "RegistryPackageSchemaInvalid")).value;

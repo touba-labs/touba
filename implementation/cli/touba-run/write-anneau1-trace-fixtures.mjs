@@ -1,3 +1,4 @@
+import "../../tools/fixture-clock.mjs";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {

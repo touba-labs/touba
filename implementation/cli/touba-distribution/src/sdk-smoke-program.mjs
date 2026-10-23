@@ -266,7 +266,7 @@ skill Work
 const packageBefore = readFileSync("package.json", "utf8");
 const lockBefore = readFileSync("package-lock.json", "utf8");
 const previouslyPrepared = existsSync(".touba/build/dev/touba.manifest.json");
-const prepared = JSON.parse(command(["prepare", "--root", process.cwd(), "--mode", "write", "--json"]));
+const prepared = JSON.parse(command(["prepare", "--root", process.cwd(), "--entry", "skill:distribution.handlers/Work", "--mode", "write", "--json"]));
 assert.equal(prepared.status, previouslyPrepared ? "success" : "needs_changes");
 assert.equal(prepared.sdk_dependency.status, "ready");
 let manifest = JSON.parse(readFileSync(prepared.manifest_path, "utf8"));
@@ -277,7 +277,8 @@ const hostArgs = ["prepare", "--root", process.cwd(), "--host-decisions-json", J
 const beforeHostPlan = readFileSync(prepared.manifest_path, "utf8");
 command([...hostArgs, "--mode", "plan"]);
 assert.equal(readFileSync(prepared.manifest_path, "utf8"), beforeHostPlan);
-assert.equal(JSON.parse(command([...hostArgs, "--mode", "write"])).status, "success");
+const authorizedPreparation = JSON.parse(command([...hostArgs, "--mode", "write"]));
+assert.equal(authorizedPreparation.status, "success", JSON.stringify(authorizedPreparation));
 const repeatedHostPlan = JSON.parse(command([...hostArgs, "--mode", "write"]));
 assert.equal(repeatedHostPlan.actions.some(action => action.kind === "apply_host_decision"), false);
 assert.equal(JSON.parse(command([...hostArgs, "--mode", "check"])).status, "success");

@@ -57,6 +57,17 @@ const root = await realpath(await mkdtemp(join(tmpdir(), 'touba-explorer-browser
 let browser, server;
 try {
   await cp(join(implementationRoot,'examples/explorer-project'),root,{recursive:true});
+  const reviewFile = join(root,'src/review.tb');
+  const reviewSource = await readFile(reviewFile,'utf8');
+  await writeFile(reviewFile,reviewSource.replace('module review\n',`module review
+
+limits run
+    max_tool_calls as 20
+    max_agent_invocations as 1
+    max_provider_calls as 3
+    max_run_ms as 30000
+    max_steps as 100
+`)+ '\ntype Diagnosis\n    summary is Text default "ready"\n    severity is Int min 0 max 10 default 0\n    urgent is Boolean default false\n');
   server=await startExplorer({root,openBrowser:false,interval:200}); await server.ready;
   browser=await chromium.launch({headless:true,...(process.env.TOUBA_BROWSER_CHANNEL ? {channel:process.env.TOUBA_BROWSER_CHANNEL} : {})});
   let count=0;
@@ -71,8 +82,33 @@ try {
     await page.locator('#language').selectOption(language==='fr'?'en':'fr'); await page.locator('#language').selectOption(language);
     await checkDisplayControls(page);
     assert.equal(await page.locator('.node').count(),1);
-    await page.locator('#group').uncheck(); assert.equal(await page.locator('.node').count(),4);
-    await page.locator('#module').selectOption('module:review'); assert.equal(await page.locator('.node').count(),4); await page.locator('#module').selectOption('');
+    assert.equal(await page.locator('.node .kind').textContent(),`Module · 5 ${language==='fr'?'ressources':'resources'}`);
+    await page.locator('#resource-list button').filter({hasText:/^review$/}).click();
+    const budgetSection = page.locator('#detail .detail-section').filter({has:page.locator('h3').filter({hasText:language==='fr'?'Budgets du run':'Run budgets'})});
+    const facts = await budgetSection.locator('dt').evaluateAll(nodes=>Object.fromEntries(nodes.map(n=>[n.textContent,n.nextElementSibling.textContent])));
+    assert.deepEqual(facts,language==='fr'
+      ? {'Invocations d’agents maximum':'1','Appels fournisseur maximum':'3','Durée maximale du run':'30 s','Étapes maximum':'100','Appels d’outils maximum':'20'}
+      : {'Maximum agent invocations':'1','Maximum provider calls':'3','Maximum run duration':'30 s','Maximum steps':'100','Maximum tool calls':'20'});
+    assert.doesNotMatch(await budgetSection.innerText(),/source_ref|start_byte|NaN|\{"/);
+    await page.locator('#detail button').filter({hasText:language==='fr'?'Ouvrir la source':'Open source'}).click();
+    await page.locator('#source-dialog[open]').waitFor();
+    assert.match(await page.locator('#source-code').innerText(),/max_tool_calls as 20/);
+    await page.locator('#close-source').click();
+    // Keeping Group checked while selecting a module used to give every card a spurious 1.
+    await page.locator('#module').selectOption('module:review');
+    assert.equal(await page.locator('.node').count(),5);
+    assert.equal(await page.locator('.node[data-id="module:review"] .kind').textContent(),'Module');
+    assert.equal(await page.locator('.node[data-id="type:review/Diagnosis"] .kind').textContent(),'Type');
+    await page.locator('#resource-list button').filter({hasText:/^Diagnosis$/}).click();
+    const fieldDetails = await page.locator('#detail').innerText();
+    assert.match(fieldDetails,/ready/);
+    assert.match(fieldDetails,/severity/);
+    assert.match(fieldDetails,/10/);
+    assert.match(fieldDetails,/\b0\b/);
+    assert.match(fieldDetails,/false/);
+    assert.doesNotMatch(fieldDetails,/source_ref|start_byte|\[object Object\]/);
+    await page.locator('#group').uncheck(); assert.equal(await page.locator('.node').count(),5);
+    await page.locator('#module').selectOption('');
     await page.locator('#search').fill('Specialist'); assert.equal(await page.locator('#resource-list button').count(),1);
     await page.locator('#resource-list button').focus(); await page.keyboard.press('Enter');
     assert.match(await page.locator('#detail').innerText(),/Diagnose the supplied incident/);

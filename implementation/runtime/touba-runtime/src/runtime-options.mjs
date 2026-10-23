@@ -34,6 +34,7 @@ const SKILL_PACK_BUDGET_FIELDS = Object.freeze({
  * @typedef {object} NormalizedAgentDecisionProvider
  * @property {(request: any, execution?: any) => unknown | Promise<unknown>} decide
  * @property {Readonly<Record<string, string>> | null} metadata
+ * @property {Readonly<Record<string, string>>} initialModes
  *
  * @typedef {object} NormalizedSkillPackResource
  * @property {string} ref
@@ -84,6 +85,7 @@ export function normalizeAgentDecisionProvider(provider, options = {}) {
     const providerRecord = /** @type {RuntimeOptionRecord} */ (provider);
     return Object.freeze({
       decide: /** @type {(request: any, execution?: any) => unknown | Promise<unknown>} */ (provider),
+      initialModes: normalizeInitialModes(providerRecord.initialModes),
       metadata: metadataOverride
         ?? normalizeAgentDecisionProviderMetadata(providerRecord.metadata, "agentDecisionProvider.metadata", { optional: true }),
     });
@@ -96,6 +98,7 @@ export function normalizeAgentDecisionProvider(provider, options = {}) {
   if (typeof providerRecord.decideAgentCapability === "function") {
     return Object.freeze({
       decide: providerRecord.decideAgentCapability.bind(provider),
+      initialModes: normalizeInitialModes(providerRecord.initialModes),
       metadata: metadataOverride
         ?? normalizeAgentDecisionProviderMetadata(
           providerRecord.provider_metadata ?? providerRecord.providerMetadata ?? providerRecord.metadata,
@@ -107,6 +110,7 @@ export function normalizeAgentDecisionProvider(provider, options = {}) {
   if (typeof providerRecord.decide === "function") {
     return Object.freeze({
       decide: providerRecord.decide.bind(provider),
+      initialModes: normalizeInitialModes(providerRecord.initialModes),
       metadata: metadataOverride
         ?? normalizeAgentDecisionProviderMetadata(
           providerRecord.provider_metadata ?? providerRecord.providerMetadata ?? providerRecord.metadata,
@@ -116,6 +120,18 @@ export function normalizeAgentDecisionProvider(provider, options = {}) {
     });
   }
   throw invalidAgentDecisionProvider();
+}
+
+/** @param {unknown} value @returns {Readonly<Record<string, string>>} */
+function normalizeInitialModes(value) {
+  if (value === undefined) return Object.freeze({});
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 1024) throw invalidAgentDecisionProvider();
+  const result = Object.create(null);
+  for (const [ref, mode] of Object.entries(value)) {
+    if (!/^agent:[A-Za-z0-9_.-]+\/[A-Za-z][A-Za-z0-9_]*$/u.test(ref) || !["summary", "capabilities"].includes(mode)) throw invalidAgentDecisionProvider();
+    result[ref] = mode;
+  }
+  return Object.freeze(result);
 }
 
 /**

@@ -1,5 +1,40 @@
 # Référence des packages
 
+## Modules hôtes partagés
+
+Un package peut distribuer un adaptateur d'attestation ou de décision dans
+`hosts`. Chaque entrée possède un `id` unique, un `kind` et un `path` :
+`human_approval` ou `decision_provider`, avec un fichier JS ou Python.
+Un package exclusivement hôte peut déclarer `exports: {}`.
+
+```json title="Champs du manifeste"
+{
+  "hosts": [
+    { "id": "approval", "kind": "human_approval", "path": "host/approval.mjs" },
+    { "id": "decision", "kind": "decision_provider", "path": "host/decision.py" }
+  ],
+  "files": ["host"]
+}
+```
+
+Le projet active un module par `pkg:organisation.package/identifiant`,
+dans `--human-approval-host` ou `--agent-decision-provider`.
+Touba vérifie l'inventaire de tous les packages installés avant son chargement.
+Les fichiers auxiliaires doivent figurer dans `files` ; les bibliothèques JS
+ou Python sont installées explicitement dans l'environnement de l'application.
+Le module hôte fait partie du code de confiance de cette application.
+Après remplacement d'un package déjà chargé, redémarrez l'hôte.
+
+Les handlers Python proposés utilisent le Python de `.venv` du projet
+consommateur lorsqu'il existe. Touba évite l'écriture de bytecode pendant leur
+exécution. Pour vos tests Python lancés séparément, utilisez `python -B`.
+Un cache ajouté dans `packages/` reste un fichier non déclaré : vérifiez son
+origine et réinstallez une copie validée, sans modifier le lock pour l'accepter.
+
+Les grants contrôlent l'admission des opérations Touba. Le confinement du
+processus hôte se configure séparément avec la politique de sandbox.
+
+
 Le manifeste auteur unique est `touba.package.json`, schéma
 `touba-package-v1`. Une procédure contextuelle et un agent réutilisable utilisent
 le même format de distribution. Les imports `.tb` restent typés.
@@ -25,7 +60,8 @@ Toutes acceptent `--json` et `--root`. La racine est découverte depuis les
 sous-dossiers ; pour `new`, `--root` est le parent du nouveau dossier. Sans cible,
 `check` vérifie le package auteur courant ou les dépendances d'une application.
 Code de sortie : `0` réussite, `1` test échoué/absent ou création annulée, `2`
-erreur de contrat/arguments. Aucun test tiers n'est exécuté par check/add/pack/publish.
+erreur de contrat/arguments. Check/add/pack/checkout n’exécutent aucun code auteur.
+Le service exécute les tests isolés lors de submit et de la publication distante.
 `add --allow-draft` accepte explicitement une version draft du registry choisi.
 Un nom d'organisation local n'atteste ni disponibilité ni propriété publique.
 
@@ -44,7 +80,8 @@ Un nom d'organisation local n'atteste ni disponibilité ni propriété publique.
 | `files` | Fichiers/dossiers relatifs à inclure ; sinon `src` pour du code |
 | `handlers` | Implémentations proposées, sans binding ni grant effectif |
 | `engines` | Plage `node`, liste `platforms` ; optionnel |
-| `description`, `publisher`, `license`, `readme` | Obligatoires pour partager avec `pack` |
+| `description`, `publisher`, `license` | Obligatoires pour préparer l’archive avec `pack` |
+| `readme` | README inclus dans l’archive ; requis pour publier directement en CLI. Le service de publication peut accepter une présentation renseignée séparément. |
 | `contract_tests` | Fichiers Node `.test.mjs`, `.test.cjs`, `.test.js` ; exécutés uniquement par `package test` |
 | `root` | Facultatif ; uniquement `.` |
 | `provenance` | Métadonnées `kind`, `source`, `revision` ; non signées |
@@ -107,8 +144,8 @@ décisions hôte :
 } } }
 ```
 
-Cette sélection configure seulement le processus (`node` pour JS, `python3`
-pour Python) et évite un stub inutilisé. Elle n'accorde aucun grant, secret ou
+Cette sélection configure seulement le processus (`node` pour JS, Python de
+`.venv` si présent, sinon `python3`) et évite un stub inutilisé. Elle n'accorde aucun grant, secret ou
 effet. Les autres formats demandent un binding explicite ; un handler existant
 n'est jamais supprimé automatiquement.
 
@@ -135,6 +172,74 @@ Limites : 4 096 fichiers/entrées, 16 Mio par fichier, 64 Mio de contenu,
 
 Le lock d'installation ne remplace pas la [supply chain d'exécution](../guides/supply-chain-handlers.md).
 Voir le [guide auteur et consommateur](../guides/creer-partager-package.md).
+
+## Brouillons privés
+
+| Commande | Résultat |
+| --- | --- |
+| `touba package submit [dossier] --registry <URL>` | Archive vérifiée et soumise comme brouillon privé |
+| `touba package checkout <identifiant> --registry <URL> [--root <parent>]` | Nouveau dossier auteur, nommé comme le package |
+| `touba package submit [dossier] [--draft <identifiant>]` | Resoumission vers le brouillon lié ou explicitement choisi |
+| `touba package submit [dossier] --ci <autorisation> --registry <URL>` | Nouveau brouillon depuis un job GitHub Actions autorisé |
+
+Les commandes interactives acceptent `--no-browser` et `--json`. L’identité est confirmée
+dans le navigateur à chaque opération. Le service exige l’authentification
+renforcée pour ces opérations CLI. `checkout` contrôle l’accès privé et
+l’intégrité avant extraction ; `submit` applique les validations et tests
+isolés du service. La publication reste une action explicite.
+
+Le mode `--ci` utilise OIDC GitHub avec `id-token: write`. Son autorisation
+est liée au dépôt GitHub, au workflow, à la branche et à l'environnement. Elle prépare uniquement
+un nouveau brouillon, sans lien local ni remplacement automatique. La publication
+finale exige une personne habilitée et une authentification forte dans le service.
+`--draft` et `--no-browser` ne s’utilisent pas avec `--ci`.
+
+Le lien local `.touba/package-draft.json` est exclu de l’archive. Il contient
+registre, identité/version, identifiant, révision et empreinte, sans jeton.
+Une modification de présentation distante est conservée à la resoumission.
+Un changement d’archive ou une révision concurrente interrompt le remplacement.
+
+| Diagnostic | Action |
+| --- | --- |
+| `PackageAlreadyExists` | Choisir un parent sans dossier portant le nom du package |
+| `PackageDraftConflict` | Relire le brouillon distant avant de resoumettre |
+| `PackageDraftTargetMismatch` | Vérifier registre, identité et version de la cible |
+| `PackageDraftIntegrityMismatch` | Faire vérifier l’archive par l’opérateur |
+| `PackageDraftBusy` | Vérifier l’opération active avant toute récupération du verrou |
+| `PackageOperationCancelled` | Consulter le brouillon avant une nouvelle tentative |
+| `PackageDraftRefused` | Vérifier session, droits et diagnostic renvoyé par le service |
+
+## Registre distant signé
+
+La même archive peut être publiée vers un service compatible :
+
+```sh
+touba package publish --registry https://registry.example.org/registry
+```
+
+Le navigateur confirme le compte, le second facteur et l'autorisation du
+terminal. Le service vérifie l'espace de publication, l'archive et ses tests
+isolés. `--no-browser` affiche le lien à ouvrir manuellement. Les identifiants
+de publication restent en mémoire pour cette opération.
+
+Pour installer une version publique, obtenez le fichier de confiance auprès
+de l'opérateur du registre et vérifiez son empreinte par un canal de confiance :
+
+```sh
+touba package add acme.review@1.0.0 \
+  --registry https://registry.example.org/registry \
+  --trust registry-trust.json
+```
+
+L'index signé lie le registre à ses versions et empreintes. Une signature
+invalide, une clé inconnue ou révoquée, un index expiré et une version retirée
+interrompent l'installation. Les permissions d'exécution restent celles du
+projet consommateur. Les commandes sont identiques pour les handlers
+JavaScript et Python. L'adresse ci-dessus illustre un registre compatible ;
+elle ne désigne pas un service public Touba ouvert.
+
+`touba package check archive.tar.gz --publishing` vérifie directement une
+archive sans l'installer ni exécuter ses tests contributeur.
 
 ## Migrer un ancien contexte
 

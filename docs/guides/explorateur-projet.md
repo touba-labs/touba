@@ -49,6 +49,11 @@ La liste de ressources est utilisable au clavier. Le graphe propose zoom,
 déplacement, cadrage et export en SVG ou en PNG. Les interfaces française et anglaise
 partagent les mêmes vues, en thème clair ou sombre.
 
+Les détails d’un module affichent directement ses budgets : nombre maximal
+d’appels, d’invocations et d’étapes, ainsi que la durée autorisée.
+Le nombre de ressources apparaît sur les cartes regroupées. Les cartes
+module et type individuelles conservent leur libellé simple.
+
 ## Adapter l’affichage
 
 Le bouton **Affichage** règle la présentation du graphe. Vos choix sont conservés :
@@ -96,3 +101,17 @@ touba explore . --port 4180 --no-open
 
 Voir le [tutoriel guidé](../tutoriels/explorer-un-projet.md) et la
 [référence CLI](../reference/cli-v1-rc.md).
+
+## Lire les détails
+| Ressource | Informations affichées |
+| --- | --- |
+| Module | Budgets et entrées déclarées du projet |
+| Constante | Type et valeur, y compris les dates civiles |
+| Type | Champs, contraintes et valeurs par défaut |
+| Appel ou condition | Arguments nommés et expression lisible |
+| Approbation | Contexte, rôle, délai et règle de signataire |
+| Package | Version, éditeur, licence, exports, dépendances et modules hôtes |
+
+Les structures imbriquées sont présentées par champs. Les références de source
+servent au bouton **Ouvrir la source**. Les valeurs calculées au cours d’un run
+restent consultables dans ses traces.

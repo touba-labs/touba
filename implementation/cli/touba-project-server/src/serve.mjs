@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
 import { loadProjectContexts } from "../../touba-project/src/skill-packs.mjs";
+import { assertProjectEntrypoint, readProjectEntrypoints } from "../../touba-project/src/project-entrypoints.mjs";
+import { createHostModuleLoader } from "../../touba-run/src/host-modules.mjs";
 import { verifyManifestPackages } from "../../touba-project/src/handler-packages.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -24,6 +26,7 @@ import { validateHumanCheckpointBudgetState, validateHumanCheckpointContinuation
 import { createApprovalRuntime, approvalRequest, authorizeApprovalDecision } from "../../../runtime/touba-runtime/src/human-approval-policy.mjs";
 import { airDocumentDigest } from "../../../runtime/touba-runtime/src/air-identity.mjs";
 import { admitStateOrigin, inspectStateOrigin, currentStateBuild } from "./state-origin.mjs";
+import { acquireStateLease, archiveProjectState, restoreProjectState } from "./state-maintenance.mjs";
 
 import {
   PRODUCT_SURFACE_CONTRACTS,
@@ -80,6 +83,7 @@ import {
   INTERACTION_SESSION_SCHEMA_VERSION,
   INTERACTION_SESSION_STORE_SCHEMA_VERSION,
   listInteractionSessions,
+  operationStatusForRun,
   MAX_INTERACTION_ASSET_BYTES,
   readInteractionAsset,
   readInteractionSessions,
@@ -128,7 +132,8 @@ const EVENT_STREAM_SCHEMA_VERSION = "touba-project-event-stream-v1";
 const SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION = "touba-sandbox-checkpoints-v1";
 const HUMAN_WAIT_SCHEMA_VERSION = "touba-human-wait-v1";
 const HUMAN_WAIT_TTL_MS = 86_400_000;
-const MAX_ACTIVE_HUMAN_WAITS = 100;
+const DEFAULT_ACTIVE_HUMAN_WAITS = 100;
+const MAX_ACTIVE_HUMAN_WAITS = 10000;
 const MAX_HUMAN_WAIT_TIMER_DELAY_MS = 2_147_483_647;
 const MAX_HUMAN_WAIT_TERMINALIZATION_ATTEMPTS = 100;
 const HUMAN_WAIT_TERMINALIZATION_RETRY_MS = 30_000;
@@ -245,10 +250,16 @@ export const CHECKPOINT_INDEXES = Object.freeze({
 });
 
 if (isMainModule()) {
+  const hostModules = createHostModuleLoader();
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help === true) {
       process.stdout.write(`${usage()}\n`);
+      process.exit(0);
+    }
+    if (options.archiveState || options.restoreState) {
+      const report = options.restoreState ? restoreProjectState(options) : archiveProjectState(options, checkToubaProjectState);
+      process.stdout.write(JSON.stringify(report, null, 2) + "\n");
       process.exit(0);
     }
     if (options.checkState === true) {
@@ -257,17 +268,29 @@ if (isMainModule()) {
       process.exit(report.status === "refused" ? 1 : 0);
     }
     if (options.agentDecisionProviderPath !== undefined) {
-      options.agentDecisionProvider = await loadAgentDecisionProviderFromPath(options.agentDecisionProviderPath);
+      options.agentDecisionProvider = await hostModules.decisionProvider(options.agentDecisionProviderPath, { projectRoot: options.projectRoot });
     }
     if (options.humanApprovalHostPath !== undefined) {
-      const host = await import(pathToFileURL(resolve(options.humanApprovalHostPath)).href);
-      if (typeof host.attestHumanApproval !== "function") throw serviceError("HumanApprovalAuthorityUnavailable", "trusted host module must export attestHumanApproval");
-      options.humanApprovalAuthority = host.attestHumanApproval;
-      options.humanApprovalInitiator = host.initiatorRef;
+      Object.assign(options, await hostModules.approvalHost(options.humanApprovalHostPath, { projectRoot: options.projectRoot }));
     }
     const service = createToubaProjectServer(options);
+    let stopping = false;
+    const shutdownSignals = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
+    for (const signal of shutdownSignals) process.once(signal, async () => {
+      if (stopping) return;
+      stopping = true;
+      hostModules.close();
+      try {
+        await service.stop();
+        if (process.platform === "win32") process.exit(0);
+        process.removeAllListeners(signal);
+        process.kill(process.pid, signal);
+      }
+      catch { process.exit(1); }
+    });
     await service.start();
   } catch (error) {
+    hostModules.close();
     process.stderr.write(`touba serve error [${error.code ?? "ToubaServeError"}]: ${error.message}\n`);
     for (const diagnostic of error.diagnostics ?? []) {
       process.stderr.write(`  [${diagnostic.code}]: ${diagnostic.message}\n`);
@@ -277,6 +300,36 @@ if (isMainModule()) {
 }
 
 export function createToubaProjectServer(options = {}) {
+  const root = resolve(options.projectRoot ?? process.cwd());
+  if (!existsSync(root) || !statSync(root).isDirectory()) throw serviceError("ToubaServeProjectRootMissing", "project root must be an existing directory");
+  let release = acquireStateLease(root);
+  const dropLease = () => { release?.(); release = null; };
+  try {
+    const service = createProjectServerWithLease(options);
+    return {
+      ...service,
+      async start() {
+        release ??= acquireStateLease(root);
+        try { return await service.start(); }
+        catch (error) { try { await service.stop(); } finally { dropLease(); } throw error; }
+      },
+      async stop() { try { await service.stop(); } finally { dropLease(); } },
+    };
+  } catch (error) { dropLease(); throw error; }
+}
+
+function createProjectServerWithLease(options) {
+  if (options.tracePureFunctions !== undefined && !["full", "calls"].includes(options.tracePureFunctions)) {
+    throw serviceError("ToubaServeTraceDetailInvalid", "tracePureFunctions must be full or calls");
+  }
+  if (options.humanApprovalAuthorityTimeoutMs !== undefined && (!Number.isSafeInteger(options.humanApprovalAuthorityTimeoutMs)
+      || options.humanApprovalAuthorityTimeoutMs < 1 || options.humanApprovalAuthorityTimeoutMs > 60000)) {
+    throw serviceError("ToubaServeHumanApprovalInvalid", "humanApprovalAuthorityTimeoutMs must be an integer between 1 and 60000");
+  }
+  const maxPendingApprovals = options.maxPendingApprovals ?? DEFAULT_ACTIVE_HUMAN_WAITS;
+  if (!Number.isSafeInteger(maxPendingApprovals) || maxPendingApprovals < 1 || maxPendingApprovals > MAX_ACTIVE_HUMAN_WAITS) {
+    throw serviceError("ToubaServeHumanWaitCapacityInvalid", `maxPendingApprovals must be an integer from 1 to ${MAX_ACTIVE_HUMAN_WAITS}`);
+  }
   const contractsRoot = resolve(
     options.contractsRoot ?? fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url)),
   );
@@ -560,10 +613,10 @@ export function createToubaProjectServer(options = {}) {
       reservation.runId === null
       || !activeRecords.some((record) => record.run_id === reservation.runId)
     ));
-    if (activeRecords.length + unmaterializedReservations.length >= MAX_ACTIVE_HUMAN_WAITS) {
+    if (activeRecords.length + unmaterializedReservations.length >= maxPendingApprovals) {
       throw serviceError(
         "ToubaServeHumanWaitCapacityExceeded",
-        `project already has ${MAX_ACTIVE_HUMAN_WAITS} active or reserved human waits`,
+        `project already has ${maxPendingApprovals} active or reserved human waits`,
       );
     }
     const token = `human-wait-reservation:${randomBytes(12).toString("hex")}`;
@@ -642,7 +695,9 @@ export function createToubaProjectServer(options = {}) {
       agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
+          tracePureFunctions: options.tracePureFunctions,
       contractsRoot,
       effectJournalPath,
       humanRequestsPath,
@@ -947,7 +1002,9 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
+          tracePureFunctions: options.tracePureFunctions,
           cancelRequestedProvider: () => controller.cancelRequested,
           contractsRoot,
           dispatchAuthorityProvider,
@@ -1269,7 +1326,9 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
+          tracePureFunctions: options.tracePureFunctions,
           contractsRoot,
           dispatchAuthorityProvider: executionDispatchAuthorityProvider({
             accessToken: request.headers["x-touba-identity-token"],
@@ -1916,7 +1975,9 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
+          tracePureFunctions: options.tracePureFunctions,
           contractsRoot,
           effectJournalPath,
           executionKind: "trigger",
@@ -2206,6 +2267,7 @@ export function createToubaProjectServer(options = {}) {
           contractsRoot,
           projectRoot,
           humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanWaitClaimedObserver,
           humanDecisionsPath,
           humanRequestsPath,
@@ -2239,7 +2301,9 @@ export function createToubaProjectServer(options = {}) {
           agentDecisionProviderMetadata: options.agentDecisionProviderMetadata,
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
+          humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
+          tracePureFunctions: options.tracePureFunctions,
           contractsRoot,
           dispatchAuthorityProvider: executionDispatchAuthorityProvider({
             accessToken: request.headers["x-touba-identity-token"],
@@ -2939,6 +3003,7 @@ async function acceptDecisionWithHumanWait({
   contractsRoot,
   projectRoot,
   humanApprovalAuthority,
+  humanApprovalAuthorityTimeoutMs,
   decision,
   humanDecisionsPath,
   humanRequestsPath,
@@ -2998,6 +3063,10 @@ async function acceptDecisionWithHumanWait({
     request: record.human_wait.request,
   });
   const authorizationAt = new Date(nowMs()).toISOString();
+  const trustedHostApproval = typeof humanApprovalAuthority === "function"
+    && record.checkpoint.approval_state !== undefined
+    && decision.schema_version === "touba-approval-decision-v1"
+    && ["approve", "reject"].includes(decision.decision);
   prepareDecisionAcceptance({
     acceptedAt: authorizationAt,
     authoritativeRequest: record.human_wait.request,
@@ -3007,6 +3076,7 @@ async function acceptDecisionWithHumanWait({
     humanRequestsPath,
     productIdentityPath,
     requireProjectAuthorization,
+    trustedHostApproval,
   });
   let approvalState;
   if (record.checkpoint.approval_state && record.human_wait.resolution === null) {
@@ -3016,9 +3086,16 @@ async function acceptDecisionWithHumanWait({
     }
     const ref = record.approval_ref;
     const runtime = createApprovalRuntime(resolved.document, {
+      humanApprovalAuthorityTimeoutMs,
       humanApprovalAuthority: humanApprovalAuthority
-        ? args => humanApprovalAuthority({ ...args, hostDecision: structuredClone(decision) }) : undefined,
-      humanApprovalDecisions: { [ref]: { decision: runtimeDecisionFromStoredDecision(decision), evidence_ref: decision.request_id } },
+        ? async args => {
+          const attestation = await humanApprovalAuthority({ ...args, hostDecision: structuredClone(decision) });
+          if (attestation?.subject_ref !== decision.user_ref || decision.decided_by !== decision.user_ref) {
+            throw serviceError("HumanApprovalIdentityMismatch", "host attestation does not match the submitted signer");
+          }
+          return attestation;
+        } : undefined,
+      humanApprovalDecisions: { [ref]: { decision: runtimeDecisionFromStoredDecision(decision), evidence_ref: decision.evidence_ref ?? decision.request_id, comment: decision.comment } },
     }, record.checkpoint);
     const saved = runtime.state.requests[ref];
     if (!saved) throw serviceError("HumanApprovalCheckpointIncompatible", "approval occurrence is missing its source authority state");
@@ -3069,6 +3146,7 @@ function prepareDecisionAcceptance({
   humanRequestsPath,
   productIdentityPath,
   requireProjectAuthorization,
+  trustedHostApproval = false,
 }) {
   const schemaVersion = decision?.schema_version;
   if (!ACCEPTED_DECISION_CONTRACTS.includes(schemaVersion)) {
@@ -3090,6 +3168,7 @@ function prepareDecisionAcceptance({
       enforceRequestExpiration,
       humanRequestsPath,
       productIdentityPath,
+      trustedHostApproval,
     });
   }
   parseHumanWaitInstant(acceptedAt, "decision.accepted_at");
@@ -3117,6 +3196,7 @@ function assertProjectDecisionAuthorized({
   enforceRequestExpiration = true,
   humanRequestsPath,
   productIdentityPath,
+  trustedHostApproval = false,
 }) {
   const isReview = decision.schema_version === "touba-human-review-decision-v1";
   let pendingRequest = authoritativeRequest;
@@ -3145,6 +3225,10 @@ function assertProjectDecisionAuthorized({
   if (enforceRequestExpiration && Date.parse(pendingRequest.expires_at) <= Date.parse(acceptedAt)) {
     throw serviceError("ToubaServeDecisionRequestExpired", "pending human request has expired");
   }
+
+  // The durable approval path still attests the exact signer and source policy
+  // before claiming the decision. An application may own its identity store.
+  if (trustedHostApproval && !isReview) return;
 
   const identity = readProductIdentity({ contractsRoot, productIdentityPath, generatedAt: acceptedAt });
   const user = identity.users.find((candidate) => candidate.user_ref === decision.user_ref && candidate.status === "active");
@@ -3487,7 +3571,9 @@ export async function executeProjectSandboxRun({
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
   humanApprovalAuthority,
+  humanApprovalAuthorityTimeoutMs,
   humanApprovalInitiator,
+  tracePureFunctions,
   contractsRoot,
   cancelRequestedProvider,
   dispatchAuthorityProvider,
@@ -3578,7 +3664,9 @@ export async function executeProjectSandboxRun({
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
       humanApprovalAuthority,
+      humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
+      tracePureFunctions,
       cancelRequestedProvider,
       dispatchAuthorityProvider,
       durableHumanApprovals: true,
@@ -3779,7 +3867,9 @@ export async function resumeProjectSandboxRun({
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
   humanApprovalAuthority,
+  humanApprovalAuthorityTimeoutMs,
   humanApprovalInitiator,
+  tracePureFunctions,
   contractsRoot,
   cancelRequestedProvider,
   dispatchAuthorityProvider,
@@ -3806,7 +3896,9 @@ export async function resumeProjectSandboxRun({
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
       humanApprovalAuthority,
+      humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
+      tracePureFunctions,
       cancelRequestedProvider,
       contractsRoot,
       dispatchAuthorityProvider,
@@ -3865,7 +3957,9 @@ export async function resumeProjectSandboxRun({
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
       humanApprovalAuthority,
+      humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
+      tracePureFunctions,
       cancelRequestedProvider,
       dispatchAuthorityProvider,
       durableHumanApprovals: true,
@@ -3873,7 +3967,7 @@ export async function resumeProjectSandboxRun({
       effectScopeId: record.operation_id,
       entryRef: record.target_ref,
       humanApprovalDecisions: {
-        [record.approval_ref]: runtimeDecisionFromStoredDecision(decision),
+        [record.approval_ref]: { decision: runtimeDecisionFromStoredDecision(decision), comment: decision.comment },
       },
       humanApprovalResumeCheckpoint: record.checkpoint,
       operationId: record.operation_id,
@@ -3966,7 +4060,9 @@ async function terminalizeAutomaticHumanWait({
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
   humanApprovalAuthority,
+  humanApprovalAuthorityTimeoutMs,
   humanApprovalInitiator,
+  tracePureFunctions,
   contractsRoot,
   effectJournalPath,
   humanRequestsPath,
@@ -4015,7 +4111,9 @@ async function terminalizeAutomaticHumanWait({
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
       humanApprovalAuthority,
+      humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
+      tracePureFunctions,
       durableHumanApprovals: true,
       effectJournal,
       effectScopeId: record.operation_id,
@@ -4102,7 +4200,9 @@ async function resumeProjectDurableSandboxRun({
   agentDecisionProviderMetadata,
   agentDecisionProviderTimeoutMs,
   humanApprovalAuthority,
+  humanApprovalAuthorityTimeoutMs,
   humanApprovalInitiator,
+  tracePureFunctions,
   cancelRequestedProvider,
   contractsRoot,
   dispatchAuthorityProvider,
@@ -4165,7 +4265,9 @@ async function resumeProjectDurableSandboxRun({
       agentDecisionProviderMetadata,
       agentDecisionProviderTimeoutMs,
       humanApprovalAuthority,
+      humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
+      tracePureFunctions,
       cancelRequestedProvider: durableCancelRequestedProvider,
       dispatchAuthorityProvider,
       durableHumanApprovals: true,
@@ -4258,6 +4360,7 @@ async function resumeProjectDurableSandboxRun({
 }
 
 function resolveSandboxAirDocument({ projectRoot, targetRef }) {
+  assertProjectEntrypoint(projectRoot, targetRef);
   const diagnostics = [];
   const prepared = readPreparedProject(projectRoot);
   const artifacts = prepared
@@ -4839,8 +4942,19 @@ function validateHumanWaitInteractionProjectionMarkers({
   for (const record of records) {
     const projectionMayHaveExpired = ["completed", "superseded"].includes(record.status)
       && record.human_wait.resolution?.status === "completed"
-      && record.human_wait.projections.interaction !== null
-      && record.human_wait.projections.terminal_event !== null;
+      && record.human_wait.projections.terminal_event !== null
+      && (record.human_wait.projections.interaction !== null
+        || (record.status === "superseded"
+          && loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: record.operation_id }]).records.some(terminal => (
+            terminal.record_kind === "human"
+            && terminal.status === "completed"
+            && terminal.run_id === record.run_id
+            && terminal.target_ref === record.target_ref
+            && terminal.human_wait.resolution?.status === "completed"
+            && terminal.human_wait.projections.terminal_event !== null
+            && terminal.human_wait.projections.interaction !== null
+            && terminal.human_wait.projections.interaction.session_id === record.human_wait.projections.pause_interaction?.session_id
+          ))));
     for (const [field, result] of [
       ["pause_interaction", record.paused_result],
       ["interaction", record.result],
@@ -6776,7 +6890,11 @@ function buildProjectEntrypoints({ projectRoot, artifacts, diagnostics }) {
       });
     }
   }
-  return [...entrypoints.values()].sort((left, right) => left.ref.localeCompare(right.ref));
+  let admitted = [];
+  try { admitted = readProjectEntrypoints(projectRoot); }
+  catch (error) { diagnostics.push(serviceDiagnostic(error.code, error.message, "error", "touba.project.json")); }
+  return [...entrypoints.values()].filter(entry => admitted.includes(entry.ref))
+    .sort((left, right) => left.ref.localeCompare(right.ref));
 }
 
 function collectProjectArtifacts(projectRoot, diagnostics) {
@@ -9300,6 +9418,7 @@ function humanRequestFromCheckpoint({ checkpoint, createdAt, requestId }) {
     summary: approvalContextSummary(checkpoint)
       ?? `Resume ${checkpoint.entry_ref} at its declared human approval boundary.`,
     allowed_decisions: ["approve", "reject"],
+    policy: structuredClone(checkpoint.approval_state?.requests[checkpoint.approval_ref]?.policy ?? {}),
     expires_at: expiresAt,
     trace_ref: traceRef,
     redaction: "payload_minimized",
@@ -11134,7 +11253,7 @@ function publishInteractionCompletionEventOnce({
   result,
   sandboxCheckpointsPath,
 }) {
-  const type = interactionCompletionEventType(operation.status);
+  const type = interactionCompletionEventType(operationStatusForRun(result));
   const event = appendInteractionCompletionEventOnce({
     eventJournalPath,
     nextEvent,
@@ -11153,7 +11272,10 @@ function appendInteractionCompletionEventOnce({
   result,
   sandboxCheckpointsPath,
 }) {
-  const type = interactionCompletionEventType(operation.status);
+  // A pause can already be followed by a cancellation claim when its event is
+  // repaired. Classify the immutable result, not the operation's newer state.
+  const resultStatus = operationStatusForRun(result);
+  const type = interactionCompletionEventType(resultStatus);
   const resultDigest = canonicalDigest(result);
   const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: operation.operation_id }]);
   const matchingRecords = store.records.filter((candidate) => (
@@ -11220,7 +11342,7 @@ function appendInteractionCompletionEventOnce({
     ))
     : undefined;
   const event = projectionMarker ?? existing ?? nextEvent(type, interactionOperationEventPayload(
-    operation,
+    { ...operation, status: resultStatus },
     record === undefined ? {} : { request_id: record.request_id, result_digest: resultDigest },
   ));
   for (const target of markerTargets) {
@@ -11412,6 +11534,8 @@ function writeSse(response, event, data) {
 }
 
 function httpStatusForError(code) {
+  if (code === "ProjectEntrypointNotAllowed") return 403;
+  if (code === "ProjectEntrypointsInvalid") return 400;
   if (["HumanApprovalRoleRequired", "HumanApprovalSignerConflict", "HumanApprovalIdentityMismatch",
     "HumanApprovalAttestationInvalid"].includes(code)) return 403;
   if (["HumanApprovalAuthorityUnavailable", "HumanApprovalAuthorityRequired"].includes(code)) return 503;
@@ -11594,7 +11718,10 @@ export function checkToubaProjectState(options = {}) {
         const records = value.records ?? value.decisions ?? value.entries ?? value.sessions ?? value.assets ?? [...(value.approvals ?? []), ...(value.reviews ?? [])];
         stores.push({ store: key, exists: true, schema_version: value.schema_version ?? null,
           records: Array.isArray(records) ? records.length : Object.keys(records).length,
-          active_waits: Array.isArray(value.records) ? value.records.filter(record => record.record_kind === "human" && ["pending", "resolution_claimed"].includes(record.status)).length : 0 });
+          active_waits: Array.isArray(value.records) ? value.records.filter(record => record.record_kind === "human" && ["pending", "resolution_claimed"].includes(record.status)).length : 0,
+          active_operations: Array.isArray(value.sessions)
+            ? value.sessions.flatMap(session => session.operations ?? []).filter(operation => ["queued", "running", "awaiting_human", "cancel_requested", "interrupted"].includes(operation.status)).length
+            : Array.isArray(value.records) ? value.records.filter(record => record.record_kind === "execution" && !["completed", "failed", "cancelled"].includes(record.status)).length : 0 });
       } catch (error) { diagnostics.push({ code: error.code ?? "ToubaServeStoredStateInvalid", store: key }); }
     }
     if (diagnostics.length === 0) {
@@ -11629,6 +11756,12 @@ function parseArgs(rawArgs) {
       options.help = true;
     } else if (arg === "--check-state") {
       options.checkState = true;
+    } else if (arg === "--archive-state") {
+      options.archiveState = true;
+    } else if (arg === "--restore-state") {
+      options.restoreState = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--apply") {
+      options.applyState = true;
     } else if (arg === "--identity") {
       options.productIdentityPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--contracts-root") {
@@ -11645,6 +11778,8 @@ function parseArgs(rawArgs) {
       options.eventJournalPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--event-journal-limit") {
       options.eventJournalLimit = Number.parseInt(requiredValue(arg, rawArgs, ++index), 10);
+    } else if (arg === "--max-pending-approvals") {
+      options.maxPendingApprovals = Number(requiredValue(arg, rawArgs, ++index));
     } else if (arg === "--run-summary") {
       options.runSummaryPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--trace-timeline") {
@@ -11671,6 +11806,15 @@ function parseArgs(rawArgs) {
       options.deploymentTargetUrl = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--deployment-target-token-env") {
       options.deploymentTargetTokenEnv = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--trace-pure-functions" || arg.startsWith("--trace-pure-functions=")) {
+      options.tracePureFunctions = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : requiredValue(arg, rawArgs, ++index);
+      if (!["full", "calls"].includes(options.tracePureFunctions)) throw serviceError("ToubaServeTraceDetailInvalid", "--trace-pure-functions must be full or calls");
+    } else if (arg === "--human-approval-authority-timeout-ms" || arg.startsWith("--human-approval-authority-timeout-ms=")) {
+      const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : requiredValue(arg, rawArgs, ++index);
+      if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 60000) {
+        throw serviceError("ToubaServeHumanApprovalInvalid", "--human-approval-authority-timeout-ms must be an integer between 1 and 60000");
+      }
+      options.humanApprovalAuthorityTimeoutMs = Number(value);
     } else if (arg === "--human-approval-host") {
       options.humanApprovalHostPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg.startsWith("--human-approval-host=")) {
@@ -11743,6 +11887,10 @@ function parseArgs(rawArgs) {
   ) {
     throw serviceError("ToubaServeAgentDecisionProviderInvalid", "--agent-decision-provider-max-retries must be a non-negative integer");
   }
+  if ([options.checkState, options.archiveState, options.restoreState].filter(Boolean).length > 1
+    || (options.applyState && !options.archiveState && !options.restoreState)) {
+    throw serviceError("ToubaStateOptionsInvalid", "choose one state operation; --apply requires --archive-state or --restore-state");
+  }
   return options;
 }
 
@@ -11769,37 +11917,18 @@ function parseJsonObjectOption(option, rawValue) {
   }
 }
 
-async function loadAgentDecisionProviderFromPath(providerPath) {
-  const moduleUrl = pathToFileURL(resolve(providerPath)).href;
-  const providerModule = await import(moduleUrl);
-  const provider =
-    providerModule.decideAgentCapability
-    ?? providerModule.decide
-    ?? providerModule.default;
-  if (typeof provider !== "function") {
-    throw serviceError(
-      "ToubaServeAgentDecisionProviderInvalid",
-      "provider module must export decideAgentCapability, decide, or a default function",
-    );
-  }
-  const metadata = providerModule.provider_metadata
-    ?? providerModule.providerMetadata
-    ?? provider.metadata
-    ?? providerModule.default?.metadata;
-  return metadata === undefined
-    ? provider
-    : {
-      decide: provider,
-      metadata,
-    };
-}
-
 function usage() {
   return [
     "Usage: touba serve [--check-state] [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-approval-host <host.mjs>] [--human-decisions <human-decisions.sqlite>] [--human-requests <path>] [--effect-journal <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for authenticated project clients.",
+    "--max-pending-approvals <n> sets the pending approval capacity (default 100, maximum 10000).",
+    "--human-approval-host and --agent-decision-provider accept JavaScript (.mjs) and Python (.py) host modules.",
+    "--trace-pure-functions full|calls selects pure function detail (default full).",
+    "--human-approval-authority-timeout-ms <1..60000> bounds each identity attestation call (default 5000 ms).",
     "--check-state returns an offline structural preflight as JSON, without starting the server or loading host modules.",
+    "--archive-state previews archival of stopped, completed project state; add --apply to archive it reversibly.",
+    "--restore-state <archive-id> previews restoration; add --apply to restore without overwriting current state.",
     "Use --identity <project-identity.json> to load an explicit, schema-validated identity configuration inside the project root.",
     "",
     "Defaults:",

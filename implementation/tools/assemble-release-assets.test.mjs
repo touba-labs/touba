@@ -49,6 +49,8 @@ test("assembles public release assets with global checksums", () => {
     const releaseNotes = readFileSync(join(output, "GITHUB_RELEASE_NOTES.md"), "utf8");
     assert.match(releaseNotes, /^# Touba 1\.2\.3/mu);
     assert.match(releaseNotes, /## Release Assets/u);
+    assert.match(releaseNotes, /https:\/\/toubalang\.org\/docs\/demarrer\/installation/u);
+    assert.doesNotMatch(releaseNotes, /https:\/\/touba-labs\.com/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

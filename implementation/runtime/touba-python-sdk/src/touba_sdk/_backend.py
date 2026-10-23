@@ -10,14 +10,14 @@ import os
 import subprocess
 import threading
 from ._host_context import execution_context
-from .provider_errors import ToubaAgentDecisionProviderError
+from .provider_errors import ToubaAgentDecisionProviderError, provider_diagnostic_details
 from ._engine_command import resolve_engine_command
 
 MAX_BYTES = 8 * 1024 * 1024
 
 
-def _error(code="PythonHostUnavailable"):
-    return ToubaAgentDecisionProviderError(code, "Touba SDK backend operation failed")
+def _error(code="PythonHostUnavailable", details=None):
+    return ToubaAgentDecisionProviderError(code, "Touba SDK backend operation failed", details)
 
 
 class MicroUnits(int):
@@ -123,7 +123,11 @@ class Backend:
     def _callback(self, message, state):
         try:
             _, loop, context, _ = state
-            function = context.get(execution_context) if message["target"] == "cost" else self.callbacks[message["target"]]
+            if message["target"] in ("cost", "provider_metadata"):
+                observer = context.get(execution_context)
+                function = observer if message["target"] == "cost" else lambda value: observer(value, "provider_metadata")
+            else:
+                function = self.callbacks[message["target"]]
             if not callable(function):
                 raise _error()
             arguments = self.unpack(message["args"])
@@ -140,7 +144,8 @@ class Backend:
         except BaseException as error:
             code = error.code if isinstance(error, ToubaAgentDecisionProviderError) else "PythonHostUnavailable"
             try:
-                self.send({"callback_reply": message["callback"], "error": {"code": code}})
+                self.send({"callback_reply": message["callback"], "error": {"code": code,
+                    "details": provider_diagnostic_details(getattr(error, "details", None))}})
             except BaseException:
                 self.close()
 
@@ -168,7 +173,7 @@ class Backend:
                         if future.cancelled():
                             continue
                         if "error" in message:
-                            future.set_exception(_error(message["error"].get("code", "PythonHostUnavailable")))
+                            future.set_exception(_error(message["error"].get("code", "PythonHostUnavailable"), message["error"].get("details")))
                         else:
                             future.set_result(self.unpack(message["result"]))
         except BaseException:

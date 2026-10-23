@@ -708,6 +708,8 @@ test("ToubaEngine compiles a source and runs it through the Touba CLI facade", a
         provider_name: "sdk-fixture",
       },
       agentDecisionProviderTimeoutMs: 1000,
+      humanApprovalAuthorityTimeoutMs: 12000,
+      tracePureFunctions: "calls",
       agentDecisionProviderMaxRetries: 1,
       agentDecisionProviderInitialMode: "capabilities",
       agentDecisionProviderContentMode: "opaque_refs",
@@ -745,6 +747,8 @@ test("ToubaEngine compiles a source and runs it through the Touba CLI facade", a
       provider_name: "sdk-fixture",
     });
     const timeoutIndex = calls[1].args.indexOf("--agent-decision-provider-timeout-ms");
+    assert.equal(calls[1].args[calls[1].args.indexOf("--human-approval-authority-timeout-ms") + 1], "12000");
+    assert.equal(calls[1].args[calls[1].args.indexOf("--trace-pure-functions") + 1], "calls");
     assert.notEqual(timeoutIndex, -1);
     assert.equal(calls[1].args[timeoutIndex + 1], "1000");
     const retriesIndex = calls[1].args.indexOf("--agent-decision-provider-max-retries");

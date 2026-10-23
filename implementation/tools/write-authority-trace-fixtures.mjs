@@ -1,3 +1,4 @@
+import "./fixture-clock.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

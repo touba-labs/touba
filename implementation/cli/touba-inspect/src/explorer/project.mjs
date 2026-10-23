@@ -6,6 +6,7 @@ import path, { basename, dirname, isAbsolute, join, relative, resolve, sep } fro
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { compilerInputsForFile } from '../../../touba-project/src/project.mjs';
+import { projectEntrypoints } from '../../../touba-project/src/project-entrypoints.mjs';
 import { projectExplorer } from './model.mjs';
 
 export const implementationRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -60,9 +61,10 @@ export { safeRead as readProjectSource };
 
 export async function captureProject(root) {
   const files = [], metadata = [], roots = [], diagnostics = [], packages = [];
+  let entrypoints = [];
   const packageSummary = document => {
     if (packages.some(p => p.name === document.name)) return;
-    packages.push({ name:document.name, version:document.version, description:document.description, contexts:(document.contexts ?? []).map(c => ({ id:c.id, description:c.description, activation:c.activation, execution_links:c.execution_links })) });
+    packages.push({ ...Object.fromEntries(['name', 'version', 'description', 'publisher', 'license', 'touba', 'exports', 'dependencies', 'engines', 'hosts'].filter(key => document[key] !== undefined).map(key => [key, document[key]])), contexts:(document.contexts ?? []).map(c => ({ id:c.id, description:c.description, activation:c.activation, execution_links:c.execution_links })) });
   };
   let total = 0, entries = 0;
   async function walk(directory, pkg = null, depth = 0) {
@@ -94,6 +96,7 @@ export async function captureProject(root) {
         for (const file of files) file.package=document.name;
       }
       if (name === 'touba.project.json') {
+        entrypoints = projectEntrypoints(JSON.parse(bytes));
         for (const record of JSON.parse(bytes).packages ?? []) {
           if (typeof record.manifest !== 'string' || !inside(root, await realpath(resolve(root, record.manifest)))) throw new Error('ExplorerPackageOutsideProject');
         }
@@ -120,7 +123,7 @@ export async function captureProject(root) {
     }
   }
   const revision = digest(JSON.stringify([metadata, files.map(f => [f.path, f.digest]), diagnostics]));
-  return { root, name: basename(root), files, roots, revision, diagnostics, packages };
+  return { root, name: basename(root), files, roots, revision, diagnostics, packages, entrypoints };
 }
 
 async function compilerBinary() {

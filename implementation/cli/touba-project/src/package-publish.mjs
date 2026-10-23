@@ -16,6 +16,9 @@ export async function publishPackage(path, options = {}) {
   }
   path ??= findPackageWorkspace(options.root, { author: true });
   const author = readPackage(path, { publishing: true });
+  if (!author.document.readme || !readFileSync(join(author.root, author.document.readme), 'utf8').trim()) {
+    throw packageError('PackagePresentationRequired', 'direct publication requires a README; use Cloud to compose a presentation separately');
+  }
   let registry = resolve(options.registry);
   // Resolve the selected directory boundary, e.g. macOS /tmp, not its children.
   if (existsSync(registry)) {

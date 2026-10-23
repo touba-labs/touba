@@ -148,7 +148,7 @@ function renderReleaseNotes(manifest, canonicalReleaseNotes) {
     "Download `SHA256SUMS` or `CHECKSUMS.json` from this release and compare the SHA-256 digest of the archive before installation.",
     "",
     "Installation instructions are maintained in the Touba documentation:",
-    "https://touba-labs.com/docs/demarrer/installation",
+    "https://toubalang.org/docs/demarrer/installation",
     "",
   ].join("\n");
 }

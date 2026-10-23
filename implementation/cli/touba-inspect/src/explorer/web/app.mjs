@@ -17,9 +17,11 @@ const roles = {
   fr:{ next:'suite',true:'si vrai',false:'si faux',loop_next:'itération suivante',loop_exit:'sortie de boucle',failure:'en cas d’échec',fallback:'repli',expired:'à l’expiration',stop:'arrêt',read:'lecture',write:'écriture',read_write:'lecture et écriture',append:'ajout' },
 };
 const fields = {
-  en:{ signature:'Signature',description:'Description',responsibility:'Responsibility',fields:'Fields',variants:'Variants',type_ref:'Type',limits:'Limits',memory_scopes:'Memory scopes',memory_accesses:'Memory access',event:'Event',required_capabilities:'Required capabilities',required_secrets:'Required secrets',boundary:'External handler',budgets:'Run budgets',version:'Version',activation:'Activation',target_ref:'Target',result_binding:'Result',condition_ref:'Condition',collection_ref:'Collection',item_binding:'Item',max_concurrency:'Maximum concurrency',max_items:'Maximum items',approval_policy:'Approval policy',interaction_mode:'Interaction mode',role:'Role',timeout_ms:'Timeout',access:'Access',memory_ref:'Memory',name:'Name' },
-  fr:{ signature:'Signature',description:'Description',responsibility:'Responsabilité',fields:'Champs',variants:'Variantes',type_ref:'Type',limits:'Limites',memory_scopes:'Périmètres mémoire',memory_accesses:'Accès mémoire',event:'Événement',required_capabilities:'Capacités requises',required_secrets:'Secrets requis',boundary:'Handler externe',budgets:'Budgets du run',version:'Version',activation:'Activation',target_ref:'Cible',result_binding:'Résultat',condition_ref:'Condition',collection_ref:'Collection',item_binding:'Élément',max_concurrency:'Concurrence maximale',max_items:'Éléments maximum',approval_policy:'Politique d’approbation',interaction_mode:'Mode d’interaction',role:'Rôle',timeout_ms:'Délai',access:'Accès',memory_ref:'Mémoire',name:'Nom' },
+  en:{ signature:'Signature',description:'Description',responsibility:'Responsibility',fields:'Fields',variants:'Variants',type_ref:'Type',limits:'Limits',memory_scopes:'Memory scopes',memory_accesses:'Memory access',event:'Event',required_capabilities:'Required capabilities',required_secrets:'Required secrets',boundary:'External handler',budgets:'Run budgets',version:'Version',activation:'Activation',target_ref:'Target',result_binding:'Result',condition_ref:'Condition',collection_ref:'Collection',item_binding:'Item',max_concurrency:'Maximum concurrency',max_items:'Maximum items',approval_policy:'Approval policy',interaction_mode:'Interaction mode',role:'Role',timeout_ms:'Timeout',access:'Access',memory_ref:'Memory',name:'Name',max_agent_invocations:'Maximum agent invocations',max_provider_calls:'Maximum provider calls',max_tool_calls:'Maximum tool calls',max_steps:'Maximum steps',max_run_ms:'Maximum run duration' },
+  fr:{ signature:'Signature',description:'Description',responsibility:'Responsabilité',fields:'Champs',variants:'Variantes',type_ref:'Type',limits:'Limites',memory_scopes:'Périmètres mémoire',memory_accesses:'Accès mémoire',event:'Événement',required_capabilities:'Capacités requises',required_secrets:'Secrets requis',boundary:'Handler externe',budgets:'Budgets du run',version:'Version',activation:'Activation',target_ref:'Cible',result_binding:'Résultat',condition_ref:'Condition',collection_ref:'Collection',item_binding:'Élément',max_concurrency:'Concurrence maximale',max_items:'Éléments maximum',approval_policy:'Politique d’approbation',interaction_mode:'Mode d’interaction',role:'Rôle',timeout_ms:'Délai',access:'Accès',memory_ref:'Mémoire',name:'Nom',max_agent_invocations:'Invocations d’agents maximum',max_provider_calls:'Appels fournisseur maximum',max_tool_calls:'Appels d’outils maximum',max_steps:'Étapes maximum',max_run_ms:'Durée maximale du run' },
 };
+Object.assign(fields.en, { value:'Declared value', arguments:'Declared arguments', context:'Context', payload:'Input mapping', constraints:'Constraints', default:'Default value', min_length:'Minimum length', max_length:'Maximum length', format:'Format', min:'Minimum', max:'Maximum', entrypoint:'Project entrypoint', entrypoints:'Project entrypoints', exports:'Exports', dependencies:'Dependencies', engines:'Host requirements', hosts:'Declared host modules', publisher:'Publisher', license:'License', touba:'Touba compatibility', runtime_compatibility:'Runtime version', air_profile:'AIR profile', content_types:'Content types', max_bytes:'Maximum bytes', map:'Mapping', path:'Path', language:'Language', distinct_from:'Different signer', exclude_signers:'Excluded signers rule' });
+Object.assign(fields.fr, { value:'Valeur déclarée', arguments:'Arguments déclarés', context:'Contexte', payload:'Correspondance des entrées', constraints:'Contraintes', default:'Valeur par défaut', min_length:'Longueur minimale', max_length:'Longueur maximale', format:'Format', min:'Minimum', max:'Maximum', entrypoint:'Entrée du projet', entrypoints:'Entrées du projet', exports:'Exports', dependencies:'Dépendances', engines:'Prérequis hôtes', hosts:'Modules hôtes déclarés', publisher:'Éditeur', license:'Licence', touba:'Compatibilité Touba', runtime_compatibility:'Version du runtime', air_profile:'Profil AIR', content_types:'Types de contenu', max_bytes:'Octets maximum', map:'Correspondance', path:'Chemin', language:'Langage', distinct_from:'Signataire différent', exclude_signers:'Règle de signataires exclus' });
 const icons = {
   module:'M3 7h7l2 2h9v11H3z M3 7V4h7l2 3', package:'m3 7 9-4 9 4v10l-9 4-9-4z M3 7l9 4 9-4 M12 11v10',
   agent:'M5 9h14v12H5z M9 14h.1 M15 14h.1 M9 18h6 M12 3v6 M9 3h6', skill:'m13 2-9 12h7l-1 8 10-13h-7z',
@@ -85,7 +87,7 @@ function nodeSubtitle(n) {
   if (n.kind === 'parallel_call' && d.max_concurrency) return `${lang === 'fr' ? `${d.max_concurrency} en parallèle` : `${d.max_concurrency} concurrent`}${d.max_items ? ` · max ${d.max_items}` : ''}`;
   if (n.graph && d.target_ref) return `→ ${refName(d.target_ref)}`;
   if (n.graph && n.owner && nodeById(n.owner)) return nodeById(n.owner).name;
-  return `${kindText(n.kind)}${n.count ? ` · ${n.count}` : ''}`;
+  return `${kindText(n.kind)}${n.count > 1 ? ` · ${n.count} ${text('count')}` : ''}`;
 }
 function translate() {
   document.documentElement.lang = lang; $('language').value = lang;
@@ -266,27 +268,38 @@ function expand(n) {
 }
 function detailValue(key, value) {
   if (key === 'boundary') return el('p', text('boundaryValue'));
+  if (typeof value?.expression === 'string') return el('pre', value.expression, 'declared-expression');
+  if (key === 'default' && value?.present === false) return el('code', 'none');
+  if (key === 'default' && value?.present === true) return detailValue(key, value.value);
   if (value === null || ['string','number','boolean'].includes(typeof value)) {
     const target = /_ref$/u.test(key) ? nodeById(value) : null;
     if (target) { const link = button(nodeLabel(target), () => revealNode(target.id)); link.className = 'link-button'; return link; }
-    const shown = /_ms$/u.test(key) ? duration(value) : /_ref$|_binding$/u.test(key) ? refName(value) : String(value);
+    const shown = key === 'type_ref' ? typeName(value) : key === 'entrypoint' ? (lang === 'fr' ? 'Oui' : 'Yes') : /_ms$/u.test(key) ? duration(value) : /_ref$|_binding$/u.test(key) ? refName(value) : String(value);
     return el('p', shown, typeof value === 'string' && value.length > 60 ? 'prose' : 'value');
   }
   if (Array.isArray(value)) {
-    const chips = el('div', undefined, 'chips');
+    const chips = el('div', undefined, value.some(item => item && typeof item === 'object') ? 'detail-items' : 'chips');
     for (const item of value) {
       if (item && typeof item === 'object') {
-        const name = item.name ?? item.handle ?? item.capability ?? (item.memory_ref ? refName(item.memory_ref) : null);
-        const extra = item.type_ref ? typeName(item.type_ref) : item.access ? roleText(item.access) : null;
-        chips.append(el('span', name ? `${name}${extra ? ` · ${extra}` : ''}` : JSON.stringify(item), 'chip'));
-      } else chips.append(el('span', String(item), 'chip'));
+        const card = el('div', undefined, 'detail-item');
+        if (item.name) card.append(el('h4', `${item.name}${item.type_ref ? ` · ${typeName(item.type_ref)}` : ''}`));
+        const remaining = Object.fromEntries(Object.entries(item).filter(([field]) => !item.name || !['name', 'type_ref'].includes(field)));
+        card.append(detailValue(key, remaining)); chips.append(card);
+      } else {
+        const target = nodeById(item);
+        chips.append(target ? button(nodeLabel(target), () => revealNode(target.id)) : el('span', String(item), 'chip'));
+      }
     }
     return chips;
   }
   const list = el('dl', undefined, 'facts');
   for (const [subKey, subValue] of Object.entries(value ?? {})) {
     if (subKey === 'source_ref' || subValue === undefined) continue;
-    list.append(el('dt', fieldText(subKey)), el('dd', /_ms$/u.test(subKey) ? duration(subValue) : typeof subValue === 'object' ? JSON.stringify(subValue) : String(subValue)));
+    // AIR run limits carry provenance alongside their value. Keep that contract
+    // intact and unwrap only this known field when presenting the limit.
+    const shown = key === 'budgets' ? subValue.value : subValue;
+    const detail = el('dd'); detail.append(detailValue(subKey, shown));
+    list.append(el('dt', fieldText(subKey)), detail);
   }
   return list;
 }

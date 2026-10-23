@@ -9,6 +9,7 @@ import { captureProject, compileCapture, ExplorerSession, implementationRoot, sn
 import { startExplorer, explorerHtml } from '../src/explorer/server.mjs';
 import { visibleGraph, layoutGraph, viewForNode } from '../src/explorer/web/view.mjs';
 import { projectExplorer } from '../src/explorer/model.mjs';
+import { expressionFormatter } from '../src/explorer/expressions.mjs';
 import { initProject } from '../../touba-project/src/project.mjs';
 import { newPackage, packPackage, addPackage } from '../../touba-project/src/packages.mjs';
 import { validateObject } from '../../../tools/validate-product-surface-contracts.mjs';
@@ -55,6 +56,49 @@ test('real compiler: responsibilities, authority, secrets names, approval and bo
   assert.equal(JSON.stringify(graph).includes(root), false);
 });
 
+test('expression display preserves syntax and bounds cyclic or oversized input', () => {
+  const display = expressionFormatter({expressions: [
+    {id:'concat', kind:'binary_op', operator:'text_concat', operands:['literal:string:Hello ', 'value:name']},
+    {id:'cycle', kind:'value_ref', value_ref:'expr:cycle'},
+    {id:'large', kind:'literal_text', literal_text:'x'.repeat(10000)},
+  ]});
+  assert.equal(display('expr:concat'), '("Hello " ++ name)');
+  assert.equal(display('expr:cycle'), '…');
+  assert.equal(display('expr:large').length, 4097);
+});
+
+test('declared constants, field contracts and expressions are readable without executing code', async t => {
+  const root = await project(t);
+  await writeFile(join(root, 'src/details.tb'), `module details
+define Cutoff as Date = date("2026-10-22")
+type Invoice
+    amount is Int min 0 max 1000
+    note is Text default "ready"
+function Total
+    takes invoice as Invoice
+    gives Int
+    do
+        give invoice.amount + 2
+strategy Review
+    takes invoice as Invoice
+    gives Int
+    do
+        Total
+            with invoice as invoice
+            into total
+        give total
+`);
+  const result = await compileCapture(await captureProject(root));
+  assert.ok(result.graph, JSON.stringify(result.diagnostics));
+  assert.equal(result.graph.nodes.find(n => n.id === 'constant:details/Cutoff').details.value.expression, 'date("2026-10-22")');
+  const fields = result.graph.nodes.find(n => n.id === 'type:details/Invoice').details.fields;
+  assert.deepEqual(fields[0].constraints, { min: 0, max: 1000 });
+  assert.equal(fields[1].default, 'ready');
+  assert.equal(result.graph.nodes.find(n => n.owner === 'function:details/Total' && n.kind === 'give').details.arguments['1'].expression, '(invoice.amount + 2)');
+  const call = result.graph.nodes.find(n => n.kind === 'call_function' && n.details.target_ref === 'function:details/Total');
+  assert.equal(call.details.arguments.invoice.expression, 'invoice');
+});
+
 test('multi-module source resolution, true origins, deterministic revision, no project writes', async t => {
   const root = await project(t);
   await writeFile(join(root,'src/common.tb'), 'module common\nfunction Echo\n    takes value as Text\n    gives Text\n    do\n        give value\n');
@@ -86,6 +130,11 @@ test('real package installation appears with package provenance; modified packag
   const result=await compileCapture(await captureProject(consumer));
   assert.ok(result.graph,JSON.stringify(result.diagnostics));
   assert.ok(result.graph.nodes.some(n=>n.kind==='package' && n.name==='example.echo'));
+  const details = result.graph.nodes.find(n=>n.kind==='package' && n.name==='example.echo').details;
+  assert.equal(details.publisher, 'Test');
+  assert.equal(details.license, 'MIT');
+  assert.ok(details.exports.skills.includes('skill:example.echo/Echo'));
+  assert.ok(details.touba.runtime_compatibility);
   assert.equal(result.graph.nodes.find(n=>n.id==='skill:example.echo/Echo').package,'example.echo');
   await writeFile(join(consumer,'packages/example.echo/src/example/echo.tb'),'module example.echo\n');
   const broken=await compileCapture(await captureProject(consumer));
@@ -134,6 +183,42 @@ test('views preserve semantic edges; grouping and focus remain explicit', async 
   for (const node of graph.nodes) {
     assert.ok(visibleGraph(graph,{...options,view:viewForNode(node)}).nodes.some(n=>n.id===node.id),`source navigation must reveal ${node.id}`);
   }
+});
+
+test('run budgets retain exact values and source locations for display', async t => {
+  const root = await project(t);
+  await cp(join(implementationRoot,'grammar/tree-sitter-touba/examples/budgets-bq1/source-limits.tb'),join(root,'src/budgets.tb'));
+  const result = await compileCapture(await captureProject(root));
+  assert.ok(result.graph,JSON.stringify(result.diagnostics));
+  const budgets = result.graph.nodes.find(n=>n.id==='module:budgets.source').details.budgets;
+  const source = await readFile(join(root,'src/budgets.tb'),'utf8');
+  for (const [key,value] of Object.entries({max_run_ms:30000,max_steps:100,max_tool_calls:2,max_agent_invocations:2,max_provider_calls:2})) {
+    assert.equal(budgets[key].value,value);
+    const ref = budgets[key].source_ref;
+    assert.equal(ref.source_id,'src/budgets.tb');
+    assert.equal(Buffer.from(source).subarray(ref.start_byte,ref.end_byte).toString(),`${key} as ${value}`);
+  }
+});
+
+test('counts describe actual groups, never individual modules or types', () => {
+  const graph = {nodes:[
+    {id:'module:empty',kind:'module',module:'module:empty'},
+    {id:'module:vendors',kind:'module',module:'module:vendors'},
+    {id:'type:vendors/Account',kind:'type',module:'module:vendors'},
+  ],edges:[{id:'contains',kind:'contains',from:'module:vendors',to:'type:vendors/Account'}]};
+  const grouped = visibleGraph(graph,{...options,group:true});
+  assert.equal(grouped.nodes.find(n=>n.id==='module:empty').count,undefined);
+  assert.equal(grouped.nodes.find(n=>n.id==='module:vendors').count,2);
+  const inModule = {...options,module:'module:vendors'};
+  assert.deepEqual(visibleGraph(graph,{...inModule,group:true}),visibleGraph(graph,inModule));
+  assert.ok(graph.nodes.every(n=>!Object.hasOwn(n,'count')),'grouping leaves the source graph intact');
+
+  const installed = {nodes:[{id:'package:example.finance',kind:'package',package:'example.finance'},
+    ...graph.nodes.map(n=>({...n,package:'example.finance'}))],edges:graph.edges};
+  assert.equal(visibleGraph(installed,{...options,group:true}).nodes[0].count,4);
+  const inPackage = visibleGraph(installed,{...options,group:true,package:'example.finance'});
+  assert.equal(inPackage.nodes.find(n=>n.kind==='package').count,undefined);
+  assert.equal(inPackage.nodes.find(n=>n.id==='module:vendors').count,2);
 });
 
 test('cyclic layout is deterministic and finite', () => {

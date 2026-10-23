@@ -14,9 +14,10 @@ import {
   assertCompleteProviderResponse,
 } from "./decision-contract.mjs";
 import { decideNativeCapability } from "./native-decision.mjs";
+import { createDecisionWireSchema, decisionSchemaEncoding, FLAT_OPTIONAL_INSTRUCTIONS } from "./decision-wire-schema.mjs";
 import { createDecisionHistory } from "./decision-history.mjs";
 import { createProviderContextFetch } from "./provider-context.mjs";
-import { bindProviderCostContext } from "./provider-cost-context.mjs";
+import { bindProviderCostContext, emitProviderModel } from "./provider-cost-context.mjs";
 import { createProviderCostFetch } from "./provider-cost.mjs";
 export { createProviderContextFetch } from "./provider-context.mjs";
 export { createProviderCostFetch } from "./provider-cost.mjs";
@@ -142,6 +143,15 @@ export class ToubaEngine {
       appendOptionalPath(args, "--human-checkpoint-out", options.humanCheckpointOut, this.projectRoot);
       appendOptionalPath(args, "--human-resume-checkpoint", options.humanResumeCheckpoint, this.projectRoot);
       appendOptionalPath(args, "--human-approval-host", options.humanApprovalHost, this.projectRoot);
+      if (options.tracePureFunctions !== undefined) {
+        if (!["full", "calls"].includes(options.tracePureFunctions)) throw new ToubaEngineError("options", "run.tracePureFunctions must be full or calls");
+        args.push("--trace-pure-functions", options.tracePureFunctions);
+      }
+      if (options.humanApprovalAuthorityTimeoutMs !== undefined) {
+        const timeout = requirePositiveInteger(options.humanApprovalAuthorityTimeoutMs, "run.humanApprovalAuthorityTimeoutMs");
+        if (timeout > 60000) throw new ToubaEngineError("options", "run.humanApprovalAuthorityTimeoutMs must not exceed 60000");
+        args.push("--human-approval-authority-timeout-ms", String(timeout));
+      }
       appendOptionalPath(args, "--parallel-checkpoint-out", options.parallelCheckpointOut, this.projectRoot);
       appendOptionalPath(args, "--parallel-resume-checkpoint", options.parallelResumeCheckpoint, this.projectRoot);
       appendOptionalJson(args, "--parallel-limits-json", options.parallelLimits, "parallelLimits");
@@ -362,6 +372,8 @@ export function createAiSdkDecisionProvider(options = {}) {
   return bindProviderCostContext(async function decideAgentCapability(request) {
     validateAgentDecisionRequest(request);
     const model = await modelForDecisionRequest(normalized, request);
+    await emitProviderModel(model);
+    const schemaEncoding = decisionSchemaEncoding(model, normalized.schemaEncoding);
     const allowHumanReview = await valueForRequest(normalized.allowHumanReview, request) !== false;
     const providerOptions = await valueForRequest(normalized.providerOptions, request);
     const system = await valueForRequest(normalized.system, request);
@@ -371,7 +383,7 @@ export function createAiSdkDecisionProvider(options = {}) {
     }
     const effectiveSystem = [system ?? defaultDecisionSystemPrompt(request, {
       allowHumanReview, transport: normalized.decisionInterface === "native" && request.mode === "capabilities" ? "native_tools" : "json_schema",
-    }), instructions].filter(Boolean).join("\n\n");
+    }), instructions, schemaEncoding === "flat_optionals" ? FLAT_OPTIONAL_INSTRUCTIONS : undefined].filter(Boolean).join("\n\n");
     const execute = async (capture = null) => {
       if (normalized.decisionInterface === "native") {
         const historyOptions = capture ? {
@@ -380,12 +392,13 @@ export function createAiSdkDecisionProvider(options = {}) {
           generateObject: async generation => capture(await historyObjectGenerator(normalized), generation, "object"),
         } : {};
         return decideNativeCapability(request, {
-          ...normalized, ...historyOptions, model, allowHumanReview, system: effectiveSystem, providerOptions,
+          ...normalized, ...historyOptions, model, allowHumanReview, system: effectiveSystem, providerOptions, schemaEncoding,
         });
       }
       const generateObject = capture ? await historyObjectGenerator(normalized) : await aiSdkGenerateObject(normalized);
       const schema = decisionSchemaForRequest(request, normalized, { allowHumanReview });
-      const aiSchema = await aiSdkJsonSchema(schema, normalized);
+      const wire = createDecisionWireSchema(schema, schemaEncoding);
+      const aiSchema = await aiSdkJsonSchema(wire.schema, normalized);
       const { context: runtimeContext, data } = structuredDecisionInput(request, { allowHumanReview });
       const prompt = JSON.stringify(data);
       const generation = compactObject({
@@ -404,7 +417,7 @@ export function createAiSdkDecisionProvider(options = {}) {
 
       assertCompleteProviderResponse(result, normalized);
 
-      return normalizeStructuredDecisionObject(request, result?.object, normalized.source, {
+      return normalizeStructuredDecisionObject(request, wire.decode(result?.object), normalized.source, {
         allowHumanReview,
       });
     };
@@ -538,6 +551,7 @@ function normalizeAiSdkDecisionProviderOptions(options) {
   if (options.decisionInterface !== undefined && !["structured", "native"].includes(options.decisionInterface)) {
     throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "decisionInterface must be structured or native");
   }
+  decisionSchemaEncoding(undefined, options.schemaEncoding);
   if (options.temperature !== undefined && options.temperature !== null
     && !(Number.isFinite(options.temperature) && options.temperature >= 0 && options.temperature <= 2)) {
     throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "temperature must be null or a number from 0 to 2");
@@ -1861,7 +1875,9 @@ function resolvePath(baseDir, path) {
 
 function appendOptionalPath(args, optionName, value, baseDir) {
   if (value !== undefined) {
-    args.push(optionName, resolvePath(baseDir, requireString(value, optionName)));
+    const selected = requireString(value, optionName);
+    const host = ["--human-approval-host", "--agent-decision-provider"].includes(optionName);
+    args.push(optionName, host && selected.startsWith("pkg:") ? selected : resolvePath(baseDir, selected));
   }
 }
 

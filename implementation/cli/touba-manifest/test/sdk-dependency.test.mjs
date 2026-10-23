@@ -6,6 +6,21 @@ import test from "node:test";
 import { inspectSdkDependency } from "../src/sdk-dependency.mjs";
 import { sdkBuildIdentity } from "../src/sdk-build-identity.mjs";
 
+test("SDK identity includes the canonical machine contracts materialized in its archive", t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-sdk-contract-identity-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = join(root, "runtime/touba-handler-sdk"), packed = join(root, "packed");
+  mkdirSync(join(root, "contracts/machine"), { recursive: true });
+  for (const dir of [source, packed]) mkdirSync(join(dir, "src"), { recursive: true });
+  const canonical = join(root, "contracts/machine/value-contracts.mjs");
+  writeFileSync(canonical, "export const contract = 1;\n");
+  writeFileSync(join(source, "src/value-contracts.mjs"), 'export * from "../../../contracts/machine/value-contracts.mjs";\n');
+  writeFileSync(join(packed, "src/value-contracts.mjs"), readFileSync(canonical));
+  assert.equal(sdkBuildIdentity(source), sdkBuildIdentity(packed));
+  writeFileSync(canonical, "export const contract = 2;\n");
+  assert.notEqual(sdkBuildIdentity(source), sdkBuildIdentity(packed));
+});
+
 test("same-version SDK builds are distinguished by source bytes without loading project code", t => {
   const root = mkdtempSync(join(tmpdir(), "touba-sdk-build-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

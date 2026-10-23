@@ -34,6 +34,42 @@ const uri = "file:///touba-diagnostics-session.tb";
 const valid = 'module examples.diagnostics\n\nstrategy Run\n    do\n        show\n            with message as "ready"\n';
 const invalid = 'module examples.diagnostics\n\nstrategy Run\n    do\n        show "test"\n';
 
+test("real LSP checks Date, list defaults, copy and typed approval fields", { timeout: 20000 }, async t => {
+  const client = await startClient(t);
+  const source = `module examples.typed_diagnostics
+type Invoice
+    day is Date
+    total is Int min 0 default 0
+    labels is List of Text length 0..5 default []
+function Draft
+    gives Invoice
+    do
+        give record Invoice { day as date("2026-10-21") }
+function Flag
+    takes invoice as Invoice
+    gives Invoice
+    do
+        give copy invoice { labels as ["review"] }
+strategy Review
+    gives Text
+    do
+        human.approve
+            with context as "invoice"
+            into approval
+            on rejected
+                give approval.decision
+        give approval.decision
+`;
+  const opened = await nextDiagnostics(client, () => client.sendNotification("textDocument/didOpen", {
+    textDocument: { uri, languageId: "touba", version: 1, text: source },
+  }));
+  assert.deepEqual(opened.diagnostics, []);
+  const changed = await nextDiagnostics(client, () => client.sendNotification("textDocument/didChange", {
+    textDocument: { uri, version: 2 }, contentChanges: [{ text: source.replaceAll("approval.decision", "approval.decided_by") }],
+  }));
+  assert.ok(changed.diagnostics.some(d => d.code === "UnknownExpressionField"), JSON.stringify(changed.diagnostics));
+});
+
 test("real LSP compiles unsaved imported expressions and locates dependency errors separately", { timeout: 20000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-lsp-imports-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

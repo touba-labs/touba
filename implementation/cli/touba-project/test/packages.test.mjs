@@ -7,12 +7,16 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import * as tar from "tar";
 import { newPackage, checkPackage, packPackage, addPackage, addRegistryPackage, unpackPackage, removePackage } from "../src/packages.mjs";
-import { PACKAGE_MANIFEST, packageDigest, readPackage } from "../src/package-contract.mjs";
+import { PACKAGE_MANIFEST, packageDigest, readPackage, validatePackageDocument } from "../src/package-contract.mjs";
 import { PACKAGE_LOCK, verifyInstalledPackages } from "../src/package-store.mjs";
 import { initProject, prepareProject, compilerInputsForFile, resolveProjectRunArgs } from "../src/project.mjs";
 import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
 import { ToubaEngine } from "../../../runtime/touba-handler-sdk/src/index.mjs";
 import { fileURLToPath } from "node:url";
+import { createHostModuleLoader } from "../../touba-run/src/host-modules.mjs";
+import { resolvePackageHost } from "../src/package-hosts.mjs";
+import { publishPackage } from "../src/package-publish.mjs";
+import { checkRegistry } from "../src/registry.mjs";
 
 const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 function workspace(t) { const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-unified-package-"))); t.after(() => rmSync(root, { recursive: true, force: true })); return root; }
@@ -44,6 +48,9 @@ strategy Run
   assert.equal(prepared.status, "success", JSON.stringify(prepared.diagnostics));
   assert.equal(existsSync(join(project, "touba.manifest.json")), false);
   assert.equal(compilerInputsForFile(program).diagnostics.length, 0);
+  const compiled = spawnSync(process.execPath, [cli, "compile", program, "--out", join(project, "single.air.json")], { cwd: root, encoding: "utf8" });
+  assert.equal(compiled.status, 0, compiled.stderr);
+  assert.ok(JSON.parse(readFileSync(join(project, "single.air.json"))).definitions.skills.some(skill => skill.id === "skill:example.echo/Echo"));
   assert.ok(resolveProjectRunArgs(["--project", project]).includes("--run-plan"));
   const engine = new ToubaEngine({ projectRoot: project, command: process.execPath, commandArgs: [cli] });
   const result = await engine.run({ air: ".touba/build/dev/air/client/main.air.json", inputs: { request: "Package import works" } });
@@ -58,6 +65,36 @@ strategy Run
     "--manifest", directManifest, "--inputs-json", JSON.stringify({ request: "denied" }), "--output", "json"], { encoding: "utf8" });
   assert.notEqual(direct.status, 0);
   assert.match(direct.stderr, /PackageIntegrityMismatch/);
+});
+
+test("pure list transforms preserve imported record identities and collect every finding", async t => {
+  const root = workspace(t), source = author(root, "example.findings"), project = consumer(root);
+  writeFileSync(join(source, "src/example/findings.tb"), `module example.findings
+type Finding
+    label is Text
+    blocking is Boolean
+`);
+  manifest(source, value => { value.exports = { types: ["type:example.findings/Finding"] }; });
+  await addPackage(source, { root: project });
+  const program = join(project, "review.tb");
+  writeFileSync(program, `module review
+import type Finding from example.findings
+function Report
+    takes findings as List of Finding
+    takes additional as List of Finding
+    gives Text
+    do
+        bind all as List of Finding = concat(findings, additional)
+        give join([item.label for item in all if item.blocking], "; ")
+`);
+  const compiled = spawnSync(process.execPath, [cli, "compile", program, "--stdout"], { cwd: root, encoding: "utf8" });
+  assert.equal(compiled.status, 0, compiled.stderr);
+  const inputs = { findings: [{ label: "Missing owner", blocking: true }, { label: "Style", blocking: false }], additional: [{ label: "Expired policy", blocking: true }] };
+  const before = structuredClone(inputs);
+  const result = await executeAirDocument(JSON.parse(compiled.stdout), { entryRef: "function:review/Report", inputs });
+  assert.equal(result.status, "success", JSON.stringify(result));
+  assert.equal(result.result, "Missing owner; Expired policy");
+  assert.deepEqual(inputs, before);
 });
 
 test("a manually copied unregistered package gives a registration hint and is never loaded implicitly", async t => {
@@ -140,6 +177,181 @@ strategy Run
   const authorized = spawnSync(process.execPath, [cli, "run", "--project", project, "--inputs-json", '{"value":"test"}', "--output", "json"], { encoding: "utf8" });
   assert.equal(authorized.status, 0, authorized.stdout + authorized.stderr);
   assert.equal(JSON.parse(authorized.stdout).result, "test");
+});
+
+test("Python package handlers use the consuming venv and preserve the installed inventory across runs", async t => {
+  const root = workspace(t), source = author(root, "example.python"), project = consumer(root);
+  const python = process.env.TOUBA_TEST_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
+  const venv = spawnSync(python, ["-m", "venv", "--without-pip", join(project, ".venv")], { encoding: "utf8" });
+  assert.equal(venv.status, 0, venv.stderr);
+  writeFileSync(join(source, "src/example/python.tb"), `module example.python
+tool Echo
+    takes value as Text
+    gives Text
+`);
+  mkdirSync(join(source, "handlers"));
+  writeFileSync(join(source, "handlers/helper.py"), "def echo(value):\n    return value\n");
+  writeFileSync(join(source, "handlers/echo.py"), `import json, sys
+from helper import echo
+assert sys.prefix != sys.base_prefix, "consumer virtual environment required"
+assert sys.dont_write_bytecode, "installed sources must stay immutable"
+request = json.load(sys.stdin)
+print(json.dumps({"ok": True, "value": echo(request["arguments"]["value"])}))
+`);
+  manifest(source, m => {
+    m.exports = { tools: ["tool:example.python/Echo"] };
+    m.files = [...(m.files ?? []), "handlers/helper.py"];
+    m.handlers = [{ tool: "tool:example.python/Echo", path: "handlers/echo.py", protocol: "touba-tool-handler-v1" }];
+  });
+  await addPackage(source, { root: project });
+  mkdirSync(join(project, "src/client"), { recursive: true });
+  writeFileSync(join(project, "src/client/main.tb"), `module client.main
+import tool Echo from example.python
+strategy Run
+    takes value as Text
+    gives Text
+    uses Echo
+    do
+        Echo
+            with value as value
+            into result
+        give result
+`);
+  const options = { root: project, entryRef: "strategy:client.main/Run", hostDecisions: {
+    bindings: { "tool:example.python/Echo": { package_handler: "example.python", effect_contract: { kind: "none" } } } } };
+  const prepared = await prepareProject({ ...options, mode: "write" });
+  assert.equal(prepared.status, "success", JSON.stringify(prepared.diagnostics));
+  const file = join(project, ".touba/build/dev/touba.manifest.json");
+  assert.match(JSON.parse(readFileSync(file)).bindings["tool:example.python/Echo"].handler.command, /^\.\/.venv\//);
+  for (let run = 0; run < 2; run++) {
+    const result = spawnSync(process.execPath, [cli, "run", "--project", project, "--inputs-json", '{"value":"venv works"}', "--output", "json"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(JSON.parse(result.stdout).result, "venv works");
+    assert.equal(existsSync(join(project, "packages/example.python/handlers/__pycache__")), false);
+    const checked = await prepareProject({ ...options, mode: "check" });
+    assert.equal(checked.status, "success", JSON.stringify(checked.diagnostics));
+  }
+  const installed = join(project, "packages/example.python/handlers");
+  mkdirSync(join(installed, "__pycache__"));
+  writeFileSync(join(installed, "__pycache__/helper.pyc"), "untrusted bytecode");
+  const records = JSON.parse(readFileSync(join(project, "touba.project.json"))).packages;
+  assert.throws(() => verifyInstalledPackages(project, records), { code: "PackageUnexpectedFile" });
+  const refused = await prepareProject({ ...options, mode: "plan" });
+  assert.equal(refused.status, "error");
+  assert.ok(refused.diagnostics.some(d => d.code === "PackageUnexpectedFile"), JSON.stringify(refused.diagnostics));
+  assert.ok(existsSync(join(installed, "__pycache__/helper.pyc")), "prepare must not silently delete external files");
+});
+
+test("host-only packages remain inert until explicitly selected, with role and inventory checks", async t => {
+  const root = workspace(t), source = author(root, "example.identity"), project = consumer(root);
+  const marker = join(root, "loaded.txt");
+  mkdirSync(join(source, "host"));
+  writeFileSync(join(source, "host/helper.mjs"), 'export const initiator = "employee:initiator";');
+  writeFileSync(join(source, "host/approval.mjs"), `import { writeFileSync } from "node:fs";
+import { initiator } from "./helper.mjs";
+writeFileSync(${JSON.stringify(marker)}, "explicit activation");
+export const initiatorRef = initiator;
+export function attestHumanApproval({request, decision}) {
+ return {request_id:request.request_id,run_id:request.run_id,decision,subject_ref:"employee:reviewer",roles:["finance"]};
+}`);
+  writeFileSync(join(source, "host/decision.mjs"), 'export function decideAgentCapability() { return { action: "answer_directly", result: "ready" }; }');
+  writeFileSync(join(source, "host/helper.py"), 'initiator = "employee:initiator"\n');
+  writeFileSync(join(source, "host/approval.py"), `from helper import initiator
+initiator_ref = initiator
+def attest_human_approval(payload):
+    request = payload["request"]
+    return {"request_id": request["request_id"], "run_id": request["run_id"], "decision": payload["decision"], "subject_ref": "employee:reviewer", "roles": ["finance"]}
+`);
+  writeFileSync(join(source, "host/decision.py"), 'def decide_agent_capability(payload):\n    return {"action": "answer_directly", "result": "ready"}\n');
+  manifest(source, m => {
+    m.exports = {}; m.files = ["host", "README.md"]; m.contract_tests = [];
+    m.hosts = [{ id: "approval", kind: "human_approval", path: "host/approval.mjs" },
+      { id: "decision", kind: "decision_provider", path: "host/decision.mjs" },
+      { id: "approval-py", kind: "human_approval", path: "host/approval.py" },
+      { id: "decision-py", kind: "decision_provider", path: "host/decision.py" }];
+  });
+  assert.notEqual((await checkPackage(source)).status, "error");
+  const archive = join(root, "identity.tar.gz");
+  await packPackage(source, { output: archive });
+  await addPackage(archive, { root: project });
+  const registry = join(root, "registry");
+  await publishPackage(source, { registry });
+  assert.equal((await checkRegistry({ registry, sourceRoot: registry })).status, "success");
+  const registryConsumer = join(root, "registry-consumer");
+  initProject({ root: registryConsumer });
+  await addRegistryPackage("example.identity", { root: registryConsumer, registry, version: "0.1.0", "allow-draft": true });
+  assert.ok(resolvePackageHost("pkg:example.identity/approval", "human_approval", registryConsumer).path.endsWith("host/approval.mjs"));
+  assert.equal(existsSync(marker), false, "check, pack, publication and installation must never execute a host");
+  const python = process.env.TOUBA_TEST_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
+  const venv = spawnSync(python, ["-m", "venv", "--without-pip", join(project, ".venv")], { encoding: "utf8" });
+  assert.equal(venv.status, 0, venv.stderr);
+  const interpreter = join(project, process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python");
+  const sitePackages = spawnSync(interpreter, ["-c", 'import sysconfig; print(sysconfig.get_path("purelib"))'], { encoding: "utf8" });
+  assert.equal(sitePackages.status, 0, sitePackages.stderr);
+  cpSync(fileURLToPath(new URL("../../../runtime/touba-python-sdk/src/touba_sdk", import.meta.url)), join(sitePackages.stdout.trim(), "touba_sdk"), { recursive: true });
+  const loader = createHostModuleLoader(); t.after(() => loader.close());
+  await assert.rejects(loader.approvalHost("pkg:example.identity/decision", { projectRoot: project }), { code: "PackageHostSelectionInvalid" });
+  await assert.rejects(loader.approvalHost("pkg:example.identity/../approval", { projectRoot: project }), { code: "PackageHostSelectionInvalid" });
+  assert.equal(existsSync(marker), false);
+  const authority = await loader.approvalHost("pkg:example.identity/approval", { projectRoot: project });
+  assert.equal(authority.humanApprovalInitiator, "employee:initiator");
+  assert.equal(existsSync(marker), true);
+  assert.deepEqual((await loader.decisionProvider("pkg:example.identity/decision", { projectRoot: project }))(), { action: "answer_directly", result: "ready" });
+  const pythonAuthority = await loader.approvalHost("pkg:example.identity/approval-py", { projectRoot: project });
+  assert.equal(pythonAuthority.humanApprovalInitiator, "employee:initiator");
+  assert.deepEqual(await (await loader.decisionProvider("pkg:example.identity/decision-py", { projectRoot: project }))({}), { action: "answer_directly", result: "ready" });
+  assert.equal(existsSync(join(project, "packages/example.identity/host/__pycache__")), false);
+  mkdirSync(join(project, "src/client"), { recursive: true });
+  const program = join(project, "src/client/main.tb");
+  writeFileSync(program, `module client.main
+strategy Run
+    gives Text
+    do
+        human.approve
+            with context as "Review"
+            with role as "finance"
+            into approval
+        give "accepted"
+`);
+  const prepared = await prepareProject({ root: project, mode: "write", entryRef: "strategy:client.main/Run" });
+  assert.equal(prepared.status, "success", JSON.stringify(prepared.diagnostics));
+  const args = [cli, "run", "--project", project, "--human-approval-host", "pkg:example.identity/approval", "--output", "json"];
+  const result = spawnSync(process.execPath, args, { encoding: "utf8" });
+  assert.match(result.stdout, /human_approval_pending/, result.stdout + result.stderr);
+  const engine = new ToubaEngine({ projectRoot: project, command: process.execPath, commandArgs: [cli] });
+  const pending = await engine.run({ source: program, entryRef: "strategy:client.main/Run", humanApprovalHost: "pkg:example.identity/approval" });
+  assert.equal(pending.reason, "human_approval_pending");
+  const pythonRun = spawnSync(interpreter, ["-B", "-c", `from touba_sdk import ToubaEngine
+engine = ToubaEngine(project_root=${JSON.stringify(project)}, command=${JSON.stringify(process.execPath)}, command_args=[${JSON.stringify(cli)}])
+result = engine.run(source=${JSON.stringify(program)}, entry_ref="strategy:client.main/Run", human_approval_host="pkg:example.identity/approval-py", human_approval_authority_timeout_ms=12000)
+assert result.reason == "human_approval_pending", result
+`], { encoding: "utf8" });
+  assert.equal(pythonRun.status, 0, pythonRun.stdout + pythonRun.stderr);
+  writeFileSync(join(project, "packages/example.identity/host/helper.mjs"), 'export const initiator = "tampered";');
+  assert.throws(() => resolvePackageHost("pkg:example.identity/approval", "human_approval", project), { code: "PackageIntegrityMismatch" });
+  await assert.rejects(loader.approvalHost("pkg:example.identity/approval", { projectRoot: project }), { code: "PackageIntegrityMismatch" });
+  copyFileSync(join(source, "host/helper.mjs"), join(project, "packages/example.identity/host/helper.mjs"));
+  await removePackage("example.identity", { root: project });
+  manifest(source, m => { m.version = "0.1.1"; });
+  await addPackage(source, { root: project });
+  await assert.rejects(loader.approvalHost("pkg:example.identity/approval", { projectRoot: project }), { code: "PackageHostRestartRequired" });
+});
+
+test("host declarations reject ambiguous roles, duplicate IDs and escaping files", async t => {
+  const root = workspace(t), source = author(root);
+  const base = readPackage(source).document;
+  const host = { id: "approval", kind: "human_approval", path: "host/approval.mjs" };
+  for (const hosts of [null, [null], [{ ...host, id: "../approval" }], [host, host],
+    [{ ...host, kind: "tool" }], [{ ...host, path: "../outside.mjs" }],
+    [{ ...host, path: "host/approval.sh" }], [{ ...host, auto_activate: true }]]) {
+    assert.throws(() => validatePackageDocument({ ...base, hosts }));
+  }
+  manifest(source, m => { m.hosts = [host]; });
+  assert.throws(() => readPackage(source));
+  mkdirSync(join(source, "host"));
+  const outside = join(root, "outside.mjs"); writeFileSync(outside, "export default null;");
+  symlinkSync(outside, join(source, host.path));
+  assert.throws(() => readPackage(source), { code: "PackageSymlinkForbidden" });
 });
 
 test("an exported strategy composes a packaged agent without widening its callers or capabilities", async t => {

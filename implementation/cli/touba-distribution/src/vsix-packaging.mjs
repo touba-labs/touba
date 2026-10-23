@@ -2,16 +2,25 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
+export const VSIX_TARGETS = Object.freeze(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]);
+
 export function nativeVsixTarget(platform = process.platform, arch = process.arch) {
   const target = `${platform}-${arch}`;
-  if (!["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].includes(target)) {
+  if (!VSIX_TARGETS.includes(target)) {
     throw new Error(`Unsupported native VSIX target: ${target}`);
   }
   return target;
 }
 
 export function vsixFilename(manifest, target = nativeVsixTarget()) {
-  return `${manifest.name}-${manifest.version}-${target}.vsix`;
+  if (typeof manifest?.version !== "string" || manifest.version.trim() !== manifest.version ||
+      !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(manifest.version)) {
+    throw new Error("VSIX version must be MAJOR.MINOR.PATCH without a label or leading zeros");
+  }
+  if (!VSIX_TARGETS.includes(target)) {
+    throw new Error(`Unsupported native VSIX target: ${target}`);
+  }
+  return `touba-vscode-v${manifest.version}-${target}.vsix`;
 }
 
 // Generated from the exact bytes sent to the publisher, not the staging tree.

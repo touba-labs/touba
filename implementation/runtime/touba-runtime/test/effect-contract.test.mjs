@@ -26,6 +26,25 @@ const REQUEST_DIGEST = `sha256:${"b".repeat(64)}`;
 const OTHER_DIGEST = `sha256:${"c".repeat(64)}`;
 const EFFECT_ID = `effect:sha256:${"d".repeat(64)}`;
 
+test("effect failures retain the handler cause without trusting a missing or invalid receipt", () => {
+  for (const receipt of [undefined, {}, { outcome: "not_applied", effect_id: "wrong" }]) {
+    assert.throws(() => decodeToolHandlerResponse({ ok: false,
+      error: { code: "ExternalServiceDown", message: "service failed: secret-token" }, effect_receipt: receipt,
+    }, "tool:test/Write", ["secret-token"], { effect: { effect_id: EFFECT_ID, request_digest: REQUEST_DIGEST } }), error => {
+      assert.equal(error.code, "ToolHandlerReportedError");
+      assert.equal(error.details.handlerErrorCode, "ExternalServiceDown");
+      assert.equal(error.details.receiptErrorCode, "EffectReceiptInvalid");
+      assert.equal(error.details.state, "unknown");
+      assert.equal(error.details.effectReceipt, undefined);
+      assert(!JSON.stringify(error).includes("secret-token"));
+      assert(!error.message.includes("secret-token"));
+      return true;
+    });
+  }
+  assert.throws(() => decodeToolHandlerResponse({ ok: true, value: "done" }, "tool:test/Write", [],
+    { effect: { effect_id: EFFECT_ID, request_digest: REQUEST_DIGEST } }), { code: "EffectReceiptInvalid" });
+});
+
 test("derives stable effect identities and canonical request digests", () => {
   const identity = {
     effectScopeId: "queue:stable-1",

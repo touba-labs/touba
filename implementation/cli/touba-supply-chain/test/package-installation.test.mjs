@@ -1,0 +1,35 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { newPackage, addPackage } from "../../touba-project/src/packages.mjs";
+import { initProject, prepareProject } from "../../touba-project/src/project.mjs";
+import { generateSupplyChainLock } from "../src/generate.mjs";
+import { loadSupplyChainArtifacts, validateSupplyChainArtifacts } from "../src/validate.mjs";
+
+test("supply-chain locks pin installed package inventory, including modules unused by the entry AIR", async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-supply-packages-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = newPackage("example.echo", { root }).path;
+  const project = join(root, "consumer");
+  initProject({ root: project });
+  await addPackage(source, { root: project });
+  mkdirSync(join(project, "src/client"), { recursive: true });
+  writeFileSync(join(project, "src/client/main.tb"), 'module client.main\nstrategy Run\n    gives Text\n    do\n        give "ready"\n');
+  const prepared = await prepareProject({ root: project, mode: "write", entryRef: "strategy:client.main/Run" });
+  assert.equal(prepared.status, "success", JSON.stringify(prepared.diagnostics));
+  const air = join(project, ".touba/build/dev/air/client/main.air.json");
+  const out = join(project, "touba.lock.json");
+  generateSupplyChainLock({ air, out });
+  const validate = () => validateSupplyChainArtifacts(loadSupplyChainArtifacts({ air, lock: out }));
+  assert.equal(validate().checked.package_installation, true);
+  const originalLock = readFileSync(out, "utf8");
+  const selected = JSON.parse(originalLock);
+  delete selected.package_installation;
+  writeFileSync(out, JSON.stringify(selected));
+  assert.ok(validate().diagnostics.some(d => d.code === "SupplyChainPackageInstallationMissing"));
+  writeFileSync(out, originalLock);
+  writeFileSync(join(project, "packages/example.echo/src/example/echo.tb"), "module example.echo\n");
+  assert.ok(validate().diagnostics.some(d => d.code === "SupplyChainPackageInstallationChanged"));
+});

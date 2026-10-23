@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createDecisionWireSchema } from "./decision-wire-schema.mjs";
 import {
   ToubaAgentDecisionProviderError,
   argumentsSchemaForCapability,
@@ -90,16 +91,23 @@ export async function decideNativeCapability(request, options) {
   };
   if (!catalogue) {
     const schema = decisionSchemaForRequest(request, options, { allowHumanReview });
+    const wire = createDecisionWireSchema(schema, options.schemaEncoding);
     const generateObject = await sdkFunction(options, "generateObject");
     const result = await generateObject({ ...generation,
-      schema: await jsonSchema(schema), schemaName: schema.title, schemaDescription: schema.description,
+      schema: await jsonSchema(wire.schema), schemaName: schema.title, schemaDescription: schema.description,
     });
     assertCompleteProviderResponse(result, options);
-    return normalizeStructuredDecisionObject(request, result.object, options.source, { allowHumanReview });
+    return normalizeStructuredDecisionObject(request, wire.decode(result.object), options.source, { allowHumanReview });
   }
 
   const tools = {};
   const byName = new Map();
+  const wires = new Map();
+  const inputSchema = async (name, schema) => {
+    const wire = createDecisionWireSchema(schema, options.schemaEncoding);
+    wires.set(name, wire);
+    return jsonSchema(wire.schema);
+  };
   for (const capability of request.capabilities ?? []) {
     if (!request.capability_refs.includes(capability.target_ref)) continue;
     const name = nativeCapabilityName(capability.target_ref);
@@ -107,20 +115,20 @@ export async function decideNativeCapability(request, options) {
     byName.set(name, capability);
     tools[name] = {
       description: `${capability.description ?? capability.name}\nRuntime contract: ${JSON.stringify(capability)}`,
-      inputSchema: await jsonSchema(argumentsSchemaForCapability(capability)),
+      inputSchema: await inputSchema(name, argumentsSchemaForCapability(capability)),
       strict: true,
     };
   }
   if (allowHumanReview) {
     tools[NATIVE_HUMAN_REVIEW_NAME] = {
       description: "Request the runtime's governed human review. This is not a business operation and does not grant additional authority.",
-      inputSchema: await jsonSchema({ type: "object", properties: { review_prompt: { type: "string" } }, required: ["review_prompt"], additionalProperties: false }),
+      inputSchema: await inputSchema(NATIVE_HUMAN_REVIEW_NAME, { type: "object", properties: { review_prompt: { type: "string" } }, required: ["review_prompt"], additionalProperties: false }),
       strict: true,
     };
   }
   tools[NATIVE_COMPLETION_NAME] = {
     description: "Return the agent's final typed result when its goal is satisfied. This control operation performs no business effect and grants no authority.",
-    inputSchema: await jsonSchema({ type: "object", properties: {
+    inputSchema: await inputSchema(NATIVE_COMPLETION_NAME, { type: "object", properties: {
       reason: { type: "string" }, result: agentResultSchema(request),
     }, required: ["reason", "result"], additionalProperties: false }),
     strict: true,
@@ -133,7 +141,10 @@ export async function decideNativeCapability(request, options) {
   if (result.toolResults?.length || result.toolCalls?.length !== 1) {
     fail("InvalidModelDecision", "native selection must propose exactly one call and must not execute a tool");
   }
-  const call = result.toolCalls[0];
+  const proposedCall = result.toolCalls[0];
+  const wire = wires.get(proposedCall.toolName);
+  if (!wire) fail("InvalidModelDecision", "native selection named an unavailable capability");
+  const call = { ...proposedCall, input: wire.decode(proposedCall.input) };
   if (call.providerExecuted || call.invalid) fail("InvalidModelDecision", "native selection must be a valid application-side proposal");
   let decision;
   if (call.toolName === NATIVE_COMPLETION_NAME) {

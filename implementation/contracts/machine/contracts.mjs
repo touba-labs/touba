@@ -9,13 +9,13 @@ export const AIR_NODE_KINDS = Object.freeze([
   "human_approval", "user_interaction", "branch", "loop", "give", "stop", "fallback",
 ]);
 export const AIR_EDGE_ROLES = Object.freeze([
-  "next", "true", "false", "loop_next", "loop_exit", "failure", "fallback", "expired",
+  "next", "true", "false", "loop_next", "loop_exit", "failure", "fallback", "expired", "rejected",
 ]);
 export const AIR_EXPRESSION_KINDS = Object.freeze([
   "optional_some", "optional_none", "optional_present", "optional_value",
   "enum_value",
   "value_ref", "literal_text", "literal_boolean", "literal_int", "literal_float",
-  "text_conversion", "field_access", "construct_record", "unary_op", "binary_op",
+  "text_conversion", "date_conversion", "field_access", "construct_record", "copy_record", "construct_list", "list_comprehension", "list_concat", "text_join", "unary_op", "binary_op",
 ]);
 export const FAILURE_FAMILIES = Object.freeze([
   "business", "authority", "provider", "handler",
@@ -32,6 +32,7 @@ export const TRACE_EVENT_KINDS = Object.freeze([
   "agent_capability_refused", "agent_capability_result_returned", "agent_capability_selected",
   "agent_decision_catalog_requested", "agent_decision_provider_call_attempted",
   "agent_decision_provider_retry_scheduled", "agent_decision_provider_returned",
+  "agent_decision_provider_model_resolved",
   "provider_cost_recorded",
   "agent_decision_recorded", "agent_decision_requested", "agent_direct_answer_returned",
   "agent_human_review_requested", "agent_interface_entered", "agent_interface_refused",
@@ -71,9 +72,10 @@ const TRACE_ROOT_FIELDS = new Set([
 ]);
 const TRACE_RUN_FIELDS = new Set([
   "run_id", "air_schema_version", "air_digest", "module_ref", "entry_ref", "admission",
+  "pure_function_detail",
 ]);
 const TRACE_EVENT_FIELDS = new Set([
-  "event_id", "run_id", "sequence_index", "kind", "air_ref", "payload", "message",
+  "event_id", "run_id", "sequence_index", "kind", "air_ref", "payload", "message", "observed_at",
 ]);
 const TERMINAL_STATUSES = new Set(["success", "failure", "stopped", "cancelled"]);
 const PURE_FUNCTION_NODE_KINDS = new Set(["call_function", "bind", "branch", "loop", "give", "stop"]);
@@ -168,17 +170,57 @@ function validateStrategyCalls(definitions, graphs) {
 /** @param {Record<string, Array<Record<string, any>>>} definitions
  *  @param {Array<Record<string, any>>} graphs */
 function validateOptionals(definitions, graphs) {
-  const knownTypes = new Set(["builtin:Text", "builtin:Boolean", "builtin:Int", "builtin:Float",
+  const knownTypes = new Set(["builtin:Text", "builtin:Boolean", "builtin:Int", "builtin:Float", "builtin:Date", "builtin:Approval",
     ...(definitions.types ?? []).map(type => type.id)]);
   /** @param {unknown} type */
   const validType = type => {
     while (typeof type === "string" && /^(list|optional):/u.test(type)) type = type.slice(type.indexOf(":") + 1);
     return knownTypes.has(type);
   };
+  for (const type of definitions.types ?? []) for (const field of type.fields ?? []) {
+    if (Object.hasOwn(field, "constraints") && !validFieldConstraints(field.type_ref, field.constraints)) {
+      fail("AirFieldConstraintInvalid", "field constraints must be compatible, bounded and noncontradictory");
+    }
+    if (Object.hasOwn(field, "default") && (!validType(field.type_ref) || !validFieldDefault(field.default, field.type_ref, field.constraints))) {
+      fail("AirFieldDefaultInvalid", "field default must satisfy its type and constraints");
+    }
+  }
   for (const constant of definitions.constants ?? []) {
     if (typeof constant.type_ref === "string" && constant.type_ref.startsWith("optional:")) fail("AirOptionalInvalid", "module constants cannot contain optional constructors");
+    if (constant.type_ref === "builtin:Date" && (!isIsoDate(constant.literal_text)
+      || ["literal_boolean", "literal_int", "literal_float"].some(key => Object.hasOwn(constant, key)))) {
+      fail("AirDateInvalid", "Date constant requires one valid YYYY-MM-DD civil date");
+    }
   }
   for (const [graphIndex, graph] of graphs.entries()) for (const [index, expression] of (graph.expressions ?? []).entries()) {
+    if (expression.kind === "date_conversion") {
+      const path = `$.execution_graphs[${graphIndex}].expressions[${index}]`;
+      rejectUnknownFields(expression, new Set(["id", "kind", "operands", "type_ref", "source_ref"]), path);
+      if (expression.type_ref !== "builtin:Date" || !Array.isArray(expression.operands)
+        || expression.operands.length !== 1 || typeof expression.operands[0] !== "string" || !expression.operands[0]) {
+        fail("AirDateInvalid", "date conversion requires one Text operand and Date result", path);
+      }
+    }
+    if (expression.kind === "construct_list") {
+      const path = `$.execution_graphs[${graphIndex}].expressions[${index}]`;
+      rejectUnknownFields(expression, new Set(["id", "kind", "operands", "type_ref", "source_ref"]), path);
+      if (!validType(expression.type_ref) || !expression.type_ref.startsWith("list:")
+        || !Array.isArray(expression.operands ?? [])
+        || (expression.operands ?? []).some(/** @param {unknown} handle */ handle => typeof handle !== "string" || !handle.length)) {
+        fail("AirListInvalid", "list expression requires a known list type and ordered operands", path);
+      }
+    }
+    if (["list_comprehension", "list_concat", "text_join"].includes(expression.kind)) {
+      const path = `$.execution_graphs[${graphIndex}].expressions[${index}]`;
+      const comprehension = expression.kind === "list_comprehension";
+      rejectUnknownFields(expression, new Set(["id", "kind", "operands", "type_ref", "source_ref", ...(comprehension ? ["value_ref"] : [])]), path);
+      if (!validType(expression.type_ref) || (expression.kind === "text_join" ? expression.type_ref !== "builtin:Text" : !expression.type_ref.startsWith("list:"))
+        || !Array.isArray(expression.operands) || !(comprehension ? [2, 3] : [2]).includes(expression.operands.length)
+        || expression.operands.some(/** @param {unknown} handle */ handle => typeof handle !== "string" || !handle.length)
+        || comprehension && (typeof expression.value_ref !== "string" || !/^value:[a-z_][A-Za-z0-9_]*$/u.test(expression.value_ref))) {
+        fail("AirListInvalid", "list operation requires a known result type, exact operands and a local comprehension binding", path);
+      }
+    }
     if (typeof expression.type_ref === "string" && expression.type_ref.startsWith("optional:") && (expression.kind.startsWith("literal_") || expression.kind === "construct_record")) {
       fail("AirOptionalInvalid", "optional values require explicit constructors or typed references");
     }
@@ -282,8 +324,9 @@ function validateGraph(value, allIds, path) {
       const label = (/** @type {unknown} */ value) => typeof value === "string" && value.trim() === value && value.length > 0
         && new TextEncoder().encode(value).length <= 128 && !/[\x00-\x1f\x7f]/u.test(value);
       if (node.kind !== "human_approval" || Object.keys(policy).length === 0
-        || Object.keys(policy).some(key => !["role", "timeout_ms", "distinct_from"].includes(key))
+        || Object.keys(policy).some(key => !["role", "timeout_ms", "distinct_from", "exclude_signers"].includes(key))
         || (Object.hasOwn(policy, "role") && !label(policy.role))
+        || (Object.hasOwn(policy, "exclude_signers") && !label(policy.exclude_signers))
         || (Object.hasOwn(policy, "timeout_ms") && (!Number.isSafeInteger(policy.timeout_ms) || policy.timeout_ms < 1 || policy.timeout_ms > 2592000000))
         || (Object.hasOwn(policy, "distinct_from") && !["initiator", "previous", "initiator_and_previous"].includes(policy.distinct_from))) {
         fail("InvalidHumanApprovalPolicy", "invalid static source approval constraints", policyPath);
@@ -311,16 +354,20 @@ function validateGraph(value, allIds, path) {
     requireNodeRef(item.from_node_id, nodeIds, `${path}.edges[${index}].from_node_id`);
     requireNodeRef(item.to_node_id, nodeIds, `${path}.edges[${index}].to_node_id`);
     requireEnum(item.role, AIR_EDGE_ROLES, `${path}.edges[${index}].role`);
-    if (item.role === "expired" && nodes.find(node => node.id === item.from_node_id)?.kind !== "human_approval") {
-      fail("InvalidHumanApprovalPolicy", "expired edge requires a human approval source", `${path}.edges[${index}]`);
+    if (["expired", "rejected"].includes(item.role) && nodes.find(node => node.id === item.from_node_id)?.kind !== "human_approval") {
+      fail("InvalidHumanApprovalPolicy", "approval outcome edge requires a human approval source", `${path}.edges[${index}]`);
     }
   }
   for (const [index, expression] of (graph.expressions ?? []).entries()) {
     const item = requireObject(expression, `${path}.expressions[${index}]`, "AIR expression");
     requireString(item.id, `${path}.expressions[${index}].id`);
     requireEnum(item.kind, AIR_EXPRESSION_KINDS, `${path}.expressions[${index}].kind`);
-    if (item.kind === "construct_record") validateCanonicalRecordFields(item, `${path}.expressions[${index}]`);
+    if (["construct_record", "copy_record"].includes(item.kind)) validateCanonicalRecordFields(item, `${path}.expressions[${index}]`);
+    if (item.kind === "copy_record" && (!Array.isArray(item.operands) || item.operands.length !== 1 || typeof item.operands[0] !== "string")) {
+      fail("AirRecordCopyInvalid", "record copy requires one typed base operand", `${path}.expressions[${index}]`);
+    }
   }
+  validateApprovalOutcomeBranches(graph, path);
   for (const [index, failurePath] of (graph.failure_paths ?? []).entries()) {
     const item = requireObject(failurePath, `${path}.failure_paths[${index}]`, "AIR failure path");
     requireString(item.id, `${path}.failure_paths[${index}].id`);
@@ -328,6 +375,39 @@ function validateGraph(value, allIds, path) {
     requireNodeRef(item.target_node_id, nodeIds, `${path}.failure_paths[${index}].target_node_id`);
     requireEnum(item.mode, ["fallback", "stop"], `${path}.failure_paths[${index}].mode`);
     requireEnum(item.failure_family, FAILURE_FAMILIES, `${path}.failure_paths[${index}].failure_family`);
+  }
+}
+
+/** Refusal/expiry cannot be forged into an approved continuation in direct AIR.
+ * @param {any} graph @param {string} path */
+function validateApprovalOutcomeBranches(graph, path) {
+  const byId = new Map(graph.nodes.map(/** @param {any} node */ node => [node.id, node]));
+  const outgoing = /** @type {Map<string, any[]>} */ (new Map());
+  for (const edge of graph.edges) outgoing.set(edge.from_node_id, [...(outgoing.get(edge.from_node_id) ?? []), edge]);
+  const reachable = /** @param {string[]} starts */ starts => {
+    const seen = new Set();
+    const queue = [...starts];
+    while (queue.length) {
+      const id = queue.pop();
+      if (id === undefined) break;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      for (const edge of outgoing.get(id) ?? []) queue.push(edge.to_node_id);
+    }
+    return seen;
+  };
+  for (const node of graph.nodes) if (node.kind === "human_approval") {
+    const edges = outgoing.get(node.id) ?? [];
+    const approved = reachable(edges.filter(edge => !["expired", "rejected"].includes(edge.role)).map(edge => edge.to_node_id));
+    for (const role of ["expired", "rejected"]) {
+      const outcomes = edges.filter(edge => edge.role === role);
+      if (outcomes.length > 1) fail("InvalidHumanApprovalOutcome", "approval has duplicate outcome branches", path);
+      for (const target of reachable(outcomes.map(edge => edge.to_node_id))) {
+        if (approved.has(target) || target === node.id || (!(outgoing.get(target)?.length) && !["give", "stop"].includes(byId.get(target)?.kind))) {
+          fail("InvalidHumanApprovalOutcome", "approval outcome must terminate without joining the protected continuation", path);
+        }
+      }
+    }
   }
 }
 
@@ -353,6 +433,9 @@ export function validateTraceMachineContract(value) {
   rejectUnknownFields(trace, TRACE_ROOT_FIELDS, "$");
   const run = requireObject(trace.run, "$.run", "trace run");
   rejectUnknownFields(run, TRACE_RUN_FIELDS, "$.run");
+  if (run.pure_function_detail !== undefined && !["full", "calls"].includes(run.pure_function_detail)) {
+    fail("TraceDetailInvalid", "pure_function_detail must be full or calls", "$.run.pure_function_detail");
+  }
   const runId = requireString(run.run_id, "$.run.run_id");
   if (run.admission !== undefined) {
     requireExact(run.admission, "refused", "$.run.admission");
@@ -397,6 +480,10 @@ export function validateTraceMachineContract(value) {
   for (let index = 0; index < events.length; index += 1) {
     const event = requireObject(events[index], `$.events[${index}]`, "trace event");
     rejectUnknownFields(event, TRACE_EVENT_FIELDS, `$.events[${index}]`);
+    if (event.observed_at !== undefined && (typeof event.observed_at !== "string" || !Number.isFinite(Date.parse(event.observed_at))
+      || new Date(event.observed_at).toISOString() !== event.observed_at)) {
+      fail("TraceTimestampInvalid", "observed_at requires a canonical UTC ISO instant", `$.events[${index}].observed_at`);
+    }
     const eventId = requireString(event.event_id, `$.events[${index}].event_id`);
     if (eventIds.has(eventId)) fail("DuplicateTraceEventId", `duplicate trace event ${eventId}`, `$.events[${index}].event_id`);
     eventIds.add(eventId);
@@ -436,7 +523,7 @@ export function canonicalizeMachineValue(value) {
 /** @param {unknown} codeValue @param {unknown} [failureMode] @returns {string} */
 export function failureFamilyForRuntimeCode(codeValue, failureMode = undefined) {
   const code = String(codeValue ?? "RuntimeFailure");
-  if (/^HumanApproval(?:Authority|Evidence|Role|Signer|Identity|Initiator|Attestation|DecisionAlready|StateLimit|NotExpired)/u.test(code)
+  if (/^HumanApproval(?:Authority|Evidence|Exclusion|Role|Signer|Identity|Initiator|Attestation|DecisionAlready|StateLimit|NotExpired)/u.test(code)
     || code === "InvalidHumanApprovalPolicy") return "authority";
   if (/^(InvalidParallel|ParallelContinuation|ParallelOutcome|Parallel.*LimitExceeded)/u.test(code)) return "authority";
   if (code === "RuntimeCancelled") return "cancelled";
@@ -530,3 +617,4 @@ function fail(code, message, path = "$") {
   throw new MachineContractError(code, message, path);
 }
 // @ts-check
+import { isIsoDate, validFieldConstraints, validFieldDefault } from "./value-contracts.mjs";

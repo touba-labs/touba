@@ -14,6 +14,16 @@
     "capability_ref": { "type": "string" },
     "reason": { "type": "string" },
     "summary": { "type": "string" },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "exclude_signers": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 2592000000 },
+        "distinct_from": { "enum": ["initiator", "previous", "initiator_and_previous"] }
+      }
+    },
     "allowed_decisions": {
       "type": "array",
       "minItems": 1,

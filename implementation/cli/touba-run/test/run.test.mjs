@@ -4276,7 +4276,7 @@ function humanApprovalDocument() {
           name: "ReviewChange",
           signature: {
             inputs: [],
-            output_type: "builtin:Text",
+            output_type: "builtin:Approval",
           },
           uses: [],
           flow_graph_ref: "graph:skill:examples.cli_human/ReviewChange",
@@ -4336,7 +4336,7 @@ function toolThenHumanApprovalDocument() {
           name: "ReviewFetched",
           signature: {
             inputs: [],
-            output_type: "builtin:Text",
+            output_type: "builtin:Approval",
           },
           uses: [LINEAR_FETCH_SOURCE_TOOL_REF],
           flow_graph_ref: "graph:skill:examples.cli_human_checkpoint/ReviewFetched",

@@ -1,0 +1,46 @@
+module calendar
+
+define LeapDay as Date = date("2024-02-29") # Gregorian civil date
+
+function Constant
+    gives Date
+    do
+        give LeapDay
+
+type Invoice
+    issued is Date
+    paid is Optional of Date
+
+function Parse
+    takes value as Text
+    gives Date
+    do
+        give date(value)
+
+function Literal
+    gives Date
+    do
+        give date("2024-02-29")
+
+function OnOrAfter
+    takes invoice as Invoice
+    takes ordered as Date
+    gives Boolean
+    do
+        give invoice.issued >= ordered
+
+function Label
+    takes value as Date
+    gives Text
+    do
+        give text(value)
+
+tool ReadDate
+    gives Date
+
+strategy Read
+    gives Date
+    do
+        ReadDate
+            into value
+        give value

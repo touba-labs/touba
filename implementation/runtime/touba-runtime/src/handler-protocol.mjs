@@ -71,6 +71,9 @@ const EFFECT_ID_PATTERN = /^effect:sha256:[0-9a-f]{64}$/u;
  */
 export async function runProcessToolHandler(input) {
   const { toolRef, binding, request, secretHandles, secretStore } = input;
+  if (secretHandles.some(handle => handle.toUpperCase() === "PYTHONDONTWRITEBYTECODE")) {
+    throw new RuntimeFailure("a secret handle conflicts with a reserved handler environment variable", {}, "ToolHandlerEnvironmentInvalid");
+  }
   const secretValues = secretValuesForRedaction(secretStore);
   const requestPayload = `${JSON.stringify(request)}\n`;
   assertPayloadWithinLimit(
@@ -558,6 +561,23 @@ function decodeEffectfulToolHandlerResponse(response, toolRef, secretValues, eff
   } catch (error) {
     if (error instanceof RuntimeFailure) {
       error.details.toolRef = toolRef;
+      // A missing/invalid receipt leaves the effect outcome unknown. Preserve
+      // the handler's diagnostic without admitting the unverified receipt.
+      if (response.ok === false) {
+        const handlerError = response.error;
+        const code = isPlainRecord(handlerError) && typeof handlerError.code === "string"
+          && handlerError.code.trim() ? handlerError.code : "ToolHandlerError";
+        const message = isPlainRecord(handlerError) && typeof handlerError.message === "string"
+          ? handlerError.message : code;
+        const handlerErrorCode = redactSecrets(code, secretValues);
+        const cause = redactSecrets(message, secretValues);
+        throw new RuntimeFailure(
+          `tool handler returned error ${toolRef} [${handlerErrorCode}]: ${cause}; effect receipt is invalid, outcome is unknown`,
+          { toolRef, handlerErrorCode, cause, effectId: effect.effect_id,
+            requestDigest: effect.request_digest, state: "unknown", receiptErrorCode: error.code },
+          "ToolHandlerReportedError",
+        );
+      }
     }
     throw error;
   }
@@ -817,7 +837,7 @@ function validateCompensationReceipt(value, context, inverseEffectId, toolRef) {
  */
 function buildHandlerEnv(secretHandles, secretStore) {
   /** @type {Record<string, string>} */
-  const env = {};
+  const env = { PYTHONDONTWRITEBYTECODE: "1" };
   for (const handle of secretHandles) {
     const value = secretStore?.valueFor?.(handle);
     if (value !== undefined) {

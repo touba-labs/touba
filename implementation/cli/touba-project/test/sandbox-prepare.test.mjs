@@ -14,6 +14,8 @@ test("prepared relative handler boots its SDK inside macOS sandbox without openi
   const installed = join(root, "node_modules/@touba/sdk");
   mkdirSync(installed, {recursive: true});
   cpSync(join(sdkRoot, "src"), join(installed, "src"), {recursive: true});
+  // Match the distributable SDK: materialize its workspace forwarding module.
+  cpSync(join(sdkRoot, "../../contracts/machine/value-contracts.mjs"), join(installed, "src/value-contracts.mjs"));
   cpSync(join(sdkRoot, "package.json"), join(installed, "package.json"));
   symlinkSync(join(sdkRoot, "node_modules"), join(installed, "node_modules"), "dir");
   writeFileSync(join(root, "package.json"), JSON.stringify({type: "module", dependencies: {"@touba/sdk": "1.0.0"}}));

@@ -113,6 +113,16 @@ pub struct AstEnumVariant {
 pub struct AstField {
     pub name: String,
     pub type_ref: AstTypeRef,
+    pub constraints: Vec<AstFieldConstraint>,
+    pub default: Option<AstExpression>,
+    pub source_ref: SourceRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstFieldConstraint {
+    pub kind: String,
+    pub value: String,
+    pub upper: Option<String>,
     pub source_ref: SourceRef,
 }
 
@@ -295,6 +305,7 @@ pub struct AstHumanApprovalStatement {
     pub arguments: Vec<AstCallArgument>,
     pub result_binding: Option<AstResultBinding>,
     pub expired_branch: Option<Vec<AstStatement>>,
+    pub rejected_branch: Option<Vec<AstStatement>>,
     pub source_ref: SourceRef,
 }
 
@@ -401,6 +412,27 @@ pub struct AstWhileStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstExpression {
+    ListComprehension {
+        element: Box<AstExpression>,
+        item: String,
+        collection: Box<AstExpression>,
+        condition: Option<Box<AstExpression>>,
+        source_ref: SourceRef,
+    },
+    ListConcat {
+        left: Box<AstExpression>,
+        right: Box<AstExpression>,
+        source_ref: SourceRef,
+    },
+    TextJoin {
+        values: Box<AstExpression>,
+        separator: Box<AstExpression>,
+        source_ref: SourceRef,
+    },
+    List {
+        elements: Vec<AstExpression>,
+        source_ref: SourceRef,
+    },
     OptionalSome {
         expression: Box<AstExpression>,
         source_ref: SourceRef,
@@ -411,6 +443,11 @@ pub enum AstExpression {
     },
     Record {
         type_name: String,
+        fields: Vec<AstRecordField>,
+        source_ref: SourceRef,
+    },
+    RecordCopy {
+        base: Box<AstExpression>,
         fields: Vec<AstRecordField>,
         source_ref: SourceRef,
     },
@@ -439,6 +476,10 @@ pub enum AstExpression {
         source_ref: SourceRef,
     },
     TextConversion {
+        expression: Box<AstExpression>,
+        source_ref: SourceRef,
+    },
+    DateConversion {
         expression: Box<AstExpression>,
         source_ref: SourceRef,
     },

@@ -4,6 +4,23 @@ sidebar_position: 8
 
 # Référence diagnostics
 
+## Données typées et admission
+
+| Code | Cause | Action |
+| --- | --- | --- |
+| `ProjectEntrypointsInvalid` | Liste d'entrées invalide, répétée ou entrée agent directe | Déclarer `entry` et `entrypoints` ; appeler l'agent depuis sa stratégie autorisée |
+| `ProjectEntrypointNotAllowed` | Parcours absent des entrées du projet | Vérifier la sélection ; ajouter le parcours autorisé puis refaire `prepare` |
+| `InvalidFieldConstraint` | Contrainte incompatible avec le type ou bornes incohérentes | Employer `format "digits"` sur `Text`, `length` sur texte/liste et `min`/`max` sur nombre |
+| `InvalidFieldDefault` | Valeur par défaut incompatible avec le type ou ses contraintes | Fournir une valeur statique valide ; voir [données typées](../concepts/donnees-typees.md) |
+| `DateValueInvalid` | Conversion d'une date invalide | Fournir une date civile réelle au format `YYYY-MM-DD` |
+| `RecordValueInvalid` | Construction ou copie qui viole le contrat d'un champ | Corriger la valeur avant la construction ; les entrées et sorties externes sont également contrôlées |
+| `HumanApprovalExclusionEvidenceRequired` | Liste de signataires exclus absente ou règle incorrecte | Faire attester par l'hôte la règle `exclude_signers` déclarée dans le source |
+
+Les erreurs fournisseur exposent des détails bornés : `http_status`,
+`finish_reason` et, si disponible, `incomplete_reason`. Une erreur de handler
+conserve sa cause ; `receipt_error_code` distingue un reçu d'effet absent ou
+invalide. Sans preuve d'application, l'effet reste d'issue inconnue.
+
 ## Intégration projet, agents et handlers
 
 | Code | Cause | Action |
@@ -45,7 +62,7 @@ sidebar_position: 8
 Cette page liste les diagnostics et erreurs utilisateur principaux.
 
 :::info Comment lire cette page
-Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action recommandée. Pour approfondir, consulter la [référence CLI](./cli-v1-rc.md) ou le [guide dépannage](https://touba-labs.com/docs/guides/depannage).
+Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action recommandée. Pour approfondir, consulter la [référence CLI](./cli-v1-rc.md) ou le [guide dépannage](https://toubalang.org/docs/guides/depannage).
 :::
 
 ## Sources, audit et démarrage

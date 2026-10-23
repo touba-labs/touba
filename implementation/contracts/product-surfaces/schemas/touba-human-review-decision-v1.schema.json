@@ -15,7 +15,7 @@
     "outcome": { "enum": ["accepted", "changes_requested", "rejected", "escalated"] },
     "reviewed_by": { "type": "string" },
     "reviewed_at": { "type": "string" },
-    "comment": { "type": ["string", "null"] },
+    "comment": { "type": ["string", "null"], "maxLength": 4096 },
     "client_ref": { "type": "string" }
   }
 }

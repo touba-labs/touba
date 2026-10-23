@@ -15,6 +15,21 @@ const samples = {
     systemInstruction: { parts: [{ text: "System instructions" }] }, tools: [{ functionDeclarations: [{ name: "Read" }] }],
     generationConfig: { maxOutputTokens: 100, responseJsonSchema: { type: "object" } } } },
 };
+
+test("count failures retain HTTP status without provider response bodies or credentials", async () => {
+  for (const status of [401, 404, 429, 500]) {
+    const guard = createProviderContextFetch({ provider: "google", contextWindowTokens: 1000,
+      countFetch: async () => new Response("private provider detail and api-key", { status }),
+      fetch: () => assert.fail("must not generate") });
+    await assert.rejects(guard(samples.google.url, { body: JSON.stringify(samples.google.body) }), error => {
+      assert.equal(error.code, "ProviderContextCountUnavailable");
+      assert.equal(error.details.http_status, status);
+      assert.match(error.message, new RegExp(`HTTP ${status}`));
+      assert(!JSON.stringify(error).includes("api-key"));
+      return true;
+    });
+  }
+});
 for (const [provider, { url, body }] of Object.entries(samples)) {
   test(`${provider}: counts the full serialized input and forwards the original request unchanged`, async () => {
     const events = [], counts = [], sent = [];

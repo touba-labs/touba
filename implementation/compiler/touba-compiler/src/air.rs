@@ -110,6 +110,10 @@ pub struct AirEnumVariant {
 pub struct AirTypeField {
     pub name: String,
     pub type_ref: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub constraints: std::collections::BTreeMap<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
     pub source_ref: SourceRef,
 }
 
@@ -364,6 +368,8 @@ pub struct AirApprovalPolicy {
     pub timeout_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distinct_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_signers: Option<String>,
 }
 
 impl AirFlowNodeKind {
@@ -446,8 +452,14 @@ pub enum AirExpressionKind {
     LiteralInt,
     LiteralFloat,
     TextConversion,
+    DateConversion,
     FieldAccess,
     ConstructRecord,
+    CopyRecord,
+    ConstructList,
+    ListComprehension,
+    ListConcat,
+    TextJoin,
     UnaryOp,
     BinaryOp,
 }
@@ -484,6 +496,7 @@ pub enum AirFlowEdgeRole {
     Failure,
     Fallback,
     Expired,
+    Rejected,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -565,6 +578,8 @@ impl AirDiagnostic {
 pub enum AirDiagnosticCode {
     AstError,
     InvalidRunLimits,
+    InvalidFieldConstraint,
+    InvalidFieldDefault,
     InvalidTextLiteral,
     DuplicateDefinition,
     MissingExecutableBody,
@@ -591,6 +606,7 @@ pub enum AirDiagnosticCode {
     UnknownHumanApprovalArgument,
     InvalidHumanApprovalPolicy,
     HumanApprovalExpirationMustTerminate,
+    HumanApprovalRejectionMustTerminate,
     HumanApprovalInFunction,
     MissingUserInteractionMessageArgument,
     MissingUserInteractionPromptArgument,

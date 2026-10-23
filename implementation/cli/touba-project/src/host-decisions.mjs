@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
+import { openSync, fstatSync, readSync, closeSync, constants } from "node:fs";
 import { effectContractToJson, normalizeEffectContract } from "../../touba-manifest/src/effect-contract.mjs";
 
-const fields = new Set(["grants", "secrets", "memories", "effect_contract", "timeout_ms", "max_payload_bytes", "package_handler", "sandbox"]);
+const fields = new Set(["grants", "secrets", "memories", "effect_contract", "timeout_ms", "max_payload_bytes", "package_handler", "handler", "sandbox"]);
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const fail = (code, details = {}) => { throw Object.assign(new Error(code), { code, details }); };
@@ -13,6 +14,53 @@ const knownKeys = (value, allowed, path = "host_decisions") => {
   if (key !== undefined) fail("HostDecisionFieldUnknown", { field: diagnosticKey(key), path });
 };
 
+export function readHostDecisionsFile(path) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > 65536) fail("HostDecisionFileInvalid");
+    const bytes = Buffer.alloc(65537);
+    let size = 0;
+    while (size < bytes.length) {
+      const count = readSync(fd, bytes, size, bytes.length - size, null);
+      if (!count) break;
+      size += count;
+    }
+    if (size > 65536) fail("HostDecisionFileInvalid");
+    const document = JSON.parse(bytes.subarray(0, size).toString("utf8"));
+    requireObject(document);
+    return document;
+  } catch { fail("HostDecisionFileInvalid"); }
+  finally { if (fd !== undefined) closeSync(fd); }
+}
+
+function expandModuleDecisions(decisions, requirements) {
+  if (decisions.modules === undefined) return decisions;
+  requireObject(decisions.modules);
+  if (decisions.bindings !== undefined) requireObject(decisions.bindings);
+  const bindings = Object.create(null);
+  for (const [module, defaults] of Object.entries(decisions.modules)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(module)) fail("HostDecisionModuleInvalid");
+    knownKeys(defaults, new Set(["grants", "secrets", "timeout_ms", "max_payload_bytes"]), `modules.${module}`);
+    const entries = Object.entries(requirements.bindings).filter(([ref]) => ref.startsWith(`tool:${module}/`));
+    if (entries.length === 0) fail("HostDecisionTargetUnknown", { target_ref: module, path: "modules" });
+    for (const [field, value] of Object.entries(defaults)) {
+      const union = [...new Set(entries.flatMap(([, required]) => required[field] ?? []))];
+      normalizeField(field, value, { [field]: union });
+    }
+    for (const [ref, required] of entries) {
+      bindings[ref] = Object.fromEntries(Object.entries(defaults).map(([field, value]) => [field,
+        ["grants", "secrets"].includes(field) ? value.filter(item => (required[field] ?? []).includes(item)) : value]));
+    }
+  }
+  for (const [ref, patch] of Object.entries(decisions.bindings ?? {})) {
+    requireObject(patch);
+    bindings[ref] = { ...(bindings[ref] ?? {}), ...patch };
+  }
+  return { ...decisions, bindings };
+}
+
 function selection(value, required) {
   if (!Array.isArray(value) || value.some(item => !required.some(candidate => isDeepStrictEqual(candidate, item)))
       || value.some((item, index) => value.slice(0, index).some(previous => isDeepStrictEqual(previous, item)))) fail("HostDecisionSelectionInvalid");
@@ -20,6 +68,14 @@ function selection(value, required) {
 }
 
 function normalizeField(field, value, required) {
+  if (field === "handler") {
+    knownKeys(value, new Set(["kind", "command", "args", "cwd"]), "handler");
+    const text = item => typeof item === "string" && !item.includes("\0");
+    if (value.kind !== "process" || !text(value.command) || !value.command.trim()
+        || !Array.isArray(value.args) || value.args.some(arg => !text(arg))
+        || value.cwd !== undefined && (!text(value.cwd) || !value.cwd.trim())) fail("HostDecisionHandlerInvalid");
+    return structuredClone(value);
+  }
   if (field === "sandbox") {
     knownKeys(value, new Set(["required", "profile", "code_paths", "read_paths", "write_paths", "local_sockets"]), "sandbox");
     if (value.required !== undefined && typeof value.required !== "boolean"
@@ -42,9 +98,23 @@ function normalizeField(field, value, required) {
 // Pure, atomic proposal. No input is persisted, executed or treated as a secret value.
 export function applyHostDecisions(manifest, decisions, requirements, fragmentToolRefs = new Set(), packageHandlers = new Map()) {
   if (decisions === undefined) return { manifest, changes: [] };
-  knownKeys(decisions, new Set(["bindings", "agent_secret_scopes"]));
+  knownKeys(decisions, new Set(["bindings", "modules", "agent_secret_scopes", "remove_bindings"]));
+  decisions = expandModuleDecisions(decisions, requirements);
   const proposed = structuredClone(manifest);
   const changes = [];
+  if (decisions.remove_bindings !== undefined) {
+    const refs = decisions.remove_bindings;
+    if (!Array.isArray(refs) || new Set(refs).size !== refs.length || refs.some(ref => typeof ref !== "string" || !/^tool:[A-Za-z_][A-Za-z0-9_.]*\/[A-Za-z_][A-Za-z0-9_]*$/.test(ref))) fail("HostDecisionRemovalInvalid");
+    for (const ref of refs) {
+      if (Object.hasOwn(requirements.bindings, ref) || fragmentToolRefs.has(ref) || Object.hasOwn(decisions.bindings ?? {}, ref)) {
+        fail("HostDecisionRemovalConflict", { target_ref: ref });
+      }
+      if (Object.hasOwn(proposed.bindings, ref)) {
+        delete proposed.bindings[ref];
+        changes.push({ target_ref: ref, field: "remove_binding", before: true, after: false });
+      }
+    }
+  }
   const change = (targetRef, field, holder, value, required, normalize, reportField = field) => {
     const before = holder[field];
     if (isDeepStrictEqual(before, value)) return;
@@ -62,6 +132,9 @@ export function applyHostDecisions(manifest, decisions, requirements, fragmentTo
       if (!Object.hasOwn(requirements.bindings, ref)) fail("HostDecisionTargetUnknown", { target_ref: diagnosticKey(ref), path: "bindings" });
       if (fragmentToolRefs.has(ref)) fail("HostDecisionFragmentConflict", { target_ref: diagnosticKey(ref), path: "bindings" });
       knownKeys(patch, fields, `bindings.${diagnosticKey(ref)}`);
+      if (Object.hasOwn(patch, "handler") && Object.hasOwn(patch, "package_handler")) {
+        fail("HostDecisionHandlerConflict", { target_ref: ref });
+      }
       for (const [field, value] of Object.entries(patch)) {
         if (field === "package_handler") {
           if (typeof value !== "string" || !packageHandlers.get(ref)?.has(value)) fail("HostDecisionPackageHandlerUnknown", { target_ref: ref, field });

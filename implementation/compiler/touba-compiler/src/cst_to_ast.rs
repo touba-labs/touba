@@ -265,9 +265,35 @@ impl<'a> AstLowerer<'a> {
 
     fn lower_field(&mut self, node: Node<'_>) -> Option<AstField> {
         let type_node = self.required_field(node, "type")?;
+        let mut cursor = node.walk();
+        let mut constraints = Vec::new();
+        for child in node
+            .named_children(&mut cursor)
+            .filter(|child| child.kind() == "field_constraint")
+        {
+            let value = self.required_field(child, "value")?;
+            constraints.push(AstFieldConstraint {
+                kind: self.required_field_text(child, "kind")?,
+                value: if value.kind() == "string" {
+                    self.lower_text_literal(value)?
+                } else {
+                    self.text(value)
+                },
+                upper: child
+                    .child_by_field_name("upper")
+                    .map(|value| self.text(value)),
+                source_ref: self.source_ref(child),
+            });
+        }
+        let default = match node.child_by_field_name("default") {
+            Some(value) => Some(self.lower_expression(value)?),
+            None => None,
+        };
         Some(AstField {
             name: self.required_field_text(node, "name")?,
             type_ref: self.lower_type_ref(type_node)?,
+            constraints,
+            default,
             source_ref: self.source_ref(node),
         })
     }
@@ -795,8 +821,13 @@ impl<'a> AstLowerer<'a> {
     fn lower_match_statement(&mut self, node: Node<'_>) -> Option<AstMatchStatement> {
         let value = self.required_field(node, "value")?;
         let mut cases = Vec::new();
-        for child in named_children(node).into_iter().filter(|child| child.kind() == "match_case") {
-            let body = named_children(child).into_iter().find(|child| child.kind() == "block")?;
+        for child in named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "match_case")
+        {
+            let body = named_children(child)
+                .into_iter()
+                .find(|child| child.kind() == "block")?;
             cases.push(AstMatchCase {
                 type_name: self.required_field_text(child, "type")?,
                 variant: self.required_field_text(child, "variant")?,
@@ -804,7 +835,11 @@ impl<'a> AstLowerer<'a> {
                 source_ref: self.source_ref(child),
             });
         }
-        Some(AstMatchStatement { value: self.lower_expression(value)?, cases, source_ref: self.source_ref(node) })
+        Some(AstMatchStatement {
+            value: self.lower_expression(value)?,
+            cases,
+            source_ref: self.source_ref(node),
+        })
     }
 
     fn lower_human_approval_statement(
@@ -832,6 +867,7 @@ impl<'a> AstLowerer<'a> {
             match child.kind() {
                 "human_approval_target" => {}
                 "approval_expired_clause" => {}
+                "approval_rejected_clause" => {}
                 "call_argument_clause" => {
                     if let Some(argument) = self.lower_call_argument_clause(child) {
                         if !seen_arguments.insert(argument.name.clone()) {
@@ -868,21 +904,47 @@ impl<'a> AstLowerer<'a> {
             }
         }
 
-        let expired_clauses: Vec<_> = named_children(node).into_iter()
-            .filter(|child| child.kind() == "approval_expired_clause").collect();
+        let expired_clauses: Vec<_> = named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "approval_expired_clause")
+            .collect();
         if expired_clauses.len() > 1 {
-            self.push_error(AstDiagnosticCode::UnsupportedCstNode, node,
-                "human approval accepts at most one on expired branch");
+            self.push_error(
+                AstDiagnosticCode::UnsupportedCstNode,
+                node,
+                "human approval accepts at most one on expired branch",
+            );
         }
-        let expired_branch = expired_clauses.first().map(|clause|
-            named_children(*clause).into_iter()
-                .filter_map(|statement| self.lower_statement(statement)).collect());
+        let expired_branch = expired_clauses.first().map(|clause| {
+            named_children(*clause)
+                .into_iter()
+                .filter_map(|statement| self.lower_statement(statement))
+                .collect()
+        });
+        let rejected_clauses: Vec<_> = named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "approval_rejected_clause")
+            .collect();
+        if rejected_clauses.len() > 1 {
+            self.push_error(
+                AstDiagnosticCode::UnsupportedCstNode,
+                node,
+                "human approval accepts at most one on rejected branch",
+            );
+        }
+        let rejected_branch = rejected_clauses.first().map(|clause| {
+            named_children(*clause)
+                .into_iter()
+                .filter_map(|statement| self.lower_statement(statement))
+                .collect()
+        });
         Some(AstHumanApprovalStatement {
             target,
             mode,
             arguments,
             result_binding,
             expired_branch,
+            rejected_branch,
             source_ref: self.source_ref(node),
         })
     }
@@ -1218,7 +1280,10 @@ impl<'a> AstLowerer<'a> {
     }
 
     fn lower_interpolated_string(&mut self, node: Node<'_>) -> Option<AstExpression> {
-        let mut value = AstExpression::StringLiteral { value: String::new(), source_ref: self.source_ref(node) };
+        let mut value = AstExpression::StringLiteral {
+            value: String::new(),
+            source_ref: self.source_ref(node),
+        };
         for child in named_children(node) {
             let part = if child.kind() == "interpolation" {
                 let expression = self.required_field(child, "value")?;
@@ -1233,10 +1298,17 @@ impl<'a> AstLowerer<'a> {
                         return None;
                     }
                 };
-                AstExpression::StringLiteral { value: decoded, source_ref: self.source_ref(child) }
+                AstExpression::StringLiteral {
+                    value: decoded,
+                    source_ref: self.source_ref(child),
+                }
             };
-            value = AstExpression::Binary { left: Box::new(value), operator: AstBinaryOperator::TextConcat,
-                right: Box::new(part), source_ref: self.source_ref(child) };
+            value = AstExpression::Binary {
+                left: Box::new(value),
+                operator: AstBinaryOperator::TextConcat,
+                right: Box::new(part),
+                source_ref: self.source_ref(child),
+            };
         }
         Some(value)
     }
@@ -1257,6 +1329,27 @@ impl<'a> AstLowerer<'a> {
         let source_ref = self.source_ref(node);
         let value = self.text(node);
         match node.kind() {
+            "record_copy_expression" => {
+                let base_node = self.required_field(node, "base")?;
+                let base = self.lower_expression(base_node)?;
+                let fields = named_children(node)
+                    .into_iter()
+                    .filter(|child| child.kind() == "record_field")
+                    .map(|child| {
+                        let value_node = self.required_field(child, "value")?;
+                        Some(AstRecordField {
+                            name: self.required_field_text(child, "name")?,
+                            value: self.lower_expression(value_node)?,
+                            source_ref: self.source_ref(child),
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(AstExpression::RecordCopy {
+                    base: Box::new(base),
+                    fields,
+                    source_ref,
+                })
+            }
             "record_expression" => {
                 let type_node = self.required_field(node, "type")?;
                 let fields = named_children(node)
@@ -1305,10 +1398,62 @@ impl<'a> AstLowerer<'a> {
                     source_ref,
                 })
             }
+            "date_conversion_expression" => {
+                let value_node = self.required_field(node, "value")?;
+                Some(AstExpression::DateConversion {
+                    expression: Box::new(self.lower_expression(value_node)?),
+                    source_ref,
+                })
+            }
             "optional_some_expression" => {
                 let value_node = self.required_field(node, "value")?;
                 Some(AstExpression::OptionalSome {
                     expression: Box::new(self.lower_expression(value_node)?),
+                    source_ref,
+                })
+            }
+            "list_comprehension_expression" => {
+                let element = self.required_field(node, "element")?;
+                let item = self.required_field(node, "item")?;
+                let collection = self.required_field(node, "collection")?;
+                let condition = node.child_by_field_name("condition");
+                Some(AstExpression::ListComprehension {
+                    element: Box::new(self.lower_expression(element)?),
+                    item: self.text(item),
+                    collection: Box::new(self.lower_expression(collection)?),
+                    condition: match condition {
+                        Some(child) => Some(Box::new(self.lower_expression(child)?)),
+                        None => None,
+                    },
+                    source_ref,
+                })
+            }
+            "list_concat_expression" => {
+                let left = self.required_field(node, "left")?;
+                let right = self.required_field(node, "right")?;
+                Some(AstExpression::ListConcat {
+                    left: Box::new(self.lower_expression(left)?),
+                    right: Box::new(self.lower_expression(right)?),
+                    source_ref,
+                })
+            }
+            "text_join_expression" => {
+                let values = self.required_field(node, "values")?;
+                let separator = self.required_field(node, "separator")?;
+                Some(AstExpression::TextJoin {
+                    values: Box::new(self.lower_expression(values)?),
+                    separator: Box::new(self.lower_expression(separator)?),
+                    source_ref,
+                })
+            }
+            "list_expression" => {
+                let mut cursor = node.walk();
+                let elements = node
+                    .named_children(&mut cursor)
+                    .map(|child| self.lower_expression(child))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(AstExpression::List {
+                    elements,
                     source_ref,
                 })
             }
@@ -1499,5 +1644,5 @@ pub(crate) fn parse_error_message(source: &str) -> String {
 
 fn named_children<'b>(node: Node<'b>) -> Vec<Node<'b>> {
     let mut cursor = node.walk();
-    node.named_children(&mut cursor).collect()
+    node.named_children(&mut cursor).filter(|child| child.kind() != "comment").collect()
 }

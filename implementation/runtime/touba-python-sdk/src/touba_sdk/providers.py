@@ -17,6 +17,7 @@ def _options(value, keys):
 
 
 COMMON = {"model": "model", "source": "source", "decision_interface": "decisionInterface",
+          "schema_encoding": "schemaEncoding",
           "temperature": "temperature", "max_retries": "maxRetries", "max_output_tokens": "maxOutputTokens",
           "allow_human_review": "allowHumanReview", "native_tool_choice": "nativeToolChoice",
           "system": "system", "instructions": "instructions", "provider_options": "providerOptions",

@@ -185,11 +185,28 @@ test("prepared multi-module project keeps the same minimum and provenance as the
   const plan = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.run-plan.json"), "utf8"));
   const path = join(root, ".touba/build/dev", plan.air);
   const air = JSON.parse(readFileSync(path, "utf8"));
-  assert.equal(air.budgets.run.max_steps.value, 25);
-  assert.match(air.budgets.run.max_steps.source_ref.source_id, /shared\.tb$/);
+  assert.equal(air.budgets.run.max_steps.value, 100);
+  assert.match(air.budgets.run.max_steps.source_ref.source_id, /pure\.tb$/);
   const direct = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "-p", "touba-cli", "--bin", "touba-compile", "--",
     "--source-root", join(root, "src"), join(root, "src/budgets/pure.tb")], { cwd: implementation, encoding: "utf8" }));
   assert.deepEqual(air.budgets, direct.budgets);
+});
+
+test("project linking retains constants used inside an imported record constructor", async t => {
+  const root = workspace(t);
+  mkdirSync(join(root, "src/job"), { recursive: true });
+  writeFileSync(join(root, "src/job/main.tb"), 'module job.main\nimport function Draft from job.records\nfunction Run\n    gives Text\n    do\n        give "ready"\n');
+  writeFileSync(join(root, "src/job/records.tb"), 'module job.records\nimport define Label from job.labels\ntype Item\n    label is Text\nfunction Draft\n    gives Item\n    do\n        give record Item { label as Label }\n');
+  writeFileSync(join(root, "src/job/labels.tb"), 'module job.labels\nlimits run\n    max_steps as 1\ndefine Label as Text = "label"\n');
+  const report = await prepareProject({ root, mode: "write", entryRef: "function:job.main/Run" });
+  assert.equal(report.status, "success", JSON.stringify(report));
+  const plan = JSON.parse(readFileSync(join(root, ".touba/build/dev/touba.run-plan.json")));
+  const air = JSON.parse(readFileSync(join(root, ".touba/build/dev", plan.air)));
+  assert.ok(air.definitions.constants.some(value => value.id === "constant:job.labels/Label"));
+  assert.equal(air.budgets, undefined);
+  const result = await executeAirDocument(air, { entryRef: "function:job.records/Draft" });
+  assert.equal(result.status, "success", JSON.stringify(result));
+  assert.deepEqual(result.result, { label: "label" });
 });
 
 test("hardened run-plan uses real source budgets and requires durable checkpoint configuration", async t => {
@@ -223,7 +240,7 @@ test("prepared source limits stop a real SDK process handler before its third in
   const root = workspace(t);
   mkdirSync(join(root, "src/budgets"), { recursive: true });
   writeFileSync(join(root, "src/budgets/source.tb"), source);
-  const report = await prepareProject({ root, mode: "write", hostDecisions: { bindings: {
+  const report = await prepareProject({ root, mode: "write", entryRef: "skill:budgets.source/Repeat", hostDecisions: { bindings: {
     [tool]: { grants: [], effect_contract: { kind: "none" } },
   } } });
   assert.equal(report.status, "success", JSON.stringify(report));

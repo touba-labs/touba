@@ -1,6 +1,7 @@
 // @ts-check
 
 import { RuntimeFailure } from "./runtime-errors.mjs";
+import { isIsoDate, matchesFieldConstraints } from "../../../contracts/machine/value-contracts.mjs";
 
 const BUILTIN_TEXT = "builtin:Text";
 const BUILTIN_BOOLEAN = "builtin:Boolean";
@@ -40,6 +41,7 @@ export function validateEntryInputPayload(entry, values, context) {
  * @typedef {object} AirParameter
  * @property {string} name
  * @property {string} type_ref
+ * @property {Record<string, any>=} constraints
  *
  * @typedef {object} AirToolSignature
  * @property {AirParameter[]=} inputs
@@ -68,6 +70,8 @@ export function validateEntryInputPayload(entry, values, context) {
  * @property {number=} max_items
  *
  * @typedef {object} SchemaFailureDetails
+ * @property {string=} constraint
+ * @property {any=} constraintLimitValue
  * @property {string} toolRef
  * @property {PayloadDirection} direction
  * @property {string} path
@@ -309,6 +313,10 @@ function payloadConstraintLimitValue(constraint, reason) {
  * @param {SchemaFailureDetails} details
  */
 function validatePayloadValue(value, typeRef, context, details) {
+  if (typeRef === "builtin:Date") {
+    if (!isIsoDate(value)) throwToolSchemaFailure("expected Date (YYYY-MM-DD)", value, typeRef, details);
+    return;
+  }
   if (typeof typeRef !== "string" || typeRef.trim() === "") {
     return;
   }
@@ -411,6 +419,11 @@ function validatePayloadValue(value, typeRef, context, details) {
       ...details,
       path: `${details.path}.${field.name}`,
     });
+    if (!matchesFieldConstraints(value[field.name], field.constraints)) {
+      const [constraint, limit] = Object.entries(field.constraints ?? {}).find(([key, limit]) => !matchesFieldConstraints(value[field.name], { [key]: limit })) ?? ["unknown", null];
+      throwToolSchemaFailure(`field constraint ${constraint} requires ${JSON.stringify(limit)}`, value[field.name], field.type_ref,
+        { ...details, path: `${details.path}.${field.name}`, constraint, constraintLimitValue: limit });
+    }
   }
 }
 
@@ -432,6 +445,8 @@ function throwToolSchemaFailure(reason, value, expectedTypeRef, details) {
       schemaPath: details.path,
       expectedTypeRef,
       actualType: payloadValueKind(value),
+      constraint: details.constraint,
+      constraintLimitValue: details.constraintLimitValue,
       missingFields: details.missingFields,
       unknownFieldCount: details.unknownFields?.length,
     },

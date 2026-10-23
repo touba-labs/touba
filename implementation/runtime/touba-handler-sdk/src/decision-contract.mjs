@@ -1,5 +1,6 @@
 // Internal decision contract shared by SDK transports. No provider I/O or
 // capability execution belongs here; runtime authority is unchanged.
+import { fieldConstraintSchema } from "./value-contracts.mjs";
 
 const AGENT_DECISION_PROTOCOL = "touba-agent-decision-v1";
 const AGENT_MODEL_INPUT_PROTOCOL = "touba-agent-model-input-v1";
@@ -18,17 +19,24 @@ export class ToubaAgentDecisionProviderError extends Error {
 }
 
 export function assertCompleteProviderResponse(result, options, { catalogue = false } = {}) {
+  const reasons = new Set(["stop", "length", "content-filter", "tool-calls", "error", "other", "unknown"]);
+  const finishReason = reasons.has(result?.finishReason) ? result.finishReason : "unknown";
   // Unified finishReason is not the HTTP Responses envelope status. Validate
   // both when that protocol is known; never salvage a partial typed decision.
   const body = result?.response?.body;
   if (options.responseProtocol === "openai-responses" || body?.object === "response") {
     if (!body || typeof body !== "object" || Array.isArray(body)
       || body.status !== "completed" || body.error != null || body.incomplete_details != null) {
-      throw new ToubaAgentDecisionProviderError("IncompleteModelDecision", "decision provider response is not completed; partial output cannot be used");
+      const incompleteReason = ["max_output_tokens", "content_filter"].includes(body?.incomplete_details?.reason)
+        ? body.incomplete_details.reason : "unknown";
+      throw new ToubaAgentDecisionProviderError("IncompleteModelDecision",
+        `decision provider response is incomplete (reason: ${incompleteReason}, finish: ${finishReason})`,
+        { finish_reason: finishReason, incomplete_reason: incompleteReason });
     }
   }
   if (!(catalogue ? ["stop", "tool-calls"] : ["stop"]).includes(result?.finishReason)) {
-    throw new ToubaAgentDecisionProviderError("IncompleteModelDecision", "decision generation did not complete; partial output cannot be used");
+    throw new ToubaAgentDecisionProviderError("IncompleteModelDecision",
+      `decision generation did not complete (finish: ${finishReason})`, { finish_reason: finishReason });
   }
 }
 
@@ -328,7 +336,7 @@ function schemaForDescriptor(descriptor) {
     const properties = {};
     const required = [];
     for (const field of fields) {
-      properties[field.name] = schemaForDescriptor(field);
+      properties[field.name] = { ...schemaForDescriptor(field), ...fieldConstraintSchema(field.type_ref, field.constraints) };
       required.push(field.name);
     }
     return {
@@ -342,6 +350,7 @@ function schemaForDescriptor(descriptor) {
 }
 
 function schemaForTypeRef(typeRef) {
+  if (typeRef === "builtin:Date") return { type: "string", format: "date" };
   if (typeRef === BUILTIN_TEXT) {
     return { type: "string" };
   }

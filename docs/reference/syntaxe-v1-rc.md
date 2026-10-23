@@ -4,6 +4,24 @@ sidebar_position: 1
 
 # Référence syntaxe
 
+## Transformer des listes et composer du texte
+
+| Expression | Résultat |
+| --- | --- |
+| `[x * 2 for x in values if x > 0]` | Nouvelle liste des valeurs positives doublées |
+| `concat(left, right)` | Nouvelle liste, dans l'ordre gauche puis droite |
+| `join(labels, "; ")` | Texte réunissant une `List of Text` |
+
+La collection est évaluée une fois. Pour chaque élément, le filtre est évalué
+avant la transformation. L'élément nommé reste local à la compréhension ; les
+listes d'entrée sont conservées. Les types des éléments doivent être compatibles.
+Une liste vide reçoit son type du contexte, par exemple `bind labels as List of Text = []`.
+
+Les compréhensions respectent la limite d'itérations de l'hôte, y compris pour
+les éléments filtrés, ainsi que les contrôles d'annulation et de durée.
+Voir le [tutoriel de fonctions pures](../tutoriels/fonctions-metier-pures.md).
+
+
 Cette page est une aide de consultation pour la syntaxe visible.
 
 ## Fichiers et indentation
@@ -13,6 +31,10 @@ Les fichiers `.tb` acceptent les fins de ligne LF (Linux/macOS) et CRLF
 Les diagnostics pointent vers les lignes et positions du fichier original ;
 aucune conversion manuelle en LF n'est nécessaire. Un retour chariot isolé
 (`CR` sans `LF`) ne constitue pas une fin de ligne.
+
+Un commentaire commence par `#` et se termine à la fin de la ligne. Il peut
+occuper une ligne entière ou suivre une instruction. `//` est la division
+entière, pas un marqueur de commentaire.
 
 ## Text, types et portée des liaisons
 
@@ -53,7 +75,7 @@ limits run
 
 Un seul bloc `limits run`, après les imports et avant les déclarations, fixe les plafonds du run entier. Chaque valeur est un littéral Int strictement positif, au plus `9007199254740991`. Le compilateur conserve la localisation source dans l’AIR ; aucune édition manuelle de JSON n’est nécessaire.
 
-Une capacité peut être réutilisée tant que son autorité et le budget le permettent. Les sous-agents partagent les compteurs du run ; une reprise humaine conserve la consommation précédente. À l’assemblage, les plafonds de tous les modules importés transitivement, même pour un type, sont combinés par minimum. Un module non importé ne contribue pas. Un package ne doit donc déclarer un plafond global que s’il veut contraindre tout run qui l’importe.
+Une capacité peut être réutilisée tant que son autorité et le budget le permettent. Les sous-agents partagent les compteurs du run ; une reprise humaine conserve la consommation précédente. À l’assemblage, les plafonds du module d’entrée et des modules dont une déclaration exécutable est liée sont combinés par minimum. Importer uniquement un type, une constante ou une mémoire ne transfère pas les plafonds de son module. Les dépendances exécutables conservent leurs limites.
 
 ## Imports
 
@@ -318,14 +340,39 @@ Expressions :
 - Booléens : `and`, `or`, `not`
 - Comparaisons : `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Concaténation texte : `++`
-- Rendu texte explicite : `text(expr)` pour `Text`, `Int`, `Float` et `Boolean`
+- Rendu texte explicite : `text(expr)` pour `Text`, `Int`, `Float`, `Boolean` et `Date`
 - Accès champ : `value.field`
 - Construction nominale : `record TypeName { field as expression, ... }`
 
-Le constructeur `record` accepte uniquement un type local explicite. Tous les
-champs déclarés sont obligatoires et doivent être fournis exactement une fois.
-Les objets anonymes, champs optionnels, valeurs par défaut, spreads et mises à
-jour partielles ne font pas partie de cette version.
+Le constructeur `record` utilise un type déclaré, local ou importé. Chaque
+champ sans valeur par défaut doit être fourni exactement une fois. Les valeurs
+par défaut sont appliquées à la construction source. Les données reçues d’un
+handler, d’un hôte ou d’un modèle doivent fournir le record complet.
+
+`copy original { status as "approved" }` construit un nouveau record du même
+type en remplaçant les champs indiqués. Le record initial reste inchangé.
+
+Les listes s’écrivent `["a", "b"]`. Une liste vide `[]` demande un type attendu,
+par exemple `bind tags as List of Text = []`. Les listes imbriquées sont
+acceptées ; leurs éléments gardent le même type.
+
+`Date` représente une date civile ISO `YYYY-MM-DD`, entre les années 0001 et
+9999. `date("2026-10-21")` vérifie le calendrier, y compris les années
+bissextiles. Deux `Date` peuvent être comparées. Le format JSON reste un texte
+ISO validé, avec `format: date` dans le schéma envoyé au modèle.
+
+| Contrainte de champ | Types | Exemple |
+| --- | --- | --- |
+| `format` | Text | `code is Text format "digits"` |
+| `length` | Text, List | `code is Text length 3`, `tags is List of Text length 0..5` |
+| `min`, `max` | Int, Float | `count is Int min 0 max 100` |
+| `default` | Valeur compatible | `active is Boolean default true` |
+
+`digits` désigne les chiffres ASCII de 0 à 9. La longueur d’un texte compte
+les caractères Unicode, celle d’une liste ses éléments. Les bornes sont
+inclusives. Les valeurs par défaut acceptent les scalaires, `date("2026-10-21")`,
+`none(Text)` et `[]`, avec un type compatible. Une expression métier calculée
+reste dans une fonction. Voir [Données typées](../concepts/donnees-typees.md).
 
 ## Tool
 

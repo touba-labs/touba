@@ -1802,7 +1802,8 @@ test("pauses human approval without a decision and resumes when approved", async
   });
 
   assert.equal(approved.status, "success");
-  assert.equal(approved.result, "approved");
+  assert.equal(approved.result.decision, "approved");
+  assert.deepEqual(approved.result.subject_ref, { present: false });
   assert.equal(eventOf(approved.trace, "human_approval_decided").payload.decision, "approved");
   assert.deepEqual(eventOf(approved.trace, "human_approval_resumed").payload, {
     approval_ref: "approval:test:required",
@@ -4256,6 +4257,44 @@ test("refuses resolved secrets in active skill pack context before calling the p
   assert.equal(JSON.stringify(result.trace).includes("resolved-secret-value"), false);
 });
 
+test("provider initial modes are agent-specific and empty catalogues need one request", async () => {
+  for (const empty of [false, true]) {
+    const document = agentProviderDocument();
+    const agent = document.definitions.agents[0];
+    if (empty) { agent.uses = []; agent.use_refs = []; }
+    const modes = [];
+    const result = await executeAirDocument(document, {
+      agentDecisionProvider: { initialModes: empty ? {} : { [agent.id]: "capabilities" },
+        decide(request) { modes.push(request.mode); return { action: "answer_directly", result: "done" }; } },
+    });
+    assert.equal(result.status, "success", JSON.stringify(result));
+    assert.deepEqual(modes, ["capabilities"]);
+  }
+  await assert.rejects(executeAirDocument(agentProviderDocument(), { agentDecisionProvider: {
+    initialModes: { "agent:invalid/A": "unsafe" }, decide: () => assert.fail("invalid configuration"),
+  } }), { code: "InvalidAgentDecisionProvider" });
+});
+
+test("resolved model evidence is per invocation and closed after the provider returns", async () => {
+  const events = [];
+  let callback;
+  const result = await executeAirDocument(agentProviderDocument(), {
+    traceEventObserver: event => events.push(event),
+    agentDecisionProvider: { metadata: { provider_name: "router", model_id: "dynamic" },
+      decide(request, execution) {
+        callback = execution.recordProviderMetadata;
+        assert.equal(callback({ provider_name: "resolved-host", model_id: "selected-model" }), true);
+        return { action: "answer_directly", result: "done" };
+      } },
+  });
+  assert.equal(result.status, "success");
+  const resolved = events.find(event => event.kind === "agent_decision_provider_model_resolved");
+  assert.equal(resolved.payload.provider_metadata.model_id, "selected-model");
+  const count = events.length;
+  assert.equal(callback({ provider_name: "late", model_id: "late" }), false);
+  assert.equal(events.length, count);
+});
+
 test("traces ADP-1 provider metadata and redacted request digest without raw inputs", async () => {
   const document = agentProviderDocument({ entryInputs: [parameter("topic", "builtin:Text")] });
   const result = await executeAirDocument(document, {
@@ -5534,7 +5573,7 @@ test("resumes explicit human approval from checkpoint without redispatching prio
   });
 
   assert.equal(resumed.status, "success", JSON.stringify(resumed));
-  assert.equal(resumed.result, "approved");
+  assert.equal(resumed.result.decision, "approved");
   assert.equal(toolCalls, 1);
   assert.equal(eventsOf(resumed.trace, "tool_binding_authorized").length, 0);
   assert.equal(
@@ -5770,6 +5809,14 @@ test("refuses unauthorized agent invocation before entering the target agent", a
   assert.equal(failure.payload.target_ref, "agent:test/Builder");
   assert.equal(failure.payload.caller_ref, "strategy:test/RunBuild");
   assert.equal(failure.payload.agent_ref, "agent:test/Builder");
+
+  let providerCalls = 0;
+  const direct = await executeAirDocument(document, { entryRef: "agent:test/Builder",
+    agentDecisionProvider: () => { providerCalls++; return { action: "answer_directly", result: "unexpected" }; } });
+  assert.equal(direct.status, "failure");
+  assert.equal(providerCalls, 0);
+  assert.equal(eventOf(direct.trace, "agent_invocation_refused").payload.reason, "missing_caller_ref");
+  assert.equal(eventOf(direct.trace, "failure_detected").payload.runtime_error_code, "UnauthorizedAgentInvocation");
 });
 
 test("refuses agent invocation from non-agent non-strategy graph owners", async () => {
@@ -6041,7 +6088,7 @@ test("resumes a trigger target approval checkpoint without replaying prior effec
   });
 
   assert.equal(resumed.status, "success", JSON.stringify(resumed));
-  assert.equal(resumed.result, "approved");
+  assert.equal(resumed.result.decision, "approved");
   assert.equal(toolCalls, 1);
   assert.equal(
     eventOf(resumed.trace, "trigger_execution_completed").payload.resumed_from_checkpoint,
@@ -6196,7 +6243,8 @@ test("requires normalized trigger event identity before execution", async () => 
 function humanApprovalDocument() {
   return baseDocument({
     types: [{ id: "type:test/Change", name: "Change", fields: [parameter("summary", "builtin:Text")], source_ref: sourceRef() }],
-    skills: [skill("NeedsApproval", "graph:skill:test/NeedsApproval", [], [parameter("change", "type:test/Change")])],
+    skills: [{ ...skill("NeedsApproval", "graph:skill:test/NeedsApproval"),
+      signature: { inputs: [parameter("change", "type:test/Change")], output_type: "builtin:Approval" } }],
     graphs: [
       graph("graph:skill:test/NeedsApproval", "skill:test/NeedsApproval", [
         node("n1", "human_approval", {

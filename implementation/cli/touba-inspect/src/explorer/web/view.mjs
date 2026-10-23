@@ -26,9 +26,9 @@ export function visibleGraph(graph, options) {
     }
     nodes = nodes.filter(n => seen.has(n.id));
   }
-  if (options.group && options.view === 'architecture' && !options.kind && !options.search && options.direction === 'all') {
+  if (options.group && options.view === 'architecture' && !options.module && !options.kind && !options.search && options.direction === 'all') {
     const groups = new Map();
-    const groupId = n => options.module ? n.id : n.package && !options.package ? `package:${n.package}` : n.module ?? n.id;
+    const groupId = n => n.package && !options.package ? `package:${n.package}` : n.module ?? n.id;
     const byId = new Map(graph.nodes.map(n => [n.id, n]));
     for (const n of nodes) { const id = groupId(n); if (!groups.has(id)) groups.set(id, { ...(byId.get(id) ?? n), count: 0 }); groups.get(id).count++; }
     const grouped = new Map();
@@ -39,7 +39,8 @@ export function visibleGraph(graph, options) {
       if (!grouped.has(id)) grouped.set(id, { ...e, id, from, to, count: 0, aggregated: true });
       grouped.get(id).count++;
     }
-    nodes = [...groups.values()]; edges = [...grouped.values()];
+    nodes = [...groups.values()].map(({ count, ...node }) => count > 1 ? { ...node, count } : node);
+    edges = [...grouped.values()];
   }
   const ids = new Set(nodes.map(n => n.id));
   edges = edges.filter(e => ids.has(e.from) && ids.has(e.to));

@@ -14,6 +14,7 @@ export { TRACE_CAPABILITY_PROFILE, TRACE_PROTOCOL_VERSION };
  * @typedef {object} TraceAirDocument
  * @property {string} air_schema_version
  * @property {{ id: string }} module
+ * @property {{ id: string, owner_ref: string }[]=} execution_graphs
  *
  * @typedef {object} TraceEventOptions
  * @property {unknown=} airRef
@@ -25,6 +26,7 @@ export { TRACE_CAPABILITY_PROFILE, TRACE_PROTOCOL_VERSION };
  * @property {string} run_id
  * @property {number} sequence_index
  * @property {string} kind
+ * @property {string} observed_at
  * @property {unknown=} air_ref
  * @property {unknown=} payload
  * @property {string=} message
@@ -37,8 +39,13 @@ export class TraceBuilder {
    * @param {string} runId
    * @param {((event: TraceEvent) => void) | null} [eventObserver]
    * @param {number} [initialSequenceIndex]
+   * @param {"full" | "calls"} [pureFunctionDetail]
    */
-  constructor(airDocument, entryRef, runId, eventObserver = null, initialSequenceIndex = 0) {
+  constructor(airDocument, entryRef, runId, eventObserver = null, initialSequenceIndex = 0, pureFunctionDetail = "full") {
+    if (!["full", "calls"].includes(pureFunctionDetail)) throw new TypeError("pureFunctionDetail must be full or calls");
+    this.pureFunctionDetail = pureFunctionDetail;
+    this.pureGraphs = new Map((airDocument.execution_graphs ?? [])
+      .filter(graph => graph.owner_ref.startsWith("function:")).map(graph => [graph.id, graph.owner_ref]));
     if (!Number.isSafeInteger(initialSequenceIndex) || initialSequenceIndex < 0) {
       throw new TypeError("initialSequenceIndex must be a non-negative safe integer");
     }
@@ -60,9 +67,17 @@ export class TraceBuilder {
   /**
    * @param {string} kind
    * @param {TraceEventOptions} [options]
-   * @returns {TraceEvent}
+   * @returns {TraceEvent | null}
    */
   push(kind, options = {}) {
+    const graphRef = /** @type {{ flow_graph_ref?: string } | undefined} */ (options.airRef)?.flow_graph_ref;
+    const pureOwner = graphRef === undefined ? undefined : this.pureGraphs.get(graphRef);
+    if (this.pureFunctionDetail === "calls" && pureOwner !== undefined) {
+      const internal = ["branch_evaluated", "loop_evaluated", "binding_created"].includes(kind);
+      const successfulScope = pureOwner !== this.entryRef
+        && (kind === "scope_entered" || kind === "scope_exited" && options.payload?.status === "success");
+      if (internal || successfulScope) return null;
+    }
     const rawPayload = kind === "failure_detected" && options.payload
       ? {
         ...options.payload,
@@ -81,6 +96,7 @@ export class TraceBuilder {
       event_id: `event:${this.runId}:${sequenceIndex + 1}`,
       run_id: this.runId,
       sequence_index: sequenceIndex,
+      observed_at: new Date().toISOString(),
       kind,
       air_ref: options.airRef,
       payload,
@@ -103,7 +119,7 @@ export class TraceBuilder {
   }
 
   /**
-   * @returns {{ trace_protocol_version: string, trace_capability_profile: string, run: { run_id: string, air_schema_version: string, air_digest: string, module_ref: string, entry_ref: string }, events: TraceEvent[] }}
+   * @returns {{ trace_protocol_version: string, trace_capability_profile: string, run: { run_id: string, air_schema_version: string, air_digest: string, module_ref: string, entry_ref: string, pure_function_detail?: string }, events: TraceEvent[] }}
    */
   document() {
     return {
@@ -115,6 +131,7 @@ export class TraceBuilder {
         air_digest: this.airDigest,
         module_ref: this.airDocument.module.id,
         entry_ref: this.entryRef,
+        ...(this.pureFunctionDetail === "calls" ? { pure_function_detail: "calls" } : {}),
       },
       events: this.events,
     };

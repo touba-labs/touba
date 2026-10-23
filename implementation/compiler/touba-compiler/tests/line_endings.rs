@@ -3,6 +3,17 @@ use touba_compiler::{compile_source_to_air, parse_source};
 const PROGRAM: &str = "module examples.vscode_run\n\nstrategy RunSmoke\n    do\n        show\n            with message as \"Touba VS Code run ok\"\n";
 
 #[test]
+fn inline_comments_keep_indentation_strings_and_source_positions() {
+    let program = "module comments.inline # module\n\ndefine Label as Text = \"#not a comment\" # value\nfunction Read # declaration\n    gives Text # signature\n    do # block\n        if true # branch\n            give Label # result\n        else # other\n            give \"#still text\" # end\n";
+    for source in [program.to_string(), program.replace('\n', "\r\n"), program.trim_end().to_string()] {
+        let compiled = compile_source_to_air("inline.tb", &source);
+        assert!(compiled.document.is_some(), "{:?}", compiled.diagnostics);
+        let ast = parse_source("inline.tb", &source).document.unwrap();
+        assert_eq!(ast.declarations[1].source_ref().start_byte, source.find("function").unwrap());
+    }
+}
+
+#[test]
 fn compiles_lf_crlf_and_mixed_line_endings_without_rewriting_source_positions() {
     for source in [
         PROGRAM.to_string(),

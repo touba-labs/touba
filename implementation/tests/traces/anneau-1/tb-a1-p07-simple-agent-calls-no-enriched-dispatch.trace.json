@@ -13,6 +13,7 @@
       "event_id": "event:run-1:1",
       "run_id": "run-1",
       "sequence_index": 0,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
       "payload": {
         "entry_ref": "strategy:examples.a1_simple_agents/RunChange",
@@ -23,6 +24,7 @@
       "event_id": "event:run-1:2",
       "run_id": "run-1",
       "sequence_index": 1,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -33,6 +35,7 @@
       "event_id": "event:run-1:3",
       "run_id": "run-1",
       "sequence_index": 2,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -59,6 +62,7 @@
       "event_id": "event:run-1:4",
       "run_id": "run-1",
       "sequence_index": 3,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_invocation_authorized",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -84,6 +88,7 @@
       "event_id": "event:run-1:5",
       "run_id": "run-1",
       "sequence_index": 4,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_entered",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Engineer",
@@ -96,6 +101,7 @@
       "event_id": "event:run-1:6",
       "run_id": "run-1",
       "sequence_index": 5,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capabilities_listed",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Engineer",
@@ -166,6 +172,7 @@
       "event_id": "event:run-1:7",
       "run_id": "run-1",
       "sequence_index": 6,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_decision_recorded",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Engineer",
@@ -178,6 +185,7 @@
       "event_id": "event:run-1:8",
       "run_id": "run-1",
       "sequence_index": 7,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capability_selected",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Engineer",
@@ -191,6 +199,7 @@
       "event_id": "event:run-1:9",
       "run_id": "run-1",
       "sequence_index": 8,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/MakeChange",
@@ -201,6 +210,7 @@
       "event_id": "event:run-1:10",
       "run_id": "run-1",
       "sequence_index": 9,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/MakeChange",
@@ -227,6 +237,7 @@
       "event_id": "event:run-1:11",
       "run_id": "run-1",
       "sequence_index": 10,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/MakeChange",
@@ -253,6 +264,7 @@
       "event_id": "event:run-1:12",
       "run_id": "run-1",
       "sequence_index": 11,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/MakeChange",
@@ -267,6 +279,7 @@
       "event_id": "event:run-1:13",
       "run_id": "run-1",
       "sequence_index": 12,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_result_returned",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Engineer",
@@ -279,6 +292,7 @@
       "event_id": "event:run-1:14",
       "run_id": "run-1",
       "sequence_index": 13,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -304,6 +318,7 @@
       "event_id": "event:run-1:15",
       "run_id": "run-1",
       "sequence_index": 14,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -330,6 +345,7 @@
       "event_id": "event:run-1:16",
       "run_id": "run-1",
       "sequence_index": 15,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_invocation_authorized",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -355,6 +371,7 @@
       "event_id": "event:run-1:17",
       "run_id": "run-1",
       "sequence_index": 16,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_entered",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
@@ -367,6 +384,7 @@
       "event_id": "event:run-1:18",
       "run_id": "run-1",
       "sequence_index": 17,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capabilities_listed",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
@@ -428,6 +446,7 @@
       "event_id": "event:run-1:19",
       "run_id": "run-1",
       "sequence_index": 18,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_decision_recorded",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
@@ -440,6 +459,7 @@
       "event_id": "event:run-1:20",
       "run_id": "run-1",
       "sequence_index": 19,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capability_selected",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
@@ -453,6 +473,7 @@
       "event_id": "event:run-1:21",
       "run_id": "run-1",
       "sequence_index": 20,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/ReviewChange",
@@ -463,6 +484,7 @@
       "event_id": "event:run-1:22",
       "run_id": "run-1",
       "sequence_index": 21,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_simple_agents/ReviewChange",
@@ -477,6 +499,7 @@
       "event_id": "event:run-1:23",
       "run_id": "run-1",
       "sequence_index": 22,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_result_returned",
       "payload": {
         "agent_ref": "agent:examples.a1_simple_agents/Reviewer",
@@ -489,6 +512,7 @@
       "event_id": "event:run-1:24",
       "run_id": "run-1",
       "sequence_index": 23,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -514,6 +538,7 @@
       "event_id": "event:run-1:25",
       "run_id": "run-1",
       "sequence_index": 24,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.a1_simple_agents/RunChange",
@@ -528,6 +553,7 @@
       "event_id": "event:run-1:26",
       "run_id": "run-1",
       "sequence_index": 25,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",
       "payload": {
         "status": "success",

@@ -21,8 +21,8 @@ project with Python handler scaffolding:
 touba init --language python --root my-project
 ```
 
-See the [Python SDK guide](https://touba-labs.com/docs/guides/sdk-python)
-and [handler tutorial](https://touba-labs.com/docs/tutoriels/handlers-python).
+See the [Python SDK guide](https://toubalang.org/docs/guides/sdk-python)
+and [handler tutorial](https://toubalang.org/docs/tutoriels/handlers-python).
 
 ## Integration model
 

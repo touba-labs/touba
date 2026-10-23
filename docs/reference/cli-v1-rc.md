@@ -84,6 +84,7 @@ Ce document n'active pas le trigger à la place du manifest hôte.
 | `touba supply-chain generate` | Calcule un lock depuis les fichiers réels ; revue pending, sans écrasement |
 | `touba supply-chain validate` | Valide un lock supply chain pour AIR, manifest, handlers, SDK, paquet handler, provenance et revue déclarées |
 | `touba registry resolve` | Résout une entrée de registry statique vers un lock local sans installer ni exécuter de package |
+| `touba registry check` | Vérifie le catalogue, ses métadonnées et les fichiers disponibles ; compare un instantané précédent si fourni |
 | `touba manifest generate` | Génère un manifest de binding à partir d’un AIR |
 | `touba handler stub` | Génère un squelette de handler pour les tools |
 | `touba version` | Affiche la version Touba et la build ; détails avec `--json` |
@@ -223,6 +224,19 @@ exécuter le code auteur.
 non requise par une autre. Sans cible dans une application, `check` vérifie
 les dépendances ; dans un projet auteur, il vérifie le package lui-même.
 
+`checkout <identifiant> --registry <URL> [--root <parent>]` récupère un brouillon
+privé dans un nouveau dossier auteur.
+`submit [dossier] [--registry <URL>] [--draft <identifiant>]` vérifie et soumet
+l’archive vers un brouillon privé. Le registre peut venir du lien local créé
+par checkout ou une soumission précédente. Ces deux opérations acceptent
+`--no-browser` ; elles authentifient le terminal sans publication implicite.
+
+`submit [dossier] --ci <autorisation> --registry <URL>` prépare un nouveau
+brouillon depuis un job GitHub Actions autorisé. OIDC temporaire, permission
+`id-token: write`, dépôt GitHub, workflow, branche et environnement exacts ; publication
+finale dans l’interface par un membre habilité. Options `--draft` et
+`--no-browser` incompatibles avec ce mode.
+
 Toutes acceptent `--json` et `--root`. La racine est découverte depuis les
 sous-dossiers. `packages/` est réservé aux copies installées. Installation,
 check et pack n'exécutent aucun test ou hook et n'accordent aucune autorisation.
@@ -234,7 +248,10 @@ vérifie aussi la continuité des identités et versions déjà publiées.
 
 ## `touba prepare`
 
-`--host-decisions-json '<objet>'` sélectionne explicitement grants, handles,
+`--host-decisions host-decisions.json` lit un fichier JSON local (64 Kio maximum,
+chemin relatif à `--root`). L’alternative `--host-decisions-json '<objet>'`
+accepte le même document en ligne. Choisissez une seule forme. Le document
+sélectionne explicitement grants, handles,
 effets et limites dans le manifest. `plan` montre le diff, `check` refuse
 un diff non appliqué, `write` applique les décisions idempotemment. Voir
 [le guide projet](../guides/projet-touba-prepare.md).
@@ -403,6 +420,11 @@ touba compile source.tb --out program.air.json
 
 Compile une source `.tb` vers un AIR JSON.
 
+Dans un projet, la commande retrouve la racine depuis le fichier et résout les
+imports des packages installés après contrôle d'intégrité, même si le terminal
+est ouvert ailleurs. `touba prepare` prépare en plus les manifests, bindings et
+plans d'exécution de l'ensemble du projet.
+
 Le chemin `--out` est le mode recommandé : Touba vérifie que la cible se termine
 par `.air.json` et que la sortie du compilateur est bien un document AIR JSON
 avant d'écrire le fichier.
@@ -430,6 +452,11 @@ touba run program.air.json
 ```
 
 Exécute un AIR JSON.
+
+`--trace-pure-functions full|calls` choisit le détail des fonctions pures.
+`full` est le défaut ; `calls` conserve leurs appels, résultats et échecs,
+ainsi que tous les événements de gouvernance. Cette option est aussi disponible
+avec `touba serve`. Voir [les niveaux de trace](traces-v1-rc.md).
 
 Avec run plan explicite :
 
@@ -1609,8 +1636,14 @@ le workflow après celle-ci. Voir le [tutoriel](../tutoriels/orchestration-multi
 
 ## Adaptateur d'approbation de confiance
 
-`touba run` et `touba serve` acceptent `--human-approval-host <host.mjs>`.
-Le module exporte `attestHumanApproval` et éventuellement `initiatorRef`.
+`touba run` et `touba serve` acceptent
+`--human-approval-host <host.mjs|host.py|pkg:organisation.nom/identifiant>`.
+Le module exporte `attestHumanApproval` et éventuellement `initiatorRef` en
+JavaScript, `attest_human_approval` et `initiator_ref` en Python.
+Le [package sélectionné](packages.md) est vérifié avant son chargement.
+`--human-approval-authority-timeout-ms` fixe le délai technique d'attestation
+entre 1 et 60 000 ms (défaut : 5 000). Une expiration refuse la décision ;
+elle ne modifie pas l'échéance métier déclarée dans le programme.
 Une décision contrainte contient une référence opaque `evidence_ref`, pas
 des rôles fournis par le client. Voir le [tutoriel exécutable](../tutoriels/approbations-roles-delais.md).
 Une échéance source atteinte permet une reprise sans décision ; utiliser un

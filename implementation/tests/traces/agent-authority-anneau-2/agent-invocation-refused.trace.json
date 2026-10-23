@@ -13,6 +13,7 @@
       "event_id": "event:run-1:1",
       "run_id": "run-1",
       "sequence_index": 0,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
       "payload": {
         "entry_ref": "strategy:test/RunBuild",
@@ -23,6 +24,7 @@
       "event_id": "event:run-1:2",
       "run_id": "run-1",
       "sequence_index": 1,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
@@ -33,6 +35,7 @@
       "event_id": "event:run-1:3",
       "run_id": "run-1",
       "sequence_index": 2,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
@@ -58,6 +61,7 @@
       "event_id": "event:run-1:4",
       "run_id": "run-1",
       "sequence_index": 3,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_invocation_refused",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
@@ -83,6 +87,7 @@
       "event_id": "event:run-1:5",
       "run_id": "run-1",
       "sequence_index": 4,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "failure_detected",
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
@@ -113,6 +118,7 @@
       "event_id": "event:run-1:6",
       "run_id": "run-1",
       "sequence_index": 5,
+      "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",
       "payload": {
         "status": "failure",

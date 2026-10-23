@@ -108,6 +108,14 @@ export default grammar({
       choice("is", "are"),
       $._sp,
       field("type", $.type_ref),
+      repeat(seq($._sp, $.field_constraint)),
+      optional(seq($._sp, "default", $._sp, field("default", $.expression))),
+    ),
+
+    field_constraint: $ => choice(
+      seq(field("kind", "format"), $._sp, field("value", $.string)),
+      seq(field("kind", "length"), $._sp, field("value", $.integer), optional(seq("..", field("upper", $.integer)))),
+      seq(field("kind", choice("min", "max")), $._sp, field("value", choice($.float, $.integer))),
     ),
 
     enum_declaration: $ => seq(
@@ -356,11 +364,13 @@ export default grammar({
         $.call_argument_clause,
         $.call_result_binding_clause,
         $.approval_expired_clause,
+        $.approval_rejected_clause,
         $.indent_error,
       ))),
     ),
 
     approval_expired_clause: $ => seq("on", $._sp, "expired", indentedBlock($, $._statement)),
+    approval_rejected_clause: $ => seq("on", $._sp, "rejected", indentedBlock($, $._statement)),
 
     human_approval_target: _ => token(choice("human.approve", "human.review")),
 
@@ -527,10 +537,16 @@ export default grammar({
     )),
 
     _primary_expression: $ => choice(
+      $.list_comprehension_expression,
+      $.list_concat_expression,
+      $.text_join_expression,
+      $.list_expression,
       $.optional_some_expression,
       $.optional_none_expression,
       $.record_expression,
+      $.record_copy_expression,
       $.text_conversion_expression,
+      $.date_conversion_expression,
       $.interpolated_string,
       $.parenthesized_expression,
       $.symbol_identifier,
@@ -547,6 +563,21 @@ export default grammar({
       ")",
     ),
 
+    list_expression: $ => seq("[", optional($._sp), optional(commaSep1($.expression, $)), optional($._sp), "]"),
+
+    list_comprehension_expression: $ => seq("[", optional($._sp), field("element", $.expression),
+      $._sp, "for", $._sp, field("item", $.value_identifier), $._sp, "in", $._sp,
+      field("collection", $.expression), optional(seq($._sp, "if", $._sp, field("condition", $.expression))), optional($._sp), "]"),
+
+    list_concat_expression: $ => seq("concat", optional($._sp), "(", field("left", $.expression),
+      ",", optional($._sp), field("right", $.expression), ")"),
+
+    text_join_expression: $ => seq("join", optional($._sp), "(", field("values", $.expression),
+      ",", optional($._sp), field("separator", $.expression), ")"),
+
+    record_copy_expression: $ => seq("copy", $._sp, field("base", $.expression), $._sp,
+      "{", optional($._sp), commaSep1($.record_field, $), optional($._sp), "}"),
+
     text_conversion_expression: $ => seq(
       "text",
       optional($._sp),
@@ -554,6 +585,8 @@ export default grammar({
       field("value", $.expression),
       ")",
     ),
+
+    date_conversion_expression: $ => seq("date", optional($._sp), "(", field("value", $.expression), ")"),
 
     optional_some_expression: $ => seq("some", optional($._sp), "(", field("value", $.expression), ")"),
     optional_none_expression: $ => seq("none", optional($._sp), "(", field("type", $.type_ref), ")"),
@@ -565,7 +598,7 @@ export default grammar({
       optional($._sp),
       "{",
       optional($._sp),
-      commaSep1($.record_field, $),
+      optional(commaSep1($.record_field, $)),
       optional($._sp),
       "}",
     ),
@@ -628,7 +661,7 @@ export default grammar({
 
     not_operator: _ => token(seq("not", /[ \t]+/)),
 
-    comment: _ => token(seq("#", /.*/)),
+    comment: _ => token(seq(optional(/ +/), "#", /[^\r\n]*/)),
 
     _sp: _ => /[ \t]+/,
   },

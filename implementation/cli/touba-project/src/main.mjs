@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   applyRunProfileToArgs,
   checkProjectSecret,
+  compilerInputsForFile,
   initProject,
   listProjectSecrets,
   newModule,
@@ -19,6 +20,7 @@ import {
 } from "./project.mjs";
 import { packageCommand } from "./package-command.mjs";
 import { sdkCommand } from "./sdk-command.mjs";
+import { readHostDecisionsFile } from "./host-decisions.mjs";
 import {
   checkRegistry,
   renderRegistryResolution,
@@ -99,8 +101,8 @@ const PUBLIC_COMMANDS = Object.freeze({
   update_policy: true,
 });
 const REQUIRED_COMPONENTS = Object.freeze(["cli", "runtime", "inspect", "audit", "supply_chain", "manifest"]);
-const TOUBA_HUB_URL = "https://touba-labs.com/hub/";
-const TOUBA_INSTALLATION_GUIDE_URL = "https://touba-labs.com/docs/demarrer/installation";
+const TOUBA_HUB_URL = "https://toubalang.org/hub/";
+const TOUBA_INSTALLATION_GUIDE_URL = "https://toubalang.org/docs/demarrer/installation";
 const TOUBA_RELEASE_BASE_URL = "https://github.com/touba-labs/touba/releases/download";
 const UPDATE_PLATFORM_PROFILES = Object.freeze({
   "darwin-arm64": Object.freeze({
@@ -284,6 +286,27 @@ function compileCommand(rawArgs) {
   if (options.out !== undefined && options.stdout === true) {
     throw new Error("touba compile cannot combine --out and --stdout");
   }
+  let sourceIndex = -1;
+  for (let index = 0; index < options.compilerArgs.length; index += 1) {
+    const arg = options.compilerArgs[index];
+    if (["--source-root", "--module-source"].includes(arg)) { index += 1; continue; }
+    // Leave unknown options to the selected compiler, including an explicit
+    // host compiler override whose command-line contract may differ.
+    if (arg.startsWith("-") && !["--json", "--stdin", "--module"].includes(arg)) break;
+    if (!arg.startsWith("-")) { sourceIndex = index; break; }
+  }
+  if (sourceIndex !== -1) {
+    const source = resolve(options.compilerArgs[sourceIndex]);
+    const context = compilerInputsForFile(source);
+    if (context.diagnostics.some(diagnostic => diagnostic.severity === "error")) {
+      if (options.compilerArgs.includes("--json")) process.stdout.write(JSON.stringify({ ok: false, air: null, diagnostics: context.diagnostics }) + "\n");
+      else for (const diagnostic of context.diagnostics) process.stderr.write(`${diagnostic.code}: ${diagnostic.message}\n`);
+      return { passthrough: true, exitCode: 1 };
+    }
+    options.compilerArgs[sourceIndex] = source;
+    options.compilerArgs.push(...context.sourceRoots.flatMap(root => ["--source-root", root]),
+      ...context.moduleSourcePaths.flatMap(path => ["--module-source", path]));
+  }
   if (options.out === undefined && options.stdout === true) {
     return runCompilerPassthrough(options.compilerArgs);
   }
@@ -419,6 +442,7 @@ function compileUsage() {
     "",
     "Use --out for normal project work. It validates the .air.json extension and AIR JSON output before writing.",
     "Use --stdout only for explicit pipelines or advanced tooling.",
+    "Inside a project, installed package imports are resolved and checked automatically.",
   ].join("\n");
 }
 
@@ -460,12 +484,14 @@ function runUsage() {
     "  --supply-chain-lock <touba.lock.json> [--require-supply-chain-lock]",
     "  --inputs-json <json-object>",
     "  --human-decisions <path> | --human-decisions-json <json-object>",
-    "  --human-approval-host <host.mjs> (trusted identity and role attestation)",
+    "  --human-approval-host <path|pkg:organization.name/host-id> (trusted identity and role attestation)",
+    "  --human-approval-authority-timeout-ms <1..60000> (default 5000)",
+    "  --trace-pure-functions full|calls (default full)",
     "  --human-checkpoint-out <path> [--human-resume-checkpoint <path>]",
     "  On resume, checkpoint-out saves the next approval pause; earlier instructions are not replayed.",
     "  --user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs",
     "  --cancel-before-dispatch | --cancel-on-pause | --kill-switch-enabled",
-    "  --agent-decision-provider <path>",
+    "  --agent-decision-provider <path|pkg:organization.name/host-id>",
     "  --skill-pack <directory> (repeatable; discovery only)",
     "  --activate-skill-pack <skill_pack:namespace/id> (repeatable)",
     "  --skill-pack-discovery-max-bytes <n> --skill-pack-activation-max-bytes <n>",
@@ -514,6 +540,10 @@ function serveUsage() {
     "Usage: touba serve [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-decisions <human-decisions.sqlite>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--deployment-target-url <url>] [--deployment-target-token-env NAME] [--identity-control-plane-url URL] [--identity-service-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the Touba project server for authenticated project clients.",
+    "--max-pending-approvals <n> sets pending approval capacity (default 100, maximum 10000).",
+    "--check-state validates stored state offline, without loading host modules.",
+    "--archive-state previews reversible archival of completed state; --apply performs it.",
+    "--restore-state <archive-id> previews restoration; --apply restores without overwriting current state.",
     "",
     "Defaults:",
     "  host: 127.0.0.1",
@@ -532,7 +562,10 @@ function serveUsage() {
     "Sandbox entrypoints are invoked only through the Touba runtime and the authority declared by the project.",
     "",
     "Agent decision provider (trusted host module, never a request field):",
-    "  --agent-decision-provider <path>",
+    "  --agent-decision-provider <path|pkg:organization.name/host-id>",
+    "  --human-approval-host <path|pkg:organization.name/host-id>",
+    "  --human-approval-authority-timeout-ms <1..60000> (default 5000)",
+    "  --trace-pure-functions full|calls (default full)",
     "  --agent-decision-provider-metadata-json <json-object>",
     "  --agent-decision-provider-content-mode inline|opaque_refs",
     "  --agent-decision-provider-initial-mode summary|capabilities",
@@ -811,13 +844,16 @@ function supplyChainCommand(rawArgs) {
 
 async function registryCommand(rawArgs) {
   if (rawArgs[0] === "check") {
+    if (rawArgs.length === 2 && ["--help", "-h"].includes(rawArgs[1])) {
+      return { text: registryCheckUsage(), exitCode: 0 };
+    }
     const options = {};
     for (let i = 1; i < rawArgs.length; i++) {
       if (rawArgs[i] === "--json") options.json = true;
-      else if (["--registry", "--source-root", "--previous"].includes(rawArgs[i]) && rawArgs[i + 1] && !rawArgs[i + 1].startsWith("--")) {
-        const key = rawArgs[i] === "--registry" ? "registry" : rawArgs[i] === "--previous" ? "previous" : "sourceRoot";
+      else if (["--registry", "--source-root", "--previous", "--trust"].includes(rawArgs[i]) && rawArgs[i + 1] && !rawArgs[i + 1].startsWith("--")) {
+        const key = rawArgs[i] === "--registry" ? "registry" : rawArgs[i] === "--previous" ? "previous" : rawArgs[i] === "--trust" ? "trust" : "sourceRoot";
         options[key] = rawArgs[++i];
-      } else throw new Error("usage: touba registry check --registry <directory|URL> [--source-root <directory>] [--previous <prior-snapshot>] [--json]");
+      } else throw new Error("usage: touba registry check --registry <directory|URL> [--trust <keys.json>] [--source-root <directory>] [--previous <prior-snapshot>] [--json]");
     }
     const report = await checkRegistry(options);
     return { text: JSON.stringify(report, null, 2), exitCode: report.status === "error" ? 1 : 0 };
@@ -843,7 +879,7 @@ async function registryCommand(rawArgs) {
   }
   if (subcommand === undefined || subcommand === "--help" || subcommand === "-h") {
     return {
-      text: registryResolveUsage(),
+      text: `${registryResolveUsage()}\n\n${registryCheckUsage()}`,
       exitCode: 0,
     };
   }
@@ -1395,8 +1431,12 @@ function parsePrepareOptions(rawArgs) {
       options.bindingFragmentPaths.push(requiredValue(arg, rawArgs, ++index));
     } else if (arg.startsWith("--binding-fragment=")) {
       options.bindingFragmentPaths.push(arg.slice("--binding-fragment=".length));
+    } else if (arg === "--host-decisions" || arg.startsWith("--host-decisions=")) {
+      if (options.hostDecisions !== undefined || options.hostDecisionsPath !== undefined) throw new Error("host decisions must be supplied once");
+      options.hostDecisionsPath = arg === "--host-decisions" ? requiredValue(arg, rawArgs, ++index)
+        : arg.slice("--host-decisions=".length);
     } else if (arg === "--host-decisions-json" || arg.startsWith("--host-decisions-json=")) {
-      if (options.hostDecisions !== undefined) throw new Error("host decisions must be supplied once");
+      if (options.hostDecisions !== undefined || options.hostDecisionsPath !== undefined) throw new Error("host decisions must be supplied once");
       const input = arg === "--host-decisions-json" ? requiredValue(arg, rawArgs, ++index)
         : arg.slice("--host-decisions-json=".length);
       try {
@@ -1445,6 +1485,10 @@ function parsePrepareOptions(rawArgs) {
       throw new Error(`unknown option ${arg}`);
     }
   }
+  if (options.hostDecisionsPath !== undefined) {
+    options.hostDecisions = readHostDecisionsFile(resolve(options.root ?? process.cwd(), options.hostDecisionsPath));
+    delete options.hostDecisionsPath;
+  }
   return options;
 }
 
@@ -1492,6 +1536,8 @@ function parseRegistryResolveOptions(rawArgs) {
       options.registry = requiredValue(arg, rawArgs, ++index);
     } else if (arg.startsWith("--registry=")) {
       options.registry = arg.slice("--registry=".length);
+    } else if (arg === "--trust") {
+      options.trust = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--package") {
       options.packageRef = requiredValue(arg, rawArgs, ++index);
     } else if (arg.startsWith("--package=")) {
@@ -1626,10 +1672,18 @@ function restScaffoldUsage() {
 
 function registryResolveUsage() {
   return [
-    "Usage: touba registry resolve --registry <path-or-url> --package <pkg:namespace/name> --version <semver> [--source-root <path>] [--allow-draft] [--allow-deprecated] [--generated-on YYYY-MM-DD] [--out <lock.json>] [--json]",
+    "Usage: touba registry resolve --registry <path-or-url> --package <pkg:organization.name> --version <semver> [--trust <keys.json>] [--source-root <path>] [--allow-draft] [--allow-deprecated] [--generated-on YYYY-MM-DD] [--out <lock.json>] [--json]",
     "",
     "Reads a static registry index and package metadata, verifies metadata digests, optionally verifies source artifact digests, and prints a local lock.",
     "It does not install package content or execute scripts.",
+  ].join("\n");
+}
+
+function registryCheckUsage() {
+  return [
+    "Usage: touba registry check --registry <path-or-url> [--trust <keys.json>] [--source-root <path>] [--previous <prior-snapshot>] [--json]",
+    "",
+    "Validates the registry index, package metadata and available source artifacts. An optional prior snapshot checks published-version immutability.",
   ].join("\n");
 }
 
@@ -1657,8 +1711,8 @@ function printUsage() {
   touba sdk install javascript|python [--root <path>] [--python <executable>]
   touba sdk path javascript|python
   touba new module <domain.module> [--root <path>] [--force]
-  touba package new|check|test|version|pack|add|list|remove ... (touba package --help)
-  touba prepare [--root <path>] [--mode plan|check|write] [--source <file.tb>] [--air <file.air.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--host-decisions-json <json>] [--resource-bindings <resources.json>] [--require-resource-bindings] [--run-plan <path>] [--ownership <touba.ownership.json>] [--require-ownership] [--entry <air-ref>] [--profile pure|dev|prod] [--manifest <path>] [--handler-root <path>] [--handler-command <path>] [--json]
+  touba package new|check|test|version|pack|checkout|submit|publish|add|list|remove ... (touba package --help)
+  touba prepare [--root <path>] [--mode plan|check|write] [--source <file.tb>] [--air <file.air.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--host-decisions <file.json> | --host-decisions-json <json>] [--resource-bindings <resources.json>] [--require-resource-bindings] [--run-plan <path>] [--ownership <touba.ownership.json>] [--require-ownership] [--entry <air-ref>] [--profile pure|dev|prod] [--manifest <path>] [--handler-root <path>] [--handler-command <path>] [--json]
   touba secret set <HANDLE> [--root <path>] [--store <path>] --value-stdin
   touba secret list [--root <path>] [--store <path>]
   touba secret check <HANDLE> [--root <path>] [--store <path>]
@@ -1676,7 +1730,8 @@ function printUsage() {
   touba audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--timeline-out <timeline.trace-timeline.json>] [--output text|json]
   touba supply-chain validate --lock <touba.lock.json> --air <program.air.json> [--manifest <touba.manifest.json>] [--report-out <report.supply-chain-report.json>] [--output text|json] [--strict] [--require-review]
   touba supply-chain generate --air <program.air.json> [--air <module.air.json> ...] --manifest <touba.manifest.json> --out <touba.lock.json> [--package-root <relative-dir>] [--file <file> ...] [--entrypoint-arg <index|command>]
-  touba registry resolve --registry <path-or-url> --package <pkg:namespace/name> --version <semver> [--source-root <path>] [--allow-draft] [--allow-deprecated] [--generated-on YYYY-MM-DD] [--out <lock.json>] [--json]
+  touba registry resolve --registry <path-or-url> --package <pkg:organization.name> --version <semver> [--trust <keys.json>] [--source-root <path>] [--allow-draft] [--allow-deprecated] [--generated-on YYYY-MM-DD] [--out <lock.json>] [--json]
+  touba registry check --registry <path-or-url> [--trust <keys.json>] [--source-root <path>] [--previous <prior-snapshot>] [--json]
   touba mcp import <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--select <tool>] [--force] [--json]
   touba rest scaffold <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--force] [--json]
   touba manifest generate <air.json> --out <touba.manifest.json>

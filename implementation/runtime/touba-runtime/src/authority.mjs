@@ -13,7 +13,7 @@ export function callerKindFromRef(ref) {
 /**
  * Evaluate `callable_by` without producing traces or mutating runtime state.
  *
- * @param {string} callerRef
+ * @param {string | null} callerRef
  * @param {{callable_by?: Array<{caller_ref?: string, caller_kind?: string}>}} agent
  * @returns {{authorized: boolean, callerKind: string | null, reason?: string}}
  */
@@ -32,6 +32,7 @@ export function evaluateAgentInvocationAuthority(callerRef, agent) {
   return {
     authorized: false,
     callerKind,
-    reason: validCallerKind ? "caller_not_allowed" : "invalid_caller_kind",
+    reason: callerRef === null || callerRef === "" ? "missing_caller_ref"
+      : validCallerKind ? "caller_not_allowed" : "invalid_caller_kind",
   };
 }

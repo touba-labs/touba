@@ -1,5 +1,40 @@
 # Créer, installer et partager un package
 
+## Partager un module hôte
+
+Pour réutiliser un adaptateur d'identité, placez le module dans `host/` et
+ajoutez ces champs au manifeste du package. Incluez ses fichiers auxiliaires :
+
+```json title="Host module declarations"
+{
+  "hosts": [
+    { "id": "approval", "kind": "human_approval", "path": "host/approval.mjs" }
+  ],
+  "files": ["host"]
+}
+```
+
+```sh
+touba package check --publishing
+touba package pack
+```
+
+Le consommateur installe le package, relit l'adaptateur, configure son
+environnement puis choisit explicitement son point d'entrée :
+
+```sh
+touba run --project . --human-approval-host pkg:acme.review/approval
+```
+
+L'adaptateur exporte `attestHumanApproval` et, si nécessaire,
+`resolveInitiator` en JavaScript ; `attest_human_approval` et
+`resolve_initiator` en Python. Le
+[tutoriel d'approbation](../tutoriels/approbations-roles-delais.md) montre leur
+contrat. Une proposition de décision utilise `kind: "decision_provider"`
+et `--agent-decision-provider`. Les fichiers sont contrôlés avant chargement ;
+les accès et identités restent configurés par l'application.
+
+
 Un package Touba est l'unité de réutilisation : types, fonctions, tools, skills
 exécutables, agents, stratégies, mémoires ou procédures contextuelles peuvent
 cohabiter. Une intégration est un usage d'un package, pas un format supplémentaire.
@@ -171,7 +206,7 @@ Avant diffusion :
 
 1. Choisir une identité stable `organisation.nom` et une version SemVer exacte.
 2. Déclarer uniquement les exports publics et les dépendances exactes.
-3. Renseigner `description`, `publisher`, `license` et `readme`.
+3. Renseigner `description`, `publisher` et `license`. Préparer une présentation : le `readme` du package suffit et permet la publication directe en CLI ; un service de publication peut aussi recueillir cette présentation séparément.
 4. Expliquer entrées, sorties, erreurs, effets, limites et exemples d'import.
 5. Déclarer les prérequis hôtes dans `engines` et la configuration attendue.
 6. Tester les cas nominaux et les refus, sans données privées ni secrets.
@@ -259,6 +294,12 @@ Le registry est un dossier ou une URL HTTPS ; aucune adresse par défaut n'est
 supposée. L'identité et l'empreinte de l'archive sont vérifiées. Une version
 retirée est refusée. Le statut éditorial ne remplace pas vos autorisations.
 
+Pour une URL distante, fournir les clés approuvées de l'opérateur avec
+`--trust registry-trust.json`. La CLI vérifie l'index signé, sa validité,
+puis les empreintes des métadonnées et de l'archive. Le fichier de confiance
+doit être obtenu et vérifié auprès de l'opérateur, indépendamment du package.
+Voir la [référence des registres signés](../reference/packages.md#registre-distant-signé).
+
 `touba registry check --registry ./registry --source-root ./registry` vérifie
 index, métadonnées et artefacts. `--previous <snapshot-publié-fiable>` contrôle
 aussi la continuité : aucune suppression, aucun renommage ou remplacement
@@ -297,7 +338,61 @@ pour changer le contenu. L'index est remplacé atomiquement après les artefacts
 les publications concurrentes sont refusées. Après un arrêt interrompu,
 inspectez le verrou `.touba-registry-publishing` et les fichiers non indexés
 avant récupération, sans les écraser. Pour diffuser le registry, hébergez
-séparément ce dossier sur HTTPS avec les contrôles d'accès appropriés.
+séparément ce dossier sur HTTPS avec un index signé et les contrôles d'accès
+appropriés.
+
+## Publier vers un service compatible
+
+```sh
+touba package publish --registry https://registry.example.org/registry
+```
+
+Ouvrez le lien proposé, confirmez le code affiché dans votre terminal, puis
+validez votre identité dans le navigateur. Le service contrôle votre droit de
+publier dans l'organisation du package et qualifie l'archive avant de l'enregistrer.
+Une version publiée est immuable : utilisez `touba package version` pour la suite.
+`--no-browser` convient à un terminal sans navigateur. L'adresse ci-dessus est
+un exemple de service compatible, pas l'annonce d'un Registry public Touba.
+Le parcours est commun aux packages JavaScript et Python.
+
+## Préparer un brouillon depuis l’éditeur
+
+Pour faire relire la présentation avant publication, choisissez un service
+compatible avec les brouillons :
+
+```sh
+touba package submit --registry https://registry.example.org/registry
+```
+
+Touba prépare et vérifie l’archive, ouvre la connexion navigateur puis la soumet.
+Le service contrôle vos droits et exécute les tests isolés. La commande rend le
+lien du brouillon privé : complétez la présentation, prévisualisez puis publiez.
+
+Pour reprendre un package créé dans l’interface du service, copiez son identifiant :
+
+```sh
+touba package checkout 11111111-1111-4111-8111-111111111111 --registry https://registry.example.org/registry
+cd review
+touba package check
+touba package test
+touba package submit
+```
+
+Remplacez l’identifiant d’exemple par celui du brouillon. Le dossier créé porte
+le nom court du package (`review` dans cet exemple). `--root` choisit un dossier
+parent existant ; aucun dossier existant n’est remplacé. La récupération
+vérifie les empreintes, le contenu et les contrats sans exécuter le code auteur.
+
+Le lien local `.touba/package-draft.json` mémorise le registre, l’identité du
+brouillon et son empreinte. Il ne contient aucun secret et reste hors archive.
+Les soumissions suivantes réutilisent ce lien. La présentation enregistrée dans
+le service et ses images sont conservées ; chaque remplacement est tracé.
+
+Si le code distant a changé, relisez le nouveau brouillon avant de poursuivre.
+`--draft <identifiant>` sélectionne explicitement une cible de même nom et version.
+Après une interruption, consultez le service pour savoir si la soumission a
+abouti. Un verrou local résiduel doit être examiné avant récupération.
+Les mêmes commandes s’appliquent aux handlers JavaScript et Python.
 
 ## Sélectionner un handler proposé
 
@@ -316,3 +411,25 @@ guide le modèle sans lui ajouter de capacité.
 
 Suite : [tutoriel d'import](../tutoriels/package-reutilisable.md),
 [procédures contextuelles](skills-first.md), [référence](../reference/packages.md).
+
+## Préparer un brouillon depuis GitHub Actions
+
+Un propriétaire autorise le dépôt GitHub, le fichier workflow, la branche et
+l’environnement dans le service de publication, après authentification forte.
+Il obtient un identifiant d’autorisation, sans secret à enregistrer dans GitHub.
+
+Dans un job ayant installé Touba et récupéré les sources du package, activez
+`id-token: write`, choisissez l’environnement autorisé, puis lancez :
+
+```sh
+touba package submit --ci 11111111-1111-4111-8111-111111111111 --registry https://registry.example.org/registry
+```
+
+Remplacez l’identifiant et l’URL par ceux de votre service. Le jeton GitHub reste
+en mémoire et sert à une seule soumission. Le service vérifie les identifiants
+stables du dépôt GitHub et de son propriétaire, le workflow, la branche et l’environnement,
+puis qualifie l’archive. Le résultat contient le lien privé du brouillon et sa
+provenance. Un membre habilité le prévisualise et le publie ensuite.
+
+Ce mode crée un nouveau brouillon ; une version déjà soumise est signalée pour
+revue. La commande et le manifeste sont identiques pour JavaScript et Python.

@@ -44,6 +44,38 @@ def generated(_options):
 
 
 class ProviderTests(unittest.TestCase):
+    def test_bounded_diagnostics_survive_backend_and_host_runtime_bridges(self):
+        def incomplete(options):
+            return {"finishReason": "length", "object": {}}
+        provider = create_ai_sdk_decision_provider(model="fixture", generate_object=incomplete,
+            json_schema=lambda schema: schema, history=False)
+        try:
+            with self.assertRaises(ToubaAgentDecisionProviderError) as raised:
+                asyncio.run(provider(request()))
+            self.assertEqual(raised.exception.details, {"finish_reason": "length"})
+        finally:
+            provider.close()
+
+        with tempfile.TemporaryDirectory(prefix="touba-py-diagnostic-") as folder:
+            root = Path(folder)
+            (root / "main.tb").write_text(SOURCE)
+            (root / "provider.py").write_text('''from touba_sdk import ToubaAgentDecisionProviderError
+def decide_agent_capability(request):
+    raise ToubaAgentDecisionProviderError("ProviderContextCountUnavailable", "private message", {
+        "http_status":404, "finish_reason":"length", "incomplete_reason":"max_output_tokens",
+        "private":"must-not-cross-the-boundary"})
+''')
+            engine = ToubaEngine(project_root=root, command=os.environ["TOUBA_TEST_NODE"], command_args=[os.environ["TOUBA_TEST_CLI"]],
+                                env={"TOUBA_HOST_PYTHON": sys.executable})
+            with self.assertRaises(ToubaEngineError) as raised:
+                engine.run(source="main.tb", entry_ref="strategy:python.providers/Run", agent_decision_provider="provider.py", timeout=20)
+            events = raised.exception.details["trace"]["events"]
+            failure = next(event["payload"] for event in events if event["kind"] == "failure_detected")
+            self.assertEqual(failure["provider_http_status"], 404)
+            self.assertEqual(failure["provider_finish_reason"], "length")
+            self.assertEqual(failure["provider_incomplete_reason"], "max_output_tokens")
+            self.assertNotIn("must-not-cross-the-boundary", json.dumps(raised.exception.details))
+
     def test_python_context_counting_and_generation_share_exact_budget(self):
         with tempfile.TemporaryDirectory(prefix="touba-py-counting-") as folder:
             budget = create_sqlite_provider_budget(filename=Path(folder) / "cost.sqlite", budget_id="counting", currency="USD", limit_micros=1000)
@@ -305,8 +337,10 @@ budget = create_sqlite_provider_budget(filename={str(root / "cost.sqlite")!r}, b
 adapter = create_provider_token_cost_adapter(protocol="openai-responses", model="fixture-model", budget=budget,
     tariff={{"id":"fixture", "date":"2026-10-19", "currency":"USD", "rates":{{"input":1000000, "output":1000000}}}},
     input_token_bound=lambda request: {{"basis":"upper_bound", "tokens":100}})
-decide_agent_capability = create_open_ai_decision_provider(model="fixture-model", api_key_env_names=["TOUBA_OFFLINE_FIXTURE_KEY"],
+provider = create_open_ai_decision_provider(model="fixture-model", api_key_env_names=["TOUBA_OFFLINE_FIXTURE_KEY"],
     base_url="http://127.0.0.1:{server.server_port}/v1", max_output_tokens=64, max_retries=0, history=False, token_cost=adapter)
+async def decide_agent_capability(request):
+    return await provider(request)
 ''')
                     engine = ToubaEngine(project_root=root, command=os.environ["TOUBA_TEST_NODE"], command_args=[os.environ["TOUBA_TEST_CLI"]],
                                         env={"TOUBA_HOST_PYTHON": sys.executable})

@@ -597,6 +597,23 @@ impl AirLowerer {
     }
 
     fn register_type_fields(&mut self, document: &AstDocument) {
+        self.type_fields.insert(
+            BUILTIN_APPROVAL.into(),
+            APPROVAL_FIELDS
+                .iter()
+                .map(|(name, type_ref)| {
+                    (
+                        name.to_string(),
+                        TypeFieldRef {
+                            type_ref: Some(type_ref.to_string()),
+                            constraints: BTreeMap::new(),
+                            default: None,
+                            source_ref: document.module.source_ref.clone(),
+                        },
+                    )
+                })
+                .collect(),
+        );
         for declaration in &document.declarations {
             let AstDeclaration::Type(declaration) = declaration else {
                 continue;
@@ -624,6 +641,8 @@ impl AirLowerer {
                         field.name.clone(),
                         TypeFieldRef {
                             type_ref: self.lower_type_ref_raw_silent(&field.type_ref.raw),
+                            constraints: self.lower_field_constraints(field),
+                            default: self.lower_field_default(field),
                             source_ref: field.source_ref.clone(),
                         },
                     )
@@ -745,17 +764,26 @@ impl AirLowerer {
                 self.statements_contain_effectful_call(&statement.then_branch, effectful)
                     || self.statements_contain_effectful_call(&statement.else_branch, effectful)
             }
-            AstStatement::Match(statement) => statement.cases.iter().any(|case| {
-                self.statements_contain_effectful_call(&case.body, effectful)
-            }),
+            AstStatement::Match(statement) => statement
+                .cases
+                .iter()
+                .any(|case| self.statements_contain_effectful_call(&case.body, effectful)),
             AstStatement::For(statement) => {
                 self.statements_contain_effectful_call(&statement.body, effectful)
             }
             AstStatement::While(statement) => {
                 self.statements_contain_effectful_call(&statement.body, effectful)
             }
-            AstStatement::HumanApproval(statement) => statement.expired_branch.as_ref()
-                .is_some_and(|body| self.statements_contain_effectful_call(body, effectful)),
+            AstStatement::HumanApproval(statement) => {
+                statement
+                    .expired_branch
+                    .as_ref()
+                    .is_some_and(|body| self.statements_contain_effectful_call(body, effectful))
+                    || statement
+                        .rejected_branch
+                        .as_ref()
+                        .is_some_and(|body| self.statements_contain_effectful_call(body, effectful))
+            }
             AstStatement::Bind(_)
             | AstStatement::UserInteraction(_)
             | AstStatement::Give(_)
@@ -857,10 +885,76 @@ impl AirLowerer {
             .map(|field| AirTypeField {
                 name: field.name.clone(),
                 type_ref: self.lower_type_ref(&field.type_ref),
+                constraints: self
+                    .type_fields
+                    .get(&type_id(&self.module_name, &declaration.name))
+                    .and_then(|fields| fields.get(&field.name))
+                    .map(|field| field.constraints.clone())
+                    .unwrap_or_default(),
+                default: self
+                    .type_fields
+                    .get(&type_id(&self.module_name, &declaration.name))
+                    .and_then(|fields| fields.get(&field.name))
+                    .and_then(|field| field.default.clone()),
                 source_ref: field.source_ref.clone(),
             })
             .collect();
         lower_type_declaration(&self.module_name, declaration, fields)
+    }
+
+    fn lower_field_constraints(&mut self, field: &AstField) -> crate::field_contracts::Constraints {
+        let type_ref = self
+            .lower_type_ref_raw_silent(&field.type_ref.raw)
+            .unwrap_or_default();
+        match crate::field_contracts::constraints(&field.constraints, &type_ref) {
+            Ok(value) => value,
+            Err(message) => {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::InvalidFieldConstraint,
+                    message,
+                    Some(field.source_ref.clone()),
+                ));
+                BTreeMap::new()
+            }
+        }
+    }
+
+    fn lower_field_default(&mut self, field: &AstField) -> Option<serde_json::Value> {
+        let expression = field.default.as_ref()?;
+        let expected = self
+            .lower_type_ref_raw_silent(&field.type_ref.raw)
+            .unwrap_or_default();
+        let value = match expression {
+            AstExpression::OptionalNone { type_ref, .. }
+                if self
+                    .lower_type_ref_raw_silent(&type_ref.raw)
+                    .map(|inner| format!("optional:{inner}"))
+                    == Some(expected.clone()) =>
+            {
+                Some(serde_json::json!({"present": false}))
+            }
+            AstExpression::List { elements, .. }
+                if elements.is_empty() && expected.starts_with("list:") =>
+            {
+                Some(serde_json::json!([]))
+            }
+            _ => crate::field_contracts::literal(expression)
+                .filter(|(actual, _)| is_assignable_to(actual, &expected))
+                .map(|(_, value)| value),
+        };
+        if let Some(value) = value {
+            if let Ok(constraints) =
+                crate::field_contracts::constraints(&field.constraints, &expected)
+            {
+                if crate::field_contracts::matches(&value, &constraints) {
+                    return Some(value);
+                }
+            }
+        }
+        self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::InvalidFieldDefault,
+            "default requires a typed scalar literal, date literal, none(Type) or empty list satisfying the field constraints".to_string(),
+            Some(expression_source_ref(expression))));
+        None
     }
 
     fn lower_constant(&mut self, declaration: &AstConstantDeclaration) -> Option<AirConstant> {
@@ -889,14 +983,18 @@ impl AirLowerer {
         } else {
             None
         };
+        let date_literal = if let AstExpression::DateConversion { .. } = &declaration.value {
+            crate::field_contracts::literal(&declaration.value)
+        } else { None };
         let actual_type = enum_value
             .as_ref()
             .map(|(type_ref, _)| type_ref.clone())
+            .or_else(|| date_literal.as_ref().map(|(type_ref, _)| type_ref.clone()))
             .or_else(|| literal_expression_type(&declaration.value).map(str::to_string));
         if actual_type.is_none() {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::UnsupportedModuleConstantExpression,
-                "`define` V1 accepts scalar literals and qualified enum members",
+                "`define` accepts scalar literals, date(\"YYYY-MM-DD\") with a valid civil date, and qualified enum members",
                 Some(expression_source_ref(&declaration.value)),
             ));
         }
@@ -908,7 +1006,8 @@ impl AirLowerer {
             id: constant_id(&self.module_name, &declaration.name),
             name: declaration.name.clone(),
             type_ref,
-            literal_text: enum_value.map(|(_, member)| member),
+            literal_text: enum_value.map(|(_, member)| member)
+                .or_else(|| date_literal.and_then(|(_, value)| value.as_str().map(str::to_string))),
             literal_boolean: None,
             literal_int: None,
             literal_float: None,
@@ -1838,10 +1937,16 @@ impl AirLowerer {
                 }
             }
             AstExpression::Value { source_ref, .. }
+            | AstExpression::List { source_ref, .. }
+            | AstExpression::ListComprehension { source_ref, .. }
+            | AstExpression::ListConcat { source_ref, .. }
+            | AstExpression::TextJoin { source_ref, .. }
             | AstExpression::OptionalSome { source_ref, .. }
             | AstExpression::OptionalNone { source_ref, .. }
             | AstExpression::Record { source_ref, .. }
+            | AstExpression::RecordCopy { source_ref, .. }
             | AstExpression::TextConversion { source_ref, .. }
+            | AstExpression::DateConversion { source_ref, .. }
             | AstExpression::FieldAccess { source_ref, .. }
             | AstExpression::Unary { source_ref, .. }
             | AstExpression::Binary { source_ref, .. }
@@ -2257,7 +2362,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         kind: AirFlowNodeKind::Fallback,
                         approval_ref: None,
                         approval_mode: None,
-            approval_policy: None,
+                        approval_policy: None,
                         context_refs: Vec::new(),
                         interaction_ref: None,
                         interaction_mode: None,
@@ -2307,7 +2412,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         kind: AirFlowNodeKind::Stop,
                         approval_ref: None,
                         approval_mode: None,
-            approval_policy: None,
+                        approval_policy: None,
                         context_refs: Vec::new(),
                         interaction_ref: None,
                         interaction_mode: None,
@@ -2680,10 +2785,9 @@ impl<'a> FlowGraphBuilder<'a> {
         }
         let context_refs = self.lower_human_approval_context_refs(statement);
         let approval_policy = self.lower_human_approval_policy(statement);
-        let result_binding = statement
-            .result_binding
-            .as_ref()
-            .and_then(|binding| self.lower_result_binding(binding, None));
+        let result_binding = statement.result_binding.as_ref().and_then(|binding| {
+            self.lower_result_binding(binding, Some(BUILTIN_APPROVAL.to_string()))
+        });
         if statement.result_binding.is_none() {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::MissingHumanApprovalDecisionBinding,
@@ -2730,35 +2834,76 @@ impl<'a> FlowGraphBuilder<'a> {
                 ));
             }
         }
+        if let Some(body) = &statement.rejected_branch {
+            let branch = self.lower_branch(&node_id, AirFlowEdgeRole::Rejected, body);
+            if !branch.exits.is_empty() || branch.terminal_reason.is_none() {
+                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::HumanApprovalRejectionMustTerminate,
+                    "on rejected must terminate explicitly on every path; it cannot authorize the protected continuation",
+                    Some(statement.source_ref.clone())));
+            }
+        }
         FlowFragment::linear(node_id)
     }
 
-    fn lower_human_approval_policy(&mut self, statement: &AstHumanApprovalStatement) -> Option<AirApprovalPolicy> {
+    fn lower_human_approval_policy(
+        &mut self,
+        statement: &AstHumanApprovalStatement,
+    ) -> Option<AirApprovalPolicy> {
         let mut policy = AirApprovalPolicy::default();
         for argument in &statement.arguments {
             let valid = match (argument.name.as_str(), &argument.value) {
-                ("role", AstExpression::StringLiteral { value, .. }) if !value.is_empty() && value.trim() == value && value.len() <= 128 && !value.chars().any(char::is_control) => {
-                    policy.role = Some(value.clone()); true
+                ("role", AstExpression::StringLiteral { value, .. })
+                    if !value.is_empty()
+                        && value.trim() == value
+                        && value.len() <= 128
+                        && !value.chars().any(char::is_control) =>
+                {
+                    policy.role = Some(value.clone());
+                    true
                 }
                 ("timeout_ms", AstExpression::IntLiteral { value, .. }) => {
-                    policy.timeout_ms = value.parse::<u64>().ok().filter(|n| *n > 0 && *n <= 2_592_000_000);
+                    policy.timeout_ms = value
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|n| *n > 0 && *n <= 2_592_000_000);
                     policy.timeout_ms.is_some()
                 }
                 ("distinct_from", AstExpression::StringLiteral { value, .. })
-                    if ["initiator", "previous", "initiator_and_previous"].contains(&value.as_str()) => {
-                    policy.distinct_from = Some(value.clone()); true
+                    if ["initiator", "previous", "initiator_and_previous"]
+                        .contains(&value.as_str()) =>
+                {
+                    policy.distinct_from = Some(value.clone());
+                    true
                 }
                 ("context", _) => true,
-                ("role" | "timeout_ms" | "distinct_from", _) => false,
+                ("exclude_signers", AstExpression::StringLiteral { value, .. })
+                    if !value.is_empty()
+                        && value.trim() == value
+                        && value.len() <= 128
+                        && !value.chars().any(char::is_control) =>
+                {
+                    policy.exclude_signers = Some(value.clone());
+                    true
+                }
+                ("role" | "timeout_ms" | "distinct_from" | "exclude_signers", _) => false,
                 _ => continue,
             };
             if !valid {
-                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::InvalidHumanApprovalPolicy,
-                    format!("human approval {} requires a valid static literal", argument.name),
-                    Some(argument.source_ref.clone())));
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::InvalidHumanApprovalPolicy,
+                    format!(
+                        "human approval {} requires a valid static literal",
+                        argument.name
+                    ),
+                    Some(argument.source_ref.clone()),
+                ));
             }
         }
-        if policy == AirApprovalPolicy::default() { None } else { Some(policy) }
+        if policy == AirApprovalPolicy::default() {
+            None
+        } else {
+            Some(policy)
+        }
     }
 
     fn lower_human_approval_context_refs(
@@ -2767,12 +2912,16 @@ impl<'a> FlowGraphBuilder<'a> {
     ) -> Vec<String> {
         let mut context_ref = None;
         for argument in &statement.arguments {
-            if ["role", "timeout_ms", "distinct_from"].contains(&argument.name.as_str()) { continue; }
+            if ["role", "timeout_ms", "distinct_from", "exclude_signers"]
+                .contains(&argument.name.as_str())
+            {
+                continue;
+            }
             if argument.name != "context" {
                 self.diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::UnknownHumanApprovalArgument,
                     format!(
-                        "human approval argument `{}` is not supported; expected context, role, timeout_ms or distinct_from",
+                        "human approval argument `{}` is not supported; expected context, role, timeout_ms, distinct_from or exclude_signers",
                         argument.name
                     ),
                     Some(argument.source_ref.clone()),
@@ -3148,11 +3297,17 @@ impl<'a> FlowGraphBuilder<'a> {
             AstExpression::StringLiteral { .. }
             | AstExpression::OptionalSome { .. }
             | AstExpression::OptionalNone { .. }
+            | AstExpression::List { .. }
+            | AstExpression::ListComprehension { .. }
+            | AstExpression::ListConcat { .. }
+            | AstExpression::TextJoin { .. }
             | AstExpression::Record { .. }
+            | AstExpression::RecordCopy { .. }
             | AstExpression::IntLiteral { .. }
             | AstExpression::FloatLiteral { .. }
             | AstExpression::BooleanLiteral { .. }
             | AstExpression::TextConversion { .. }
+            | AstExpression::DateConversion { .. }
             | AstExpression::FieldAccess { .. }
             | AstExpression::Unary { .. }
             | AstExpression::Binary { .. }
@@ -3173,7 +3328,52 @@ impl<'a> FlowGraphBuilder<'a> {
         expected_type: Option<&str>,
         context: ExpressionContext,
     ) -> LoweredExpression {
-        let lowered = self.lower_expression_atom_or_air(expression, context);
+        let lowered = match expression {
+            AstExpression::ListComprehension {
+                element,
+                item,
+                collection,
+                condition,
+                source_ref,
+            } => self.lower_list_comprehension(
+                element,
+                item,
+                collection,
+                condition.as_deref(),
+                expected_type,
+                source_ref,
+            ),
+            AstExpression::ListConcat {
+                left,
+                right,
+                source_ref,
+            } => self.lower_list_concat(left, right, expected_type, source_ref),
+            AstExpression::List {
+                elements,
+                source_ref,
+            } => self.lower_list_expression(elements, expected_type, context, source_ref),
+            AstExpression::Parenthesized { expression, .. } => {
+                self.lower_expression_handle(expression, expected_type, context)
+            }
+            AstExpression::OptionalSome {
+                expression,
+                source_ref,
+            } => {
+                let inner = expected_type.and_then(|value| value.strip_prefix("optional:"));
+                let operand = self.lower_expression_handle(expression, inner, context);
+                let type_ref = format!(
+                    "optional:{}",
+                    operand.type_ref.as_deref().unwrap_or("unresolved:optional")
+                );
+                self.lower_optional_expression(
+                    AirExpressionKind::OptionalSome,
+                    vec![operand.handle],
+                    type_ref,
+                    source_ref,
+                )
+            }
+            _ => self.lower_expression_atom_or_air(expression, context),
+        };
         self.check_expression_context_type(
             lowered.type_ref.as_deref(),
             expected_type,
@@ -3189,6 +3389,66 @@ impl<'a> FlowGraphBuilder<'a> {
         context: ExpressionContext,
     ) -> LoweredExpression {
         match expression {
+            AstExpression::ListComprehension {
+                element,
+                item,
+                collection,
+                condition,
+                source_ref,
+            } => self.lower_list_comprehension(
+                element,
+                item,
+                collection,
+                condition.as_deref(),
+                None,
+                source_ref,
+            ),
+            AstExpression::ListConcat {
+                left,
+                right,
+                source_ref,
+            } => self.lower_list_concat(left, right, None, source_ref),
+            AstExpression::TextJoin {
+                values,
+                separator,
+                source_ref,
+            } => {
+                let values =
+                    self.lower_expression_handle(values, Some("list:builtin:Text"), context);
+                let separator =
+                    self.lower_expression_handle(separator, Some(BUILTIN_TEXT), context);
+                self.lower_optional_expression(
+                    AirExpressionKind::TextJoin,
+                    vec![values.handle, separator.handle],
+                    builtin_text(),
+                    source_ref,
+                )
+            }
+            AstExpression::List {
+                elements,
+                source_ref,
+            } => self.lower_list_expression(elements, None, context, source_ref),
+            AstExpression::DateConversion {
+                expression,
+                source_ref,
+            } => {
+                let operand = self.lower_expression_handle(expression, Some(BUILTIN_TEXT), context);
+                if let AstExpression::StringLiteral { value, .. } = expression.as_ref() {
+                    if !is_iso_date(value) {
+                        self.diagnostics.push(AirDiagnostic::new(
+                            AirDiagnosticCode::InvalidExpressionOperandType,
+                            "date(...) requires a valid YYYY-MM-DD civil date".to_string(),
+                            Some(source_ref.clone()),
+                        ));
+                    }
+                }
+                self.lower_optional_expression(
+                    AirExpressionKind::DateConversion,
+                    vec![operand.handle],
+                    BUILTIN_DATE.to_string(),
+                    source_ref,
+                )
+            }
             AstExpression::OptionalSome {
                 expression,
                 source_ref,
@@ -3221,7 +3481,12 @@ impl<'a> FlowGraphBuilder<'a> {
                 type_name,
                 fields,
                 source_ref,
-            } => self.lower_record_expression(type_name, fields, source_ref),
+            } => self.lower_record_expression(type_name, fields, None, source_ref),
+            AstExpression::RecordCopy {
+                base,
+                fields,
+                source_ref,
+            } => self.lower_record_expression("copy", fields, Some(base), source_ref),
             AstExpression::Value { value, source_ref } => self.lower_value_expression(
                 value,
                 source_ref,
@@ -3349,6 +3614,128 @@ impl<'a> FlowGraphBuilder<'a> {
         })
     }
 
+    fn lower_list_expression(
+        &mut self,
+        elements: &[AstExpression],
+        expected_type: Option<&str>,
+        context: ExpressionContext,
+        source_ref: &SourceRef,
+    ) -> LoweredExpression {
+        let mut item_type = expected_type
+            .and_then(|value| value.strip_prefix("list:"))
+            .map(str::to_owned);
+        let mut operands = Vec::with_capacity(elements.len());
+        for element in elements {
+            let lowered = self.lower_expression_handle(element, item_type.as_deref(), context);
+            if item_type.is_none() {
+                item_type = lowered.type_ref;
+            }
+            operands.push(lowered.handle);
+        }
+        let Some(item_type) = item_type else {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidExpressionOperandType,
+                "an empty list requires an expected List of type".to_string(),
+                Some(source_ref.clone()),
+            ));
+            return LoweredExpression::untyped("unresolved:list".into());
+        };
+        self.lower_optional_expression(
+            AirExpressionKind::ConstructList,
+            operands,
+            format!("list:{item_type}"),
+            source_ref,
+        )
+    }
+
+    fn lower_list_comprehension(
+        &mut self,
+        element: &AstExpression,
+        item: &str,
+        collection: &AstExpression,
+        condition: Option<&AstExpression>,
+        expected_type: Option<&str>,
+        source_ref: &SourceRef,
+    ) -> LoweredExpression {
+        let Some((collection_handle, item_type)) = self.collection_handle(collection) else {
+            return LoweredExpression::untyped("unresolved:list-comprehension".into());
+        };
+        let previous_values = self.local_values.clone();
+        let previous_types = self.local_value_types.clone();
+        self.local_values.insert(item.to_string());
+        self.local_value_types.insert(item.to_string(), item_type);
+        let predicate = condition.map(|value| {
+            self.lower_expression_handle(value, Some(BUILTIN_BOOLEAN), ExpressionContext::Condition)
+        });
+        let result = self.lower_expression_handle(
+            element,
+            expected_type.and_then(|t| t.strip_prefix("list:")),
+            ExpressionContext::Expression,
+        );
+        self.local_values = previous_values;
+        self.local_value_types = previous_types;
+        let mut operands = vec![collection_handle, result.handle];
+        if let Some(predicate) = predicate {
+            operands.push(predicate.handle);
+        }
+        let id = self.next_expression_id();
+        self.push_air_expression(AirExpression {
+            id,
+            kind: AirExpressionKind::ListComprehension,
+            value_ref: Some(format!("value:{item}")),
+            operands,
+            type_ref: result.type_ref.map(|t| format!("list:{t}")),
+            source_ref: source_ref.clone(),
+            literal_text: None,
+            literal_boolean: None,
+            literal_int: None,
+            literal_float: None,
+            operator: None,
+            field_name: None,
+            record_fields: Vec::new(),
+        })
+    }
+
+    fn lower_list_concat(
+        &mut self,
+        left: &AstExpression,
+        right: &AstExpression,
+        expected_type: Option<&str>,
+        source_ref: &SourceRef,
+    ) -> LoweredExpression {
+        let context = ExpressionContext::Expression;
+        let (left, right) = if expected_type.is_none() && is_empty_list_expression(left) {
+            let right = self.lower_expression_handle(right, None, context);
+            let left = self.lower_expression_handle(left, right.type_ref.as_deref(), context);
+            (left, right)
+        } else {
+            let left = self.lower_expression_handle(left, expected_type, context);
+            let right = self.lower_expression_handle(
+                right,
+                expected_type.or(left.type_ref.as_deref()),
+                context,
+            );
+            (left, right)
+        };
+        let result_type = expected_type
+            .or(left.type_ref.as_deref())
+            .unwrap_or("unresolved:list")
+            .to_string();
+        if !result_type.starts_with("list:") {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidExpressionOperandType,
+                "concat requires two compatible lists".to_string(),
+                Some(source_ref.clone()),
+            ));
+        }
+        self.lower_optional_expression(
+            AirExpressionKind::ListConcat,
+            vec![left.handle, right.handle],
+            result_type,
+            source_ref,
+        )
+    }
+
     fn lower_text_conversion_expression(
         &mut self,
         expression: &AstExpression,
@@ -3361,7 +3748,9 @@ impl<'a> FlowGraphBuilder<'a> {
         {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::InvalidExpressionOperandType,
-                format!("text(...) accepts only Text, Boolean, Int, Float or an enum, got `{type_ref}`"),
+                format!(
+                    "text(...) accepts only Text, Boolean, Int, Float or an enum, got `{type_ref}`"
+                ),
                 Some(source_ref.clone()),
             ));
         }
@@ -3388,18 +3777,29 @@ impl<'a> FlowGraphBuilder<'a> {
         &mut self,
         type_name: &str,
         fields: &[AstRecordField],
+        base: Option<&AstExpression>,
         source_ref: &SourceRef,
     ) -> LoweredExpression {
-        let Some((target_type, expected_fields)) = self
-            .symbols
-            .get(type_name)
-            .filter(|symbol| symbol.kind == SymbolKind::Type)
-            .and_then(|symbol| {
+        let base = base.map(|expression| {
+            self.lower_expression_handle(expression, None, ExpressionContext::Expression)
+        });
+        let contract = if let Some(base) = &base {
+            base.type_ref.as_ref().and_then(|type_ref| {
                 self.type_fields
-                    .get(&symbol.id)
-                    .map(|fields| (symbol.id.clone(), fields.clone()))
+                    .get(type_ref)
+                    .map(|fields| (type_ref.clone(), fields.clone()))
             })
-        else {
+        } else {
+            self.symbols
+                .get(type_name)
+                .filter(|symbol| symbol.kind == SymbolKind::Type)
+                .and_then(|symbol| {
+                    self.type_fields
+                        .get(&symbol.id)
+                        .map(|fields| (symbol.id.clone(), fields.clone()))
+                })
+        };
+        let Some((target_type, expected_fields)) = contract else {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::UnknownRecordType,
                 format!("unknown local record type `{type_name}`"),
@@ -3438,6 +3838,17 @@ impl<'a> FlowGraphBuilder<'a> {
         canonical_expected.sort_by(|left, right| left.0.cmp(&right.0));
         for (name, expected) in canonical_expected {
             let Some(field) = provided.get(&name) else {
+                if base.is_some() {
+                    continue;
+                }
+                if let (Some(value), Some(type_ref)) = (&expected.default, &expected.type_ref) {
+                    let lowered = self.lower_default_value(value, type_ref, source_ref);
+                    record_fields.push(AirRecordField {
+                        name,
+                        value_ref: lowered.handle,
+                    });
+                    continue;
+                }
                 self.diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::MissingRecordField,
                     format!("record type `{type_name}` requires field `{name}`"),
@@ -3445,8 +3856,20 @@ impl<'a> FlowGraphBuilder<'a> {
                 ));
                 continue;
             };
-            let lowered =
-                self.lower_expression_atom_or_air(&field.value, ExpressionContext::Expression);
+            let lowered = self.lower_expression_handle(
+                &field.value,
+                expected.type_ref.as_deref(),
+                ExpressionContext::Expression,
+            );
+            if let Some((_, literal)) = crate::field_contracts::literal(&field.value) {
+                if !crate::field_contracts::matches(&literal, &expected.constraints) {
+                    self.diagnostics.push(AirDiagnostic::new(
+                        AirDiagnosticCode::InvalidFieldConstraint,
+                        format!("record field `{name}` violates constraints {:?}", expected.constraints),
+                        Some(field.source_ref.clone()),
+                    ));
+                }
+            }
             if let (Some(actual), Some(expected)) =
                 (lowered.type_ref.as_deref(), expected.type_ref.as_deref())
                 && !is_assignable_to(actual, expected)
@@ -3468,19 +3891,67 @@ impl<'a> FlowGraphBuilder<'a> {
         let expression_id = self.next_expression_id();
         self.push_air_expression(AirExpression {
             id: expression_id,
-            kind: AirExpressionKind::ConstructRecord,
+            kind: if base.is_some() {
+                AirExpressionKind::CopyRecord
+            } else {
+                AirExpressionKind::ConstructRecord
+            },
             value_ref: None,
             literal_text: None,
             literal_boolean: None,
             literal_int: None,
             literal_float: None,
             operator: None,
-            operands: Vec::new(),
+            operands: base.map(|value| vec![value.handle]).unwrap_or_default(),
             field_name: None,
             record_fields,
             type_ref: Some(target_type),
             source_ref: source_ref.clone(),
         })
+    }
+
+    fn lower_default_value(
+        &mut self,
+        value: &serde_json::Value,
+        type_ref: &str,
+        source_ref: &SourceRef,
+    ) -> LoweredExpression {
+        if type_ref.starts_with("optional:") {
+            return self.lower_optional_expression(
+                AirExpressionKind::OptionalNone,
+                Vec::new(),
+                type_ref.into(),
+                source_ref,
+            );
+        }
+        if type_ref.starts_with("list:") {
+            return self.lower_optional_expression(
+                AirExpressionKind::ConstructList,
+                Vec::new(),
+                type_ref.into(),
+                source_ref,
+            );
+        }
+        if type_ref == BUILTIN_DATE {
+            return self.lower_optional_expression(
+                AirExpressionKind::DateConversion,
+                vec![format!("literal:string:{}", value.as_str().unwrap())],
+                type_ref.into(),
+                source_ref,
+            );
+        }
+        let handle = match type_ref {
+            BUILTIN_TEXT => format!("literal:string:{}", value.as_str().unwrap()),
+            BUILTIN_BOOLEAN => format!("literal:bool:{}", value.as_bool().unwrap()),
+            BUILTIN_INT => format!("literal:int:{value}"),
+            BUILTIN_FLOAT => format!("literal:float:{value}"),
+            _ => unreachable!("defaults are validated before graph lowering"),
+        };
+        LoweredExpression {
+            handle,
+            type_ref: Some(type_ref.into()),
+            literal_zero: value.as_f64() == Some(0.0),
+        }
     }
 
     fn lower_field_access_expression(
@@ -3670,7 +4141,9 @@ impl<'a> FlowGraphBuilder<'a> {
             if right.literal_zero
                 && matches!(
                     operator,
-                    AstBinaryOperator::Divide | AstBinaryOperator::IntegerDivide | AstBinaryOperator::Modulo
+                    AstBinaryOperator::Divide
+                        | AstBinaryOperator::IntegerDivide
+                        | AstBinaryOperator::Modulo
                 )
             {
                 self.diagnostics.push(AirDiagnostic::new(
@@ -3726,7 +4199,10 @@ impl<'a> FlowGraphBuilder<'a> {
                 if left_type == Some(BUILTIN_INT) && right_type == Some(BUILTIN_INT) {
                     Some(builtin_int())
                 } else {
-                    self.invalid_operand_type("operators `%` and `//` expect Int operands", source_ref);
+                    self.invalid_operand_type(
+                        "operators `%` and `//` expect Int operands",
+                        source_ref,
+                    );
                     None
                 }
             }
@@ -3758,7 +4234,9 @@ impl<'a> FlowGraphBuilder<'a> {
             | AstBinaryOperator::GreaterThan
             | AstBinaryOperator::LessThanOrEqual
             | AstBinaryOperator::GreaterThanOrEqual => {
-                if is_numeric_pair(left_type, right_type) {
+                if is_numeric_pair(left_type, right_type)
+                    || (left_type == Some(BUILTIN_DATE) && right_type == Some(BUILTIN_DATE))
+                {
                     Some(builtin_boolean())
                 } else {
                     self.invalid_operand_type(
@@ -3897,67 +4375,121 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     fn lower_match(&mut self, statement: &AstMatchStatement) -> FlowFragment {
-        let value = self.lower_expression_atom_or_air(&statement.value, ExpressionContext::Condition);
-        let Some(variants) = value.type_ref.as_ref().and_then(|kind| self.type_variants.get(kind)).cloned() else {
-            self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::MatchRequiresEnum,
-                "match requires a nominal enum value", Some(statement.source_ref.clone())));
+        let value =
+            self.lower_expression_atom_or_air(&statement.value, ExpressionContext::Condition);
+        let Some(variants) = value
+            .type_ref
+            .as_ref()
+            .and_then(|kind| self.type_variants.get(kind))
+            .cloned()
+        else {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::MatchRequiresEnum,
+                "match requires a nominal enum value",
+                Some(statement.source_ref.clone()),
+            ));
             return FlowFragment::empty();
         };
         let mut seen = HashSet::new();
         let mut valid = true;
         for case in &statement.cases {
-            let kind = self.symbols.get(&case.type_name).filter(|symbol| symbol.kind == SymbolKind::Type);
+            let kind = self
+                .symbols
+                .get(&case.type_name)
+                .filter(|symbol| symbol.kind == SymbolKind::Type);
             if kind.map(|symbol| symbol.id.as_str()) != value.type_ref.as_deref() {
                 valid = false;
-                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::MatchCaseTypeMismatch,
-                    format!("case {}.{} does not belong to the matched enum", case.type_name, case.variant), Some(case.source_ref.clone())));
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::MatchCaseTypeMismatch,
+                    format!(
+                        "case {}.{} does not belong to the matched enum",
+                        case.type_name, case.variant
+                    ),
+                    Some(case.source_ref.clone()),
+                ));
             } else if !variants.contains(&case.variant) {
                 valid = false;
-                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::UnknownEnumVariant,
-                    format!("unknown enum member {}.{}", case.type_name, case.variant), Some(case.source_ref.clone())));
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::UnknownEnumVariant,
+                    format!("unknown enum member {}.{}", case.type_name, case.variant),
+                    Some(case.source_ref.clone()),
+                ));
             } else if !seen.insert(case.variant.clone()) {
                 valid = false;
-                self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::DuplicateMatchCase,
-                    format!("duplicate case {}.{}", case.type_name, case.variant), Some(case.source_ref.clone())));
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::DuplicateMatchCase,
+                    format!("duplicate case {}.{}", case.type_name, case.variant),
+                    Some(case.source_ref.clone()),
+                ));
             }
         }
         let mut missing: Vec<_> = variants.difference(&seen).cloned().collect();
         missing.sort();
         if !missing.is_empty() {
             valid = false;
-            self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::NonExhaustiveMatch,
-                format!("match is missing cases: {}", missing.join(", ")), Some(statement.source_ref.clone())));
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::NonExhaustiveMatch,
+                format!("match is missing cases: {}", missing.join(", ")),
+                Some(statement.source_ref.clone()),
+            ));
         }
-        if !valid { return FlowFragment::empty(); }
+        if !valid {
+            return FlowFragment::empty();
+        }
         // Names containing ':' cannot be written in source. The snapshot is
         // evaluated once and cannot collide with a user binding.
         let name = format!("match:temporary:{}", self.nodes.len());
         let outer_values = self.local_values.clone();
         let outer_types = self.local_value_types.clone();
-        let mut snapshot = self.lower_typed_binding(&name, value.type_ref.unwrap(), value.handle, &statement.source_ref);
+        let mut snapshot = self.lower_typed_binding(
+            &name,
+            value.type_ref.unwrap(),
+            value.handle,
+            &statement.source_ref,
+        );
         let mut branches = statement.cases.last().unwrap().body.clone();
         for case in statement.cases.iter().rev().skip(1) {
             let member = AstExpression::FieldAccess {
-                target: Box::new(AstExpression::Symbol { value: case.type_name.clone(), source_ref: case.source_ref.clone() }),
-                field: case.variant.clone(), field_source_ref: case.source_ref.clone(), source_ref: case.source_ref.clone(),
+                target: Box::new(AstExpression::Symbol {
+                    value: case.type_name.clone(),
+                    source_ref: case.source_ref.clone(),
+                }),
+                field: case.variant.clone(),
+                field_source_ref: case.source_ref.clone(),
+                source_ref: case.source_ref.clone(),
             };
             branches = vec![AstStatement::If(AstIfStatement {
                 condition: AstExpression::Binary {
-                    left: Box::new(AstExpression::Value { value: name.clone(), source_ref: statement.source_ref.clone() }),
-                    operator: AstBinaryOperator::Equal, right: Box::new(member), source_ref: case.source_ref.clone(),
+                    left: Box::new(AstExpression::Value {
+                        value: name.clone(),
+                        source_ref: statement.source_ref.clone(),
+                    }),
+                    operator: AstBinaryOperator::Equal,
+                    right: Box::new(member),
+                    source_ref: case.source_ref.clone(),
                 },
-                present_binding: None, then_branch: case.body.clone(), else_branch: branches, source_ref: case.source_ref.clone(),
+                present_binding: None,
+                then_branch: case.body.clone(),
+                else_branch: branches,
+                source_ref: case.source_ref.clone(),
             })];
         }
         let first_node = self.nodes.len();
         let lowered = self.lower_statement_sequence(&branches);
         if let Some(entry) = self.nodes.get(first_node) {
-            self.edges.extend(connect_pending_exits(&mut snapshot.exits, &entry.id, statement.source_ref.clone()));
+            self.edges.extend(connect_pending_exits(
+                &mut snapshot.exits,
+                &entry.id,
+                statement.source_ref.clone(),
+            ));
         }
         self.local_values = outer_values;
         self.local_value_types = outer_types;
-        FlowFragment { entry_node_id: snapshot.entry_node_id, exits: lowered.exits,
-            terminal_reason: lowered.terminal_reason.map(|_| "match") }
+        FlowFragment {
+            entry_node_id: snapshot.entry_node_id,
+            exits: lowered.exits,
+            terminal_reason: lowered.terminal_reason.map(|_| "match"),
+        }
     }
 
     fn lower_if(&mut self, statement: &AstIfStatement) -> FlowFragment {
@@ -4291,10 +4823,16 @@ impl<'a> FlowGraphBuilder<'a> {
                 format!("literal:bool:{value}")
             }
             AstExpression::FieldAccess { .. }
+            | AstExpression::List { .. }
+            | AstExpression::ListComprehension { .. }
+            | AstExpression::ListConcat { .. }
+            | AstExpression::TextJoin { .. }
             | AstExpression::OptionalSome { .. }
             | AstExpression::OptionalNone { .. }
             | AstExpression::Record { .. }
+            | AstExpression::RecordCopy { .. }
             | AstExpression::TextConversion { .. }
+            | AstExpression::DateConversion { .. }
             | AstExpression::Unary { .. }
             | AstExpression::Binary { .. }
             | AstExpression::Parenthesized { .. }
@@ -4442,6 +4980,8 @@ struct SymbolInputRef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TypeFieldRef {
     type_ref: Option<String>,
+    constraints: crate::field_contracts::Constraints,
+    default: Option<serde_json::Value>,
     source_ref: SourceRef,
 }
 
@@ -4604,6 +5144,14 @@ enum SymbolKind {
     Trigger,
 }
 
+fn is_empty_list_expression(expression: &AstExpression) -> bool {
+    match expression {
+        AstExpression::List { elements, .. } => elements.is_empty(),
+        AstExpression::Parenthesized { expression, .. } => is_empty_list_expression(expression),
+        _ => false,
+    }
+}
+
 fn expression_handle(expression: &AstExpression) -> String {
     match expression {
         AstExpression::Record { source_ref, .. } => {
@@ -4616,9 +5164,15 @@ fn expression_handle(expression: &AstExpression) -> String {
         AstExpression::FloatLiteral { value, .. } => format!("literal:float:{value}"),
         AstExpression::BooleanLiteral { value, .. } => format!("literal:bool:{value}"),
         AstExpression::FieldAccess { source_ref, .. }
+        | AstExpression::RecordCopy { source_ref, .. }
+        | AstExpression::List { source_ref, .. }
+        | AstExpression::ListComprehension { source_ref, .. }
+        | AstExpression::ListConcat { source_ref, .. }
+        | AstExpression::TextJoin { source_ref, .. }
         | AstExpression::OptionalSome { source_ref, .. }
         | AstExpression::OptionalNone { source_ref, .. }
         | AstExpression::TextConversion { source_ref, .. }
+        | AstExpression::DateConversion { source_ref, .. }
         | AstExpression::Unary { source_ref, .. }
         | AstExpression::Binary { source_ref, .. }
         | AstExpression::Parenthesized { source_ref, .. } => {
@@ -4650,9 +5204,14 @@ fn failure_family(value: &str) -> AirFailureFamily {
 fn expression_source_ref(expression: &AstExpression) -> SourceRef {
     match expression {
         AstExpression::Symbol { source_ref, .. }
+        | AstExpression::List { source_ref, .. }
+        | AstExpression::ListComprehension { source_ref, .. }
+        | AstExpression::ListConcat { source_ref, .. }
+        | AstExpression::TextJoin { source_ref, .. }
         | AstExpression::OptionalSome { source_ref, .. }
         | AstExpression::OptionalNone { source_ref, .. }
         | AstExpression::Record { source_ref, .. }
+        | AstExpression::RecordCopy { source_ref, .. }
         | AstExpression::Value { source_ref, .. }
         | AstExpression::StringLiteral { source_ref, .. }
         | AstExpression::IntLiteral { source_ref, .. }
@@ -4660,6 +5219,7 @@ fn expression_source_ref(expression: &AstExpression) -> SourceRef {
         | AstExpression::BooleanLiteral { source_ref, .. }
         | AstExpression::FieldAccess { source_ref, .. }
         | AstExpression::TextConversion { source_ref, .. }
+        | AstExpression::DateConversion { source_ref, .. }
         | AstExpression::Unary { source_ref, .. }
         | AstExpression::Binary { source_ref, .. }
         | AstExpression::Parenthesized { source_ref, .. } => source_ref.clone(),

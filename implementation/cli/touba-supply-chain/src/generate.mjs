@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { loadSupplyChainArtifacts, resolveExecutable, sha256Text, SUPPLY_CHAIN_LOCK_SCHEMA_VERSION, validateSupplyChainArtifacts } from "./validate.mjs";
 import { localImportClosure } from "./local-imports.mjs";
 import { pythonImportClosure } from "./python-imports.mjs";
+import { pythonModuleEntrypoint } from "./python-module.mjs";
+import { PACKAGE_LOCK, findPackageWorkspace, readPackageWorkspace, verifyInstalledPackages } from "../../touba-project/src/package-store.mjs";
 
 const dependencyNames = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"];
 const pythonDependencyNames = ["pylock.toml", "uv.lock", "poetry.lock"];
@@ -49,6 +51,17 @@ export function generateSupplyChainLock(options) {
     ...(artifacts.manifest ? { manifest: record(artifacts.manifest.path) } : {}),
     handlers: [],
   };
+  let workspaceRoot;
+  try { workspaceRoot = findPackageWorkspace(root); }
+  catch (error) { if (error.code !== "PackageProjectRequired") throw error; }
+  if (workspaceRoot) {
+    const workspace = readPackageWorkspace(workspaceRoot);
+    verifyInstalledPackages(workspaceRoot, workspace.records);
+    // Keep the caller's lexical root (e.g. /var on macOS); the workspace
+    // resolver returns its physical /private/var spelling.
+    const installation = path.join(root, path.relative(realpathSync(root), workspaceRoot), PACKAGE_LOCK);
+    if (existsSync(installation)) lock.package_installation = record(installation);
+  }
   const index = options.entrypointArg ?? 0;
   const sdkMetadata = options.sdkMetadataJson === undefined ? undefined : JSON.parse(options.sdkMetadataJson);
   if (index !== "command" && (!Number.isInteger(index) || index < 0)) throw new Error("--entrypoint-arg must be a non-negative index or command");
@@ -58,7 +71,8 @@ export function generateSupplyChainLock(options) {
     const cwd = path.resolve(path.dirname(artifacts.manifest.path), handler.cwd ?? ".");
     const command = resolveExecutable(handler.command, cwd);
     if (!command) throw new Error(`${toolRef}: handler command is missing or not executable`);
-    const argument = index === "command" ? command : handler.args?.[index];
+    const module = options.entrypointArg === undefined ? pythonModuleEntrypoint(command, handler.args, cwd) : null;
+    const argument = module?.entrypoint ?? (index === "command" ? command : handler.args?.[index]);
     if (typeof argument !== "string" || argument.startsWith("-")) throw new Error(`${toolRef}: select the actual entrypoint with --entrypoint-arg`);
     const entrypoint = path.resolve(cwd, argument);
     // Confinement precedes parsing, including for an entrypoint in another tree.
@@ -68,7 +82,8 @@ export function generateSupplyChainLock(options) {
     relativeFile(root, metadataPath);
     let identity, hasDependencies;
     if (isPython) {
-      identity = pythonImportClosure(entrypoint, { packageRoot, python: options.python });
+      identity = pythonImportClosure(entrypoint, { packageRoot, python: options.python,
+        moduleName: module?.moduleName, searchRoot: module?.searchRoot });
       hasDependencies = identity.has_dependencies;
       for (const file of identity.files) files.add(file);
     } else {

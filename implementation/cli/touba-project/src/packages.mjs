@@ -12,6 +12,28 @@ import { readPackageBytes } from "./package-fetch.mjs";
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
+// Validate a distribution without installing it or running contributor code.
+// The archive and its bounded extraction use the same checks as installation.
+export async function checkPackageArchive(archive, options = {}) {
+  const staging = mkdtempSync(join(tmpdir(), "touba-package-check-"));
+  try {
+    const stat = lstatSync(archive);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw packageError("PackageArchiveInvalid", "archive must be a regular file");
+    if (stat.size > PACKAGE_LIMITS.totalBytes) throw packageError("PackageTooLarge", "archive exceeds limit");
+    const bytes = readFileSync(archive);
+    if (bytes.length > PACKAGE_LIMITS.totalBytes) throw packageError("PackageTooLarge", "archive exceeds limit");
+    const snapshot = join(staging, "package.tar.gz");
+    writeFileSync(snapshot, bytes, { flag: "wx", mode: 0o600 });
+    const path = unpackPackage(snapshot, join(staging, "contents"));
+    const checked = await checkPackage(path, options);
+    const manifest = checked.closure.first.document;
+    const readme = manifest.readme ? readFileSync(packageFile(path, manifest.readme), "utf8") : "";
+    delete checked.closure;
+    return { ...checked, manifest, readme: readme.slice(0, 65536), readme_truncated: readme.length > 65536,
+      archive_digest: packageDigest(bytes) };
+  } finally { rmSync(staging, { recursive: true, force: true }); }
+}
+
 // Exact closure, supplied inside the root package or already present in the
 // consuming project. No ambient workspace search, latest selection or network.
 export function packageClosure(path, { projectRoot, publishing = false } = {}) {
@@ -49,7 +71,7 @@ export function packageClosure(path, { projectRoot, publishing = false } = {}) {
 
 export async function addRegistryPackage(name, options) {
   if (!PACKAGE_NAME.test(name) || !options.registry || !options.version) throw packageError("PackageRegistryOptionMissing", "use a qualified package name, --version and --registry");
-  const resolution = await resolveRegistryPackage({ registry: options.registry, version: options.version, packageRef: `pkg:${name}`, allowDraft: options["allow-draft"] === true });
+  const resolution = await resolveRegistryPackage({ registry: options.registry, trust: options.trust, version: options.version, packageRef: `pkg:${name}`, allowDraft: options["allow-draft"] === true });
   if (!semver.satisfies(runtimeVersion, resolution.compatibility.touba)) throw packageError("PackageVersionIncompatible", `registry requires Touba ${resolution.compatibility.touba}; installed ${runtimeVersion}`);
   if (resolution.package.kind !== "touba_package") throw packageError("PackageSchemaMismatch", "registry entry must describe a Touba package");
   const archives = resolution.artifacts.filter(artifact => artifact.kind === "package_archive");
@@ -82,7 +104,7 @@ export async function checkPackage(path, options = {}) {
   const { validatePackageSources } = await import("./project.mjs");
   const diagnostics = await validatePackageSources(closure.packages, options);
   if (diagnostics.length) throw packageError("PackageSourceInvalid", diagnostics.map(d => `${d.code}: ${d.message}`).join("\n"));
-  const missing = ["description", "publisher", "license", "readme"].filter(field => !closure.first.document[field]);
+  const missing = ["description", "publisher", "license"].filter(field => !closure.first.document[field]);
   return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: missing.length ? [`Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : [], packages: closure.packages.map(pkg => ({ name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, files: pkg.files.length, requirements: pkg.requirements })), tests: "Source contracts checked. Author tests are not executed automatically.", closure };
 }
 
