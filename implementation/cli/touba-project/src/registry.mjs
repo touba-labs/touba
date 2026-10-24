@@ -24,19 +24,19 @@ const SUPPORTED_PROTOCOLS = new Set([
 ]);
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
-const readIndex = (ref, trust) => /^https?:\/\//.test(ref)
-  ? readSignedRegistry(ref, trust) : readJsonRef(ref, "RegistryIndexSchemaInvalid");
+const readIndex = (ref, trust, readBytes) => /^https?:\/\//.test(ref)
+  ? readSignedRegistry(ref, trust, undefined, readBytes) : readJsonRef(ref, "RegistryIndexSchemaInvalid");
 
 export async function resolveRegistryPackage(options = {}) {
   const packageRef = requiredOption(options.packageRef, "package");
   const version = requiredOption(options.version, "version");
   const registry = registryLocation(requiredOption(options.registry, "registry"));
 
-  const indexDocument = await readIndex(registry.indexRef, options.trust);
+  const indexDocument = await readIndex(registry.indexRef, options.trust, options.readBytes);
   validateIndex(indexDocument.value, indexDocument.ref);
   const indexEntry = findIndexEntry(indexDocument.value, packageRef, version);
   const metadataRef = resolveRegistryChild(registry.rootRef, indexEntry.metadata_path);
-  const metadataDocument = await readJsonRef(metadataRef, "RegistryPackageSchemaInvalid");
+  const metadataDocument = await readJsonRef(metadataRef, "RegistryPackageSchemaInvalid", options.readBytes);
   const actualMetadataDigest = digestBuffer(metadataDocument.bytes);
   if (actualMetadataDigest !== indexEntry.metadata_digest) {
     fail("RegistryMetadataDigestMismatch", `${packageRef}@${version} metadata digest does not match index`, indexEntry.metadata_path);
@@ -326,8 +326,8 @@ function assertRelativePath(path, label) {
   catch { fail("RegistryPathInvalid", `${label} must be a portable relative path inside its root`, label); }
 }
 
-async function readJsonRef(ref, schemaCode) {
-  const bytes = await readBytesRef(ref);
+async function readJsonRef(ref, schemaCode, readBytes = readPackageBytes) {
+  const bytes = await readBytes(ref, 1024 * 1024);
   try {
     return {
       ref,
@@ -337,10 +337,6 @@ async function readJsonRef(ref, schemaCode) {
   } catch (error) {
     fail(schemaCode, error.message, ref);
   }
-}
-
-async function readBytesRef(ref) {
-  return readPackageBytes(ref, 1024 * 1024);
 }
 
 function requiredOption(value, name) {

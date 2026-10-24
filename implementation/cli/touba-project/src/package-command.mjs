@@ -20,7 +20,7 @@ export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organizati
        touba package submit [directory] [--registry <URL>] [--draft <draft-id>] [--no-browser] [--root <author>]
        touba package submit [directory] --ci <authorization-id> --registry <URL> [--root <author>]
        touba package add <name|directory|archive.tar.gz> [--root <workspace>]
-       touba package add <name>@<version> --registry <directory|URL> [--trust <keys.json>] [--allow-draft] [--root <workspace>]
+       touba package add <name>@<version> --registry <directory|URL> [--trust <keys.json>] [--allow-draft] [--no-browser] [--root <workspace>]
        touba package list [--root <workspace>]
        touba package remove <name> [--root <workspace>]
 All commands support --json. new and version ask questions only in an interactive terminal.
@@ -28,7 +28,7 @@ Creation is offline. Package tests execute reviewed host code, never during chec
 
 function parse(args) {
   const [action, ...rest] = args;
-  const allowed = { new: ["context", "yes", "root", "org", "description", "publisher", "license", "version"], check: ["root", "publishing"], test: ["root", "env"], version: ["root"], pack: ["root", "output"], publish: ["root", "registry", "no-browser"], checkout: ["root", "registry", "no-browser"], submit: ["root", "registry", "draft", "no-browser", "ci"], add: ["root", "registry", "trust", "version", "allow-draft"], list: ["root"], remove: ["root"] };
+  const allowed = { new: ["context", "yes", "root", "org", "description", "publisher", "license", "version"], check: ["root", "publishing"], test: ["root", "env"], version: ["root"], pack: ["root", "output"], publish: ["root", "registry", "no-browser"], checkout: ["root", "registry", "no-browser"], submit: ["root", "registry", "draft", "no-browser", "ci"], add: ["root", "registry", "trust", "version", "allow-draft", "no-browser"], list: ["root"], remove: ["root"] };
   if (!Object.hasOwn(allowed, action)) throw packageError("PackageCommandInvalid", PACKAGE_USAGE);
   let target;
   const options = {};

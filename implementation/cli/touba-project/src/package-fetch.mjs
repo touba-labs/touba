@@ -1,14 +1,20 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { packageError } from "./package-contract.mjs";
+import { authorizeRegistry, publicationUrl } from "./package-identity.mjs";
 
 // Bounded reads, including slow or chunked responses. No credentials in URLs,
 // redirects, fallback registry, or unbounded response.arrayBuffer().
-export async function readPackageBytes(location, maxBytes) {
+export async function readPackageBytes(location, maxBytes, authorization) {
   if (/^https?:\/\//.test(location)) {
     const url = new URL(location);
     if (url.username || url.password) throw packageError("RegistryUrlInvalid", "registry URLs must not contain credentials");
     if (url.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) throw packageError("RegistryUrlInvalid", "use HTTPS, except for loopback development");
-    const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20000) });
+    const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20000),
+      headers: authorization ? { Authorization: `Bearer ${authorization}` } : {} });
+    if (response.status === 401 && /^Bearer(?:\s|$)/i.test(response.headers.get('www-authenticate') ?? '')) {
+      await response.body?.cancel();
+      throw packageError('RegistryAuthenticationRequired', 'sign in to read this private registry');
+    }
     if (!response.ok || !response.body) throw packageError("RegistryFetchFailed", `registry returned HTTP ${response.status}`);
     const declared = Number(response.headers.get("content-length"));
     if (declared > maxBytes) { await response.body.cancel(); throw packageError("PackageTooLarge", "registry response exceeds limit"); }
@@ -24,4 +30,30 @@ export async function readPackageBytes(location, maxBytes) {
   if (!stat.isFile() || stat.isSymbolicLink()) throw packageError("RegistryFileMissing", "registry content must be a regular file");
   if (stat.size > maxBytes) throw packageError("PackageTooLarge", "registry file exceeds limit");
   return readFileSync(location);
+}
+
+// One reader per installation, no process-global credentials or token files.
+export function createRegistryReader(location, { noBrowser = false, notify, signal } = {}) {
+  if (!/^https?:\/\//.test(location)) return { readBytes: readPackageBytes, close: async () => {} };
+  const registry = publicationUrl(location.replace(/\/index\.json$/, ''));
+  const root = new URL(registry + '/');
+  let identity;
+  let attempted = false;
+  return {
+    async readBytes(url, maximum) {
+      const target = new URL(url);
+      if (target.origin !== root.origin || !target.pathname.startsWith(root.pathname)
+          || target.username || target.password || target.search || target.hash) {
+        throw packageError('RegistryUrlInvalid', 'registry content must remain inside the selected registry');
+      }
+      try { return await readPackageBytes(target.href, maximum, identity?.token); }
+      catch (error) {
+        if (error.code !== 'RegistryAuthenticationRequired' || attempted) throw error;
+        attempted = true;
+        identity = await authorizeRegistry(registry, { access: 'read', noBrowser, notify, signal });
+        return readPackageBytes(target.href, maximum, identity.token);
+      }
+    },
+    async close() { try { await identity?.revoke(); } finally { identity = undefined; } },
+  };
 }

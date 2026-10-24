@@ -222,7 +222,7 @@ terminal. Le service vérifie l'espace de publication, l'archive et ses tests
 isolés. `--no-browser` affiche le lien à ouvrir manuellement. Les identifiants
 de publication restent en mémoire pour cette opération.
 
-Pour installer une version publique, obtenez le fichier de confiance auprès
+Pour installer une version publiée, obtenez le fichier de confiance auprès
 de l'opérateur du registre et vérifiez son empreinte par un canal de confiance :
 
 ```sh
@@ -230,6 +230,13 @@ touba package add acme.review@1.0.0 \
   --registry https://registry.example.org/registry \
   --trust registry-trust.json
 ```
+
+Si le registre est privé, la commande ouvre le navigateur pour autoriser sa
+lecture. `--no-browser` affiche le lien à ouvrir vous-même. Ce consentement
+permet de consulter le catalogue et de télécharger les packages publiés ;
+il ne permet pas de publier. Le jeton reste en mémoire pendant l'installation
+et sa révocation est demandée à la fin, y compris en cas d'échec.
+L'authentification et le fichier de confiance sont deux contrôles distincts.
 
 L'index signé lie le registre à ses versions et empreintes. Une signature
 invalide, une clé inconnue ou révoquée, un index expiré et une version retirée

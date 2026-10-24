@@ -8,7 +8,7 @@ import { PACKAGE_LIMITS, PACKAGE_MANIFEST, PACKAGE_NAME, PACKAGE_RUNTIME_VERSION
 import { PACKAGE_LOCK, PACKAGE_TRANSACTION, assertAuthorWritable, assertOnlyInventory, assertPlainDirectory, assertPackageDirectory, findPackageWorkspace, readPackageWorkspace, setWorkspacePackages, verifyInstalledPackages } from "./package-store.mjs";
 export { newPackage } from "./package-author.mjs";
 import { resolveRegistryPackage } from "./registry.mjs";
-import { readPackageBytes } from "./package-fetch.mjs";
+import { createRegistryReader } from "./package-fetch.mjs";
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
@@ -71,7 +71,13 @@ export function packageClosure(path, { projectRoot, publishing = false } = {}) {
 
 export async function addRegistryPackage(name, options) {
   if (!PACKAGE_NAME.test(name) || !options.registry || !options.version) throw packageError("PackageRegistryOptionMissing", "use a qualified package name, --version and --registry");
-  const resolution = await resolveRegistryPackage({ registry: options.registry, trust: options.trust, version: options.version, packageRef: `pkg:${name}`, allowDraft: options["allow-draft"] === true });
+  const reader = createRegistryReader(options.registry, { noBrowser: options['no-browser'] === true });
+  try { return await installRegistryPackage(name, options, reader.readBytes); }
+  finally { await reader.close(); }
+}
+
+async function installRegistryPackage(name, options, readBytes) {
+  const resolution = await resolveRegistryPackage({ registry: options.registry, trust: options.trust, version: options.version, packageRef: `pkg:${name}`, allowDraft: options["allow-draft"] === true, readBytes });
   if (!semver.satisfies(runtimeVersion, resolution.compatibility.touba)) throw packageError("PackageVersionIncompatible", `registry requires Touba ${resolution.compatibility.touba}; installed ${runtimeVersion}`);
   if (resolution.package.kind !== "touba_package") throw packageError("PackageSchemaMismatch", "registry entry must describe a Touba package");
   const archives = resolution.artifacts.filter(artifact => artifact.kind === "package_archive");
@@ -79,7 +85,7 @@ export async function addRegistryPackage(name, options) {
   const artifact = archives[0]; packagePath(artifact.path);
   const index = resolution.registry.index_ref;
   const location = /^https?:\/\//.test(index) ? new URL(artifact.path, new URL("./", index)).href : packageFile(dirname(resolve(index)), artifact.path);
-  const bytes = await readPackageBytes(location, PACKAGE_LIMITS.totalBytes);
+  const bytes = await readBytes(location, PACKAGE_LIMITS.totalBytes);
   if (packageDigest(bytes) !== artifact.digest) throw packageError("PackageIntegrityMismatch", "registry archive digest mismatch");
   const staging = mkdtempSync(join(tmpdir(), "touba-package-fetch-"));
   try {

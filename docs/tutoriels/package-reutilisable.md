@@ -174,6 +174,24 @@ changé : l'identité et le contrat sont stables. Versionnez le manifeste projet
 et le lock ensemble. Les versions `0.1.0` et `0.1.1` ici appartiennent à votre
 **package**, pas à la distribution du langage Touba.
 
+## Installer depuis un registre privé
+
+Après publication, récupérez le fichier de confiance de l'opérateur et vérifiez
+son empreinte par votre canal de confiance. Dans un nouveau projet :
+
+```sh
+touba package add acme.echo@0.1.1 \
+  --registry https://registry.example.org/registry \
+  --trust registry-trust.json
+touba package list
+```
+
+Pour un registre privé, Touba ouvre la connexion dans le navigateur. Vérifiez
+le code affiché par le terminal et acceptez la lecture du catalogue. La commande
+vérifie ensuite la signature et les empreintes avant l'installation. Vous pouvez
+reprendre le même import typé que dans ce tutoriel. L'URL est un exemple :
+utilisez celle du registre où votre package a été publié.
+
 ## 7. Variante : publier et installer depuis un registry local
 
 Toujours depuis `consumer/`, publiez la version auteur dans un dossier voisin :
