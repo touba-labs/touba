@@ -126,13 +126,13 @@ function copyNodeRuntime() {
   const copied = spawnSync(join(toolchainRoot, "bin", nodeName), ["--version"], {
     encoding: "utf8", timeout: 10000, windowsHide: true,
   });
-  if (copied.error || copied.status !== 0 || copied.stdout.trim() !== "v24.15.0") {
-    throw new Error(`Bundled Node must run independently as v24.15.0; provision the official native distribution in .toolchains/node-v24.15.0-${platform} before packaging`);
+  if (copied.error || copied.status !== 0 || copied.stdout.trim() !== "v24.22.1") {
+    throw new Error(`Bundled Node must run independently as v24.22.1; provision the official native distribution in .toolchains/node-v24.22.1-${platform} before packaging`);
   }
 }
 
 function resolveNodeRuntimeSource(nodeName) {
-  const localNode = join(implementationRoot, ".toolchains", `node-v24.15.0-${platform}`, "bin", nodeName);
+  const localNode = join(implementationRoot, ".toolchains", `node-v24.22.1-${platform}`, "bin", nodeName);
   if (existsSync(localNode)) {
     return realpathSync(localNode);
   }

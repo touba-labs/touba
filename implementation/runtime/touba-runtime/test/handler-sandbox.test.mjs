@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { buildHandlerSandboxPlan } from "../src/handler-protocol.mjs";
 import { probeHostSandbox } from "../src/hardened-execution-profile.mjs";
@@ -64,6 +66,18 @@ test("handler sandbox plan wraps process handlers on macOS", () => {
 test("required Windows sandbox refuses a missing backend or a foreign host", () => {
   assert.throws(() => buildHandlerSandboxPlan({ binding, platform: "win32", env: { TOUBA_SANDBOX_LAUNCHER: "/touba-missing-sandbox-launcher" } }),
     error => error.code === (process.platform === "win32" ? "HandlerSandboxUnavailable" : "HandlerSandboxUnsupportedPolicy"));
+});
+test("Homebrew OpenSSL configuration access remains file-scoped", { skip: process.platform !== "darwin" }, () => {
+  const plan = buildHandlerSandboxPlan({ binding, platform: "darwin",
+    env: { TOUBA_SANDBOX_EXEC_COMMAND: "/usr/bin/sandbox-exec", OPENSSL_CONF: "/private/user-provided.cnf" } });
+  const policy = plan.args[1];
+  for (const config of ["/opt/homebrew/etc/openssl@4/openssl.cnf", "/usr/local/etc/openssl@4/openssl.cnf"]) {
+    if (!existsSync(config)) continue;
+    const resolved = realpathSync(config);
+    assert.ok(policy.includes(`(literal ${JSON.stringify(resolved)})`));
+    assert.ok(!policy.includes(`(subpath ${JSON.stringify(dirname(resolved))})`));
+  }
+  assert.ok(!policy.includes("/private/user-provided.cnf"));
 });
 test("handler sandbox refuses unsupported required platforms", () => {
   assert.throws(

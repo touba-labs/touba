@@ -68,7 +68,11 @@ export function macosHandlerPolicy(binding, command) {
     '(allow file-read* (subpath "/System/Library") (subpath "/usr/lib") (subpath "/Library/Apple/System/Library"))',
     '(allow file-read* (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
     '(allow file-write* (literal "/dev/null"))'];
-  const cryptoConfig = ["/etc/ssl/openssl.cnf", "/private/etc/ssl/openssl.cnf", "/opt/homebrew/etc/openssl@3/openssl.cnf", "/usr/local/etc/openssl@3/openssl.cnf"]
+  // Homebrew Node may link OpenSSL 3 or 4. Grant only the configuration file,
+  // never its parent directory, keys or arbitrary user-provided OPENSSL_CONF.
+  const cryptoConfig = ["/etc/ssl/openssl.cnf", "/private/etc/ssl/openssl.cnf",
+    "/opt/homebrew/etc/openssl@3/openssl.cnf", "/usr/local/etc/openssl@3/openssl.cnf",
+    "/opt/homebrew/etc/openssl@4/openssl.cnf", "/usr/local/etc/openssl@4/openssl.cnf"]
     .filter(existsSync).map(canonicalPath);
   for (const path of [...paths.code, ...runtimeLibraries(paths.command), ...cryptoConfig]) rules.push(`(allow file-read* (literal ${JSON.stringify(path)}))`);
   for (const [items, operation] of [[paths.read, "file-read*"], [paths.write, "file-write*"]]) {

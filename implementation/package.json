@@ -9,7 +9,7 @@
   },
   "packageManager": "pnpm@10.33.2",
   "engines": {
-    "node": ">=24 <25",
+    "node": ">=24.22.1 <25",
     "pnpm": "10.33.2"
   },
   "scripts": {
@@ -155,7 +155,7 @@
   },
   "devDependencies": {
     "@types/node": "24.0.0",
-    "@vscode/vsce": "3.9.1",
+    "@vscode/vsce": "4.0.0",
     "tree-sitter-cli": "0.26.8",
     "typescript": "5.9.3"
   }

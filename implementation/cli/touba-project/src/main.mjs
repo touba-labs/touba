@@ -4,6 +4,7 @@ import { runPassthrough } from "./passthrough.mjs";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { satisfies } from "semver";
 
 import {
   applyRunProfileToArgs,
@@ -1205,16 +1206,15 @@ function toubaDoctor() {
 }
 
 function checkNodeVersion() {
-  const [majorText] = process.versions.node.split(".");
-  const major = Number.parseInt(majorText, 10);
-  const ok = major >= 24 && major < 25;
+  const expected = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).engines.node;
+  const ok = satisfies(process.versions.node, expected);
   return {
     id: "node_version",
     status: ok ? "ok" : "error",
-    message: ok ? `Node ${process.versions.node} satisfies >=24 <25` : `Node ${process.versions.node} does not satisfy >=24 <25`,
+    message: ok ? `Node ${process.versions.node} satisfies ${expected}` : `Node ${process.versions.node} does not satisfy ${expected}`,
     details: {
       node: process.versions.node,
-      expected: ">=24 <25",
+      expected,
     },
   };
 }

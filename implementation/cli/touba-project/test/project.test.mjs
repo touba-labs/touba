@@ -2627,6 +2627,15 @@ test("CLI doctor reports installation health and public feature surface", () => 
   assert.equal(report.checks.some((check) => check.id === "public_command_surface" && check.status === "ok"), true);
 });
 
+test("CLI doctor rejects Node releases below the security baseline", () => {
+  const setup = "Object.defineProperty(process.versions, 'node', {value: '24.15.0'});";
+  const result = spawnSync(process.execPath, ["--import", `data:text/javascript,${encodeURIComponent(setup)}`, cliPath, "doctor", "--json"], { encoding: "utf8" });
+  assert.equal(result.status, 1, result.stderr);
+  const check = JSON.parse(result.stdout).checks.find((item) => item.id === "node_version");
+  assert.equal(check.status, "error");
+  assert.equal(check.details.expected, ">=24.22.1 <25");
+});
+
 test("CLI update reports the manual reinstall policy", () => {
   const result = spawnSync(process.execPath, [cliPath, "update"], { encoding: "utf8" });
   assert.equal(result.status, 1);
