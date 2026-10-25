@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import queue
 import urllib.request
 import unittest
@@ -381,6 +382,8 @@ strategy Run
         (self.root / "touba.project.json").write_text(json.dumps({"entry": "strategy:python.host/Run"}))
         (self.root / "host.py").write_text('''from pathlib import Path
 import os
+import atexit
+atexit.register(lambda: (Path(__file__).parent / "host-closed.txt").write_text("closed"))
 with (Path(__file__).parent / "host-loads.txt").open("a") as stream: stream.write(str(os.getpid()) + "\\n")
 initiator_ref = "test-initiator"
 def decide_agent_capability(request):
@@ -411,11 +414,20 @@ def attest_human_approval(payload):
                 result = json.load(response)
             self.assertEqual(result["result"], "served by Python", result)
             self.assertEqual(len((self.root / "host-loads.txt").read_text().splitlines()), 1)
+            self.assertIsNone(child.poll(), "server must still be alive before the requested termination")
         finally:
             child.terminate()
             _, error = child.communicate(timeout=10)
             reader.join(timeout=2)
-        self.assertEqual(child.returncode, 0 if os.name == "nt" else -signal.SIGTERM, error)
+        # CPython Popen.terminate() uses TerminateProcess(handle, 1) on Windows;
+        # POSIX reports termination by SIGTERM as a negative return code.
+        self.assertEqual(child.returncode, 1 if os.name == "nt" else -signal.SIGTERM, error)
+        closed = self.root / "host-closed.txt"
+        deadline = time.monotonic() + 10
+        while not closed.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertTrue(closed.exists(), "the shared Python host must exit after its parent closes")
+        self.assertEqual(closed.read_text(), "closed")
 
     def test_large_output_and_errors_do_not_leak_stderr(self):
         payload = "é🙂" * 200000
