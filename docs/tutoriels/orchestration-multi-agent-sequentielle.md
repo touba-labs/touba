@@ -429,7 +429,7 @@ export async function decide(request) {
 ```
 
 ```sh title="Terminal"
-touba compile parallel.tb > parallel.air.json
+touba compile parallel.tb --out parallel.air.json
 touba run parallel.air.json \
   --entry strategy:examples.parallel/Run \
   --inputs-json '{"incidents":["billing","inventory","shipping"]}' \
