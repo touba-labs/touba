@@ -19,7 +19,7 @@ import {
   runProcessToolHandler,
 } from "../src/handler-protocol.mjs";
 import { RuntimeFailure } from "../src/runtime-errors.mjs";
-import { createFileEffectJournal } from "../src/file-effect-journal.mjs";
+import { createSqliteEffectJournal } from "../src/sqlite-effect-journal.mjs";
 
 const AIR_DIGEST = `sha256:${"a".repeat(64)}`;
 const REQUEST_DIGEST = `sha256:${"b".repeat(64)}`;
@@ -183,7 +183,7 @@ test("file journal refuses escaped resolved secret values before persistence", (
   const workspace = mkdtempSync(join(tmpdir(), "touba-effect-journal-secret-"));
   try {
     const escapedSecret = "journal-\"secret\"\nwith\\escapes";
-    const journal = createFileEffectJournal(join(workspace, "effects.json"), {
+    const journal = createSqliteEffectJournal(join(workspace, "effects.sqlite"), {
       secretValues: [escapedSecret],
     });
     assert.throws(
@@ -210,10 +210,10 @@ test("file journal JSON diagnostics never echo resolved secret source text", () 
   const workspace = mkdtempSync(join(tmpdir(), "touba-effect-journal-invalid-json-"));
   try {
     const escapedSecret = "journal-json-\"secret\"\nwith\\escapes";
-    const path = join(workspace, "effects.json");
+    const path = join(workspace, "effects.sqlite");
     writeFileSync(path, `{"leak":${JSON.stringify(escapedSecret)}`, "utf8");
     assert.throws(
-      () => createFileEffectJournal(path, { secretValues: [escapedSecret] }),
+      () => createSqliteEffectJournal(path, { secretValues: [escapedSecret] }),
       (error) => (
         error?.code === "EffectJournalInvalid"
         && !`${error.message}${JSON.stringify(error.details)}`.includes(escapedSecret)

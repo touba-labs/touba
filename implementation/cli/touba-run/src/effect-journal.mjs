@@ -1,13 +1,13 @@
 import { closeSync, lstatSync, mkdirSync, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { createFileEffectJournal } from "../../../runtime/touba-runtime/src/file-effect-journal.mjs";
+import { createSqliteEffectJournal } from "../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs";
 import { ToubaRuntimeError } from "../../../runtime/touba-runtime/src/runtime-errors.mjs";
 
-// The file adapter is single-writer. A lease spans the whole CLI execution,
+// The CLI execution is single-writer. A lease spans the whole execution,
 // including pauses in a process; a crashed lease is never stolen automatically.
 export function openCliEffectJournal(inputPath, secretValues = []) {
-  if (typeof inputPath !== "string" || !inputPath.endsWith(".effect-journal.json")) {
-    throw new ToubaRuntimeError("EffectJournalPathInvalid", "effect journal path must end with .effect-journal.json");
+  if (typeof inputPath !== "string" || !inputPath.endsWith(".sqlite")) {
+    throw new ToubaRuntimeError("EffectJournalPathInvalid", "effect journal path must end with .sqlite; migrate old JSON explicitly");
   }
   const requested = resolve(inputPath);
   mkdirSync(dirname(requested), { recursive: true });
@@ -32,6 +32,6 @@ export function openCliEffectJournal(inputPath, secretValues = []) {
   };
   try {
     writeFileSync(fd, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }) + "\n");
-    return { journal: createFileEffectJournal(path, { secretValues }), close };
+    return { journal: createSqliteEffectJournal(path, { secretValues }), close };
   } catch (error) { close(); throw error; }
 }

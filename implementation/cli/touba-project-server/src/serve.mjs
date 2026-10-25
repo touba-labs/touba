@@ -7,11 +7,16 @@ import { verifyManifestPackages } from "../../touba-project/src/handler-packages
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
+  chmodSync,
+  closeSync,
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
   lstatSync,
+  openSync,
   readFileSync,
+  readSync,
   realpathSync,
   readdirSync,
   renameSync,
@@ -39,9 +44,13 @@ import {
 import { buildInteractionContract } from "../../../contracts/product-surfaces/interaction-contracts.mjs";
 import { readPreparedProject } from "./prepared-project.mjs";
 import { validatedRecords } from "./validated-records.mjs";
-import { indexedStore } from "./indexed-store.mjs";
-import { loadHumanDecisionStore, saveHumanDecisionStore, readHumanRequestStore, saveHumanRequestStore } from "./human-stores.mjs";
-import { withNativeTrace, readNativeTraceExport } from "./native-traces.mjs";
+import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
+import { migrateRecordState } from "../../../runtime/touba-runtime/src/sqlite-state-migration.mjs";
+import { auditHumanStore, loadHumanDecisionStore, saveHumanDecisionStore, readHumanRequestStore, saveHumanRequestStore } from "./human-stores.mjs";
+import { withNativeTrace, readNativeTraceIndex, readNativeTracePage, nativeTraceExportChunks } from "./native-traces.mjs";
+import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
+import { writeChunks } from "../../touba-run/src/trace-output.mjs";
+import { tracePrefixDigestFromEvents } from "../../../runtime/touba-runtime/src/execution-checkpoints.mjs";
 import {
   buildElementAuthoringChangeSet,
   ELEMENT_AUTHORING_SCHEMA_VERSION,
@@ -54,10 +63,9 @@ import {
   loadSecretsFromJson,
   loadToolBindingManifestFromJson,
   ToubaRuntimeError,
-  tracePrefixDigest,
   validateExecutionCheckpoint,
 } from "@touba/runtime";
-import { createIndexedEffectJournal, loadIndexedEffectJournal } from "./indexed-effect-journal.mjs";
+import { createSqliteEffectJournal, auditSqliteEffectJournal } from "../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs";
 import {
   buildDeploymentBundle,
   deploymentReadinessChecks,
@@ -98,6 +106,7 @@ import {
 } from "./interactions.mjs";
 
 const DEFAULT_HOST = "127.0.0.1";
+const TRACE_PREVIEW_EVENTS = 200;
 const DEFAULT_PORT = 8791;
 const DEFAULT_HUMAN_DECISIONS_PATH = ".touba/human-decisions.sqlite";
 const DEFAULT_CHANGE_PROPOSALS_PATH = ".touba/project-change-proposals.json";
@@ -300,17 +309,25 @@ if (isMainModule()) {
 }
 
 export function createToubaProjectServer(options = {}) {
+  options = { ...options };
+  const ownsTraceStorage = options.traceStorage === undefined;
   const root = resolve(options.projectRoot ?? process.cwd());
   if (!existsSync(root) || !statSync(root).isDirectory()) throw serviceError("ToubaServeProjectRootMissing", "project root must be an existing directory");
-  let release = acquireStateLease(root);
-  const dropLease = () => { release?.(); release = null; };
+  let release = null;
+  const dropLease = () => {
+    if (ownsTraceStorage) { options.traceStorage?.close(); options.traceStorage = undefined; }
+    release?.(); release = null;
+  };
   try {
-    const service = createProjectServerWithLease(options);
+    const service = createProjectServerWithLease(options, () => { release = acquireStateLease(root); });
     return {
       ...service,
       async start() {
         release ??= acquireStateLease(root);
-        try { return await service.start(); }
+        try {
+          if (ownsTraceStorage) options.traceStorage ??= createSqliteTraceStore({ filename: join(root, ".touba/traces.sqlite") });
+          return await service.start();
+        }
         catch (error) { try { await service.stop(); } finally { dropLease(); } throw error; }
       },
       async stop() { try { await service.stop(); } finally { dropLease(); } },
@@ -318,7 +335,7 @@ export function createToubaProjectServer(options = {}) {
   } catch (error) { dropLease(); throw error; }
 }
 
-function createProjectServerWithLease(options) {
+function createProjectServerWithLease(options, takeLease) {
   if (options.tracePureFunctions !== undefined && !["full", "calls"].includes(options.tracePureFunctions)) {
     throw serviceError("ToubaServeTraceDetailInvalid", "tracePureFunctions must be full or calls");
   }
@@ -498,9 +515,6 @@ function createProjectServerWithLease(options) {
         "previous-build state exists beside the configured indexed store; preserve it and finish or archive it with its original build before starting this build");
     }
   }
-  if (inspectStateOrigin(projectRoot).status === "different_build") {
-    throw serviceError("ToubaServeStateBuildMismatch", "state belongs to another build; use its preserved executable and run --check-state before changing builds");
-  }
   preflightServeOptions({
     contractsRoot,
     projectRoot,
@@ -521,14 +535,20 @@ function createProjectServerWithLease(options) {
     eventJournalLimit,
     strict: options.strict === true,
   });
+  // Reject invalid options before creating project state. From here onward,
+  // the lease protects origin checks, recovery and persistent initialization.
+  takeLease();
+  if (inspectStateOrigin(projectRoot).status === "different_build") {
+    throw serviceError("ToubaServeStateBuildMismatch", "state belongs to another build; use its preserved executable and run --check-state before changing builds");
+  }
   admitStateOrigin(projectRoot, [sandboxCheckpointsPath, humanRequestsPath, humanDecisionsPath,
     effectJournalPath, interactionSessionsPath, interactionAssetsPath]);
+  options.traceStorage ??= createSqliteTraceStore({ filename: join(projectRoot, ".touba/traces.sqlite") });
   recoverProjectChangeTransactions({ projectRoot });
   // Stored waits must already satisfy the canonical contract; never rewrite
   // historical records or invent missing correlation/trace evidence.
-  loadSandboxCheckpointStore(sandboxCheckpointsPath);
-  readHumanRequestStore(humanRequestsPath);
-  loadHumanDecisionStore(humanDecisionsPath);
+  auditHumanStore(humanRequestsPath, "requests");
+  auditHumanStore(humanDecisionsPath, "decisions");
   auditInteractionAssets(interactionAssetsPath);
   validateHumanWaitInteractionProjectionMarkers({
     interactionSessionsPath,
@@ -698,6 +718,7 @@ function createProjectServerWithLease(options) {
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
           tracePureFunctions: options.tracePureFunctions,
+          traceStorage: options.traceStorage,
       contractsRoot,
       effectJournalPath,
       humanRequestsPath,
@@ -1005,6 +1026,7 @@ function createProjectServerWithLease(options) {
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
           tracePureFunctions: options.tracePureFunctions,
+          traceStorage: options.traceStorage,
           cancelRequestedProvider: () => controller.cancelRequested,
           contractsRoot,
           dispatchAuthorityProvider,
@@ -1329,6 +1351,7 @@ function createProjectServerWithLease(options) {
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
           tracePureFunctions: options.tracePureFunctions,
+          traceStorage: options.traceStorage,
           contractsRoot,
           dispatchAuthorityProvider: executionDispatchAuthorityProvider({
             accessToken: request.headers["x-touba-identity-token"],
@@ -1931,7 +1954,7 @@ function createProjectServerWithLease(options) {
         response.end(buffer);
         return;
       }
-      const nativeTraceMatch = /^\/runs\/([^/]+)\/trace$/u.exec(url.pathname);
+      const nativeTraceMatch = /^\/runs\/([^/]+)\/trace(?:\/segments\/(\d+))?$/u.exec(url.pathname);
       if (request.method === "GET" && nativeTraceMatch !== null) {
         // Mobile pairing tokens expose bounded operational surfaces, not native
         // execution evidence. The project token/identity boundary still applies.
@@ -1939,12 +1962,39 @@ function createProjectServerWithLease(options) {
           writeJson(response, 403, { status: "error", code: "ToubaServeNativeTraceUnauthorized" });
           return;
         }
-        const evidence = readNativeTraceExport(projectRoot, decodeURIComponent(nativeTraceMatch[1]));
+        const runId = decodeURIComponent(nativeTraceMatch[1]);
+        const evidence = readNativeTraceIndex(projectRoot, runId);
         if (evidence === null) {
           writeJson(response, 404, { status: "error", code: "ToubaServeNativeTraceUnavailable" });
         } else {
           response.setHeader("cache-control", "no-store");
-          writeJson(response, 200, evidence);
+          if (nativeTraceMatch[2] !== undefined) {
+            const pageOptions = {};
+            for (const key of ["after", "limit"]) if (url.searchParams.has(key)) {
+              const raw = url.searchParams.get(key);
+              if (!/^-?\d+$/u.test(raw) || !Number.isSafeInteger(Number(raw))
+                || (key === "limit" ? Number(raw) < 1 || Number(raw) > 1000 : Number(raw) < -1)) {
+                writeJson(response, 400, { status: "error", code: "ToubaServeNativeTracePageInvalid" }); return;
+              }
+              pageOptions[key] = Number(raw);
+            }
+            const segmentIndex = Number(nativeTraceMatch[2]);
+            if (!Number.isSafeInteger(segmentIndex)) {
+              writeJson(response, 400, { status: "error", code: "ToubaServeNativeTracePageInvalid" }); return;
+            }
+            const reference = evidence.segments[segmentIndex]?.reference;
+            if (reference && pageOptions.after !== undefined && (pageOptions.after < reference.start_index - 1
+              || pageOptions.after >= reference.start_index + reference.event_count)) {
+              writeJson(response, 400, { status: "error", code: "ToubaServeNativeTracePageInvalid" }); return;
+            }
+            const page = readNativeTracePage(projectRoot, runId, segmentIndex, pageOptions);
+            writeJson(response, page ? 200 : 404, page ?? { status: "error", code: "ToubaServeNativeTraceUnavailable" });
+          } else if (url.searchParams.get("index") === "true") writeJson(response, 200, evidence);
+          else {
+            response.setHeader("content-type", "application/json; charset=utf-8");
+            try { await writeChunks(response, nativeTraceExportChunks(projectRoot, runId)); response.end(); }
+            catch (error) { response.destroy(error); }
+          }
         }
         return;
       }
@@ -1978,6 +2028,7 @@ function createProjectServerWithLease(options) {
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
           tracePureFunctions: options.tracePureFunctions,
+          traceStorage: options.traceStorage,
           contractsRoot,
           effectJournalPath,
           executionKind: "trigger",
@@ -2304,6 +2355,7 @@ function createProjectServerWithLease(options) {
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
           humanApprovalInitiator: options.humanApprovalInitiator,
           tracePureFunctions: options.tracePureFunctions,
+          traceStorage: options.traceStorage,
           contractsRoot,
           dispatchAuthorityProvider: executionDispatchAuthorityProvider({
             accessToken: request.headers["x-touba-identity-token"],
@@ -2890,7 +2942,7 @@ export function preflightServeOptions({
     && (!existsSync(effectJournalPath) || !statSync(effectJournalPath).isDirectory())
   ) {
     try {
-      loadIndexedEffectJournal(effectJournalPath);
+      auditSqliteEffectJournal(effectJournalPath);
     } catch (cause) {
       diagnostics.push(serviceDiagnostic(
         "ToubaServeEffectJournalPathInvalid",
@@ -3334,7 +3386,7 @@ export function readOperationRecovery({
     throw serviceError("ToubaServeOperationNotFound", "operation recovery state is unavailable");
   }
 
-  const entries = createIndexedEffectJournal(effectJournalPath).entriesForScope(normalizedOperationId);
+  const entries = createSqliteEffectJournal(effectJournalPath).entriesForScope(normalizedOperationId);
   const effects = operationEffectSummary(entries);
   const status = operationRecoveryStatus({ execution, human });
   const correlations = {
@@ -3564,6 +3616,7 @@ export function readProjectTriggerStatus({
 }
 
 export async function executeProjectSandboxRun({
+  projectRoot,
   agentDecisionProvider,
   agentDecisionProviderContentMode,
   agentDecisionProviderInitialMode,
@@ -3574,6 +3627,7 @@ export async function executeProjectSandboxRun({
   humanApprovalAuthorityTimeoutMs,
   humanApprovalInitiator,
   tracePureFunctions,
+  traceStorage,
   contractsRoot,
   cancelRequestedProvider,
   dispatchAuthorityProvider,
@@ -3581,7 +3635,6 @@ export async function executeProjectSandboxRun({
   effectJournalPath = join(projectRoot, DEFAULT_EFFECT_JOURNAL_PATH),
   executionKind,
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
-  projectRoot,
   request,
   operationId: requestedOperationId,
   runId: requestedRunId,
@@ -3627,7 +3680,7 @@ export async function executeProjectSandboxRun({
     required: secretsRequired,
     secretsPath,
   });
-  const effectJournal = providedEffectJournal ?? createIndexedEffectJournal(effectJournalPath, {
+  const effectJournal = providedEffectJournal ?? createSqliteEffectJournal(effectJournalPath, {
     secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
   });
   // RESUME-1 is intentionally limited to direct entry graphs. Trigger
@@ -3639,7 +3692,9 @@ export async function executeProjectSandboxRun({
     targetRef: targetExecutionRef,
     toolBindingManifest,
   })
-    ? async ({ checkpoint, trace }) => {
+    ? async observation => {
+      const { checkpoint } = observation;
+      const trace = observation.traceReader ?? observation.trace;
       persistSandboxExecutionCheckpoint({
         checkpoint,
         createdAt: startedAt,
@@ -3667,6 +3722,7 @@ export async function executeProjectSandboxRun({
       humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
       tracePureFunctions,
+      traceStorage,
       cancelRequestedProvider,
       dispatchAuthorityProvider,
       durableHumanApprovals: true,
@@ -3756,6 +3812,7 @@ export async function executeProjectSandboxRun({
 }
 
 export function buildSandboxRunResult({
+  approvalRefs = [],
   completedAt,
   effectPolicy,
   executionKind,
@@ -3778,7 +3835,8 @@ export function buildSandboxRunResult({
     effect_policy: effectPolicy,
     result: runtimeResult.result ?? null,
     ...sandboxMessages(runtimeResult.messages ?? []),
-    trace: sandboxTraceSummary(runtimeResult.trace),
+    trace: sandboxTraceSummary(runtimeResult.traceReader ?? runtimeResult.trace,
+      [...approvalRefs, runtimeResult.checkpoint?.approval_ref].filter(Boolean)),
     diagnostics: [sandboxRunDiagnostic(runtimeResult, executionKind)],
   };
 }
@@ -3841,9 +3899,7 @@ function sandboxRunDiagnostic(runtimeResult, executionKind) {
       humanTerminal === "cancelled" ? "warning" : "error",
     );
   }
-  const runtimeFailure = [...(runtimeResult.trace?.events ?? [])]
-    .reverse()
-    .find((event) => (event.kind ?? event.type) === "failure_detected");
+  const runtimeFailure = lastRuntimeTraceEvent(runtimeResult, event => (event.kind ?? event.type) === "failure_detected");
   if (runtimeFailure) {
     return serviceDiagnostic(
       runtimeFailure.payload?.runtime_error_code ?? "ToubaSandboxRuntimeFailure",
@@ -3870,6 +3926,7 @@ export async function resumeProjectSandboxRun({
   humanApprovalAuthorityTimeoutMs,
   humanApprovalInitiator,
   tracePureFunctions,
+  traceStorage,
   contractsRoot,
   cancelRequestedProvider,
   dispatchAuthorityProvider,
@@ -3899,6 +3956,7 @@ export async function resumeProjectSandboxRun({
       humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
       tracePureFunctions,
+      traceStorage,
       cancelRequestedProvider,
       contractsRoot,
       dispatchAuthorityProvider,
@@ -3942,7 +4000,7 @@ export async function resumeProjectSandboxRun({
     required: secretsRequired,
     secretsPath,
   });
-  const effectJournal = createIndexedEffectJournal(effectJournalPath, {
+  const effectJournal = createSqliteEffectJournal(effectJournalPath, {
     secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
   });
   const startedMs = Date.now();
@@ -3960,6 +4018,7 @@ export async function resumeProjectSandboxRun({
       humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
       tracePureFunctions,
+      traceStorage,
       cancelRequestedProvider,
       dispatchAuthorityProvider,
       durableHumanApprovals: true,
@@ -4007,6 +4066,7 @@ export async function resumeProjectSandboxRun({
     runId: record.run_id,
     runtimeResult,
     startedAt: record.paused_result?.started_at ?? generatedAt,
+    approvalRefs: [record.approval_ref],
     startedMs,
     targetRef: record.target_ref,
   });
@@ -4063,6 +4123,7 @@ async function terminalizeAutomaticHumanWait({
   humanApprovalAuthorityTimeoutMs,
   humanApprovalInitiator,
   tracePureFunctions,
+  traceStorage,
   contractsRoot,
   effectJournalPath,
   humanRequestsPath,
@@ -4098,7 +4159,7 @@ async function terminalizeAutomaticHumanWait({
       required: secretsRequired,
       secretsPath,
     });
-    const effectJournal = createIndexedEffectJournal(effectJournalPath, {
+    const effectJournal = createSqliteEffectJournal(effectJournalPath, {
       secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
     });
     const startedMs = Date.now();
@@ -4114,6 +4175,7 @@ async function terminalizeAutomaticHumanWait({
       humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
       tracePureFunctions,
+      traceStorage,
       durableHumanApprovals: true,
       effectJournal,
       effectScopeId: record.operation_id,
@@ -4154,6 +4216,7 @@ async function terminalizeAutomaticHumanWait({
       runId: record.run_id,
       runtimeResult,
       startedAt: record.paused_result?.started_at ?? record.created_at,
+      approvalRefs: [record.approval_ref],
       startedMs,
       targetRef: record.target_ref,
     });
@@ -4203,6 +4266,7 @@ async function resumeProjectDurableSandboxRun({
   humanApprovalAuthorityTimeoutMs,
   humanApprovalInitiator,
   tracePureFunctions,
+  traceStorage,
   cancelRequestedProvider,
   contractsRoot,
   dispatchAuthorityProvider,
@@ -4246,7 +4310,7 @@ async function resumeProjectDurableSandboxRun({
       required: secretsRequired,
       secretsPath,
     });
-    const effectJournal = createIndexedEffectJournal(effectJournalPath, {
+    const effectJournal = createSqliteEffectJournal(effectJournalPath, {
       secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
     });
     const durableCancelRequestedProvider = () => {
@@ -4268,13 +4332,16 @@ async function resumeProjectDurableSandboxRun({
       humanApprovalAuthorityTimeoutMs,
       humanApprovalInitiator,
       tracePureFunctions,
+      traceStorage,
       cancelRequestedProvider: durableCancelRequestedProvider,
       dispatchAuthorityProvider,
       durableHumanApprovals: true,
       effectJournal,
       effectScopeId: record.operation_id,
       entryRef: record.target_ref,
-      executionCheckpointObserver: async ({ checkpoint, trace }) => {
+      executionCheckpointObserver: async observation => {
+        const { checkpoint } = observation;
+        const trace = observation.traceReader ?? observation.trace;
         persistSandboxExecutionCheckpoint({
           checkpoint,
           createdAt: record.created_at,
@@ -4567,42 +4634,74 @@ function sandboxExecutionTerminalStatus(runtimeResult) {
   return "failed";
 }
 
-function sandboxTraceSummary(trace) {
-  const events = Array.isArray(trace?.events) ? trace.events : [];
-  const entryRef = nonEmptyString(trace?.run?.entry_ref) ?? "unknown";
+function traceEvents(trace) {
+  return typeof trace?.events === "function" ? trace.events() : trace?.events ?? [];
+}
+
+function lastRuntimeTraceEvent(result, predicate) {
+  let last;
+  for (const event of traceEvents(result?.traceReader ?? result?.trace)) if (predicate(event)) last = event;
+  return last;
+}
+
+function sandboxTraceSummary(trace, approvalRefs = []) {
+  const header = trace?.header ?? trace;
+  const entryRef = nonEmptyString(header?.run?.entry_ref) ?? "unknown";
+  const evidenceRefs = new Set(approvalRefs);
+  if (evidenceRefs.size > 2) throw serviceError("ToubaServeSandboxResultInvalid", "a projection retains the resolved and pending approval only");
+  const visibleRefs = [];
+  for (const event of traceEvents(trace)) {
+    visibleRefs.push(event.payload?.approval_ref);
+    if (visibleRefs.length > TRACE_PREVIEW_EVENTS) visibleRefs.shift();
+  }
+  const selectedRefs = new Set([...visibleRefs, ...evidenceRefs]);
   const decisionsByApproval = new Map();
-  for (const event of events) {
+  for (const event of traceEvents(trace)) {
     const payload = isPlainObject(event?.payload) ? event.payload : {};
     const approvalRef = nonEmptyString(payload.approval_ref);
     const decision = nonEmptyString(payload.decision);
-    if (approvalRef === undefined || decision === undefined) continue;
+    if (approvalRef === undefined || decision === undefined || !selectedRefs.has(approvalRef)) continue;
     const decisions = decisionsByApproval.get(approvalRef) ?? new Set();
-    decisions.add(decision);
+    if (decisions.size < 2) decisions.add(decision);
     decisionsByApproval.set(approvalRef, decisions);
   }
+  const events = [];
+  const evidence = new Map();
+  let count = 0, startIndex = 0;
+  const budgets = sandboxTraceBudgetUsage([]);
+  for (const event of traceEvents(trace)) {
+    const index = count++;
+    if (index === 0) startIndex = event.sequence_index ?? 0;
+    const type = nonEmptyString(event.kind ?? event.type) ?? "event";
+    const payload = isPlainObject(event?.payload) ? event.payload : {};
+    const approvalRef = nonEmptyString(payload.approval_ref);
+    const knownDecisions = approvalRef === undefined ? undefined : decisionsByApproval.get(approvalRef);
+    const humanDecision = humanApprovalTraceDecision(type, payload, knownDecisions);
+    const references = sandboxTraceEventReferences(event, type, humanDecision);
+    const authorityRef = references.authorityRef
+      ?? (/^run_(started|completed|cancelled)$/u.test(type) ? entryRef : null);
+    const projected = {
+      index: Number.isInteger(event.sequence_index) ? event.sequence_index : index,
+      type,
+      summary: boundedResultText(sandboxTraceEventSummary(event, type), 1024),
+      ...(authorityRef ? { authority_ref: authorityRef } : {}),
+      ...(references.relatedRef ? { related_ref: references.relatedRef } : {}),
+      severity: sandboxTraceEventSeverity(event, type),
+      redaction: type.includes("secret") ? "secrets_redacted" : "payload_minimized",
+    };
+    events.push(projected);
+    if (events.length > TRACE_PREVIEW_EVENTS) events.shift();
+    if (evidenceRefs.has(approvalRef) && type.startsWith("human_approval_")) evidence.set(`${type}:${approvalRef}`, projected);
+    if (type === "agent_decision_requested") budgets.steps_used++;
+    if (type === "tool_binding_authorized") budgets.tool_calls_used++;
+    if (type === "agent_decision_provider_call_attempted") budgets.provider_calls_used++;
+  }
   return {
-    run_id: nonEmptyString(trace?.run?.run_id) ?? "unknown",
+    run_id: nonEmptyString(header?.run?.run_id) ?? "unknown",
     entry_ref: entryRef,
-    event_count: events.length,
-    events: events.map((event, index) => {
-      const type = nonEmptyString(event.kind ?? event.type) ?? "event";
-      const payload = isPlainObject(event?.payload) ? event.payload : {};
-      const approvalRef = nonEmptyString(payload.approval_ref);
-      const knownDecisions = approvalRef === undefined ? undefined : decisionsByApproval.get(approvalRef);
-      const humanDecision = humanApprovalTraceDecision(type, payload, knownDecisions);
-      const references = sandboxTraceEventReferences(event, type, humanDecision);
-      const authorityRef = references.authorityRef
-        ?? (/^run_(started|completed|cancelled)$/u.test(type) ? entryRef : null);
-      return {
-        index: Number.isInteger(event.sequence_index) ? event.sequence_index : index,
-        type,
-        summary: sandboxTraceEventSummary(event, type),
-        ...(authorityRef ? { authority_ref: authorityRef } : {}),
-        ...(references.relatedRef ? { related_ref: references.relatedRef } : {}),
-        severity: sandboxTraceEventSeverity(event, type),
-        redaction: type.includes("secret") ? "secrets_redacted" : "payload_minimized",
-      };
-    }),
+    event_count: count, start_index: startIndex,
+    events, events_truncated: count > events.length,
+    approval_evidence: [...evidence.values()].filter(event => event.index < (events[0]?.index ?? 0)), budget_usage: budgets,
   };
 }
 
@@ -4613,14 +4712,24 @@ function mergeSandboxTraceSummaries(...summaries) {
     entry_ref: "unknown",
     events: [],
   };
-  const events = available
-    .flatMap((summary) => Array.isArray(summary.events) ? summary.events : [])
-    .map((event, index) => ({ ...event, index }));
+  let count = 0;
+  const events = [], budgets = sandboxTraceBudgetUsage([]);
+  let evidence = [];
+  for (const summary of available) {
+    const offset = count - (summary.start_index ?? 0);
+    events.push(...(summary.events ?? []).map(event => ({ ...event, index: event.index + offset })));
+    if (events.length > TRACE_PREVIEW_EVENTS) events.splice(0, events.length - TRACE_PREVIEW_EVENTS);
+    evidence = (summary.approval_evidence ?? []).map(event => ({ ...event, index: event.index + offset }));
+    const usage = summary.budget_usage ?? sandboxTraceBudgetUsage(summary.events ?? []);
+    for (const key of Object.keys(budgets)) budgets[key] += usage[key];
+    count += summary.event_count;
+  }
   return {
     run_id: nonEmptyString(latest.run_id) ?? "unknown",
     entry_ref: nonEmptyString(latest.entry_ref) ?? "unknown",
-    event_count: events.length,
-    events,
+    event_count: count, start_index: 0,
+    events, events_truncated: count > events.length,
+    approval_evidence: evidence, budget_usage: budgets,
   };
 }
 
@@ -4642,12 +4751,23 @@ function mergeDurableTraceSummaries(prefix, segment) {
     }
     eventsByIndex.set(event.index, structuredClone(event));
   }
-  const events = [...eventsByIndex.values()].sort((left, right) => left.index - right.index);
+  const events = [...eventsByIndex.values()].sort((left, right) => left.index - right.index).slice(-TRACE_PREVIEW_EVENTS);
+  const start = segment.start_index ?? segment.events[0]?.index ?? 0;
+  if (start !== 0 && start !== prefix.event_count) {
+    throw serviceError("DurableResumeCheckpointIncompatible", "trace segment must follow its retained prefix");
+  }
+  const count = start + segment.event_count;
+  const budgets = { ...(segment.budget_usage ?? sandboxTraceBudgetUsage(segment.events)) };
+  if (start) {
+    const before = prefix.budget_usage ?? sandboxTraceBudgetUsage(prefix.events);
+    for (const key of Object.keys(budgets)) budgets[key] += before[key];
+  }
   return {
     run_id: prefix.run_id,
     entry_ref: nonEmptyString(segment.entry_ref) ?? nonEmptyString(prefix.entry_ref) ?? "unknown",
-    event_count: events.length,
-    events,
+    event_count: count, start_index: 0,
+    events, events_truncated: count > events.length,
+    approval_evidence: segment.approval_evidence ?? [], budget_usage: budgets,
   };
 }
 
@@ -4717,6 +4837,8 @@ function persistSandboxCurrentSurfaces({ contractsRoot, result, runSummaryPath, 
     schema_version: "touba-trace-timeline-v1",
     run_id: result.run_id,
     trace_ref: traceRef,
+    event_count: result.trace.event_count,
+    events_truncated: result.trace.events_truncated ?? false,
     events: result.trace.events.map((event) => ({
       index: event.index,
       type: event.type,
@@ -4740,7 +4862,7 @@ function persistSandboxCurrentSurfaces({ contractsRoot, result, runSummaryPath, 
     refusals: result.diagnostics
       .filter((diagnostic) => diagnostic.severity === "error")
       .map((diagnostic) => ({ code: diagnostic.code, message: diagnostic.message, source_ref: result.target_ref })),
-    budgets: sandboxTraceBudgetUsage(result.trace.events),
+    budgets: result.trace.budget_usage ?? sandboxTraceBudgetUsage(result.trace.events),
   };
   validateContractPayload({
     contractsRoot,
@@ -4761,7 +4883,7 @@ function persistSandboxCurrentSurfaces({ contractsRoot, result, runSummaryPath, 
 }
 
 function sandboxHumanTerminalDecision(runtimeResult, approvalRef) {
-  const event = [...(runtimeResult?.trace?.events ?? [])].reverse().find((candidate) => (
+  const event = lastRuntimeTraceEvent(runtimeResult, candidate => (
     ["human_approval_rejected", "human_approval_expired", "human_approval_cancelled"]
       .includes(candidate.kind ?? candidate.type)
     && (
@@ -4777,7 +4899,13 @@ function sandboxHumanTerminalDecision(runtimeResult, approvalRef) {
 }
 
 function summarizedHumanApprovalEventExists(result, type, approvalRef, decision) {
-  return (result?.trace?.events ?? []).some((event) => (
+  const trace = result?.trace;
+  if (!Array.isArray(trace?.events) || !Number.isSafeInteger(trace.event_count)
+    || trace.events.length !== Math.min(TRACE_PREVIEW_EVENTS, trace.event_count)
+    || !Array.isArray(trace.approval_evidence ?? []) || (trace.approval_evidence?.length ?? 0) > 32
+    || (trace.approval_evidence ?? []).some(event => !Number.isSafeInteger(event?.index) || event.index < 0
+      || event.index >= (trace.events[0]?.index ?? 0) || !event.type?.startsWith("human_approval_"))) return false;
+  return [...(result?.trace?.events ?? []), ...(result?.trace?.approval_evidence ?? [])].some((event) => (
     event?.type === type
     && event.authority_ref === approvalRef
     && event.related_ref === `decision:${decision}`
@@ -4934,12 +5062,12 @@ function validateHumanWaitInteractionProjectionMarkers({
   interactionSessionsPath,
   sandboxCheckpointsPath,
 }) {
-  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath, filter).records.filter((record) => (
-    record.record_kind === "human"
-  ));
   const sessions = new Map(readInteractionSessions(interactionSessionsPath)
     .map(session => [session.session_id, session]));
-  for (const record of records) {
+  // The scan validates every checkpoint, including execution records, without
+  // materializing the historical collection. Active uniqueness spans pages.
+  for (const page of sandboxCheckpointPages(sandboxCheckpointsPath, filter)) for (const record of page) {
+    if (record.record_kind !== "human") continue;
     const projectionMayHaveExpired = ["completed", "superseded"].includes(record.status)
       && record.human_wait.resolution?.status === "completed"
       && record.human_wait.projections.terminal_event !== null
@@ -9145,30 +9273,37 @@ function isMeasuredDispatchReservationReplacement(record, checkpoint) {
 }
 
 function verifyObservedExecutionTrace({ checkpoint, previousCheckpoint, trace }) {
-  const events = Array.isArray(trace?.events) ? trace.events : [];
+  const header = trace?.header ?? trace;
   const previousNextIndex = previousCheckpoint?.trace_state?.next_sequence_index ?? 0;
-  const firstSequenceIndex = events.length === 0
-    ? previousNextIndex
-    : events[0]?.sequence_index;
+  let firstSequenceIndex = previousNextIndex, count = 0, contiguous = true;
+  for (const event of traceEvents(trace)) {
+    if (count === 0) firstSequenceIndex = event?.sequence_index;
+    if (event?.sequence_index !== firstSequenceIndex + count) contiguous = false;
+    count++;
+  }
   if (
-    !isPlainObject(trace?.run)
-    || trace.run.run_id !== checkpoint.run_id
-    || trace.run.entry_ref !== checkpoint.entry_ref
+    !isPlainObject(header?.run)
+    || header.run.run_id !== checkpoint.run_id
+    || header.run.entry_ref !== checkpoint.entry_ref
     || !Number.isSafeInteger(firstSequenceIndex)
     || firstSequenceIndex < 0
-    || events.some((event, index) => event?.sequence_index !== firstSequenceIndex + index)
-    || checkpoint.trace_state.next_sequence_index !== firstSequenceIndex + events.length
+    || !contiguous
+    || checkpoint.trace_state.next_sequence_index !== firstSequenceIndex + count
   ) {
     throw serviceError("DurableResumeCheckpointIncompatible", "observed trace segment is not contiguous with its checkpoint");
   }
   const localEventOffset = previousNextIndex - firstSequenceIndex;
-  if (!Number.isSafeInteger(localEventOffset) || localEventOffset < 0 || localEventOffset > events.length) {
+  if (!Number.isSafeInteger(localEventOffset) || localEventOffset < 0 || localEventOffset > count) {
     throw serviceError("DurableResumeCheckpointIncompatible", "observed trace segment does not extend the stored prefix");
   }
   const previousPrefixDigest = previousCheckpoint?.trace_state?.prefix_digest ?? null;
-  const observedPrefixDigest = localEventOffset === events.length && previousPrefixDigest !== null
+  function* delta() {
+    let index = 0;
+    for (const event of traceEvents(trace)) if (index++ >= localEventOffset) yield event;
+  }
+  const observedPrefixDigest = localEventOffset === count && previousPrefixDigest !== null
     ? previousPrefixDigest
-    : tracePrefixDigest(previousPrefixDigest, trace, localEventOffset);
+    : tracePrefixDigestFromEvents(previousPrefixDigest, header.run, delta());
   if (observedPrefixDigest !== checkpoint.trace_state.prefix_digest) {
     throw serviceError("DurableResumeCheckpointIntegrityMismatch", "observed trace prefix digest does not match the checkpoint");
   }
@@ -9515,38 +9650,47 @@ function repairHumanWaitProjections({
   humanRequestsPath,
   sandboxCheckpointsPath,
 }) {
-  const store = loadSandboxCheckpointStore(sandboxCheckpointsPath, activeOnly ? [{ active_human: 1 }] : undefined);
-  const records = activeOnly ? activeHumanWaitRecords(store) : store.records;
-  const projectedDecisions = new Map(loadHumanDecisionStore(humanDecisionsPath,
-    activeOnly ? [{ request_id: records.filter(record => record.record_kind === "human").map(record => record.request_id) }] : undefined)
-    .decisions.map(decision => [decision.request_id, decision]));
-  for (const record of records) {
-    if (record.record_kind !== "human") continue;
-    const request = record.human_wait.request;
-    validateContractPayload({
-      contractsRoot,
-      schemaVersion: request.schema_version,
-      value: request,
-      errorCode: "ToubaServePendingHumanRequestInvalid",
-      message: "durable human request does not match its product contract",
-    });
-    projectHumanRequestDocument({ humanRequestsPath, request });
-    const resolution = record.human_wait.resolution;
-    const conflictingProjection = projectedDecisions.get(record.request_id);
-    if (resolution?.kind !== "decision") {
-      if (
-        conflictingProjection !== undefined
-        && ["pending", "resolution_claimed"].includes(record.status)
-      ) {
-        throw serviceError(
-          "ToubaServeSandboxCheckpointStoreInvalid",
-          "human decision projection conflicts with the durable wait arbiter",
-        );
+  for (const records of sandboxCheckpointPages(sandboxCheckpointsPath, activeOnly ? [{ active_human: 1 }] : undefined)) {
+    const filter = [{ request_id: records.filter(record => record.record_kind === "human").map(record => record.request_id) }];
+    const requests = readHumanRequestStore(humanRequestsPath, filter);
+    const projectedRequests = new Map([...requests.approvals, ...requests.reviews].map(request => [request.request_id, request]));
+    const projectedDecisions = new Map(loadHumanDecisionStore(humanDecisionsPath, filter)
+      .decisions.map(decision => [decision.request_id, decision]));
+    for (const record of records) {
+      if (record.record_kind !== "human") continue;
+      const request = record.human_wait.request;
+      validateContractPayload({
+        contractsRoot,
+        schemaVersion: request.schema_version,
+        value: request,
+        errorCode: "ToubaServePendingHumanRequestInvalid",
+        message: "durable human request does not match its product contract",
+      });
+      const projectedRequest = projectedRequests.get(record.request_id);
+      if (projectedRequest === undefined) projectHumanRequestDocument({ humanRequestsPath, request });
+      else if (canonicalDigest(projectedRequest) !== canonicalDigest(request)) {
+        throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "human request projection diverges from its durable wait");
       }
-      continue;
+      const resolution = record.human_wait.resolution;
+      const conflictingProjection = projectedDecisions.get(record.request_id);
+      if (resolution?.kind !== "decision") {
+        if (
+          conflictingProjection !== undefined
+          && ["pending", "resolution_claimed"].includes(record.status)
+        ) {
+          throw serviceError(
+            "ToubaServeSandboxCheckpointStoreInvalid",
+            "human decision projection conflicts with the durable wait arbiter",
+          );
+        }
+        continue;
+      }
+      validateStoredDecisionSnapshot({ contractsRoot, decision: resolution.decision });
+      if (conflictingProjection === undefined) projectHumanDecisionDocument({ humanDecisionsPath, decision: resolution.decision });
+      else if (canonicalDigest(conflictingProjection) !== canonicalDigest(resolution.decision)) {
+        throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "human decision projection diverges from its durable wait claim");
+      }
     }
-    validateStoredDecisionSnapshot({ contractsRoot, decision: resolution.decision });
-    projectHumanDecisionDocument({ humanDecisionsPath, decision: resolution.decision });
   }
 }
 
@@ -9913,11 +10057,22 @@ function indexedCheckpointStore(path) {
   });
 }
 
-export function loadSandboxCheckpointStore(sandboxCheckpointsPath, filter) {
+export function migrateSandboxCheckpoints(options) {
+  return migrateRecordState(options, { schemaVersion: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION,
+    fields: ["records"], recordsOf: document => document.records,
+    validateRecord: validateCurrentCheckpointRecord, validateSet: validateSandboxHumanWaitSet,
+    keyOf: record => JSON.stringify([record.record_kind, record.record_kind === "human" ? record.request_id : record.operation_id]),
+    storeOf: indexedCheckpointStore,
+  });
+}
+
+export function loadSandboxCheckpointStore(sandboxCheckpointsPath, filter, pagination) {
   try {
-    const records = indexedCheckpointStore(sandboxCheckpointsPath).read(filter);
+    const store = indexedCheckpointStore(sandboxCheckpointsPath);
+    const page = pagination ? store.page({ filter, ...pagination }) : undefined;
+    const records = page ? page.items : store.read(filter);
     validateSandboxHumanWaitSet(records);
-    return { schema_version: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION, records };
+    return { schema_version: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION, records, ...(page ? { next: page.next } : {}) };
   } catch (error) {
     if (error instanceof SyntaxError || typeof error.errno === "number" || error.code?.startsWith("ERR_SQLITE")
       || error.code === "ToubaStoreRecordInvalid" || error.code === "ToubaStoreFormatIncompatible") {
@@ -9926,6 +10081,33 @@ export function loadSandboxCheckpointStore(sandboxCheckpointsPath, filter) {
     }
     throw error;
   }
+}
+
+function* sandboxCheckpointPages(path, filter) {
+  let after;
+  const activeRuns = new Set();
+  for (;;) {
+    const page = loadSandboxCheckpointStore(path, filter, { after, limit: 100 });
+    for (const record of activeHumanWaitRecords(page)) {
+      if (activeRuns.has(record.run_id) || activeRuns.size >= MAX_ACTIVE_HUMAN_WAITS) {
+        throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "active human waits violate their global capacity or run identity");
+      }
+      activeRuns.add(record.run_id);
+    }
+    if (page.next === null) return;
+    yield page.records;
+    after = page.next;
+  }
+}
+
+function auditSandboxCheckpoints(path) {
+  let entry_count = 0, active_waits = 0, active_operations = 0;
+  for (const records of sandboxCheckpointPages(path)) for (const record of records) {
+    entry_count++;
+    if (record.record_kind === "human" && ["pending", "resolution_claimed"].includes(record.status)) active_waits++;
+    if (record.record_kind === "execution" && !["completed", "failed", "cancelled"].includes(record.status)) active_operations++;
+  }
+  return { schema_version: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION, entry_count, active_waits, active_operations };
 }
 
 function saveSandboxCheckpointStore(sandboxCheckpointsPath, store) {
@@ -10714,14 +10896,14 @@ function isSandboxTraceSummary(value, runId, checkpoint) {
     || !Number.isSafeInteger(value.event_count)
     || value.event_count < 0
     || !Array.isArray(value.events)
-    || value.events.length !== value.event_count
+    || value.events.length !== Math.min(TRACE_PREVIEW_EVENTS, value.event_count)
     || !isPlainObject(checkpoint.trace_state)
     || !Number.isSafeInteger(checkpoint.trace_state.next_sequence_index)
     || checkpoint.trace_state.next_sequence_index !== value.event_count
   ) return false;
   return value.events.every((event, index) => (
     isPlainObject(event)
-    && event.index === index
+    && event.index === value.event_count - value.events.length + index
     && typeof event.type === "string"
     && typeof event.summary === "string"
     && ["info", "warning", "error"].includes(event.severity)
@@ -11690,10 +11872,10 @@ export function checkToubaProjectState(options = {}) {
   const copies = {};
   try {
     for (const [key, fallback, load] of [
-      ["sandboxCheckpointsPath", DEFAULT_SANDBOX_CHECKPOINTS_PATH, loadSandboxCheckpointStore],
-      ["humanRequestsPath", DEFAULT_HUMAN_REQUESTS_PATH, readHumanRequestStore],
-      ["humanDecisionsPath", DEFAULT_HUMAN_DECISIONS_PATH, loadHumanDecisionStore],
-      ["effectJournalPath", DEFAULT_EFFECT_JOURNAL_PATH, loadIndexedEffectJournal],
+      ["sandboxCheckpointsPath", DEFAULT_SANDBOX_CHECKPOINTS_PATH, auditSandboxCheckpoints],
+      ["humanRequestsPath", DEFAULT_HUMAN_REQUESTS_PATH, path => auditHumanStore(path, "requests")],
+      ["humanDecisionsPath", DEFAULT_HUMAN_DECISIONS_PATH, path => auditHumanStore(path, "decisions")],
+      ["effectJournalPath", DEFAULT_EFFECT_JOURNAL_PATH, auditSqliteEffectJournal],
       ["interactionSessionsPath", DEFAULT_INTERACTION_SESSIONS_PATH, path => ({ schema_version: INTERACTION_SESSION_STORE_SCHEMA_VERSION, sessions: readInteractionSessions(path) })],
       ["interactionAssetsPath", DEFAULT_INTERACTION_ASSETS_PATH, auditInteractionAssets],
     ]) {
@@ -11710,18 +11892,19 @@ export function checkToubaProjectState(options = {}) {
         // Current stores use DELETE journaling. An active journal/WAL means a
         // stopped, consistent snapshot has not been established.
         if (["-journal", "-wal", "-shm"].some(suffix => existsSync(path + suffix))) throw Object.assign(new Error(), { code: "ToubaServeStateSnapshotRequired" });
-        const bytes = readFileSync(path);
-        if (!bytes.subarray(0, 16).equals(Buffer.from("SQLite format 3\0"))) throw Object.assign(new Error(), { code: "ToubaStoreFormatIncompatible" });
+        const header = Buffer.alloc(16), fd = openSync(path, "r");
+        try { readSync(fd, header, 0, 16, 0); } finally { closeSync(fd); }
+        if (!header.equals(Buffer.from("SQLite format 3\0"))) throw Object.assign(new Error(), { code: "ToubaStoreFormatIncompatible" });
         const copy = copies[key];
-        writeFileSync(copy, bytes, { mode: 0o600 });
+        copyFileSync(path, copy); chmodSync(copy, 0o600);
         const value = load(copy);
         const records = value.records ?? value.decisions ?? value.entries ?? value.sessions ?? value.assets ?? [...(value.approvals ?? []), ...(value.reviews ?? [])];
         stores.push({ store: key, exists: true, schema_version: value.schema_version ?? null,
-          records: Array.isArray(records) ? records.length : Object.keys(records).length,
-          active_waits: Array.isArray(value.records) ? value.records.filter(record => record.record_kind === "human" && ["pending", "resolution_claimed"].includes(record.status)).length : 0,
-          active_operations: Array.isArray(value.sessions)
+          records: value.entry_count ?? (Array.isArray(records) ? records.length : Object.keys(records).length),
+          active_waits: value.active_waits ?? 0,
+          active_operations: value.active_operations ?? (Array.isArray(value.sessions)
             ? value.sessions.flatMap(session => session.operations ?? []).filter(operation => ["queued", "running", "awaiting_human", "cancel_requested", "interrupted"].includes(operation.status)).length
-            : Array.isArray(value.records) ? value.records.filter(record => record.record_kind === "execution" && !["completed", "failed", "cancelled"].includes(record.status)).length : 0 });
+            : 0) });
       } catch (error) { diagnostics.push({ code: error.code ?? "ToubaServeStoredStateInvalid", store: key }); }
     }
     if (diagnostics.length === 0) {

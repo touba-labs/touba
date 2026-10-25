@@ -1,0 +1,55 @@
+module pilot
+
+import tool Read from touba.http_api
+import type WriteReceipt from touba.sql_effects
+
+tool CreateOrder
+    description "Create one order transactionally in the host database."
+    takes order_id as Text
+    gives WriteReceipt
+    requires network, secret_read
+    secrets PILOT_DATABASE
+
+tool ReadStatus
+    takes order_id as Text
+    gives Text
+    requires network, secret_read
+    secrets PILOT_DATABASE
+
+tool ReleaseOrder
+    description "Release the order identified by the original effect receipt."
+    gives Text
+    requires network, secret_read
+    secrets PILOT_DATABASE
+
+strategy Create
+    takes order_id as Text
+    gives WriteReceipt
+    uses Read
+    uses CreateOrder
+    do
+        Read
+            with path as "/catalog"
+            into catalog
+        CreateOrder
+            with order_id as order_id
+            into stored
+        give stored
+
+strategy Reconcile
+    takes order_id as Text
+    gives Text
+    uses ReadStatus
+    do
+        ReadStatus
+            with order_id as order_id
+            into status
+        give status
+
+strategy Release
+    gives Text
+    uses ReleaseOrder
+    do
+        ReleaseOrder
+            into released
+        give released

@@ -20,6 +20,7 @@ import {
   setProjectSecret,
 } from "./project.mjs";
 import { packageCommand } from "./package-command.mjs";
+import { triggerStateCommand } from "./trigger-state-command.mjs";
 import { sdkCommand } from "./sdk-command.mjs";
 import { readHostDecisionsFile } from "./host-decisions.mjs";
 import {
@@ -154,6 +155,14 @@ try {
 
 async function dispatch(rawArgs) {
   const [command, ...rest] = rawArgs;
+  if (command === "state") {
+    const { stateCommand } = await import("./state-command.mjs");
+    return stateCommand(rest);
+  }
+  if (command === "trace") {
+    const { traceCommand } = await import("../../touba-run/src/trace-command.mjs");
+    return traceCommand(rest);
+  }
   if (command === "explore") {
     const { exploreCommand } = await import("../../touba-inspect/src/explorer/server.mjs");
     await exploreCommand(rest);
@@ -499,8 +508,9 @@ function runUsage() {
     "  --agent-model-input-max-bytes <n>",
     "  --max-agent-steps <n> --max-provider-calls <n> --max-tool-calls <n>",
     "  --entry <air-ref>",
-    "  --output show|result|trace|all|run-summary|json",
+    "  --output show|result|trace|all|run-summary|json|json-reference",
     "  --trace-out <path>",
+    "  --trace-store <path.sqlite> (durable trace journal)",
     "  --evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]",
     "Exit codes: 0 success, 1 execution/admission error, 2 usage error, 3 pending input/approval, 4 stopped/refused, 5 cancelled.",
   ].join("\n");
@@ -508,6 +518,7 @@ function runUsage() {
 
 function triggerCommand(rawArgs) {
   const [subcommand, ...tail] = rawArgs;
+  if (["state", "migrate-state", "archive-state", "queue", "migrate-queue", "archive-queue"].includes(subcommand)) return triggerStateCommand(subcommand, tail);
   if (subcommand === "run") {
     return runCommand(tail);
   }
@@ -517,8 +528,14 @@ function triggerCommand(rawArgs) {
   if (subcommand === undefined || subcommand === "--help" || subcommand === "-h") {
     return {
       text: [
-        "Usage: touba trigger run <air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json> [--trace-out <path>] [--output show|result|trace|all|run-summary|json]",
-        "       touba trigger serve <air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--host 127.0.0.1] [--port 8787] [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]",
+        "Usage: touba trigger run <air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> [--state <path.sqlite>] [--trace-out <path>] [--output show|result|trace|all|run-summary|json]",
+        "       touba trigger serve <air.json> --manifest <path> [--state <path.sqlite>] [--queue <path.sqlite>] [--host 127.0.0.1] [--port 8787] [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]",
+        "       touba trigger state <path.sqlite> [--trigger <ref>] [--after <cursor>] [--limit <1..1000>]",
+        "       touba trigger migrate-state <old.json> --out <new.sqlite> [--apply]",
+        "       touba trigger archive-state <path.sqlite> --before <ISO date> [--out <new.sqlite> --apply]",
+        "       touba trigger queue <path.sqlite> [--after <cursor>] [--limit <1..1000>]",
+        "       touba trigger migrate-queue <old.json> --out <new.sqlite> [--apply]",
+        "       touba trigger archive-queue <path.sqlite> --before <ISO date> [--out <new.sqlite> --apply]",
       ].join("\n"),
       exitCode: 0,
     };
@@ -1720,11 +1737,15 @@ function printUsage() {
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
   touba run (<program.air.json> | --project <path>) [--profile pure|dev|prod] [runtime options]
+  touba trace read --store <traces.sqlite> --reference-json <json> [--after <n>] [--limit <1..1000>]
+  touba trace export --store <traces.sqlite> --postgres-env <NAME> [--watch] [--batch-size <1..1000>]
+  touba state migrate <kind> <source.json> --out <new.sqlite> [--apply]
+  touba state list effects|compensations <path.sqlite> [--after <cursor>] [--limit <1..1000>]
   touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.sqlite>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--identity-control-plane-url URL] [--identity-service-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
   touba deploy plan|publish|list|activate|rollback|target ...
   touba refresh --url <touba-serve-url> [--auth-token-env NAME] [--reason <text>]
-  touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba.trigger-state.json>
-  touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]
+  touba trigger run <program.air.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> [--state <path.sqlite>]
+  touba trigger serve <program.air.json> --manifest <path> [--state <path.sqlite>] [--queue <path.sqlite>] [--auth-token-env NAME] [--signature-secret-env NAME] [--max-attempts n]
   touba inspect <artifact> [inspect options] [--report-out <report.inspect.txt>]
   touba explore [project] [--port <number>] [--no-open]
   touba audit --trace <trace.json> [--air <air.json>] [--source <file.tb>] [--manifest <touba.manifest.json>] [--audit-manifest <trace-audit.json>] [--export <export.json>] [--report-out <report.trace-audit-report.json>] [--timeline-out <timeline.trace-timeline.json>] [--output text|json]

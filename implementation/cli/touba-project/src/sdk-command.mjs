@@ -8,12 +8,14 @@ const toolchainRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const languages = { javascript: "sdk", python: "python_sdk" };
 const help = `Usage:
   touba sdk install javascript [--root <project>]
-  touba sdk install python [--root <project>] [--python <executable>]
+  touba sdk install python [--root <project>] [--python <executable>] [--manager auto|uv|pip]
   touba sdk path javascript|python
 
 Install the matching bundled SDK offline in this project, never globally.
-JavaScript requires npm; Python requires Python 3.11+ with venv and pip.
+JavaScript requires npm; Python requires Python 3.11+ and uv or pip.
 Python creates or reuses .venv. --python selects its base interpreter.
+--manager auto selects uv for a project with uv.lock, otherwise pip.
+uv projects keep their SDK dependency in pyproject.toml and uv.lock.
 The archives are copied into vendor/touba-sdk for reproducible installations.
 Both SDKs can coexist. Choose generated handlers with init --language javascript|python.
 Other package managers can use the verified archive returned by sdk path.`;
@@ -83,11 +85,12 @@ function preserveArchive(root, sdk) {
   return target;
 }
 
-export function installSdk(language, { root = process.cwd(), python, distributionRoot = toolchainRoot } = {}) {
+export function installSdk(language, { root = process.cwd(), python, manager = "auto", distributionRoot = toolchainRoot } = {}) {
+  if (!["auto", "uv", "pip"].includes(manager)) fail("--manager must be auto, uv or pip.");
   const sdk = bundledSdk(language, distributionRoot);
   root = realpathSync(resolve(root)); regular(root, true);
   if (language === "javascript") {
-    if (python) fail("--python applies only to the Python SDK.");
+    if (python || manager !== "auto") fail("--python and --manager apply only to the Python SDK.");
     for (const lock of ["pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"]) {
       if (existsSync(join(root, lock))) fail(`Project uses ${lock}; use touba sdk path javascript with that package manager. No lockfile was changed.`);
     }
@@ -105,21 +108,43 @@ export function installSdk(language, { root = process.cwd(), python, distributio
     run(process.execPath, ["--input-type=module", "-e", 'import { ToubaEngine } from "@touba/sdk"; if (typeof ToubaEngine !== "function") process.exit(1);'], root, {}, {phase:"JavaScript SDK import"});
     return { language, archive, root, package: sdk.name, version: sdk.version, verify: 'node --input-type=module -e \'import { ToubaEngine } from "@touba/sdk"; console.log(typeof ToubaEngine)\'' };
   }
+  for (const file of ["pyproject.toml", "uv.lock", "uv.toml", "poetry.lock", "Pipfile.lock", "pdm.lock"]) {
+    if (existsSync(join(root, file))) regular(join(root, file));
+  }
+  const uvProject = existsSync(join(root, "uv.lock"));
+  manager = manager === "auto" ? (uvProject ? "uv" : "pip") : manager;
+  if (uvProject && manager !== "uv") fail("Project uses uv.lock; use --manager uv to keep its dependency declaration and lock consistent.");
+  for (const file of ["poetry.lock", "Pipfile.lock", "pdm.lock"]) {
+    if (existsSync(join(root, file))) fail(`Project uses ${file}; use touba sdk path python with that package manager. No lockfile was changed.`);
+  }
+  if (uvProject && !existsSync(join(root, "pyproject.toml"))) fail("uv.lock requires a project pyproject.toml.");
+  if (manager === "uv") run("uv", ["--version"], root, {}, { phase: "uv availability" });
   const venv = join(root, ".venv");
   if (existsSync(venv)) { regular(venv, true); regular(join(venv, "pyvenv.cfg")); }
   const executable = join(venv, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-  const pythonEnv = { PYTHONNOUSERSITE: "1", PIP_NO_INPUT: "1", PIP_DISABLE_PIP_VERSION_CHECK: "1" };
+  const pythonEnv = { PYTHONNOUSERSITE: "1", PIP_NO_INPUT: "1", PIP_DISABLE_PIP_VERSION_CHECK: "1",
+    UV_OFFLINE: "true", UV_PYTHON_DOWNLOADS: "never", UV_PROJECT_ENVIRONMENT: venv };
   if (!existsSync(venv)) {
     const base = python ?? (process.platform === "win32" ? "python" : "python3");
     run(base, ["-I", "-c", 'import sys; assert sys.version_info >= (3, 11), "Python 3.11 or newer is required"'], root, pythonEnv);
-    run(base, ["-I", "-m", "venv", venv], root, pythonEnv);
+    if (manager === "uv") run("uv", ["venv", "--offline", "--no-config", "--no-python-downloads", "--python", base, venv], root, pythonEnv);
+    else run(base, ["-I", "-m", "venv", venv], root, pythonEnv);
   }
   const actualPrefix = run(executable, ["-I", "-c", 'import sys; assert sys.version_info >= (3, 11); assert sys.prefix != sys.base_prefix, "A virtual environment is required"; print(sys.prefix)'], root, pythonEnv);
   if (realpathSync(actualPrefix) !== realpathSync(venv)) fail("Python interpreter does not belong to this project's .venv.");
   const archive = preserveArchive(root, sdk);
-  run(executable, ["-I", "-m", "pip", "--isolated", "install", "--no-index", "--no-deps", "--force-reinstall", archive], root, pythonEnv);
+  if (manager === "uv") {
+    if (existsSync(join(root, "pyproject.toml"))) {
+      // Resolve and record the local wheel through the project's manager. No
+      // sync: unrelated dependencies and the project itself are not installed.
+      run("uv", ["add", "--offline", "--no-sync", "--no-build", "--no-python-downloads", "--python", executable, archive], root, pythonEnv, { phase: "offline uv dependency resolution" });
+    }
+    run("uv", ["pip", "install", "--offline", "--no-config", "--no-index", "--no-deps", "--no-build", "--reinstall", "--python", executable, archive], root, pythonEnv, { phase: "offline uv SDK installation" });
+  } else {
+    run(executable, ["-I", "-m", "pip", "--isolated", "install", "--no-index", "--no-deps", "--force-reinstall", archive], root, pythonEnv);
+  }
   run(executable, ["-I", "-c", "from touba_sdk import ToubaEngine, AsyncToubaEngine; assert callable(ToubaEngine) and callable(AsyncToubaEngine)"], root, pythonEnv);
-  return { language, archive, root, package: sdk.name, version: sdk.version, python: executable, verify: process.platform === "win32" ? '.venv\\Scripts\\python.exe -c "from touba_sdk import ToubaEngine; print(ToubaEngine)"' : '.venv/bin/python -c "from touba_sdk import ToubaEngine; print(ToubaEngine)"' };
+  return { language, manager, archive, root, package: sdk.name, version: sdk.version, python: executable, verify: process.platform === "win32" ? '.venv\\Scripts\\python.exe -c "from touba_sdk import ToubaEngine; print(ToubaEngine)"' : '.venv/bin/python -c "from touba_sdk import ToubaEngine; print(ToubaEngine)"' };
 }
 
 export function sdkCommand(args) {
@@ -129,7 +154,7 @@ export function sdkCommand(args) {
   const options = {};
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
-    if (action !== "install" || !["--root", "--python"].includes(flag) || !rest[i + 1] || rest[i + 1].startsWith("--")) fail(`Unknown or incomplete SDK option: ${flag}`);
+    if (action !== "install" || !["--root", "--python", "--manager"].includes(flag) || Object.hasOwn(options, flag.slice(2)) || !rest[i + 1] || rest[i + 1].startsWith("--")) fail(`Unknown, duplicate or incomplete SDK option: ${flag}`);
     options[flag.slice(2)] = rest[++i];
   }
   if (action === "path") return { text: bundledSdk(language).path, exitCode: 0 };

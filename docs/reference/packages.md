@@ -245,6 +245,19 @@ projet consommateur. Les commandes sont identiques pour les handlers
 JavaScript et Python. L'adresse ci-dessus illustre un registre compatible ;
 elle ne désigne pas un service public Touba ouvert.
 
+La CLI conserve la dernière révision acceptée et les clés déjà vues dans
+`registry-trust.json.sqlite`, à côté du fichier de confiance choisi. Gardez
+ces deux fichiers ensemble. Une révision plus ancienne, un contenu différent
+à révision identique ou une clé révoquée interrompent la commande. Pour une
+rotation, l'opérateur fournit d'abord un fichier avec les deux clés actives,
+puis retire ou révoque l'ancienne. Une révocation observée reste effective
+après restauration d'un ancien fichier de confiance.
+
+Déplacer le fichier de confiance sans son état SQLite démarre un nouvel
+amorçage. Le premier accès s'appuie sur la clé vérifiée et la validité de la
+signature ; sauvegarder l'état conserve ensuite la protection anti-retour arrière.
+
+
 `touba package check archive.tar.gz --publishing` vérifie directement une
 archive sans l'installer ni exécuter ses tests contributeur.
 

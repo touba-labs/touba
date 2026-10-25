@@ -201,8 +201,9 @@ function copyPackage(relativePackage, destination) {
 function copyRuntimeContracts() {
   for (const root of ["lib/contracts"]) {
     mkdirSync(join(toolchainRoot, root), { recursive: true });
-    copyFileSync(join(implementationRoot, "contracts/resource-bindings.mjs"), join(toolchainRoot, root, "resource-bindings.mjs"));
-    copyFileSync(join(implementationRoot, "contracts/run-outcome.mjs"), join(toolchainRoot, root, "run-outcome.mjs"));
+    for (const name of ["resource-bindings.mjs", "run-outcome.mjs", "trace-reference.mjs"]) {
+      copyFileSync(join(implementationRoot, "contracts", name), join(toolchainRoot, root, name));
+    }
   }
   for (const family of ["machine", "product-surfaces", "hardened", "packages", "design"]) {
     const source = join(implementationRoot, "contracts", family);

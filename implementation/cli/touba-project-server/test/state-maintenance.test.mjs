@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { archiveProjectState, restoreProjectState, acquireStateLease } from "../src/state-maintenance.mjs";
 import { checkToubaProjectState } from "../src/serve.mjs";
 import { createInteractionSession, enqueueInteractionOperation } from "../src/interactions.mjs";
+import { withNativeTrace, readNativeTraceExport } from "../src/native-traces.mjs";
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "touba-state-archive-test-"));
@@ -18,8 +19,11 @@ function fixture(t) {
   return { projectRoot: root, session };
 }
 
-test("state archive previews, preserves bytes, restores and leaves project configuration alone", t => {
+test("state archive previews, preserves bytes, restores and leaves project configuration alone", async t => {
   const options = fixture(t), root = join(options.projectRoot, ".touba");
+  const trace = JSON.parse(readFileSync(new URL("../../../tests/traces/tb-v01-003-branch.trace.json", import.meta.url)));
+  await withNativeTrace({ projectRoot: options.projectRoot, runId: trace.run.run_id, phase: "initial" }, async () => ({ status: "success", trace }));
+  const evidence = readNativeTraceExport(options.projectRoot, trace.run.run_id);
   const original = readFileSync(join(root, "interaction-sessions.sqlite"));
   const preview = archiveProjectState(options, checkToubaProjectState);
   assert.equal(preview.status, "preview");
@@ -27,11 +31,14 @@ test("state archive previews, preserves bytes, restores and leaves project confi
   const archive = archiveProjectState({ ...options, applyState: true }, checkToubaProjectState);
   assert.equal(archive.status, "archived");
   assert.equal(existsSync(join(root, "interaction-sessions.sqlite")), false);
+  assert.equal(existsSync(join(root, "native-traces.sqlite")), false);
+  assert.equal(existsSync(join(root, "traces.sqlite")), false);
   assert.equal(readFileSync(join(options.projectRoot, "touba.secrets.dev.json"), "utf8"), "do not archive");
   const restore = { ...options, restoreState: archive.archive_id };
   assert.equal(restoreProjectState(restore).status, "restore_preview");
   assert.equal(restoreProjectState({ ...restore, applyState: true }).status, "restored");
   assert.deepEqual(readFileSync(join(root, "interaction-sessions.sqlite")), original);
+  assert.deepEqual(readNativeTraceExport(options.projectRoot, trace.run.run_id), evidence);
   assert.equal(checkToubaProjectState(options).status, "structurally_valid");
 });
 

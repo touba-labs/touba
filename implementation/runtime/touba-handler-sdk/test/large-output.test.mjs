@@ -6,6 +6,38 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ToubaEngine, ToubaEngineError } from "../src/index.mjs";
+import { createSqliteTraceStore } from "../../touba-runtime/src/sqlite-trace-store.mjs";
+
+test("reference mode returns a small business result when a real trace exceeds the SDK transport limit", { timeout: 120000 }, async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-large-reference-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // Long binding names make the trace large without enlarging business output.
+  // Execute the actual compiler, runtime and SDK; do not substitute a fake trace.
+  const binding = "value_" + "x".repeat(40000);
+  writeFileSync(join(root, "large.tb"), `module large.reference\nstrategy Run\n    takes batches as List of Int\n    takes items as List of Int\n    gives Text\n    do\n        for batch in batches\n            for item in items\n                bind ${binding} as Int = item\n        give "done"\n`);
+  const engine = new ToubaEngine({ projectRoot: root, command: process.execPath,
+    commandArgs: ["--max-old-space-size=48", cli] });
+  t.after(() => engine.close());
+  const result = await engine.run({ source: "large.tb", inputs: {
+    batches: Array.from({ length: 10 }, (_, i) => i), items: Array.from({ length: 90 }, (_, i) => i) },
+    traceStore: "traces.sqlite", traceMode: "reference" });
+  assert.equal(result.result, "done"); assert.equal(result.trace, null);
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) < 4096);
+  const store = createSqliteTraceStore({ filename: join(root, "traces.sqlite"), readOnly: true });
+  try {
+    const [segment] = [...store.segments()];
+    assert.ok(segment.bytes > 32 * 1024 * 1024, `${segment.bytes} bytes`);
+    let count = 0, after;
+    while (true) {
+      const page = await engine.readTrace({ traceStore: "traces.sqlite", reference: result.traceReference, after, limit: 1000 });
+      assert.ok(Buffer.byteLength(JSON.stringify(page.events)) < 1024 * 1024 + 2000);
+      count += page.events.length; after = page.next;
+      if (page.done) break;
+    }
+    assert.equal(count, result.traceReference.event_count);
+    t.diagnostic(`${segment.bytes} serialized bytes; ${count} events; Core heap limit 48 MiB`);
+  } finally { store.close(); }
+});
 
 const cli = fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url));
 

@@ -116,7 +116,7 @@ touba trigger run daily_research.air.json \
   --manifest touba.manifest.json \
   --trigger trigger:examples.daily_research/DailyResearchSchedule \
   --max-runs 1 \
-  --state touba.trigger-state.json \
+  --state touba.triggers.sqlite \
   --trace-out daily_research.trace.json
 ```
 
@@ -126,28 +126,26 @@ Résultat attendu après environ une seconde :
 Daily research run: daily review
 ```
 
-`--max-runs` est obligatoire pour éviter toute boucle implicite. `--state` est
-obligatoire pour que le runner conserve la preuve des événements consommés et
-applique les quotas de manière durable. Le runner s’arrête après le nombre de
-runs demandé.
+`--max-runs` fixe le nombre d’exécutions. Le registre SQLite par défaut est
+`.touba/triggers.sqlite`, dans le projet ou à côté de l’AIR hors projet.
+`--state` permet de choisir un autre fichier `.sqlite`.
 
 La trace écrite dans `daily_research.trace.json` contient l’événement reçu, l’acceptation du trigger, le début d’exécution et la fin du run.
 
-Le fichier `touba.trigger-state.json` suit le schéma
-`touba-trigger-state-v1`. Il mémorise les `event_id` consommés, les refus
+Le registre SQLite mémorise les `event_id` consommés, les refus
 observés et la clé de jour UTC utilisée pour appliquer `max_runs_per_day`, sans
 payload brut. Si un même événement est rejoué, Touba refuse avant de relancer la
 stratégie avec `TriggerReplayRejected`. Une acceptation enregistrée un jour
 précédent ne bloque pas le premier événement du jour courant. Le chemin passé à
-`--state` doit se terminer par `.trigger-state.json`.
+`--state` doit se terminer par `.triggers.sqlite`.
 
 ## 5. Lancer le service webhook
 
 ```sh title="Terminal"
 touba trigger serve daily_research.air.json \
   --manifest touba.manifest.json \
-  --state touba.trigger-state.json \
-  --queue touba.trigger-queue.json \
+  --state touba.triggers.sqlite \
+  --queue touba.trigger-queue.sqlite \
   --trace-dir traces \
   --max-events 1
 ```
@@ -158,9 +156,9 @@ d'effets local :
 ```sh title="Terminal"
 touba trigger serve daily_research.air.json \
   --manifest touba.manifest.json \
-  --state touba.trigger-state.json \
-  --queue touba.trigger-queue.json \
-  --effect-journal touba.effect-journal.json
+  --state touba.triggers.sqlite \
+  --queue touba.trigger-queue.sqlite \
+  --effect-journal touba.effect-journal.sqlite
 ```
 
 Le service refuse de démarrer sans ce journal. Le `queue_id` de l'entrée sert
@@ -176,7 +174,7 @@ curl -X POST http://127.0.0.1:8787/webhook/daily-research \
 ```
 
 Le service répond `202 queued`, inscrit une entrée dans
-`touba.trigger-queue.json`, exécute la stratégie, écrit l’état TD-1 et produit
+`touba.trigger-queue.sqlite`, exécute la stratégie, écrit l’état TD-1 et produit
 une trace par entrée si `--trace-dir` est fourni. Le corps HTTP brut n’est pas
 injecté comme input Touba implicite et n’est pas écrit dans la queue, l’état ou
 la trace ; la queue conserve la taille, le digest SHA-256 du payload et les
@@ -242,7 +240,7 @@ Ce mode sert aux tests d’hôte ou d’adapter. Il fournit l’événement à l
 ```sh title="Terminal"
 touba inspect daily_research.air.json
 touba inspect trace.json
-touba inspect touba.trigger-state.json
+touba trigger state touba.triggers.sqlite --trigger trigger:examples.daily_research/DailyResearchSchedule
 touba inspect daily_research.air.json --manifest touba.manifest.json
 ```
 
@@ -251,6 +249,46 @@ durable de trigger (TD-1), elle affiche les compteurs d’acceptations, de refus
 d’`event_id` consommés. Le service webhook existe quand il est lancé
 explicitement par `touba trigger serve` ; la supervision de déploiement relève
 de l’environnement hôte.
+
+## Conservation et migration
+
+L’admission du déclencheur est enregistrée avant le lancement de sa stratégie.
+Un arrêt du processus conserve ainsi l’identité consommée. Les compteurs sont
+calculés par jour UTC ; les identifiants anti-rejeu restent conservés après archivage.
+
+Le registre est limité à 512 Mio par défaut. `--state-max-bytes` ajuste ce
+plafond (minimum 65 536 octets). Un registre plein bloque une nouvelle admission.
+
+```sh title="Consulter une page"
+touba trigger state touba.triggers.sqlite --limit 100
+touba trigger state touba.triggers.sqlite --after 100 --limit 100
+```
+
+Utilisez la valeur `next` renvoyée comme curseur de la page suivante.
+`--trigger <référence>` filtre les événements et ajoute les compteurs du trigger.
+
+```sh title="Archiver les événements terminés"
+touba trigger archive-state touba.triggers.sqlite --before 2026-10-01T00:00:00Z
+touba trigger archive-state touba.triggers.sqlite --before 2026-10-01T00:00:00Z \
+  --out archives/triggers-octobre.sqlite --apply
+```
+
+La première commande prévisualise. La seconde copie puis vérifie l’archive
+avant de retirer les détails des événements réussis et des refus. Les événements
+actifs, suspendus ou d’issue incertaine, les compteurs et les identifiants
+consommés restent dans le registre. L’archive se consulte avec `touba trigger state`.
+
+Pour convertir un ancien état JSON, arrêtez son service puis lancez :
+
+```sh title="Migration explicite"
+touba trigger migrate-state ancien.trigger-state.json --out touba.triggers.sqlite
+touba trigger migrate-state ancien.trigger-state.json --out touba.triggers.sqlite --apply
+```
+
+La migration crée un nouveau registre et une copie exacte `.source-backup.json`.
+Elle conserve le fichier d’origine et refuse d’écraser une destination existante.
+Les états migrés restent d’issue incertaine, car l’ancien registre conservait
+l’admission mais pas le résultat final. Aucun événement n’est relancé.
 
 ## Refus utiles
 
@@ -265,26 +303,26 @@ de l’environnement hôte.
 | Même identité webhook et même digest | entrée et `queue_id` existants réutilisés |
 | Même identité webhook et digest divergent | `TriggerEventPayloadConflict` avant mise en queue |
 | En-tête `x-touba-event-id` invalide | `TriggerEventIdInvalid` avant mise en queue |
-| Runner lancé sans `--state` | refus CLI avant exécution |
-| Service webhook sans `--queue` | refus CLI avant démarrage |
+| Service webhook sans `--queue` | file SQLite dans `.touba/trigger-queue.sqlite` |
 | Écriture externe sans `--effect-journal` | refus CLI avant démarrage |
 | Payload request non conforme au manifest | refus avant mise en queue |
 | Signature webhook invalide | refus avant mise en queue |
 | Service webhook exposé hors loopback sans token | refus CLI avant démarrage |
 
-Le worker du service est unique dans le processus. Il sérialise les entrées et
-se réveille à l’échéance d’un retry sans attendre un nouveau webhook. Utilisez
-un seul processus pour un même ensemble de fichiers `--queue`, `--state` et,
-le cas échéant, `--effect-journal` : leur partage entre plusieurs processus
-n’est pas supporté.
+Le worker sérialise les entrées et se réveille à l’échéance d’un retry.
+La prise en charge et les mises à jour des entrées sont transactionnelles.
+Une entrée expirée reste réservée à son processus tant que celui-ci est vivant.
+Déployez un seul service par projet ; la coordination des effets entre hôtes
+nécessite un protocole de reprise supplémentaire.
 
 La reprise d’une entrée `processing` périmée conserve
 `recovery_effect_outcome: "unknown"`, car un effet externe a pu réussir avant
 l'interruption. Le contrat d'effet V1 est obligatoire : le journal autorise
 une nouvelle tentative d'écriture inconnue
-uniquement pour `idempotency_key` et bloque `reconcile` ou `none`. Les fichiers
-de queue, d'état et de journal sont remplacés atomiquement chacun de leur côté,
-mais ne forment pas une transaction avec l'effet externe. Le service ne promet
+uniquement pour `idempotency_key` et bloque `reconcile` ou `none`. La queue,
+le journal et l’état des déclencheurs utilisent des transactions SQLite.
+L’admission est durable avant le lancement de la stratégie.
+Ces écritures ne forment pas une transaction avec l’effet externe. Le service ne promet
 donc pas `exactly-once` ni un rapprochement automatique.
 
 ## Portée

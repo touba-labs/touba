@@ -1,3 +1,5 @@
+import { readEffectJournalFixture } from "../../../tests/helpers/effect-journal.mjs";
+import { createSqliteTriggerStore, migrateTriggerState } from "../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -10,6 +12,7 @@ import { generateSupplyChainLock } from "../../touba-supply-chain/src/generate.m
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { validateRunResult } from "../../../contracts/run-outcome.mjs";
+import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
 
 const LINEAR_FETCH_SOURCE_TOOL_REF = "tool:examples.linear_skill/FetchSource";
 const STRATEGY_APPLY_CHANGE_TOOL_REF = "tool:examples.strategy_agents/ApplyChange";
@@ -991,7 +994,7 @@ process.stdin.on('end', () => {
     assert.equal(refused.status, 1);
     assert.match(refused.stderr, /EffectContextRequired|EffectJournalRequired/);
     assert.equal(existsSync(marker), false);
-    const journal = join(workspace, "run.effect-journal.json");
+    const journal = join(workspace, "run.effect-journal.sqlite");
     for (let index = 0; index < 2; index++) {
       const run = spawnSync(process.execPath, [...args, "--effect-journal", journal], { encoding: "utf8" });
       assert.equal(run.status, 0, run.stderr);
@@ -999,7 +1002,7 @@ process.stdin.on('end', () => {
       assert.equal(existsSync(journal + ".lock"), false);
     }
     assert.equal(readFileSync(marker, "utf8"), "write\nwrite\n");
-    const entries = Object.values(JSON.parse(readFileSync(journal, "utf8")).entries);
+    const entries = Object.values(readEffectJournalFixture(journal).entries);
     assert.equal(entries.length, 2);
     assert.equal(new Set(entries.map(entry => entry.effect_scope_id)).size, 2);
     assert.deepEqual(entries.map(entry => entry.state), ["applied", "applied"]);
@@ -2748,12 +2751,24 @@ test("runs a trigger event through explicit manifest and event JSON", () => {
   }
 });
 
-test("persists trigger state and refuses replayed trigger events", () => {
+for (const mode of ["trace", "json-reference"]) test(`persists trigger state and refuses replayed trigger events (${mode})`, () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-trigger-state-"));
   try {
     const airPath = writeAirDocument(workspace, triggerDocument());
     const manifestPath = writeTriggerManifest(workspace);
-    const statePath = join(workspace, "touba.trigger-state.json");
+    const statePath = join(workspace, "touba.triggers.sqlite");
+    const database = join(workspace, "traces.sqlite");
+    const traceFrom = output => {
+      const value = JSON.parse(output);
+      if (mode === "trace") return value;
+      validateRunResult(value);
+      const store = createSqliteTraceStore({ filename: database, readOnly: true });
+      try {
+        const page = store.readReference(value.trace_reference);
+        assert.equal(page.done, true);
+        return { ...page.header, events: page.events };
+      } finally { store.close(); }
+    };
 
     const first = spawnSync(
       process.execPath,
@@ -2767,12 +2782,12 @@ test("persists trigger state and refuses replayed trigger events", () => {
         "--state",
         statePath,
         "--output",
-        "trace",
+        mode, "--trace-store", database,
       ],
       { encoding: "utf8" },
     );
     assert.equal(first.status, 0, first.stderr);
-    const firstTrace = JSON.parse(first.stdout);
+    const firstTrace = traceFrom(first.stdout);
     assert.equal(eventOf(firstTrace, "trigger_event_received").payload.event_id, "evt-cli-001");
     assert.equal(eventOf(firstTrace, "trigger_event_accepted").payload.trigger_ref, "trigger:examples.cli_trigger/DailyRun");
 
@@ -2788,13 +2803,13 @@ test("persists trigger state and refuses replayed trigger events", () => {
         "--state",
         statePath,
         "--output",
-        "trace",
+        mode, "--trace-store", database,
       ],
       { encoding: "utf8" },
     );
     assert.equal(replay.status, 1);
     assert.match(replay.stderr, /TriggerReplayRejected/);
-    const replayTrace = JSON.parse(replay.stdout);
+    const replayTrace = traceFrom(replay.stdout);
     validateTraceMachineContract(replayTrace);
     assert.equal(replayTrace.run.air_digest, firstTrace.run.air_digest);
     assert.equal(replayTrace.events.at(-1).payload.reason, "TriggerReplayRejected");
@@ -2822,9 +2837,8 @@ test("persists trigger state and refuses replayed trigger events", () => {
     const rateLimitedTrace = JSON.parse(rateLimited.stdout);
     assert.equal(eventOf(rateLimitedTrace, "trigger_event_refused").payload.reason, "max_runs_per_day_reached");
 
-    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const state = readTriggerState(statePath);
     const triggerState = state.triggers["trigger:examples.cli_trigger/DailyRun"];
-    assert.equal(state.trigger_state_schema_version, "touba-trigger-state-v1");
     assert.equal(triggerState.accepted_count, 1);
     assert.equal(triggerState.refused_count, 2);
     assert.deepEqual(triggerState.consumed_event_ids, ["evt-cli-001"]);
@@ -2839,8 +2853,8 @@ test("applies trigger max_runs_per_day to the current UTC day", () => {
   try {
     const airPath = writeAirDocument(workspace, triggerDocument());
     const manifestPath = writeTriggerManifest(workspace);
-    const statePath = join(workspace, "touba.trigger-state.json");
-    writeFileSync(statePath, JSON.stringify({
+    const statePath = join(workspace, "touba.triggers.sqlite");
+    writeFileSync(statePath + ".legacy.json", JSON.stringify({
       trigger_state_schema_version: "touba-trigger-state-v1",
       created_at: "2026-01-01T00:00:00.000Z",
       triggers: {
@@ -2859,6 +2873,7 @@ test("applies trigger max_runs_per_day to the current UTC day", () => {
       },
     }), "utf8");
 
+    migrateTriggerState({ source: statePath + ".legacy.json", destination: statePath, apply: true });
     const currentDay = spawnSync(
       process.execPath,
       [
@@ -2900,7 +2915,7 @@ test("applies trigger max_runs_per_day to the current UTC day", () => {
     const secondTrace = JSON.parse(secondCurrentDay.stdout);
     assert.equal(eventOf(secondTrace, "trigger_event_refused").payload.reason, "max_runs_per_day_reached");
 
-    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const state = readTriggerState(statePath);
     const events = state.triggers["trigger:examples.cli_trigger/DailyRun"].events;
     assert.equal(events.some((event) => event.event_id === "evt-current-day-001" && event.status === "accepted"), true);
     assert.equal(events.some((event) => event.event_id === "evt-current-day-002" && event.reason === "max_runs_per_day_reached"), true);
@@ -2933,7 +2948,7 @@ test("refuses invalid trigger state artifacts before trigger execution", () => {
     ]);
 
     assert.equal(failure.status, 1);
-    assert.match(failure.stderr, /TriggerStateSchemaMismatch/);
+    assert.match(failure.stderr, /TriggerStatePathInvalid/);
 
     const invalidPathFailure = runCliExpectFailure([
       runPath,
@@ -2993,7 +3008,7 @@ test("cancels after a global run timeout before the next tool dispatch", () => {
     const secondHandlerPath = join(workspace, "second.handler.mjs");
     writeFileSync(
       firstHandlerPath,
-      "setTimeout(() => process.stdout.write(JSON.stringify({ ok: true, value: 'first' })), 120);\n",
+      "setTimeout(() => process.stdout.write(JSON.stringify({ ok: true, value: 'first' })), 1500);\n",
       "utf8",
     );
     writeFileSync(
@@ -3012,7 +3027,7 @@ test("cancels after a global run timeout before the next tool dispatch", () => {
         "--manifest",
         manifestPath,
         "--run-timeout-ms",
-        "50",
+        "1000",
         "--output",
         "trace",
       ],
@@ -3022,6 +3037,7 @@ test("cancels after a global run timeout before the next tool dispatch", () => {
     const trace = JSON.parse(stdout);
     assert.equal(trace.events.at(-1).payload.status, "cancelled");
     assert.equal(eventOf(trace, "run_timeout_exceeded").payload.reason, "global_timeout_exceeded");
+    assert.ok(trace.events.some(event => event.kind === "call_completed" && event.payload.target_ref === "tool:examples.cli_timeout/First"));
     assert.equal(
       eventOf(trace, "dispatch_refused_cancelled").payload.target_ref,
       "tool:examples.cli_timeout/Second",
@@ -3037,7 +3053,7 @@ test("runs a local schedule trigger runner with a real bounded interval", () => 
   try {
     const airPath = writeAirDocument(workspace, triggerDocument({ scheduleValue: "every 1s" }));
     const manifestPath = writeTriggerManifest(workspace);
-    const statePath = join(workspace, "touba.trigger-state.json");
+    const statePath = join(workspace, "touba.triggers.sqlite");
 
     const stdout = execFileSync(
       process.execPath,
@@ -3063,15 +3079,14 @@ test("runs a local schedule trigger runner with a real bounded interval", () => 
     assert.match(eventOf(trace, "trigger_event_received").payload.event_id, /^evt-local-DailyRun-/);
     assert.equal(eventOf(trace, "trigger_event_accepted").payload.target_ref, "strategy:examples.cli_trigger/RunDaily");
     assert.equal(eventOf(trace, "trigger_execution_completed").payload.status, "success");
-    const state = JSON.parse(readFileSync(statePath, "utf8"));
-    assert.equal(state.trigger_state_schema_version, "touba-trigger-state-v1");
+    const state = readTriggerState(statePath);
     assert.equal(state.triggers["trigger:examples.cli_trigger/DailyRun"].accepted_count, 1);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
 });
 
-test("schedule runner aggregates canonical traces and preserves a later quota refusal", () => {
+for (const persisted of [false, true]) test(`schedule runner aggregates canonical traces and preserves a later quota refusal (SQLite=${persisted})`, () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-aggregate-"));
   try {
     const document = triggerDocument({ scheduleValue: "every 1s" });
@@ -3079,9 +3094,11 @@ test("schedule runner aggregates canonical traces and preserves a later quota re
     const air = writeAirDocument(workspace, document);
     const manifest = writeTriggerManifest(workspace, { limits: { max_runs_per_day: 2, timeout_ms: 30000 } });
     for (const [maxRuns, expectedStatus, exit] of [[2, "success", 0], [3, "failure", 1]]) {
+      const database = join(workspace, `traces-${maxRuns}.sqlite`);
       const result = spawnSync(process.execPath, [runPath, air, "--manifest", manifest,
+        ...(persisted ? ["--trace-store", database] : []),
         "--trigger", "trigger:examples.cli_trigger/DailyRun", "--max-runs", String(maxRuns),
-        "--state", join(workspace, `runs-${maxRuns}.trigger-state.json`), "--output", "json"], { encoding: "utf8" });
+        "--state", join(workspace, `runs-${maxRuns}.triggers.sqlite`), "--output", "json"], { encoding: "utf8" });
       assert.equal(result.status, exit, result.stderr);
       const envelope = JSON.parse(result.stdout);
       validateRunResult(envelope);
@@ -3093,6 +3110,16 @@ test("schedule runner aggregates canonical traces and preserves a later quota re
       const origins = envelope.trace.events.filter(event => event.payload?.origin_run_id).map(event => event.payload.origin_run_id);
       assert.equal(new Set(origins).size, maxRuns);
       if (exit === 1) assert.equal(envelope.result.at(-1).status, "failure");
+      if (persisted) {
+        const store = createSqliteTraceStore({ filename: database });
+        try {
+          const segments = [...store.segments()];
+          assert.equal(segments.length, maxRuns + 1);
+          assert.ok(segments.every(segment => segment.complete));
+          const aggregate = segments.find(segment => segment.runId === envelope.trace.run.run_id);
+          assert.deepEqual(store.document(aggregate.id), envelope.trace);
+        } finally { store.close(); }
+      }
     }
   } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
@@ -3105,7 +3132,7 @@ test("schedule runner stops immediately on an explicit stop, without claiming co
     document.execution_graphs[0].nodes = [node("n1", "stop", {})];
     const air = writeAirDocument(workspace, document);
     const manifest = writeTriggerManifest(workspace, { limits: { max_runs_per_day: 3, timeout_ms: 30000 } });
-    const statePath = join(workspace, "stop.trigger-state.json");
+    const statePath = join(workspace, "stop.triggers.sqlite");
     const result = spawnSync(process.execPath, [runPath, air, "--manifest", manifest,
       "--trigger", "trigger:examples.cli_trigger/DailyRun", "--max-runs", "3", "--state", statePath,
       "--output", "json"], { encoding: "utf8" });
@@ -3115,7 +3142,7 @@ test("schedule runner stops immediately on an explicit stop, without claiming co
     validateTraceMachineContract(envelope.trace);
     assert.equal(envelope.status, "stopped");
     assert.equal(envelope.reason, "explicit_stop");
-    assert.equal(JSON.parse(readFileSync(statePath, "utf8")).triggers["trigger:examples.cli_trigger/DailyRun"].accepted_count, 1);
+    assert.equal(readTriggerState(statePath).triggers["trigger:examples.cli_trigger/DailyRun"].accepted_count, 1);
   } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
 
@@ -3124,7 +3151,7 @@ test("rejects local schedule trigger runner ambiguity and unsupported schedule f
   try {
     const airPath = writeAirDocument(workspace, triggerDocument());
     const manifestPath = writeTriggerManifest(workspace);
-    const statePath = join(workspace, "touba.trigger-state.json");
+    const statePath = join(workspace, "touba.triggers.sqlite");
 
     const missingMaxRuns = runCliExpectFailure([
       runPath,
@@ -3137,18 +3164,16 @@ test("rejects local schedule trigger runner ambiguity and unsupported schedule f
     assert.equal(missingMaxRuns.status, 2);
     assert.match(missingMaxRuns.stderr, /--trigger requires --max-runs/);
 
-    const missingState = runCliExpectFailure([
+    const defaultState = spawnSync(process.execPath, [
       runPath,
       airPath,
       "--manifest",
       manifestPath,
-      "--trigger",
-      "trigger:examples.cli_trigger/DailyRun",
-      "--max-runs",
-      "1",
-    ]);
-    assert.equal(missingState.status, 2);
-    assert.match(missingState.stderr, /--trigger requires --state/);
+      "--trigger-event-json",
+      JSON.stringify(triggerEvent()),
+    ], { encoding: "utf8" });
+    assert.equal(defaultState.status, 0, defaultState.stderr);
+    assert.equal(existsSync(join(workspace, ".touba", "triggers.sqlite")), true);
 
     const triggerAndEvent = runCliExpectFailure([
       runPath,
@@ -4768,4 +4793,18 @@ function fixtureBindingArgs(airPath, value) {
     }])),
   }));
   return ["--manifest", manifestPath];
+}
+
+// Bounded fixture projection; production readers use pages and SQL summaries.
+function readTriggerState(filename) {
+  const store = createSqliteTriggerStore({ filename, readOnly: true });
+  try {
+    const triggers = {};
+    for (const event of store.page({ limit: 1000 }).items) {
+      const entry = triggers[event.trigger_ref] ??= { ...store.summary(event.trigger_ref), events: [], consumed_event_ids: [] };
+      entry.events.push(event);
+      if (event.status === "accepted") entry.consumed_event_ids.push(event.event_id);
+    }
+    return { triggers };
+  } finally { store.close(); }
 }

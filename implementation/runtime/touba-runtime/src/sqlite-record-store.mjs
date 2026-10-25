@@ -1,4 +1,4 @@
-import { closeSync, existsSync, linkSync, mkdirSync, openSync, readSync, unlinkSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -7,9 +7,13 @@ const FORMAT = "touba-indexed-record-store-v1";
 const SQLITE_HEADER = Buffer.from("SQLite format 3\0");
 const snapshots = new WeakMap();
 
-// Local persistence only. Callers own record validation and authorization.
+// Shared local persistence. Callers own record validation and authorization.
 // No connection, payload or authorization cache survives an operation.
-export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {}, checkTransaction }) {
+export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {}, checkTransaction,
+  maxBytes = 512 * 1024 * 1024, maxRecordBytes = 16 * 1024 * 1024, readOnly = false }) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 65536 || !Number.isSafeInteger(maxRecordBytes) || maxRecordBytes < 1) {
+    throw storeError("ToubaStoreConfigurationInvalid", "invalid storage or record byte limit");
+  }
   const absolutePath = resolve(path);
   const names = Object.keys(indexes);
   if (names.some(name => !/^[a-z][a-z_]*$/.test(name))) {
@@ -18,6 +22,9 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
 
   function configure(db) {
     db.exec("PRAGMA journal_mode=DELETE; PRAGMA trusted_schema=OFF; PRAGMA synchronous=EXTRA; PRAGMA fullfsync=ON; PRAGMA cache_size=-2048;");
+    const pages = Math.floor(maxBytes / db.prepare("PRAGMA page_size").get().page_size);
+    if (db.prepare("PRAGMA page_count").get().page_count > pages) throw storeError("ToubaStoreCapacityExceeded", "database exceeds its configured byte limit");
+    db.exec(`PRAGMA max_page_count=${pages};`);
   }
 
   function initialize() {
@@ -41,25 +48,60 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
       try { linkSync(temporary, absolutePath); }
       catch (error) { if (error.code !== "EEXIST") throw error; }
     } finally { unlinkSync(temporary); }
+    if (process.platform !== "win32") {
+      const directory = openSync(dirname(absolutePath), "r");
+      try { fsyncSync(directory); } finally { closeSync(directory); }
+    }
   }
 
-  function open() {
-    if (!existsSync(absolutePath)) initialize();
+  function open({ forWrite = true } = {}) {
+    if (!existsSync(absolutePath)) {
+      if (readOnly) throw storeError("ToubaStoreMissing", "stored state does not exist");
+      initialize();
+    }
+    for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+      let stat;
+      try { stat = lstatSync(absolutePath + suffix); }
+      catch (error) { if (suffix && error.code === "ENOENT") continue; throw error; }
+      // Initial publication links the completed database and then unlinks its
+      // temporary name. Another process may observe that short two-link window.
+      // Wait a bounded interval, but never accept a persistently hardlinked file.
+      if (!suffix && stat.isFile() && stat.nlink === 2) {
+        const wait = new Int32Array(new SharedArrayBuffer(4));
+        for (let attempt = 0; attempt < 25 && stat.nlink === 2; attempt++) {
+          Atomics.wait(wait, 0, 0, 10);
+          stat = lstatSync(absolutePath);
+        }
+      }
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw storeError("ToubaStorePathInvalid", "stored state must be a regular file without links");
+    }
     {
-      const fd = openSync(absolutePath, "r");
+      const fd = openSync(absolutePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       const header = Buffer.alloc(16);
-      try { readSync(fd, header, 0, 16, 0); } finally { closeSync(fd); }
+      try {
+        if (!fstatSync(fd).isFile()) throw storeError("ToubaStorePathInvalid", "stored state must be a regular file");
+        readSync(fd, header, 0, 16, 0);
+      } finally { closeSync(fd); }
       if (!header.equals(SQLITE_HEADER)) {
         throw storeError("ToubaStoreFormatIncompatible",
           "stored state is not the current indexed format; preserve it and use its original build before upgrading");
       }
     }
-    const db = new DatabaseSync(absolutePath, { timeout: 1000, allowExtension: false });
+    const db = new DatabaseSync(absolutePath, { timeout: 1000, allowExtension: false, readOnly: readOnly || !forWrite });
     try {
-      configure(db);
+      db.exec("PRAGMA trusted_schema=OFF;");
       const metadata = db.prepare("SELECT format, schema_version FROM metadata WHERE singleton=1").get();
       if (metadata?.format !== FORMAT || metadata.schema_version !== schemaVersion) {
         throw storeError("ToubaStoreFormatIncompatible", "stored state schema does not match this build; no migration was performed");
+      }
+      if (!readOnly && forWrite) configure(db);
+      else {
+        // Read paths do not change journaling or persist page-quota settings.
+        // Still reject an oversized database before returning any record.
+        const pageSize = db.prepare("PRAGMA page_size").get().page_size;
+        if (db.prepare("PRAGMA page_count").get().page_count > Math.floor(maxBytes / pageSize)) {
+          throw storeError("ToubaStoreCapacityExceeded", "database exceeds its configured byte limit");
+        }
       }
       return db;
     } catch (error) {
@@ -94,15 +136,33 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
     return { sql: ` WHERE ${clauses.join(" OR ")}`, params };
   }
 
-  function read(filter) {
+  function read(filter, page) {
     const query = selection(filter);
+    if (page) {
+      if (page.after !== undefined && typeof page.after !== "string") throw storeError("ToubaStoreQueryInvalid", "page cursor must be a record identifier");
+      if (!Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 1000) throw storeError("ToubaStoreQueryInvalid", "page limit must be between 1 and 1000");
+      // Parentheses retain the meaning of OR selections before adding a cursor.
+      query.sql = query.sql ? ` WHERE (${query.sql.slice(7)})` : " WHERE 1";
+      if (page.after !== undefined) { query.sql += " AND id>?"; query.params.push(page.after); }
+    }
     const records = [];
     const versions = new Map();
     if (existsSync(absolutePath)) {
-      const db = open();
+      const db = open({ forWrite: false });
       try {
-        for (const row of db.prepare(`SELECT id, revision, body FROM records${query.sql} ORDER BY rowid`).iterate(...query.params)) {
-          const record = JSON.parse(row.body);
+        const tail = page ? " ORDER BY id LIMIT ?" : " ORDER BY rowid";
+        const params = page ? [...query.params, page.limit] : query.params;
+        let bytes = 0;
+        for (const row of db.prepare(`SELECT id, revision, body FROM records${query.sql}${tail}`).iterate(...params)) {
+          if (page) {
+            const size = Buffer.byteLength(row.body);
+            if (size > 16 * 1024 * 1024) throw storeError("ToubaStoreRecordTooLarge", "record exceeds the page byte limit");
+            if (bytes + size > 16 * 1024 * 1024) break;
+            bytes += size;
+          }
+          let record;
+          try { record = JSON.parse(row.body); }
+          catch { throw storeError("ToubaStoreRecordInvalid", "stored record is not valid JSON"); }
           validate(record, records.length);
           if (keyOf(record) !== row.id) {
             throw storeError("ToubaStoreRecordInvalid", "stored record key does not match its content");
@@ -117,6 +177,7 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
   }
 
   function write(records, { removeIds = [] } = {}) {
+    if (readOnly) throw storeError("ToubaStoreReadOnly", "stored state is read-only");
     const snapshot = snapshots.get(records);
     if (!snapshot || snapshot.path !== absolutePath || snapshot.schemaVersion !== schemaVersion) {
       throw storeError("ToubaStoreSnapshotRequired", "write requires a snapshot read from this store");
@@ -130,6 +191,7 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
         throw storeError("ToubaStoreRecordInvalid", "record keys must be nonempty and unique");
       }
       const body = JSON.stringify(record);
+      if (Buffer.byteLength(body) > maxRecordBytes) throw storeError("ToubaStoreRecordTooLarge", "record exceeds its byte limit");
       const previous = snapshot.versions.get(id);
       const revision = previous?.revision ?? 0;
       if (body !== previous?.body) changes.push({ id, body, revision, previous });
@@ -142,7 +204,8 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
     for (const id of snapshot.versions.keys()) {
       if (!next.has(id) && !removed.has(id)) throw storeError("ToubaStoreDeletionRefused", "record deletion is not an implicit update");
     }
-    if (changes.length === 0 && removed.size === 0) return;
+    // A no-op commit still validates its read set: authorization may depend on
+    // an unchanged record that another process has revoked in the meantime.
     const db = open();
     try {
       db.exec("BEGIN IMMEDIATE");
@@ -177,7 +240,19 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
     } finally { db.close(); }
   }
 
-  return Object.freeze({ read, write, initialize() { open().close(); } });
+  return Object.freeze({ read, write,
+    page({ filter, after, limit = 100 } = {}) {
+      const items = read(filter, { after, limit });
+      return { items, next: items.length ? keyOf(items.at(-1)) : null };
+    },
+    count(filter) {
+      if (!existsSync(absolutePath)) return 0;
+      const query = selection(filter), db = open({ forWrite: false });
+      try { return db.prepare(`SELECT count(*) AS n FROM records${query.sql}`).get(...query.params).n; }
+      finally { db.close(); }
+    },
+    initialize() { open().close(); },
+  });
 }
 
 function conflict() {

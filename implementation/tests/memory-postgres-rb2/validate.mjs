@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { generateManifestFromAirDocument } from "../../cli/touba-manifest/src/generate.mjs";
+import { packageSdk } from "../../cli/touba-distribution/src/package-sdk.mjs";
 
 const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
 const implementationRoot = path.resolve(fixtureRoot, "../..");
@@ -38,6 +39,7 @@ const dockerEnv = {
 };
 
 try {
+  packageSdk(implementationRoot, tmpRoot);
   await dockerCompose(["up", "--build", "-d"]);
   await waitForHealth();
 
@@ -142,7 +144,7 @@ function materializeProject() {
   mkdirSync(path.join(projectRoot, ".touba/air"), { recursive: true });
   mkdirSync(path.join(projectRoot, "node_modules/@touba"), { recursive: true });
   cpSync(
-    path.join(implementationRoot, "runtime/touba-handler-sdk"),
+    path.join(tmpRoot, "lib/node_modules/@touba/sdk"),
     path.join(projectRoot, "node_modules/@touba/sdk"),
     { recursive: true },
   );
@@ -352,7 +354,7 @@ async function runAir(options) {
     "--secrets",
     secretsPath,
     "--effect-journal",
-    path.join(tmpRoot, "memory.effect-journal.json"),
+    path.join(tmpRoot, "memory.effect-journal.sqlite"),
     "--output",
     options.output ?? "result",
     "--trace-out",
@@ -391,7 +393,7 @@ async function runAir(options) {
     args.push("--max-steps", String(options.maxSteps));
   }
   if (options.triggerRef) {
-    args.push("--trigger", options.triggerRef, "--max-runs", String(options.maxRuns ?? 1), "--state", path.join(projectRoot, "memory.trigger-state.json"));
+    args.push("--trigger", options.triggerRef, "--max-runs", String(options.maxRuns ?? 1), "--state", path.join(projectRoot, "memory.triggers.sqlite"));
   }
   if (options.entryRef) {
     args.push("--entry", options.entryRef);

@@ -12,14 +12,13 @@ import {
   classifyHumanApprovalDecision,
 } from "../src/interactions.mjs";
 import { executeRunLifecycle } from "../src/result-construction.mjs";
+import { TraceBuilder } from "../src/trace-builder.mjs";
 import {
   RuntimeFailure,
   RuntimeStop,
 } from "../src/runtime-errors.mjs";
 import {
   AIR_SCHEMA_VERSION,
-  TRACE_CAPABILITY_PROFILE,
-  TRACE_PROTOCOL_VERSION,
 } from "../../../contracts/machine/contracts.mjs";
 
 test("evaluates agent invocation authority without runtime side effects", () => {
@@ -391,31 +390,6 @@ function agentOperations(decision = undefined) {
 }
 
 function traceRecorder(events) {
-  return {
-    push(kind, details = {}) {
-      events.push({ kind, ...details });
-    },
-    document() {
-      const runId = "run-extracted-modules";
-      return {
-        trace_protocol_version: TRACE_PROTOCOL_VERSION,
-        trace_capability_profile: TRACE_CAPABILITY_PROFILE,
-        run: {
-          run_id: runId,
-          // Synthetic lifecycle recorder, not evidence from a real execution.
-          air_digest: `sha256:${"0".repeat(64)}`,
-          air_schema_version: AIR_SCHEMA_VERSION,
-          module_ref: "module:test",
-          entry_ref: "skill:test/Review",
-        },
-        events: events.map((event, index) => ({
-          event_id: `event:${runId}:${index + 1}`,
-          run_id: runId,
-          sequence_index: index,
-          kind: event.kind,
-          ...(event.payload === undefined ? {} : { payload: event.payload }),
-        })),
-      };
-    },
-  };
+  return new TraceBuilder({ air_schema_version: AIR_SCHEMA_VERSION, module: { id: "module:test" } },
+    "skill:test/Review", "run-extracted-modules", event => events.push(event));
 }

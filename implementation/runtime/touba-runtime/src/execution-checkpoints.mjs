@@ -230,11 +230,24 @@ export function tracePrefixDigest(previousPrefixDigest, traceDocument, localEven
   const events = Array.isArray(traceDocument.events)
     ? traceDocument.events.slice(localEventOffset)
     : [];
-  return canonicalDigest({
-    previous_prefix_digest: previousPrefixDigest,
-    run: traceDocument.run,
-    events,
-  });
+  return tracePrefixDigestFromEvents(previousPrefixDigest, traceDocument.run, events);
+}
+
+/** Same canonical bytes as tracePrefixDigest, with bounded event consumption.
+ * @param {string | null} previousPrefixDigest
+ * @param {Record<string, any>} run
+ * @param {Iterable<unknown>} events
+ */
+export function tracePrefixDigestFromEvents(previousPrefixDigest, run, events) {
+  const digest = createHash("sha256").update('{"events":[');
+  let separator = "";
+  for (const event of events) {
+    digest.update(separator).update(canonicalizeMachineValue(event));
+    separator = ",";
+  }
+  digest.update('],"previous_prefix_digest":').update(canonicalizeMachineValue(previousPrefixDigest));
+  digest.update(',"run":').update(canonicalizeMachineValue(run)).update("}");
+  return `sha256:${digest.digest("hex")}`;
 }
 
 /**

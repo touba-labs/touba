@@ -1,6 +1,8 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { readPackageBytes } from './package-fetch.mjs';
 import { packageError } from './package-contract.mjs';
+import { registryTrustState, trustedKeys } from './registry-trust-state.mjs';
+import { realpathSync } from 'node:fs';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 export async function readSignedRegistry(indexRef, trustPath, now, readBytes = readPackageBytes) {
@@ -9,10 +11,11 @@ export async function readSignedRegistry(indexRef, trustPath, now, readBytes = r
   try { trust = JSON.parse(await readPackageBytes(trustPath, 65536)); }
   catch { throw packageError('RegistryTrustInvalid', 'cannot read a valid local registry trust document'); }
   const registry = new URL('./', indexRef).href.replace(/\/$/, '');
-  if (!object(trust) || trust.schema_version !== 'touba-registry-trust-v1' || trust.registry !== registry
-      || !Array.isArray(trust.keys) || !trust.keys.every(object)) {
-    throw packageError('RegistryTrustInvalid', 'trust file does not identify this registry');
-  }
+  const material = trustedKeys(trust, registry);
+  // Keep this file beside the explicitly selected trust document, including in
+  // backups. A different trust location is an explicit new trust bootstrap.
+  const continuity = registryTrustState(realpathSync(trustPath) + '.sqlite', registry);
+  continuity.observe(material);
   const token = (await readBytes(new URL('index.jwt', registry + '/').href, 8 * 1024 * 1024)).toString('utf8');
   const parts = token.split('.');
   if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) throw packageError('RegistrySignatureInvalid', 'invalid signed registry index');
@@ -37,8 +40,12 @@ export async function readSignedRegistry(indexRef, trustPath, now, readBytes = r
     throw packageError('RegistrySignatureExpired', 'registry origin or validity interval is invalid');
   }
   if (!object(payload.index)) throw packageError('RegistrySignatureInvalid', 'signed registry index is missing');
+  if (!Number.isSafeInteger(payload.revision) || payload.revision < 1) throw packageError('RegistryRevisionInvalid', 'signed registry revision must be a positive safe integer');
   const bytes = Buffer.from(JSON.stringify(payload.index));
   if (bytes.length > 4 * 1024 * 1024) throw packageError('PackageTooLarge', 'registry index exceeds limit');
+  const digest = 'sha256:' + createHash('sha256').update(bytes).digest('hex');
+  continuity.accept({ revision: payload.revision, digest, signingKey: header.kid,
+    keyFingerprint: material.find(key => key.id === header.kid).fingerprint });
   return { value: payload.index, ref: indexRef, bytes, signingKey: header.kid,
-    digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex') };
+    revision: payload.revision, digest };
 }

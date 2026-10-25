@@ -49,6 +49,7 @@ Lists and optionals recursively retain reachable record/enum definitions.
 | `touba-interaction-asset-v1` | project clients, project server | Opaque, digest-verified content handle without a client-visible storage path. |
 | `touba-trace-timeline-v1` | project clients | Ordered trace timeline for review and investigation. |
 | `touba-run-trace-export-v1` | Authorized audit clients | Native per-invocation trace segments, local digest chain and explicit completeness; no AIR/source/checkpoint discovery. |
+| `touba-native-trace-index-v1` | Authorized audit clients | Bounded segment metadata and durable references for paginated reads. |
 | `touba-trigger-status-v1` | host applications | Trigger state, queue state, replay/rate-limit surface. |
 | `touba-approval-request-v1` | host applications | Human approval request before an effect proceeds. |
 | `touba-approval-decision-v1` | Touba Engine | Human approval decision submitted by a client. |
@@ -60,6 +61,24 @@ Lists and optionals recursively retain reachable record/enum definitions.
 | `touba-alert-v1` | host applications | Notification-only alert, separate from runtime decisions. |
 
 ## Validation
+
+Server traces use `.touba/traces.sqlite` with a separate SQLite metadata index.
+`GET /runs/{run_id}/trace?index=true` returns the index; `/trace/segments/{index}`
+accepts `after` and `limit` (1–1000) and returns the Core `touba-trace-page-v1`
+contract. Its reference and event checks live in `contracts/trace-reference.mjs`.
+The initial page verifies the full segment digest. Subsequent pages verify the
+events read. Plain `/trace` streams the existing complete export contract.
+These routes require project execution-read access and refuse mobile tokens.
+
+Sandbox and current-timeline previews retain the last 200 events. `event_count`
+is the full count, `start_index` the segment's first sequence index and
+`events_truncated` identifies a partial view. The sandbox `budget_usage` counts
+the complete execution; bounded `approval_evidence` retains older events needed
+to validate the resolved and pending approvals. It never duplicates a visible
+event. Exported native traces retain their original ordering and content.
+
+Whole-project archival keeps the trace journal, index, checkpoints and effects
+together. Standalone trace archival refuses a server journal with linked state.
 
 Run:
 

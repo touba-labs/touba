@@ -2,6 +2,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { packageSdk } from "../../cli/touba-distribution/src/package-sdk.mjs";
 
 const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
 const implementationRoot = path.resolve(fixtureRoot, "../..");
@@ -14,6 +15,7 @@ const secretsPath = path.join(projectRoot, "touba.secrets.dev.json");
 const secretValue = "engine-fixture-secret";
 
 try {
+  packageSdk(implementationRoot, tmpRoot);
   materializeJavaScriptProject();
   const { ToubaEngine } = await import(path.join(projectRoot, "node_modules/@touba/sdk/src/index.mjs"));
   const engine = new ToubaEngine({
@@ -49,7 +51,7 @@ function materializeJavaScriptProject() {
   mkdirSync(path.join(projectRoot, "handlers"), { recursive: true });
   mkdirSync(path.join(projectRoot, "node_modules/@touba"), { recursive: true });
   cpSync(
-    path.join(implementationRoot, "runtime/touba-handler-sdk"),
+    path.join(tmpRoot, "lib/node_modules/@touba/sdk"),
     path.join(projectRoot, "node_modules/@touba/sdk"),
     { recursive: true },
   );

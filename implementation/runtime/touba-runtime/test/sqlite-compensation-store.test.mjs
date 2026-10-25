@@ -1,20 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import {
   compensationRecordDigest,
   sealCompensationRecord,
 } from "../src/compensation-store.mjs";
-import { createFileCompensationStore } from "../src/file-compensation-store.mjs";
+import { createSqliteCompensationStore, migrateCompensationStore, COMPENSATION_STORE_SCHEMA_VERSION } from "../src/sqlite-compensation-store.mjs";
 
 test("persists one current compensation record and applies exact CAS", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-comp-store-"));
   try {
-    const path = join(workspace, "compensations.json");
-    const store = createFileCompensationStore(path);
+    const path = join(workspace, "compensations.sqlite");
+    const store = createSqliteCompensationStore(path);
     const initial = recordFixture();
     const created = store.createIfAbsent(initial);
     assert.deepEqual(store.read(initial.compensation_id), created);
@@ -74,21 +77,21 @@ test("persists one current compensation record and applies exact CAS", () => {
 test("refuses digest corruption and resolved secrets before persistence", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-comp-store-integrity-"));
   try {
-    const path = join(workspace, "compensations.json");
+    const path = join(workspace, "compensations.sqlite");
     const secret = "resolved-secret-never-persist";
-    const store = createFileCompensationStore(path, { secretValues: [secret] });
+    const store = createSqliteCompensationStore(path, { secretValues: [secret] });
     const initial = recordFixture();
     store.createIfAbsent(initial);
-    const persisted = JSON.parse(readFileSync(path, "utf8"));
-    persisted.records[initial.compensation_id].state = "terminal";
-    writeFileSync(path, JSON.stringify(persisted), "utf8");
+    const db = new DatabaseSync(path);
+    db.prepare("UPDATE records SET body=json_set(body, '$.state', 'terminal') WHERE id=?").run(initial.compensation_id);
+    db.close();
     assert.throws(
       () => store.read(initial.compensation_id),
       (error) => error?.code === "CompensationRecordDigestMismatch",
     );
 
-    const secondPath = join(workspace, "secret.json");
-    const secretStore = createFileCompensationStore(secondPath, { secretValues: [secret] });
+    const secondPath = join(workspace, "secret.sqlite");
+    const secretStore = createSqliteCompensationStore(secondPath, { secretValues: [secret] });
     assert.throws(
       () => secretStore.createIfAbsent(sealCompensationRecord({
         ...recordFixture(),
@@ -99,6 +102,41 @@ test("refuses digest corruption and resolved secrets before persistence", () => 
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("competing processes can advance one compensation revision only once", async t => {
+  const directory = mkdtempSync(join(tmpdir(), "touba-comp-cas-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.sqlite"), initial = recordFixture();
+  const store = createSqliteCompensationStore(path);
+  store.createIfAbsent(initial);
+  const next = sealCompensationRecord({ ...initial, revision: 2, updated_at: "2026-09-22T10:01:00.000Z" });
+  const script = `import { createSqliteCompensationStore } from ${JSON.stringify(new URL("../src/sqlite-compensation-store.mjs", import.meta.url).href)};
+    const [path, before, after] = process.argv.slice(1), record = JSON.parse(before);
+    try { createSqliteCompensationStore(path).compareAndSwap(record.compensation_id, record.revision, record.record_digest, JSON.parse(after)); process.stdout.write('won'); }
+    catch(error) { if(error.code !== 'CompensationConflict') throw error; process.stdout.write('stale'); }`;
+  const run = promisify(execFile);
+  const results = await Promise.all(Array.from({ length: 6 }, () => run(process.execPath,
+    ["--input-type=module", "-e", script, path, JSON.stringify(initial), JSON.stringify(next)], { timeout: 10000 })));
+  assert.equal(results.filter(result => result.stdout === "won").length, 1);
+  assert.equal(results.filter(result => result.stdout === "stale").length, 5);
+  assert.equal(store.read(initial.compensation_id).revision, 2);
+});
+
+test("migration preserves signed revisions and original bytes, with an explicit preview", t => {
+  const directory = mkdtempSync(join(tmpdir(), "touba-comp-migration-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = join(directory, "old.json"), destination = join(directory, "new.sqlite");
+  const record = recordFixture();
+  const bytes = JSON.stringify({ schema_version: COMPENSATION_STORE_SCHEMA_VERSION, records: { [record.compensation_id]: record } });
+  writeFileSync(source, bytes);
+  assert.equal(migrateCompensationStore({ source, destination }).record_count, 1);
+  assert.equal(existsSync(destination), false);
+  migrateCompensationStore({ source, destination, apply: true });
+  assert.deepEqual(createSqliteCompensationStore(destination).read(record.compensation_id), record);
+  assert.equal(readFileSync(source, "utf8"), bytes);
+  assert.equal(readFileSync(destination + ".source-backup.json", "utf8"), bytes);
+  assert.throws(() => migrateCompensationStore({ source, destination, apply: true }));
 });
 
 function recordFixture() {

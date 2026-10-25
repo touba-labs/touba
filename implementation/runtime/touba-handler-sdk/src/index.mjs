@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -27,6 +26,7 @@ import { providerBudgetFetch, validateProviderRequestBudget } from "./provider-r
 import { emitLocalHandlerDiagnostic } from "./handler-diagnostic.mjs";
 import { PersistentEngineTransport } from "./engine-transport.mjs";
 import { resolveEngineCommand } from "./engine-command.mjs";
+import { validateTracePage, validateTraceReference } from "./trace-reference.mjs";
 
 export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
 const PROTOCOL = TOOL_HANDLER_PROTOCOL_VERSION;
@@ -128,18 +128,19 @@ export class ToubaEngine {
 
   async run(options = {}) {
     if (this.closed) throw new ToubaEngineError("run", "Engine is closed", { code: "EngineClosed" });
+    const referenceMode = options.traceMode === "reference";
+    if (options.traceMode !== undefined && !["inline", "reference"].includes(options.traceMode)) throw new ToubaEngineError("options", "traceMode must be inline or reference");
     const tempRoot = await mkdtemp(join(tmpdir(), "touba-engine-"));
     try {
       const airPath = await this.#materializeAir(options, tempRoot);
-      const tracePath = options.traceOut
-        ? resolvePath(this.projectRoot, options.traceOut)
-        : join(tempRoot, "run.trace.json");
-      const args = ["run", airPath, "--output", "json", "--trace-out", tracePath];
+      const args = ["run", airPath, "--output", referenceMode ? "json-reference" : "json"];
+      appendOptionalPath(args, "--trace-out", options.traceOut, this.projectRoot);
 
       appendOptionalPath(args, "--manifest", options.manifest, this.projectRoot);
       appendOptionalPath(args, "--secrets", options.secrets, this.projectRoot);
       appendOptionalPath(args, "--resource-bindings", options.resourceBindings, this.projectRoot);
       appendOptionalPath(args, "--effect-journal", options.effectJournal, this.projectRoot);
+      appendOptionalPath(args, "--trace-store", options.traceStore ?? ".touba/traces.sqlite", this.projectRoot);
       appendOptionalPath(args, "--human-checkpoint-out", options.humanCheckpointOut, this.projectRoot);
       appendOptionalPath(args, "--human-resume-checkpoint", options.humanResumeCheckpoint, this.projectRoot);
       appendOptionalPath(args, "--human-approval-host", options.humanApprovalHost, this.projectRoot);
@@ -243,10 +244,13 @@ export class ToubaEngine {
       }
 
       const result = await this.#runCommand("run", args, { allowFailure: true, signal: options.signal });
-      const trace = await readOptionalJson(tracePath);
       let envelope;
       try { envelope = JSON.parse(result.stdout); } catch { /* Admission and launch failures may have no result. */ }
-      const terminal = envelope?.trace?.events?.at(-1);
+      let reference;
+      if (referenceMode && envelope?.schema_version === "touba-run-reference-v1") {
+        try { reference = validateTraceReference(envelope.trace_reference); } catch { /* Rejected by validEnvelope below. */ }
+      }
+      const terminal = reference ? { kind: "run_completed", payload: reference.terminal } : envelope?.trace?.events?.at(-1);
       const admissionRefused = envelope?.trace?.run?.admission === "refused"
         && envelope.trace.events.length === 1 && terminal?.kind === "admission_refused"
         && terminal.payload?.code === envelope.reason && envelope.status === "failure"
@@ -261,7 +265,9 @@ export class ToubaEngine {
           && envelope.status === "stopped" && ["user_input_pending", "human_approval_pending"].includes(envelope.reason)
           && new Set(pendings.map(value => value.interaction_ref)).size === pendings.length
           && (pending === undefined || (pending.interaction_ref === pendings[0].interaction_ref && pending.prompt === pendings[0].prompt))));
-      const validEnvelope = envelope?.schema_version === "touba-run-result-v1"
+      const validEnvelope = (reference ? envelope.schema_version === "touba-run-reference-v1" && envelope.trace === undefined
+        : envelope?.schema_version === "touba-run-result-v1" && envelope.trace_reference === undefined)
+        && (!referenceMode || reference || admissionRefused)
         && validQuestions
         && ["success", "stopped", "cancelled", "failure"].includes(envelope.status)
         && typeof envelope.reason === "string" && Array.isArray(envelope.messages)
@@ -277,7 +283,8 @@ export class ToubaEngine {
           ...(validEnvelope ? { status: envelope.status, reason: envelope.reason, messages: envelope.messages } : {}),
           stdout: redactText(result.stdout, this.redactValues),
           stderr: redactText(result.stderr, this.redactValues),
-          trace,
+          trace: envelope?.trace ?? null,
+          ...(reference ? { traceReference: reference } : {}),
         });
       }
 
@@ -288,11 +295,26 @@ export class ToubaEngine {
         messages: envelope.messages,
         ...(envelope.pending_interaction ? { pendingInteraction: envelope.pending_interaction } : {}),
         pendingInteractions: envelope.pending_interactions ?? (envelope.pending_interaction ? [envelope.pending_interaction] : []),
-        trace: envelope.trace,
+        trace: envelope.trace ?? null,
+        ...(reference ? { traceReference: reference } : {}),
       };
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
+  }
+
+  async readTrace({ traceStore, reference, after, limit = 100, signal } = {}) {
+    if (this.closed) throw new ToubaEngineError("trace", "Engine is closed", { code: "EngineClosed" });
+    try { reference = structuredClone(validateTraceReference(reference)); }
+    catch { throw new ToubaEngineError("trace", "Invalid trace reference", { code: "InvalidTraceReference" }); }
+    after ??= reference.start_index - 1;
+    if (!Number.isSafeInteger(after) || after < reference.start_index - 1 || after >= reference.start_index + reference.event_count
+      || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new ToubaEngineError("trace", "Invalid trace page cursor or limit", { code: "InvalidTracePage" });
+    const args = ["trace", "read", "--store", resolvePath(this.projectRoot, requireString(traceStore, "traceStore")),
+      "--reference-json", JSON.stringify(reference), "--after", String(after), "--limit", String(limit)];
+    const result = await this.#runCommand("trace", args, { signal });
+    try { return validateTracePage(JSON.parse(result.stdout), reference, after, limit); }
+    catch { throw new ToubaEngineError("trace", "Invalid trace page", { code: "InvalidTracePage" }); }
   }
 
   async #materializeAir(options, tempRoot) {
@@ -1892,13 +1914,6 @@ function normalizeJsonObject(value, label) {
     throw new ToubaEngineError("options", `${label} must be an object`);
   }
   return value;
-}
-
-async function readOptionalJson(path) {
-  if (!existsSync(path)) {
-    return null;
-  }
-  return JSON.parse(await readFile(path, "utf8"));
 }
 
 function collectRedactionValues(env, extraValues) {

@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "touba-native-trace-index-v1",
+  "title": "touba-native-trace-index-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "complete",
+    "segments"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "touba-native-trace-index-v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "segments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "phase",
+          "state",
+          "reason",
+          "previous_digest",
+          "reference",
+          "digest"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "phase": {
+            "enum": [
+              "initial",
+              "human_resume",
+              "execution_resume",
+              "human_terminal"
+            ]
+          },
+          "state": {
+            "enum": [
+              "recording",
+              "paused",
+              "terminal",
+              "unavailable"
+            ]
+          },
+          "reason": {
+            "enum": [
+              null,
+              "not_completed",
+              "runtime_rejected",
+              "trace_rejected",
+              "storage_limit"
+            ]
+          },
+          "previous_digest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "schema_version",
+                  "segment_id",
+                  "run_id",
+                  "start_index",
+                  "event_count",
+                  "header_digest",
+                  "trace_digest",
+                  "terminal"
+                ],
+                "properties": {
+                  "schema_version": {
+                    "const": "touba-trace-reference-v1"
+                  },
+                  "segment_id": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+                  },
+                  "run_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "start_index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "event_count": {
+                    "type": "integer",
+                    "minimum": 2
+                  },
+                  "header_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  },
+                  "trace_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  },
+                  "terminal": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "event_id",
+                      "digest",
+                      "status",
+                      "reason"
+                    ],
+                    "properties": {
+                      "event_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[a-f0-9]{64}$"
+                      },
+                      "status": {
+                        "enum": [
+                          "success",
+                          "stopped",
+                          "cancelled",
+                          "failure"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

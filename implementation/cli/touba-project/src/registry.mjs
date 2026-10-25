@@ -61,7 +61,7 @@ export async function resolveRegistryPackage(options = {}) {
       mode: registry.kind,
       index_ref: registry.publicIndexRef,
       index_schema_version: indexDocument.value.index_schema_version,
-      ...(indexDocument.signingKey ? { signing_key: indexDocument.signingKey } : {}),
+      ...(indexDocument.signingKey ? { signing_key: indexDocument.signingKey, revision: indexDocument.revision, index_digest: indexDocument.digest } : {}),
     },
     package: {
       package_ref: metadata.package_ref,

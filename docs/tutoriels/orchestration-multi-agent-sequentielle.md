@@ -231,7 +231,7 @@ import { ToubaEngine, ToubaEngineError } from "@touba/sdk";
 const engine = new ToubaEngine({ projectRoot: ".", env: { REMEDIATION_TOKEN: "isolated-ledger-credential" } });
 const options = { source: "incident-remediation.tb", entryRef: "strategy:examples.incident_remediation/RunIncidentRemediation",
   manifest: "touba.manifest.json", secrets: "touba.secrets.json", resourceBindings: "touba.resources.json", requireResourceBindings: true,
-  agentDecisionProvider: "providers/incidents.mjs", maxAgentSteps: 4, effectJournal: "remediation.effect-journal.json",
+  agentDecisionProvider: "providers/incidents.mjs", maxAgentSteps: 4, effectJournal: "remediation.effect-journal.sqlite",
   inputs: { request: { service: "billing-worker", urgency: 5 } } };
 const paused = await engine.run({ ...options, humanCheckpointOut: "approval.checkpoint.json" });
 assert.equal(paused.reason, "human_approval_pending");

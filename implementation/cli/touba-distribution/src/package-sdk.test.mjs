@@ -73,6 +73,16 @@ test("installed archive supplies an independent SDK, provider dependencies, lice
 engine = ToubaEngine(project_root=${JSON.stringify(workspace)}, command=${JSON.stringify(node)}, command_args=[${JSON.stringify(cli)}])
 assert engine.version()["build"]["id"] == ${JSON.stringify(metadata.build.id)}
 assert engine.run(source="python.tb", inputs={"value":"installed-python-ok"}).result == "installed-python-ok"
+run = engine.run(source="python.tb", inputs={"value":"installed-python-ok"}, trace_store="traces.sqlite", trace_mode="reference")
+assert run.trace is None and run.result == "installed-python-ok"
+count, after = 0, None
+while True:
+    page = engine.read_trace(trace_store="traces.sqlite", reference=run.trace_reference, after=after, limit=2)
+    count += len(page["events"])
+    after = page["next"]
+    if page["done"]:
+        break
+assert count == run.trace_reference["event_count"]
 print("PYTHON_ARCHIVE_OK")`], workspace, { PYTHONPATH: "" }), /PYTHON_ARCHIVE_OK/);
     if (process.platform !== "win32") {
       const implementationRoot = join(here, "../../..");

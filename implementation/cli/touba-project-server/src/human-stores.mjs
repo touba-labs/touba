@@ -1,4 +1,5 @@
-import { indexedStore } from "./indexed-store.mjs";
+import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
+import { migrateRecordState } from "../../../runtime/touba-runtime/src/sqlite-state-migration.mjs";
 import { readFileSync } from "node:fs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 import { validatedRecords } from "./validated-records.mjs";
@@ -48,6 +49,22 @@ function requests(path) {
   });
 }
 
+export function migrateHumanRequests(options) {
+  return migrateRecordState(options, { schemaVersion: REQUEST_SCHEMA, fields: ["approvals", "reviews"],
+    recordsOf: document => [
+      ...document.approvals.map(request => ({ collection: "approvals", request })),
+      ...document.reviews.map(request => ({ collection: "reviews", request })),
+    ], validateRecord: validateRequest, keyOf: record => record.request.request_id, storeOf: requests,
+  });
+}
+
+export function migrateHumanDecisions(options) {
+  return migrateRecordState(options, { schemaVersion: DECISION_SCHEMA, fields: ["decisions"],
+    recordsOf: document => document.decisions, validateRecord: validateDecision,
+    keyOf: record => record.request_id, storeOf: decisions,
+  });
+}
+
 function decisions(path) {
   return indexedStore({ path, schemaVersion: DECISION_SCHEMA,
     keyOf: record => record.request_id,
@@ -76,6 +93,24 @@ export function saveHumanRequestStore(path, store) {
 
 export function loadHumanDecisionStore(path, filter) {
   return { schema_version: DECISION_SCHEMA, decisions: read(decisions(path), filter) };
+}
+
+export function auditHumanStore(path, kind) {
+  if (!["requests", "decisions"].includes(kind)) throw invalid("unknown human store kind");
+  const store = kind === "requests" ? requests(path) : decisions(path);
+  let after, count = 0;
+  try {
+    for (;;) {
+      const page = store.page({ after, limit: 100 });
+      count += page.items.length;
+      if (page.next === null) break;
+      after = page.next;
+    }
+  } catch (cause) {
+    if (cause.code === "ToubaStoreRecordInvalid") throw invalid("human projection has a duplicate or divergent stored identity");
+    throw cause;
+  }
+  return { schema_version: kind === "requests" ? REQUEST_SCHEMA : DECISION_SCHEMA, entry_count: count };
 }
 
 export function saveHumanDecisionStore(path, store) {

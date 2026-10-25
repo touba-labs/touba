@@ -20,6 +20,78 @@ numérotation, les observateurs et la persistance : tous reçoivent la même tra
 La CLI `serve` et les deux SDK exposent aussi ce réglage.
 
 
+## Conserver les traces
+
+```sh
+touba run program.air.json --trace-store .touba/traces.sqlite --trace-out trace.json
+```
+
+SQLite conserve les traces par défaut dans `.touba/traces.sqlite` du projet.
+Sans `touba.project.json` parent, la CLI utilise le dossier de l’AIR ou du
+plan fourni. `--trace-store` choisit un autre journal privé. Les événements sont conservés
+progressivement ; les détails purs sont regroupés en petits lots, enregistrés
+avant les appels et checkpoints. Une panne de stockage interrompt la progression
+avant le prochain effet. Chaque exécution ou reprise crée un segment distinct.
+
+`--trace-out` exporte le document `touba-trace-v1`. Les modes `--output trace`,
+`json` et `all` lisent le journal progressivement et attendent la disponibilité
+de la sortie. Le fichier exporté est remplacé seulement une fois complet.
+
+Le résumé `--output run-summary` et les preuves `--evidence-out` parcourent aussi
+le journal progressivement. Les collections du résumé sont limitées à 16 Mio ;
+en cas de dépassement, exportez la trace complète avec `--trace-out`.
+
+
+Le journal autorise par défaut 512 Mio de données sérialisées et 1 Mio par
+événement. Il reste conservé jusqu'à son archivage par l'hôte ; aucune purge
+automatique n'est activée. Placez-le dans un dossier privé et sauvegardé.
+Les SDK utilisent `traceStore` (JavaScript) et `trace_store` (Python).
+Leurs résultats complets restent soumis à la limite de transport de 32 Mio.
+
+### Archiver un journal
+
+```sh
+touba trace archive --store .touba/traces.sqlite
+mkdir -m 700 archives
+touba trace archive --store .touba/traces.sqlite --destination archives/traces.sqlite --apply
+```
+
+La première commande affiche le volume récupérable. La commande avec `--apply` crée
+une archive vérifiée, puis libère les runs réussis de la source. Les pauses,
+échecs et exécutions interrompues restent conservés. L'archive se lit avec les
+mêmes références, en passant son chemin à `--store`. Sa destination doit être
+nouvelle ; aucun fichier existant n'est remplacé.
+
+Pour un serveur projet, archivez l'état complet, serveur arrêté : traces,
+checkpoints et effets restent associés. Les aperçus serveur affichent les 200
+derniers événements et le nombre total. L'index `GET /runs/{run_id}/trace?index=true`
+et les pages `/runs/{run_id}/trace/segments/0?limit=100` donnent accès au journal
+complet avec l'autorisation du projet. Sans `index`, la route exporte toute la trace.
+
+## Lire une trace par pages
+
+`--output json-reference` renvoie le résultat métier et une `trace_reference`.
+Le journal par défaut suffit ; `--trace-store` permet de choisir un autre chemin.
+Les événements se lisent séparément, par pages.
+Pour lire une page, transmettez la référence JSON complète à :
+
+```text
+touba trace read --store .touba/traces.sqlite --reference-json '<référence JSON>' --limit 100
+```
+
+La réponse contient `header`, `events`, `next` et `done`. Passez `next` à
+`--after` pour la page suivante, jusqu'à `done: true`. La première lecture
+sans curseur vérifie aussi l'empreinte du segment complet, en mémoire bornée.
+Les pages suivantes vérifient les événements lus et leur ordre.
+Une lecture n'exécute aucun programme et ne modifie pas le journal.
+
+Une page contient au plus 1 000 événements et 1 Mio de contenu d'événements ;
+la référence et l'en-tête s'ajoutent à cette taille. Les exemples des
+[SDK JavaScript](../guides/sdk-javascript.md#conserver-les-traces) et
+[Python](../guides/sdk-python.md#conserver-les-traces) montrent la boucle complète.
+La référence désigne un segment terminé, y compris en cas de pause ou d'échec.
+Un refus d'admission conserve sa petite trace dans le résultat d'erreur.
+
 ## Provenance et décisions
 
 Les nouveaux AIR produits par la CLI utilisent des identités de source relatives à une racine commune aux fichiers compilés, sans enregistrer le chemin absolu de cette racine dans l’AIR. Les traces héritent de ces identités. Le résultat technique de compilation `--json` fournit séparément `source_root` à l’éditeur ; les diagnostics locaux gardent leurs chemins pour ouvrir le fichier. Avant de partager un artefact, vérifiez aussi les données et métadonnées applicatives : ce changement n’est pas un anonymiseur général.

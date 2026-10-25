@@ -1,8 +1,8 @@
 export {
   EFFECT_JOURNAL_SCHEMA_VERSION,
-  createFileEffectJournal,
-  loadEffectJournal,
-} from "@touba/runtime/file-effect-journal";
+  createSqliteEffectJournal,
+  auditSqliteEffectJournal,
+} from "@touba/runtime/sqlite-effect-journal";
 
 /**
  * Return null when the scope has no uncertain effect. Otherwise all uncertain

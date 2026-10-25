@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { createAdmissionRefusalTrace } from "../../runtime/touba-runtime/src/admission-trace.mjs";
 import { publicRunResult, runExitCode, validateRunResult } from "../run-outcome.mjs";
 import { validateObject } from "../../tools/validate-product-surface-contracts.mjs";
+import { createTraceReference } from "../trace-reference.mjs";
 
 test("run result separates business messages and defines process exits without parsing prose", () => {
   const schema = JSON.parse(readFileSync(new URL("schemas/touba-run-result-v1.schema.json", import.meta.url), "utf8"));
@@ -33,8 +34,80 @@ test("run result separates business messages and defines process exits without p
 import {
   AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, AIR_SCHEMA_VERSION, MachineContractError,
   TRACE_CAPABILITY_PROFILE, TRACE_PROTOCOL_VERSION, canonicalizeMachineValue,
-  validateAirMachineContract, validateTraceMachineContract,
+  validateAirMachineContract, validateTraceMachineContract, validateTraceMachineStream, validateTracePageMachineContract,
 } from "./contracts.mjs";
+
+test("streamed runtime traces enforce the same invariants without accumulating IDs", () => {
+  function runtimeTrace() {
+    const trace = validTrace();
+    trace.events.forEach(event => { event.event_id = `event:${trace.run.run_id}:${event.sequence_index + 1}`; });
+    return trace;
+  }
+  const valid = runtimeTrace();
+  const { events, ...header } = valid;
+  validateTraceMachineStream(header, events.values());
+  for (const mutate of [
+    trace => { trace.events[1].sequence_index += 2; },
+    trace => { trace.events[1].run_id = "other"; },
+    trace => { trace.events[0].kind = "scope_entered"; },
+    trace => { trace.events.at(-1).kind = "scope_exited"; },
+    trace => { trace.events.at(-1).payload.status = "unknown"; },
+    trace => { trace.events[0].payload = { secret_value: "secret" }; },
+    trace => { trace.events[0].observed_at = "not-a-date"; },
+    trace => { trace.run.air_digest = "bad"; },
+    trace => { trace.events.push({ ...trace.events.at(-1), sequence_index: trace.events.length, event_id: "next" }); },
+    trace => { trace.events.splice(0); },
+  ]) {
+    const invalid = runtimeTrace(); mutate(invalid);
+    const { events: items, ...meta } = invalid;
+    assert.throws(() => validateTraceMachineContract(invalid), MachineContractError);
+    assert.throws(() => validateTraceMachineStream(meta, items.values()), MachineContractError);
+  }
+  const imported = runtimeTrace();
+  imported.events[0].event_id = "external-custom-id";
+  validateTraceMachineContract(imported);
+  assert.throws(() => validateTraceMachineStream(header, imported.events.values()), { code: "TraceEventIdentityInvalid" });
+  assert.throws(() => validateTraceMachineStream(valid, events.values()), { code: "TraceStreamInvalid" });
+});
+
+test("trace pages validate resumed cursors, terminal identity and page-only boundaries", () => {
+  const trace = validTrace(), startIndex = 7;
+  trace.run.run_id = "run:resumed";
+  trace.events.forEach((event, index) => {
+    event.sequence_index = startIndex + index;
+    event.run_id = trace.run.run_id;
+    event.event_id = `event:${trace.run.run_id}:${event.sequence_index + 1}`;
+  });
+  const { events, ...header } = trace;
+  const reference = createTraceReference({ segmentId: "00000000-0000-4000-8000-000000000001", complete: true,
+    header, eventCount: events.length, startIndex, events: () => events.values() });
+  const end = startIndex + events.length - 1;
+  function page(after) {
+    const selected = events.filter(event => event.sequence_index > after).slice(0, 1);
+    const next = after + selected.length;
+    return { schema_version: "touba-trace-page-v1", reference, header, events: selected, next, done: next === end };
+  }
+  for (let cursor = startIndex - 1; cursor <= end; cursor++) {
+    const current = page(cursor);
+    assert.equal(validateTracePageMachineContract(current, reference, cursor, 1), current);
+    assert.throws(() => validateTraceMachineContract({ ...header, events: current.events }), MachineContractError);
+  }
+  for (const mutate of [
+    value => { value.events[0].event_id = "foreign"; },
+    value => { value.events[0].run_id = "foreign"; },
+    value => { value.events[0].payload = { secret_value: "hidden" }; },
+    value => { value.events[0].unexpected = true; },
+    value => { value.next++; },
+    value => { value.events = []; },
+  ]) {
+    const invalid = structuredClone(page(startIndex - 1)); mutate(invalid);
+    assert.throws(() => validateTracePageMachineContract(invalid, reference, startIndex - 1, 1));
+  }
+  const terminal = structuredClone(page(end - 1));
+  terminal.events[0].payload.status = "stopped";
+  assert.throws(() => validateTracePageMachineContract(terminal, reference, end - 1, 1));
+  assert.throws(() => validateTracePageMachineContract(page(end), reference, end + 1, 1));
+});
 
 test("parallel questions expose only public prompts, with consistent singular and plural views", () => {
   const trace = validTrace();

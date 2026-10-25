@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { generateManifestFromAirDocument } from "../../cli/touba-manifest/src/generate.mjs";
+import { packageSdk } from "../../cli/touba-distribution/src/package-sdk.mjs";
 
 const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
 const implementationRoot = path.resolve(fixtureRoot, "../..");
@@ -19,6 +20,7 @@ const cargo = process.env.CARGO ?? "cargo";
 const secretValue = "integration-secret-value";
 
 try {
+  packageSdk(implementationRoot, tmpRoot);
   materializeJavaScriptProject();
   compileSourceToAir();
   materializeManifestFromAir();
@@ -35,7 +37,7 @@ function materializeJavaScriptProject() {
   mkdirSync(path.join(projectRoot, "handlers"), { recursive: true });
   mkdirSync(path.join(projectRoot, "node_modules/@touba"), { recursive: true });
   cpSync(
-    path.join(implementationRoot, "runtime/touba-handler-sdk"),
+    path.join(tmpRoot, "lib/node_modules/@touba/sdk"),
     path.join(projectRoot, "node_modules/@touba/sdk"),
     { recursive: true },
   );

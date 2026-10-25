@@ -1,16 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 // Deliberate allowlist: credentials, manifests, handlers, AIR and SDKs stay put.
 const STATE_FILES = Object.freeze([
   "sandbox-checkpoints.sqlite", "human-requests.sqlite", "human-decisions.sqlite",
+  "traces.sqlite", "native-traces.sqlite",
   "project.effect-journal.sqlite", "interaction-sessions.sqlite", "interaction-assets.sqlite",
   "interaction-assets", "project-events.jsonl", "current-run-summary.json",
   "current-trace-timeline.json", "native-traces", "trigger-status.json", "cost-observatory.json", "state-origin.json",
 ]);
 const fail = (code, message = code) => { throw Object.assign(new Error(message), { code }); };
-const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+function fileDigest(path) {
+  const file = openSync(path, "r"), buffer = Buffer.alloc(64 * 1024), hash = createHash("sha256");
+  try { let size; while ((size = readSync(file, buffer)) > 0) hash.update(buffer.subarray(0, size)); return hash.digest("hex"); }
+  finally { closeSync(file); }
+}
 
 function stateRoot(projectRoot) {
   const root = realpathSync(resolve(projectRoot));
@@ -58,7 +63,7 @@ function inventory(root, names = STATE_FILES) {
       for (const child of readdirSync(file).sort()) visit(`${name}/${child}`);
     } else if (stat.isFile()) {
       if (["-wal", "-shm", "-journal"].some(suffix => existsSync(file + suffix))) fail("ToubaServeStateSnapshotRequired");
-      files.push({ path: name, bytes: stat.size, sha256: digest(readFileSync(file)) });
+      files.push({ path: name, bytes: stat.size, sha256: fileDigest(file) });
     } else fail("ToubaStatePathInvalid");
   }
   for (const name of names) if (existsSync(join(root, name))) visit(name);

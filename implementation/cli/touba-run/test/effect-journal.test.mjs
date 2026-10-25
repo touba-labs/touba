@@ -9,10 +9,10 @@ test("CLI journal lease excludes another writer through root aliases and release
   const root = mkdtempSync(join(tmpdir(), "touba-cli-effects-"));
   let host;
   try {
-    const path = join(root, "run.effect-journal.json");
+    const path = join(root, "run.effect-journal.sqlite");
     host = openCliEffectJournal(path);
     symlinkSync(root, join(root, "alias"), "dir");
-    assert.throws(() => openCliEffectJournal(join(root, "alias", "run.effect-journal.json")), { code: "EffectJournalBusy" });
+    assert.throws(() => openCliEffectJournal(join(root, "alias", "run.effect-journal.sqlite")), { code: "EffectJournalBusy" });
     assert.equal(JSON.parse(readFileSync(path + ".lock", "utf8")).pid, process.pid);
     host.close(); host.close();
     assert.equal(existsSync(path + ".lock"), false);
@@ -23,11 +23,11 @@ test("CLI journal lease excludes another writer through root aliases and release
 test("CLI refuses linked or invalid journals without deleting a pre-existing lease", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-cli-effects-refusal-"));
   try {
-    const path = join(root, "run.effect-journal.json");
+    const path = join(root, "run.effect-journal.sqlite");
     writeFileSync(join(root, "target.json"), "{}");
     symlinkSync(join(root, "target.json"), path);
     assert.throws(() => openCliEffectJournal(path), { code: "EffectJournalPathInvalid" });
-    const invalid = join(root, "invalid.effect-journal.json");
+    const invalid = join(root, "invalid.effect-journal.sqlite");
     writeFileSync(invalid, "{invalid}");
     assert.throws(() => openCliEffectJournal(invalid), { code: "EffectJournalInvalid" });
     assert.equal(existsSync(invalid + ".lock"), false);

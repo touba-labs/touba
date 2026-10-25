@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { indexedStore } from "../src/indexed-store.mjs";
+import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
 import { HUMAN_DECISION_INDEXES, HUMAN_REQUEST_INDEXES } from "../src/human-stores.mjs";
 import { CHECKPOINT_INDEXES } from "../src/serve.mjs";
 

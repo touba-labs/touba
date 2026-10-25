@@ -13,6 +13,7 @@ import tempfile
 from threading import Event
 from typing import Any, Literal, Mapping, Sequence, TypedDict, Unpack
 from ._engine_command import resolve_engine_command
+from ._trace_reference import validate_reference, validate_page
 
 MAX_OUTPUT = 32 * 1024 * 1024
 
@@ -37,9 +38,10 @@ class RunResult:
     reason: str
     result: Any
     messages: list[dict[str, str]]
-    trace: dict[str, Any]
+    trace: dict[str, Any] | None
     pending_interaction: dict[str, Any] | None = None
     pending_interactions: list[dict[str, str]] = field(default_factory=list)
+    trace_reference: dict[str, Any] | None = None
 
 
 class RunOptions(TypedDict, total=False):
@@ -83,6 +85,8 @@ class RunOptions(TypedDict, total=False):
     trigger_event: dict[str, Any]
     trigger_state: str
     trace_out: str
+    trace_store: str
+    trace_mode: Literal["inline", "reference"]
     cancel_before_dispatch: bool
     cancel_on_pause: bool
     timeout: float
@@ -95,7 +99,7 @@ PATHS = {
     "human_checkpoint_out": "human-checkpoint-out", "human_resume_checkpoint": "human-resume-checkpoint",
     "human_approval_host": "human-approval-host", "parallel_checkpoint_out": "parallel-checkpoint-out",
     "parallel_resume_checkpoint": "parallel-resume-checkpoint", "agent_decision_provider": "agent-decision-provider",
-    "trigger_state": "state", "trace_out": "trace-out",
+    "trigger_state": "state", "trace_out": "trace-out", "trace_store": "trace-store",
 }
 JSON_OPTIONS = {
     key: flag for key, flag in [
@@ -140,34 +144,46 @@ def _parse(raw: bytes, phase: str) -> Any:
         raise ToubaEngineError(phase, "InvalidJsonResult") from None
 
 
-def _result(raw: bytes, exit_code: int) -> RunResult:
+def _result(raw: bytes, exit_code: int, trace_mode: str = "inline") -> RunResult:
     data = _parse(raw, "run")
     if not isinstance(data, dict):
         raise ToubaEngineError("run", "InvalidRunResult")
     status, reason = data.get("status"), data.get("reason")
     trace, messages = data.get("trace"), data.get("messages")
-    if not (data.get("schema_version") == "touba-run-result-v1"
+    reference = None
+    if data.get("schema_version") == "touba-run-reference-v1":
+        if trace_mode != "reference":
+            raise ToubaEngineError("run", "InvalidRunResult")
+        try:
+            reference = validate_reference(data.get("trace_reference"))
+        except (ValueError, TypeError, UnicodeError, OverflowError):
+            raise ToubaEngineError("run", "InvalidTraceReference") from None
+    if not ((data.get("schema_version") == "touba-run-result-v1" and "trace_reference" not in data
+              or reference is not None and "trace" not in data)
             and status in ("success", "stopped", "cancelled", "failure") and isinstance(reason, str)
             and isinstance(messages, list) and all(isinstance(m, dict) and isinstance(m.get("interaction_ref"), str)
                 and isinstance(m.get("text"), str) for m in messages)
-            and isinstance(trace, dict) and isinstance(trace.get("events"), list) and trace["events"]):
+            and (reference is not None or isinstance(trace, dict) and isinstance(trace.get("events"), list) and trace["events"])):
         raise ToubaEngineError("run", "InvalidRunResult")
-    last = trace["events"][-1]
+    last = {"kind": "run_completed", "payload": reference["terminal"]} if reference else trace["events"][-1]
     payload = last.get("payload", {}) if isinstance(last, dict) else {}
     if not isinstance(last, dict) or not isinstance(payload, dict):
         raise ToubaEngineError("run", "InvalidRunResult")
-    admission = (isinstance(trace.get("run"), dict) and trace["run"].get("admission") == "refused"
+    admission = (reference is None and isinstance(trace.get("run"), dict) and trace["run"].get("admission") == "refused"
                  and len(trace["events"]) == 1 and last.get("kind") == "admission_refused"
                  and payload.get("code") == reason and status == "failure"
                  and data.get("result") is None and messages == [] and "pending_interaction" not in data
                  and "pending_interactions" not in data)
     terminal = isinstance(last, dict) and last.get("kind") == "run_completed" and payload.get("status") == status and payload.get("reason") == reason
+    if trace_mode == "reference" and reference is None and not admission:
+        raise ToubaEngineError("run", "InvalidRunResult")
     expected = (0 if status == "success" else 5 if status == "cancelled" or reason == "human_approval_cancelled"
                 else (3 if reason in ("human_approval_pending", "user_input_pending") else 4) if status == "stopped" else 1)
     if not (admission or terminal) or exit_code != expected:
         raise ToubaEngineError("run", "InvalidRunResult", {"exit_code": exit_code})
     if status == "failure":
-        raise ToubaEngineError("run", reason, {"exit_code": exit_code, "status": status, "reason": reason, "trace": trace})
+        raise ToubaEngineError("run", reason, {"exit_code": exit_code, "status": status, "reason": reason, "trace": trace,
+                                              **({"trace_reference": reference} if reference else {})})
     pending = data.get("pending_interaction")
     if pending is not None and (not isinstance(pending, dict) or set(pending) != {"interaction_ref", "prompt"}
             or not all(isinstance(value, str) for value in pending.values())
@@ -182,7 +198,7 @@ def _result(raw: bytes, exit_code: int) -> RunResult:
                      or len({item["interaction_ref"] for item in pendings}) != len(pendings)
                      or (pending is not None and pending != pendings[0])):
         raise ToubaEngineError("run", "InvalidRunResult")
-    return RunResult(status, reason, data.get("result"), messages, trace, pending, pendings)
+    return RunResult(status, reason, data.get("result"), messages, trace, pending, pendings, reference)
 
 
 def touba_sdk_metadata() -> dict[str, str]:
@@ -317,6 +333,9 @@ class AsyncToubaEngine:
         unknown = options.keys() - RunOptions.__annotations__.keys()
         if unknown:
             raise ToubaEngineError("options", "UnknownRunOption")
+        mode = options.get("trace_mode", "inline")
+        if mode not in ("inline", "reference"):
+            raise ToubaEngineError("options", "InvalidTraceMode")
         if sum(key in options for key in ("source", "air", "air_json")) != 1:
             raise ToubaEngineError("options", "ExactlyOneProgramRequired")
         with tempfile.TemporaryDirectory(prefix="touba-python-engine-") as temporary:
@@ -334,7 +353,9 @@ class AsyncToubaEngine:
                 air = str(Path(temporary) / "program.air.json")
                 Path(air).write_text(_json(document), encoding="utf-8")
                 os.chmod(air, 0o600)
-            args = ["run", air, "--output", "json"]
+            args = ["run", air, "--output", "json-reference" if mode == "reference" else "json"]
+            if "trace_store" not in options:
+                args.extend(["--trace-store", self._path(".touba/traces.sqlite")])
             for key, flag in PATHS.items():
                 if key in options:
                     selected = _text(options[key])
@@ -371,7 +392,27 @@ class AsyncToubaEngine:
                     for value in options[key]:
                         args.extend([flag, self._path(value) if key == "skill_packs" else _text(value)])
             code, raw = await self._execute("run", args, timeout=options.get("timeout"), cancel_event=options.get("cancel_event"))
-            return _result(raw, code)
+            return _result(raw, code, mode)
+
+    async def read_trace(self, *, trace_store: str, reference: dict[str, Any], after: int | None = None,
+                         limit: int = 100, timeout: float | None = None, cancel_event: Event | None = None) -> dict[str, Any]:
+        try:
+            reference = json.loads(_json(validate_reference(reference)))
+        except (ValueError, TypeError, UnicodeError, OverflowError):
+            raise ToubaEngineError("trace", "InvalidTraceReference") from None
+        after = reference["start_index"] - 1 if after is None else after
+        if (type(after) is not int or not reference["start_index"] - 1 <= after < reference["start_index"] + reference["event_count"]
+                or type(limit) is not int or not 1 <= limit <= 1000):
+            raise ToubaEngineError("trace", "InvalidTracePage")
+        args = ["trace", "read", "--store", self._path(trace_store), "--reference-json", _json(reference),
+                "--after", str(after), "--limit", str(limit)]
+        code, raw = await self._execute("trace", args, timeout=timeout, cancel_event=cancel_event)
+        if code != 0:
+            raise ToubaEngineError("trace", "TraceReadFailed", {"exit_code": code})
+        try:
+            return validate_page(_parse(raw, "trace"), reference, after, limit)
+        except (ValueError, TypeError, UnicodeError, KeyError, AttributeError):
+            raise ToubaEngineError("trace", "InvalidTracePage") from None
 
 
 class ToubaEngine:
@@ -402,3 +443,8 @@ class ToubaEngine:
 
     def run(self, **options: Unpack[RunOptions]) -> RunResult:
         return self._run(self._async.run(**options))
+
+    def read_trace(self, *, trace_store: str, reference: dict[str, Any], after: int | None = None,
+                   limit: int = 100, timeout: float | None = None, cancel_event: Event | None = None) -> dict[str, Any]:
+        return self._run(self._async.read_trace(trace_store=trace_store, reference=reference, after=after,
+                                               limit=limit, timeout=timeout, cancel_event=cancel_event))

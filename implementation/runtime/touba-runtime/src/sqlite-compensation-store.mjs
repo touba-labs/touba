@@ -1,8 +1,7 @@
 // @ts-check
 
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { indexedStore } from "./sqlite-record-store.mjs";
+import { migrateJsonState } from "./sqlite-state-migration.mjs";
 
 import {
   COMPENSATION_STORE_SCHEMA_VERSION,
@@ -17,38 +16,54 @@ export { COMPENSATION_STORE_SCHEMA_VERSION };
 const STORE_FIELDS = new Set(["schema_version", "records", "updated_at"]);
 
 /**
- * Local single-process COMP-1 store. File replacement is atomic on the same
- * filesystem; the revision/digest CAS is checked immediately before it.
+ * Durable COMP-1 records. SQLite checks the complete read revision in the same
+ * transaction as the replacement; no history is loaded for a single operation.
  *
  * @param {string} path
- * @param {{secretValues?: string[]}} [options]
+ * @param {{secretValues?: string[], maxBytes?: number}} [options]
  */
-export function createFileCompensationStore(path, options = {}) {
+export function createSqliteCompensationStore(path, options = {}) {
+  if (typeof path !== "string" || !path.endsWith(".sqlite")) invalid("compensation store requires a .sqlite path; migrate JSON explicitly");
   const secretValues = (options.secretValues ?? []).filter((value) => value.length > 0);
-  loadCompensationStore(path, { secretValues });
+  const store = indexedStore({ path, schemaVersion: COMPENSATION_STORE_SCHEMA_VERSION,
+    maxBytes: options.maxBytes, readOnly: options.readOnly, keyOf: record => record.compensation_id,
+    validate(record) { validateCompensationRecord(record); assertNoSecret(record, secretValues); },
+    indexes: { state: "json_extract(body, '$.state')" },
+  });
+  store.initialize();
+  function write(records) {
+    try { store.write(records); }
+    catch (error) { if (error.code === "ToubaStoreWriteConflict") conflict(); throw error; }
+  }
   return Object.freeze({
     schemaVersion: COMPENSATION_STORE_SCHEMA_VERSION,
+    page(options) { return store.page(options); },
 
     read(compensationId) {
-      const record = loadCompensationStore(path, { secretValues }).records[compensationId];
-      return record === undefined ? null : structuredClone(record);
+      return store.read([{ id: compensationId }])[0] ?? null;
     },
 
     createIfAbsent(record) {
       const normalized = sealCompensationRecord(record);
       assertNoSecret(normalized, secretValues);
-      const store = loadCompensationStore(path, { secretValues });
-      const existing = store.records[normalized.compensation_id];
+      const records = store.read([{ id: normalized.compensation_id }]);
+      const existing = records[0];
       if (existing !== undefined) return structuredClone(existing);
       if (normalized.revision !== 1) conflict();
-      store.records[normalized.compensation_id] = normalized;
-      save(path, store);
+      records.push(normalized);
+      try { write(records); }
+      catch (error) {
+        if (error.code !== "CompensationConflict") throw error;
+        const winner = store.read([{ id: normalized.compensation_id }])[0];
+        if (!winner) throw error;
+        return winner;
+      }
       return structuredClone(normalized);
     },
 
     compareAndSwap(compensationId, expectedRevision, expectedRecordDigest, nextRecord) {
-      const store = loadCompensationStore(path, { secretValues });
-      const current = store.records[compensationId];
+      const records = store.read([{ id: compensationId }]);
+      const current = records[0];
       if (
         current === undefined
         || current.revision !== expectedRevision
@@ -62,8 +77,8 @@ export function createFileCompensationStore(path, options = {}) {
       const normalized = sealCompensationRecord(nextRecord);
       assertTransition(current, normalized);
       assertNoSecret(normalized, secretValues);
-      store.records[compensationId] = normalized;
-      save(path, store);
+      records[0] = normalized;
+      write(records);
       return structuredClone(normalized);
     },
   });
@@ -107,17 +122,7 @@ function assertTransition(current, next) {
   ) conflict();
 }
 
-/** @param {string} path @param {{secretValues?: string[]}} [options] */
-export function loadCompensationStore(path, { secretValues = [] } = {}) {
-  if (!existsSync(path)) {
-    return { schema_version: COMPENSATION_STORE_SCHEMA_VERSION, records: {} };
-  }
-  let store;
-  try {
-    store = JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    invalid("compensation store is not valid JSON");
-  }
+function validateMigration(store, secretValues) {
   if (
     !store
     || typeof store !== "object"
@@ -134,20 +139,20 @@ export function loadCompensationStore(path, { secretValues = [] } = {}) {
     store.records[compensationId] = normalized;
   }
   assertNoSecret(store, secretValues);
-  return store;
+  return Object.values(store.records);
 }
 
-function save(path, store) {
-  mkdirSync(dirname(path), { recursive: true });
-  store.updated_at = new Date().toISOString();
-  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporaryPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-    renameSync(temporaryPath, path);
-  } catch (error) {
-    rmSync(temporaryPath, { force: true });
-    throw error;
-  }
+export function migrateCompensationStore(options) {
+  return migrateJsonState({ ...options,
+    validate: document => validateMigration(document, options.secretValues ?? []),
+    build(path, records) {
+      const store = indexedStore({ path, schemaVersion: COMPENSATION_STORE_SCHEMA_VERSION,
+        keyOf: record => record.compensation_id, validate: validateCompensationRecord,
+        indexes: { state: "json_extract(body, '$.state')" },
+      });
+      const snapshot = store.read(); snapshot.push(...records); store.write(snapshot); store.initialize();
+    },
+  });
 }
 
 function assertNoSecret(value, secretValues) {

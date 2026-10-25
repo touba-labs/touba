@@ -1,3 +1,5 @@
+import { createTraceReference, validateTraceReference } from "./trace-reference.mjs";
+
 // Stable process exit contract. Runtime reasons are machine values, never prose.
 export function runExitCode(result) {
   if (result.status === "success") return 0;
@@ -10,6 +12,17 @@ export function runExitCode(result) {
 }
 
 export function publicRunResult(result) {
+  return { ...publicRunResultMetadata(result), trace: result.trace };
+}
+
+export function publicReferencedRunResult(result) {
+  return { ...publicRunResultMetadata(result), schema_version: "touba-run-reference-v1",
+    trace_reference: createTraceReference(result.traceReader) };
+}
+
+// The same public envelope can be serialized with a streamed trace. Private
+// checkpoints and host storage handles are never part of this projection.
+export function publicRunResultMetadata(result) {
   return {
     schema_version: "touba-run-result-v1",
     status: result.status,
@@ -18,20 +31,21 @@ export function publicRunResult(result) {
     messages: result.messages,
     ...(result.pending_interaction ? { pending_interaction: result.pending_interaction } : {}),
     ...(result.pending_interactions?.length ? { pending_interactions: result.pending_interactions } : {}),
-    trace: result.trace,
   };
 }
 
 export function validateRunResult(value) {
   const fail = () => { throw new TypeError("Invalid touba-run-result-v1 envelope"); };
-  if (!value || value.schema_version !== "touba-run-result-v1") fail();
-  const keys = new Set(["schema_version", "status", "reason", "result", "messages", "pending_interaction", "pending_interactions", "trace"]);
+  const referenced = value?.schema_version === "touba-run-reference-v1";
+  if (!value || (!referenced && value.schema_version !== "touba-run-result-v1")) fail();
+  const keys = new Set(["schema_version", "status", "reason", "result", "messages", "pending_interaction", "pending_interactions", referenced ? "trace_reference" : "trace"]);
   if (Object.keys(value).some(key => !keys.has(key))) fail();
   if (!Object.hasOwn(value, "result") || !["success", "stopped", "cancelled", "failure"].includes(value.status)) fail();
   if (typeof value.reason !== "string" || value.reason.length === 0 || !Array.isArray(value.messages)) fail();
   if (value.messages.some(message => !message || typeof message.text !== "string" || typeof message.interaction_ref !== "string"
     || Object.keys(message).some(key => !["interaction_ref", "text"].includes(key)))) fail();
-  const terminal = value.trace?.events?.at(-1);
+  const reference = referenced ? validateTraceReference(value.trace_reference) : null;
+  const terminal = reference ? { kind: "run_completed", payload: reference.terminal } : value.trace?.events?.at(-1);
   const refusedAdmission = value.trace?.run?.admission === "refused"
     && value.trace.events.length === 1 && terminal?.kind === "admission_refused"
     && terminal.payload?.code === value.reason && value.status === "failure"

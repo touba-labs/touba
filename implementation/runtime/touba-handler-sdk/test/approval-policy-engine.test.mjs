@@ -50,7 +50,7 @@ process.stdout.write(JSON.stringify({ok:true,value:request.arguments.value,effec
     commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
   const options = { source: "source.tb", entryRef: "strategy:approval_policy/ApproveTwice", manifest: "manifest.json",
     humanApprovalHost: "authority.mjs", humanApprovalAuthorityTimeoutMs: 12000,
-    humanCheckpointOut: "waiting.json", effectJournal: "run.effect-journal.json" };
+    humanCheckpointOut: "waiting.json", effectJournal: "run.effect-journal.sqlite" };
   assert.equal((await engine.run({ ...options, inputs: { dossier: "invoice" } })).reason, "human_approval_pending");
   for (const signer of ["employee:one", "employee:two"]) {
     const checkpoint = JSON.parse(readFileSync(join(root, "waiting.json")));

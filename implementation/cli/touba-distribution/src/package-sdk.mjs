@@ -75,14 +75,21 @@ function locateDependency(parent, name) {
 
 // Preserve each installed dependency's own resolution tree. Flattening by name
 // silently substitutes versions when two providers pin different releases.
-export function copyDependency(source, destination, inventory, ancestors = new Set()) {
-  if (ancestors.has(source)) throw new Error("SDK dependency cycle requires an explicit packaging layout");
+export function copyDependency(source, destination, inventory, ancestors = new Map(), parentDestination = null) {
+  source = realpathSync(source);
   const manifest = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
+  if (ancestors.has(source)) {
+    // A required peer may point back to its parent (pg-pool -> pg). Node must
+    // resolve that edge to the exact ancestor already copied, not a different
+    // version or a checkout/global package. No symlink or duplicate is needed.
+    if (parentDestination && locateDependency(parentDestination, manifest.name) === realpathSync(ancestors.get(source))) return;
+    throw new Error("SDK dependency cycle requires an explicit packaging layout");
+  }
   inventory.set(`${manifest.name}@${manifest.version}`, { name: manifest.name, version: manifest.version, license: manifest.license ?? null });
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(source, destination, { recursive: true, dereference: true,
     filter: file => basename(file) !== "node_modules" && basename(file) !== ".git" });
-  const next = new Set(ancestors).add(source);
+  const next = new Map(ancestors).set(source, destination);
   const dependencies = { ...manifest.dependencies, ...manifest.optionalDependencies };
   // Required peer dependencies are part of the runtime closure as well.
   for (const name of Object.keys(manifest.peerDependencies ?? {})) {
@@ -94,6 +101,6 @@ export function copyDependency(source, destination, inventory, ancestors = new S
       if (Object.hasOwn(manifest.optionalDependencies ?? {}, name)) continue;
       throw error;
     }
-    copyDependency(dependency, join(destination, "node_modules", name), inventory, next);
+    copyDependency(dependency, join(destination, "node_modules", name), inventory, next, destination);
   }
 }

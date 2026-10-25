@@ -21,6 +21,22 @@ cover both SDKs, native GUI sessions, the current FR/EN tutorial inventory,
 industrial qualification, security/signatures and production restoration.
 These gates remain open until their actual evidence is supplied.
 
+### Durable state and trace export, 25 October 2026
+
+- SQLite is the default for execution traces, trigger admission/queues, effects
+ and compensations. Paged reads and explicit retention preserve active,
+ uncertain and unacknowledged records. JSON migration writes a validated new
+ store with an exact backup; existing project data is never converted on open.
+- A separate trace exporter sends bounded batches to PostgreSQL. Durable
+ acknowledgements, idempotent replay and lease epochs protect recovery after
+ network loss or a worker crash. JavaScript and Python expose the same trace
+ references and paged reading workflow.
+- Signed Registry snapshots carry a monotone revision. Local trust pins signing
+ keys and retains observed revocations and index revisions across restarts.
+ Older or conflicting signed snapshots are refused.
+- Bundled dependencies preserve resolvable peer cycles without substituting
+ another version. PostgreSQL export is tested with the assembled CLI.
+
 ### Native distribution qualification, 20 October 2026
 
 - Parallel checkpoints retain file flushing and atomic replacement on Windows;

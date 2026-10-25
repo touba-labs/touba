@@ -731,7 +731,8 @@ test("ToubaEngine compiles a source and runs it through the Touba CLI facade", a
     assert.equal(calls[0].command, "compile");
     assert.equal(calls[1].command, "run");
     assert.ok(calls[1].args.includes("--entry"));
-    assert.ok(calls[1].args.includes("--trace-out"));
+    assert.equal(calls[1].args.includes("--trace-out"), false, "no implicit full JSON copy");
+    assert.equal(calls[1].args[calls[1].args.indexOf("--trace-store") + 1], join(workspace, ".touba/traces.sqlite"));
     assert.ok(calls[1].args.includes("--resource-bindings"));
     assert.ok(calls[1].args.includes(join(workspace, "touba.resources.json")));
     assert.ok(calls[1].args.includes("--require-resource-bindings"));
@@ -1743,7 +1744,7 @@ if (command === "compile") {
     run: { id: "run-sdk-engine", entry_ref: entryRef },
     events: [{ kind: "run_completed", payload: { status: "success", reason: "completed" } }]
   };
-  writeFileSync(option("--trace-out"), JSON.stringify(trace), "utf8");
+  if (option("--trace-out")) writeFileSync(option("--trace-out"), JSON.stringify(trace), "utf8");
   process.stdout.write(JSON.stringify({
     schema_version: "touba-run-result-v1", status: "success", reason: "completed",
     result: { message: "Hello " + inputs.request.name, entry_ref: entryRef },

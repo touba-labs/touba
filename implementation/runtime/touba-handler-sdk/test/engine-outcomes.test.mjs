@@ -1,3 +1,4 @@
+import { readEffectJournalFixture } from "../../../tests/helpers/effect-journal.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -25,7 +26,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
     } }));
     const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
       commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
-    const options = { source: "source.tb", manifest: "touba.manifest.json", entryRef: "strategy:control.nested/Review", effectJournal: "run.effect-journal.json" };
+    const options = { source: "source.tb", manifest: "touba.manifest.json", entryRef: "strategy:control.nested/Review", effectJournal: "run.effect-journal.sqlite" };
     let result = await engine.run({ ...options, inputs: { rows: [[1, 2], [3]] }, humanCheckpointOut: "pause-0.json" });
     assert.equal(result.reason, "human_approval_pending");
     assert.equal(existsSync(marker), false);
@@ -41,7 +42,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
       assert.equal(readFileSync(marker, "utf8"), Array.from({ length: i + 1 }, (_, n) => `${n + 1}\n`).join(""));
     }
     assert.equal(existsSync(join(root, "pause-3.json")), false);
-    const entries = Object.values(JSON.parse(readFileSync(join(root, "run.effect-journal.json"), "utf8")).entries);
+    const entries = Object.values(readEffectJournalFixture(join(root, "run.effect-journal.sqlite")).entries);
     assert.equal(entries.length, 3);
     assert.ok(entries.every(entry => entry.state === "applied"));
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -75,7 +76,7 @@ export function decideAgentCapability(request) {
   const options = { source: "source.tb", manifest: "touba.manifest.json",
     entryRef: `strategy:agent.continuation/${delegated ? "RunDelegation" : "Run"}`,
     ...(delegated ? { agentDecisionProvider: "provider.mjs", agentDecisionProviderInitialMode: "capabilities" } : {}),
-    effectJournal: "run.effect-journal.json" };
+    effectJournal: "run.effect-journal.sqlite" };
   let result = await engine.run({ ...options, inputs: delegated ? { value: "delegated" } : { values: ["one", "two"] }, humanCheckpointOut: "pause-0.json" });
   let runId;
   for (let i = 0; i < (delegated ? 1 : 3); i++) {
@@ -93,7 +94,7 @@ export function decideAgentCapability(request) {
   const expected = delegated ? ["before", "delegated"] : ["start", "before", "one", "before", "two"];
   assert.deepEqual(writes.map(item => item.value), expected);
   assert.equal(new Set(writes.map(item => item.effect_id)).size, expected.length);
-  const entries = Object.values(JSON.parse(readFileSync(join(root, "run.effect-journal.json"), "utf8")).entries);
+  const entries = Object.values(readEffectJournalFixture(join(root, "run.effect-journal.sqlite")).entries);
   assert.equal(entries.length, expected.length);
   assert.ok(entries.every(entry => entry.state === "applied"));
   assert.equal(new Set(entries.map(entry => entry.effect_scope_id)).size, 1);
@@ -144,13 +145,13 @@ trigger Hourly
     const triggerRef = "trigger:sdk.trigger/Hourly";
     writeFileSync(join(root, "touba.manifest.json"), JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {},
       triggers: { [triggerRef]: { enabled: true, source: { kind: "schedule" }, limits: { max_runs_per_day: 10, timeout_ms: 30000 } } } }));
-    const options = { source: "program.tb", manifest: "touba.manifest.json", triggerState: "events.trigger-state.json",
+    const options = { source: "program.tb", manifest: "touba.manifest.json", triggerState: "events.triggers.sqlite",
       triggerEvent: { trigger_ref: triggerRef, event_id: "sdk-event-1", source_kind: "schedule" } };
     const result = await engine.run(options);
     assert.equal(result.status, "success");
     assert.equal(result.result, "done");
     await assert.rejects(engine.run(options), error => error instanceof ToubaEngineError && error.details.reason === "TriggerReplayRejected");
-    assert.ok(existsSync(join(root, "events.trigger-state.json")));
+    assert.ok(existsSync(join(root, "events.triggers.sqlite")));
     await assert.rejects(engine.run({ ...options, triggerEvent: { ...options.triggerEvent, event_id: "sdk-event-2", source_kind: "request" } }),
       error => error instanceof ToubaEngineError && /Source|Event/.test(error.details.reason));
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -279,13 +280,13 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
     await assert.rejects(engine.run(request), error => error instanceof ToubaEngineError
       && ["EffectContextRequired", "EffectJournalRequired"].includes(error.details.reason));
     assert.equal(existsSync(marker), false);
-    const effectJournal = join(root, "sdk.effect-journal.json");
+    const effectJournal = join(root, "sdk.effect-journal.sqlite");
     for (let index = 0; index < 2; index++) {
       assert.equal((await engine.run({ ...request, effectJournal })).result, "stored");
       assert.equal(existsSync(effectJournal + ".lock"), false);
     }
     assert.equal(readFileSync(marker, "utf8"), "record\nrecord\n");
-    const entries = Object.values(JSON.parse(readFileSync(effectJournal, "utf8")).entries);
+    const entries = Object.values(readEffectJournalFixture(effectJournal).entries);
     assert.equal(new Set(entries.map(entry => entry.effect_scope_id)).size, 2);
     assert.deepEqual(entries.map(entry => entry.state), ["applied", "applied"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -339,7 +340,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
       "tool:sdk.successive/Write": { handler: { kind: "process", command: process.execPath, args: [join(root, "handler.mjs")], cwd: root },
         grants: [], timeout_ms: 5000, max_payload_bytes: 65536, effect_contract: { kind: "external_write", retry_mode: "none" } },
     } }));
-    const options = { source: "program.tb", manifest: "touba.manifest.json", effectJournal: "run.effect-journal.json" };
+    const options = { source: "program.tb", manifest: "touba.manifest.json", effectJournal: "run.effect-journal.sqlite" };
     const first = await engine.run({ ...options, humanCheckpointOut: "first.json" });
     assert.equal(first.reason, "human_approval_pending");
     assert.deepEqual(first.messages.map(message => message.text), ["Before first approval"]);
@@ -371,7 +372,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
       assert.equal(existsSync(join(root, "third.json")), false);
       assert.equal(readFileSync(marker, "utf8"), decision === "approved" ? "before\nbetween\nafter\n" : "before\nbetween\n");
     }
-    const entries = Object.values(JSON.parse(readFileSync(join(root, "run.effect-journal.json"))).entries);
+    const entries = Object.values(readEffectJournalFixture(join(root, "run.effect-journal.sqlite")).entries);
     assert.equal(entries.length, 3);
     assert.ok(entries.every(entry => entry.state === "applied"));
   } finally { rmSync(root, { recursive: true, force: true }); }

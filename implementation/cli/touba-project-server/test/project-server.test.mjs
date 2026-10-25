@@ -3143,6 +3143,24 @@ test("HTTP durable resume reconstructs the terminal result and coalesces one cla
     assert.equal(nativeEvidence.complete, true);
     assert.deepEqual(nativeEvidence.segments.map(segment => segment.phase), ["initial", "execution_resume"]);
     assertMatchesSchema("touba-run-trace-export-v1", nativeEvidence);
+    const traceUrl = `${baseUrl}/runs/${first.run_id}/trace`;
+    const traceIndex = await getJson(`${traceUrl}?index=true`);
+    assert.equal(traceIndex.schema_version, "touba-native-trace-index-v1");
+    assert.equal(traceIndex.segments.length, 2);
+    for (const [index, segment] of nativeEvidence.segments.entries()) {
+      let after = segment.trace.events[0].sequence_index - 1;
+      const events = [];
+      while (true) {
+        const page = await getJson(`${traceUrl}/segments/${index}?after=${after}&limit=2`);
+        assert.ok(page.events.length <= 2);
+        events.push(...page.events); after = page.next;
+        if (page.done) break;
+      }
+      assert.deepEqual(events, segment.trace.events);
+    }
+    for (const query of ["limit=0", "limit=1001", "after=-2", "after=NaN", "after=99999999"]) {
+      assert.equal((await fetch(`${traceUrl}/segments/0?${query}`)).status, 400);
+    }
     assert.deepEqual(first.trace.events.map((event) => event.index), first.trace.events.map((_, index) => index));
 
     const repeated = await postJson(`${baseUrl}/runs/sandbox/resume`, resumeRequest);
@@ -3246,12 +3264,12 @@ test("SIGKILL after an applied effect resumes explicitly without redispatching t
     const appliedMarkerPath = join(root, ".touba", "effect-applied-before-host-advance");
     const harnessPath = join(root, "crash-worker.mjs");
     const projectServerModule = new URL("../src/serve.mjs", import.meta.url).href;
-    const journalModule = new URL("../src/indexed-effect-journal.mjs", import.meta.url).href;
+    const journalModule = new URL("../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs", import.meta.url).href;
     writeFileSync(harnessPath, `
       import { writeFileSync } from "node:fs";
       import { executeProjectSandboxRun } from ${JSON.stringify(projectServerModule)};
-      import { createIndexedEffectJournal } from ${JSON.stringify(journalModule)};
-      const persisted = createIndexedEffectJournal(${JSON.stringify(journalPath)});
+      import { createSqliteEffectJournal } from ${JSON.stringify(journalModule)};
+      const persisted = createSqliteEffectJournal(${JSON.stringify(journalPath)});
       const blockingJournal = {
         schemaVersion: persisted.schemaVersion,
         readEntry: (effectId) => persisted.readEntry(effectId),
@@ -3721,10 +3739,10 @@ for (const crashWindow of [
       const crashMarkerPath = join(root, ".touba", `${crashWindow.mode}.json`);
       const harnessPath = join(root, "crash-worker.mjs");
       const projectServerModule = new URL("../src/serve.mjs", import.meta.url).href;
-      const journalModule = new URL("../src/indexed-effect-journal.mjs", import.meta.url).href;
+      const journalModule = new URL("../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs", import.meta.url).href;
       const preparedJournalSetup = crashWindow.mode === "after_prepared"
         ? `
-          const persisted = createIndexedEffectJournal(${JSON.stringify(journalPath)});
+          const persisted = createSqliteEffectJournal(${JSON.stringify(journalPath)});
           const blockingJournal = {
             schemaVersion: persisted.schemaVersion,
             readEntry: (effectId) => persisted.readEntry(effectId),
@@ -3761,7 +3779,7 @@ for (const crashWindow of [
       writeFileSync(harnessPath, `
         import { writeFileSync } from "node:fs";
         import { executeProjectSandboxRun } from ${JSON.stringify(projectServerModule)};
-        import { createIndexedEffectJournal } from ${JSON.stringify(journalModule)};
+        import { createSqliteEffectJournal } from ${JSON.stringify(journalModule)};
         ${preparedJournalSetup}
         await executeProjectSandboxRun({
           contractsRoot: ${JSON.stringify(contractsRoot)},
@@ -3798,7 +3816,7 @@ for (const crashWindow of [
       assert.equal(beforeKill.checkpoint.cursor.phase, "started");
       if (crashWindow.mode !== "after_prepared") {
         assert.equal(beforeKill.checkpoint.pending_dispatch, null);
-        assert.equal(existsSync(journalPath), false);
+        assert.deepEqual(readStoreFixture(journalPath).entries, {}, "SQLite may be initialized, but no effect is reserved before the checkpoint barrier");
         assert.equal(beforeKill.checkpoint.runtime_state.budget_counters.tool_calls, 0);
       } else {
         assert.equal(beforeKill.checkpoint.pending_dispatch.phase, "reserved");
@@ -4778,6 +4796,8 @@ test("HTTP project server requires bearer auth when configured", async () => {
     assert.equal(unauthorizedEvents.status, 401);
     assert.equal((await unauthorizedEvents.json()).code, "ToubaServeUnauthorized");
     assert.equal((await fetch(`${baseUrl}/runs/unknown/trace`)).status, 401);
+    assert.equal((await fetch(`${baseUrl}/runs/unknown/trace?index=true`)).status, 401);
+    assert.equal((await fetch(`${baseUrl}/runs/unknown/trace/segments/0`)).status, 401);
     const missingNativeTrace = await fetch(`${baseUrl}/runs/unknown/trace`, { headers: { authorization: "Bearer secret-token" } });
     assert.equal(missingNativeTrace.status, 404);
     assert.equal((await missingNativeTrace.json()).code, "ToubaServeNativeTraceUnavailable");

@@ -4,27 +4,79 @@
   "title": "touba-trace-timeline-v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "trace_ref", "events"],
+  "required": [
+    "schema_version",
+    "run_id",
+    "trace_ref",
+    "events"
+  ],
   "properties": {
-    "schema_version": { "const": "touba-trace-timeline-v1" },
-    "run_id": { "type": "string" },
-    "trace_ref": { "type": "string" },
+    "schema_version": {
+      "const": "touba-trace-timeline-v1"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "trace_ref": {
+      "type": "string"
+    },
     "events": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["index", "type", "timestamp", "severity", "summary", "source_ref", "redaction"],
+        "required": [
+          "index",
+          "type",
+          "timestamp",
+          "severity",
+          "summary",
+          "source_ref",
+          "redaction"
+        ],
         "properties": {
-          "index": { "type": "integer" },
-          "type": { "type": "string" },
-          "timestamp": { "type": "string" },
-          "severity": { "enum": ["debug", "info", "warning", "error"] },
-          "summary": { "type": "string" },
-          "source_ref": { "type": ["string", "null"] },
-          "redaction": { "enum": ["none", "secrets_redacted", "payload_minimized"] }
+          "index": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "debug",
+              "info",
+              "warning",
+              "error"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "redaction": {
+            "enum": [
+              "none",
+              "secrets_redacted",
+              "payload_minimized"
+            ]
+          }
         }
       }
+    },
+    "event_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "events_truncated": {
+      "type": "boolean"
     }
   }
 }

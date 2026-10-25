@@ -42,6 +42,16 @@ assert.equal(run.status, "success");
 assert.equal(run.result, "installed-sdk-ok");
 assertRunSucceeded(run, "installed-sdk-ok");
 assertTraceEvents(run.trace, { kind: "run_completed", count: 1 });
+const traced = await engine.run({ source: "hello.tb", traceStore: "traces.sqlite", traceMode: "reference" });
+assert.equal(traced.result, "installed-sdk-ok");
+assert.equal(traced.trace, null);
+let after, eventCount = 0;
+while (true) {
+  const page = await engine.readTrace({ traceStore: "traces.sqlite", reference: traced.traceReference, after, limit: 2 });
+  eventCount += page.events.length; after = page.next;
+  if (page.done) break;
+}
+assert.equal(eventCount, traced.traceReference.event_count);
 await checkInstalledProviderAccounting(engine);
 
 async function checkInstalledProviderAccounting(installedEngine) {
@@ -420,7 +430,7 @@ writeFileSync(join(triggerRoot, "touba.manifest.json"), JSON.stringify({ manifes
     payload: { format: "json", content_types: ["application/json"], max_bytes: 4096, map: { message: "$.message" } },
     limits: { max_runs_per_day: 5, timeout_ms: 30000 } } } }));
 const triggerEngine = new ToubaEngine({ projectRoot: triggerRoot, command: process.execPath, commandArgs: [process.argv[2]] });
-const triggerOptions = { source: "program.tb", manifest: "touba.manifest.json", triggerState: "archive.trigger-state.json",
+const triggerOptions = { source: "program.tb", manifest: "touba.manifest.json", triggerState: "archive.triggers.sqlite",
   triggerEvent: { trigger_ref: triggerRef, source_kind: "request", event_id: `archive-request-${randomUUID()}`, arguments: { message: "Archived SDK\nverified" } } };
 assert.equal((await triggerEngine.run(triggerOptions)).result, "Archived SDK\nverified");
 await assert.rejects(triggerEngine.run(triggerOptions), error => error.details.reason === "TriggerReplayRejected");

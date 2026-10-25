@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { copyDependency } from "./package-sdk.mjs";
 
@@ -31,8 +32,43 @@ test("SDK and editor packaging preserve conflicting transitive versions and requ
     }
     assert.ok(inventory.has("shared@1.0.0"));
     assert.ok(inventory.has("shared@2.0.0"));
-    assert.throws(() => copyDependency(source, join(root, "cycle"), new Map(), new Set([source])), /cycle/);
+    assert.throws(() => copyDependency(source, join(root, "cycle"), new Map(), new Map([[realpathSync(source), target]])), /cycle/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("a required cyclic peer resolves to the exact packaged ancestor without checkout access", () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-cyclic-peer-"));
+  const source = join(root, "source/node_modules/driver");
+  const target = join(root, "output/node_modules/driver");
+  try {
+    mkdirSync(join(source, "node_modules/pool"), { recursive: true });
+    writeFileSync(join(source, "package.json"), JSON.stringify({ name: "driver", version: "1.0.0", main: "index.cjs", dependencies: { pool: "1.0.0" } }));
+    writeFileSync(join(source, "index.cjs"), "exports.version='1.0.0'; exports.pool=require('pool');\n");
+    writeFileSync(join(source, "node_modules/pool/package.json"), JSON.stringify({ name: "pool", version: "1.0.0", main: "index.cjs", peerDependencies: { driver: "1.0.0" } }));
+    writeFileSync(join(source, "node_modules/pool/index.cjs"), "exports.driverVersion=()=>require('driver').version;\n");
+    const inventory = new Map();
+    copyDependency(source, target, inventory);
+    rmSync(join(root, "source"), { recursive: true });
+    const require = createRequire(join(root, "output/package.json"));
+    assert.equal(require("driver").pool.driverVersion(), "1.0.0");
+    assert.deepEqual([...inventory.keys()].sort(), ["driver@1.0.0", "pool@1.0.0"]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("PostgreSQL and its cyclic required peer work from an isolated copied dependency tree", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-packaged-pg-"));
+  try {
+    const requireSource = createRequire(new URL("../../touba-run/package.json", import.meta.url));
+    const source = join(requireSource.resolve("pg/package.json"), "..");
+    const inventory = new Map();
+    copyDependency(source, join(root, "node_modules/pg"), inventory);
+    const require = createRequire(join(root, "package.json"));
+    const { Client, Pool } = require("pg");
+    assert.equal(typeof Client, "function");
+    const pool = new Pool({ max: 1 });
+    assert.equal(pool.Client, Client);
+    await pool.end();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

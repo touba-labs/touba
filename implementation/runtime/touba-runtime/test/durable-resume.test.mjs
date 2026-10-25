@@ -18,6 +18,38 @@ import {
 } from "../src/index.mjs";
 import { deriveEffectId, deriveEffectRequestDigest } from "../src/effect-contract.mjs";
 import { airDocumentDigest } from "../src/human-approval-checkpoints.mjs";
+import { createSqliteTraceStore } from "../src/sqlite-trace-store.mjs";
+
+test("SQLite checkpoints consume deltas and retain their exact prefix without materialization", async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-durable-traces-"));
+  const store = createSqliteTraceStore({ filename: join(root, "traces.sqlite"), maxDocumentBytes: 1 });
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  const observations = [];
+  let previousDigest = null, after = -1;
+  const result = await executeAirDocument(bindStopDocument(), {
+    ...durableOptions({ manifest: emptyEffectManifest(), journal: journalAdapter(), observer: async observation => {
+      const { checkpoint, traceReader } = observation;
+      const expected = canonicalDigest({ previous_prefix_digest: previousDigest, run: traceReader.header.run,
+        events: [...traceReader.events({ after })] });
+      if (traceReader.nextSequenceIndex > after + 1 || previousDigest === null) previousDigest = expected;
+      assert.equal(checkpoint.trace_state.prefix_digest, previousDigest);
+      assert.equal(checkpoint.trace_state.next_sequence_index, traceReader.nextSequenceIndex);
+      after = traceReader.nextSequenceIndex - 1;
+      observations.push(observation);
+      await Promise.resolve();
+    } }),
+    traceStorage: store,
+  });
+  assert.equal(result.status, "stopped");
+  assert.ok(observations.length > 1);
+  for (const observation of observations) {
+    assert.throws(() => observation.trace, { code: "TraceMaterializationLimitExceeded" });
+    const events = [...observation.traceReader.events()];
+    assert.equal(events.at(-1).sequence_index + 1, observation.checkpoint.trace_state.next_sequence_index);
+    assert.ok(events.every(event => event.kind !== "run_completed"));
+  }
+  assert.equal([...result.traceReader.events()].at(-1).kind, "run_completed");
+});
 
 test("accepts empty inputs and persists awaited checkpoints before dispatch without secrets", async () => {
   const secretValue = "durable-secret-\"quoted\"\nwith\\escapes-never-persisted";

@@ -1,3 +1,6 @@
+import { readEffectJournalFixture } from "../../../tests/helpers/effect-journal.mjs";
+import { createSqliteTriggerQueue } from "../src/sqlite-queue.mjs";
+import { createSqliteTriggerStore, migrateTriggerState } from "../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
@@ -19,6 +22,29 @@ const triggerStatusSchemaPath = join(
   implementationDir,
   "contracts/product-surfaces/schemas/touba-trigger-status-v1.schema.json",
 );
+
+test("a refused listening port closes stores and leaves the queue reusable by a new service", async t => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-listen-"));
+  const blocker = createServer();
+  let replacement;
+  t.after(async () => {
+    if (replacement?.server.listening) await closeServer(replacement.server);
+    if (blocker.listening) await closeServer(blocker);
+    rmSync(workspace, { recursive: true, force: true });
+  });
+  await new Promise(resolve => blocker.listen(0, "127.0.0.1", resolve));
+  const fixture = writeFixture(workspace);
+  const options = { airPath: fixture.airPath, manifestPath: fixture.manifestPath,
+    statePath: fixture.statePath, queuePath: fixture.queuePath, port: blocker.address().port, quiet: true };
+  const refused = await createTriggerService(options);
+  await assert.rejects(refused.start(), { code: "EADDRINUSE" });
+  await assert.rejects(refused.start(), { code: "TriggerServiceClosed" });
+  assert.equal(readQueue(fixture.queuePath).entries.length, 0);
+  await closeServer(blocker);
+  replacement = await createTriggerService(options);
+  await replacement.start();
+  assert.equal(replacement.server.listening, true);
+});
 
 test("serves a request trigger through HTTP, durable queue, state and trace", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-"));
@@ -45,7 +71,7 @@ test("serves a request trigger through HTTP, durable queue, state and trace", as
 
     const queueText = readFileSync(fixture.queuePath, "utf8");
     assert.equal(queueText.includes("raw-secret-payload"), false);
-    const queue = JSON.parse(queueText);
+    const queue = readQueue(fixture.queuePath);
     assert.equal(queue.trigger_queue_schema_version, "touba-trigger-queue-v1");
     assert.equal(queue.entries.length, 1);
     assert.equal(queue.entries[0].status, "succeeded");
@@ -54,7 +80,7 @@ test("serves a request trigger through HTTP, durable queue, state and trace", as
 
     const stateText = readFileSync(fixture.statePath, "utf8");
     assert.equal(stateText.includes("raw-secret-payload"), false);
-    const state = JSON.parse(stateText);
+    const state = readTriggerState(fixture.statePath);
     const triggerState = state.triggers["trigger:examples.webhook/WebhookRun"];
     assert.equal(triggerState.accepted_count, 1);
     assert.deepEqual(triggerState.consumed_event_ids, ["evt-webhook-001"]);
@@ -100,7 +126,7 @@ test("assigns a fresh event and queue identity to each delivery without an event
     assert.equal(new Set(deliveries.map((delivery) => delivery.queue_id)).size, 2);
     await closed;
 
-    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    const queue = readQueue(fixture.queuePath);
     assert.equal(queue.entries.length, 2);
     assert.equal(queue.entries.every((entry) => entry.status === "succeeded"), true);
     assert.equal(effectInvocationCount(fixture.effectLogPath), 2);
@@ -134,7 +160,7 @@ test("refuses an invalid event id header before creating a queue entry", async (
     });
     assert.equal(response.status, 400);
     assert.equal((await response.json()).code, "TriggerEventIdInvalid");
-    assert.equal(existsSync(fixture.queuePath), false);
+    assert.equal(readQueue(fixture.queuePath).entries.length, 0);
   } finally {
     if (service?.server.listening) {
       await closeServer(service.server);
@@ -170,12 +196,12 @@ test("refuses replayed webhook event ids before rerunning the target strategy", 
     const refusal = await replay.json();
     assert.equal(refusal.code, "TriggerReplayRejected");
 
-    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    const queue = readQueue(fixture.queuePath);
     assert.equal(queue.entries.length, 1);
     assert.equal(queue.entries[0].status, "succeeded");
     assert.equal(refusal.queue_id, queue.entries[0].queue_id);
 
-    const state = JSON.parse(readFileSync(fixture.statePath, "utf8"));
+    const state = readTriggerState(fixture.statePath);
     const triggerState = state.triggers["trigger:examples.webhook/WebhookRun"];
     assert.equal(triggerState.accepted_count, 1);
     assert.equal(triggerState.refused_count, 1);
@@ -355,7 +381,7 @@ test("maps declared JSON webhook payload fields to durable trigger arguments", a
     const queueText = readFileSync(fixture.queuePath, "utf8");
     assert.equal(queueText.includes("raw-secret-payload"), false);
     assert.equal(queueText.includes("approved-message"), true);
-    const queue = JSON.parse(queueText);
+    const queue = readQueue(fixture.queuePath);
     assert.deepEqual(queue.entries[0].arguments, { message: "approved-message" });
     assert.deepEqual(queue.entries[0].payload_contract.mapped_inputs, ["message"]);
 
@@ -431,7 +457,7 @@ test("rejects mapped webhook payload arguments that do not match the target sign
     const exit = await once(child, "exit");
     assert.equal(exit[0], 0);
 
-    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    const queue = readQueue(fixture.queuePath);
     assert.equal(queue.entries[0].status, "failed");
     assert.equal(queue.entries[0].runtime_error_code, "TriggerPayloadInvalid");
     assert.equal(queue.entries[0].arguments.message, 42);
@@ -448,7 +474,7 @@ test("recovers stale processing queue entries when the service starts", async ()
   const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-recover-"));
   try {
     const fixture = writeFixture(workspace);
-    writeFileSync(fixture.queuePath, JSON.stringify({
+    writeQueueFixture(fixture.queuePath, JSON.stringify({
       trigger_queue_schema_version: "touba-trigger-queue-v1",
       created_at: new Date().toISOString(),
       entries: [
@@ -474,7 +500,7 @@ test("recovers stale processing queue entries when the service starts", async ()
     const exit = await once(child, "exit");
     assert.equal(exit[0], 0);
 
-    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    const queue = readQueue(fixture.queuePath);
     assert.equal(queue.entries[0].status, "succeeded");
     assert.equal(queue.entries[0].recovery_reason, "processing_timeout");
   } finally {
@@ -538,7 +564,7 @@ test("deduplicates overlapping deliveries and refuses a divergent payload before
     assert.equal(entries[0].status, "succeeded");
     assert.equal(effectInvocationCount(fixture.effectLogPath), 1);
 
-    const state = JSON.parse(readFileSync(fixture.statePath, "utf8"));
+    const state = readTriggerState(fixture.statePath);
     const triggerState = state.triggers["trigger:examples.webhook/WebhookRun"];
     assert.equal(triggerState.accepted_count, 1);
     assert.equal(triggerState.refused_count, 0);
@@ -584,7 +610,7 @@ test("wakes a delayed retry without requiring another HTTP event", async () => {
     assert.equal(entry.attempt_count, 2);
     assert.equal(entry.next_attempt_at, undefined);
     assert.equal(effectInvocationCount(fixture.effectLogPath), 2);
-    const state = JSON.parse(readFileSync(fixture.statePath, "utf8"));
+    const state = readTriggerState(fixture.statePath);
     assert.equal(state.triggers["trigger:examples.webhook/WebhookRun"].accepted_count, 1);
   } finally {
     if (service?.server.listening) {
@@ -628,7 +654,7 @@ test("moves an exhausted retry to dead letter without inflating accepted event c
     assert.equal(entry.attempt_count, 2);
     assert.equal(typeof entry.dead_lettered_at, "string");
     assert.equal(effectInvocationCount(fixture.effectLogPath), 2);
-    const state = JSON.parse(readFileSync(fixture.statePath, "utf8"));
+    const state = readTriggerState(fixture.statePath);
     assert.equal(state.triggers["trigger:examples.webhook/WebhookRun"].accepted_count, 1);
   } finally {
     if (service?.server.listening) {
@@ -644,7 +670,7 @@ test("an immediate HTTP event preserves the earlier wake-up of a delayed queue e
   try {
     const fixture = writeFixture(workspace);
     const delayedDueAt = Date.now() + 700;
-    writeFileSync(fixture.queuePath, JSON.stringify({
+    writeQueueFixture(fixture.queuePath, JSON.stringify({
       trigger_queue_schema_version: "touba-trigger-queue-v1",
       created_at: new Date().toISOString(),
       entries: [queuedEntry("queue:delayed:001", "evt-delayed-existing", {
@@ -692,7 +718,7 @@ test("cancels delayed queue wake-up when max-events stops the service", async ()
   let child;
   try {
     const fixture = writeFixture(workspace);
-    writeFileSync(fixture.queuePath, JSON.stringify({
+    writeQueueFixture(fixture.queuePath, JSON.stringify({
       trigger_queue_schema_version: "touba-trigger-queue-v1",
       created_at: new Date().toISOString(),
       entries: [
@@ -708,10 +734,10 @@ test("cancels delayed queue wake-up when max-events stops the service", async ()
     assert.equal(exit[0], 0);
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
 
-    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
-    assert.equal(queue.entries[0].status, "succeeded");
-    assert.equal(queue.entries[1].status, "queued");
-    assert.equal(queue.entries[1].attempt_count, undefined);
+    const queue = readQueue(fixture.queuePath);
+    assert.equal(queue.entries.find(entry => entry.event_id === "evt-stop-first").status, "succeeded");
+    assert.equal(queue.entries.find(entry => entry.event_id === "evt-stop-delayed").status, "queued");
+    assert.equal(queue.entries.find(entry => entry.event_id === "evt-stop-delayed").attempt_count, undefined);
   } finally {
     await terminateChild(child);
     rmSync(workspace, { recursive: true, force: true });
@@ -760,7 +786,7 @@ test("marks the previous external outcome unknown when recovering a crash after 
     const recoveredExit = await once(recovered, "exit");
     assert.equal(recoveredExit[0], 0);
 
-    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    const queue = readQueue(fixture.queuePath);
     assert.equal(queue.entries[0].status, "succeeded");
     assert.equal(queue.entries[0].attempt_count, 2);
     assert.equal(queue.entries[0].recovery_effect_outcome, "unknown");
@@ -896,17 +922,17 @@ test("redelivery during a crash lease reuses one queue and effect identity, then
     assert.equal((await divergent.json()).code, "TriggerEventPayloadConflict");
     assert.equal(external.requestCount(), 1);
     assert.equal(external.mutationCount(), 1);
-    assert.equal(JSON.parse(readFileSync(fixture.queuePath, "utf8")).entries.length, 1);
+    assert.equal(readQueue(fixture.queuePath).entries.length, 1);
 
     const recoveredExit = await once(recovered, "exit");
     assert.equal(recoveredExit[0], 0);
 
-    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    const queue = readQueue(fixture.queuePath);
     assert.equal(queue.entries.length, 1);
     assert.equal(queue.entries[0].queue_id, firstDelivery.queue_id);
     assert.equal(queue.entries[0].status, "succeeded");
     assert.equal(queue.entries[0].attempt_count, 2);
-    const journal = JSON.parse(readFileSync(fixture.effectJournalPath, "utf8"));
+    const journal = readEffectJournalFixture(fixture.effectJournalPath);
     const entries = Object.values(journal.entries);
     assert.equal(entries.length, 1);
     assert.equal(entries[0].state, "applied");
@@ -961,11 +987,11 @@ for (const [retryMode, expectedCode] of [
       const exit = await once(child, "exit");
       assert.equal(exit[0], 0);
 
-      const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+      const queue = readQueue(fixture.queuePath);
       assert.equal(queue.entries[0].status, "failed");
       assert.equal(queue.entries[0].runtime_error_code, expectedCode);
       assert.equal(queue.entries[0].attempt_count, 1);
-      const journal = JSON.parse(readFileSync(fixture.effectJournalPath, "utf8"));
+      const journal = readEffectJournalFixture(fixture.effectJournalPath);
       const entries = Object.values(journal.entries);
       assert.equal(entries.length, 1);
       assert.equal(entries[0].state, "unknown");
@@ -1041,11 +1067,11 @@ for (const scenario of [
       const exit = await once(child, "exit");
       assert.equal(exit[0], 0);
 
-      const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+      const queue = readQueue(fixture.queuePath);
       assert.equal(queue.entries[0].status, "failed");
       assert.equal(queue.entries[0].runtime_error_code, scenario.expectedCode);
       assert.equal(queue.entries[0].attempt_count, 1);
-      const journal = JSON.parse(readFileSync(fixture.effectJournalPath, "utf8"));
+      const journal = readEffectJournalFixture(fixture.effectJournalPath);
       assert.equal(Object.values(journal.entries)[0].state, "unknown");
       assert.equal(external.requestCount(), scenario.expectedRequests);
       assert.equal(external.mutationCount(), scenario.expectedMutations);
@@ -1089,11 +1115,11 @@ test("keeps resolved secrets out of the durable journal, queue and trace on an i
     assert.equal(exit[0], 0);
 
     const queueText = readFileSync(fixture.queuePath, "utf8");
-    const queue = JSON.parse(queueText);
+    const queue = readQueue(fixture.queuePath);
     assert.equal(queue.entries[0].status, "failed");
     assert.equal(queue.entries[0].runtime_error_code, "EffectReceiptInvalid");
     const journalText = readFileSync(fixture.effectJournalPath, "utf8");
-    const [journalEntry] = Object.values(JSON.parse(journalText).entries);
+    const [journalEntry] = Object.values(readEffectJournalFixture(fixture.effectJournalPath).entries);
     assert.equal(journalEntry.state, "unknown");
     assert.equal(Object.hasOwn(journalEntry, "receipt"), false);
     const traceText = readFileSync(queue.entries[0].trace_path, "utf8");
@@ -1139,15 +1165,15 @@ test("refuses a divergent request for the same durable effect before redispatch"
     await waitForEffectJournalState(fixture.effectJournalPath, "unknown");
     const queued = await waitForQueuedAttempt(fixture.queuePath, "evt-effect-request-conflict", 1);
     queued.arguments.message = "divergent";
-    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    const queue = readQueue(fixture.queuePath);
     queue.entries = queue.entries.map((entry) =>
       entry.queue_id === queued.queue_id ? queued : entry
     );
-    writeFileSync(fixture.queuePath, `${JSON.stringify(queue, null, 2)}\n`, "utf8");
+    writeQueueFixture(fixture.queuePath, `${JSON.stringify(queue, null, 2)}\n`, "utf8");
 
     const exit = await once(child, "exit");
     assert.equal(exit[0], 0);
-    const finished = JSON.parse(readFileSync(fixture.queuePath, "utf8")).entries[0];
+    const finished = readQueue(fixture.queuePath).entries[0];
     assert.equal(finished.status, "failed");
     assert.equal(finished.runtime_error_code, "EffectRequestConflict");
     assert.equal(finished.attempt_count, 2);
@@ -1192,7 +1218,7 @@ async function waitForQueueEntryStatus(queuePath, eventId, status, timeoutMs = 5
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     if (existsSync(queuePath)) {
-      const queue = JSON.parse(readFileSync(queuePath, "utf8"));
+      const queue = readQueue(queuePath);
       const entry = queue.entries?.find((candidate) => candidate.event_id === eventId);
       if (entry?.status === status) {
         return entry;
@@ -1207,7 +1233,7 @@ async function waitForQueuedAttempt(queuePath, eventId, attemptCount, timeoutMs 
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     if (existsSync(queuePath)) {
-      const queue = JSON.parse(readFileSync(queuePath, "utf8"));
+      const queue = readQueue(queuePath);
       const entry = queue.entries?.find((candidate) => candidate.event_id === eventId);
       if (entry?.status === "queued" && entry.attempt_count === attemptCount) {
         return entry;
@@ -1222,7 +1248,7 @@ async function waitForQueueEventTerminalCount(queuePath, eventId, expectedCount)
   const startedAt = Date.now();
   while (Date.now() - startedAt < 5000) {
     if (existsSync(queuePath)) {
-      const queue = JSON.parse(readFileSync(queuePath, "utf8"));
+      const queue = readQueue(queuePath);
       const entries = queue.entries?.filter((candidate) => candidate.event_id === eventId) ?? [];
       if (
         entries.length === expectedCount
@@ -1251,7 +1277,7 @@ async function waitForEffectJournalState(path, state, timeoutMs = 5000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     if (existsSync(path)) {
-      const journal = JSON.parse(readFileSync(path, "utf8"));
+      const journal = readEffectJournalFixture(path);
       const entries = Object.values(journal.entries ?? {});
       if (entries.length > 0 && entries.every((entry) => entry.state === state)) {
         return entries;
@@ -1410,9 +1436,9 @@ async function waitForStart(child) {
 function writeFixture(workspace, options = {}) {
   const airPath = join(workspace, "webhook.air.json");
   const manifestPath = join(workspace, "touba.manifest.json");
-  const statePath = join(workspace, "touba.trigger-state.json");
-  const queuePath = join(workspace, "touba.trigger-queue.json");
-  const effectJournalPath = join(workspace, "touba.effect-journal.json");
+  const statePath = join(workspace, "touba.triggers.sqlite");
+  const queuePath = join(workspace, "touba.trigger-queue.sqlite");
+  const effectJournalPath = join(workspace, "touba.effect-journal.sqlite");
   const secretsPath = join(workspace, "touba.secrets.json");
   const traceDir = join(workspace, "traces");
   const effectLogPath = join(workspace, "effect-invocations.log");
@@ -1786,4 +1812,34 @@ function sourceRef() {
     end_line: 1,
     end_column: 0,
   };
+}
+
+// Bounded fixture projection; production readers use pages and SQL summaries.
+function readTriggerState(filename) {
+  const store = createSqliteTriggerStore({ filename, readOnly: true });
+  try {
+    const triggers = {};
+    for (const event of store.page({ limit: 1000 }).items) {
+      const entry = triggers[event.trigger_ref] ??= { ...store.summary(event.trigger_ref), events: [], consumed_event_ids: [] };
+      entry.events.push(event);
+      if (event.status === "accepted") entry.consumed_event_ids.push(event.event_id);
+    }
+    return { triggers };
+  } finally { store.close(); }
+}
+
+function readQueue(filename) {
+  const store = createSqliteTriggerQueue({ filename, readOnly: true });
+  try { return { trigger_queue_schema_version: "touba-trigger-queue-v1", entries: store.page({ limit: 1000 }).entries }; }
+  finally { store.close(); }
+}
+function writeQueueFixture(filename, json) {
+  const store = createSqliteTriggerQueue({ filename });
+  try {
+    for (const entry of JSON.parse(json).entries) {
+      const existing = store.find(entry.trigger_ref, entry.event_id);
+      if (existing) { Object.assign(existing, entry); store.finish(existing); }
+      else store.enqueue(entry);
+    }
+  } finally { store.close(); }
 }

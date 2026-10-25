@@ -7,11 +7,19 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
-import { createFileEffectJournal } from "../../../runtime/touba-runtime/src/file-effect-journal.mjs";
+import { createSqliteEffectJournal } from "../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs";
+import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
+import { canonicalDigest } from "../../../runtime/touba-runtime/src/execution-checkpoints.mjs";
 
-const compiler = fileURLToPath(new URL("../../../target/debug/touba-compile", import.meta.url));
+const cargoManifest = fileURLToPath(new URL("../../../Cargo.toml", import.meta.url));
+// Cargo coordinates compilation with the other test files. Executing the
+// shared target/debug binary directly can race a concurrent Cargo relink.
+function compileFile(...args) {
+  return JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path", cargoManifest,
+    "-p", "touba-cli", "--bin", "touba-compile", "--", ...args], { encoding: "utf8" }));
+}
 const fixture = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/parallel-v1/positive/diagnostics.tb", import.meta.url));
-const air = JSON.parse(execFileSync(compiler, [fixture], { encoding: "utf8" }));
+const air = compileFile(fixture);
 const entryRef = "strategy:parallel.diagnostics/Run";
 const toolRef = "tool:parallel.diagnostics/Diagnose";
 const agentRef = "agent:parallel.diagnostics/Specialist";
@@ -25,7 +33,7 @@ const options = { entryRef, inputs: { incidents: ["a", "b", "c", "d", "e", "f"] 
 
 function compile(source) {
   const dir = mkdtempSync(join(tmpdir(), "touba-parallel-source-"));
-  try { const path = join(dir, "main.tb"); writeFileSync(path, source); return JSON.parse(execFileSync(compiler, [path], { encoding: "utf8" })); }
+  try { const path = join(dir, "main.tb"); writeFileSync(path, source); return compileFile(path); }
   finally { rmSync(dir, { recursive: true, force: true }); }
 }
 const approvalSource = `module parallel.review
@@ -78,6 +86,27 @@ test("native multi-agent fan-out overlaps bounded calls and joins in input order
   assert([...identities.values()].every(ids => ids.size === 1));
   assert.equal(new Set([...identities.values()].flatMap(ids => [...ids])).size, 6);
   assert.ok(result.trace.events.filter(e => e.kind === "agent_decision_provider_call_attempted").every(e => e.payload.branch_id));
+});
+
+test("parallel checkpoint observers retain the matching SQLite prefix after other branches advance", async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-parallel-trace-"));
+  const store = createSqliteTraceStore({ filename: join(root, "trace.sqlite"), maxDocumentBytes: 1 });
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  const observations = [];
+  const result = await executeAirDocument(air, {
+    ...options, traceStorage: store,
+    toolHandlers: { [toolRef]: async ({ arguments: args }) => { await delay(1); return `diagnosis:${args.request}`; } },
+    parallelCheckpointObserver: async observation => { observations.push(observation); await delay(2); },
+  });
+  assert.equal(result.status, "success");
+  assert.deepEqual(result.result, options.inputs.incidents.map(item => `diagnosis:${item}`));
+  assert.ok(observations.length > 2);
+  for (const { checkpoint, traceReader } of observations) {
+    const trace = JSON.parse([...traceReader.json()].join(""));
+    assert.equal(canonicalDigest(trace), checkpoint.trace_prefix_digest);
+    assert.ok(trace.events.every(event => event.kind !== "run_completed"));
+  }
+  assert.throws(() => result.trace, { code: "TraceMaterializationLimitExceeded" });
 });
 
 test("zero items, cardinality and all input arguments are checked before dispatch", async () => {
@@ -498,7 +527,7 @@ process.stdin.on('data', chunk => data += chunk); process.stdin.on('end', () => 
 });`;
   let interrupted;
   const config = { entryRef: "strategy:parallel.review/Run", inputs: { incidents: ["a"] },
-    effectScopeId: "parallel-reconcile", effectJournal: createFileEffectJournal(join(root, "journal.json")),
+    effectScopeId: "parallel-reconcile", effectJournal: createSqliteEffectJournal(join(root, "journal.sqlite")),
     toolBindingManifest: { manifest_version: "touba-manifest-v1", bindings: {
       "tool:parallel.review/Diagnose": { handler: { kind: "process", command: process.execPath, args: ["-e", handler] },
         grants: [], timeout_ms: 2000, max_payload_bytes: 65536, effect_contract: { kind: "external_write", retry_mode: "none" } } } },
@@ -552,7 +581,7 @@ strategy Run
 `;
   for (const target of ["Worker", "Supervisor"]) {
     writeFileSync(join(root, "batches.tb"), source.replace("parallel Supervisor", "parallel " + target));
-    const document = JSON.parse(execFileSync(compiler, ["--source-root", root, join(root, "batches.tb")], { encoding: "utf8" }));
+    const document = compileFile("--source-root", root, join(root, "batches.tb"));
     const inputs = { requests: ["a", "b", "c"] }, seen = [];
     const result = await executeAirDocument(document, { entryRef: "strategy:batches/Run", inputs,
       agentDecisionProviderInitialMode: "capabilities", agentDecisionProvider: async request => {

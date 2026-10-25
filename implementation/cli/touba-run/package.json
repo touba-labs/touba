@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@touba/runtime": "workspace:*",
-    "@touba/supply-chain": "workspace:*"
+    "@touba/supply-chain": "workspace:*",
+    "pg": "8.21.0"
   }
 }

@@ -4751,8 +4751,8 @@ function validateRunPlanOutputsShape(outputs, runPlanPath, diagnostics) {
     diagnostics.push(errorDiagnostic("RunPlanSchemaMismatch", "run plan outputs must be an object", { run_plan_path: runPlanPath }));
     return false;
   }
-  if (outputs.mode !== undefined && !["show", "result", "trace", "all", "run-summary", "json"].includes(outputs.mode)) {
-    diagnostics.push(errorDiagnostic("RunPlanSchemaMismatch", "run plan outputs.mode must be one of show, result, trace, all, run-summary, json", {
+  if (outputs.mode !== undefined && !["show", "result", "trace", "all", "run-summary", "json", "json-reference"].includes(outputs.mode)) {
+    diagnostics.push(errorDiagnostic("RunPlanSchemaMismatch", "run plan outputs.mode must be one of show, result, trace, all, run-summary, json, json-reference", {
       run_plan_path: runPlanPath,
     }));
     return false;

@@ -11,7 +11,8 @@ import { basename, dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 import { validatedRecords } from "./validated-records.mjs";
-import { indexedStore } from "./indexed-store.mjs";
+import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
+import { migrateRecordState } from "../../../runtime/touba-runtime/src/sqlite-state-migration.mjs";
 
 const SESSION_SCHEMA = JSON.parse(readFileSync(new URL("../../../contracts/product-surfaces/schemas/touba-interaction-session-v1.schema.json", import.meta.url), "utf8"));
 const ASSET_SCHEMA = JSON.parse(readFileSync(new URL("../../../contracts/product-surfaces/schemas/touba-interaction-asset-v1.schema.json", import.meta.url), "utf8"));
@@ -598,6 +599,16 @@ function indexedSessionStore(path) {
   });
 }
 
+export function migrateInteractionSessions(options) {
+  return migrateRecordState(options, { schemaVersion: INTERACTION_SESSION_STORE_SCHEMA_VERSION,
+    fields: ["sessions"], recordsOf: document => document.sessions, validateRecord: validateCurrentSession,
+    keyOf: session => session.session_id, storeOf: indexedSessionStore,
+    validateSet(records) {
+      if (records.length > MAX_SESSIONS) throw interactionError("ToubaServeInteractionSessionCapacityExceeded", "interaction projection exceeds its bounded window");
+    },
+  });
+}
+
 function loadInteractionSessionStore(path, filter) {
   try {
     return { schema_version: INTERACTION_SESSION_STORE_SCHEMA_VERSION, sessions: indexedSessionStore(path).read(filter) };
@@ -616,14 +627,23 @@ function saveInteractionSessionStore(path, store, options) {
 function indexedAssetStore(path) {
   return indexedStore({ path, schemaVersion: INTERACTION_ASSET_STORE_SCHEMA_VERSION,
     keyOf: asset => asset.handle, indexes: { digest: "json_extract(body, '$.digest')" },
-    validate(asset) {
+    validate: validateStoredAsset,
+  });
+}
+
+function validateStoredAsset(asset) {
       if (!asset || validateObject(ASSET_SCHEMA, publicAsset(asset)).length > 0
         || !/^sha256:[a-f0-9]{64}$/.test(asset.digest)
         || asset.storage_name !== `${asset.digest.slice(7)}.bin`
         || asset.handle !== `asset_${asset.digest.slice(7, 31)}`) {
         throw interactionError("ToubaServeInteractionAssetStoreInvalid", "stored asset has an invalid contract or content address");
       }
-    },
+}
+
+export function migrateInteractionAssets(options) {
+  return migrateRecordState(options, { schemaVersion: INTERACTION_ASSET_STORE_SCHEMA_VERSION,
+    fields: ["assets"], recordsOf: document => document.assets, validateRecord: validateStoredAsset,
+    keyOf: asset => asset.handle, storeOf: indexedAssetStore,
   });
 }
 

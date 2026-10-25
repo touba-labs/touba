@@ -229,6 +229,8 @@ function createProject() {
   writeFileSync(join(root, "touba.project.json"), `${JSON.stringify({
     project_version: "touba-project-v1",
     language: "javascript",
+    sdk: "@touba/sdk",
+    artifact_layout: "touba-artifacts-v1",
     run_profiles: {
       dev: { require_supply_chain_lock: false },
       prod: {

@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { indexedStore } from "../src/indexed-store.mjs";
+import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
 
 function fixture(t, options = {}) {
   const root = mkdtempSync(join(tmpdir(), "touba-indexed-store-"));
@@ -44,6 +44,25 @@ test("indexed store selects and updates only the requested record, retaining all
     const plan = db.prepare("EXPLAIN QUERY PLAN SELECT body FROM records WHERE json_extract(body, '$.run_id') IS ?").all("run-40");
     assert.match(plan.map(r => r.detail).join(" "), /USING INDEX idx_run_id/);
   } finally { db.close(); }
+});
+
+test("bounded pages retain indexed OR filters, cursors and revision-checked writes", t => {
+  let validations = 0;
+  const { store } = fixture(t, { validate: () => validations++ });
+  const initial = store.read();
+  initial.push(...Array.from({ length: 1005 }, (_, i) => ({ id: String(i).padStart(5, "0"), status: i % 2 ? "pending" : "done" })));
+  store.write(initial); validations = 0;
+  const first = store.page({ filter: [{ status: "pending" }, { id: "00002" }], limit: 3 });
+  assert.equal(validations, 3);
+  assert.deepEqual(first.items.map(item => item.id), ["00001", "00002", "00003"]);
+  const second = store.page({ filter: [{ status: "pending" }, { id: "00002" }], after: first.next, limit: 3 });
+  assert.deepEqual(second.items.map(item => item.id), ["00005", "00007", "00009"]);
+  second.items[0].status = "reviewed"; store.write(second.items);
+  assert.equal(store.count([{ status: "reviewed" }]), 1);
+  assert.equal(store.count(), 1005);
+  assert.throws(() => store.page({ limit: 1001 }), { code: "ToubaStoreQueryInvalid" });
+  assert.throws(() => store.page({ after: 3 }), { code: "ToubaStoreQueryInvalid" });
+  assert.equal(store.page({ after: "zzzz" }).next, null);
 });
 
 test("conflicting writes roll back the whole batch and cannot erase unrelated history", t => {
@@ -109,6 +128,14 @@ test("an unchanged peer in a stale read set cannot authorize another update", t 
   assert.equal(store.read([{ id: "effect" }])[0].status, "pending");
 });
 
+test("an unchanged snapshot still checks concurrent revocation at commit", t => {
+  const { store } = fixture(t);
+  const initial = store.read(); initial.push({ id: "key", status: "active" }); store.write(initial);
+  const stale = store.read();
+  const revoked = store.read(); revoked[0].status = "revoked"; store.write(revoked);
+  assert.throws(() => store.write(stale), { code: "ToubaStoreWriteConflict" });
+});
+
 test("explicit projection eviction cannot delete an unseen or concurrently modified row", t => {
   const { store } = fixture(t);
   const initial = store.read(); initial.push({ id: "old", status: "complete" }); store.write(initial);
@@ -136,7 +163,7 @@ test("SQLite storage exhaustion rolls back every write and preserves the origina
 });
 
 function childStore(path, body) {
-  const source = `import { indexedStore } from ${JSON.stringify(new URL("../src/indexed-store.mjs", import.meta.url).href)};
+  const source = `import { indexedStore } from ${JSON.stringify(new URL("../../../runtime/touba-runtime/src/sqlite-record-store.mjs", import.meta.url).href)};
     const store = indexedStore({ path: ${JSON.stringify(path)}, schemaVersion: "test-record-v1",
       keyOf: record => record.id, validate() {}, ${body.includes("checkTransaction") ? body : ""} });
     ${body.includes("checkTransaction") ? "const records=store.read(); records[0].status='uncommitted'; store.write(records);" : body}`;

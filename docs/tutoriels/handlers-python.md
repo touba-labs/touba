@@ -32,7 +32,7 @@ touba init --language python
 touba sdk install python
 ```
 
-Python 3.11+ avec `venv` et `pip` est requis. Le SDK fourni avec Touba
+Python 3.11+ avec `uv`, ou `venv` et `pip`, est requis. Le SDK fourni avec Touba
 est installé hors ligne dans `.venv`. Activez-le avec
 `source .venv/bin/activate` sous macOS/Linux ou
 `.venv\Scripts\Activate.ps1` sous Windows.

@@ -183,7 +183,7 @@ console.log(run.trace);
 | `humanDecisions` | objet associant les références d'approbation aux décisions runtime |
 | `effectJournal` | chemin du journal durable pour les effets ; conserver le même journal à la reprise |
 | `triggerEvent` | événement normalisé : `trigger_ref`, `event_id`, `source_kind` et `arguments` nommés éventuels ; exclusif d'une entrée ordinaire |
-| `triggerState` | chemin finissant par `.trigger-state.json`, pour dédoublonnage et quotas persistants |
+| `triggerState` | chemin finissant par `.triggers.sqlite`, pour dédoublonnage et quotas persistants |
 | `supplyChainLock`, `requireSupplyChainLock` | verrou explicite et exigence de validation avant exécution |
 | `runLimits`, `maxProviderCalls` | bornes explicites d'exécution et d'appels provider |
 
@@ -221,6 +221,50 @@ Les échecs de compilation, d'admission, d'exécution ou de lancement lèvent
 `code`. Ne transformez pas cette exception en succès. Les sorties publiques
 n'exposent pas le checkpoint privé. Les décisions humaines doivent cibler les
 références de l'AIR effectivement exécuté, jamais celles d'un autre programme.
+
+### Conserver les traces
+
+```js
+const run = await engine.run({ source: "program.tb", traceStore: ".touba/traces.sqlite" });
+```
+
+SQLite conserve les traces par défaut dans `.touba/traces.sqlite`, à la racine
+du projet de l’engine. Le chemin ci-dessus peut être personnalisé. Chaque segment
+reste disponible après la fin du processus ; `traceOut` / `trace_out` permet
+en plus un export JSON. L’archivage est décrit dans la [référence traces](../reference/traces-v1-rc.md#conserver-les-traces).
+
+Pour une longue trace, choisissez `traceMode: "reference"`. Le résultat métier
+revient après la finalisation du journal, avec `traceReference`
+et `trace` à `null`. Lisez ensuite les événements par pages :
+
+```js
+const traceStore = ".touba/traces.sqlite";
+const run = await engine.run({
+  source: "program.tb", traceStore, traceMode: "reference",
+});
+let after;
+while (true) {
+  const page = await engine.readTrace({
+    traceStore, reference: run.traceReference, after, limit: 100,
+  });
+  for (const event of page.events) console.log(event.kind);
+  if (page.done) break;
+  after = page.next;
+}
+```
+
+`readTrace` utilise le lecteur Core en lecture seule. `limit` accepte 1 à
+1 000 événements ; le contenu des événements d'une page est limité à 1 Mio.
+Un échec runtime expose sa référence dans `error.details.traceReference`.
+La référence sert à la lecture ; la reprise d'exécution utilise son checkpoint.
+Conservez la référence et le journal pour reprendre la lecture après un
+redémarrage. Commencez sans curseur pour vérifier l'empreinte du segment complet ;
+les pages suivantes contrôlent leurs événements et leur ordre.
+
+En mode intégral, `trace` contient le document complet. La limite de transport
+de 32 Mio s'applique aux réponses SDK, y compris au résultat métier et aux
+messages. Une trace longue peut être conservée et lue par pages sans augmenter
+cette limite. Voir la [référence traces](../reference/traces-v1-rc.md#conserver-les-traces).
 
 ## Écrire un handler
 
@@ -455,7 +499,7 @@ const result = await engine.run({
     event_id: "watch-event-42",
     source_kind: "schedule",
   },
-  triggerState: "watch.trigger-state.json",
+  triggerState: "watch.triggers.sqlite",
 });
 ```
 

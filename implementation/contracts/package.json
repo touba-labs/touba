@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Standalone Touba AIR/trace contracts and conformance corpus.",
-  "files": ["machine", "conformance", "reference-runtime"],
+  "files": ["machine", "conformance", "reference-runtime", "trace-reference.mjs"],
   "bin": {
     "touba-conformance": "./conformance/runner.mjs"
   },

@@ -49,6 +49,7 @@ import {
   normalizeOptionalExecutionCheckpoint,
   sealExecutionCheckpoint,
   tracePrefixDigest,
+  tracePrefixDigestFromEvents,
   validateExecutionCheckpoint,
 } from "./execution-checkpoints.mjs";
 import {
@@ -404,6 +405,10 @@ function createExecutionContext(document, entryRef, options = {}) {
   if (options.tracePureFunctions !== undefined && !["full", "calls"].includes(options.tracePureFunctions)) {
     throw new ToubaRuntimeError("InvalidRuntimeOption", "tracePureFunctions must be full or calls");
   }
+  const traceStorage = options.traceStorage ?? null;
+  if (traceStorage !== null && ["openSegment", "append", "document", "events", "snapshot"].some(name => typeof traceStorage[name] !== "function")) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", "traceStorage requires openSegment, append, document, events and snapshot methods");
+  }
   const trace = new TraceBuilder(
     document,
     entryRef,
@@ -413,6 +418,7 @@ function createExecutionContext(document, entryRef, options = {}) {
       ?? internalCompensation?.trace_state?.next_sequence_index
       ?? 0,
     options.tracePureFunctions ?? "full",
+    traceStorage,
   );
   const initialValues = normalizeInputs(options.inputs ?? {});
   const toolBindingManifest = normalizeOptionalToolBindingManifest(options.toolBindingManifest);
@@ -499,6 +505,7 @@ function createExecutionContext(document, entryRef, options = {}) {
       "maxAgentSteps",
     ),
     triggerRunCounts: normalizeTriggerRunCounts(options.triggerRunCounts ?? {}),
+    triggerAdmission: options.triggerAdmission,
     effectState: createEffectState(),
     effectScopeId: options.effectScopeId
       ?? options.effect_scope_id
@@ -2280,7 +2287,7 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
   const contextValues = (payload.context_refs ?? []).map(ref => resolveHandle(ref, context, graph));
   assertCheckpointHasNoResolvedSecret(contextValues, context, payload.approval_ref);
   const valueTypes = checkpointObjectFromMap(context.valueTypes, "value_types");
-  const tracePrefixDigest = `sha256:${sha256Json(context.trace.document())}`;
+  const tracePrefixDigest = `sha256:${context.trace.digest()}`;
   const checkpoint = {
     checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
     kind: "human_approval",
@@ -2348,7 +2355,7 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
   const checkpointObservations = checkpointJsonClone(observations, "agent_loop_state.observations");
   assertCheckpointHasNoResolvedSecret(checkpointObservations, context, payload.approval_ref);
   const valueTypes = checkpointObjectFromMap(context.valueTypes, "value_types");
-  const tracePrefixDigest = `sha256:${sha256Json(context.trace.document())}`;
+  const tracePrefixDigest = `sha256:${context.trace.digest()}`;
   const capabilityRefs = Array.isArray(agent.uses) ? [...agent.uses] : [];
   const checkpoint = {
     checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
@@ -2653,6 +2660,27 @@ async function executeNormalizedTriggerEvent(triggerEvent, context) {
       refuseTriggerForRuntimeFailure(context, triggerRef, eventId, sourceKind, trigger.target_ref, error, "payload_invalid");
     }
     throw error;
+  }
+
+  if (context.triggerAdmission !== undefined) {
+    let admission;
+    try {
+      if (typeof context.triggerAdmission !== "function") throw new TypeError("triggerAdmission must be a synchronous host function");
+      admission = context.triggerAdmission({ triggerRef, eventId, sourceKind, runId: trace.runId,
+        maxRunsPerDay: effectiveLimits.max_runs_per_day });
+      if (!admission || typeof admission.accepted !== "boolean" || typeof admission.then === "function") {
+        throw new TypeError("triggerAdmission must synchronously return an admission decision");
+      }
+    } catch {
+      refuseTrigger(context, triggerRef, eventId, { code: "TriggerStateUnavailable", reason: "state_unavailable", sourceKind });
+    }
+    if (!admission.accepted) {
+      const limited = admission.reason === "max_runs_per_day_reached";
+      if (limited) trace.push("trigger_rate_limited", { payload: { trigger_ref: triggerRef, event_id: eventId,
+        limit_ref: "max_runs_per_day", limit_value: effectiveLimits.max_runs_per_day, observed_count: admission.observedCount } });
+      refuseTrigger(context, triggerRef, eventId, { code: limited ? "TriggerRateLimited" : "TriggerReplayRejected",
+        reason: limited ? "max_runs_per_day_reached" : "event_replay", sourceKind });
+    }
   }
 
   trace.push("trigger_event_accepted", {
@@ -5410,7 +5438,6 @@ async function executeEffectfulProcessTool(
       result: null,
       blockerCode: null,
     };
-    enrichActiveCompensationCallTrace(context, effectId, attemptIndex);
   }
   const durableReservation = context.executionDurability.enabled
     ? await reserveDurableToolDispatch(tool, binding, context, {
@@ -5634,16 +5661,15 @@ function assertEffectJournalRequestMatches(entry, expected) {
   );
 }
 
-function enrichActiveCompensationCallTrace(context, inverseEffectId, attemptIndex) {
-  const events = context.trace.document().events;
-  const event = [...events].reverse().find((candidate) => candidate.kind === "call_started");
-  if (!event) return;
-  event.payload = {
-    ...event.payload,
+function compensationCallIdentity(context) {
+  if (!context.compensation) return {};
+  // Identity is sealed before execution. The attempt number is only known
+  // after consulting the effect journal and is reported by the outcome event.
+  // Published events are never retroactively enriched.
+  return {
     compensation_id: context.compensation.config.envelope.compensation_id,
     compensates_effect_id: context.compensation.config.envelope.compensates_effect_id,
-    inverse_effect_id: inverseEffectId,
-    attempt_index: attemptIndex,
+    inverse_effect_id: context.compensation.config.inverse_effect_id,
   };
 }
 
@@ -8179,13 +8205,13 @@ async function afterDurableNode(graph, node, context, step, nextNode) {
 async function persistDurableExecutionCheckpoint(context, options = {}) {
   const durable = context.executionDurability;
   if (!durable.enabled) return null;
-  const traceDocument = context.trace.document();
+  const traceReader = context.trace.snapshot();
   let prefixDigest = durable.tracePrefixDigest;
-  if (traceDocument.events.length > durable.traceEventOffset || prefixDigest === null) {
-    prefixDigest = tracePrefixDigest(
+  if (traceReader.eventCount > durable.traceEventOffset || prefixDigest === null) {
+    prefixDigest = tracePrefixDigestFromEvents(
       durable.tracePrefixDigest,
-      traceDocument,
-      durable.traceEventOffset,
+      traceReader.header.run,
+      traceReader.events({ after: traceReader.startIndex + durable.traceEventOffset - 1 }),
     );
   }
   const activeElapsedMs = options.activeElapsedMs
@@ -8232,14 +8258,13 @@ async function persistDurableExecutionCheckpoint(context, options = {}) {
     checkpoint,
     secretValuesForRedaction(context.secretStore),
   );
-  await durable.observer({
+  await durable.observer(context.trace.attach({
     checkpoint: structuredClone(checkpoint),
-    trace: structuredClone(traceDocument),
-  });
+  }, traceReader));
   durable.revision = checkpoint.revision;
   durable.previousCheckpointDigest = checkpoint.checkpoint_digest;
   durable.tracePrefixDigest = prefixDigest;
-  durable.traceEventOffset = traceDocument.events.length;
+  durable.traceEventOffset = traceReader.eventCount;
   durable.lastCheckpoint = checkpoint;
   return checkpoint;
 }
@@ -8311,7 +8336,7 @@ function parallelCheckpoint(context, graph, node, state) {
     budget_counters: { steps: context.budgetState.counters.steps, tool_calls: context.budgetState.counters.toolCalls,
       agent_invocations: context.budgetState.counters.agentInvocations, provider_calls: context.budgetState.counters.providerCalls },
     effect_state: { external_tool_dispatches: context.effectState.externalToolDispatches, next_effect_index: context.effectState.nextEffectIndex },
-    next_call_index: context.nextCallIndex, trace_prefix_digest: canonicalDigest(context.trace.document()),
+    next_call_index: context.nextCallIndex, trace_prefix_digest: `sha256:${context.trace.digest(true)}`,
   };
   assertCheckpointHasNoResolvedSecret(checkpoint, context, first?.approval_ref ?? state.id);
   const portable = checkpointJsonClone(checkpoint, "parallel_checkpoint");
@@ -8396,9 +8421,9 @@ async function resumeParallelCheckpoint(document, entryRef, context, checkpoint)
   }
   if (pendingParallelApprovals(checkpoint.parallel_state).length || pendingParallelInputs(checkpoint.parallel_state).length) {
     context.pendingHumanApprovalCheckpoint = parallelCheckpoint(context, graph, node, checkpoint.parallel_state);
-    if (context.parallelRuntime.observer) await context.parallelRuntime.observer({
-      checkpoint: structuredClone(context.pendingHumanApprovalCheckpoint), trace: context.trace.document(),
-    });
+    if (context.parallelRuntime.observer) await context.parallelRuntime.observer(context.trace.attach({
+      checkpoint: structuredClone(context.pendingHumanApprovalCheckpoint),
+    }));
     throw new RuntimeStop("parallel group awaits remaining human responses", { reason: pendingParallelApprovals(checkpoint.parallel_state).length ? "human_approval_pending" : "user_input_pending" });
   }
   return resumeInvocationStack(context, async () => {
@@ -8461,7 +8486,8 @@ async function executeParallelNode(graph, node, context, restored = null) {
       }
       if (!runtime.observer) return;
       const checkpoint = parallelCheckpoint(context, graph, node, state);
-      persistence = persistence.then(() => runtime.observer({ checkpoint, trace: context.trace.document() }));
+      const observation = context.trace.attach({ checkpoint });
+      persistence = persistence.then(() => runtime.observer(observation));
       await persistence;
     },
   };
@@ -8526,7 +8552,8 @@ async function executeFallbackNode(graph, node, context) {
   context.callStack.push(frame);
   context.activeCallerRef = graph.owner_ref;
   context.trace.push("call_started", { airRef: airRefForNode(graph, node),
-    payload: compactPayload({ target_ref: targetRef, caller_ref: graph.owner_ref, agent_ref: context.activeAgentRef }) });
+    payload: compactPayload({ target_ref: targetRef, caller_ref: graph.owner_ref, agent_ref: context.activeAgentRef,
+      ...compensationCallIdentity(context) }) });
   try {
     const result = await executeTarget(targetRef, context);
     bindCompletedCall(graph, node, targetRef, result, context);
@@ -8998,6 +9025,7 @@ async function executeCallNode(graph, node, context) {
       caller_ref: graph.owner_ref,
       agent_ref: context.activeAgentRef,
       argument_count: callArguments?.length,
+      ...compensationCallIdentity(context),
     },
   });
 
@@ -10644,12 +10672,9 @@ function runtimeFailureFamily(error) {
 }
 
 function traceUnhandledRuntimeFailure(context, error) {
-  const events = context.trace.document().events ?? [];
-  const alreadyTraced = events.some((event) =>
-    event.kind === "failure_detected"
-    && event.payload?.runtime_error_code === error.code
-  );
-  if (alreadyTraced) return;
+  for (const event of context.trace.iterateEvents()) {
+    if (event.kind === "failure_detected" && event.payload?.runtime_error_code === error.code) return;
+  }
   context.trace.push("failure_detected", {
     payload: compactPayload({
       failure_mode: "run",

@@ -51,15 +51,22 @@ try {
   assertSuccess("run", run);
   assert.deepEqual(JSON.parse(run.stdout), { verdict: "approved" });
   const trace = readJson(tracePath);
+  // Event timestamps are required and validated independently of the semantic
+  // fixture, which predates wall-clock trace observations.
+  const semanticTrace = { ...trace, events: trace.events.map(({ observed_at, ...event }) => {
+    assert.equal(typeof observed_at, "string");
+    assert.equal(new Date(observed_at).toISOString(), observed_at);
+    return event;
+  }) };
   if (process.argv.includes("--write-trace-fixture")) {
-    writeFileSync(expectedTracePath, JSON.stringify(stripSourceRefs(trace), null, 2) + "\n");
+    writeFileSync(expectedTracePath, JSON.stringify(stripSourceRefs(semanticTrace), null, 2) + "\n");
   }
   const expectedTrace = readJson(expectedTracePath);
   // The snapshot describes event semantics. Independently recompute the full
   // commitment from this compilation, including its portable source metadata.
   // Never rewrite the historical snapshot or omit the commitment assertion.
   expectedTrace.run.air_digest = airDocumentDigest(air);
-  assert.deepEqual(stripSourceRefs(trace), expectedTrace);
+  assert.deepEqual(stripSourceRefs(semanticTrace), expectedTrace);
   assert.equal(JSON.stringify(trace).includes("Review fixture"), false);
   assert.equal(JSON.stringify(trace).includes("approved"), false);
 

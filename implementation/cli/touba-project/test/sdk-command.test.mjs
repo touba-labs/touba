@@ -24,6 +24,29 @@ test("SDK commands describe both SDKs and handler scope", () => {
   assert.throws(() => sdkCommand(["get"]), /Usage/);
   assert.throws(() => sdkCommand(["path", "python", "--root", "."]), /option/);
   assert.throws(() => sdkCommand(["install", "python", "--python"]), /option/);
+  assert.match(sdkCommand([]).text, /--manager auto\|uv\|pip/);
+  assert.throws(() => sdkCommand(["install", "python", "--manager", "uv", "--manager", "pip"]), /duplicate/);
+  assert.throws(() => installSdk("python", { manager: "unknown" }), /auto, uv or pip/);
+});
+
+test("Python manager preflight preserves unsupported locks and rejects unsafe paths before installation", t => {
+  const { root, metadata } = fixture(t);
+  const archive = "sdk/touba_sdk-1.0.0-py3-none-any.whl";
+  writeFileSync(join(root, archive), "controlled archive");
+  metadata.python_sdk = { ...metadata.sdk, archive, name: "touba-sdk" };
+  writeFileSync(join(root, "TOOLCHAIN.json"), JSON.stringify(metadata));
+  for (const file of ["poetry.lock", "Pipfile.lock", "pdm.lock", "uv.lock"]) {
+    const project = join(root, file); mkdirSync(project);
+    writeFileSync(join(project, file), "preserve me");
+    assert.throws(() => installSdk("python", { root: project, distributionRoot: root, manager: "pip" }), /Project uses/);
+    assert.equal(readFileSync(join(project, file), "utf8"), "preserve me");
+    assert.equal(existsSync(join(project, ".venv")), false);
+    assert.equal(existsSync(join(project, "vendor")), false);
+  }
+  const project = join(root, "unsafe"); mkdirSync(project);
+  symlinkSync(join(root, "TOOLCHAIN.json"), join(project, "pyproject.toml"));
+  assert.throws(() => installSdk("python", { root: project, distributionRoot: root }), /regular file/);
+  assert.equal(existsSync(join(project, ".venv")), false);
 });
 
 test("SDK archive is resolved and checksum verified", t => {
@@ -31,6 +54,22 @@ test("SDK archive is resolved and checksum verified", t => {
   assert.equal(bundledSdk("javascript", root).path, join(root, "sdk/touba-sdk.tgz"));
   writeFileSync(join(root, "sdk/touba-sdk.tgz"), "altered");
   assert.throws(() => bundledSdk("javascript", root), /checksum mismatch/);
+});
+
+test("a requested uv manager never falls back to pip when uv is unavailable", t => {
+  const { root, metadata } = fixture(t);
+  const archive = "sdk/touba_sdk-1.0.0-py3-none-any.whl";
+  writeFileSync(join(root, archive), "controlled archive");
+  metadata.python_sdk = { ...metadata.sdk, archive, name: "touba-sdk" };
+  writeFileSync(join(root, "TOOLCHAIN.json"), JSON.stringify(metadata));
+  const project = join(root, "project"); mkdirSync(project);
+  const previousPath = process.env.PATH;
+  process.env.PATH = project;
+  try {
+    assert.throws(() => installSdk("python", { root: project, distributionRoot: root, manager: "uv" }), /uv availability/);
+  } finally { process.env.PATH = previousPath; }
+  assert.equal(existsSync(join(project, ".venv")), false);
+  assert.equal(existsSync(join(project, "vendor")), false);
 });
 
 test("SDK path refuses unknown SDK, absent metadata, traversal and symlinks", t => {

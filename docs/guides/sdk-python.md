@@ -34,7 +34,26 @@ La commande vérifie la wheel livrée avec Touba, la conserve dans
 `vendor/touba-sdk/<empreinte>/`, crée ou réutilise `.venv`, puis installe
 `touba-sdk` hors ligne. Elle vérifie les imports `ToubaEngine` et `AsyncToubaEngine`.
 Aucune installation globale ni publication PyPI n'est nécessaire.
-Python 3.11+ avec `venv` et `pip` doit être présent sur la machine.
+Python 3.11+ doit être présent, avec `uv` ou `venv` et `pip`.
+
+### Choisir le gestionnaire
+
+```sh
+touba sdk install python --manager uv
+touba sdk install python --manager pip
+```
+
+Sans option, `auto` sélectionne `uv` si le projet contient `uv.lock`,
+sinon `pip`. Le gestionnaire choisi doit être installé.
+Avec `uv` et un `pyproject.toml`, Touba inscrit la wheel locale dans les
+dépendances et actualise `uv.lock` hors ligne. Un prochain `uv sync`
+conserve donc le SDK. Sans projet Python déclaré, seul le venv est préparé.
+
+La résolution hors ligne d'un projet uv existant nécessite que ses autres
+dépendances soient déjà disponibles dans le cache uv. Touba installe uniquement
+sa wheel ; la synchronisation du reste du projet reste à votre initiative.
+Pour Poetry, PDM ou un autre gestionnaire, utilisez l'archive vérifiée fournie
+par `touba sdk path python` avec votre gestionnaire.
 
 Pour choisir un interpréteur lors de la création du venv :
 
@@ -55,10 +74,8 @@ Sous Windows, utilisez `.venv\Scripts\Activate.ps1` ou directement
 La commande `touba` doit rester accessible. Pour une autre installation,
 passez son chemin absolu à `ToubaEngine(command=...)`.
 
-Pour gérer vous-même un environnement existant, `touba sdk path python`
-donne le chemin vérifié de la wheel ; installez-la avec
-`python -m pip install --no-index --no-deps --force-reinstall <wheel>`.
-Ne commitez pas `.venv` ; conservez l'archive dans `vendor/touba-sdk`.
+Conservez `vendor/touba-sdk` et vos déclarations de dépendances dans Git ;
+excluez `.venv`. Dans un projet uv, conservez aussi `uv.lock`.
 
 Sous Windows, le SDK reconnaît le lanceur `touba.cmd` de l’installation et
 appelle directement le Node embarqué avec l’entrée CLI, sans interpréteur de
@@ -153,6 +170,55 @@ ne contient aucun état privé de continuation.
 `RunResult` expose `status`, `reason`, `result`, `messages`, `pending_interaction` et `trace`. Une pause, un rejet humain ou un arrêt déclaré restent des résultats contrôlés. `ToubaEngineError` porte `phase`, `code` et `details` pour une erreur technique ou un refus du runtime. Les sorties brutes stderr ne sont pas recopiées dans les exceptions.
 
 `engine.version()` identifie la CLI ; `touba_sdk_metadata()` distingue les builds du SDK par leur empreinte.
+
+### Conserver les traces
+
+```python
+run = engine.run(source="program.tb", trace_store=".touba/traces.sqlite")
+```
+
+SQLite conserve les traces par défaut dans `.touba/traces.sqlite`, à la racine
+du projet de l’engine. Le chemin ci-dessus peut être personnalisé. Chaque segment
+reste disponible après la fin du processus ; `traceOut` / `trace_out` permet
+en plus un export JSON. L’archivage est décrit dans la [référence traces](../reference/traces-v1-rc.md#conserver-les-traces).
+
+Pour une longue trace, choisissez `trace_mode="reference"`. Le résultat métier
+revient après la finalisation du journal, avec `trace_reference`
+et `trace` à `None`. Lisez ensuite les événements par pages :
+
+```python
+trace_store = ".touba/traces.sqlite"
+run = engine.run(
+    source="program.tb", trace_store=trace_store, trace_mode="reference",
+)
+after = None
+while True:
+    page = engine.read_trace(
+        trace_store=trace_store, reference=run.trace_reference,
+        after=after, limit=100,
+    )
+    for event in page["events"]:
+        print(event["kind"])
+    if page["done"]:
+        break
+    after = page["next"]
+```
+
+`read_trace` utilise le lecteur Core en lecture seule. `limit` accepte 1 à
+1 000 événements ; le contenu des événements d'une page est limité à 1 Mio.
+Un échec runtime expose sa référence dans `error.details["trace_reference"]`.
+La référence sert à la lecture ; la reprise d'exécution utilise son checkpoint.
+Conservez la référence et le journal pour reprendre la lecture après un
+redémarrage. Commencez sans curseur pour vérifier l'empreinte du segment complet ;
+les pages suivantes contrôlent leurs événements et leur ordre.
+
+Avec `AsyncToubaEngine`, utilisez `await engine.run(...)` et
+`await engine.read_trace(...)` avec les mêmes paramètres.
+
+En mode intégral, `trace` contient le document complet. La limite de transport
+de 32 Mio s'applique aux réponses SDK, y compris au résultat métier et aux
+messages. Une trace longue peut être conservée et lue par pages sans augmenter
+cette limite. Voir la [référence traces](../reference/traces-v1-rc.md#conserver-les-traces).
 
 ## Écrire un handler
 

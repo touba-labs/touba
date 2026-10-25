@@ -718,7 +718,7 @@ function validateRedaction(artifacts, auditManifest, diagnostics) {
   }
 }
 
-function scanSensitiveContent(value, artifact, diagnostics, state = {}) {
+export function scanSensitiveContent(value, artifact, diagnostics, state = {}) {
   if (Array.isArray(value)) {
     for (const item of value) {
       scanSensitiveContent(item, artifact, diagnostics, state);

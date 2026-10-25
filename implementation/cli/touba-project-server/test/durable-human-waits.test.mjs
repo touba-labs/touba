@@ -14,9 +14,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 
 import { canonicalDigest } from "@touba/runtime";
+import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
 
 import {
   createToubaProjectServer,
@@ -39,9 +41,11 @@ const REVIEW_TARGET = "strategy:demo.review/RunReview";
 const USER_REF = "user:test-reviewer";
 const DEVICE_REF = "device:test-suite";
 
-for (const delegated of [false, true]) test(`compiled ${delegated ? "agent-selected" : "source"} continuation survives server restart and validates persisted scopes`, async t => {
+for (const journal of [false, true]) for (const delegated of [false, true]) test(`compiled ${delegated ? "agent-selected" : "source"} continuation survives server restart and validates persisted scopes (${journal ? "host SQLite journal" : "default SQLite journal"})`, async t => {
   const root = createTestProject();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const traceStorage = journal ? createSqliteTraceStore({ filename: join(root, "traces.sqlite"), maxDocumentBytes: 1 }) : undefined;
+  const longContinuation = journal && !delegated;
+  t.after(() => { traceStorage?.close(); rmSync(root, { recursive: true, force: true }); });
   const source = join(root, "src/demo/approval.tb");
   writeFileSync(source, `module demo.approval
 strategy Child
@@ -52,7 +56,11 @@ strategy Child
         human.approve
             with context as value
             into approval
-        give value
+${longContinuation ? `        for item in [${Array(80).fill('"item"').join(", ")}]
+            bind first as Text = item
+            bind second as Text = item
+            bind third as Text = item
+` : ""}        give value
 ${delegated ? `agent Coordinator
     takes value as Text
     gives Text
@@ -80,7 +88,7 @@ strategy RunApproval
       ? { target_ref: "strategy:demo.approval/Child", arguments: { value: request.inputs.value } }
       : { action: "answer_directly", result: request.observations[0].value };
   } : undefined;
-  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true, agentDecisionProvider });
+  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true, agentDecisionProvider, traceStorage });
   try {
     await service.start();
     const paused = await runSandbox(serverBaseUrl(service), WAIT_TARGET);
@@ -127,7 +135,7 @@ strategy RunApproval
     }
     // Restore the exact test snapshot. No recovery or effect ran while corrupted.
     writeJson(path, stored);
-    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true, agentDecisionProvider });
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true, agentDecisionProvider, traceStorage });
     await service.start();
     const base = serverBaseUrl(service);
     assert.equal((await postJson(`${base}/decisions`, decisionFor(pending))).status, 202);
@@ -137,6 +145,20 @@ strategy RunApproval
     assert.equal(completed.status, "success", JSON.stringify(completed));
     assert.equal(completed.run_id, paused.run_id);
     assert.equal(completed.result, "nested request");
+    if (longContinuation) {
+      assert.ok(completed.trace.event_count > 200);
+      assert.equal(completed.trace.events.length, 200);
+      assert.ok(completed.trace.approval_evidence.length > 0);
+      await service.stop();
+      service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true, traceStorage });
+      await service.start();
+      assert.equal(checkToubaProjectState({ projectRoot: root }).status, "structurally_valid");
+    }
+    if (traceStorage) {
+      const segments = [...traceStorage.segments({ runId: completed.run_id })];
+      assert.equal(segments.length, 2);
+      for (const segment of segments) assert.throws(() => traceStorage.document(segment.id), { code: "TraceMaterializationLimitExceeded" });
+    }
     if (delegated) assert.deepEqual(steps, [0, 1]);
   } finally { await service.stop(); }
 });
@@ -1790,7 +1812,13 @@ for (const twoApprovals of [false, true]) test(`WAIT completed projections survi
 
 // Include the exact retained-history sizes reported by the industrial pilot.
 // Histories are created through real decisions/resumes, never cloned as successes.
-for (const historyCount of [0, 16, 50, 100]) test(`WAIT ${historyCount} completed approvals preserve restart and eight concurrent multi-handler sessions`, { timeout: 180000 }, async t => {
+const extendedHistory = process.env.TOUBA_HTTP_HISTORY_COUNTS;
+const historyMatrix = process.env.TOUBA_HTTP_HISTORY_MATRIX === "1";
+const historyCounts = extendedHistory ? extendedHistory.split(",").map(Number) : [0, 16, 50, 100];
+if (historyCounts.length > 4 || historyCounts.some(count => !Number.isSafeInteger(count) || count < 0 || count > 10000)) {
+  throw new Error("TOUBA_HTTP_HISTORY_COUNTS requires up to four counts between 0 and 10000");
+}
+for (const historyCount of historyCounts) test(`WAIT ${historyCount} completed approvals preserve restart and eight concurrent multi-handler sessions`, { timeout: (historyMatrix ? 1800000 : 180000) + historyCount * 2000 }, async t => {
   const root = createTestProject({ withSentinel: true });
   const marker = join(root, "concurrent-writes.txt");
   configureSentinelHandler(root, marker);
@@ -1824,9 +1852,14 @@ for (const historyCount of [0, 16, 50, 100]) test(`WAIT ${historyCount} complete
       const resumed = await postJson(`${url}/runs/sandbox/resume`, { request_id: pending.request_id });
       assert.equal(resumed.status, 200, await resumed.clone().text());
       await waitForInteractionStatus(url, session.session_id, operation.operation_id, "succeeded");
+      if (extendedHistory && (index + 1) % 100 === 0) process.stdout.write(`HTTP_HISTORY ${JSON.stringify({ target: historyCount, completed: index + 1, elapsed_ms: Math.round(performance.now() - started), rss_bytes: process.memoryUsage().rss })}\n`);
     }
     t.diagnostic(`${historyCount} actual approval/resume flows: ${Math.round(performance.now() - started)} ms`);
     await service.stop();
+    if (historyMatrix) {
+      await qualifyHttpHistoryMatrix(root, historyCount, marker, t);
+      return;
+    }
     const restartAt = performance.now();
     service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
     await service.start();
@@ -1861,6 +1894,57 @@ for (const historyCount of [0, 16, 50, 100]) test(`WAIT ${historyCount} complete
       { code: "ToubaServeSandboxCheckpointStoreInvalid" });
   } finally { lag.disable(); await service.stop(); rmSync(root, { recursive: true, force: true }); }
 });
+
+async function qualifyHttpHistoryMatrix(root, history, marker, t) {
+  const backup = mkdtempSync(join(tmpdir(), "touba-http-history-baseline-"));
+  const state = join(root, ".touba");
+  cpSync(state, join(backup, "state"), { recursive: true });
+  const failures = [];
+  try {
+    for (let repetition = 0; repetition < 3; repetition++) for (const concurrency of [1, 8, 32]) {
+      // Restore only this disposable fixture, with all services stopped. Keep
+      // its absolute path because checkpoint origin is bound to that path.
+      rmSync(state, { recursive: true });
+      cpSync(join(backup, "state"), state, { recursive: true });
+      writeFileSync(marker, "");
+      const { stdout } = await promisify(execFile)(process.execPath, ["--max-old-space-size=512",
+        new URL("./http-history-profile.mjs", import.meta.url).pathname,
+        JSON.stringify({ root, history, repetition, concurrency })], { encoding: "utf8", timeout: 180000, signal: t.signal, maxBuffer: 8 * 1024 * 1024 })
+        .catch(error => {
+          // Preserve partial observations even when a later flow fails.
+          for (const line of (error.stdout ?? "").trim().split("\n").filter(Boolean)) process.stdout.write(`HTTP_PROFILE ${line}\n`);
+          process.stderr.write(error.stderr ?? "");
+          throw error;
+        });
+      const observations = stdout.trim().split("\n").map(line => JSON.parse(line));
+      for (const observation of observations) {
+        process.stdout.write(`HTTP_PROFILE ${JSON.stringify(observation)}\n`);
+        if (observation.kind === "startup") {
+          if (observation.milliseconds > 10000) failures.push({ history, repetition, concurrency, limit: "startup_10s" });
+        } else {
+          if (observation.peak_rss_bytes > 512 * 1024 * 1024) failures.push({ history, repetition, concurrency, limit: "rss_512mib" });
+          if (observation.quantiles.total.p95_ms > 30000) failures.push({ history, repetition, concurrency, limit: "flow_p95_30s" });
+          if (observation.throughput_per_second < 0.5) failures.push({ history, repetition, concurrency, limit: "throughput_0.5" });
+          assert.deepEqual(observation.errors, []);
+        }
+      }
+      assert.equal(readFileSync(marker, "utf8"), "dispatched\n".repeat(6 * concurrency));
+      const effects = Object.values(readJson(join(root, ".touba/project.effect-journal.sqlite")).entries);
+      assert.equal(effects.length, 6 * concurrency);
+      assert.ok(effects.every(effect => effect.state === "applied"));
+      assert.equal(loadSandboxCheckpointStore(join(state, "sandbox-checkpoints.sqlite")).records.filter(r => r.status === "completed").length,
+        history + 2 * concurrency);
+    }
+    t.diagnostic(`HTTP matrix: history=${history}, 3 repetitions, concurrency=1/8/32, two waves per fresh process`);
+    assert.deepEqual(failures, [], JSON.stringify(failures));
+    // Check the final page too: a bounded startup audit must not stop early.
+    const path = join(state, "sandbox-checkpoints.sqlite"), stored = readJson(path);
+    stored.records.at(-1).human_wait.request_digest = "sha256:" + "0".repeat(64);
+    writeJson(path, stored);
+    assert.throws(() => createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true }),
+      { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+  } finally { rmSync(backup, { recursive: true, force: true }); }
+}
 
 test("offline preflight and startup both refuse an orphan interaction projection without altering stored state", async () => {
   const root = createTestProject();
@@ -2353,6 +2437,7 @@ test("removing the host adapter cannot bypass a persisted attestation requiremen
 
 test("source deadline creates a durable escalation instead of authorizing the expired path", async t => {
   const root = createTestProject(); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const clock = controlledClock(Date.now());
   compilePolicyProject(root, `        human.approve
             with context as "invoice"
             with timeout_ms as 250
@@ -2366,14 +2451,17 @@ test("source deadline creates a durable escalation instead of authorizing the ex
                 give "manager accepted"
         give "initial accepted"
 `);
-  const options = { contractsRoot, projectRoot: root, port: 0, quiet: true };
+  const options = { contractsRoot, projectRoot: root, port: 0, quiet: true, humanWaitRuntime: clock.runtime };
   let service = createToubaProjectServer(options);
   try {
     await service.start(); const base = serverBaseUrl(service);
     const paused = await runSandbox(base, WAIT_TARGET);
     assert.equal(paused.reason, "human_approval_pending");
     const initial = await getJson(`${base}/approvals/pending/current`);
-    await new Promise(resolve => setTimeout(resolve, 350));
+    // Freeze expiry until the initial request has been observed, even on a
+    // slow disk; then cross the real source deadline explicitly.
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(initial.expires_at) - Date.now() + 1)));
+    clock.setNow(Date.now());
     const nextResponse = await fetch(`${base}/approvals/pending/current`);
     assert.equal(nextResponse.status, 200, JSON.stringify(humanRecord(root, initial.request_id)));
     const next = await nextResponse.json();
@@ -2816,14 +2904,17 @@ async function waitForInteractionOperation(baseUrl, sessionId, operationId) {
 }
 
 async function waitForInteractionStatus(baseUrl, sessionId, operationId, expectedStatus) {
+  let last;
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const operation = await getJson(
       `${baseUrl}/interactions/sessions/${sessionId}/operations/${operationId}`,
     );
     if (operation.status === expectedStatus) return operation;
+    last = operation;
+    if (["failed", "cancelled", "interrupted"].includes(operation.status)) break;
     await new Promise((resolveWait) => setTimeout(resolveWait, 5));
   }
-  assert.fail(`interaction operation ${operationId} did not reach ${expectedStatus}`);
+  assert.fail(`interaction operation ${operationId} did not reach ${expectedStatus}: ${JSON.stringify(last)}`);
 }
 
 async function waitForDifferentPending(baseUrl, priorRequestId) {

@@ -4,46 +4,187 @@
   "title": "touba-sandbox-run-result-v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "execution_kind", "target_ref", "status", "reason", "started_at", "completed_at", "duration_ms", "effect_policy", "result", "messages", "messages_truncated", "trace", "diagnostics"],
+  "required": [
+    "schema_version",
+    "run_id",
+    "execution_kind",
+    "target_ref",
+    "status",
+    "reason",
+    "started_at",
+    "completed_at",
+    "duration_ms",
+    "effect_policy",
+    "result",
+    "messages",
+    "messages_truncated",
+    "trace",
+    "diagnostics"
+  ],
   "properties": {
-    "schema_version": { "const": "touba-sandbox-run-result-v1" },
-    "run_id": { "type": "string" },
-    "execution_kind": { "enum": ["entrypoint", "trigger"] },
-    "target_ref": { "type": "string" },
-    "status": { "enum": ["success", "failure", "stopped", "cancelled"] },
-    "reason": { "type": "string", "minLength": 1 },
-    "started_at": { "type": "string" },
-    "completed_at": { "type": "string" },
-    "duration_ms": { "type": "integer" },
-    "effect_policy": { "enum": ["runtime_only", "allow_declared_external_effects"] },
+    "schema_version": {
+      "const": "touba-sandbox-run-result-v1"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "execution_kind": {
+      "enum": [
+        "entrypoint",
+        "trigger"
+      ]
+    },
+    "target_ref": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "success",
+        "failure",
+        "stopped",
+        "cancelled"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "completed_at": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "effect_policy": {
+      "enum": [
+        "runtime_only",
+        "allow_declared_external_effects"
+      ]
+    },
     "result": {},
-    "messages_truncated": { "type": "boolean" },
-    "messages": { "type": "array", "maxItems": 100, "items": {
-      "type": "object", "additionalProperties": false, "required": ["interaction_ref", "text"],
-      "properties": { "interaction_ref": { "type": "string", "minLength": 1 }, "text": { "type": "string" } }
-    } },
+    "messages_truncated": {
+      "type": "boolean"
+    },
+    "messages": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "interaction_ref",
+          "text"
+        ],
+        "properties": {
+          "interaction_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "trace": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["run_id", "entry_ref", "event_count", "events"],
+      "required": [
+        "run_id",
+        "entry_ref",
+        "event_count",
+        "events"
+      ],
       "properties": {
-        "run_id": { "type": "string" },
-        "entry_ref": { "type": "string" },
-        "event_count": { "type": "integer" },
+        "run_id": {
+          "type": "string"
+        },
+        "entry_ref": {
+          "type": "string"
+        },
+        "event_count": {
+          "type": "integer"
+        },
         "events": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["index", "type", "summary"],
+            "required": [
+              "index",
+              "type",
+              "summary"
+            ],
             "properties": {
-              "index": { "type": "integer" },
-              "type": { "type": "string" },
-              "summary": { "type": "string" },
-              "authority_ref": { "type": "string" },
-              "related_ref": { "type": "string" },
-              "severity": { "enum": ["info", "warning", "error"] },
-              "redaction": { "enum": ["none", "secrets_redacted", "payload_minimized"] }
+              "index": {
+                "type": "integer"
+              },
+              "type": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "authority_ref": {
+                "type": "string"
+              },
+              "related_ref": {
+                "type": "string"
+              },
+              "severity": {
+                "enum": [
+                  "info",
+                  "warning",
+                  "error"
+                ]
+              },
+              "redaction": {
+                "enum": [
+                  "none",
+                  "secrets_redacted",
+                  "payload_minimized"
+                ]
+              }
+            }
+          }
+        },
+        "start_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "events_truncated": {
+          "type": "boolean"
+        },
+        "approval_evidence": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/properties/trace/properties/events/items"
+          }
+        },
+        "budget_usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "steps_used",
+            "tool_calls_used",
+            "provider_calls_used"
+          ],
+          "properties": {
+            "steps_used": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tool_calls_used": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "provider_calls_used": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         }
@@ -54,11 +195,25 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["severity", "code", "message"],
+        "required": [
+          "severity",
+          "code",
+          "message"
+        ],
         "properties": {
-          "severity": { "enum": ["info", "warning", "error"] },
-          "code": { "type": "string" },
-          "message": { "type": "string" }
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
         }
       }
     }

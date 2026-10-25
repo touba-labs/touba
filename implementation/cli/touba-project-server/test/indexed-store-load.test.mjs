@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { indexedStore } from "../src/indexed-store.mjs";
+import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
 
 // Storage-level workload, not a substitute for HTTP/handler qualification.
 // Three repetitions, five queued batches each. Durability stays enabled.

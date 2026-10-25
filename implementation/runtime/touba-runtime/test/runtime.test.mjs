@@ -5861,6 +5861,29 @@ test("refuses agent invocation from non-agent non-strategy graph owners", async 
   );
 });
 
+test("durable trigger admission follows contract checks and precedes strategy execution", async () => {
+  let calls = 0;
+  const admission = request => {
+    calls += 1;
+    assert.equal(request.maxRunsPerDay, 1);
+    assert.equal(request.eventId, "evt-001");
+    return { accepted: false, reason: "event_replay" };
+  };
+  const options = { toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(triggerManifestDocument())), triggerAdmission: admission };
+  const invalid = await executeTriggerEvent(triggerDocument(), { ...triggerEvent(), source_kind: "request" }, options);
+  assert.equal(invalid.status, "failure"); assert.equal(calls, 0);
+  const refused = await executeTriggerEvent(triggerDocument(), triggerEvent(), options);
+  assert.equal(refused.status, "failure"); assert.equal(calls, 1);
+  assert.equal(eventOf(refused.trace, "trigger_event_refused").payload.reason, "event_replay");
+  assert.equal(refused.trace.events.some(event => event.kind === "scope_entered"), false);
+  for (const triggerAdmission of [() => { throw new Error("storage unavailable"); }, () => Promise.resolve({ accepted: true }), () => ({})]) {
+    const failure = await executeTriggerEvent(triggerDocument(), triggerEvent(), { ...options, triggerAdmission });
+    assert.equal(failure.status, "failure");
+    assert.equal(eventOf(failure.trace, "trigger_event_refused").payload.runtime_error_code, "TriggerStateUnavailable");
+    assert.equal(failure.trace.events.some(event => event.kind === "trigger_execution_started"), false);
+  }
+});
+
 test("executes an enabled schedule trigger by launching its target strategy", async () => {
   const document = triggerDocument();
   const result = await executeTriggerEvent(document, triggerEvent(), {

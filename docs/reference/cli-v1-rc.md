@@ -96,6 +96,8 @@ Ce document n'active pas le trigger à la place du manifest hôte.
 touba sdk install javascript
 touba sdk install python
 touba sdk install python --python python3.12
+touba sdk install python --manager uv
+touba sdk install python --manager pip
 touba sdk path javascript
 touba sdk path python
 ```
@@ -453,6 +455,21 @@ touba run program.air.json
 
 Exécute un AIR JSON.
 
+Les traces sont conservées par défaut dans `.touba/traces.sqlite` du projet.
+`--trace-store <base.sqlite>` choisit un autre journal SQLite privé.
+`--trace-out <trace.json>` exporte le document JSON. Voir
+[la conservation des traces](traces-v1-rc.md#conserver-les-traces).
+
+`--output json-reference` retourne le résultat avec une référence au journal.
+`touba trace read --store <base.sqlite> --reference-json <json> --limit 100`
+lit ensuite les événements par pages. Voir la
+[lecture paginée](traces-v1-rc.md#lire-une-trace-par-pages).
+
+`touba trace archive --store <base.sqlite>` prévisualise la rétention.
+Ajoutez `--destination <nouvelle-archive.sqlite> --apply` pour archiver et
+retirer les runs réussis de la source après vérification de la copie.
+Pour un serveur projet, archivez plutôt l’état complet, serveur arrêté.
+
 `--trace-pure-functions full|calls` choisit le détail des fonctions pures.
 `full` est le défaut ; `calls` conserve leurs appels, résultats et échecs,
 ainsi que tous les événements de gouvernance. Cette option est aussi disponible
@@ -704,7 +721,7 @@ touba trigger run program.air.json \
   --manifest touba.manifest.json \
   --trigger trigger:examples.daily/DailyRun \
   --max-runs 1 \
-  --state touba.trigger-state.json \
+  --state touba.triggers.sqlite \
   --trace-out trace.json
 ```
 
@@ -721,7 +738,7 @@ Il génère ensuite un événement trigger normalisé sans payload brut et appel
 même runtime que le mode `--trigger-event-json`. `--max-runs` et `--state` sont
 obligatoires pour le runner foreground.
 
-`--state <touba.trigger-state.json>` active l’état durable de trigger
+`--state <touba.triggers.sqlite>` active l’état durable de trigger
 `touba-trigger-state-v1`. Le runner y conserve les `event_id` consommés, les
 acceptations, les refus et la clé du jour UTC utilisée pour appliquer
 `max_runs_per_day`. Un même `event_id` déjà consommé pour le même `trigger_ref`
@@ -729,15 +746,15 @@ est refusé avec `TriggerReplayRejected` avant de relancer la stratégie. Une
 acceptation enregistrée un jour précédent ne bloque pas le premier événement du
 jour courant. Ce fichier ne contient pas de payload brut et n’accorde aucune
 autorité runtime. Le chemin fourni à `--state` doit se terminer par
-`.trigger-state.json`.
+`.triggers.sqlite`.
 
 Avec le service webhook :
 
 ```sh title="Terminal"
 touba trigger serve program.air.json \
   --manifest touba.manifest.json \
-  --state touba.trigger-state.json \
-  --queue touba.trigger-queue.json \
+  --state touba.triggers.sqlite \
+  --queue touba.trigger-queue.sqlite \
   --host 127.0.0.1 \
   --port 8787 \
   --trace-dir traces \
@@ -756,7 +773,7 @@ Le mapping peut être déclaré directement dans le source Touba avec
 `with message as payload.message` sur un trigger `on request`; `touba manifest
 generate` émet alors l’entrée `payload.map` correspondante.
 `--state` et `--queue` doivent pointer vers des chemins terminant par
-`.trigger-state.json` et `.trigger-queue.json`.
+`.triggers.sqlite` et `.trigger-queue.sqlite`.
 
 Avec un `x-touba-event-id` explicite, `(trigger_ref, event_id)` identifie une
 réception logique. Le même digest de payload réutilise l'entrée existante et son
@@ -795,7 +812,7 @@ constituent pas une transaction avec l’effet externe.
 
 `--effect-journal` devient obligatoire si le manifest V1 contient au moins un
 binding `external_write` ; son chemin doit se terminer par
-`.effect-journal.json`. Le service utilise le `queue_id` comme portée stable.
+`.effect-journal.sqlite`. Le service utilise le `queue_id` comme portée stable.
 Une issue `unknown` n'est répétée que pour le mode `idempotency_key` ; les modes
 `reconcile` et `none` bloquent explicitement. Le package reste responsable de
 transmettre réellement la clé au service externe. La CLI directe accepte aussi `--effect-journal`, le SDK accepte
@@ -1235,7 +1252,7 @@ touba inspect touba.run-plan.json
 touba inspect .touba/build/dev/touba.effective-project.json
 touba inspect .touba/build/dev/touba.effective-project.json --json
 touba inspect touba.ownership.json
-touba inspect touba.trigger-state.json
+touba trigger state touba.triggers.sqlite --trigger trigger:examples.daily_research/DailyResearchSchedule
 touba inspect trace-audit.export.json
 touba inspect --supply-chain touba.lock.json
 touba inspect --supply-chain supply-chain.report.json

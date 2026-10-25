@@ -17,12 +17,14 @@ import {
   deriveCompensationId,
   resumeCompensation,
 } from "../src/compensation.mjs";
-import { createFileCompensationStore } from "../src/file-compensation-store.mjs";
+import { createSqliteCompensationStore } from "../src/sqlite-compensation-store.mjs";
 import { sealCompensationRecord } from "../src/compensation-store.mjs";
+import { createSqliteTraceStore } from "../src/sqlite-trace-store.mjs";
 import { airDocumentDigest } from "../src/human-approval-checkpoints.mjs";
 
-test("executes one inverse, journals its crash-safe result, and replays creation as a pure read", async () => {
+for (const maxDocumentBytes of [null, 16 * 1024 * 1024, 1]) test(`executes one inverse, journals its crash-safe result, and replays creation as a pure read (document limit=${maxDocumentBytes})`, async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-comp-success-"));
+  const traceStorage = maxDocumentBytes === null ? null : createSqliteTraceStore({ filename: join(workspace, "traces.sqlite"), maxDocumentBytes });
   try {
     const callsPath = join(workspace, "calls.log");
     const fixture = compensationFixture({ callsPath, handlerOutcome: "completed" });
@@ -30,6 +32,7 @@ test("executes one inverse, journals its crash-safe result, and replays creation
     const published = [];
     const result = await createCompensation(createCommand(fixture.originalEffectId), {
       ...fixture.options,
+      runtimeOptions: { traceStorage },
       traceEventObserver: (event) => published.push(event),
       compensationAuthorityProvider: {
         check(request) {
@@ -56,8 +59,15 @@ test("executes one inverse, journals its crash-safe result, and replays creation
     assert.equal(inverse.result.schema_version, "touba-compensation-effect-result-v1");
     assert.equal(inverse.result.compensation_receipt.result, "completed");
     assert.equal(fixture.journal.entries.get(fixture.originalEffectId).state, "applied");
+    const events = [...result.traceReader.events()];
+    if (traceStorage) {
+      const [segment] = [...traceStorage.segments()];
+      assert.deepEqual([...traceStorage.events(segment.id)], events);
+    }
+    if (maxDocumentBytes === 1) assert.throws(() => result.trace, { code: "TraceMaterializationLimitExceeded" });
+    else assert.deepEqual(result.trace.events, events);
     for (const kind of ["call_started", "call_completed", "run_completed"]) {
-      const event = result.trace.events.find((candidate) => candidate.kind === kind);
+      const event = events.find((candidate) => candidate.kind === kind);
       assert.equal(event.payload.compensation_id, result.record.compensation_id);
       assert.equal(event.payload.compensates_effect_id, fixture.originalEffectId);
       assert.equal(event.payload.inverse_effect_id, result.record.inverse.effect_id);
@@ -70,6 +80,8 @@ test("executes one inverse, journals its crash-safe result, and replays creation
       published.find((event) => event.kind === "call_started").payload.compensation_id,
       result.record.compensation_id,
     );
+    assert.deepEqual(published, events);
+    assert.equal(result.record.checkpoint.trace_state.next_sequence_index, events.at(-1).sequence_index + 1);
 
     const replay = await createCompensation(createCommand(fixture.originalEffectId), {
       ...fixture.options,
@@ -79,6 +91,7 @@ test("executes one inverse, journals its crash-safe result, and replays creation
     assert.equal(replay.record.revision, result.record.revision);
     assert.equal(readJsonLines(callsPath).length, 1);
   } finally {
+    traceStorage?.close();
     rmSync(workspace, { recursive: true, force: true });
   }
 });
@@ -424,7 +437,7 @@ function compensationFixture({
     originalEntry(document, originalEffectId, originalState),
   );
   const manifest = compensationManifest(callsPath, handlerOutcome);
-  const store = createFileCompensationStore(join(callsPath, "..", "compensations.json"));
+  const store = createSqliteCompensationStore(join(callsPath, "..", "compensations.sqlite"));
   return {
     document,
     originalEffectId,

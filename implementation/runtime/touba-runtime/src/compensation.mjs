@@ -23,10 +23,11 @@ import {
   canonicalDigest,
   sealExecutionCheckpoint,
   tracePrefixDigest,
+  tracePrefixDigestFromEvents,
 } from "./execution-checkpoints.mjs";
 import { airDocumentDigest } from "./human-approval-checkpoints.mjs";
 import { RuntimeFailure } from "./runtime-errors.mjs";
-import { TraceBuilder } from "./trace-builder.mjs";
+import { TraceBuilder, attachTraceReader } from "./trace-builder.mjs";
 
 export { COMPENSATION_RESULTS };
 
@@ -600,27 +601,28 @@ async function progressCompensation(record, command, host) {
       supply_chain_lock_digest: optionalArtifactDigest(host.supplyChainLock),
       hardened_profile_digest: optionalArtifactDigest(host.hardenedExecutionProfile),
     },
-    executionCheckpointObserver: async ({ checkpoint, trace }) => {
+    executionCheckpointObserver: async ({ checkpoint, traceReader }) => {
       current = await replaceRecord(host.store, current, {
         checkpoint,
         pre_checkpoint_trace_state: null,
       }, host.now);
       publishEvents(
         host.traceEventObserver,
-        trace.events.filter((event) => (
-          event.sequence_index >= publishedSequence
-          && event.sequence_index < checkpoint.trace_state.next_sequence_index
-        )),
+        traceReader.events({ after: publishedSequence - 1 }),
       );
       publishedSequence = checkpoint.trace_state.next_sequence_index;
     },
     __compensationExecutionContext: internal,
   });
 
-  const conflictEvent = response.trace.events.find(
-    (event) => event.payload?.runtime_error_code === "CompensationConflict",
-  );
-  if (conflictEvent) conflict();
+  const reader = response.traceReader;
+  let completed;
+  let failure;
+  for (const event of reader.events()) {
+    if (event.payload?.runtime_error_code === "CompensationConflict") conflict();
+    if (event.kind === "run_completed") completed = event;
+    if (event.kind === "failure_detected") failure = event;
+  }
   if (current.checkpoint === null) {
     throw new RuntimeFailure(
       "compensation runtime did not persist its initial checkpoint",
@@ -628,43 +630,38 @@ async function progressCompensation(record, command, host) {
       "CompensationCheckpointIncompatible",
     );
   }
-  const terminalEvents = response.trace.events.filter(
-    (event) => event.sequence_index >= current.checkpoint.trace_state.next_sequence_index,
-  );
-  if (terminalEvents.length > 0) {
+  const after = current.checkpoint.trace_state.next_sequence_index - 1;
+  if (reader.nextSequenceIndex > after + 1) {
     const checkpoint = sealExecutionCheckpoint({
       ...current.checkpoint,
       revision: current.checkpoint.revision + 1,
       previous_checkpoint_digest: current.checkpoint.checkpoint_digest,
       checkpoint_digest: undefined,
       trace_state: {
-        prefix_digest: tracePrefixDigest(
+        prefix_digest: tracePrefixDigestFromEvents(
           current.checkpoint.trace_state.prefix_digest,
-          { ...response.trace, events: terminalEvents },
-          0,
+          reader.header.run,
+          reader.events({ after }),
         ),
-        next_sequence_index: terminalEvents.at(-1).sequence_index + 1,
+        next_sequence_index: reader.nextSequenceIndex,
       },
     });
     current = await replaceRecord(host.store, current, { checkpoint }, host.now);
-    publishEvents(host.traceEventObserver, terminalEvents);
+    publishEvents(host.traceEventObserver, reader.events({ after }));
   }
-  const classification = await classifyRuntimeOutcome(response, current, host.effectJournal);
+  const classification = await classifyRuntimeOutcome(completed, failure, current, host.effectJournal);
   current = await replaceRecord(host.store, current, classification, host.now);
-  return { record: current, trace: response.trace };
+  return attachTraceReader({ record: current }, reader);
 }
 
-async function classifyRuntimeOutcome(response, record, effectJournal) {
-  const completed = [...response.trace.events].reverse().find((event) => event.kind === "run_completed");
+async function classifyRuntimeOutcome(completed, failure, record, effectJournal) {
   const result = completed?.payload?.result;
   if (result === "completed" || result === "partial") {
     return { state: "terminal", result, blocker_code: null };
   }
   const inverse = await readEffectJournalEntry(effectJournal, record.inverse.effect_id);
   if (inverse?.state === "applied") {
-    const appliedFailure = [...response.trace.events].reverse().find(
-      (event) => event.kind === "failure_detected",
-    )?.payload?.runtime_error_code;
+    const appliedFailure = failure?.payload?.runtime_error_code;
     if (["CompensationEffectResultInvalid", "DurableResumeCheckpointIncompatible"].includes(appliedFailure)) {
       return {
         state: "action_required",
@@ -688,7 +685,6 @@ async function classifyRuntimeOutcome(response, record, effectJournal) {
   if (["dispatched", "unknown"].includes(inverse?.state)) {
     return { state: "action_required", result: "unknown", blocker_code: "EffectOutcomeUnknown" };
   }
-  const failure = [...response.trace.events].reverse().find((event) => event.kind === "failure_detected");
   return {
     state: "action_required",
     result: failure?.payload?.result ?? null,

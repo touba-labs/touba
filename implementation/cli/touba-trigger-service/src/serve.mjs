@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createSqliteTriggerStore } from "../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs";
+import { projectTracePath } from "../../../runtime/touba-runtime/src/project-trace-path.mjs";
+import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
+import { writeTraceFile } from "../../touba-run/src/trace-output.mjs";
+import { createSqliteTriggerQueue } from "./sqlite-queue.mjs";
 import {
   executeTriggerEvent,
   loadAirFromJson,
@@ -12,18 +17,16 @@ import {
   ToubaRuntimeError,
 } from "@touba/runtime";
 import {
-  createFileEffectJournal,
+  createSqliteEffectJournal,
   unknownEffectRetryDecision,
 } from "./effect-journal.mjs";
 
 const QUEUE_SCHEMA_VERSION = "touba-trigger-queue-v1";
-const STATE_SCHEMA_VERSION = "touba-trigger-state-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const MAX_BODY_BYTES = 64 * 1024;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
-let atomicWriteSequence = 0;
 
 if (isMainModule()) {
   try {
@@ -43,15 +46,16 @@ if (isMainModule()) {
 export async function createTriggerService(options) {
   const airPath = resolve(required(options.airPath, "AIR path"));
   const manifestPath = resolve(required(options.manifestPath, "--manifest"));
-  const statePath = resolve(required(options.statePath, "--state"));
-  const queuePath = resolve(required(options.queuePath, "--queue"));
+  const statePath = resolve(options.statePath ?? join(dirname(projectTracePath(airPath)), "triggers.sqlite"));
+  const queuePath = resolve(options.queuePath ?? join(dirname(projectTracePath(airPath)), "trigger-queue.sqlite"));
+  const tracePath = resolve(options.traceStorePath ?? projectTracePath(airPath));
   const effectJournalPath = options.effectJournalPath === undefined
     ? undefined
     : resolve(options.effectJournalPath);
-  assertSuffix(statePath, ".trigger-state.json", "TriggerStatePathInvalid");
-  assertSuffix(queuePath, ".trigger-queue.json", "TriggerQueuePathInvalid");
+  assertSuffix(statePath, ".sqlite", "TriggerStatePathInvalid");
+  assertSuffix(queuePath, ".sqlite", "TriggerQueuePathInvalid");
   if (effectJournalPath !== undefined) {
-    assertSuffix(effectJournalPath, ".effect-journal.json", "EffectJournalPathInvalid");
+    assertSuffix(effectJournalPath, ".sqlite", "EffectJournalPathInvalid");
   }
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
@@ -100,6 +104,16 @@ export async function createTriggerService(options) {
     );
   }
 
+  const effectJournal = effectJournalPath === undefined ? undefined
+    : createSqliteEffectJournal(effectJournalPath, {
+      secretValues: secretStore?.resolvedSecretEntries?.().map(entry => entry.value) ?? [],
+    });
+  const triggerState = createSqliteTriggerStore({ filename: statePath, maxBytes: options.stateMaxBytes });
+  let queue, traceStorage;
+  try {
+    queue = createSqliteTriggerQueue({ filename: queuePath, maxEntries: options.queueMaxEntries, maxBytes: options.queueMaxBytes });
+    traceStorage = createSqliteTraceStore({ filename: tracePath, maxBytes: options.traceMaxBytes });
+  } catch (error) { triggerState.close(); queue?.close(); throw error; }
   const serverState = {
     processedCount: 0,
     stopping: false,
@@ -113,18 +127,17 @@ export async function createTriggerService(options) {
     manifest,
     secretStore,
     statePath,
+    triggerState,
+    queue,
     queuePath,
     traceDir: options.traceDir,
+    traceStorage,
     server: undefined,
     serverState,
     maxEvents: options.maxEvents,
     maxAttempts,
     processingTimeoutMs,
-    effectJournal: effectJournalPath === undefined
-      ? undefined
-      : createFileEffectJournal(effectJournalPath, {
-        secretValues: secretStore?.resolvedSecretEntries?.().map((entry) => entry.value) ?? [],
-      }),
+    effectJournal,
   };
 
   const server = createServer(async (request, response) => {
@@ -148,8 +161,8 @@ export async function createTriggerService(options) {
         writeJson(response, 200, buildTriggerStatusContract({
           document,
           manifest,
-          state: loadTriggerState(statePath),
-          queue: loadQueue(queuePath),
+          state: triggerState,
+          queue,
         }));
         return;
       }
@@ -176,11 +189,7 @@ export async function createTriggerService(options) {
       }
       const argumentsFromPayload = materializePayloadArguments(route, request, body);
       const eventId = triggerEventId(request, route.trigger, body.digest);
-      const queue = loadQueue(queuePath);
-      const existingEntry = queue.entries.find((candidate) =>
-        candidate.trigger_ref === route.trigger.id
-        && candidate.event_id === eventId
-      );
+      const existingEntry = queue.find(route.trigger.id, eventId);
       if (existingEntry !== undefined) {
         if (existingEntry.http?.payload_sha256 !== body.digest) {
           throw serviceError(
@@ -188,16 +197,14 @@ export async function createTriggerService(options) {
             "the trigger event id is already associated with a different payload digest",
           );
         }
-        const triggerState = loadTriggerState(statePath);
         if (
           isTerminalQueueStatus(existingEntry.status)
-          && isTriggerEventConsumed(triggerState, existingEntry.trigger_ref, existingEntry.event_id)
+          && triggerState.consumed(existingEntry.trigger_ref, existingEntry.event_id)
         ) {
           const runId = `trigger-service-${safeFilePart(existingEntry.queue_id)}-replay`;
           const event = normalizeStateTriggerEvent(existingEntry);
           const result = replayRejectedResult(document, event, runId);
-          recordTriggerStateEvent(triggerState, event, result);
-          saveTriggerState(statePath, triggerState);
+          triggerState.recordResult(event, result);
           writeJson(response, 409, {
             status: "error",
             code: "TriggerReplayRejected",
@@ -242,8 +249,7 @@ export async function createTriggerService(options) {
           mapped_inputs: Object.keys(route.payload.map).sort(),
         },
       };
-      queue.entries.push(entry);
-      saveQueue(queuePath, queue);
+      queue.enqueue(entry);
 
       writeJson(response, 202, {
         status: "queued",
@@ -265,15 +271,30 @@ export async function createTriggerService(options) {
       });
     }
   });
+  let storesClosed = false;
+  const closeStores = () => {
+    if (storesClosed) return;
+    storesClosed = true;
+    triggerState.close(); queue.close(); traceStorage.close();
+  };
   server.once("close", () => {
     serverState.stopping = true;
     clearRetryWake(serverState);
+    Promise.resolve(serverState.workerPromise).finally(closeStores).catch(() => {});
   });
 
   return {
     async start() {
-      await new Promise((resolveListen) => {
-        server.listen(port, host, resolveListen);
+      if (storesClosed || serverState.stopping) throw serviceError("TriggerServiceClosed", "create a new service after it has stopped");
+      await new Promise((resolveListen, rejectListen) => {
+        const failListen = error => {
+          server.removeListener("error", failListen);
+          serverState.stopping = true; closeStores(); rejectListen(error);
+        };
+        server.once("error", failListen);
+        try {
+          server.listen(port, host, () => { server.removeListener("error", failListen); resolveListen(); });
+        } catch (error) { failListen(error); }
       });
       const address = server.address();
       if (options.quiet !== true) {
@@ -383,8 +404,11 @@ async function processQueue({
   manifest,
   secretStore,
   statePath,
+  triggerState,
+  queue,
   queuePath,
   traceDir,
+  traceStorage,
   server,
   serverState,
   maxEvents,
@@ -396,30 +420,15 @@ async function processQueue({
     return;
   }
   while (!serverState.stopping) {
-    const queue = loadQueue(queuePath);
-    const recovered = recoverStaleProcessingEntries(queue, processingTimeoutMs);
-    const entry = queue.entries.find((candidate) =>
-      candidate.status === "queued"
-      && (!candidate.next_attempt_at || Date.parse(candidate.next_attempt_at) <= Date.now())
-    );
+    const entry = queue.claim(processingTimeoutMs);
     if (!entry) {
-      if (recovered) {
-        saveQueue(queuePath, queue);
-      }
-      return nextQueueWakeDelayMs(queue, processingTimeoutMs);
+      return queue.nextWake(processingTimeoutMs);
     }
-    entry.status = "processing";
-    entry.started_at = new Date().toISOString();
-    entry.attempt_count = (entry.attempt_count ?? 0) + 1;
-    delete entry.next_attempt_at;
-    saveQueue(queuePath, queue);
 
-    const triggerState = loadTriggerState(statePath);
     // TD-1 consumes an external event once. A later attempt owned by the same
     // queue entry may retry its target without recording a second event.
     const retryingConsumedEvent = entry.attempt_count > 1
-      && isTriggerEventConsumed(triggerState, entry.trigger_ref, entry.event_id);
-    const acceptedRunCount = countAcceptedTriggerEvents(triggerState, entry.trigger_ref, currentDayKey());
+      && triggerState.consumed(entry.trigger_ref, entry.event_id);
     const event = {
       trigger_ref: entry.trigger_ref,
       event_id: entry.event_id,
@@ -431,18 +440,21 @@ async function processQueue({
       secretStore,
       statePath,
       runId: `trigger-service-${entry.queue_id.replaceAll(/[^A-Za-z0-9_-]/gu, "-")}-attempt-${entry.attempt_count}`,
-      triggerRunCounts: {
-        [entry.trigger_ref]: Math.max(0, acceptedRunCount - (retryingConsumedEvent ? 1 : 0)),
-      },
+      triggerAdmission: request => triggerState.admit({ ...request, ownerId: entry.queue_id,
+        attempt: entry.attempt_count, retry: retryingConsumedEvent }),
       effectScopeId: entry.queue_id,
       effectJournal,
-    }, triggerState, { retryingConsumedEvent });
+      traceStorage,
+    }, triggerState);
 
-    const finishedQueue = loadQueue(queuePath);
-    const stored = finishedQueue.entries.find((candidate) => candidate.queue_id === entry.queue_id);
+    const stored = entry;
     if (stored) {
-      const refusal = lastTriggerRefusal(result.trace, entry.trigger_ref, entry.event_id);
-      const executionFailure = lastTriggerExecutionFailure(result.trace, entry.trigger_ref);
+      let refusal, executionFailure;
+      for (const event of result.traceReader?.events() ?? result.trace.events) {
+        if (event.payload?.trigger_ref !== entry.trigger_ref) continue;
+        if (event.kind === "trigger_event_refused" && (event.payload.event_id === undefined || event.payload.event_id === entry.event_id)) refusal = event;
+        if (event.kind === "trigger_execution_failed") executionFailure = event;
+      }
       const runtimeErrorCode = refusal?.payload?.runtime_error_code
         ?? executionFailure?.payload?.runtime_error_code;
       stored.completed_at = new Date().toISOString();
@@ -453,7 +465,7 @@ async function processQueue({
       if (traceDir !== undefined) {
         mkdirSync(resolve(traceDir), { recursive: true });
         const tracePath = join(resolve(traceDir), `${safeFilePart(entry.queue_id)}.attempt-${entry.attempt_count}.trace.json`);
-        writeFileSync(tracePath, `${JSON.stringify(result.trace, null, 2)}\n`, "utf8");
+        await writeTraceFile(tracePath, result.traceReader);
         stored.trace_path = tracePath;
       }
       if (result.status === "success") {
@@ -470,7 +482,7 @@ async function processQueue({
         stored.dead_lettered_at = stored.status === "dead_lettered" ? new Date().toISOString() : undefined;
       }
     }
-    saveQueue(queuePath, finishedQueue);
+    queue.finish(stored);
 
     serverState.processedCount += 1;
     if (maxEvents !== undefined && serverState.processedCount >= maxEvents) {
@@ -481,31 +493,9 @@ async function processQueue({
   }
 }
 
-async function executeTriggerEventWithState(
-  document,
-  triggerEvent,
-  executionOptions,
-  state,
-  { retryingConsumedEvent = false } = {},
-) {
-  const event = normalizeStateTriggerEvent(triggerEvent);
-  if (
-    !retryingConsumedEvent
-    && event.triggerRef
-    && event.eventId
-    && isTriggerEventConsumed(state, event.triggerRef, event.eventId)
-  ) {
-    const result = replayRejectedResult(document, event, executionOptions.runId);
-    recordTriggerStateEvent(state, event, result);
-    saveTriggerState(executionOptions.statePath, state);
-    return result;
-  }
-  const result = await executeTriggerEvent(document, triggerEvent, executionOptions);
-  if (retryingConsumedEvent) {
-    return result;
-  }
-  recordTriggerStateEvent(state, event, result);
-  saveTriggerState(executionOptions.statePath, state);
+async function executeTriggerEventWithState(document, event, options, state) {
+  const result = await executeTriggerEvent(document, event, options);
+  state.recordResult(event, result);
   return result;
 }
 
@@ -638,102 +628,6 @@ function readJsonPath(root, jsonPath) {
   return current;
 }
 
-function loadQueue(queuePath) {
-  if (!existsSync(queuePath)) {
-    return {
-      trigger_queue_schema_version: QUEUE_SCHEMA_VERSION,
-      created_at: new Date().toISOString(),
-      entries: [],
-    };
-  }
-  const queue = JSON.parse(readFileSync(queuePath, "utf8"));
-  if (queue.trigger_queue_schema_version !== QUEUE_SCHEMA_VERSION) {
-    throw serviceError("TriggerQueueSchemaMismatch", `trigger_queue_schema_version must be ${QUEUE_SCHEMA_VERSION}`);
-  }
-  if (!Array.isArray(queue.entries)) {
-    throw serviceError("TriggerQueueSchemaMismatch", "trigger queue entries must be an array");
-  }
-  return queue;
-}
-
-function recoverStaleProcessingEntries(queue, processingTimeoutMs) {
-  let recovered = false;
-  const now = Date.now();
-  for (const entry of queue.entries) {
-    if (entry.status !== "processing") {
-      continue;
-    }
-    const startedAt = Date.parse(entry.started_at ?? "");
-    if (!Number.isFinite(startedAt) || now - startedAt < processingTimeoutMs) {
-      continue;
-    }
-    entry.status = "queued";
-    entry.recovered_at = new Date().toISOString();
-    entry.recovery_reason = "processing_timeout";
-    entry.recovery_effect_outcome = "unknown";
-    recovered = true;
-  }
-  return recovered;
-}
-
-function saveQueue(queuePath, queue) {
-  queue.updated_at = new Date().toISOString();
-  saveJsonAtomically(queuePath, queue);
-}
-
-function loadTriggerState(statePath) {
-  if (!existsSync(statePath)) {
-    return {
-      trigger_state_schema_version: STATE_SCHEMA_VERSION,
-      created_at: new Date().toISOString(),
-      triggers: {},
-    };
-  }
-  const state = JSON.parse(readFileSync(statePath, "utf8"));
-  if (state.trigger_state_schema_version !== STATE_SCHEMA_VERSION) {
-    throw serviceError("TriggerStateSchemaMismatch", `trigger_state_schema_version must be ${STATE_SCHEMA_VERSION}`);
-  }
-  return normalizeTriggerStateDocument(state);
-}
-
-function saveTriggerState(statePath, state) {
-  state.updated_at = new Date().toISOString();
-  saveJsonAtomically(statePath, state);
-}
-
-function saveJsonAtomically(path, value) {
-  mkdirSync(dirname(path), { recursive: true });
-  atomicWriteSequence += 1;
-  const temporaryPath = `${path}.${process.pid}.${atomicWriteSequence}.tmp`;
-  try {
-    writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    renameSync(temporaryPath, path);
-  } catch (error) {
-    rmSync(temporaryPath, { force: true });
-    throw error;
-  }
-}
-
-function nextQueueWakeDelayMs(queue, processingTimeoutMs) {
-  const now = Date.now();
-  let earliestDueAt;
-  for (const entry of queue.entries) {
-    let dueAt;
-    if (entry.status === "queued" && entry.next_attempt_at) {
-      dueAt = Date.parse(entry.next_attempt_at);
-    } else if (entry.status === "processing") {
-      const startedAt = Date.parse(entry.started_at ?? "");
-      if (Number.isFinite(startedAt)) {
-        dueAt = startedAt + processingTimeoutMs;
-      }
-    }
-    if (!Number.isFinite(dueAt)) {
-      continue;
-    }
-    earliestDueAt = earliestDueAt === undefined ? dueAt : Math.min(earliestDueAt, dueAt);
-  }
-  return earliestDueAt === undefined ? undefined : Math.max(0, earliestDueAt - now);
-}
 
 export function buildTriggerStatusContract({
   document,
@@ -756,7 +650,7 @@ export function buildTriggerStatusContract({
 
 function triggerStatusEntry(trigger, manifest, state, queue) {
   const manifestTrigger = manifestTriggerForStatus(manifest, trigger.id);
-  const triggerState = state?.triggers?.[trigger.id] ?? {};
+  const triggerState = state?.summary?.(trigger.id) ?? state?.triggers?.[trigger.id] ?? {};
   const queueEntries = queueEntriesForTrigger(queue, trigger.id);
   const limits = triggerStatusLimits(trigger, manifestTrigger);
   return {
@@ -770,7 +664,7 @@ function triggerStatusEntry(trigger, manifest, state, queue) {
       refused_count: safeNonNegativeInteger(triggerState.refused_count),
       last_event_id: typeof triggerState.last_event_id === "string" ? triggerState.last_event_id : null,
     },
-    queue: {
+    queue: queue?.counts?.(trigger.id) ?? {
       pending: queueEntries.filter((entry) => entry.status === "queued").length,
       processing: queueEntries.filter((entry) => entry.status === "processing").length,
       dead_letter: queueEntries.filter((entry) => entry.status === "dead_lettered").length,
@@ -822,48 +716,6 @@ function safeNullableInteger(value) {
   return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-function normalizeTriggerStateDocument(document) {
-  const normalized = {
-    trigger_state_schema_version: STATE_SCHEMA_VERSION,
-    created_at: typeof document.created_at === "string" ? document.created_at : new Date().toISOString(),
-    updated_at: typeof document.updated_at === "string" ? document.updated_at : undefined,
-    triggers: {},
-  };
-  for (const [triggerRef, state] of Object.entries(document.triggers ?? {})) {
-    const events = Array.isArray(state.events) ? state.events : [];
-    normalized.triggers[triggerRef] = summarizeTriggerStateEntry(
-      events
-        .filter((event) => event && typeof event === "object" && !Array.isArray(event))
-        .map((event) => ({
-          event_id: typeof event.event_id === "string" ? event.event_id : undefined,
-          source_kind: typeof event.source_kind === "string" ? event.source_kind : undefined,
-          status: event.status === "accepted" ? "accepted" : "refused",
-          reason: typeof event.reason === "string" ? event.reason : undefined,
-          observed_at: typeof event.observed_at === "string" ? event.observed_at : undefined,
-          day_key: typeof event.day_key === "string" ? event.day_key : dayKeyFromObservedAt(event.observed_at),
-          run_id: typeof event.run_id === "string" ? event.run_id : undefined,
-        }))
-        .filter((event) => event.event_id),
-    );
-  }
-  return normalized;
-}
-
-function summarizeTriggerStateEntry(events) {
-  const accepted = events.filter((event) => event.status === "accepted");
-  const refused = events.filter((event) => event.status === "refused");
-  const consumed = [...new Set(accepted.map((event) => event.event_id))].sort();
-  const last = events.at(-1);
-  return {
-    accepted_count: accepted.length,
-    refused_count: refused.length,
-    consumed_event_ids: consumed,
-    last_event_id: last?.event_id,
-    last_status: last?.status,
-    updated_at: last?.observed_at,
-    events,
-  };
-}
 
 function normalizeStateTriggerEvent(event) {
   return {
@@ -873,78 +725,11 @@ function normalizeStateTriggerEvent(event) {
   };
 }
 
-function isTriggerEventConsumed(state, triggerRef, eventId) {
-  return Boolean(state.triggers?.[triggerRef]?.consumed_event_ids?.includes(eventId));
-}
 
 function isTerminalQueueStatus(status) {
   return status === "succeeded" || status === "failed" || status === "dead_lettered";
 }
 
-function countAcceptedTriggerEvents(state, triggerRef, dayKey = currentDayKey()) {
-  const events = state.triggers?.[triggerRef]?.events;
-  if (!Array.isArray(events)) {
-    return 0;
-  }
-  return events.filter((event) =>
-    event?.status === "accepted"
-    && triggerStateEventDayKey(event) === dayKey,
-  ).length;
-}
-
-function recordTriggerStateEvent(state, event, result) {
-  if (!event.triggerRef || !event.eventId) {
-    return;
-  }
-  const accepted = hasAcceptedTriggerEvent(result.trace, event.triggerRef, event.eventId);
-  const refused = lastTriggerRefusal(result.trace, event.triggerRef, event.eventId);
-  const observedAt = new Date().toISOString();
-  const previous = state.triggers[event.triggerRef]?.events ?? [];
-  state.triggers[event.triggerRef] = summarizeTriggerStateEntry([
-    ...previous,
-    {
-      event_id: event.eventId,
-      source_kind: event.sourceKind,
-      status: accepted ? "accepted" : "refused",
-      reason: accepted ? undefined : refused?.payload?.reason ?? "execution_failed",
-      observed_at: observedAt,
-      day_key: dayKeyFromObservedAt(observedAt),
-      run_id: result.trace?.run?.run_id,
-    },
-  ]);
-}
-
-function hasAcceptedTriggerEvent(trace, triggerRef, eventId) {
-  return Boolean(
-    trace?.events?.some(
-      (event) =>
-        event.kind === "trigger_event_accepted" &&
-        event.payload?.trigger_ref === triggerRef &&
-        (event.payload?.event_id === undefined || event.payload?.event_id === eventId),
-    ),
-  );
-}
-
-function lastTriggerRefusal(trace, triggerRef, eventId) {
-  return [...(trace?.events ?? [])]
-    .reverse()
-    .find(
-      (event) =>
-        event.kind === "trigger_event_refused" &&
-        event.payload?.trigger_ref === triggerRef &&
-        (event.payload?.event_id === undefined || event.payload?.event_id === eventId),
-    );
-}
-
-function lastTriggerExecutionFailure(trace, triggerRef) {
-  return [...(trace?.events ?? [])]
-    .reverse()
-    .find(
-      (event) =>
-        event.kind === "trigger_execution_failed"
-        && event.payload?.trigger_ref === triggerRef,
-    );
-}
 
 function replayRejectedResult(document, event, runId) {
   const effectiveRunId = runId ?? "trigger-service-replay-rejected";
@@ -985,22 +770,6 @@ function traceEvent(runId, sequenceIndex, kind, payload) {
   };
 }
 
-function currentDayKey() {
-  return dayKeyFromObservedAt(new Date().toISOString());
-}
-
-function dayKeyFromObservedAt(observedAt) {
-  if (typeof observedAt !== "string") {
-    return undefined;
-  }
-  return /^(\d{4}-\d{2}-\d{2})T/u.exec(observedAt)?.[1];
-}
-
-function triggerStateEventDayKey(event) {
-  return typeof event.day_key === "string"
-    ? event.day_key
-    : dayKeyFromObservedAt(event.observed_at);
-}
 
 async function readBoundedBody(request, maxBytes = MAX_BODY_BYTES) {
   let bytes = 0;
@@ -1146,10 +915,21 @@ function parseArgs(rawArgs) {
       parsed.manifestPath = nonEmptyValue(arg.slice("--manifest=".length), "--manifest");
     } else if (arg === "--state") {
       parsed.statePath = requiredValue(rawArgs, ++index, "--state");
+    } else if (arg === "--state-max-bytes" || arg.startsWith("--state-max-bytes=")) {
+      parsed.stateMaxBytes = parsePositiveInteger(arg.includes("=") ? arg.slice("--state-max-bytes=".length)
+        : requiredValue(rawArgs, ++index, "--state-max-bytes"), "--state-max-bytes");
+      if (parsed.stateMaxBytes < 65536) throw serviceError("TriggerServiceUsage", "--state-max-bytes must be >= 65536");
     } else if (arg.startsWith("--state=")) {
       parsed.statePath = nonEmptyValue(arg.slice("--state=".length), "--state");
     } else if (arg === "--queue") {
       parsed.queuePath = requiredValue(rawArgs, ++index, "--queue");
+    } else if (arg === "--queue-max-entries" || arg.startsWith("--queue-max-entries=")) {
+      parsed.queueMaxEntries = parsePositiveInteger(arg.includes("=") ? arg.slice("--queue-max-entries=".length)
+        : requiredValue(rawArgs, ++index, "--queue-max-entries"), "--queue-max-entries");
+    } else if (arg === "--queue-max-bytes" || arg.startsWith("--queue-max-bytes=")) {
+      parsed.queueMaxBytes = parsePositiveInteger(arg.includes("=") ? arg.slice("--queue-max-bytes=".length)
+        : requiredValue(rawArgs, ++index, "--queue-max-bytes"), "--queue-max-bytes");
+      if (parsed.queueMaxBytes < 65536) throw serviceError("TriggerServiceUsage", "--queue-max-bytes must be >= 65536");
     } else if (arg.startsWith("--queue=")) {
       parsed.queuePath = nonEmptyValue(arg.slice("--queue=".length), "--queue");
     } else if (arg === "--effect-journal") {
@@ -1172,6 +952,10 @@ function parseArgs(rawArgs) {
       parsed.port = parsePort(requiredValue(rawArgs, ++index, "--port"));
     } else if (arg.startsWith("--port=")) {
       parsed.port = parsePort(arg.slice("--port=".length));
+    } else if (arg === "--trace-store" || arg.startsWith("--trace-store=")) {
+      parsed.traceStorePath = arg.includes("=") ? nonEmptyValue(arg.slice("--trace-store=".length), "--trace-store") : requiredValue(rawArgs, ++index, "--trace-store");
+    } else if (arg === "--trace-max-bytes" || arg.startsWith("--trace-max-bytes=")) {
+      parsed.traceMaxBytes = parsePositiveInteger(arg.includes("=") ? arg.slice("--trace-max-bytes=".length) : requiredValue(rawArgs, ++index, "--trace-max-bytes"), "--trace-max-bytes");
     } else if (arg === "--trace-dir") {
       parsed.traceDir = requiredValue(rawArgs, ++index, "--trace-dir");
     } else if (arg.startsWith("--trace-dir=")) {
@@ -1209,13 +993,20 @@ function parseArgs(rawArgs) {
 
 function usage() {
   return [
-    "Usage: touba trigger serve <program.air.json> --manifest <path> --state <touba.trigger-state.json> --queue <touba.trigger-queue.json> [options]",
+    "Usage: touba trigger serve <program.air.json> --manifest <path> [--state <path.sqlite>] [--queue <path.sqlite>] [options]",
     "",
     "Options:",
+    "  --queue <path.sqlite>           Queue, default .touba/trigger-queue.sqlite",
+    "  --queue-max-entries <n>         Queue entry limit, default 10000",
+    "  --queue-max-bytes <n>           Queue storage limit, default 536870912 bytes",
+    "  --state <path.sqlite>           Trigger ledger, default .touba/triggers.sqlite",
+    "  --state-max-bytes <n>           Trigger ledger quota, default 536870912 bytes",
     "  --trigger <trigger_ref>          Restrict service routes to one request trigger",
     "  --host <host>                   Bind host, default 127.0.0.1",
     "  --port <port>                   Bind port, default 8787; use 0 for an ephemeral test port",
-    "  --trace-dir <dir>               Persist one trace JSON file per processed queue entry",
+    "  --trace-store <path.sqlite>     Trace journal, default .touba/traces.sqlite",
+    "  --trace-max-bytes <n>           Trace quota, default 536870912 bytes",
+    "  --trace-dir <dir>               Also export each processed trace as JSON",
     "  --effect-journal <path>          Persist touba-effect-journal-v1 for external writes",
     "  --max-events <n>                Stop after n processed entries, useful for tests and supervised jobs",
     "  --max-attempts <n>              Retry target failures up to n attempts, default 3",
@@ -1302,6 +1093,7 @@ function serviceError(code, message) {
 }
 
 function httpStatusForServiceError(code) {
+  if (code === "TriggerQueueCapacityExceeded" || code === "TriggerStateUnavailable") return 503;
   if (code === "TriggerEventPayloadConflict" || code === "TriggerReplayRejected") {
     return 409;
   }

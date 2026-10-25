@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { createToubaProjectServer } from "../src/serve.mjs";
-import { createIndexedEffectJournal, loadIndexedEffectJournal } from "../src/indexed-effect-journal.mjs";
+import { createSqliteEffectJournal, auditSqliteEffectJournal } from "../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs";
 import { deriveEffectId } from "../../../runtime/touba-runtime/src/effect-contract.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
@@ -29,7 +29,7 @@ test("indexed effect journal validates selected entries, scopes and resolved sec
   const root = mkdtempSync(join(tmpdir(), "touba-indexed-effects-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const path = join(root, "effects.sqlite"), secret = "private-resolved-token";
-  const journal = createIndexedEffectJournal(path, { secretValues: [secret] });
+  const journal = createSqliteEffectJournal(path, { secretValues: [secret] });
   const entry = {
     effect_scope_id: "operation:one", air_digest: `sha256:${"a".repeat(64)}`, entry_ref: "strategy:incident/Resolve",
     effect_index: 1, request_digest: `sha256:${"b".repeat(64)}`, tool_ref: "tool:incident/Write",
@@ -48,5 +48,5 @@ test("indexed effect journal validates selected entries, scopes and resolved sec
   try { db.prepare("UPDATE records SET body=? WHERE id=?").run(JSON.stringify({ ...entry, attempt_count: -1 }), entry.effect_id); }
   finally { db.close(); }
   assert.throws(() => journal.readEntry(entry.effect_id), { code: "EffectJournalInvalid" });
-  assert.throws(() => loadIndexedEffectJournal(path), { code: "EffectJournalInvalid" });
+  assert.throws(() => auditSqliteEffectJournal(path), { code: "EffectJournalInvalid" });
 });

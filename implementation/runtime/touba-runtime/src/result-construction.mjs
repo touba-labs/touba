@@ -5,7 +5,7 @@ import {
   RuntimeFailure,
   RuntimeStop,
 } from "./runtime-errors.mjs";
-import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
+import { validateTraceMachineStream } from "../../../contracts/machine/contracts.mjs";
 import { assertResultHasNoResolvedSecret } from "./secret-redaction.mjs";
 
 /**
@@ -77,16 +77,15 @@ export async function executeRunLifecycle(context, execute, operations) {
     },
   });
 
-  const traceDocument = trace.document();
-  validateTraceMachineContract(traceDocument);
+  const traceReader = trace.snapshot();
+  validateTraceMachineStream(traceReader.header, traceReader.events());
   /** @type {{status: string, reason: string, result: unknown, messages: any[], pending_interaction?: any, pending_interactions?: any[], trace: unknown, checkpoint?: unknown}} */
-  const response = {
+  const response = trace.attach({
     status,
     reason,
     result,
     messages: context.messages,
-    trace: traceDocument,
-  };
+  }, traceReader);
   if (status === "stopped" && ["user_input_pending", "human_approval_pending"].includes(reason)) {
     /** @type {{interaction_ref: string, prompt: string}[]} */
     const pending = context.pendingHumanApprovalCheckpoint?.pending_interactions

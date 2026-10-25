@@ -3,9 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { readEffectJournalFixture } from "../../../tests/helpers/effect-journal.mjs";
+import { auditSqliteEffectJournal, migrateEffectJournal } from "../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs";
 import {
   EFFECT_JOURNAL_SCHEMA_VERSION,
-  createFileEffectJournal,
+  createSqliteEffectJournal,
   unknownEffectRetryDecision,
 } from "../src/effect-journal.mjs";
 
@@ -31,8 +33,8 @@ function validJournalEntry(overrides = {}) {
 test("persists complete runtime effect entries atomically and returns detached values", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-effect-journal-"));
   try {
-    const path = join(workspace, "runs.effect-journal.json");
-    const journal = createFileEffectJournal(path);
+    const path = join(workspace, "runs.effect-journal.sqlite");
+    const journal = createSqliteEffectJournal(path);
     assert.equal(journal.schemaVersion, EFFECT_JOURNAL_SCHEMA_VERSION);
     assert.equal(journal.readEntry(effectId), null);
 
@@ -43,10 +45,10 @@ test("persists complete runtime effect entries atomically and returns detached v
     assert.equal(journal.readEntry(effectId).state, "prepared");
     assert.equal(readdirSync(workspace).some((name) => name.endsWith(".tmp")), false);
 
-    const stored = JSON.parse(readFileSync(path, "utf8"));
+    const stored = readEffectJournalFixture(path);
     assert.equal(stored.schema_version, "touba-effect-journal-v1");
     assert.equal(stored.entries[effectId].effect_scope_id, "queue:fixture:001");
-    assert.equal(typeof stored.updated_at, "string");
+    assert.equal(auditSqliteEffectJournal(path).entry_count, 1);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -55,30 +57,30 @@ test("persists complete runtime effect entries atomically and returns detached v
 test("refuses a malformed journal or effect identity without replacing durable data", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-effect-journal-invalid-"));
   try {
-    const path = join(workspace, "runs.effect-journal.json");
+    const path = join(workspace, "runs.effect-journal.sqlite");
     writeFileSync(path, JSON.stringify({ schema_version: "unknown", entries: {} }), "utf8");
     assert.throws(
-      () => createFileEffectJournal(path),
+      () => createSqliteEffectJournal(path),
       (error) => error?.code === "EffectJournalInvalid",
     );
     assert.equal(existsSync(path), true);
 
     rmSync(path);
-    const journal = createFileEffectJournal(path);
+    const journal = createSqliteEffectJournal(path);
     assert.throws(
       () => journal.writeEntry({ effect_id: "not-an-effect-id" }),
       (error) => error?.code === "EffectJournalInvalid",
     );
-    assert.equal(existsSync(path), false);
+    assert.equal(auditSqliteEffectJournal(path).entry_count, 0);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
 });
 
-test("refuses unknown entry fields and resolved secret values before use", () => {
+test("migration refuses invalid states, unknown fields and resolved secret values before use", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-effect-journal-strict-"));
   try {
-    const path = join(workspace, "runs.effect-journal.json");
+    const path = join(workspace, "runs.effect-journal.sqlite");
     writeFileSync(path, JSON.stringify({
       schema_version: "touba-effect-journal-v1",
       entries: {
@@ -91,7 +93,7 @@ test("refuses unknown entry fields and resolved secret values before use", () =>
       },
     }), "utf8");
     assert.throws(
-      () => createFileEffectJournal(path),
+      () => migrateEffectJournal({ source: path, destination: path + ".migrated.sqlite" }),
       (error) => error?.code === "EffectJournalInvalid",
     );
 
@@ -102,19 +104,19 @@ test("refuses unknown entry fields and resolved secret values before use", () =>
       },
     }), "utf8");
     assert.throws(
-      () => createFileEffectJournal(path),
+      () => migrateEffectJournal({ source: path, destination: path + ".migrated.sqlite" }),
       (error) => error?.code === "EffectJournalInvalid",
     );
 
     rmSync(path);
-    const journal = createFileEffectJournal(path, { secretValues: ["resolved-secret-fixture"] });
+    const journal = createSqliteEffectJournal(path, { secretValues: ["resolved-secret-fixture"] });
     assert.throws(
       () => journal.writeEntry(validJournalEntry({
         effect_scope_id: "queue:resolved-secret-fixture",
       })),
       (error) => error?.code === "EffectJournalInvalid",
     );
-    assert.equal(existsSync(path), false);
+    assert.equal(auditSqliteEffectJournal(path).entry_count, 0);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -123,8 +125,8 @@ test("refuses unknown entry fields and resolved secret values before use", () =>
 test("blocks a mixed unknown scope unless every uncertain effect is idempotent", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-effect-journal-mixed-"));
   try {
-    const path = join(workspace, "runs.effect-journal.json");
-    const journal = createFileEffectJournal(path);
+    const path = join(workspace, "runs.effect-journal.sqlite");
+    const journal = createSqliteEffectJournal(path);
     journal.writeEntry(validJournalEntry({
       state: "unknown",
       attempt_count: 1,

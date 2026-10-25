@@ -76,7 +76,7 @@ trigger Webhook
     triggers: { "trigger:signals/Webhook": { enabled: true, source: { kind: "request" },
       limits: { max_runs_per_day: 10, timeout_ms: 30000 } } } }));
   return ["trigger", "serve", air, "--manifest", manifest,
-    "--state", join(root, "touba.trigger-state.json"), "--queue", join(root, "touba.trigger-queue.json")];
+    "--state", join(root, "touba.triggers.sqlite"), "--queue", join(root, "touba.trigger-queue.sqlite")];
 }
 
 async function start(args, root, port, processes) {

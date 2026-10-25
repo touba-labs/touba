@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { generateManifestFromAirDocument } from "../../cli/touba-manifest/src/generate.mjs";
+import { packageSdk } from "../../cli/touba-distribution/src/package-sdk.mjs";
 import {
   closeMemoryBackendServer,
   createMemoryBackendServer,
@@ -26,6 +27,7 @@ const externalEndpoint = argValue("--external-endpoint");
 let backend;
 
 try {
+  packageSdk(implementationRoot, tmpRoot);
   materializeProject();
   if (!externalEndpoint) {
     backend = await startMemoryBackend();
@@ -61,7 +63,7 @@ function materializeProject() {
   mkdirSync(path.join(projectRoot, ".touba/air"), { recursive: true });
   mkdirSync(path.join(projectRoot, "node_modules/@touba"), { recursive: true });
   cpSync(
-    path.join(implementationRoot, "runtime/touba-handler-sdk"),
+    path.join(tmpRoot, "lib/node_modules/@touba/sdk"),
     path.join(projectRoot, "node_modules/@touba/sdk"),
     { recursive: true },
   );
@@ -186,7 +188,7 @@ async function runAir(options = {}) {
     "--secrets",
     secretsPath,
     "--effect-journal",
-    path.join(tmpRoot, "memory.effect-journal.json"),
+    path.join(tmpRoot, "memory.effect-journal.sqlite"),
     "--inputs-json",
     JSON.stringify({
       request: {

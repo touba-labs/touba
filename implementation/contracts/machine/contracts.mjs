@@ -1,3 +1,6 @@
+import { validateTracePage } from "../trace-reference.mjs";
+export { validateTraceReference } from "../trace-reference.mjs";
+
 export const AIR_SCHEMA_VERSION = "touba-air-v1";
 export const AIR_CAPABILITY_PROFILE = "touba-air-capabilities-v1";
 export const AIR_JSON_PROFILE = "touba-air-json-canonical-v1";
@@ -426,7 +429,7 @@ function validateCanonicalRecordFields(expression, path) {
 }
 
 /** @param {unknown} value @returns {Record<string, any>} */
-export function validateTraceMachineContract(value) {
+function validateTraceHeader(value) {
   const trace = requireObject(value, "$", "trace document");
   requireExact(trace.trace_protocol_version, TRACE_PROTOCOL_VERSION, "$.trace_protocol_version");
   requireExact(trace.trace_capability_profile, TRACE_CAPABILITY_PROFILE, "$.trace_capability_profile");
@@ -436,7 +439,15 @@ export function validateTraceMachineContract(value) {
   if (run.pure_function_detail !== undefined && !["full", "calls"].includes(run.pure_function_detail)) {
     fail("TraceDetailInvalid", "pure_function_detail must be full or calls", "$.run.pure_function_detail");
   }
-  const runId = requireString(run.run_id, "$.run.run_id");
+  requireString(run.run_id, "$.run.run_id");
+  return trace;
+}
+
+/** @param {unknown} value @returns {Record<string, any>} */
+export function validateTraceMachineContract(value) {
+  const trace = validateTraceHeader(value);
+  const run = trace.run;
+  const runId = run.run_id;
   if (run.admission !== undefined) {
     requireExact(run.admission, "refused", "$.run.admission");
     // An admission refusal is evidence of non-execution, never a synthetic run.
@@ -460,59 +471,107 @@ export function validateTraceMachineContract(value) {
     }
     return trace;
   }
+  const events = requireArray(trace.events, "$.events");
+  validateExecutionEvents(trace, events, false);
+  return trace;
+}
+
+/** Validate a runtime-generated trace without collecting its events or IDs.
+ * Runtime IDs are derived from the run and sequence, so contiguity also proves
+ * uniqueness. General imported documents retain the existing ID-set check.
+ * @param {unknown} header
+ * @param {Iterable<unknown>} events
+ */
+export function validateTraceMachineStream(header, events) {
+  const trace = validateTraceHeader(header);
+  if (Object.hasOwn(trace, "events") || trace.run.admission !== undefined) {
+    fail("TraceStreamInvalid", "an execution stream requires a header without events or admission", "$");
+  }
+  validateExecutionEvents(trace, events, true);
+}
+
+/** Validate a bounded page without treating it as a complete execution.
+ * @param {any} page @param {any} [reference] @param {number} [after] @param {number} [limit]
+ */
+export function validateTracePageMachineContract(page, reference = page?.reference,
+  after = page?.events?.length ? page.events[0].sequence_index - 1 : page?.next, limit = 1000) {
+  validateTracePage(page, reference, after, limit);
+  const trace = validateTraceHeader(page.header);
+  if (Object.hasOwn(trace, "events") || trace.run.admission !== undefined) {
+    fail("TraceStreamInvalid", "a page requires an execution header", "$.header");
+  }
+  requireExact(trace.run.air_schema_version, AIR_SCHEMA_VERSION, "$.header.run.air_schema_version");
+  requireString(trace.run.module_ref, "$.header.run.module_ref");
+  requireString(trace.run.entry_ref, "$.header.run.entry_ref");
+  if (typeof trace.run.air_digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(trace.run.air_digest)) {
+    fail("TraceAirCommitmentInvalid", "trace requires the execution-time canonical AIR digest", "$.header.run.air_digest");
+  }
+  for (const [index, event] of page.events.entries()) validateExecutionEventFields(event, index);
+  return page;
+}
+
+/** @param {Record<string, any>} event @param {number} index */
+function validateExecutionEventFields(event, index) {
+  rejectUnknownFields(event, TRACE_EVENT_FIELDS, `$.events[${index}]`);
+  if (event.observed_at !== undefined && (typeof event.observed_at !== "string" || !Number.isFinite(Date.parse(event.observed_at))
+    || new Date(event.observed_at).toISOString() !== event.observed_at)) {
+    fail("TraceTimestampInvalid", "observed_at requires a canonical UTC ISO instant", `$.events[${index}].observed_at`);
+  }
+  requireEnum(event.kind, TRACE_EVENT_KINDS, `$.events[${index}].kind`);
+  if (event.kind === "admission_refused") fail("TraceAdmissionInvalid", "admission refusal cannot appear in an executed run", `$.events[${index}].kind`);
+  rejectForbiddenTraceFields(event.payload, `$.events[${index}].payload`);
+  if (event.kind === "failure_detected") {
+    requireString(event.payload?.runtime_error_code, `$.events[${index}].payload.runtime_error_code`);
+    requireEnum(event.payload?.failure_family, TRACE_FAILURE_FAMILIES, `$.events[${index}].payload.failure_family`);
+  }
+}
+
+/** @param {Record<string, any>} trace @param {Iterable<unknown>} events @param {boolean} canonicalIds */
+function validateExecutionEvents(trace, events, canonicalIds) {
+  const run = trace.run, runId = run.run_id;
   if (typeof run.air_digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(run.air_digest)) {
     fail("TraceAirCommitmentInvalid", "trace requires the execution-time canonical AIR digest", "$.run.air_digest");
   }
   requireExact(run.air_schema_version, AIR_SCHEMA_VERSION, "$.run.air_schema_version");
   requireString(run.module_ref, "$.run.module_ref");
   requireString(run.entry_ref, "$.run.entry_ref");
-  const events = requireArray(trace.events, "$.events");
-  if (events.length < 2) fail("TraceTerminalInvalid", "trace requires start and terminal events", "$.events");
-  const eventIds = new Set();
-  const initialSequenceIndex = events[0]?.sequence_index;
-  if (!Number.isSafeInteger(initialSequenceIndex) || initialSequenceIndex < 0) {
-    fail(
-      "TraceSequenceInvalid",
-      "first sequence index must be a non-negative safe integer",
-      "$.events[0].sequence_index",
-    );
-  }
-  for (let index = 0; index < events.length; index += 1) {
-    const event = requireObject(events[index], `$.events[${index}]`, "trace event");
-    rejectUnknownFields(event, TRACE_EVENT_FIELDS, `$.events[${index}]`);
-    if (event.observed_at !== undefined && (typeof event.observed_at !== "string" || !Number.isFinite(Date.parse(event.observed_at))
-      || new Date(event.observed_at).toISOString() !== event.observed_at)) {
-      fail("TraceTimestampInvalid", "observed_at requires a canonical UTC ISO instant", `$.events[${index}].observed_at`);
+  const eventIds = canonicalIds ? null : new Set();
+  let index = 0, initialSequenceIndex = 0;
+  /** @type {Record<string, any> | null} */
+  let terminal = null;
+  for (const item of events) {
+    const event = requireObject(item, `$.events[${index}]`, "trace event");
+    if (index === 0) {
+      initialSequenceIndex = event.sequence_index;
+      if (!Number.isSafeInteger(initialSequenceIndex) || initialSequenceIndex < 0) {
+        fail("TraceSequenceInvalid", "first sequence index must be a non-negative safe integer", "$.events[0].sequence_index");
+      }
+      if (event.kind !== "run_started") fail("TraceStartInvalid", "first event must be run_started", "$.events[0].kind");
     }
+    if (terminal?.kind === "run_completed") fail("TraceTerminalInvalid", "run_completed must be unique and final", "$.events");
+    validateExecutionEventFields(event, index);
     const eventId = requireString(event.event_id, `$.events[${index}].event_id`);
-    if (eventIds.has(eventId)) fail("DuplicateTraceEventId", `duplicate trace event ${eventId}`, `$.events[${index}].event_id`);
-    eventIds.add(eventId);
+    if (eventIds?.has(eventId)) fail("DuplicateTraceEventId", `duplicate trace event ${eventId}`, `$.events[${index}].event_id`);
+    eventIds?.add(eventId);
     requireExact(event.run_id, runId, `$.events[${index}].run_id`);
     const expectedSequenceIndex = initialSequenceIndex + index;
-    if (event.sequence_index !== expectedSequenceIndex) {
+    if (!Number.isSafeInteger(expectedSequenceIndex) || event.sequence_index !== expectedSequenceIndex) {
       fail(
         "TraceSequenceInvalid",
         `expected contiguous sequence index ${expectedSequenceIndex}`,
         `$.events[${index}].sequence_index`,
       );
     }
-    requireEnum(event.kind, TRACE_EVENT_KINDS, `$.events[${index}].kind`);
-    if (event.kind === "admission_refused") fail("TraceAdmissionInvalid", "admission refusal cannot appear in an executed run", `$.events[${index}].kind`);
-    rejectForbiddenTraceFields(event.payload, `$.events[${index}].payload`);
-    if (event.kind === "failure_detected") {
-      requireString(event.payload?.runtime_error_code, `$.events[${index}].payload.runtime_error_code`);
-      requireEnum(event.payload?.failure_family, TRACE_FAILURE_FAMILIES, `$.events[${index}].payload.failure_family`);
+    if (canonicalIds && eventId !== `event:${runId}:${expectedSequenceIndex + 1}`) {
+      fail("TraceEventIdentityInvalid", "runtime event ID must match its run and sequence", `$.events[${index}].event_id`);
     }
+    terminal = event;
+    index++;
   }
-  if (events[0].kind !== "run_started") fail("TraceStartInvalid", "first event must be run_started", "$.events[0].kind");
-  const terminal = events.at(-1);
-  if (terminal.kind !== "run_completed") fail("TraceTerminalInvalid", "last event must be run_completed", `$.events[${events.length - 1}].kind`);
-  requireEnum(terminal.payload?.status, TERMINAL_STATUSES, `$.events[${events.length - 1}].payload.status`);
-  requireString(terminal.payload?.reason, `$.events[${events.length - 1}].payload.reason`);
-  if (events.slice(0, -1).some((event) => event.kind === "run_completed")) {
-    fail("TraceTerminalInvalid", "run_completed must be unique and final", "$.events");
-  }
-  return trace;
+  if (index < 2 || terminal === null) fail("TraceTerminalInvalid", "trace requires start and terminal events", "$.events");
+  if (terminal.kind !== "run_completed") fail("TraceTerminalInvalid", "last event must be run_completed", `$.events[${index - 1}].kind`);
+  requireEnum(terminal.payload?.status, TERMINAL_STATUSES, `$.events[${index - 1}].payload.status`);
+  requireString(terminal.payload?.reason, `$.events[${index - 1}].payload.reason`);
 }
 
 /** @param {unknown} value @returns {string} */

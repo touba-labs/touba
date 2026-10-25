@@ -6,6 +6,7 @@ import {
   TRACE_CAPABILITY_PROFILE,
   TRACE_PROTOCOL_VERSION,
   failureFamilyForRuntimeCode,
+  canonicalizeMachineValue,
 } from "../../../contracts/machine/contracts.mjs";
 
 export { TRACE_CAPABILITY_PROFILE, TRACE_PROTOCOL_VERSION };
@@ -40,8 +41,9 @@ export class TraceBuilder {
    * @param {((event: TraceEvent) => void) | null} [eventObserver]
    * @param {number} [initialSequenceIndex]
    * @param {"full" | "calls"} [pureFunctionDetail]
+   * @param {{openSegment: (header: any, start: number) => string, append: (id: string, event: TraceEvent) => unknown, appendBatch?: (id: string, events: TraceEvent[]) => number, maxBatchBytes?: number, document: (id: string) => any, snapshot: (id: string) => any, events?: (id: string) => Iterable<TraceEvent>} | null} [storage]
    */
-  constructor(airDocument, entryRef, runId, eventObserver = null, initialSequenceIndex = 0, pureFunctionDetail = "full") {
+  constructor(airDocument, entryRef, runId, eventObserver = null, initialSequenceIndex = 0, pureFunctionDetail = "full", storage = null) {
     if (!["full", "calls"].includes(pureFunctionDetail)) throw new TypeError("pureFunctionDetail must be full or calls");
     this.pureFunctionDetail = pureFunctionDetail;
     this.pureGraphs = new Map((airDocument.execution_graphs ?? [])
@@ -58,10 +60,21 @@ export class TraceBuilder {
     this.entryRef = entryRef;
     /** @type {TraceEvent[]} */
     this.events = [];
+    /** @type {TraceEvent[]} */
+    this.pendingEvents = [];
+    this.pendingBytes = 0;
+    this.maxPendingBytes = Math.min(65536, storage?.maxBatchBytes ?? 65536);
+    if (!Number.isSafeInteger(this.maxPendingBytes) || this.maxPendingBytes < 1) throw new TypeError("trace batch byte limit must be a positive safe integer");
+    this.eventCount = 0;
     /** @type {number} */
     this.initialSequenceIndex = initialSequenceIndex;
     /** @type {((event: TraceEvent) => void) | null} */
     this.eventObserver = eventObserver;
+    this.storage = storage;
+    this.storageSegment = storage?.openSegment(this.header(), initialSequenceIndex) ?? null;
+    if (storage !== null && (typeof this.storageSegment !== "string" || !this.storageSegment)) {
+      throw new TypeError("trace storage must synchronously return a segment identifier");
+    }
   }
 
   /**
@@ -91,7 +104,8 @@ export class TraceBuilder {
     const payload = rawPayload === undefined
       ? undefined
       : jsonPortableTraceValue(rawPayload);
-    const sequenceIndex = this.initialSequenceIndex + this.events.length;
+    const sequenceIndex = this.initialSequenceIndex + this.eventCount;
+    if (!Number.isSafeInteger(sequenceIndex + 1)) throw new RangeError("trace sequence index cannot advance safely");
     const event = /** @type {TraceEvent} */ (compactPayload({
       event_id: `event:${this.runId}:${sequenceIndex + 1}`,
       run_id: this.runId,
@@ -102,7 +116,21 @@ export class TraceBuilder {
       payload,
       message: options.message,
     }));
-    this.events.push(event);
+    if (this.storage !== null && this.storageSegment !== null) {
+      const pureDetail = pureOwner !== undefined && ["binding_created", "branch_evaluated", "loop_evaluated"].includes(kind);
+      const bytes = pureDetail ? Buffer.byteLength(JSON.stringify(event)) : 0;
+      if (pureDetail && this.storage.appendBatch && bytes <= this.maxPendingBytes) {
+        if (this.pendingEvents.length >= 32 || this.pendingBytes + bytes > this.maxPendingBytes) this.flush();
+        this.pendingEvents.push(event); this.pendingBytes += bytes;
+      } else {
+        // Every non-pure-detail event is a durable barrier. In particular,
+        // call/authority/provider events flush pure computation before an effect.
+        this.flush();
+        const committed = this.storage.append(this.storageSegment, event);
+        if (committed !== true) throw new TypeError("trace storage must synchronously acknowledge a new durable event with true");
+      }
+    } else this.events.push(event);
+    this.eventCount += 1;
     if (this.eventObserver !== null) {
       try {
         this.eventObserver(structuredClone(event));
@@ -115,13 +143,79 @@ export class TraceBuilder {
 
   /** @returns {number} */
   nextSequenceIndex() {
-    return this.initialSequenceIndex + this.events.length;
+    return this.initialSequenceIndex + this.eventCount;
+  }
+
+  flush() {
+    if (!this.pendingEvents.length) return;
+    if (!this.storage?.appendBatch || this.storageSegment === null) throw new TypeError("trace batch storage is missing");
+    const committed = this.storage.appendBatch(this.storageSegment, this.pendingEvents);
+    if (committed !== this.pendingEvents.length) throw new TypeError("trace storage must synchronously acknowledge every event in the batch");
+    this.pendingEvents = []; this.pendingBytes = 0;
+  }
+
+  /** @returns {Iterable<TraceEvent>} */
+  *iterateEvents() {
+    this.flush();
+    if (this.storage !== null && this.storageSegment !== null) {
+      if (!this.storage.events) throw new TypeError("trace storage requires a bounded events iterator");
+      yield* this.storage.events(this.storageSegment);
+    } else yield* this.events;
+  }
+
+  /** @param {boolean} [canonical] JSON digest without materializing the document. */
+  digest(canonical = false) {
+    const header = this.header();
+    const digest = createHash("sha256").update(canonical ? '{"events":[' : JSON.stringify(header).slice(0, -1) + ',"events":[');
+    let separator = "";
+    for (const event of this.iterateEvents()) {
+      digest.update(separator).update(canonical ? canonicalizeMachineValue(event) : JSON.stringify(event)); separator = ",";
+    }
+    digest.update("]");
+    if (canonical) {
+      for (const key of Object.keys(header).sort()) {
+        digest.update("," + JSON.stringify(key) + ":" + canonicalizeMachineValue(/** @type {Record<string, unknown>} */ (header)[key]));
+      }
+    }
+    return digest.update("}").digest("hex");
   }
 
   /**
    * @returns {{ trace_protocol_version: string, trace_capability_profile: string, run: { run_id: string, air_schema_version: string, air_digest: string, module_ref: string, entry_ref: string, pure_function_detail?: string }, events: TraceEvent[] }}
    */
   document() {
+    this.flush();
+    if (this.storage !== null && this.storageSegment !== null) return this.storage.document(this.storageSegment);
+    return { ...this.header(), events: this.events };
+  }
+
+  /** Fixed prefix for checkpoint/result consumers. The host keeps storage open. */
+  snapshot() {
+    this.flush();
+    if (this.storage !== null && this.storageSegment !== null) return this.storage.snapshot(this.storageSegment);
+    const document = structuredClone(this.document());
+    const startIndex = this.initialSequenceIndex;
+    return Object.freeze({
+      segmentId: null, startIndex, eventCount: document.events.length,
+      nextSequenceIndex: startIndex + document.events.length,
+      header: this.header(),
+      *events({ after = startIndex - 1 } = {}) {
+        for (const event of document.events) if (event.sequence_index > after) yield structuredClone(event);
+      },
+      *json() { yield JSON.stringify(document); },
+      document() { return structuredClone(document); },
+    });
+  }
+
+  /** Preserve the JSON trace field while making bounded reads available to hosts.
+   * @param {Record<string, any>} envelope
+   * @param {any} [reader]
+   */
+  attach(envelope, reader = this.snapshot()) {
+    return attachTraceReader(envelope, reader, this.storage === null);
+  }
+
+  header() {
     return {
       trace_protocol_version: TRACE_PROTOCOL_VERSION,
       trace_capability_profile: TRACE_CAPABILITY_PROFILE,
@@ -133,9 +227,23 @@ export class TraceBuilder {
         entry_ref: this.entryRef,
         ...(this.pureFunctionDetail === "calls" ? { pure_function_detail: "calls" } : {}),
       },
-      events: this.events,
     };
   }
+}
+
+/** Attach a fixed reader without copying its event history.
+ * @param {Record<string, any>} envelope
+ * @param {any} reader
+ * @param {boolean} [materialize]
+ */
+export function attachTraceReader(envelope, reader, materialize = false) {
+  Object.defineProperties(envelope, {
+    trace: materialize
+      ? { enumerable: true, value: reader.document(), writable: true }
+      : { enumerable: true, get: () => reader.document() },
+    traceReader: { enumerable: false, value: reader },
+  });
+  return envelope;
 }
 
 /**

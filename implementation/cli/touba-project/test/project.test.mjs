@@ -2486,10 +2486,10 @@ test("CLI help prints usage without a synthetic report", () => {
   const result = spawnSync(process.execPath, [cliPath, "--help"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Usage:/);
-  assert.match(result.stdout, /touba trigger run <program\.air\.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> --state <touba\.trigger-state\.json>/);
-  assert.match(result.stdout, /touba trigger serve <program\.air\.json> --manifest <path> --state <touba\.trigger-state\.json> --queue <touba\.trigger-queue\.json>/);
+  assert.match(result.stdout, /touba trigger run <program\.air\.json> --manifest <path> --trigger <trigger_ref> --max-runs <n> \[--state <path\.sqlite>\]/);
+  assert.match(result.stdout, /touba trigger serve <program\.air\.json> --manifest <path> \[--state <path\.sqlite>\] \[--queue <path\.sqlite>\]/);
   assert.match(result.stdout, /touba package new\|check\|test\|version\|pack\|checkout\|submit\|publish\|add\|list\|remove/);
-  assert.match(result.stdout, /--state <touba\.trigger-state\.json>/);
+  assert.match(result.stdout, /--state <path\.sqlite>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --out <touba\.manifest\.json>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --stdout/);
   assert.match(result.stdout, /touba handler stub <air\.json> \[--tool-ref <tool_ref>\] \[--handler-root <path>\] \[--force\]/);
@@ -2509,7 +2509,8 @@ test("CLI trigger, manifest and handler help match current public options", () =
   assert.equal(triggerResult.status, 0, triggerResult.stderr);
   assert.match(triggerResult.stdout, /touba trigger run <air\.json>/);
   assert.match(triggerResult.stdout, /--max-runs <n>/);
-  assert.match(triggerResult.stdout, /--state <touba\.trigger-state\.json>/);
+  assert.match(triggerResult.stdout, /--state <path\.sqlite>/);
+  assert.match(triggerResult.stdout, /trigger migrate-state <old\.json> --out <new\.sqlite>/);
   assert.match(triggerResult.stdout, /run-summary/);
   assert.equal(triggerResult.stdout.includes("daemon"), false);
 

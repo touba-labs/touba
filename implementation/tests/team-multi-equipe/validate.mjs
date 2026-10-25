@@ -13,6 +13,7 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { packageSdk } from "../../cli/touba-distribution/src/package-sdk.mjs";
 
 const fixtureRoot = dirname(fileURLToPath(import.meta.url));
 const implementationRoot = resolve(fixtureRoot, "../..");
@@ -32,6 +33,7 @@ const SECRET_VALUE = "team-scenario-secret";
 const tmpRoot = mkdtempSync(join(tmpdir(), "touba-team-multi-equipe-"));
 
 try {
+  packageSdk(implementationRoot, tmpRoot);
   const positiveProject = materializeProject("positive");
   const prepareReport = preparePositive(positiveProject);
   assert.equal(prepareReport.status, "success");
@@ -74,7 +76,7 @@ function materializeProject(label) {
   cpSync(projectFixtureRoot, projectRoot, { recursive: true });
   mkdirSync(join(projectRoot, "node_modules/@touba"), { recursive: true });
   cpSync(
-    join(implementationRoot, "runtime/touba-handler-sdk"),
+    join(tmpRoot, "lib/node_modules/@touba/sdk"),
     join(projectRoot, "node_modules/@touba/sdk"),
     { recursive: true },
   );

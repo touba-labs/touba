@@ -1,9 +1,11 @@
 import asyncio
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -11,10 +13,12 @@ import threading
 import queue
 import urllib.request
 import unittest
+from contextlib import closing
 from unittest.mock import patch
 
 from touba_sdk import AsyncToubaEngine, ToubaEngine, ToubaEngineError, CompileResult, touba_sdk_metadata
 from touba_sdk.engine import _result, _kill
+from touba_sdk._trace_reference import validate_reference, validate_page
 
 IMPLEMENTATION = Path(__file__).resolve().parents[3]
 NODE = os.environ.get("TOUBA_TEST_NODE", shutil.which("node"))
@@ -50,6 +54,127 @@ class EngineTests(unittest.TestCase):
         self.options = dict(project_root=self.root, command=NODE, command_args=[str(CLI)])
         self.engine = ToubaEngine(**self.options)
         (self.root / "source.tb").write_text(SOURCE)
+
+    def test_sync_async_paged_traces_use_core_and_match_the_canonical_export(self):
+        async def exercise():
+            for engine in [self.engine, AsyncToubaEngine(**self.options)]:
+                async def invoke(method, **kwargs):
+                    if isinstance(engine, AsyncToubaEngine):
+                        return await method(**kwargs)
+                    return await asyncio.to_thread(method, **kwargs)
+                result = await invoke(engine.run, source="source.tb", entry_ref="strategy:python.test/Echo",
+                                      inputs={"value": "é🙂"}, trace_store="traces.sqlite", trace_mode="reference",
+                                      trace_out="export.json")
+                self.assertEqual(result.result, "é🙂")
+                self.assertIsNone(result.trace)
+                reference = result.trace_reference
+                before = (self.root / "traces.sqlite").read_bytes()
+                events, after = [], None
+                while True:
+                    page = await invoke(engine.read_trace, trace_store="traces.sqlite", reference=reference, after=after, limit=2)
+                    events.extend(page["events"])
+                    after = page["next"]
+                    if page["done"]:
+                        break
+                document = json.loads((self.root / "export.json").read_text())
+                self.assertEqual(dict(page["header"], events=events), document)
+                raw = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode()
+                self.assertEqual(reference["trace_digest"], "sha256:" + hashlib.sha256(raw).hexdigest())
+                self.assertEqual((self.root / "traces.sqlite").read_bytes(), before)
+                for options in [{"limit": True}, {"after": -2}, {"limit": 1001}]:
+                    with self.assertRaises(ToubaEngineError):
+                        await invoke(engine.read_trace, trace_store="traces.sqlite", reference=reference, **options)
+                bad_reference = dict(reference, trace_digest="sha256:" + "0" * 64)
+                with self.assertRaises(ToubaEngineError):
+                    await invoke(engine.read_trace, trace_store="traces.sqlite", reference=bad_reference)
+        asyncio.run(exercise())
+
+    def test_reference_mode_keeps_controlled_outcomes_and_failure_evidence(self):
+        options = dict(source="source.tb", trace_store="traces.sqlite", trace_mode="reference")
+        for entry, flags, status in [("Stop", {}, "stopped"), ("Ask", {}, "stopped"),
+                                      ("Ask", {"cancel_on_pause": True}, "cancelled")]:
+            result = self.engine.run(**options, entry_ref=f"strategy:python.test/{entry}", **flags)
+            self.assertEqual(result.status, status)
+            page = self.engine.read_trace(trace_store="traces.sqlite", reference=result.trace_reference)
+            self.assertEqual(page["events"][-1]["payload"]["status"], status)
+        with self.assertRaises(ToubaEngineError) as raised:
+            self.engine.run(**options, entry_ref="strategy:python.test/Fail", inputs={"divisor": 0})
+        page = self.engine.read_trace(trace_store="traces.sqlite", reference=raised.exception.details["trace_reference"])
+        self.assertEqual(page["events"][-1]["payload"]["status"], "failure")
+        with self.assertRaises(ToubaEngineError):
+            self.engine.run(source="source.tb", trace_mode="reference")
+        with self.assertRaises(ToubaEngineError) as invalid_input:
+            self.engine.run(**options, entry_ref="strategy:python.test/Echo", inputs={"unknown": "refuse"})
+        self.assertEqual(invalid_input.exception.details["trace_reference"]["terminal"]["reason"], "EntryInputSchemaInvalid")
+        air = self.engine.compile("source.tb").air_document
+        air["air_schema_version"] = "unsupported"
+        with self.assertRaises(ToubaEngineError) as admission:
+            self.engine.run(air_json=air, trace_store="traces.sqlite", trace_mode="reference")
+        self.assertNotIn("trace_reference", admission.exception.details)
+        self.assertEqual(admission.exception.details["trace"]["run"]["admission"], "refused")
+
+    def test_reference_and_page_protocol_rejects_malformed_data(self):
+        result = self.engine.run(source="source.tb", entry_ref="strategy:python.test/Echo", inputs={"value": "ok"},
+                                 trace_store="traces.sqlite", trace_mode="reference")
+        reference = result.trace_reference
+        for change in [{"start_index": True}, {"event_count": 1}, {"segment_id": "../db"},
+                       {"extra": 1}, {"header_digest": "wrong"}, {"run_id": "other"}]:
+            with self.assertRaises(ValueError):
+                validate_reference(dict(reference, **change))
+        page = self.engine.read_trace(trace_store="traces.sqlite", reference=reference, limit=1)
+        for change in [{"next": True}, {"done": True}, {"events": []}, {"extra": 1}, {"header": {}}]:
+            with self.assertRaises(ValueError):
+                validate_page(dict(page, **change), reference, -1, 1)
+        with self.assertRaises(ValueError):
+            validate_page(dict(page, reference=dict(reference, start_index=False)), reference, -1, 1)
+        bad = json.loads(json.dumps(page))
+        bad["events"][0]["sequence_index"] = False
+        with self.assertRaises(ValueError):
+            validate_page(bad, reference, -1, 1)
+        envelope = dict(schema_version="touba-run-reference-v1", status=result.status, reason=result.reason,
+                        result=result.result, messages=result.messages, trace_reference=reference)
+        with self.assertRaises(ToubaEngineError):
+            _result(json.dumps(envelope).encode(), 0)
+        self.assertEqual(_result(json.dumps(envelope).encode(), 0, "reference").result, "ok")
+        envelope["reason"] = "forged"
+        with self.assertRaises(ToubaEngineError):
+            _result(json.dumps(envelope).encode(), 0, "reference")
+
+    def test_sync_async_trace_storage_survives_the_engine_process(self):
+        options = dict(source="source.tb", entry_ref="strategy:python.test/Echo",
+                       inputs={"value": "durable"}, trace_store="traces.sqlite")
+        first = self.engine.run(**options)
+        async def run():
+            return await AsyncToubaEngine(**self.options).run(**options)
+        second = asyncio.run(run())
+        with closing(sqlite3.connect(self.root / "traces.sqlite")) as connection:
+            segments = connection.execute("SELECT id, closed FROM touba_trace_segments").fetchall()
+            self.assertEqual(len(segments), 2)
+            self.assertTrue(all(closed == 1 for _, closed in segments))
+            for result in [first, second]:
+                self.assertEqual(result.result, "durable")
+                body = json.dumps(result.trace["events"][-1], separators=(",", ":"), ensure_ascii=False)
+                self.assertEqual(connection.execute("SELECT count(*) FROM touba_trace_events WHERE body=?", (body,)).fetchone()[0], 1)
+
+    def test_default_journal_belongs_to_project_even_for_temporary_air(self):
+        air = self.engine.compile("source.tb").air_document
+        async def exercise():
+            for engine in [self.engine, AsyncToubaEngine(**self.options)]:
+                async def invoke(method, **kwargs):
+                    if isinstance(engine, AsyncToubaEngine):
+                        return await method(**kwargs)
+                    return await asyncio.to_thread(method, **kwargs)
+                result = await invoke(engine.run, air_json=air, entry_ref="strategy:python.test/Echo",
+                                      inputs={"value": "default journal"}, trace_mode="reference")
+                self.assertEqual(result.result, "default journal")
+                self.assertIsNone(result.trace)
+                page = await invoke(engine.read_trace, trace_store=".touba/traces.sqlite",
+                                    reference=result.trace_reference)
+                self.assertTrue(page["done"])
+                self.assertEqual(page["events"][-1]["payload"]["status"], "success")
+        asyncio.run(exercise())
+        with closing(sqlite3.connect(self.root / ".touba/traces.sqlite")) as connection:
+            self.assertEqual(connection.execute("SELECT count(*) FROM touba_trace_segments WHERE closed=1").fetchone()[0], 2)
 
     def test_installed_identity_and_sync_async_typed_values(self):
         self.assertEqual(touba_sdk_metadata()["version"], "1.0.0")
@@ -210,7 +335,7 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
                        human_approval_host="authority.py" if language == "python" else "authority.mjs",
                        human_approval_authority_timeout_ms=12000,
                        trace_pure_functions="calls",
-                       human_checkpoint_out="waiting.json", effect_journal="run.effect-journal.json")
+                       human_checkpoint_out="waiting.json", effect_journal="run.effect-journal.sqlite")
         self.assertEqual(self.engine.run(**options, inputs={"dossier": "invoice"}).reason, "human_approval_pending")
         for index, signer in enumerate(["one", "two"]):
             checkpoint = json.loads((self.root / "waiting.json").read_text())

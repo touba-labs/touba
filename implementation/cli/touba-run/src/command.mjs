@@ -1,19 +1,24 @@
-import { closeSync, constants, existsSync, fchmodSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { closeSync, constants, existsSync, fchmodSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { openCliEffectJournal } from "./effect-journal.mjs";
 import { writeParallelCheckpoint } from "./parallel-checkpoint-file.mjs";
+import { traceOutputChunks, writeChunks, writeTraceFile } from "./trace-output.mjs";
+import { buildRunSummary } from "./trace-summary.mjs";
+import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
+import { createSqliteTriggerStore } from "../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs";
+import { projectTracePath } from "../../../runtime/touba-runtime/src/project-trace-path.mjs";
 import { createHostModuleLoader } from "./host-modules.mjs";
 import { openLocalHandlerDiagnostics } from "../../../runtime/touba-runtime/src/handler-diagnostics.mjs";
 import { resolvedSecretEntries } from "../../../runtime/touba-runtime/src/secret-redaction.mjs";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
-import { publicRunResult, runExitCode } from "../../../contracts/run-outcome.mjs";
+import { publicRunResult, publicReferencedRunResult, runExitCode } from "../../../contracts/run-outcome.mjs";
 import { loadSkillPack } from "../../touba-project/src/skill-packs.mjs";
 import { verifyManifestPackages } from "../../touba-project/src/handler-packages.mjs";
 import { createInterface } from "node:readline/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { TraceBuilder } from "../../../runtime/touba-runtime/src/trace-builder.mjs";
-import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
+import { validateTraceMachineContract, validateTraceMachineStream } from "../../../contracts/machine/contracts.mjs";
 import { createAdmissionRefusalTrace } from "../../../runtime/touba-runtime/src/admission-trace.mjs";
 import { HARDENED_ERROR_CODES } from "../../../runtime/touba-runtime/src/hardened-execution-profile.mjs";
 import {
@@ -35,11 +40,9 @@ export async function executeRunCommand(args, { stdout = process.stdout, stderr 
 
 const RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v1";
 const RUN_EVIDENCE_SCHEMA_VERSION = "touba-run-evidence-v1";
-const RUN_SUMMARY_SCHEMA_VERSION = "touba-run-summary-v1";
 const BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v1";
 const RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v1";
-const RUN_OUTPUT_MODES = new Set(["show", "result", "trace", "all", "run-summary", "json"]);
-const TRIGGER_STATE_SCHEMA_VERSION = "touba-trigger-state-v1";
+const RUN_OUTPUT_MODES = new Set(["show", "result", "trace", "all", "run-summary", "json", "json-reference"]);
 const RESOURCE_BINDING_KINDS = new Set(["memory_backend", "event_source", "decision_provider"]);
 const RUN_LIMIT_KEYS = new Set([
   "max_run_ms",
@@ -96,10 +99,16 @@ class ResourceBindingsCliError extends Error {
 
 const parsedArgs = parseArgs(args);
 const hostModules = createHostModuleLoader();
+let traceStorage = null;
+let triggerState;
 
 // Flush this invocation's output before returning its explicit exit status.
 async function exitAfterFlush(code) {
+  triggerState?.close();
+  if (triggerState) process.removeListener("exit", triggerState.close);
   hostModules.close();
+  traceStorage?.close();
+  if (traceStorage) process.removeListener("exit", traceStorage.close);
   await Promise.all([stdout, stderr].map(stream =>
     new Promise((resolve, reject) => stream.write("", error => error ? reject(error) : resolve()))));
   return code;
@@ -107,14 +116,15 @@ async function exitAfterFlush(code) {
 
 async function refuseAdmission(code, stage, exitCode = 1) {
   const trace = createAdmissionRefusalTrace(code, stage);
-  if (parsedArgs.traceOutPath !== undefined) {
+  if (parsedArgs.traceOutPath !== undefined && (parsedArgs.traceStorePath === undefined
+    || canonicalPath(parsedArgs.traceOutPath) !== canonicalPath(parsedArgs.traceStorePath))) {
     try {
       writeFileSync(parsedArgs.traceOutPath, serializeJson(trace), "utf8");
     } catch {
       stderr.write("error: admission refusal trace could not be written\n");
     }
   }
-  if (parsedArgs.outputMode === "json") {
+  if (["json", "json-reference"].includes(parsedArgs.outputMode)) {
     stdout.write(serializeJson(publicRunResult({ status: "failure", reason: code,
       result: null, messages: [], trace })));
   }
@@ -161,6 +171,7 @@ if (parsedArgs.positional.length !== 1) {
 }
 
 const filePath = parsedArgs.positional[0];
+parsedArgs.traceStorePath ??= projectTracePath(filePath, parsedArgs.runPlanPath);
 let json;
 try {
   json = readFileSync(filePath, "utf8");
@@ -401,10 +412,13 @@ if (parsedArgs.triggerDryRun) {
   return await exitAfterFlush(report.status === "accepted" ? 0 : 1);
 }
 
-let triggerState;
+if (triggerEvent || parsedArgs.triggerRef) {
+  parsedArgs.triggerStatePath ??= join(dirname(projectTracePath(filePath, parsedArgs.runPlanPath)), "triggers.sqlite");
+}
 if (parsedArgs.triggerStatePath !== undefined) {
   try {
-    triggerState = loadTriggerStateFromPath(parsedArgs.triggerStatePath);
+    triggerState = createSqliteTriggerStore({ filename: parsedArgs.triggerStatePath, maxBytes: parsedArgs.triggerStateMaxBytes });
+    process.once("exit", triggerState.close);
   } catch (e) {
     stderr.write(`trigger state error [${e.code ?? "TriggerStateInvalid"}]: ${e.message}\n`);
     return await refuseAdmission("TriggerStateInvalid", "trigger_state", 1);
@@ -414,10 +428,23 @@ if (parsedArgs.triggerStatePath !== undefined) {
 let result;
 let effectHost;
 let handlerDiagnostics;
+let executionStarted = false;
 const interactiveUserInputSession = parsedArgs.interactiveUserInputs
   ? createInteractiveUserInputSession()
   : null;
 try {
+  if (parsedArgs.traceStorePath !== undefined) {
+    // A trace export/checkpoint must never overwrite its own backing database.
+    const database = canonicalPath(parsedArgs.traceStorePath);
+    const otherPaths = [filePath, parsedArgs.traceOutPath, parsedArgs.evidenceOutPath,
+      parsedArgs.humanCheckpointOutPath, parsedArgs.parallelCheckpointOutPath,
+      parsedArgs.effectJournalPath, parsedArgs.triggerStatePath];
+    if (otherPaths.some(path => path !== undefined && canonicalPath(path) === database)) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", "trace storage must have its own database path");
+    }
+    traceStorage = createSqliteTraceStore({ filename: database });
+    process.once("exit", traceStorage.close);
+  }
   if (parsedArgs.handlerDiagnosticsPath !== undefined) {
     try { handlerDiagnostics = openLocalHandlerDiagnostics(parsedArgs.handlerDiagnosticsPath); }
     catch {
@@ -445,6 +472,8 @@ try {
     ...humanApprovalHost,
     humanApprovalAuthorityTimeoutMs: parsedArgs.humanApprovalAuthorityTimeoutMs,
     tracePureFunctions: parsedArgs.tracePureFunctions,
+    traceStorage,
+    traceEventObserver: event => { if (event.kind === "run_started") executionStarted = true; },
     userInputs,
     userInputProvider: interactiveUserInputSession?.provider,
     agentDecisions,
@@ -493,10 +522,18 @@ try {
     stderr.write(`unexpected error: ${e.message}\n`);
   }
   interactiveUserInputSession?.close();
+  if (executionStarted && traceStorage) {
+    // Effects may already have happened. Never replace the incomplete durable
+    // evidence with an admission refusal claiming that no execution began.
+    stderr.write("error: execution interrupted; inspect the incomplete trace journal and effect receipts before resuming\n");
+    return await exitAfterFlush(1);
+  }
   const code = e instanceof ToubaRuntimeError && HARDENED_ERROR_CODES.includes(e.code)
     ? e.code : "RuntimeAdmissionRefused";
   return await refuseAdmission(code, "runtime", 1);
 } finally {
+  triggerState?.close();
+  if (triggerState) process.removeListener("exit", triggerState.close);
   if (handlerDiagnostics) {
     handlerDiagnostics.close();
     process.removeListener("exit", handlerDiagnostics.close);
@@ -507,11 +544,22 @@ try {
   interactiveUserInputSession?.close();
 }
 
+try {
 if (result.status === "failure") {
+  // These diagnostics need only the latest event of each relevant kind.
+  const latest = new Map();
+  const kinds = new Set(["failure_detected", "budget_limit_exceeded", "dispatch_refused_budget_exceeded", "trigger_event_refused"]);
+  for (const event of result.traceReader?.events() ?? result.trace.events) {
+    if (kinds.has(event.kind) && (event.kind !== "failure_detected" || event.message)) {
+      const key = event.kind === "dispatch_refused_budget_exceeded" ? `${event.kind}:${event.payload?.budget_kind}` : event.kind;
+      latest.set(key, event);
+    }
+  }
+  const diagnosticTrace = { events: [...latest.values()].sort((a, b) => a.sequence_index - b.sequence_index) };
   const diagnostic =
-    formatBudgetTraceDiagnostic(result.trace)
-    || formatTriggerTraceDiagnostic(result.trace)
-    || formatFailureTraceDiagnostic(result.trace);
+    formatBudgetTraceDiagnostic(diagnosticTrace)
+    || formatTriggerTraceDiagnostic(diagnosticTrace)
+    || formatFailureTraceDiagnostic(diagnosticTrace);
   if (diagnostic) {
     stderr.write(diagnostic);
   }
@@ -519,7 +567,8 @@ if (result.status === "failure") {
 
 if (parsedArgs.traceOutPath !== undefined) {
   try {
-    writeFileSync(parsedArgs.traceOutPath, serializeJson(result.trace), "utf8");
+    if (result.traceReader) await writeTraceFile(parsedArgs.traceOutPath, result.traceReader);
+    else writeFileSync(parsedArgs.traceOutPath, serializeJson(result.trace), "utf8");
   } catch (e) {
     stderr.write(`error: cannot write trace ${parsedArgs.traceOutPath}: ${e.message}\n`);
     return await exitAfterFlush(1);
@@ -551,8 +600,20 @@ if (parsedArgs.evidenceOutPath !== undefined) {
   }
 }
 
-stdout.write(renderOutput(result, parsedArgs.outputMode, parsedArgs));
+if (traceStorage && result.traceReader && ["json", "trace", "all"].includes(parsedArgs.outputMode)) {
+  await writeChunks(stdout, traceOutputChunks(result, parsedArgs.outputMode));
+} else stdout.write(renderOutput(result, parsedArgs.outputMode, parsedArgs));
 return await exitAfterFlush(runExitCode(result));
+} catch (error) {
+  stderr.write(`error: cannot export run output: ${error.message}\n`);
+  return await exitAfterFlush(1);
+}
+
+function canonicalPath(value) {
+  const path = resolve(value);
+  if (existsSync(path)) return realpathSync(path);
+  return existsSync(dirname(path)) ? resolve(realpathSync(dirname(path)), basename(path)) : path;
+}
 
 function loadRunPlanFromPath(runPlanPath) {
   const resolvedPath = resolve(runPlanPath);
@@ -1212,10 +1273,10 @@ function parseArgs(rawArgs) {
     } else if (arg === "--effect-journal") {
       index += 1;
       parsed.effectJournalPath = rawArgs[index];
-      if (!parsed.effectJournalPath?.endsWith(".effect-journal.json")) return { ...parsed, error: "--effect-journal requires a .effect-journal.json path" };
+      if (!parsed.effectJournalPath?.endsWith(".effect-journal.sqlite")) return { ...parsed, error: "--effect-journal requires a .effect-journal.sqlite path" };
     } else if (arg.startsWith("--effect-journal=")) {
       parsed.effectJournalPath = arg.slice("--effect-journal=".length);
-      if (!parsed.effectJournalPath.endsWith(".effect-journal.json")) return { ...parsed, error: "--effect-journal requires a .effect-journal.json path" };
+      if (!parsed.effectJournalPath.endsWith(".effect-journal.sqlite")) return { ...parsed, error: "--effect-journal requires a .effect-journal.sqlite path" };
     } else if (["--parallel-checkpoint-out", "--parallel-resume-checkpoint", "--parallel-limits-json"].includes(arg.split("=")[0])) {
       const flag = arg.split("=")[0];
       const value = arg.includes("=") ? arg.slice(flag.length + 1) : rawArgs[++index];
@@ -1363,6 +1424,10 @@ function parseArgs(rawArgs) {
         return { ...parsed, error: `${arg} requires a path` };
       }
       parsed.triggerStatePath = rawArgs[index];
+    } else if (arg === "--state-max-bytes" || arg.startsWith("--state-max-bytes=")) {
+      const value = Number(arg.includes("=") ? arg.slice("--state-max-bytes=".length) : rawArgs[++index]);
+      if (!Number.isSafeInteger(value) || value < 65536) return { ...parsed, error: "--state-max-bytes requires an integer >= 65536" };
+      parsed.triggerStateMaxBytes = value;
     } else if (arg.startsWith("--state=")) {
       parsed.triggerStatePath = arg.slice("--state=".length);
     } else if (arg.startsWith("--trigger-state=")) {
@@ -1559,6 +1624,10 @@ function parseArgs(rawArgs) {
     } else if (arg.startsWith("--output=")) {
       parsed.outputMode = arg.slice("--output=".length);
       parsed.outputModeExplicit = true;
+    } else if (arg === "--trace-store" || arg.startsWith("--trace-store=")) {
+      const value = arg === "--trace-store" ? rawArgs[++index] : arg.slice("--trace-store=".length);
+      if (!value || value.startsWith("--")) return { ...parsed, error: "--trace-store requires a SQLite database path" };
+      parsed.traceStorePath = value;
     } else if (arg === "--trace-out") {
       index += 1;
       if (index >= rawArgs.length) {
@@ -1658,10 +1727,6 @@ function parseArgs(rawArgs) {
     return { ...parsed, error: "--trigger requires --max-runs" };
   }
 
-  if (parsed.triggerRef !== undefined && parsed.triggerStatePath === undefined) {
-    return { ...parsed, error: "--trigger requires --state <*.trigger-state.json> for durable replay and quota checks" };
-  }
-
   if (parsed.triggerRunnerMaxRuns !== undefined && parsed.triggerRef === undefined) {
     return { ...parsed, error: "--max-runs requires --trigger" };
   }
@@ -1742,10 +1807,11 @@ function parseArgs(rawArgs) {
 
 function printUsage() {
   stderr.write("--trace-pure-functions full|calls selects pure function detail (default full).\n");
+  stderr.write("Traces persist in .touba/traces.sqlite by default; --trace-store PATH selects another journal; --trace-out exports JSON.\n");
   stderr.write("--human-approval-authority-timeout-ms <1..60000> bounds each identity attestation call (default 5000 ms).\n");
   stderr.write("Local development only: --handler-diagnostics <new-private-file.jsonl> requires a dev run plan on POSIX; unavailable in production.\n");
   stderr.write(
-    "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.json>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-approval-host <host.mjs>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path>] [--human-resume-checkpoint <path>] [--parallel-checkpoint-out <path>] [--parallel-resume-checkpoint <path>] [--parallel-limits-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.trigger-state.json>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.trigger-state.json>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
+    "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.sqlite>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-approval-host <host.mjs>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path>] [--human-resume-checkpoint <path>] [--parallel-checkpoint-out <path>] [--parallel-resume-checkpoint <path>] [--parallel-limits-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.triggers.sqlite>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.triggers.sqlite>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json|json-reference] [--trace-store <path.sqlite>] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
 }
 
@@ -1829,6 +1895,7 @@ function renderOutput(result, mode, parsed = {}) {
     return renderShowOutput(result);
   }
   if (mode === "json") return serializeJson(publicRunResult(result));
+  if (mode === "json-reference") return serializeJson(publicReferencedRunResult(result));
   if (mode === "result") {
     return serializeJson(result.result ?? null);
   }
@@ -1864,194 +1931,14 @@ function renderAllOutput(result) {
   return `${sections.join("\n\n")}\n`;
 }
 
-function buildRunSummary(result, parsed = {}) {
-  const trace = result.trace ?? {};
-  const events = Array.isArray(trace.events) ? trace.events : [];
-  const generatedAt = new Date().toISOString();
-  const runId = stringOrDefault(trace.run?.run_id, "run:unknown");
-  const status = productRunStatus(result, events);
-  return {
-    schema_version: RUN_SUMMARY_SCHEMA_VERSION,
-    run_id: runId,
-    status,
-    entrypoint_ref: stringOrDefault(trace.run?.entry_ref ?? parsed.entryRef, "entry:unknown"),
-    started_at: generatedAt,
-    completed_at: isTerminalProductRunStatus(status) ? generatedAt : null,
-    trigger_ref: triggerRefFromTrace(trace, events),
-    trace_ref: parsed.traceOutPath ? `file:${parsed.traceOutPath}` : `trace:${runId}`,
-    approvals_pending: pendingApprovalRefs(events),
-    refusals: refusalSummaries(events),
-    budgets: budgetCounters(events),
-  };
-}
-
-function productRunStatus(result, events) {
-  const pendingApprovals = pendingApprovalEvents(events);
-  if (pendingApprovals.length > 0) {
-    return pendingApprovals.some((event) => event.payload?.mode === "agent_review")
-      ? "review_pending"
-      : "approval_pending";
-  }
-  if (result.status === "success") {
-    return "succeeded";
-  }
-  if (result.status === "cancelled") {
-    return "cancelled";
-  }
-  if (result.status === "stopped") {
-    if (result.reason === "human_approval_cancelled") return "cancelled";
-    if (["human_approval_rejected", "human_approval_expired"].includes(result.reason)) return "refused";
-    return result.reason === "explicit_stop" ? "stopped" : "paused";
-  }
-  if (result.status === "failure") {
-    return refusalSummaries(events).length > 0 ? "refused" : "failed";
-  }
-  return "failed";
-}
-
-function isTerminalProductRunStatus(status) {
-  return ["succeeded", "failed", "cancelled", "refused", "stopped"].includes(status);
-}
-
-function triggerRefFromTrace(trace, events) {
-  if (typeof trace.run?.entry_ref === "string" && trace.run.entry_ref.startsWith("trigger:")) {
-    return trace.run.entry_ref;
-  }
-  const triggerEvent = events.find((event) => typeof event.payload?.trigger_ref === "string");
-  return triggerEvent?.payload?.trigger_ref ?? null;
-}
-
-function pendingApprovalRefs(events) {
-  return pendingApprovalEvents(events).map((event) => event.payload.approval_ref);
-}
-
-function pendingApprovalEvents(events) {
-  const settled = new Set(
-    events
-      .filter((event) => [
-        "human_approval_decided",
-        "human_approval_resumed",
-        "human_approval_rejected",
-        "human_approval_expired",
-        "human_approval_cancelled",
-      ].includes(event.kind))
-      .map((event) => event.payload?.approval_ref)
-      .filter((approvalRef) => typeof approvalRef === "string"),
-  );
-  return events.filter((event) =>
-    event.kind === "human_approval_paused"
-    && typeof event.payload?.approval_ref === "string"
-    && !settled.has(event.payload.approval_ref),
-  );
-}
-
-function hasHumanApprovalTerminalRefusal(events) {
-  return events.some((event) => [
-    "human_approval_rejected",
-    "human_approval_expired",
-    "human_approval_cancelled",
-  ].includes(event.kind));
-}
-
-function refusalSummaries(events) {
-  return events
-    .filter((event) => isRefusalEvent(event))
-    .map((event) => {
-      const payload = event.payload ?? {};
-      return {
-        code: stringOrDefault(payload.runtime_error_code ?? payload.reason ?? event.kind, event.kind),
-        message: stringOrDefault(event.message ?? refusalMessage(event), event.kind),
-        source_ref: sourceRefForEvent(event),
-      };
-    });
-}
-
-function isRefusalEvent(event) {
-  return (
-    event.kind.endsWith("_refused")
-    || event.kind === "budget_limit_exceeded"
-    || event.kind === "dispatch_refused_budget_exceeded"
-    || event.kind === "agent_step_limit_exceeded"
-    || event.kind === "trigger_rate_limited"
-    || [
-      "human_approval_rejected",
-      "human_approval_expired",
-      "human_approval_cancelled",
-    ].includes(event.kind)
-  );
-}
-
-function refusalMessage(event) {
-  const payload = event.payload ?? {};
-  if (typeof payload.reason === "string") {
-    return `${event.kind}: ${payload.reason}`;
-  }
-  if (typeof payload.runtime_error_code === "string") {
-    return `${event.kind}: ${payload.runtime_error_code}`;
-  }
-  return event.kind;
-}
-
-function sourceRefForEvent(event) {
-  if (typeof event.air_ref === "string") {
-    return event.air_ref;
-  }
-  const payload = event.payload ?? {};
-  return [
-    payload.target_ref,
-    payload.trigger_ref,
-    payload.approval_ref,
-    payload.agent_ref,
-    payload.caller_ref,
-  ].find((value) => typeof value === "string") ?? null;
-}
-
-function budgetCounters(events) {
-  return {
-    steps_used: Math.max(latestBudgetConsumed(events, "max_steps"), observedStepCount(events)),
-    tool_calls_used: Math.max(latestBudgetConsumed(events, "max_tool_calls"), observedToolCallCount(events)),
-    provider_calls_used: Math.max(
-      latestBudgetConsumed(events, "max_provider_calls"),
-      events.filter((event) => event.kind === "agent_decision_provider_call_attempted").length,
-    ),
-  };
-}
-
-function latestBudgetConsumed(events, budgetKind) {
-  const consumedValues = events
-    .filter((event) => event.kind === "budget_consumed" && event.payload?.budget_kind === budgetKind)
-    .map((event) => event.payload?.consumed_value)
-    .filter((value) => Number.isInteger(value) && value >= 0);
-  return consumedValues.length > 0 ? consumedValues.at(-1) : 0;
-}
-
-function observedStepCount(events) {
-  const nodeRefs = new Set();
-  for (const event of events) {
-    const nodeId = event.air_ref?.node_id;
-    const graphRef = event.air_ref?.flow_graph_ref;
-    if (typeof nodeId === "string" && typeof graphRef === "string") {
-      nodeRefs.add(`${graphRef}#${nodeId}`);
-    }
-  }
-  return nodeRefs.size;
-}
-
-function observedToolCallCount(events) {
-  return events.filter((event) =>
-    event.kind === "call_completed"
-    && typeof event.payload?.target_ref === "string"
-    && event.payload.target_ref.startsWith("tool:")
-  ).length;
-}
-
-function stringOrDefault(value, fallback) {
-  return typeof value === "string" && value.trim() !== "" ? value : fallback;
-}
 
 function buildRunEvidence(result, parsed) {
-  const trace = result.trace ?? {};
-  const terminalEvent = Array.isArray(trace.events) ? trace.events.at(-1) : undefined;
+  const reader = result.traceReader;
+  const trace = reader?.header ?? result.trace ?? {};
+  let terminalEvent;
+  for (const event of reader?.events() ?? trace.events ?? []) terminalEvent = event;
+  const traceDigest = reader ? createHash("sha256") : null;
+  if (reader) for (const chunk of reader.json()) traceDigest.update(chunk);
   const resultValue = result.result ?? null;
   const checkpointValue = result.checkpoint ?? null;
   return {
@@ -2066,8 +1953,8 @@ function buildRunEvidence(result, parsed) {
     },
     trace: {
       available: trace !== undefined,
-      events_count: Array.isArray(trace.events) ? trace.events.length : 0,
-      digest: digestJson(trace),
+      events_count: reader?.eventCount ?? trace.events?.length ?? 0,
+      digest: traceDigest ? { kind: "sha256", value: traceDigest.digest("hex") } : digestJson(trace),
       output: parsed.traceOutPath === undefined ? null : {
         kind: "file",
         path: parsed.traceOutPath,
@@ -2491,7 +2378,7 @@ async function runTriggerScheduleRunner(document, parsedArgs, executionOptions, 
       effectScopeId: executionOptions.effectJournal ? `${executionOptions.runId}-${runIndex}` : undefined,
       triggerRunCounts: {
         [triggerRef]: triggerState
-          ? countAcceptedTriggerEvents(triggerState.document, triggerRef, currentTriggerDayKey())
+          ? 0 // The durable admission transaction checks the shared daily count.
           : 0,
       },
     }, triggerState);
@@ -2507,239 +2394,13 @@ async function runTriggerScheduleRunner(document, parsedArgs, executionOptions, 
 }
 
 async function executeTriggerEventWithState(document, triggerEvent, executionOptions, triggerState = undefined) {
-  if (!triggerState) {
-    return executeTriggerEvent(document, triggerEvent, executionOptions);
-  }
-  const event = normalizeStateTriggerEvent(triggerEvent);
-  if (event.triggerRef && event.eventId && isTriggerEventConsumed(triggerState.document, event.triggerRef, event.eventId)) {
-    const result = replayRejectedResult(document, event, executionOptions.runId);
-    recordTriggerStateEvent(triggerState.document, event, result);
-    saveTriggerState(triggerState);
-    return result;
-  }
-
+  if (!triggerState) return executeTriggerEvent(document, triggerEvent, executionOptions);
   const result = await executeTriggerEvent(document, triggerEvent, {
     ...executionOptions,
-    triggerRunCounts: event.triggerRef
-      ? {
-        ...(executionOptions.triggerRunCounts ?? {}),
-        [event.triggerRef]: countAcceptedTriggerEvents(triggerState.document, event.triggerRef, currentTriggerDayKey()),
-      }
-      : executionOptions.triggerRunCounts,
+    triggerAdmission: request => triggerState.admit(request),
   });
-  recordTriggerStateEvent(triggerState.document, event, result);
-  saveTriggerState(triggerState);
+  triggerState.recordResult(triggerEvent, result);
   return result;
-}
-
-function loadTriggerStateFromPath(filePath) {
-  const resolvedPath = resolve(filePath);
-  assertTriggerStatePath(resolvedPath);
-  if (!existsSync(resolvedPath)) {
-    return {
-      path: resolvedPath,
-      document: emptyTriggerState(),
-    };
-  }
-  let document;
-  try {
-    document = parseJsonObject(readFileSync(resolvedPath, "utf8"), `trigger state ${filePath}`);
-  } catch (error) {
-    error.code = "TriggerStateReadFailed";
-    throw error;
-  }
-  if (document.trigger_state_schema_version !== TRIGGER_STATE_SCHEMA_VERSION) {
-    const error = new Error(`trigger_state_schema_version must be ${TRIGGER_STATE_SCHEMA_VERSION}`);
-    error.code = "TriggerStateSchemaMismatch";
-    throw error;
-  }
-  if (!document.triggers || typeof document.triggers !== "object" || Array.isArray(document.triggers)) {
-    const error = new Error("trigger state triggers must be an object");
-    error.code = "TriggerStateSchemaMismatch";
-    throw error;
-  }
-  for (const [triggerRef, state] of Object.entries(document.triggers)) {
-    if (!triggerRef.startsWith("trigger:")) {
-      const error = new Error("trigger state keys must be trigger refs");
-      error.code = "TriggerStateSchemaMismatch";
-      throw error;
-    }
-    if (!state || typeof state !== "object" || Array.isArray(state)) {
-      const error = new Error(`trigger state entry must be an object for ${triggerRef}`);
-      error.code = "TriggerStateSchemaMismatch";
-      throw error;
-    }
-    if (!Array.isArray(state.events)) {
-      const error = new Error(`trigger state events must be an array for ${triggerRef}`);
-      error.code = "TriggerStateSchemaMismatch";
-      throw error;
-    }
-  }
-  return {
-    path: resolvedPath,
-    document: normalizeTriggerStateDocument(document),
-  };
-}
-
-function assertTriggerStatePath(filePath) {
-  if (!basename(filePath).endsWith(".trigger-state.json")) {
-    const error = new Error("trigger state path must end with .trigger-state.json");
-    error.code = "TriggerStatePathInvalid";
-    throw error;
-  }
-}
-
-function emptyTriggerState() {
-  return {
-    trigger_state_schema_version: TRIGGER_STATE_SCHEMA_VERSION,
-    created_at: new Date().toISOString(),
-    triggers: {},
-  };
-}
-
-function normalizeTriggerStateDocument(document) {
-  const normalized = {
-    trigger_state_schema_version: TRIGGER_STATE_SCHEMA_VERSION,
-    created_at: typeof document.created_at === "string" ? document.created_at : new Date().toISOString(),
-    updated_at: typeof document.updated_at === "string" ? document.updated_at : undefined,
-    triggers: {},
-  };
-  for (const [triggerRef, state] of Object.entries(document.triggers ?? {})) {
-    const events = state.events
-      .filter((event) => event && typeof event === "object" && !Array.isArray(event))
-      .map((event) => ({
-        event_id: typeof event.event_id === "string" ? event.event_id : undefined,
-        source_kind: typeof event.source_kind === "string" ? event.source_kind : undefined,
-        status: event.status === "accepted" ? "accepted" : "refused",
-        reason: typeof event.reason === "string" ? event.reason : undefined,
-        observed_at: typeof event.observed_at === "string" ? event.observed_at : undefined,
-        day_key: typeof event.day_key === "string" ? event.day_key : triggerDayKeyFromObservedAt(event.observed_at),
-        run_id: typeof event.run_id === "string" ? event.run_id : undefined,
-      }))
-      .filter((event) => event.event_id);
-    normalized.triggers[triggerRef] = summarizeTriggerStateEntry(events);
-  }
-  return normalized;
-}
-
-function summarizeTriggerStateEntry(events) {
-  const accepted = events.filter((event) => event.status === "accepted");
-  const refused = events.filter((event) => event.status === "refused");
-  const consumed = [...new Set(accepted.map((event) => event.event_id))].sort();
-  const last = events.at(-1);
-  return {
-    accepted_count: accepted.length,
-    refused_count: refused.length,
-    consumed_event_ids: consumed,
-    last_event_id: last?.event_id,
-    last_status: last?.status,
-    updated_at: last?.observed_at,
-    events,
-  };
-}
-
-function saveTriggerState(triggerState) {
-  triggerState.document.updated_at = new Date().toISOString();
-  mkdirSync(dirname(triggerState.path), { recursive: true });
-  writeFileSync(triggerState.path, serializeJson(triggerState.document), "utf8");
-}
-
-function normalizeStateTriggerEvent(event) {
-  return {
-    triggerRef: normalizedString(event?.trigger_ref ?? event?.triggerRef),
-    eventId: normalizedString(event?.event_id ?? event?.eventId),
-    sourceKind: normalizedString(event?.source_kind ?? event?.sourceKind),
-  };
-}
-
-function isTriggerEventConsumed(state, triggerRef, eventId) {
-  return Boolean(state.triggers?.[triggerRef]?.consumed_event_ids?.includes(eventId));
-}
-
-function countAcceptedTriggerEvents(state, triggerRef, dayKey = currentTriggerDayKey()) {
-  const events = state.triggers?.[triggerRef]?.events;
-  if (!Array.isArray(events)) {
-    return 0;
-  }
-  return events.filter((event) =>
-    event?.status === "accepted"
-    && triggerStateEventDayKey(event) === dayKey,
-  ).length;
-}
-
-function recordTriggerStateEvent(state, event, result) {
-  if (!event.triggerRef || !event.eventId) {
-    return;
-  }
-  const accepted = hasAcceptedTriggerEvent(result.trace, event.triggerRef, event.eventId);
-  const refused = lastTriggerRefusal(result.trace, event.triggerRef, event.eventId);
-  const observedAt = new Date().toISOString();
-  const previous = state.triggers[event.triggerRef]?.events ?? [];
-  const recorded = {
-    event_id: event.eventId,
-    source_kind: event.sourceKind,
-    status: accepted ? "accepted" : "refused",
-    reason: accepted ? undefined : refused?.payload?.reason ?? "execution_failed",
-    observed_at: observedAt,
-    day_key: triggerDayKeyFromObservedAt(observedAt),
-    run_id: result.trace?.run?.run_id,
-  };
-  state.triggers[event.triggerRef] = summarizeTriggerStateEntry([...previous, recorded]);
-}
-
-function currentTriggerDayKey() {
-  return triggerDayKeyFromObservedAt(new Date().toISOString());
-}
-
-function triggerDayKeyFromObservedAt(observedAt) {
-  if (typeof observedAt !== "string") {
-    return undefined;
-  }
-  const match = /^(\d{4}-\d{2}-\d{2})T/u.exec(observedAt);
-  return match?.[1];
-}
-
-function triggerStateEventDayKey(event) {
-  return typeof event.day_key === "string"
-    ? event.day_key
-    : triggerDayKeyFromObservedAt(event.observed_at);
-}
-
-function hasAcceptedTriggerEvent(trace, triggerRef, eventId) {
-  return Boolean(
-    trace?.events?.some(
-      (event) =>
-        event.kind === "trigger_event_accepted" &&
-        event.payload?.trigger_ref === triggerRef &&
-        (event.payload?.event_id === undefined || event.payload?.event_id === eventId),
-    ),
-  );
-}
-
-function lastTriggerRefusal(trace, triggerRef, eventId) {
-  return [...(trace?.events ?? [])]
-    .reverse()
-    .find(
-      (event) =>
-        event.kind === "trigger_event_refused" &&
-        event.payload?.trigger_ref === triggerRef &&
-        (event.payload?.event_id === undefined || event.payload?.event_id === eventId),
-    );
-}
-
-function replayRejectedResult(document, event, runId = undefined) {
-  const trace = new TraceBuilder(document, event.triggerRef, runId ?? `trigger-replay:${randomUUID()}`);
-  trace.push("run_started", { payload: { entry_ref: event.triggerRef } });
-  trace.push("trigger_event_received", { payload: {
-    trigger_ref: event.triggerRef, event_id: event.eventId, source_kind: event.sourceKind,
-  } });
-  trace.push("trigger_event_refused", { payload: {
-    trigger_ref: event.triggerRef, event_id: event.eventId, source_kind: event.sourceKind,
-    reason: "event_replay", runtime_error_code: "TriggerReplayRejected",
-  } });
-  trace.push("run_completed", { payload: { status: "failure", reason: "TriggerReplayRejected" } });
-  return { status: "failure", reason: "TriggerReplayRejected", result: null, messages: [],
-    trace: validateTraceMachineContract(trace.document()) };
 }
 
 function parseTriggerRunnerSchedule(value) {
@@ -2784,13 +2445,14 @@ function localTriggerEventId(trigger, runIndex) {
 
 function aggregateTriggerRunnerResults(document, triggerRef, runResults) {
   const last = runResults.at(-1).result;
-  const trace = new TraceBuilder(document, triggerRef, `trigger-runner:${randomUUID()}`);
+  const trace = new TraceBuilder(document, triggerRef, `trigger-runner:${randomUUID()}`, null, 0, "full", traceStorage);
   trace.push("run_started", { payload: { entry_ref: triggerRef, execution_kind: "trigger_runner" } });
   // This is an explicitly correlated aggregate, not a concatenation of events
   // pretending to share a run ID. Keep each original event's provenance.
   for (const { result } of runResults) {
-    validateTraceMachineContract(result.trace);
-    for (const event of result.trace.events) {
+    if (result.traceReader) validateTraceMachineStream(result.traceReader.header, result.traceReader.events());
+    else validateTraceMachineContract(result.trace);
+    for (const event of result.traceReader?.events() ?? result.trace.events) {
       const kind = event.kind === "run_started" ? "trigger_runner_run_started"
         : event.kind === "run_completed" ? "trigger_runner_run_completed" : event.kind;
       trace.push(kind, { airRef: event.air_ref, message: event.message,
@@ -2798,7 +2460,9 @@ function aggregateTriggerRunnerResults(document, triggerRef, runResults) {
     }
   }
   trace.push("run_completed", { payload: { status: last.status, reason: last.reason } });
-  return {
+  const reader = trace.snapshot();
+  validateTraceMachineStream(reader.header, reader.events());
+  return trace.attach({
     status: last.status, reason: last.reason,
     result: runResults.map(({ event, result }) => ({ event_id: event.event_id,
       status: result.status, reason: result.reason, result: result.result ?? null })),
@@ -2806,8 +2470,7 @@ function aggregateTriggerRunnerResults(document, triggerRef, runResults) {
     ...(last.pending_interaction ? { pending_interaction: last.pending_interaction } : {}),
     ...(last.pending_interactions?.length ? { pending_interactions: last.pending_interactions } : {}),
     ...(last.checkpoint ? { checkpoint: last.checkpoint } : {}),
-    trace: validateTraceMachineContract(trace.document()),
-  };
+  }, reader);
 }
 
 function dryRunTriggerEvent(document, triggerEvent, toolBindingManifest) {
