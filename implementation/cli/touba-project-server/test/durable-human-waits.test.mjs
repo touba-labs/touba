@@ -16,6 +16,7 @@ import test from "node:test";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 
 import { canonicalDigest } from "@touba/runtime";
 import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
@@ -1810,6 +1811,91 @@ for (const twoApprovals of [false, true]) test(`WAIT completed projections survi
   }
 });
 
+test("WAIT startup recovery reads checkpoints through pages or indexed selections only", async () => {
+  const root = createTestProject();
+  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+  const originalPrepare = DatabaseSync.prototype.prepare;
+  let paged = 0, selected = 0;
+  try {
+    await service.start();
+    const url = serverBaseUrl(service);
+    const session = await createInteraction(url, WAIT_TARGET);
+    const operation = await sendInteractionMessage(url, session.session_id, "bounded_recovery");
+    await waitForInteractionStatus(url, session.session_id, operation.operation_id, "awaiting_human");
+    const pending = await getJson(`${url}/approvals/pending/current`);
+    assert.equal((await postJson(`${url}/decisions`, decisionFor(pending))).status, 202);
+    assert.equal((await postJson(`${url}/runs/sandbox/resume`, { request_id: pending.request_id })).status, 200);
+    await waitForInteractionStatus(url, session.session_id, operation.operation_id, "succeeded");
+    await service.stop();
+    DatabaseSync.prototype.prepare = function(sql) {
+      if (sql.startsWith("SELECT id, revision, body FROM records")) {
+        const schema = originalPrepare.call(this, "SELECT schema_version FROM metadata WHERE singleton=1").get();
+        if (schema?.schema_version === "touba-sandbox-checkpoints-v1") {
+          assert.ok(sql.includes(" WHERE ") || sql.includes(" LIMIT "),
+            "recovery must not materialize all historical checkpoints");
+          if (sql.includes(" LIMIT ")) paged++;
+          else selected++;
+        }
+      }
+      return originalPrepare.call(this, sql);
+    };
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    assert.ok(paged > 0, "exhaustive startup admission remains paginated");
+    assert.ok(selected > 0, "recovery keeps indexed operation reads");
+    const restored = await getJson(`${serverBaseUrl(service)}/interactions/sessions/${session.session_id}/operations/${operation.operation_id}`);
+    assert.equal(restored.status, "succeeded");
+    await service.stop();
+    DatabaseSync.prototype.prepare = originalPrepare;
+    const checkpointPath = join(root, ".touba/sandbox-checkpoints.sqlite");
+    const validStore = readJson(checkpointPath);
+    for (const field of ["paused_result", "result"]) {
+      const corrupted = structuredClone(validStore);
+      const record = corrupted.records.find(candidate => candidate.record_kind === "human");
+      record[field].diagnostics.push({ code: "ChangedAfterValidation" });
+      // On the terminal result, one resealed marker must not hide the stale
+      // second marker, even though the two share a per-validation digest.
+      if (field === "result") record.human_wait.projections.terminal_event.result_digest = canonicalDigest(record.result);
+      writeStoreFixture(checkpointPath, corrupted);
+      const before = readFileSync(checkpointPath);
+      assert.throws(() => loadSandboxCheckpointStore(checkpointPath), { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+      assert.deepEqual(readFileSync(checkpointPath), before);
+    }
+  } finally {
+    DatabaseSync.prototype.prepare = originalPrepare;
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("WAIT recovery rereads contract schemas on each pass", async () => {
+  const root = createTestProject();
+  const localContracts = join(root, "test-contracts");
+  cpSync(contractsRoot, localContracts, { recursive: true });
+  let service = createToubaProjectServer({ contractsRoot: localContracts, projectRoot: root, port: 0, quiet: true });
+  try {
+    await service.start();
+    const url = serverBaseUrl(service);
+    await runSandbox(url, WAIT_TARGET);
+    const pending = await getJson(`${url}/approvals/pending/current`);
+    assert.equal((await postJson(`${url}/decisions`, decisionFor(pending))).status, 202);
+    assert.equal((await postJson(`${url}/runs/sandbox/resume`, { request_id: pending.request_id })).status, 200);
+    await service.stop();
+    service = createToubaProjectServer({ contractsRoot: localContracts, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    await service.stop();
+    const path = join(localContracts, "schemas/touba-approval-request-v1.schema.json");
+    const schema = readJson(path);
+    schema.required.push("changed_contract_requirement");
+    writeJson(path, schema);
+    service = createToubaProjectServer({ contractsRoot: localContracts, projectRoot: root, port: 0, quiet: true });
+    await assert.rejects(() => service.start(), { code: "ToubaServePendingHumanRequestInvalid" });
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // Include the exact retained-history sizes reported by the industrial pilot.
 // Histories are created through real decisions/resumes, never cloned as successes.
 const extendedHistory = process.env.TOUBA_HTTP_HISTORY_COUNTS;
@@ -1936,13 +2022,13 @@ async function qualifyHttpHistoryMatrix(root, history, marker, t) {
         history + 2 * concurrency);
     }
     t.diagnostic(`HTTP matrix: history=${history}, 3 repetitions, concurrency=1/8/32, two waves per fresh process`);
-    assert.deepEqual(failures, [], JSON.stringify(failures));
     // Check the final page too: a bounded startup audit must not stop early.
     const path = join(state, "sandbox-checkpoints.sqlite"), stored = readJson(path);
     stored.records.at(-1).human_wait.request_digest = "sha256:" + "0".repeat(64);
     writeJson(path, stored);
     assert.throws(() => createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true }),
       { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+    assert.deepEqual(failures, [], JSON.stringify(failures));
   } finally { rmSync(backup, { recursive: true, force: true }); }
 }
 

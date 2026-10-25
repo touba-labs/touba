@@ -319,6 +319,9 @@ persistées par lots de 100 enregistrements, bornés à 16 Mio. Tous les lots so
 contrôlés ; une corruption historique bloque la reprise. Le temps de cet audit
 augmente avec l’historique, tandis qu’une décision courante sélectionne ses
 enregistrements par leurs identifiants indexés.
+La réparation des interactions sélectionne les opérations de la fenêtre
+d’interface et lit leurs checkpoints par pages. Les preuves plus anciennes
+restent conservées et contrôlées par l’audit.
 
 ## Exploitation et concurrence
 

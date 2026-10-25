@@ -793,10 +793,11 @@ function createProjectServerWithLease(options, takeLease) {
       contractsRoot,
       humanDecisionsPath,
       humanRequestsPath,
+      interactionSessionsPath: initialRecovery ? interactionSessionsPath : undefined,
       sandboxCheckpointsPath,
     });
-    validateHumanWaitInteractionProjectionMarkers({
-      filter: initialRecovery ? undefined : [{ active_human: 1 }, { needs_projection: 1 }],
+    if (!initialRecovery) validateHumanWaitInteractionProjectionMarkers({
+      filter: [{ active_human: 1 }, { needs_projection: 1 }],
       interactionSessionsPath,
       sandboxCheckpointsPath,
     });
@@ -4965,19 +4966,16 @@ function recoverTerminalHumanInteractions({
   sandboxCheckpointsPath,
   traceTimelinePath,
 }) {
-  // A recorded pause/session projection is part of the durable crash protocol.
-  // Unfinished projections must retain their exact interaction. Fully published
-  // terminal records outlive the bounded UI history and are never re-executed.
-  validateHumanWaitInteractionProjectionMarkers({
-    filter: requestId === null ? undefined : [{ request_id: requestId }],
-    interactionSessionsPath,
-    sandboxCheckpointsPath,
-  });
   const sessions = readInteractionSessions(interactionSessionsPath);
+  const sessionsById = new Map(sessions.map(session => [session.session_id, session]));
+  const requested = requestId === null ? null
+    : loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }]).records;
+  if (requested !== null) validateHumanWaitInteractionProjectionRecords(requested, sessionsById, sandboxCheckpointsPath);
   if (sessions.length === 0) return;
-  const records = loadSandboxCheckpointStore(sandboxCheckpointsPath, requestId === null ? undefined : [{ request_id: requestId }]).records.filter((record) => (
-    requestId === null || record.request_id === requestId
-  ));
+  // Startup admission audits every historical checkpoint separately. Recovery
+  // only projects operations in the bounded interaction window. Read each
+  // operation through its index and retain at most its latest terminal result;
+  // a long operation can itself have many historical approvals.
   for (const session of sessions) {
     for (const operation of session.operations.filter((candidate) => (
       [
@@ -4991,24 +4989,31 @@ function recoverTerminalHumanInteractions({
         "succeeded",
       ].includes(candidate.status)
     ))) {
-      const record = records.filter((candidate) => (
-        ["completed", "superseded"].includes(candidate.status)
-        && candidate.record_kind === "human"
-        && candidate.human_wait.resolution?.status === "completed"
-        && candidate.operation_id === operation.operation_id
-        && candidate.run_id === operation.run_id
-        && candidate.target_ref === session.target_ref
-        && candidate.result?.run_id === operation.run_id
-        && candidate.result?.target_ref === session.target_ref
-        && candidate.result?.trace?.run_id === operation.run_id
-        && candidate.result?.trace?.entry_ref === session.target_ref
-        && !["approval_pending", "review_pending", "paused"].includes(
-          sandboxRunSummaryStatus(candidate.result),
-        )
-      )).sort((left, right) => (
-        right.human_wait.resolution.completed_at.localeCompare(left.human_wait.resolution.completed_at)
-        || right.request_id.localeCompare(left.request_id)
-      ))[0];
+      const pages = requested === null
+        ? sandboxCheckpointPages(sandboxCheckpointsPath, [{ operation_id: operation.operation_id }])
+        : [requested];
+      let record;
+      for (const page of pages) {
+        if (requested === null) validateHumanWaitInteractionProjectionRecords(page, sessionsById, sandboxCheckpointsPath);
+        for (const candidate of page) {
+          const matches = ["completed", "superseded"].includes(candidate.status)
+            && candidate.record_kind === "human"
+            && candidate.human_wait.resolution?.status === "completed"
+            && candidate.operation_id === operation.operation_id
+            && candidate.run_id === operation.run_id
+            && candidate.target_ref === session.target_ref
+            && candidate.result?.run_id === operation.run_id
+            && candidate.result?.target_ref === session.target_ref
+            && candidate.result?.trace?.run_id === operation.run_id
+            && candidate.result?.trace?.entry_ref === session.target_ref
+            && !["approval_pending", "review_pending", "paused"].includes(sandboxRunSummaryStatus(candidate.result));
+          if (!matches) continue;
+          const order = record === undefined ? 1
+            : candidate.human_wait.resolution.completed_at.localeCompare(record.human_wait.resolution.completed_at)
+              || candidate.request_id.localeCompare(record.request_id);
+          if (order > 0) record = candidate;
+        }
+      }
       if (!record) continue;
       // Validate published evidence without rewriting the whole session store.
       // Incomplete projections still use the crash-repair path below.
@@ -5066,35 +5071,28 @@ function validateHumanWaitInteractionProjectionMarkers({
     .map(session => [session.session_id, session]));
   // The scan validates every checkpoint, including execution records, without
   // materializing the historical collection. Active uniqueness spans pages.
-  for (const page of sandboxCheckpointPages(sandboxCheckpointsPath, filter)) for (const record of page) {
+  for (const page of sandboxCheckpointPages(sandboxCheckpointsPath, filter)) {
+    validateHumanWaitInteractionProjectionRecords(page, sessions, sandboxCheckpointsPath);
+  }
+}
+
+// Call only with freshly validated checkpoint pages; never with model input.
+function validateHumanWaitInteractionProjectionRecords(records, sessions, sandboxCheckpointsPath) {
+  for (const record of records) {
     if (record.record_kind !== "human") continue;
     const projectionMayHaveExpired = ["completed", "superseded"].includes(record.status)
       && record.human_wait.resolution?.status === "completed"
       && record.human_wait.projections.terminal_event !== null
       && (record.human_wait.projections.interaction !== null
         || (record.status === "superseded"
-          && loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ operation_id: record.operation_id }]).records.some(terminal => (
-            terminal.record_kind === "human"
-            && terminal.status === "completed"
-            && terminal.run_id === record.run_id
-            && terminal.target_ref === record.target_ref
-            && terminal.human_wait.resolution?.status === "completed"
-            && terminal.human_wait.projections.terminal_event !== null
-            && terminal.human_wait.projections.interaction !== null
-            && terminal.human_wait.projections.interaction.session_id === record.human_wait.projections.pause_interaction?.session_id
-          ))));
-    for (const [field, result] of [
-      ["pause_interaction", record.paused_result],
-      ["interaction", record.result],
-    ]) {
+          && hasPublishedTerminalInteraction(record, sandboxCheckpointsPath)));
+    for (const field of ["pause_interaction", "interaction"]) {
       const marker = record.human_wait.projections[field];
       if (marker === null) continue;
-      // Validate durable evidence even when the UI projection has aged out.
-      const resultDigest = isPlainObject(result) ? canonicalDigest(result) : null;
-      if (resultDigest === null || marker.result_digest !== resultDigest) {
-        throw serviceError("ToubaServeSandboxCheckpointStoreInvalid",
-          `human wait ${field} marker does not match its durable result`);
-      }
+      // This freshly read record has passed validateHumanWaitProjections,
+      // including its result digest. Reuse that checked digest within this
+      // operation; every later read validates the current durable bytes again.
+      const resultDigest = marker.result_digest;
       const session = sessions.get(marker.session_id);
       if (session === undefined) {
         if (projectionMayHaveExpired) continue;
@@ -5122,6 +5120,22 @@ function validateHumanWaitInteractionProjectionMarkers({
       }
     }
   }
+}
+
+function hasPublishedTerminalInteraction(record, sandboxCheckpointsPath) {
+  let found = false;
+  for (const page of sandboxCheckpointPages(sandboxCheckpointsPath, [{ operation_id: record.operation_id }])) {
+    // Continue validating subsequent pages even after finding the terminal.
+    found ||= page.some(terminal => terminal.record_kind === "human"
+      && terminal.status === "completed"
+      && terminal.run_id === record.run_id
+      && terminal.target_ref === record.target_ref
+      && terminal.human_wait.resolution?.status === "completed"
+      && terminal.human_wait.projections.terminal_event !== null
+      && terminal.human_wait.projections.interaction !== null
+      && terminal.human_wait.projections.interaction.session_id === record.human_wait.projections.pause_interaction?.session_id);
+  }
+  return found;
 }
 
 function repairPausedHumanInteractions({
@@ -8713,13 +8727,16 @@ function readContractFixture({ contractsRoot, schemaVersion }) {
   return JSON.parse(readFileSync(fixturePath, "utf8"));
 }
 
-function readContractSchema({ contractsRoot, schemaVersion }) {
+function readContractSchema({ contractsRoot, schemaVersion, schemas }) {
   assertKnownContract(schemaVersion);
   const schemaPath = join(contractsRoot, "schemas", `${schemaVersion}.schema.json`);
+  if (schemas?.has(schemaPath)) return schemas.get(schemaPath);
   if (!existsSync(schemaPath)) {
     throw serviceError("ToubaServeSchemaMissing", `${schemaVersion} schema is missing`);
   }
-  return JSON.parse(readFileSync(schemaPath, "utf8"));
+  const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
+  schemas?.set(schemaPath, schema);
+  return schema;
 }
 
 function readOptionalContractFile({ contractsRoot, filePath, schemaVersion, errorCode, message }) {
@@ -8780,8 +8797,8 @@ function emptyTraceTimeline() {
   };
 }
 
-function validateContractPayload({ contractsRoot, schemaVersion, value, errorCode, message }) {
-  const schema = readContractSchema({ contractsRoot, schemaVersion });
+function validateContractPayload({ contractsRoot, schemaVersion, value, errorCode, message, schemas }) {
+  const schema = readContractSchema({ contractsRoot, schemaVersion, schemas });
   const diagnostics = validateObject(schema, value);
   if (diagnostics.length > 0) {
     const error = serviceError(errorCode, message);
@@ -9648,9 +9665,19 @@ function repairHumanWaitProjections({
   contractsRoot,
   humanDecisionsPath,
   humanRequestsPath,
+  interactionSessionsPath,
   sandboxCheckpointsPath,
 }) {
+  // The constructor already completed admission before any repair. During the
+  // initial worker pass, check cross-store evidence on these freshly validated
+  // pages too, instead of opening and validating the entire history again.
+  const sessions = interactionSessionsPath === undefined ? null
+    : new Map(readInteractionSessions(interactionSessionsPath).map(session => [session.session_id, session]));
+  // At most the four request/decision schemas, scoped to this synchronous pass.
+  // The next pass reads them again; no payload or authorization is cached here.
+  const schemas = new Map();
   for (const records of sandboxCheckpointPages(sandboxCheckpointsPath, activeOnly ? [{ active_human: 1 }] : undefined)) {
+    if (sessions !== null) validateHumanWaitInteractionProjectionRecords(records, sessions, sandboxCheckpointsPath);
     const filter = [{ request_id: records.filter(record => record.record_kind === "human").map(record => record.request_id) }];
     const requests = readHumanRequestStore(humanRequestsPath, filter);
     const projectedRequests = new Map([...requests.approvals, ...requests.reviews].map(request => [request.request_id, request]));
@@ -9661,6 +9688,7 @@ function repairHumanWaitProjections({
       const request = record.human_wait.request;
       validateContractPayload({
         contractsRoot,
+        schemas,
         schemaVersion: request.schema_version,
         value: request,
         errorCode: "ToubaServePendingHumanRequestInvalid",
@@ -9685,7 +9713,7 @@ function repairHumanWaitProjections({
         }
         continue;
       }
-      validateStoredDecisionSnapshot({ contractsRoot, decision: resolution.decision });
+      validateStoredDecisionSnapshot({ contractsRoot, decision: resolution.decision, schemas });
       if (conflictingProjection === undefined) projectHumanDecisionDocument({ humanDecisionsPath, decision: resolution.decision });
       else if (canonicalDigest(conflictingProjection) !== canonicalDigest(resolution.decision)) {
         throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "human decision projection diverges from its durable wait claim");
@@ -9694,7 +9722,7 @@ function repairHumanWaitProjections({
   }
 }
 
-function validateStoredDecisionSnapshot({ contractsRoot, decision }) {
+function validateStoredDecisionSnapshot({ contractsRoot, decision, schemas }) {
   const { accepted_at: acceptedAt, ...contractDecision } = decision;
   parseCanonicalHumanWaitInstant(acceptedAt, "decision.accepted_at");
   for (const field of [
@@ -9729,6 +9757,7 @@ function validateStoredDecisionSnapshot({ contractsRoot, decision }) {
   }
   validateContractPayload({
     contractsRoot,
+    schemas,
     schemaVersion: contractDecision.schema_version,
     value: contractDecision,
     errorCode: "ToubaServeDecisionInvalid",
@@ -10477,6 +10506,13 @@ function validateHumanWaitProjections(projections, record, index) {
   ) {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix} is invalid`);
   }
+  // Two markers can reference the same result. Share its digest only during
+  // this synchronous validation; no mutable record survives in a digest cache.
+  const resultDigests = new Map();
+  const digestOf = result => {
+    if (!resultDigests.has(result)) resultDigests.set(result, canonicalDigest(result));
+    return resultDigests.get(result);
+  };
   const validateEvent = (value, field, allowedTypes, projectedResult) => {
     if (value === null) return;
     if (!isPlainObject(projectedResult)) {
@@ -10496,14 +10532,14 @@ function validateHumanWaitProjections(projections, record, index) {
       || Object.keys(value).some((key) => !["type", "event_id", "result_digest", "session_id"].includes(key))
       || !allowedTypes.includes(value.type)
       || !/^evt_[0-9]{6,}$/u.test(value.event_id)
-      || value.result_digest !== canonicalDigest(projectedResult)
+      || value.result_digest !== digestOf(projectedResult)
       || (["pause_interaction", "interaction"].includes(field) && nonEmptyString(value.session_id) === undefined)
       || (typeof value.session_id === "string" && value.session_id.length > MAX_HUMAN_WAIT_IDENTIFIER_LENGTH)
       || (field === "terminal_event" && value.session_id !== undefined)
     ) {
       throw serviceError(
         "ToubaServeSandboxCheckpointStoreInvalid",
-        `${prefix}.${field} is invalid${isPlainObject(value) ? ` (${value.type ?? "unknown"}; expected ${allowedTypes.join("|") || "none"}; event=${value.event_id}; digest=${value.result_digest === canonicalDigest(projectedResult)}; session=${String(value.session_id)}; status=${record.status}/${record.human_wait.resolution?.status})` : ""}`,
+        `${prefix}.${field} is invalid${isPlainObject(value) ? ` (${value.type ?? "unknown"}; expected ${allowedTypes.join("|") || "none"}; event=${value.event_id}; digest=${value.result_digest === digestOf(projectedResult)}; session=${String(value.session_id)}; status=${record.status}/${record.human_wait.resolution?.status})` : ""}`,
       );
     }
   };
