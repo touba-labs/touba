@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from touba_sdk import create_mcp_stdio_tool_bridge, ToubaHandlerError
 
 SERVER = '''import json, os, sys, time
@@ -35,6 +36,19 @@ class McpTests(unittest.TestCase):
         self.config = {"mcp_bridge_config_version":"touba-mcp-bridge-config-v1", "server": {
             "transport":"stdio", "command":sys.executable, "args":["-I", str(self.server)],
             "timeout_ms":1000, "max_payload_bytes":4096, "env":{}}}
+        transports = []
+        create_process = asyncio.create_subprocess_exec
+
+        async def observe_process(*args, **kwargs):
+            child = await create_process(*args, **kwargs)
+            transports.append(child._transport)
+            return child
+
+        observer = patch("asyncio.create_subprocess_exec", observe_process)
+        observer.start()
+        self.addCleanup(observer.stop)
+        self.addCleanup(lambda: self.assertTrue(all(transport.is_closing() for transport in transports),
+                                               "MCP must close all owned subprocess transports before returning"))
 
     def bridge(self, config=None):
         return create_mcp_stdio_tool_bridge(mcp_tool_name="fixture", config=config or self.config)

@@ -305,6 +305,10 @@ class AsyncToubaEngine:
             if child.returncode is None or any(not task.done() for task in readers):
                 # A finished parent can leave descendants holding its pipes.
                 _kill(child)
+            # Process.wait() waits for exit, not for every pipe to disconnect.
+            # Process has no public close method; close its owned asyncio
+            # transport before the caller can dispose of the event loop.
+            child._transport.close()
             await child.wait()
             monitor.cancel(); collection.cancel()
             for task in readers:

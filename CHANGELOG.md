@@ -23,6 +23,9 @@ These gates remain open until their actual evidence is supplied.
 
 ### Durable state and trace export, 25 October 2026
 
+- Python Engine and MCP transports close their owned pipes before disposing
+ of the event loop, including after cancellation and timeout. Native tests
+ distinguish normal host cleanup from forced process-tree termination.
 - Checkpoint audits use bounded physical-order pages; API cursors retain their
  identifier order. A bounded SHA-256 witness cache reuses pure validation of
  the current JSON text without retaining documents or authorization. Objects

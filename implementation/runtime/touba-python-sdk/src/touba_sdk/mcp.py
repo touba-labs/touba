@@ -196,8 +196,13 @@ def create_mcp_stdio_tool_bridge(*, mcp_tool_name, config=None, config_path=None
         finally:
             child.stdin.close()
             try:
-                await asyncio.wait_for(child.wait(), 0.2)
-            except asyncio.TimeoutError:
-                child.kill(); await child.wait()
-            stderr_task.cancel(); await asyncio.gather(stderr_task, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(child.wait(), 0.2)
+                except asyncio.TimeoutError:
+                    child.kill(); await child.wait()
+            finally:
+                # Reaping the process alone does not close Proactor pipes.
+                # Close the owned transport while its event loop is still alive.
+                child._transport.close()
+                stderr_task.cancel(); await asyncio.gather(stderr_task, return_exceptions=True)
     return bridge

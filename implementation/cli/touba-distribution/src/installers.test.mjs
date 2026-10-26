@@ -9,7 +9,6 @@ import { debianControl, installerPlan, packageInstallers, macosInstallerTarget }
 import { desktopLauncher, installDesktop } from "./desktop-install.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
 
-
 test("native formats cover the four release targets without claiming native qualification", () => {
   for (const [platform, format] of [["darwin-arm64", "dmg"], ["darwin-x64", "dmg"], ["win32-x64", "exe"], ["linux-x64", "deb"]]) {
     const plan = installerPlan({ platform, touba_version: "0.1.0" });

@@ -55,6 +55,19 @@ class EngineTests(unittest.TestCase):
         self.options = dict(project_root=self.root, command=NODE, command_args=[str(CLI)])
         self.engine = ToubaEngine(**self.options)
         (self.root / "source.tb").write_text(SOURCE)
+        transports = []
+        create_process = asyncio.create_subprocess_exec
+
+        async def observe_process(*args, **kwargs):
+            child = await create_process(*args, **kwargs)
+            transports.append(child._transport)
+            return child
+
+        observer = patch("asyncio.create_subprocess_exec", observe_process)
+        observer.start()
+        self.addCleanup(observer.stop)
+        self.addCleanup(lambda: self.assertTrue(all(transport.is_closing() for transport in transports),
+                                               "SDK must close all owned subprocess transports before returning"))
 
     def test_sync_async_paged_traces_use_core_and_match_the_canonical_export(self):
         async def exercise():
