@@ -61,3 +61,31 @@ and `TOUBA_HTTP_HISTORY_COUNTS` when launching the server's
 `durable-human-waits.test.mjs` with the `WAIT [0-9]+ completed approvals` filter.
 Native macOS output leaves `process_io` empty rather than inventing disk-byte
 measurements. Run performance qualification without competing test suites.
+
+## Retained baselines and observer memory
+
+Set `TOUBA_HTTP_HISTORY_EVIDENCE_DIR` to an existing private directory to keep
+the stopped synthetic baselines. The recipe prints its generated evidence
+directory and copies the baselines only after all timed processes have ended.
+Their exact source-build identity and original temporary project paths remain
+in `preservation.json` and `state-origin.json`.
+
+To repeat all measurements with the same production code and baseline data:
+
+```sh
+TOUBA_HTTP_HISTORY_REPLAY_DIR=/absolute/private/evidence/http-history-XXXXXX \
+  node --test tests/storage-qualification/http-history.test.mjs
+```
+
+The replay mounts that evidence read-only, requires matching production source
+identity and counts, and refuses any existing target project. It restores only
+the original temporary test path. It reuses the historical setup; the measured
+HTTP waves and their effects are executed anew. Report it as a replay, keeping
+the first measurements and their failures. It cannot qualify changed production
+code by relabelling old outcomes.
+
+The observer counts completed checkpoints directly in SQLite and changes only
+the physical last record for its corruption probe. Every measured server still
+performs its full admission audit. This keeps the observer from retaining the
+whole historical JSON corpus beside the memory-limited worker. Observer RSS is
+reported after each count, separately from worker RSS and the timing gates.

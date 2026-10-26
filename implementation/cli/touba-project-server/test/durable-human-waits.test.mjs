@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readStoreFixture, writeStoreFixture } from "./store-fixtures.mjs";
+import { completedCheckpointCount, corruptLastCheckpoint, restoreHttpHistoryFixture } from "./http-history-fixture.mjs";
 import {
   cpSync,
   existsSync,
@@ -1909,8 +1910,16 @@ if (historyCounts.length > 4 || historyCounts.some(count => !Number.isSafeIntege
   throw new Error("TOUBA_HTTP_HISTORY_COUNTS requires up to four counts between 0 and 10000");
 }
 for (const historyCount of historyCounts) test(`WAIT ${historyCount} completed approvals preserve restart and eight concurrent multi-handler sessions`, { timeout: (historyMatrix ? 1800000 : 180000) + historyCount * 2000 }, async t => {
-  const root = createTestProject({ withSentinel: true });
+  const replay = process.env.TOUBA_HTTP_HISTORY_REPLAY_DIR;
+  if (replay) assert.ok(historyMatrix, "retained histories are for the repeated matrix only");
+  const root = replay ? restoreHttpHistoryFixture(replay, historyCount) : createTestProject({ withSentinel: true });
   const marker = join(root, "concurrent-writes.txt");
+  if (replay) {
+    t.diagnostic(`Replaying retained ${historyCount} real approval/resume flows with unchanged build and project origin; no new baseline outcomes`);
+    try { await qualifyHttpHistoryMatrix(root, historyCount, marker, t); }
+    finally { rmSync(root, { recursive: true, force: true }); }
+    return;
+  }
   configureSentinelHandler(root, marker);
   const manifestPath = join(root, "touba.manifest.json");
   const manifest = readJson(manifestPath);
@@ -2022,14 +2031,13 @@ async function qualifyHttpHistoryMatrix(root, history, marker, t) {
       const effects = Object.values(readJson(join(root, ".touba/project.effect-journal.sqlite")).entries);
       assert.equal(effects.length, 6 * concurrency);
       assert.ok(effects.every(effect => effect.state === "applied"));
-      assert.equal(loadSandboxCheckpointStore(join(state, "sandbox-checkpoints.sqlite")).records.filter(r => r.status === "completed").length,
-        history + 2 * concurrency);
+      assert.equal(completedCheckpointCount(join(state, "sandbox-checkpoints.sqlite")), history + 2 * concurrency);
+      t.diagnostic(`Observer RSS after count: ${process.memoryUsage().rss} bytes`);
     }
     t.diagnostic(`HTTP matrix: history=${history}, 3 repetitions, concurrency=1/8/32, two waves per fresh process`);
     // Check the final page too: a bounded startup audit must not stop early.
-    const path = join(state, "sandbox-checkpoints.sqlite"), stored = readJson(path);
-    stored.records.at(-1).human_wait.request_digest = "sha256:" + "0".repeat(64);
-    writeJson(path, stored);
+    const path = join(state, "sandbox-checkpoints.sqlite");
+    corruptLastCheckpoint(path);
     assert.throws(() => createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true }),
       { code: "ToubaServeSandboxCheckpointStoreInvalid" });
     assert.deepEqual(failures, [], JSON.stringify(failures));

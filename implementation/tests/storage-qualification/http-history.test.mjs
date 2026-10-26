@@ -29,6 +29,10 @@ test("HTTP histories: fresh-process audits, repeated concurrent decisions and re
     args.push("--env", "TOUBA_HTTP_HISTORY_EVIDENCE_DIR=/tmp/touba-http-evidence");
     t.diagnostic(`Synthetic baseline evidence: ${evidence}`);
   }
+  if (process.env.TOUBA_HTTP_HISTORY_REPLAY_DIR) {
+    args.push("--mount", `type=bind,source=${resolve(process.env.TOUBA_HTTP_HISTORY_REPLAY_DIR)},target=/tmp/touba-http-replay,readonly`,
+      "--env", "TOUBA_HTTP_HISTORY_REPLAY_DIR=/tmp/touba-http-replay");
+  }
   // Mount only required source trees. No .env, credential, Git or personal
   // project is exposed. State lives on the disposable container's disk layer.
   for (const path of ["cli", "runtime", "contracts", "tools", "node_modules", "package.json", "tests/traces"]) {
