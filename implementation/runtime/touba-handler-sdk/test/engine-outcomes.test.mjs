@@ -106,10 +106,11 @@ test("published request trigger accepts normalized event arguments and rejects m
   try {
     const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
       commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
-    for (const docUrl of [
-      new URL("../../../../docs/guides/triggers-gouvernes.md", import.meta.url),
-      new URL("../../../../../documentation-site/i18n/en/docusaurus-plugin-content-docs/current/guides/triggers-gouvernes.md", import.meta.url),
-    ]) {
+    // Core executes its canonical example in standalone checkouts. The site's
+    // mandatory alignment tests compare both translations with these exact
+    // source/manifest bytes; Core does not require a second private repository.
+    {
+      const docUrl = new URL("../../../../docs/guides/triggers-gouvernes.md", import.meta.url);
       const doc = readFileSync(docUrl, "utf8");
       writeFileSync(join(root, "source.tb"), doc.match(/```touba[^\n]*\n([\s\S]*?)```/)[1]);
       writeFileSync(join(root, "touba.manifest.json"), doc.match(/```json title="touba.manifest.json"\n([\s\S]*?)```/)[1]);
