@@ -146,8 +146,11 @@ strategy Run
 test("worker crash rejects in-flight work without retry, and the next explicit run starts fresh", async t => {
   const { engine, root, airJson, handler } = await fixture(t);
   const marker = join(root, "handler-started.json");
-  writeFileSync(join(root, "handler.mjs"), `import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid}));
+  // Publish readiness atomically: existence must mean the PID is fully written
+  // before the test deliberately kills the worker and its handler group.
+  writeFileSync(join(root, "handler.mjs"), `import { writeFileSync, renameSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker + ".pending")}, JSON.stringify({pid:process.pid}));
+renameSync(${JSON.stringify(marker + ".pending")}, ${JSON.stringify(marker)});
 await new Promise(resolve => setTimeout(resolve, 10000));
 ${handler}`);
   const running = engine.run({ airJson, entryRef: "strategy:worker/Call", manifest: "manifest.json", inputs: { value: "interrupted" } });
