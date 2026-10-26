@@ -361,7 +361,44 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
     def test_python_approval_host_preserves_roles_separation_and_replay(self):
         self.test_approval_host_separation_resume_and_effect_journal(language="python")
 
-    def test_serve_loads_shared_python_host_and_closes_it(self):
+    def _write_shared_python_host(self):
+        (self.root / "host.py").write_text('''from pathlib import Path
+import os
+import atexit
+atexit.register(lambda: (Path(__file__).parent / "host-closed.txt").write_text("closed"))
+with (Path(__file__).parent / "host-loads.txt").open("a") as stream: stream.write(str(os.getpid()) + "\\n")
+initiator_ref = "test-initiator"
+def decide_agent_capability(request):
+    return {"action":"answer_directly", "result":"served by Python", "reason":"Summary complete.", "source":"test"}
+def attest_human_approval(payload):
+    request = payload["request"]
+    return {"request_id":request["request_id"], "run_id":request["run_id"], "decision":payload["decision"], "subject_ref":"reviewer", "roles":["finance"]}
+''')
+
+    def test_shared_python_host_closes_gracefully(self):
+        self._write_shared_python_host()
+        loader = (CLI.parents[2] / "touba-run/src/host-modules.mjs").as_uri()
+        script = f'''import assert from "node:assert/strict";
+import {{ createHostModuleLoader }} from {json.dumps(loader)};
+const loader = createHostModuleLoader();
+try {{
+  const provider = await loader.decisionProvider("./host.py");
+  const approval = await loader.approvalHost("./host.py");
+  assert.equal((await provider({{}})).result, "served by Python");
+  assert.equal(approval.humanApprovalInitiator, "test-initiator");
+  assert.equal((await approval.humanApprovalAuthority({{
+    request: {{ request_id: "approval-test", run_id: "run-test" }}, decision: "approved"
+  }})).subject_ref, "reviewer");
+}} finally {{ loader.close(); }}
+'''
+        result = subprocess.run([NODE, "--input-type=module", "-e", script], cwd=self.root,
+            env={**os.environ, "TOUBA_HOST_PYTHON": sys.executable}, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len((self.root / "host-loads.txt").read_text().splitlines()), 1)
+        # A normal loader close must execute Python cleanup, including on Windows.
+        self.assertEqual((self.root / "host-closed.txt").read_text(), "closed")
+
+    def test_serve_reuses_host_and_terminates_process_tree(self):
         (self.root / "source.tb").write_text('''module python.host
 agent Reader
     gives Text
@@ -380,22 +417,13 @@ strategy Run
         air_dir.mkdir(parents=True)
         (air_dir / "host.air.json").write_text(json.dumps(air))
         (self.root / "touba.project.json").write_text(json.dumps({"entry": "strategy:python.host/Run"}))
-        (self.root / "host.py").write_text('''from pathlib import Path
-import os
-import atexit
-atexit.register(lambda: (Path(__file__).parent / "host-closed.txt").write_text("closed"))
-with (Path(__file__).parent / "host-loads.txt").open("a") as stream: stream.write(str(os.getpid()) + "\\n")
-initiator_ref = "test-initiator"
-def decide_agent_capability(request):
-    return {"action":"answer_directly", "result":"served by Python", "reason":"Summary complete.", "source":"test"}
-def attest_human_approval(payload):
-    request = payload["request"]
-    return {"request_id":request["request_id"], "run_id":request["run_id"], "decision":payload["decision"], "subject_ref":"reviewer", "roles":["finance"]}
-''')
+        self._write_shared_python_host()
+        errors = tempfile.TemporaryFile(mode="w+t")
+        self.addCleanup(errors.close)
         child = subprocess.Popen([NODE, str(CLI), "serve", "--project-root", str(self.root), "--port", "0",
             "--agent-decision-provider", str(self.root / "host.py"), "--human-approval-host", str(self.root / "host.py")],
             cwd=self.root, env={**os.environ, "TOUBA_HOST_PYTHON": sys.executable},
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout=subprocess.PIPE, stderr=errors, text=True)
         lines = queue.Queue()
         def collect():
             for line in child.stdout: lines.put(line)
@@ -427,33 +455,35 @@ def attest_human_approval(payload):
                 kernel32.OpenProcess.restype = wintypes.HANDLE
                 kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
                 kernel32.WaitForSingleObject.restype = wintypes.DWORD
-                kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-                kernel32.GetExitCodeProcess.restype = wintypes.BOOL
                 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
                 kernel32.CloseHandle.restype = wintypes.BOOL
-                host_handle = kernel32.OpenProcess(0x00101000, False, int(host_pids[0]))  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION
+                host_handle = kernel32.OpenProcess(0x00100000, False, int(host_pids[0]))  # SYNCHRONIZE
                 self.assertTrue(host_handle, f"cannot observe Python host exit: {ctypes.get_last_error()}")
                 self.addCleanup(kernel32.CloseHandle, host_handle)
             self.assertIsNone(child.poll(), "server must still be alive before the requested termination")
         finally:
             child.terminate()
-            _, error = child.communicate(timeout=10)
-            reader.join(timeout=2)
+            child.wait(timeout=10)
+            reader.join(timeout=10)
+            self.assertFalse(reader.is_alive(), "server descendants must release stdout")
+            child.stdout.close()
+            errors.seek(0)
+            error = errors.read()
         # CPython Popen.terminate() uses TerminateProcess(handle, 1) on Windows;
         # POSIX reports termination by SIGTERM as a negative return code.
         self.assertEqual(child.returncode, 1 if os.name == "nt" else -signal.SIGTERM, error)
-        host_exit = None
         if host_handle is not None:
             self.assertEqual(kernel32.WaitForSingleObject(host_handle, 10000), 0,
                              "the shared Python host must terminate, not only write its atexit marker")
-            status = wintypes.DWORD()
-            self.assertTrue(kernel32.GetExitCodeProcess(host_handle, ctypes.byref(status)))
-            host_exit = status.value
+            # TerminateProcess closes libuv's KILL_ON_JOB_CLOSE job, then the
+            # Python venv launcher's job. This is forced process-tree teardown;
+            # atexit is guaranteed only by the separate graceful-close test.
+            return
         closed = self.root / "host-closed.txt"
         deadline = time.monotonic() + 10
         while not closed.exists() and time.monotonic() < deadline:
             time.sleep(.02)
-        self.assertTrue(closed.exists(), f"shared Python host atexit marker missing; host_exit={host_exit!r}; parent_stderr={error!r}")
+        self.assertTrue(closed.exists(), "the shared Python host must close after the forwarded POSIX signal")
         self.assertEqual(closed.read_text(), "closed")
 
     def test_large_output_and_errors_do_not_leak_stderr(self):
