@@ -23,6 +23,19 @@ def request(**values):
 
 
 class HandlerTests(unittest.TestCase):
+    def test_documented_zero_one_multiple_argument_shapes(self):
+        for names, arguments, expected in [([], {}, {}), (["value"], {"value": 7}, 7),
+                                          (["left", "right"], {"left": 2, "right": 3}, {"left": 2, "right": 3})]:
+            with self.subTest(names=names):
+                def run(request, context):
+                    self.assertEqual(request, expected)
+                    self.assertEqual(context["arguments"], arguments)
+                    return 1
+                handler = create_tool_handler(tool_ref=TOOL, run=run,
+                    input_signature=[{"name": name, "type_ref": "builtin:Int"} for name in names])
+                result = asyncio.run(handle_tool_request(json.dumps(request(arguments=arguments)), TOOL, handler))
+                self.assertEqual(result, {"ok": True, "value": 1})
+
     def test_real_python_effect_error_keeps_cause_through_core_process_protocol(self):
         with tempfile.TemporaryDirectory(prefix="touba-python-effect-error-") as folder:
             handler = Path(folder) / "handler.py"

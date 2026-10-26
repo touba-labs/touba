@@ -196,6 +196,12 @@ type Request
 
 Builtins principaux : `Text`, `Boolean`, `Int`, `Float`, `List of <Type>`.
 
+`Int` représente exactement les entiers de −9 007 199 254 740 991 à
+9 007 199 254 740 991. Entrées et résultats hors de cet intervalle sont refusés.
+La longueur de `Text` compte les **points de code Unicode** : `😀` compte pour
+1, `é` précomposé pour 1 et `e` suivi d'un accent combinant pour 2.
+Les graphèmes visibles et les octets UTF-8 sont des mesures différentes.
+
 ### Énumérations métier
 
 Une énumération nomme un ensemble fermé de valeurs. Chaque déclaration est un

@@ -148,7 +148,7 @@ try {
   }
 } catch (error) {
   if (args[0] === "package" && args.includes("--json")) {
-    process.stdout.write(`${JSON.stringify({ status: "error", command: `package ${args[1] ?? ""}`.trim(), diagnostics: [{ code: error.code ?? "PackageCommandFailed", message: error instanceof Error ? error.message : String(error) }] })}\n`);
+    process.stdout.write(`${JSON.stringify({ status: "error", command: `package ${args[1] ?? ""}`.trim(), code: error.code ?? "PackageCommandFailed", diagnostics: error.diagnostics ?? [{ code: error.code ?? "PackageCommandFailed", message: error instanceof Error ? error.message : String(error) }] })}\n`);
   } else process.stderr.write(`touba: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 2;
 }

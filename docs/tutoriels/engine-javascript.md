@@ -6,7 +6,7 @@ Même programme, mêmes entrées et mêmes résultats que dans l’autre SDK. Au
 
 Depuis un dossier d’application vide :
 
-```sh
+```sh title="Terminal"
 touba sdk install javascript
 ```
 
@@ -78,6 +78,14 @@ console.log("refused");
 ```
 
 Exécutez `node refused.mjs`. Une attente humaine ou un arrêt explicite restent, eux, des résultats contrôlés avec `status` et `reason` ; ne les assimilez pas à une erreur technique.
+
+## Vérifier l'exemple complet
+
+```sh title="Terminal"
+node run.mjs
+node compiled.mjs
+node refused.mjs
+```
 
 ## 6. Continuer avec les handlers
 

@@ -307,6 +307,11 @@ test("counts delayed checkpoint observation as active time before handler dispat
     });
     assert.equal(refused.status, "failure");
     assert.equal(failureCode(refused), "RunTimeBudgetExceeded");
+    const reservation = refused.trace.events.find(event => event.kind === 'dispatch_refused_budget_exceeded');
+    assert.equal(reservation.payload.active_elapsed_ms, 125);
+    assert.equal(reservation.payload.reservation_ms, 1000);
+    assert.equal(reservation.payload.remaining_ms, 975);
+    assert.equal(reservation.payload.limit_value, 1100);
     assert.equal(readFileIfExists(callsPath), "");
   } finally {
     rmSync(workspace, { recursive: true, force: true });
@@ -541,6 +546,46 @@ test("repairs a dispatched unknown attempt with a new call id and the same effec
     assert.equal(readyGive.runtime_state.next_call_index, 3);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("documented 15s and 40s budgets preserve the 10s reservation across interruption", async t => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-resume-budget-recipe-"));
+  t.after(() => rmSync(workspace, {recursive: true, force: true}));
+  for (const maxRunMs of [15000, 20000, 40000]) {
+    const callsPath = join(workspace, `calls-${maxRunMs}.jsonl`);
+    const journal = journalAdapter();
+    const manifest = effectManifest(successHandlerScript(callsPath), {timeoutMs: 10000});
+    const document = effectDocument({maxRunMs});
+    let saved;
+    await assert.rejects(() => executeAirDocument(document, {
+      ...durableOptions({manifest, journal, observer: async ({checkpoint}) => {
+        if (checkpoint.pending_dispatch?.phase === 'dispatched') {
+          saved = structuredClone(checkpoint);
+          throw new Error('interrupted after dispatch reservation');
+        }
+      }}), now: () => 0,
+    }), /interrupted after dispatch reservation/);
+    assert.equal(saved.runtime_state.active_elapsed_ms, 10000);
+    assert.equal(readFileIfExists(callsPath), '');
+    const resumed = await executeAirDocument(document, {
+      ...durableOptions({manifest, journal, observer: async () => {}}),
+      executionResumeCheckpoint: saved, now: () => 3600000,
+    });
+    if (maxRunMs <= 20000) {
+      assert.equal(failureCode(resumed), 'RunTimeBudgetExceeded');
+      const {payload} = resumed.trace.events.find(e => e.kind === 'dispatch_refused_budget_exceeded');
+      assert.equal(payload.active_elapsed_ms, 10000);
+      assert.equal(payload.reservation_ms, 10000);
+      assert.equal(payload.remaining_ms, maxRunMs - 10000);
+      assert.equal(readFileIfExists(callsPath), '');
+    } else {
+      assert.equal(resumed.status, 'success');
+      const calls = readJsonLines(callsPath);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].effect.effect_id, saved.pending_dispatch.effect_id);
+      assert.equal(calls[0].effect.attempt_index, 2);
+    }
   }
 });
 

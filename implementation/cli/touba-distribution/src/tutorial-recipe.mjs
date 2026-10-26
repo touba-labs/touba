@@ -35,7 +35,7 @@ export function runDocumentRecipe(documentPath, root, env) {
         } else script.push(line);
       }
       execute(script.join("\n"));
-    } else if ((["js", "json", "touba", "yaml", "sql"].includes(language) && /\.(?:mjs|js|json|tb|ya?ml|sql)$/.test(title))
+    } else if ((["js", "json", "touba", "yaml", "sql", "python", "py", "toml"].includes(language) && /\.(?:mjs|js|json|tb|ya?ml|sql|py|toml)$/.test(title))
         || (language === "dockerfile" && /(?:^|\/)Dockerfile(?:\.[A-Za-z0-9_-]+)?$/.test(title))) {
       // Syntax excerpts are not files to create. Complete tutorial sources must
       // carry the same explicit status enforced by documentation compilation.

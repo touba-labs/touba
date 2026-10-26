@@ -3,7 +3,7 @@ import { readStoreFixture, writeStoreFixture } from "./store-fixtures.mjs";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpServer, request as httpRequest } from "node:http";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -3359,7 +3359,7 @@ test("SIGKILL after an applied effect resumes explicitly without redispatching t
   }
 });
 
-test("SIGKILL after the external mutation but before its receipt retries one logical effect idempotently", async () => {
+test("lost HTTP response and SIGKILL recover by session and message through public APIs without duplicate effects", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-sigkill-unknown-"));
   writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunTool"] }));
   const effectRequests = [];
@@ -3446,53 +3446,34 @@ test("SIGKILL after the external mutation but before its receipt retries one log
       },
     }, null, 2), "utf8");
 
-    const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
-    const journalPath = join(root, ".touba", "project.effect-journal.sqlite");
-    const harnessPath = join(root, "crash-worker.mjs");
-    const projectServerModule = new URL("../src/serve.mjs", import.meta.url).href;
-    writeFileSync(harnessPath, `
-      import { executeProjectSandboxRun } from ${JSON.stringify(projectServerModule)};
-      await executeProjectSandboxRun({
-        contractsRoot: ${JSON.stringify(contractsRoot)},
-        effectJournalPath: ${JSON.stringify(journalPath)},
-        executionKind: "entrypoint",
-        humanRequestsPath: ${JSON.stringify(join(root, ".touba", "human-requests.sqlite"))},
-        operationId: "operation:sigkill-unknown",
-        projectRoot: ${JSON.stringify(root)},
-        request: {
-          schema_version: "touba-sandbox-run-request-v1",
-          execution_kind: "entrypoint",
-          target_ref: "strategy:demo.sandbox/RunTool",
-          effect_policy: "allow_declared_external_effects",
-          inputs: {},
-          requested_by: { kind: "service", id: "sigkill-proof" },
-          reason: "prove idempotent recovery after an ambiguous external effect",
-        },
-        runId: "run:sigkill-unknown",
-        runSummaryPath: ${JSON.stringify(join(root, ".touba", "current-run-summary.json"))},
-        sandboxCheckpointsPath: ${JSON.stringify(checkpointPath)},
-        traceTimelinePath: ${JSON.stringify(join(root, ".touba", "current-trace-timeline.json"))},
+    const original = await startProjectServerProcess(root);
+    worker = original.child;
+    const sessionResponse = await postJson(`${original.baseUrl}/interactions/sessions`, {
+      schema_version: "touba-interaction-session-create-v1",
+      target_ref: "strategy:demo.sandbox/RunTool", target_kind: "strategy", presentation: "workflow",
+      effect_policy: "allow_declared_external_effects", requested_by: {kind: "service", id: "crash-test"},
+    });
+    assert.equal(sessionResponse.status, 201, await sessionResponse.clone().text());
+    const session = await sessionResponse.json();
+    const message = {schema_version: "touba-interaction-message-request-v1", message_id: "message:lost-response",
+      display_text: "Create order", inputs: {}, requested_by: {kind: "service", id: "crash-test"}};
+    const sessionPath = `/interactions/sessions/${encodeURIComponent(session.session_id)}`;
+    // Close the real HTTP connection before consuming its operation response.
+    await new Promise((resolveLost, rejectLost) => {
+      const request = httpRequest(`${original.baseUrl}${sessionPath}/messages`, {
+        method: "POST", headers: {"content-type": "application/json"},
+      }, response => {
+        assert.equal(response.statusCode, 202);
+        response.destroy(); resolveLost();
       });
-    `, "utf8");
-
-    let workerStderr = "";
-    worker = spawn(process.execPath, [harnessPath], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
-    worker.stderr.on("data", (chunk) => { workerStderr += chunk.toString("utf8"); });
-    await waitForPath(mutationMarkerPath, worker, () => workerStderr);
+      request.on("error", rejectLost);
+      request.end(JSON.stringify(message));
+    });
+    await waitForPath(mutationMarkerPath, worker, original.stderr);
     const mutationMarker = JSON.parse(readFileSync(mutationMarkerPath, "utf8"));
     interruptedHandlerPid = mutationMarker.pid;
     assert.equal(effectRequests.length, 1);
     assert.equal(appliedEffects.size, 1);
-    const journalBeforeKill = readStoreFixture(journalPath);
-    const [dispatchedEntry] = Object.values(journalBeforeKill.entries);
-    assert.equal(dispatchedEntry.state, "dispatched");
-    assert.equal(dispatchedEntry.attempt_count, 1);
-    assert.equal(dispatchedEntry.last_call_id, mutationMarker.call_id);
-    const beforeKill = readStoreFixture(checkpointPath).records[0];
-    assert.equal(beforeKill.status, "running");
-    assert.equal(beforeKill.checkpoint.pending_dispatch.phase, "dispatched");
-    assert.equal(beforeKill.checkpoint.pending_dispatch.effect_id, dispatchedEntry.effect_id);
-
     worker.kill("SIGKILL");
     await waitForChildExit(worker);
     worker = undefined;
@@ -3500,18 +3481,22 @@ test("SIGKILL after the external mutation but before its receipt retries one log
     interruptedHandlerPid = undefined;
 
     resumedServer = await startProjectServerProcess(root);
-    const interrupted = readStoreFixture(checkpointPath).records[0];
-    assert.equal(interrupted.status, "interrupted");
-    const resumeRequest = {
-      schema_version: "touba-operation-resume-request-v1",
-      operation_id: interrupted.operation_id,
-      checkpoint_revision: interrupted.checkpoint.revision,
-      checkpoint_digest: interrupted.checkpoint.checkpoint_digest,
-      resume_request_id: "resume:sigkill-unknown",
-    };
+    const restoredSession = await getJson(`${resumedServer.baseUrl}${sessionPath}`);
+    const interrupted = restoredSession.operations.find(operation => operation.message_id === message.message_id);
+    assert.ok(interrupted, "the persisted message must identify its operation without reading SQLite");
+    assert.equal(restoredSession.operations.length, 1);
+    const duplicate = await postJson(`${resumedServer.baseUrl}${sessionPath}/messages`, message);
+    assert.equal((await duplicate.json()).operation_id, interrupted.operation_id);
     const recovery = await getJson(
       `${resumedServer.baseUrl}/operations/${encodeURIComponent(interrupted.operation_id)}/recovery`,
     );
+    const resumeRequest = {
+      schema_version: "touba-operation-resume-request-v1",
+      operation_id: interrupted.operation_id,
+      checkpoint_revision: recovery.freshness.state_revision,
+      checkpoint_digest: recovery.correlations.checkpoint_digest,
+      resume_request_id: "resume:sigkill-unknown",
+    };
     assert.equal(recovery.status, "interrupted");
     assert.equal(recovery.effects.dispatched, 1);
     assert.equal(recovery.effects.reconciliation, "retry_safe");
@@ -3521,7 +3506,7 @@ test("SIGKILL after the external mutation but before its receipt retries one log
     const resumedResponse = await postJson(`${resumedServer.baseUrl}/runs/sandbox/resume`, resumeRequest);
     assert.equal(resumedResponse.status, 200);
     const resumed = await resumedResponse.json();
-    assert.equal(resumed.run_id, "run:sigkill-unknown");
+    assert.equal(resumed.run_id, interrupted.run_id);
     assert.equal(resumed.result, "created-idempotently");
     assert.equal(effectRequests.length, 2, "the ambiguous dispatch must use one bounded retry");
     assert.equal(appliedEffects.size, 1, "the provider idempotency key must preserve one mutation");
@@ -3529,11 +3514,9 @@ test("SIGKILL after the external mutation but before its receipt retries one log
     assert.equal(effectRequests[0].request_digest, effectRequests[1].request_digest);
     assert.notEqual(effectRequests[0].call_id, effectRequests[1].call_id);
     assert.deepEqual(effectRequests.map((entry) => entry.attempt_index), [1, 2]);
-    const completedJournal = readStoreFixture(journalPath);
-    const [completedEntry] = Object.values(completedJournal.entries);
-    assert.equal(completedEntry.state, "applied");
-    assert.equal(completedEntry.effect_id, dispatchedEntry.effect_id);
-    assert.equal(completedEntry.attempt_count, 2);
+    const repeated = await postJson(`${resumedServer.baseUrl}/runs/sandbox/resume`, resumeRequest);
+    assert.equal(repeated.status, 200);
+    assert.equal(effectRequests.length, 2);
   } finally {
     if (worker !== undefined) {
       worker.kill("SIGKILL");

@@ -22,6 +22,22 @@ d'événements internes. Voir les [packages](../reference/packages.md) et les
 
 Le SDK JavaScript appelle la même CLI gouvernée que le SDK Python. Les deux guides suivent le même parcours, avec les mêmes concepts et exemples de départ.
 
+## Arguments du callback handler
+
+JavaScript appelle `run({ request, context })` ; Python appelle
+`run(request, context)`. La signature déclarée détermine `request`.
+
+| Entrées déclarées | Request JavaScript | Request Python |
+| --- | --- | --- |
+| Aucune | `{}` | `{}` |
+| Une : `value as Text` | `"Invoice 42"` | `"Invoice 42"` |
+| Deux : `left as Int`, `right as Int` | `{ left: 2, right: 3 }` | `{"left": 2, "right": 3}` |
+
+Avec une entrée, lisez directement sa valeur dans `request`. Le contexte
+contient les métadonnées et helpers d'exécution ; les arguments métier ne
+sont jamais placés au même niveau que lui. Sans signature explicite,
+le handler reçoit la map des arguments.
+
 ## Installation
 
 Le SDK est livré comme archive npm autonome avec la distribution Touba. Il

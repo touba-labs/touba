@@ -24,6 +24,31 @@ function manifest(path, edit) { const file = join(path, PACKAGE_MANIFEST); const
 function author(root, name = "example.echo", options = {}) { const pkg = newPackage(name, { root, ...options }); manifest(pkg.path, m => { m.publisher = "Package test author"; m.license = "MIT"; }); return pkg.path; }
 function consumer(root) { const path = join(root, "consumer"); mkdirSync(path); initProject({ root: path }); return path; }
 
+test("package compiler failures preserve source diagnostics without cascading missing exports", async t => {
+  const root = workspace(t), source = author(root);
+  writeFileSync(join(source, 'src/example/echo.tb'), 'module example.echo\ntype Broken\n    value is UnknownType\n');
+  await assert.rejects(checkPackage(source), error => {
+    assert.equal(error.code, 'PackageSourceInvalid');
+    assert.ok(error.diagnostics.length > 0);
+    assert.ok(error.diagnostics.some(d => d.code === 'UnknownTypeReference' && d.source_ref?.start_line === 2));
+    assert.match(error.message, /echo\.tb:3:14 UnknownTypeReference/);
+    assert.ok(error.diagnostics.every(d => d.code !== 'PackageExportUnknownRef'));
+    return true;
+  });
+  const result = spawnSync(process.execPath, [cli, 'package', 'check', source, '--json'], {encoding:'utf8'});
+  assert.notEqual(result.status, 0);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.code, 'PackageSourceInvalid');
+  assert.ok(report.diagnostics.some(d => d.source_ref?.start_line === 2));
+  assert.ok(report.diagnostics.every(d => !d.message.startsWith('{')));
+  writeFileSync(join(source, 'src/example/echo.tb'), 'module example.echo\ntype Present\n    value is Text\n');
+  await assert.rejects(checkPackage(source), error => {
+    assert.ok(error.diagnostics.some(d => d.code === 'PackageExportUnknownRef'),
+      'a genuinely missing export in a valid module must still be refused');
+    return true;
+  });
+});
+
 test("real compiler, archive, isolated install, typed import and runtime execution", async t => {
   const root = workspace(t), source = author(root), project = consumer(root);
   const archive = join(root, "echo.tar.gz");

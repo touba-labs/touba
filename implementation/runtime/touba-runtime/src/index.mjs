@@ -5968,13 +5968,13 @@ function reserveDurableActiveTime(context, timeoutMs, details = {}) {
   const reserved = current + timeoutMs;
   const limit = context.budgetState.effectiveLimits.get("max_run_ms");
   if (limit && reserved >= limit.value) {
-    traceBudgetExceeded(context, "max_run_ms", limit, reserved, {
-      ...details,
-      dispatch: true,
-    });
+    const reservationDetails = { ...details, dispatch: true,
+      activeElapsedMs: current, reservationMs: timeoutMs,
+      remainingMs: Math.max(0, limit.value - current) };
+    traceBudgetExceeded(context, "max_run_ms", limit, reserved, reservationDetails);
     throw new RuntimeFailure(
       "max_run_ms exceeded",
-      budgetFailureDetails("max_run_ms", limit, reserved, details),
+      budgetFailureDetails("max_run_ms", limit, reserved, reservationDetails),
       "RunTimeBudgetExceeded",
     );
   }
@@ -9424,6 +9424,9 @@ function traceBudgetExceeded(context, budgetKind, limit, consumedValue, details 
       limit_value: limit.value,
       consumed_value: consumedValue,
       authority_source: limit.authoritySource,
+      active_elapsed_ms: details.activeElapsedMs,
+      reservation_ms: details.reservationMs,
+      remaining_ms: details.remainingMs,
       target_ref: details.targetRef,
       caller_ref: context.activeCallerRef,
       agent_ref: context.activeAgentRef,
@@ -9438,6 +9441,9 @@ function traceBudgetExceeded(context, budgetKind, limit, consumedValue, details 
         limit_value: limit.value,
         consumed_value: consumedValue,
         target_ref: details.targetRef,
+        active_elapsed_ms: details.activeElapsedMs,
+        reservation_ms: details.reservationMs,
+        remaining_ms: details.remainingMs,
         tool_ref: details.targetRef?.startsWith("tool:") ? details.targetRef : undefined,
         agent_ref: details.targetRef?.startsWith("agent:") ? details.targetRef : context.activeAgentRef,
         caller_ref: context.activeCallerRef,
@@ -9455,6 +9461,11 @@ function budgetFailureDetails(budgetKind, limit, consumedValue, details = {}) {
     limitValue: limit.value,
     consumedValue,
     authoritySource: limit.authoritySource,
+    ...(details.reservationMs === undefined ? {} : {
+      activeElapsedMs: details.activeElapsedMs,
+      reservationMs: details.reservationMs,
+      remainingMs: details.remainingMs,
+    }),
     targetRef: details.targetRef,
     agentRef: details.targetRef?.startsWith("agent:") ? details.targetRef : details.agentRef,
     providerMode: details.providerMode,

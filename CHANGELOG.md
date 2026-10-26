@@ -21,6 +21,16 @@ cover both SDKs, native GUI sessions, the current FR/EN tutorial inventory,
 industrial qualification, security/signatures and production restoration.
 These gates remain open until their actual evidence is supplied.
 
+### Package diagnostics and recovery recipes, 26 October 2026
+
+- Package checks preserve compiler diagnostics and source locations in JSON.
+ Failed compilation no longer cascades into misleading missing-export errors.
+- Durable time-budget refusals expose accounted time, the requested reservation
+ and remaining budget. Interrupted reservations remain consumed.
+- Executable documentation covers lost HTTP responses and explicit recovery,
+ handler callbacks, bounded loops and pure collection recipes. Tutorial
+ archives retain their documentation version, sources and validation command.
+
 ### Durable state and trace export, 25 October 2026
 
 - Python Engine and MCP transports close their owned pipes before disposing

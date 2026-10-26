@@ -109,7 +109,8 @@ export async function checkPackage(path, options = {}) {
   const closure = packageClosure(path, options);
   const { validatePackageSources } = await import("./project.mjs");
   const diagnostics = await validatePackageSources(closure.packages, options);
-  if (diagnostics.length) throw packageError("PackageSourceInvalid", diagnostics.map(d => `${d.code}: ${d.message}`).join("\n"));
+  if (diagnostics.length) throw Object.assign(packageError("PackageSourceInvalid",
+    diagnostics.map(d => `${d.source_path ?? ""}${d.source_ref ? `:${d.source_ref.start_line + 1}:${d.source_ref.start_column + 1}` : ""} ${d.code}: ${d.message}`.trim()).join("\n")), { diagnostics });
   const missing = ["description", "publisher", "license"].filter(field => !closure.first.document[field]);
   return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: missing.length ? [`Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : [], packages: closure.packages.map(pkg => ({ name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, files: pkg.files.length, requirements: pkg.requirements })), tests: "Source contracts checked. Author tests are not executed automatically.", closure };
 }

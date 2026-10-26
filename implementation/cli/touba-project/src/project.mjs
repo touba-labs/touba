@@ -1279,12 +1279,12 @@ async function loadOneLocalPackage({
     try {
       airDocument = await compileSource(sourcePath, compileOptions);
     } catch (error) {
-      diagnostics.push(errorDiagnostic("PackageExportUnknownRef", `package source ${sourcePath} could not be compiled: ${error.message}`, {
+      diagnostics.push(...(error.diagnostics ?? [errorDiagnostic("PackageSourceInvalid", `package source ${sourcePath} could not be compiled: ${error.message}`, {
         package_name: metadata.name,
         module_name: moduleName,
         source_path: sourcePath,
         manifest_path: manifestPath,
-      }));
+      })]));
       continue;
     }
     if (airDocument?.module?.name !== moduleName) {
@@ -1319,6 +1319,8 @@ async function loadOneLocalPackage({
   for (const [collectionName, refs] of Object.entries(metadata.exports)) {
     const descriptor = PACKAGE_EXPORT_COLLECTIONS[collectionName];
     for (const targetRef of refs) {
+      // A failed source module cannot establish whether its exports exist.
+      if (!documents.some(document => document.module.name === moduleNameFromQualifiedRef(targetRef))) continue;
       if (!packageDeclarationExists(documents, descriptor.importKind, targetRef)) {
         diagnostics.push(errorDiagnostic("PackageExportUnknownRef", `package export ${targetRef} is not declared by package ${metadata.name}`, {
           package_name: metadata.name,
@@ -1361,6 +1363,7 @@ export async function validatePackageSources(packages, options = {}) {
     moduleSourcePaths: packages.flatMap(pkg => pkg.files.filter(file => file.path.startsWith("src/") && file.path.endsWith(".tb")).map(file => join(pkg.root, file.path))) };
   const loaded = await loadLocalPackages({ root: packages[0].root, projectModuleNames: [], compileOptions,
     packageInputs: packages.map(pkg => ({ manifestPath: pkg.manifestPath, metadata: packageMetadata(pkg) })) });
+  if (hasErrorDiagnostics(loaded.diagnostics)) return loaded.diagnostics;
   const assembly = assemblePrepareAirDocuments(loaded.entries, {
     rootModuleNames: loaded.entries.map(entry => entry.document.module.name),
     packageMembership: loaded.packageMembership, packageExportsByModule: loaded.packageExportsByModule,
@@ -1388,7 +1391,7 @@ export async function validatePackageSources(packages, options = {}) {
       const path = join(pkg.root, file.path);
       if (compiled.has(path)) continue;
       try { await compileSource(path, compileOptions); }
-      catch (error) { loaded.diagnostics.push(errorDiagnostic("PackageSourceInvalid", error.message)); }
+      catch (error) { loaded.diagnostics.push(...(error.diagnostics ?? [errorDiagnostic("PackageSourceInvalid", error.message, { source_path: path })])); }
     }
   }
   return loaded.diagnostics;

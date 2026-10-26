@@ -151,6 +151,13 @@ n'est jamais supprimé automatiquement.
 
 ## Vérifications et diagnostics
 
+`touba package check --json` conserve les erreurs source sous forme d'objets
+dans `diagnostics` : `code`, `message`, `severity`, `source_path` et
+`source_ref` lorsqu'ils sont disponibles. Le code global est
+`PackageSourceInvalid`. Les indices de ligne et colonne JSON commencent à
+zéro ; l'affichage terminal commence à un. La compilation invalide est
+signalée avant les exports, pour éviter une cascade de faux exports absents.
+
 Les chemins sont relatifs et confinés ; liens symboliques et liens durs dans
 les archives, fichiers spéciaux, chemins sortants et collisions sont refusés.
 Les fichiers secrets usuels et `node_modules` ne sont pas distribuables.

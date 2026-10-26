@@ -6,7 +6,7 @@ Même programme, mêmes entrées et mêmes résultats que dans l’autre SDK. Au
 
 Depuis un dossier d’application vide :
 
-```sh
+```sh title="Terminal"
 touba sdk install python
 ```
 
@@ -81,6 +81,14 @@ print("refused")
 ```
 
 Exécutez `python refused.py`. Une attente humaine ou un arrêt explicite restent, eux, des résultats contrôlés avec `status` et `reason` ; ne les assimilez pas à une erreur technique.
+
+## Vérifier l'exemple complet
+
+```sh title="Terminal"
+.venv/bin/python run.py
+.venv/bin/python compiled.py
+.venv/bin/python refused.py
+```
 
 ## 6. Continuer avec les handlers
 
