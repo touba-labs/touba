@@ -4,6 +4,20 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, delimiter } from "node:path";
 import { fileURLToPath } from "node:url";
 
+function blocks(document) {
+  return [...document.matchAll(/```(\w+)(?: title="([^"]+)")?\n([\s\S]*?)\n```/g)]
+    .map(([, language, title, body]) => ({ language, title, body }));
+}
+
+export function engineTutorialFiles(document, sdk) {
+  assert.ok(["javascript", "python"].includes(sdk), "unknown tutorial SDK");
+  return blocks(document).filter(({ language, title }) => title && (
+    (language === "touba" && title.endsWith(".tb")) ||
+    (sdk === "javascript" && ["js", "javascript"].includes(language) && title.endsWith(".mjs")) ||
+    (sdk === "python" && ["py", "python"].includes(language) && title.endsWith(".py"))
+  ));
+}
+
 // Execute the published examples against SDK archives from an installed release.
 // Offline providers only: no paid API, source-tree SDK import or personal install.
 export function checkSdkTutorials({ root, temp }) {
@@ -22,17 +36,16 @@ export function checkSdkTutorials({ root, temp }) {
     assert.equal(result.status, 0, `${command}: ${result.error ?? result.stderr}\n${result.stdout}`);
     return result.stdout.trim();
   }
-  function blocks(document) {
-    return [...document.matchAll(/```(\w+)(?: title="([^"]+)")?\n([\s\S]*?)\n```/g)]
-      .map(([, language, title, body]) => ({ language, title, body }));
-  }
   for (const language of ["javascript", "python"]) {
     const project = join(temp, `published-${language}`); mkdirSync(project);
     const command = (...args) => run(binary, [cli, ...args], project);
     command("sdk", "install", language);
     const python = join(project, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
     const engine = readFileSync(join(docs, `engine-${language}.md`), "utf8");
-    for (const { title, body } of blocks(engine).filter(block => block.title)) {
+    const files = engineTutorialFiles(engine, language);
+    assert.ok(files.some(file => file.title.endsWith(".tb")), "published source required");
+    assert.ok(files.some(file => file.title.startsWith("refused.")), "published refusal example required");
+    for (const { title, body } of files) {
       writeFileSync(join(project, title), body + "\n");
       if (title.endsWith(".tb")) continue;
       assert.equal(run(language === "python" ? python : binary, [title], project),

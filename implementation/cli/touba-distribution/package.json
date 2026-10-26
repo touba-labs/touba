@@ -11,7 +11,7 @@
     "check:install-local": "node src/check-local-install.mjs",
     "package:release": "node src/package-release.mjs",
     "package:installers": "node src/package-installers.mjs",
-    "test:installers": "node --test src/installers.test.mjs src/macos-signing.test.mjs",
+    "test:installers": "node --test src/installers.test.mjs src/macos-signing.test.mjs src/check-sdk-tutorials.test.mjs",
     "check:release-archive": "node src/check-release-archive.mjs",
     "test:release-metadata": "node --test src/package-release.test.mjs src/build-identity.test.mjs src/install-toolchain-payload.test.mjs test/vsix-packaging.test.mjs",
     "test:sdk-archive": "node --test src/package-sdk.test.mjs src/dependency-tree.test.mjs",
