@@ -401,6 +401,7 @@ def attest_human_approval(payload):
             for line in child.stdout: lines.put(line)
         reader = threading.Thread(target=collect, daemon=True)
         reader.start()
+        host_handle = None
         try:
             while True:
                 event = json.loads(lines.get(timeout=15))
@@ -413,7 +414,24 @@ def attest_human_approval(payload):
             with urllib.request.urlopen(request, timeout=15) as response:
                 result = json.load(response)
             self.assertEqual(result["result"], "served by Python", result)
-            self.assertEqual(len((self.root / "host-loads.txt").read_text().splitlines()), 1)
+            host_pids = (self.root / "host-loads.txt").read_text().splitlines()
+            self.assertEqual(len(host_pids), 1)
+            if os.name == "nt":
+                # An atexit marker precedes actual process termination. Windows
+                # retains the child's working directory until that termination,
+                # so keep a handle to this exact process before closing its parent.
+                import ctypes
+                from ctypes import wintypes
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                kernel32.OpenProcess.restype = wintypes.HANDLE
+                kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+                kernel32.WaitForSingleObject.restype = wintypes.DWORD
+                kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+                kernel32.CloseHandle.restype = wintypes.BOOL
+                host_handle = kernel32.OpenProcess(0x00100000, False, int(host_pids[0]))  # SYNCHRONIZE
+                self.assertTrue(host_handle, f"cannot observe Python host exit: {ctypes.get_last_error()}")
+                self.addCleanup(kernel32.CloseHandle, host_handle)
             self.assertIsNone(child.poll(), "server must still be alive before the requested termination")
         finally:
             child.terminate()
@@ -422,6 +440,9 @@ def attest_human_approval(payload):
         # CPython Popen.terminate() uses TerminateProcess(handle, 1) on Windows;
         # POSIX reports termination by SIGTERM as a negative return code.
         self.assertEqual(child.returncode, 1 if os.name == "nt" else -signal.SIGTERM, error)
+        if host_handle is not None:
+            self.assertEqual(kernel32.WaitForSingleObject(host_handle, 10000), 0,
+                             "the shared Python host must terminate, not only write its atexit marker")
         closed = self.root / "host-closed.txt"
         deadline = time.monotonic() + 10
         while not closed.exists() and time.monotonic() < deadline:
