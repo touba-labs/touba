@@ -1,28 +1,32 @@
-// Memoize pure validation of exact JSON bytes, never authorization. Each read
-// parses its current bytes into a fresh object. Writes always validate the
-// original object: JSON.stringify is lossy (NaN/null, undefined/missing, toJSON).
-export function validatedRecordCodec(validate, { maxEntries = 512, maxBytes = 32 * 1024 * 1024 } = {}) {
-  const entries = new Map();
-  let bytes = 0;
+import { createHash } from "node:crypto";
+
+// Memoize pure validation by a SHA-256 fingerprint, never authorization or
+// mutable records. Keep at most 16K witnesses (2 MiB of UTF-16 hex keys, plus
+// bounded Set overhead), regardless of the size of the validated documents.
+// As with stored integrity digests, reuse relies on SHA-256 collision resistance.
+// Each read still parses current text into a fresh object. Writes always
+// validate the original object: JSON.stringify is lossy (NaN/undefined/toJSON).
+export function validatedRecordCodec(validate, { maxEntries = 16384, maxBytes = 2 * 1024 * 1024 } = {}) {
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 0 || !Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new TypeError("validation cache limits must be nonnegative safe integers");
+  }
+  const entries = new Set();
+  const capacity = Math.min(maxEntries, Math.floor(maxBytes / 128));
   function parse(content, ...context) {
     if (typeof content !== "string") throw new TypeError("stored record must be JSON text");
     const value = JSON.parse(content);
-    if (entries.has(content)) {
-      const size = entries.get(content);
-      entries.delete(content);
-      entries.set(content, size);
+    // UTF-16 retains every JS code unit: UTF-8 would alias a raw unpaired
+    // surrogate with U+FFFD before hashing, despite different JSON values.
+    const fingerprint = capacity > 0 ? createHash("sha256").update(content, "utf16le").digest("hex") : null;
+    if (entries.has(fingerprint)) {
+      entries.delete(fingerprint);
+      entries.add(fingerprint);
       return value;
     }
     validate(value, ...context);
-    const size = Buffer.byteLength(content, "utf8");
-    if (size > maxBytes || maxEntries < 1) return value;
-    while (entries.size >= maxEntries || bytes + size > maxBytes) {
-      const oldest = entries.keys().next().value;
-      bytes -= entries.get(oldest);
-      entries.delete(oldest);
-    }
-    entries.set(content, size);
-    bytes += size;
+    if (capacity < 1) return value;
+    if (entries.size >= capacity) entries.delete(entries.values().next().value);
+    entries.add(fingerprint);
     return value;
   }
   return Object.freeze({ validate, parse });

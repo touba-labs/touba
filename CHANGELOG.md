@@ -24,8 +24,9 @@ These gates remain open until their actual evidence is supplied.
 ### Durable state and trace export, 25 October 2026
 
 - Checkpoint audits use bounded physical-order pages; API cursors retain their
- identifier order. Validation caching is limited to exact JSON bytes read
- from storage. Objects being written are always validated before serialization.
+ identifier order. A bounded SHA-256 witness cache reuses pure validation of
+ the current JSON text without retaining documents or authorization. Objects
+ being written are always validated before serialization.
 - SQLite is the default for execution traces, trigger admission/queues, effects
  and compensations. Paged reads and explicit retention preserve active,
  uncertain and unacknowledged records. JSON migration writes a validated new

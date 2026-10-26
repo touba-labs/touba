@@ -323,9 +323,12 @@ La réparation des interactions sélectionne les opérations de la fenêtre
 d’interface et lit leurs checkpoints par pages. Les preuves plus anciennes
 restent conservées et contrôlées par l’audit.
 Ces parcours internes suivent l’ordre physique du stockage ; les curseurs
-de l’API gardent leur ordre par identifiant. Le cache de validation porte sur
-les octets JSON exacts relus sur disque. Chaque écriture revalide l’objet avant
-sa sérialisation et vérifie que les enregistrements lus n’ont pas changé.
+de l’API gardent leur ordre par identifiant. Le cache de validation conserve
+au plus 16 384 empreintes SHA-256 par validateur, sans garder les documents.
+Chaque lecture analyse le texte JSON courant ; une empreinte connue permet
+de réutiliser sa validation pure. Les contrôles d’autorité restent exécutés.
+Chaque écriture revalide l’objet avant sa sérialisation et vérifie que les
+enregistrements lus n’ont pas changé.
 
 ## Exploitation et concurrence
 
