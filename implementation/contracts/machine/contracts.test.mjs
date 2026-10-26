@@ -263,6 +263,46 @@ test("canonicalization sorts object keys, preserves arrays and refuses non-finit
   assert.throws(() => canonicalizeMachineValue({ value: Number.NaN }), MachineContractError);
 });
 
+test("canonicalization preserves numeric, prototype and escaped keys without changing its input", () => {
+  const value = JSON.parse('{"z":-0,"10":"ten","2":"two","01":"one","__proto__":{"polluted":true},"constructor":"data","toString":"text","quote\\\"":"line\\n","nested":[null,{"b":false,"a":"é"}]}');
+  const original = JSON.stringify(value);
+  assert.equal(canonicalizeMachineValue(value),
+    '{"2":"two","10":"ten","01":"one","__proto__":{"polluted":true},"constructor":"data","nested":[null,{"a":"é","b":false}],"quote\\\"":"line\\n","toString":"text","z":0}');
+  assert.equal(JSON.stringify(value), original);
+  assert.equal(Object.getPrototypeOf(value), Object.prototype);
+  assert.equal(Object.prototype.polluted, undefined);
+  assert.equal(canonicalizeMachineValue([, 1, ,]), '[null,1,null]');
+  for (const bad of [undefined, () => 1, Symbol('invalid'), 1n]) {
+    assert.throws(() => canonicalizeMachineValue({ nested: [bad] }), { code: 'CanonicalValueInvalid' });
+  }
+  for (const bad of [NaN, Infinity, -Infinity]) {
+    assert.throws(() => canonicalizeMachineValue({ nested: [bad] }), { code: 'CanonicalNumberInvalid' });
+  }
+});
+
+test("canonicalization retains the established bytes across nested generated JSON values", () => {
+  function reference(value) {
+    if (Array.isArray(value)) return value.map(reference);
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(Object.keys(value).sort().map(key => [key, reference(value[key])]));
+    }
+    return value;
+  }
+  let seed = 20261025;
+  const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
+  const keys = ["z", "2", "10", "01", "__proto__", "constructor", "toString", "é", "line\n", ""];
+  function generate(depth) {
+    if (!depth) return [null, true, false, "value\n\"é", -0, 0.125, -1e30][random() % 7];
+    if (random() % 2) return Array.from({ length: random() % 5 }, () => generate(depth - 1));
+    return Object.fromEntries(Array.from({ length: random() % 7 }, () =>
+      [keys[random() % keys.length], generate(depth - 1)]));
+  }
+  for (let index = 0; index < 1000; index++) {
+    const value = generate(4);
+    assert.equal(canonicalizeMachineValue(value), JSON.stringify(reference(value)));
+  }
+});
+
 test("keeps schemas and Rust producer constants aligned with the canonical module", () => {
   const airSchema = JSON.parse(readFileSync(new URL("./schemas/touba-air-v1.schema.json", import.meta.url)));
   const traceSchema = JSON.parse(readFileSync(new URL("./schemas/touba-trace-v1.schema.json", import.meta.url)));

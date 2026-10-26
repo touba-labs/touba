@@ -608,7 +608,14 @@ function canonicalValue(value) {
   if (Array.isArray(value)) return value.map(canonicalValue);
   if (value && typeof value === "object") {
     const record = /** @type {Record<string, unknown>} */ (value);
-    return Object.fromEntries(Object.keys(record).sort().map((key) => [key, canonicalValue(record[key])]));
+    const result = /** @type {Record<string, unknown>} */ (Object.create(null));
+    // Build the same ordered object without allocating an entry array and a
+    // key/value pair for every field. A prototype-free intermediate also keeps
+    // __proto__ as an ordinary own field and never invokes inherited setters.
+    for (const key of Object.keys(record).sort()) {
+      result[key] = canonicalValue(record[key]);
+    }
+    return result;
   }
   fail("CanonicalValueInvalid", `unsupported canonical value ${typeof value}`);
 }
