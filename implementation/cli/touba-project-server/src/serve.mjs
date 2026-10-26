@@ -43,7 +43,7 @@ import {
 } from "../../../contracts/product-surfaces/input-contracts.mjs";
 import { buildInteractionContract } from "../../../contracts/product-surfaces/interaction-contracts.mjs";
 import { readPreparedProject } from "./prepared-project.mjs";
-import { validatedRecords } from "./validated-records.mjs";
+import { validatedRecordCodec } from "./validated-records.mjs";
 import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
 import { migrateRecordState } from "../../../runtime/touba-runtime/src/sqlite-state-migration.mjs";
 import { auditHumanStore, loadHumanDecisionStore, saveHumanDecisionStore, readHumanRequestStore, saveHumanRequestStore } from "./human-stores.mjs";
@@ -247,7 +247,7 @@ const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
   "/reviews/pending/current": "touba-human-review-request-v1",
 });
 
-const validateCurrentCheckpointRecord = validatedRecords(validateSandboxCheckpointRecord);
+const checkpointCodec = validatedRecordCodec(validateSandboxCheckpointRecord);
 export const CHECKPOINT_INDEXES = Object.freeze({
   kind: "json_extract(body, '$.record_kind')",
   request_id: "json_extract(body, '$.request_id')",
@@ -10075,12 +10075,13 @@ function indexedCheckpointStore(path) {
     path,
     schemaVersion: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION,
     keyOf: record => JSON.stringify([record.record_kind, record.record_kind === "human" ? record.request_id : record.operation_id]),
-    validate: validateCurrentCheckpointRecord,
+    validate: checkpointCodec.validate,
+    parseValidated: checkpointCodec.parse,
     indexes: CHECKPOINT_INDEXES,
     checkTransaction(db) {
       const active = db.prepare(`SELECT body FROM records WHERE ${CHECKPOINT_INDEXES.active_human} = 1`).all()
         .map(row => JSON.parse(row.body));
-      active.forEach((record, index) => validateCurrentCheckpointRecord(record, index));
+      active.forEach((record, index) => checkpointCodec.validate(record, index));
       validateSandboxHumanWaitSet(active);
     },
   });
@@ -10089,7 +10090,7 @@ function indexedCheckpointStore(path) {
 export function migrateSandboxCheckpoints(options) {
   return migrateRecordState(options, { schemaVersion: SANDBOX_CHECKPOINT_STORE_SCHEMA_VERSION,
     fields: ["records"], recordsOf: document => document.records,
-    validateRecord: validateCurrentCheckpointRecord, validateSet: validateSandboxHumanWaitSet,
+    validateRecord: checkpointCodec.validate, validateSet: validateSandboxHumanWaitSet,
     keyOf: record => JSON.stringify([record.record_kind, record.record_kind === "human" ? record.request_id : record.operation_id]),
     storeOf: indexedCheckpointStore,
   });
@@ -10116,7 +10117,7 @@ function* sandboxCheckpointPages(path, filter) {
   let after;
   const activeRuns = new Set();
   for (;;) {
-    const page = loadSandboxCheckpointStore(path, filter, { after, limit: 100 });
+    const page = loadSandboxCheckpointStore(path, filter, { after, limit: 100, order: "rowid" });
     for (const record of activeHumanWaitRecords(page)) {
       if (activeRuns.has(record.run_id) || activeRuns.size >= MAX_ACTIVE_HUMAN_WAITS) {
         throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "active human waits violate their global capacity or run identity");
@@ -10147,7 +10148,7 @@ function saveSandboxCheckpointStore(sandboxCheckpointsPath, store) {
   ) {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", "refusing to write an invalid sandbox checkpoint store");
   }
-  store.records.forEach((record, index) => validateCurrentCheckpointRecord(record, index));
+  store.records.forEach((record, index) => checkpointCodec.validate(record, index));
   validateSandboxHumanWaitSet(store.records);
   indexedCheckpointStore(sandboxCheckpointsPath).write(store.records);
 }

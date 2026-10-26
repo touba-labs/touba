@@ -322,6 +322,10 @@ enregistrements par leurs identifiants indexés.
 La réparation des interactions sélectionne les opérations de la fenêtre
 d’interface et lit leurs checkpoints par pages. Les preuves plus anciennes
 restent conservées et contrôlées par l’audit.
+Ces parcours internes suivent l’ordre physique du stockage ; les curseurs
+de l’API gardent leur ordre par identifiant. Le cache de validation porte sur
+les octets JSON exacts relus sur disque. Chaque écriture revalide l’objet avant
+sa sérialisation et vérifie que les enregistrements lus n’ont pas changé.
 
 ## Exploitation et concurrence
 

@@ -9,7 +9,7 @@ const snapshots = new WeakMap();
 
 // Shared local persistence. Callers own record validation and authorization.
 // No connection, payload or authorization cache survives an operation.
-export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {}, checkTransaction,
+export function indexedStore({ path, schemaVersion, keyOf, validate, parseValidated, indexes = {}, checkTransaction,
   maxBytes = 512 * 1024 * 1024, maxRecordBytes = 16 * 1024 * 1024, readOnly = false }) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 65536 || !Number.isSafeInteger(maxRecordBytes) || maxRecordBytes < 1) {
     throw storeError("ToubaStoreConfigurationInvalid", "invalid storage or record byte limit");
@@ -139,21 +139,25 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
   function read(filter, page) {
     const query = selection(filter);
     if (page) {
-      if (page.after !== undefined && typeof page.after !== "string") throw storeError("ToubaStoreQueryInvalid", "page cursor must be a record identifier");
+      if (!["id", "rowid"].includes(page.order)) throw storeError("ToubaStoreQueryInvalid", "unsupported page order");
+      if (page.after !== undefined && (page.order === "id" ? typeof page.after !== "string" : !Number.isSafeInteger(page.after))) {
+        throw storeError("ToubaStoreQueryInvalid", "page cursor must match its selected order");
+      }
       if (!Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 1000) throw storeError("ToubaStoreQueryInvalid", "page limit must be between 1 and 1000");
       // Parentheses retain the meaning of OR selections before adding a cursor.
       query.sql = query.sql ? ` WHERE (${query.sql.slice(7)})` : " WHERE 1";
-      if (page.after !== undefined) { query.sql += " AND id>?"; query.params.push(page.after); }
+      if (page.after !== undefined) { query.sql += ` AND ${page.order}>?`; query.params.push(page.after); }
     }
     const records = [];
     const versions = new Map();
+    let cursor = null;
     if (existsSync(absolutePath)) {
       const db = open({ forWrite: false });
       try {
-        const tail = page ? " ORDER BY id LIMIT ?" : " ORDER BY rowid";
+        const tail = page ? ` ORDER BY ${page.order} LIMIT ?` : " ORDER BY rowid";
         const params = page ? [...query.params, page.limit] : query.params;
         let bytes = 0;
-        for (const row of db.prepare(`SELECT id, revision, body FROM records${query.sql}${tail}`).iterate(...params)) {
+        for (const row of db.prepare(`SELECT rowid, id, revision, body FROM records${query.sql}${tail}`).iterate(...params)) {
           if (page) {
             const size = Buffer.byteLength(row.body);
             if (size > 16 * 1024 * 1024) throw storeError("ToubaStoreRecordTooLarge", "record exceeds the page byte limit");
@@ -161,18 +165,30 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
             bytes += size;
           }
           let record;
-          try { record = JSON.parse(row.body); }
-          catch { throw storeError("ToubaStoreRecordInvalid", "stored record is not valid JSON"); }
-          validate(record, records.length);
+          // A caller may pair its writer validator with a validating JSON
+          // parser. This avoids serializing an already-read body for a cache
+          // key; identity and optimistic revision checks remain in this store.
+          if (parseValidated) {
+            try { record = parseValidated(row.body, records.length); }
+            catch (error) {
+              if (error instanceof SyntaxError) throw storeError("ToubaStoreRecordInvalid", "stored record is not valid JSON");
+              throw error;
+            }
+          } else {
+            try { record = JSON.parse(row.body); }
+            catch { throw storeError("ToubaStoreRecordInvalid", "stored record is not valid JSON"); }
+            validate(record, records.length);
+          }
           if (keyOf(record) !== row.id) {
             throw storeError("ToubaStoreRecordInvalid", "stored record key does not match its content");
           }
           records.push(record);
+          cursor = page?.order === "rowid" ? row.rowid : row.id;
           versions.set(row.id, { revision: row.revision, body: row.body });
         }
       } finally { db.close(); }
     }
-    snapshots.set(records, { path: absolutePath, schemaVersion, versions });
+    snapshots.set(records, { path: absolutePath, schemaVersion, versions, cursor });
     return records;
   }
 
@@ -241,9 +257,12 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, indexes = {
   }
 
   return Object.freeze({ read, write,
-    page({ filter, after, limit = 100 } = {}) {
-      const items = read(filter, { after, limit });
-      return { items, next: items.length ? keyOf(items.at(-1)) : null };
+    page({ filter, after, limit = 100, order = "id" } = {}) {
+      // Exhaustive internal audits can follow physical row order. UI/API
+      // pagination retains stable record identifiers. Each page closes its
+      // connection before callers process it, including callers that repair.
+      const items = read(filter, { after, limit, order });
+      return { items, next: snapshots.get(items).cursor };
     },
     count(filter) {
       if (!existsSync(absolutePath)) return 0;

@@ -10,7 +10,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
-import { validatedRecords } from "./validated-records.mjs";
+import { validatedRecordCodec } from "./validated-records.mjs";
 import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
 import { migrateRecordState } from "../../../runtime/touba-runtime/src/sqlite-state-migration.mjs";
 
@@ -581,7 +581,7 @@ export function readInteractionAsset({ assetsDirectory, assetsPath, handle }) {
   return { asset: publicAsset(asset), buffer };
 }
 
-const validateCurrentSession = validatedRecords(session => {
+const sessionCodec = validatedRecordCodec(session => {
   if (validateObject(SESSION_SCHEMA, session).length > 0) {
     throw interactionError("ToubaServeInteractionSessionStoreInvalid", "stored sessions must satisfy the canonical session contract");
   }
@@ -590,7 +590,7 @@ const validateCurrentSession = validatedRecords(session => {
 function indexedSessionStore(path) {
   return indexedStore({
     path, schemaVersion: INTERACTION_SESSION_STORE_SCHEMA_VERSION,
-    keyOf: session => session.session_id, validate: validateCurrentSession,
+    keyOf: session => session.session_id, validate: sessionCodec.validate, parseValidated: sessionCodec.parse,
     checkTransaction(db) {
       if (db.prepare("SELECT COUNT(*) AS count FROM records").get().count > MAX_SESSIONS) {
         throw interactionError("ToubaServeInteractionSessionCapacityExceeded", "interaction projection exceeds its bounded window");
@@ -601,7 +601,7 @@ function indexedSessionStore(path) {
 
 export function migrateInteractionSessions(options) {
   return migrateRecordState(options, { schemaVersion: INTERACTION_SESSION_STORE_SCHEMA_VERSION,
-    fields: ["sessions"], recordsOf: document => document.sessions, validateRecord: validateCurrentSession,
+    fields: ["sessions"], recordsOf: document => document.sessions, validateRecord: sessionCodec.validate,
     keyOf: session => session.session_id, storeOf: indexedSessionStore,
     validateSet(records) {
       if (records.length > MAX_SESSIONS) throw interactionError("ToubaServeInteractionSessionCapacityExceeded", "interaction projection exceeds its bounded window");

@@ -7,6 +7,7 @@ import test from "node:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
+import { validatedRecordCodec } from "../src/validated-records.mjs";
 
 function fixture(t, options = {}) {
   const root = mkdtempSync(join(tmpdir(), "touba-indexed-store-"));
@@ -79,6 +80,80 @@ test("conflicting writes roll back the whole batch and cannot erase unrelated hi
   assert.deepEqual(store.read().map(r => r.status), ["pending", "approved"]);
   first.pop();
   assert.throws(() => store.write(first), { code: "ToubaStoreDeletionRefused" });
+});
+
+test("bounded physical-order audit pages retain filters, full validation and writable snapshots", t => {
+  let validations = 0;
+  const { path, store } = fixture(t, { validate: () => validations++ });
+  const records = store.read();
+  records.push(...["z", "b", "x", "a", "y"].map(id => ({ id, status: "done" })));
+  store.write(records);
+  validations = 0;
+  const first = store.page({ order: "rowid", limit: 2 });
+  assert.deepEqual(first.items.map(item => item.id), ["z", "b"]);
+  assert.equal(first.next, 2);
+  first.items[0].status = "reviewed"; store.write(first.items);
+  const second = store.page({ order: "rowid", after: first.next, limit: 2,
+    filter: [{ id: "x" }, { id: "y" }] });
+  assert.deepEqual(second.items.map(item => item.id), ["x", "y"]);
+  assert.equal(second.next, 5);
+  assert.equal(validations, 6);
+  assert.equal(store.page({ order: "rowid", after: second.next }).next, null);
+  assert.throws(() => store.page({ order: "rowid", after: "2" }), { code: "ToubaStoreQueryInvalid" });
+  assert.throws(() => store.page({ order: "rowid", after: NaN }), { code: "ToubaStoreQueryInvalid" });
+  assert.throws(() => store.page({ order: "rowid", after: 2 ** 53 }), { code: "ToubaStoreQueryInvalid" });
+  assert.throws(() => store.page({ order: "id; DROP TABLE records" }), { code: "ToubaStoreQueryInvalid" });
+  const db = new DatabaseSync(path);
+  try {
+    db.prepare("UPDATE records SET body=? WHERE id=?").run(JSON.stringify({ id: "y", status: false }), "y");
+  } finally { db.close(); }
+  assert.throws(() => store.page({ order: "rowid", after: 4 }));
+});
+
+test("validating parsers preserve fresh reads, writer checks, key checks and revision conflicts", t => {
+  const { path } = fixture(t);
+  let validations = 0;
+  const codec = validatedRecordCodec(record => {
+    validations++;
+    assert.equal(typeof record.id, "string");
+    assert.ok(Number.isFinite(record.number));
+  });
+  const store = indexedStore({ path, schemaVersion: "test-record-v1", keyOf: record => record.id,
+    validate: codec.validate, parseValidated: codec.parse });
+  const initial = store.read(); initial.push({ id: "one", number: 1 }); store.write(initial);
+  const first = store.page().items, stale = store.page().items;
+  assert.equal(validations, 2); // One write and one validation of these exact bytes.
+  first[0].number = 2; store.write(first);
+  stale[0].number = 3;
+  assert.throws(() => store.write(stale), { code: "ToubaStoreWriteConflict" });
+  const current = store.read(); current[0].number = NaN;
+  assert.throws(() => store.write(current));
+  assert.equal(store.read()[0].number, 2);
+  const db = new DatabaseSync(path);
+  try { db.prepare("UPDATE records SET id=? WHERE id=?").run("foreign", "one"); }
+  finally { db.close(); }
+  assert.throws(() => store.read(), { code: "ToubaStoreRecordInvalid" });
+});
+
+test("both page orders enforce the byte ceiling before returning validated records", t => {
+  const { path } = fixture(t);
+  const codec = validatedRecordCodec(record => assert.equal(typeof record.id, "string"));
+  const store = indexedStore({ path, schemaVersion: "test-record-v1", keyOf: record => record.id,
+    validate: codec.validate, parseValidated: codec.parse, maxRecordBytes: 32 * 1024 * 1024 });
+  const initial = store.read();
+  initial.push({ id: "one", data: "x".repeat(9 * 1024 * 1024) }, { id: "two", data: "y".repeat(9 * 1024 * 1024) });
+  store.write(initial);
+  for (const order of ["id", "rowid"]) {
+    const first = store.page({ order });
+    assert.equal(first.items.length, 1);
+    assert.equal(first.items[0].id, "one");
+    assert.equal(store.page({ order, after: first.next }).items[0].id, "two");
+  }
+  const changed = store.read([{ id: "two" }]); changed[0].data = "z".repeat(17 * 1024 * 1024);
+  store.write(changed);
+  for (const order of ["id", "rowid"]) {
+    assert.throws(() => store.page({ order, filter: [{ id: "two" }] }), { code: "ToubaStoreRecordTooLarge" });
+  }
 });
 
 test("transaction invariants reject all writes atomically", t => {

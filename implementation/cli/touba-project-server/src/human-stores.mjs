@@ -2,7 +2,7 @@ import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-s
 import { migrateRecordState } from "../../../runtime/touba-runtime/src/sqlite-state-migration.mjs";
 import { readFileSync } from "node:fs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
-import { validatedRecords } from "./validated-records.mjs";
+import { validatedRecordCodec } from "./validated-records.mjs";
 
 const REQUEST_SCHEMA = "touba-human-requests-v1";
 const DECISION_SCHEMA = "touba-human-decisions-v1";
@@ -10,7 +10,7 @@ const requestSnapshots = new WeakMap();
 const schemas = new Map(["touba-approval-request-v1", "touba-human-review-request-v1",
   "touba-approval-decision-v1", "touba-human-review-decision-v1"].map(name => [name,
   JSON.parse(readFileSync(new URL(`../../../contracts/product-surfaces/schemas/${name}.schema.json`, import.meta.url), "utf8"))]));
-const validateRequest = validatedRecords(record => {
+const requestCodec = validatedRecordCodec(record => {
   const request = record?.request;
   const approval = record?.collection === "approvals";
   if (!request || Object.keys(record).some(key => !["collection", "request"].includes(key))
@@ -21,7 +21,7 @@ const validateRequest = validatedRecords(record => {
     throw invalid("human request projection has an invalid contract or collection");
   }
 });
-const validateDecision = validatedRecords(record => {
+const decisionCodec = validatedRecordCodec(record => {
   if (!record || !["touba-approval-decision-v1", "touba-human-review-decision-v1"].includes(record.schema_version)) {
     throw invalid("human decision projection has an invalid identity");
   }
@@ -45,7 +45,7 @@ function requests(path) {
   return indexedStore({ path, schemaVersion: REQUEST_SCHEMA,
     keyOf: record => record.request.request_id,
     indexes: HUMAN_REQUEST_INDEXES,
-    validate: validateRequest,
+    validate: requestCodec.validate, parseValidated: requestCodec.parse,
   });
 }
 
@@ -54,13 +54,13 @@ export function migrateHumanRequests(options) {
     recordsOf: document => [
       ...document.approvals.map(request => ({ collection: "approvals", request })),
       ...document.reviews.map(request => ({ collection: "reviews", request })),
-    ], validateRecord: validateRequest, keyOf: record => record.request.request_id, storeOf: requests,
+    ], validateRecord: requestCodec.validate, keyOf: record => record.request.request_id, storeOf: requests,
   });
 }
 
 export function migrateHumanDecisions(options) {
   return migrateRecordState(options, { schemaVersion: DECISION_SCHEMA, fields: ["decisions"],
-    recordsOf: document => document.decisions, validateRecord: validateDecision,
+    recordsOf: document => document.decisions, validateRecord: decisionCodec.validate,
     keyOf: record => record.request_id, storeOf: decisions,
   });
 }
@@ -69,7 +69,7 @@ function decisions(path) {
   return indexedStore({ path, schemaVersion: DECISION_SCHEMA,
     keyOf: record => record.request_id,
     indexes: HUMAN_DECISION_INDEXES,
-    validate: validateDecision,
+    validate: decisionCodec.validate, parseValidated: decisionCodec.parse,
   });
 }
 

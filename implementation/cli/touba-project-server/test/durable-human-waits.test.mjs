@@ -1815,7 +1815,7 @@ test("WAIT startup recovery reads checkpoints through pages or indexed selection
   const root = createTestProject();
   let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
   const originalPrepare = DatabaseSync.prototype.prepare;
-  let paged = 0, selected = 0;
+  let paged = 0, physical = 0, selected = 0;
   try {
     await service.start();
     const url = serverBaseUrl(service);
@@ -1828,12 +1828,15 @@ test("WAIT startup recovery reads checkpoints through pages or indexed selection
     await waitForInteractionStatus(url, session.session_id, operation.operation_id, "succeeded");
     await service.stop();
     DatabaseSync.prototype.prepare = function(sql) {
-      if (sql.startsWith("SELECT id, revision, body FROM records")) {
+      if (/^SELECT (?:rowid, )?id, revision, body FROM records/u.test(sql)) {
         const schema = originalPrepare.call(this, "SELECT schema_version FROM metadata WHERE singleton=1").get();
         if (schema?.schema_version === "touba-sandbox-checkpoints-v1") {
-          assert.ok(sql.includes(" WHERE ") || sql.includes(" LIMIT "),
+          assert.ok((sql.includes(" WHERE ") && !sql.includes(" WHERE 1")) || sql.includes(" LIMIT "),
             "recovery must not materialize all historical checkpoints");
-          if (sql.includes(" LIMIT ")) paged++;
+          if (sql.includes(" LIMIT ")) {
+            paged++;
+            if (sql.includes("ORDER BY rowid")) physical++;
+          }
           else selected++;
         }
       }
@@ -1842,6 +1845,7 @@ test("WAIT startup recovery reads checkpoints through pages or indexed selection
     service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
     await service.start();
     assert.ok(paged > 0, "exhaustive startup admission remains paginated");
+    assert.ok(physical > 0, "internal exhaustive audits follow physical order");
     assert.ok(selected > 0, "recovery keeps indexed operation reads");
     const restored = await getJson(`${serverBaseUrl(service)}/interactions/sessions/${session.session_id}/operations/${operation.operation_id}`);
     assert.equal(restored.status, "succeeded");
@@ -2029,7 +2033,24 @@ async function qualifyHttpHistoryMatrix(root, history, marker, t) {
     assert.throws(() => createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true }),
       { code: "ToubaServeSandboxCheckpointStoreInvalid" });
     assert.deepEqual(failures, [], JSON.stringify(failures));
-  } finally { rmSync(backup, { recursive: true, force: true }); }
+  } finally {
+    try {
+      if (process.env.TOUBA_HTTP_HISTORY_EVIDENCE_DIR) {
+        mkdirSync(process.env.TOUBA_HTTP_HISTORY_EVIDENCE_DIR, { recursive: true, mode: 0o700 });
+        const evidence = mkdtempSync(join(process.env.TOUBA_HTTP_HISTORY_EVIDENCE_DIR, `history-${history}-`));
+        // The baseline was copied with the server stopped, before all timed
+        // processes. Keep its exact origin and source path; never reattribute
+        // these completed runs to a future build during diagnosis.
+        cpSync(join(backup, "state"), join(evidence, "state"), { recursive: true });
+        cpSync(root, join(evidence, "project"), { recursive: true, filter: source => source !== state && source !== marker });
+        writeJson(join(evidence, "preservation.json"), {
+          history, originalProjectRoot: root, origin: readJson(join(backup, "state/state-origin.json")),
+          note: "Coherent synthetic baseline retained after all timed processes; not new outcomes.",
+        });
+        t.diagnostic(`Preserved coherent synthetic baseline: ${evidence}`);
+      }
+    } finally { rmSync(backup, { recursive: true, force: true }); }
+  }
 }
 
 test("offline preflight and startup both refuse an orphan interaction projection without altering stored state", async () => {
