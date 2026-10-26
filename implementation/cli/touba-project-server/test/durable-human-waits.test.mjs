@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { execFile, execFileSync } from "node:child_process";
@@ -34,7 +35,7 @@ import {
   AIR_SCHEMA_VERSION,
 } from "../../../contracts/machine/contracts.mjs";
 
-const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+const contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url));
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WAIT_TARGET = "strategy:demo.approval/RunApproval";
 const PURE_TARGET = "strategy:demo.approval/RunPure";
@@ -80,7 +81,7 @@ strategy RunApproval
         give reviewed
 `);
   const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
-    new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
+    fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
   writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
   const steps = [];
   const agentDecisionProvider = delegated ? request => {
@@ -190,7 +191,7 @@ strategy RunApproval
             into results
         give results
 `);
-  const air = JSON.parse(execFileSync(new URL("../../../target/debug/touba-compile", import.meta.url).pathname, [path], { encoding: "utf8" }));
+  const air = JSON.parse(execFileSync(fileURLToPath(new URL(`../../../target/debug/touba-compile${process.platform === "win32" ? ".exe" : ""}`, import.meta.url)), [path], { encoding: "utf8" }));
   writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
   let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
   try {
@@ -324,7 +325,7 @@ strategy RunApproval
         give "Business result"
 `);
     const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
-      new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--", sourcePath], { encoding: "utf8" }));
+      fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--", sourcePath], { encoding: "utf8" }));
     writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
     service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
     await service.start();
@@ -2007,7 +2008,7 @@ async function qualifyHttpHistoryMatrix(root, history, marker, t) {
       cpSync(join(backup, "state"), state, { recursive: true });
       writeFileSync(marker, "");
       const { stdout } = await promisify(execFile)(process.execPath, ["--max-old-space-size=512",
-        new URL("./http-history-profile.mjs", import.meta.url).pathname,
+        fileURLToPath(new URL("./http-history-profile.mjs", import.meta.url)),
         JSON.stringify({ root, history, repetition, concurrency })], { encoding: "utf8", timeout: 180000, signal: t.signal, maxBuffer: 8 * 1024 * 1024 })
         .catch(error => {
           // Preserve partial observations even when a later flow fails.
@@ -2593,7 +2594,7 @@ function compilePolicyProject(root, body) {
   const path = join(root, "src/demo/approval.tb");
   writeFileSync(path, `module demo.approval\nstrategy RunApproval\n    gives Text\n    do\n${body}`);
   const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
-    new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--", path], { encoding: "utf8" }));
+    fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--", path], { encoding: "utf8" }));
   writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
 }
 

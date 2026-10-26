@@ -427,9 +427,11 @@ def attest_human_approval(payload):
                 kernel32.OpenProcess.restype = wintypes.HANDLE
                 kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
                 kernel32.WaitForSingleObject.restype = wintypes.DWORD
+                kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+                kernel32.GetExitCodeProcess.restype = wintypes.BOOL
                 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
                 kernel32.CloseHandle.restype = wintypes.BOOL
-                host_handle = kernel32.OpenProcess(0x00100000, False, int(host_pids[0]))  # SYNCHRONIZE
+                host_handle = kernel32.OpenProcess(0x00101000, False, int(host_pids[0]))  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION
                 self.assertTrue(host_handle, f"cannot observe Python host exit: {ctypes.get_last_error()}")
                 self.addCleanup(kernel32.CloseHandle, host_handle)
             self.assertIsNone(child.poll(), "server must still be alive before the requested termination")
@@ -440,14 +442,18 @@ def attest_human_approval(payload):
         # CPython Popen.terminate() uses TerminateProcess(handle, 1) on Windows;
         # POSIX reports termination by SIGTERM as a negative return code.
         self.assertEqual(child.returncode, 1 if os.name == "nt" else -signal.SIGTERM, error)
+        host_exit = None
         if host_handle is not None:
             self.assertEqual(kernel32.WaitForSingleObject(host_handle, 10000), 0,
                              "the shared Python host must terminate, not only write its atexit marker")
+            status = wintypes.DWORD()
+            self.assertTrue(kernel32.GetExitCodeProcess(host_handle, ctypes.byref(status)))
+            host_exit = status.value
         closed = self.root / "host-closed.txt"
         deadline = time.monotonic() + 10
         while not closed.exists() and time.monotonic() < deadline:
             time.sleep(.02)
-        self.assertTrue(closed.exists(), "the shared Python host must exit after its parent closes")
+        self.assertTrue(closed.exists(), f"shared Python host atexit marker missing; host_exit={host_exit!r}; parent_stderr={error!r}")
         self.assertEqual(closed.read_text(), "closed")
 
     def test_large_output_and_errors_do_not_leak_stderr(self):
