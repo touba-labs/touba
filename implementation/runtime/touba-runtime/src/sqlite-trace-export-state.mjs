@@ -20,6 +20,12 @@ export function traceExportState({ db, transaction, segment, page, hash }) {
     }
     return row;
   }
+  function exportStatus(name) {
+    const row = settings(name);
+    const pending = db.prepare(`SELECT coalesce(sum(s.start_index+s.event_count-1-coalesce(c.last_index,s.start_index-1)),0) AS events
+      FROM touba_trace_segments s LEFT JOIN touba_trace_export_cursors c ON c.name=? AND c.segment_id=s.id`).get(name);
+    return { name, destinationId: row.destination_id, sourceId: row.source_id, pendingEvents: pending.events, epoch: row.epoch };
+  }
   return {
     configureExport({ name = "primary", destinationId }) {
       if (!text(name) || !text(destinationId)) throw new TypeError("invalid export identity");
@@ -77,11 +83,9 @@ export function traceExportState({ db, transaction, segment, page, hash }) {
           DO UPDATE SET last_index=excluded.last_index`).run(name, row.id, batch.through);
       });
     },
-    exportStatus(name) {
-      const row = settings(name);
-      const pending = db.prepare(`SELECT coalesce(sum(s.start_index+s.event_count-1-coalesce(c.last_index,s.start_index-1)),0) AS events
-        FROM touba_trace_segments s LEFT JOIN touba_trace_export_cursors c ON c.name=? AND c.segment_id=s.id`).get(name);
-      return { name, destinationId: row.destination_id, sourceId: row.source_id, pendingEvents: pending.events, epoch: row.epoch };
+    exportStatus,
+    exportStatuses() {
+      return exists() ? db.prepare("SELECT name FROM touba_trace_exports ORDER BY name").all().map(row => exportStatus(row.name)) : [];
     },
     exportProtectsRun(runId) {
       if (!exists()) return false;

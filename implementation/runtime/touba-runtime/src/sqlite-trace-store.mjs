@@ -246,6 +246,11 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
       // Same JSON document as document(), one bounded page in memory.
       yield* snapshot(id).json();
     },
+    statistics() {
+      const usage = db.prepare("SELECT bytes FROM touba_trace_storage WHERE singleton=1").get();
+      const counts = db.prepare("SELECT count(*) AS segments, coalesce(sum(event_count),0) AS events FROM touba_trace_segments").get();
+      return { bytes: usage.bytes, maxBytes, segments: counts.segments, events: counts.events, exports: exportState.exportStatuses() };
+    },
     *segments({ runId, after = "", limit = 100 } = {}) {
       positive(limit, "limit"); if (limit > 1000) throw new RangeError("page limit must be <= 1000");
       const rows = runId === undefined

@@ -219,7 +219,9 @@ sont les valeurs exactes de `schema_version`, pas des noms de versions du logici
 | `GET /health` | disponibilité, `build_id`, versions des protocoles et endpoints exposés |
 | `GET /contracts` | index versionné des contrats disponibles ou absents |
 | `GET /project` | inspection, entrées et signatures exécutables |
+| `GET /project/refresh` | dernier rapport d'indexation, lecture seule avec `projects.read` |
 | `POST /project/refresh` | `touba-project-refresh-request-v1` |
+| `GET /traces/storage` | `touba-trace-storage-status-v1`, usage SQLite et file d'export avec `executions.read` |
 | `GET /identity` | identité de projet, appareils et affectations |
 | `POST /runs/sandbox` | `touba-sandbox-run-request-v1`, `execution_kind: "entrypoint"` |
 | `POST /triggers/fire` | même contrat, `execution_kind: "trigger"` |
@@ -264,6 +266,17 @@ Pour une interruption de processus, consultez d'abord la route `recovery`.
 Elle indique les actions possibles et les préconditions exactes du checkpoint.
 Si l'AIR actuel est incompatible, elle refuse la reprise sans modifier l'état.
 Le runtime revérifie l'ensemble des conditions lors de l'admission.
+
+Le champ `budgets`, lorsqu'il est disponible, décrit le dernier checkpoint :
+plafond, usage imputé, part réservée et capacité restante. La réserve est déjà
+incluse dans l'usage imputé. Ces compteurs sont ceux du run ; ils ne constituent
+pas une facture fournisseur ni un budget attribué à chacun de ses agents.
+
+La route `/traces/storage` mesure le volume logique retenu et le quota configuré.
+Pour chaque destination d'export, elle compte les événements encore sans accusé
+de réception durable. Une file non vide peut être normale pendant l'export ;
+elle n'indique pas à elle seule une panne. Les chemins locaux, identifiants de
+connexion et contenus métier ne font pas partie de cette réponse.
 
 Une reprise d'interaction passe par la route de sa session, pour conserver
 les messages et publier son résultat au bon endroit. La réponse 202 signifie

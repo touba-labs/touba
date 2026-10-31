@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
 import { buildAirInputContract } from "../contracts/product-surfaces/input-contracts.mjs";
@@ -29,6 +29,9 @@ test("canonical validation follows nested references and bounds values", () => {
 });
 
 test("validates all product surface fixtures", () => {
+  const files = readdirSync(new URL("schemas/", contractsRoot)).filter(name => name.endsWith(".schema.json"))
+    .map(name => name.replace(/\.schema\.json$/u, "")).sort();
+  assert.deepEqual([...PRODUCT_SURFACE_CONTRACTS].sort(), files, "every schema must be advertised and validated");
   const report = buildProductSurfaceContractsReport();
 
   assert.equal(report.schema_version, PRODUCT_SURFACE_CONTRACTS_SCHEMA_VERSION);

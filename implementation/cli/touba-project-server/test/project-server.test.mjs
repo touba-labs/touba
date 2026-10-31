@@ -988,8 +988,14 @@ test("operational project surfaces report supply chain, governance readiness and
     });
     assertMatchesSchema("touba-handler-sandbox-status-v1", sandbox);
     assert.equal(sandbox.handlers[0].tool_ref, "tool:demo.governance/ReadInvoice");
-    assert.equal(sandbox.handlers[0].status, "isolated");
+    assert.equal(sandbox.handlers[0].status, "unknown", "a manifest requirement is not isolation evidence");
     assert.equal(sandbox.handlers[0].mechanism, "sandbox-exec");
+    for (const [platform, mechanism] of [["linux", "bubblewrap"], ["win32", "windows-lpac-job"], ["other", null]]) {
+      const report = buildHandlerSandboxStatus({ contractsRoot, projectRoot: root, platform });
+      assertMatchesSchema("touba-handler-sandbox-status-v1", report);
+      assert.equal(report.handlers[0].status, mechanism ? "unknown" : "unsupported");
+      assert.equal(report.handlers[0].mechanism, mechanism);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -2499,16 +2505,34 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     await service.start();
     const baseUrl = `http://127.0.0.1:${service.server.address().port}`;
     const health = await getJson(`${baseUrl}/health`);
+    assert.equal(health.endpoints.trace_storage, "/traces/storage");
+    assert.equal(requiredIdentityPermission("GET", "/traces/storage"), "executions.read");
+    const storageStatus = await getJson(`${baseUrl}/traces/storage`);
+    assertMatchesSchema("touba-trace-storage-status-v1", storageStatus);
+    assert.equal(storageStatus.storage.kind, "sqlite");
+    assert.equal(storageStatus.exports.length, 0);
     assert.equal(health.status, "ok");
     assert.equal(health.service, "touba-project-server");
     assert.equal(health.endpoints.events, "/events");
     assert.equal(health.endpoints.trigger_queue_health, "/triggers/queue-health");
     assert.equal(health.endpoints.supply_chain_status, "/supply-chain/status");
     assert.equal(health.endpoints.governance_readiness, "/governance/readiness");
+    assert.equal(health.endpoints.project_refresh_status, "/project/refresh");
+    assert.equal(health.endpoints.package_registry, undefined);
+    assert.equal(health.endpoints.package_local_preview, "/packages/local/preview");
+    assert.equal(health.endpoints.package_cancel, "/packages/cancel");
+    for (const action of ["message", "resume", "cancel", "archive"]) {
+      assert.match(health.endpoints[`interaction_${action}`], /^\/interactions\/sessions\/<session_id>\//u);
+    }
 
     const state = await getJson(`${baseUrl}/state`);
     assert.equal(state.schema_version, "touba-project-live-state-v1");
     assert.equal(state.project_server.refresh.summary.artifact_count, 4);
+    const refreshStatus = await getJson(`${baseUrl}/project/refresh`);
+    assert.deepEqual(refreshStatus, state.project_server.refresh);
+    assert.equal(requiredIdentityPermission("GET", "/project/refresh"), "projects.read");
+    assert.equal(requiredIdentityPermission("POST", "/project/refresh"), "projects.manage");
+    assert.equal(validateObject(JSON.parse(readFileSync(join(contractsRoot, "schemas/touba-project-refresh-v1.schema.json"))), refreshStatus).length, 0);
     assert.equal(state.project.project.name, basename(root));
     assert.equal(state.project.entrypoints.some((entrypoint) => entrypoint.kind === "strategy"), true);
 
@@ -3150,6 +3174,11 @@ test("HTTP durable resume reconstructs the terminal result and coalesces one cla
     const recovery = await recoveryResponse.json();
     assertMatchesSchema("touba-operation-recovery-v1", recovery);
     assert.equal(recovery.status, "interrupted");
+    assert.equal(recovery.budgets.status, "available");
+    const toolBudget = recovery.budgets.rows.find(row => row.kind === "max_tool_calls");
+    assert.equal(toolBudget.charged, record.checkpoint.runtime_state.budget_counters.tool_calls);
+    assert.equal(toolBudget.reserved, record.checkpoint.pending_dispatch?.budget_reserved?.tool_calls ?? 0);
+    assert.equal(toolBudget.limit, record.checkpoint.runtime_state.effective_limits.max_tool_calls ?? null);
     assert.equal(recovery.freshness.state_revision, record.checkpoint.revision);
     assert.equal(recovery.correlations.checkpoint_digest, record.checkpoint.checkpoint_digest);
     assert.deepEqual(recovery.allowed_actions.map((action) => action.action), ["resume"]);

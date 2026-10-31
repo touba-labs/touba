@@ -17,13 +17,14 @@ test("real PostgreSQL: lost COMMIT reply, replay, conflict, fencing, outage and 
   const root = mkdtempSync(join(tmpdir(), "touba-postgres-trace-"));
   const container = `touba-trace-qa-${randomUUID()}`;
   const docker = args => execFileSync("docker", args, { encoding: "utf8", timeout: 20000 }).trim();
-  let started = false, paused = false, pool, store, child;
+  let started = false, paused = false, pool, store, child, saturated;
   t.after(async () => {
     if (child && child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL"); await once(child, "exit");
     }
     if (paused) docker(["unpause", container]);
     store?.close();
+    saturated?.close();
     try { await pool?.end(); }
     finally {
       try { if (started) docker(["stop", "--time", "2", container]); }
@@ -126,10 +127,32 @@ test("real PostgreSQL: lost COMMIT reply, replay, conflict, fencing, outage and 
   const pending = store.exportStatus("primary").pendingEvents;
   await assert.rejects(outageWorker.step(), /timeout|terminated|closed/i);
   assert.equal(store.exportStatus("primary").pendingEvents, pending);
+  // Fill only a synthetic journal's logical byte quota, not the host disk.
+  // PostgreSQL is still paused: unread evidence must remain local and intact.
+  saturated = createSqliteTraceStore({ filename: join(root, "saturated.sqlite"), maxBytes: 4096 });
+  const saturatedId = saturated.openSegment({ run: { run_id: "saturated-run" } }, 0);
+  const saturatedWorker = createTraceExportWorker({ store: saturated, destination, owner: "worker-saturated", batchSize: 3 });
+  let accepted = 0;
+  for (; accepted < 100; accepted++) {
+    try {
+      saturated.append(saturatedId, { run_id: "saturated-run", event_id: `event:saturated-run:${accepted + 1}`,
+        sequence_index: accepted, kind: "tool_result_received", payload: { text: "x".repeat(300) } });
+    } catch (error) { assert.equal(error.code, "TraceStorageLimitExceeded"); break; }
+  }
+  assert.ok(accepted > 0 && accepted < 100);
+  assert.equal(saturated.exportStatus("primary").pendingEvents, accepted);
+  assert.equal(saturated.page(saturatedId, { limit: 100 }).events.length, accepted);
+  assert.equal(saturated.archive({}).segments, 0, "unacknowledged/incomplete evidence is not reclaimable");
+  await assert.rejects(saturatedWorker.step(), /timeout|terminated|closed/i);
+  assert.equal(saturated.exportStatus("primary").pendingEvents, accepted);
   docker(["unpause", container]); paused = false;
   assert.equal((await outageWorker.step()).pendingEvents, 0);
   assert.equal(Number((await pool.query("SELECT count(*) AS n FROM touba_traces.events WHERE segment_id=$1", [outageId])).rows[0].n), 2);
   await outageWorker.close();
+  while (saturated.exportStatus("primary").pendingEvents) await saturatedWorker.step();
+  assert.equal(Number((await pool.query("SELECT count(*) AS n FROM touba_traces.events WHERE segment_id=$1", [saturatedId])).rows[0].n), accepted);
+  assert.equal(saturated.page(saturatedId, { limit: 100 }).events.length, accepted, "export does not delete evidence");
+  await saturatedWorker.close(); saturated.close(); saturated = null;
   store.close();
   // An isolated distribution can replace the source launcher. The same real
   // database and assertions then exercise its bundled runtime and pg dependency.

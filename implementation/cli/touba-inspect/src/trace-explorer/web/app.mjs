@@ -110,6 +110,7 @@ function translate() {
 function setBusy(value) {
   busy = value; $('events').setAttribute('aria-busy', String(value));
   $('export').disabled = value || !state; $('refresh').disabled = value;
+  for (const item of $('runs').querySelectorAll('button')) item.disabled = value;
   clearTimeout(cancelTimer);
   // Short reads finish before the cancel action would only flicker into view.
   if (value) { setStatus('loading', 'loading'); cancelTimer = setTimeout(() => { $('cancel').hidden = false; }, 600); }
@@ -139,6 +140,7 @@ async function list(append = false) {
 function renderRuns() {
   $('runs').replaceChildren(...runs.map(run => {
     const li = element('li'), item = element('button', undefined, 'run'); item.type = 'button';
+    item.disabled = busy;
     item.dataset.category = 'flow'; item.setAttribute('aria-current', String(state?.id === run.id));
     const meta = element('small'), count = `${run.eventCount} ${t('count').toLowerCase()}`;
     if (essential()) meta.append(count); else meta.append(element('span', run.runId, 'mono'), ` · ${count}`);
@@ -530,12 +532,18 @@ document.addEventListener('keydown', event => {
   if (actions[event.key]) { event.preventDefault(); actions[event.key](); }
 });
 $('export').addEventListener('click', async () => {
+  if (busy || !state) return;
+  const generation = revision, segment = state.id;
+  setBusy(true);
   try {
     const report = await rpc('export', query);
+    if (generation !== revision || state?.id !== segment) return;
     if (vscode && report.saved === false) { notify('cancelled'); return; }
+    if ((!vscode || embeddedHost) && report.segment?.id !== segment) throw new Error('TraceExportSelectionChanged');
     if (!vscode || embeddedHost) { const url = URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'})), a = element('a'); a.href = url; a.download = 'touba-trace-selection.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
     notify('exported');
-  } catch(error) { fail(error); }
+  } catch(error) { if (generation === revision) fail(error); }
+  finally { if (generation === revision) setBusy(false); }
 });
 let resizeFrame;
 new ResizeObserver(() => {

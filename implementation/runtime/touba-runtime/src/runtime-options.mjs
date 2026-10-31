@@ -166,6 +166,9 @@ export function normalizeAgentDecisionProviderMetadata(metadata, fieldName, opti
   }
   /** @type {Record<string, string>} */
   const normalized = {};
+  /** @type {Partial<Record<string, readonly string[]>>} */
+  const allowed = { decision_interface: ["native", "structured"], history_storage: ["memory", "host_adapter", "disabled"],
+    history_summary: ["none", "host_callback"] };
   for (const [key, value] of Object.entries(metadata)) {
     if (!AGENT_DECISION_PROVIDER_METADATA_FIELD_SET.has(key)) {
       throw new ToubaRuntimeError("InvalidAgentDecisionProvider", `${fieldName} contains unsupported field`, {
@@ -182,9 +185,8 @@ export function normalizeAgentDecisionProviderMetadata(metadata, fieldName, opti
         field: key,
       });
     }
-    const allowed = { decision_interface: ["native", "structured"], history_storage: ["memory", "host_adapter", "disabled"],
-      history_summary: ["none", "host_callback"] };
-    if ((allowed[key] && !allowed[key].includes(value)) || (key.includes("_max_") && !/^[1-9][0-9]{0,15}$/.test(value))) {
+    const choices = allowed[key];
+    if ((choices && !choices.includes(value)) || (key.includes("_max_") && !/^[1-9][0-9]{0,15}$/.test(value))) {
       throw new ToubaRuntimeError("InvalidAgentDecisionProvider", `${fieldName}.${key} is invalid`, { field: key });
     }
     normalized[key] = value;

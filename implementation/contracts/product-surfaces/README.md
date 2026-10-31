@@ -48,6 +48,7 @@ Lists and optionals recursively retain reachable record/enum definitions.
 | `touba-interaction-session-list-v1` | project clients | Bounded index used to restore project interaction sessions. |
 | `touba-interaction-asset-v1` | project clients, project server | Opaque, digest-verified content handle without a client-visible storage path. |
 | `touba-trace-timeline-v1` | project clients | Ordered trace timeline for review and investigation. |
+| `touba-trace-storage-status-v1` | project clients | Measured SQLite logical usage, configured quota and pending export counts. No destination credentials or trace payloads. |
 | `touba-run-trace-export-v1` | Authorized audit clients | Native per-invocation trace segments, local digest chain and explicit completeness; no AIR/source/checkpoint discovery. |
 | `touba-native-trace-index-v1` | Authorized audit clients | Bounded segment metadata and durable references for paginated reads. |
 | `touba-trigger-status-v1` | host applications | Trigger state, queue state, replay/rate-limit surface. |
@@ -61,6 +62,32 @@ Lists and optionals recursively retain reachable record/enum definitions.
 | `touba-alert-v1` | host applications | Notification-only alert, separate from runtime decisions. |
 
 ## Validation
+
+Clients check the exact advertised endpoint and its request/response contracts
+before enabling an action. A supported run route does not imply support for
+cancellation, package installation or human decisions. The server still enforces
+the authenticated subject's grants on each request.
+
+`GET /project/refresh` returns the retained refresh report with `projects.read`.
+Only `POST /project/refresh` rebuilds the index and requires `projects.manage`.
+Readers can refresh the UI without invoking a mutating refresh or downloading
+the composite `/state` document again.
+
+`GET /traces/storage` requires `executions.read`. Usage is the journal's logical
+quota accounting, not the physical size of its SQLite/WAL files. Export backlog
+comes from durable acknowledgements; a pending count alone does not establish
+an exporter failure. `unavailable` has no storage measurement. Responses contain
+no local path, connection string, source identity or business event.
+
+Operation recovery may include `budgets` from the last retained checkpoint.
+Each row gives a declared limit (null when absent), charged usage, its reserved
+portion and remaining capacity. Reservations are already included in charged
+usage. The projection grants no permission to resume and does not infer
+per-agent spending from global counters. The runtime checks the actual claim.
+
+A manifest requiring handler isolation is a configuration requirement, not
+execution evidence. The project-server fallback reports `unknown` on supported
+platforms until runtime evidence is available, and `unsupported` otherwise.
 
 Server traces use `.touba/traces.sqlite` with a separate SQLite metadata index.
 `GET /runs/{run_id}/trace?index=true` returns the index; `/trace/segments/{index}`
@@ -135,7 +162,7 @@ source repository, description and tags.
 The Touba project server exposes the live boundary for host applications:
 
 ```bash
-touba serve --human-decisions .touba/human-decisions.json
+touba serve
 ```
 
 It serves:
@@ -145,7 +172,9 @@ GET  /health
 GET  /state
 GET  /events
 GET  /project
+GET  /project/refresh
 POST /project/refresh
+GET  /traces/storage
 GET  /authority/graph
 GET  /identity
 GET  /runs/current

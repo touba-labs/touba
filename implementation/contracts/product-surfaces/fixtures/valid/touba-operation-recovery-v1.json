@@ -5,6 +5,13 @@
   "run_id": "run:invoice-17",
   "target_ref": "strategy:billing/IssueInvoice",
   "status": "interrupted",
+  "budgets": {
+    "status": "available", "source": "checkpoint",
+    "rows": [
+      { "kind": "max_tool_calls", "limit": 8, "charged": 2, "reserved": 1, "remaining": 6 },
+      { "kind": "max_run_ms", "limit": null, "charged": 5000, "reserved": 3000, "remaining": null }
+    ]
+  },
   "freshness": {
     "observed_at": "2026-09-22T12:00:00.000Z",
     "source_updated_at": "2026-09-22T11:59:58.000Z",

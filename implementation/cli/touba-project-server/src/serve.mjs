@@ -6,6 +6,8 @@ import { readChangeProposals, saveChangeProposals, pageChangeProposals, countCha
 import { createProjectTraceExplorer } from "./trace-explorer-surface.mjs";
 import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT } from "./package-surface.mjs";
 import { createProjectPreparation } from "./project-preparation.mjs";
+import { projectOperationBudgets } from "./operation-budgets.mjs";
+import { projectTraceStorageStatus } from "./trace-storage-status.mjs";
 import { isCanonicalHandlerStub } from "../../touba-manifest/src/stub-validation.mjs";
 import { loadProjectContexts } from "../../touba-project/src/skill-packs.mjs";
 import { assertProjectEntrypoint, readProjectEntrypoints } from "../../touba-project/src/project-entrypoints.mjs";
@@ -1273,14 +1275,23 @@ function createProjectServerWithLease(options, takeLease) {
             events: "/events",
             project: "/project",
             project_refresh: "/project/refresh",
+            project_refresh_status: "/project/refresh",
             project_prepare: "/project/prepare",
             packages: "/packages/installed",
             package_preview: "/packages/preview",
+            package_local_preview: "/packages/local/preview",
+            ...(options.packageRegistry ? {
+              package_registry: "/packages/registry",
+              package_registry_resolve: "/packages/registry/resolve",
+              package_registry_preview: "/packages/registry/<resolution_id>/preview",
+            } : {}),
             package_apply: "/packages/apply",
+            package_cancel: "/packages/cancel",
             authority_graph: "/authority/graph",
             identity: "/identity",
             event_schema: PROJECT_EVENT_SCHEMA_VERSION,
             current_run: "/runs/current",
+            trace_storage: "/traces/storage",
             operation_recovery: "/operations/<operation_id>/recovery",
             sandbox_run: "/runs/sandbox",
             trigger_status: "/triggers",
@@ -1301,6 +1312,10 @@ function createProjectServerWithLease(options, takeLease) {
             human_decisions: "/decisions",
             sandbox_resume: "/runs/sandbox/resume",
             interaction_sessions: "/interactions/sessions",
+            interaction_message: "/interactions/sessions/<session_id>/messages",
+            interaction_resume: "/interactions/sessions/<session_id>/resume",
+            interaction_cancel: "/interactions/sessions/<session_id>/operations/<operation_id>/cancel",
+            interaction_archive: "/interactions/sessions/<session_id>/archive",
             interaction_assets: "/interaction-assets",
             human_decision_detail: "/decisions/<schema_version>/<request_id>",
             change_history: "/changes",
@@ -1324,6 +1339,10 @@ function createProjectServerWithLease(options, takeLease) {
             pending_review_source: "/reviews/pending/current",
           },
         });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/project/refresh") {
+        writeJson(response, 200, projectSnapshot.report);
         return;
       }
       if (request.method === "GET" && url.pathname === "/state") {
@@ -2111,6 +2130,13 @@ function createProjectServerWithLease(options, takeLease) {
       }
       if (request.method === "GET" && url.pathname === "/trace/current") {
         writeJson(response, 200, readProjectTraceTimeline({ contractsRoot, traceTimelinePath }));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/traces/storage") {
+        const report = projectTraceStorageStatus(options.traceStorage);
+        validateContractPayload({ contractsRoot, schemaVersion: report.schema_version, value: report,
+          errorCode: "ToubaServeTraceStorageInvalid", message: "trace storage status does not match its contract" });
+        writeJson(response, 200, report);
         return;
       }
       if (request.method === "GET" && url.pathname === "/authority/graph") {
@@ -3562,7 +3588,9 @@ export function readOperationRecovery({
     ?? human?.created_at
     ?? record.created_at;
   const stateRevision = execution?.checkpoint?.revision ?? 0;
+  const budgets = projectOperationBudgets({ execution, human, status });
   const stateDigest = canonicalDigest({
+    budgets,
     correlations,
     effects,
     refusal,
@@ -3584,6 +3612,7 @@ export function readOperationRecovery({
     },
     correlations,
     effects,
+    budgets,
     authority: {
       read_permission: "executions.read",
       action_permission: "executions.run",
@@ -6362,8 +6391,8 @@ function handlerSandboxRow({ toolRef, binding, platform, sourceRef }) {
   let status = "not_isolated";
   let message = "handler binding does not require sandbox isolation";
   if (required && mechanism !== null) {
-    status = "isolated";
-    message = "handler binding requires platform sandbox isolation";
+    status = "unknown";
+    message = "isolation is required by the binding; no runtime isolation evidence is recorded";
   } else if (required && mechanism === null) {
     status = "unsupported";
     message = "handler binding requires sandbox isolation on an unsupported platform";
@@ -6388,7 +6417,7 @@ function handlerSandboxRow({ toolRef, binding, platform, sourceRef }) {
 function sandboxMechanismForPlatform(platform) {
   if (platform === "linux") return "bubblewrap";
   if (platform === "darwin") return "sandbox-exec";
-  if (platform === "win32") return "Sandboxie-Plus";
+  if (platform === "win32") return "windows-lpac-job";
   return null;
 }
 
@@ -11310,7 +11339,7 @@ export function requiredIdentityPermission(method, pathname) {
   if (pathname === "/traces/explorer") return "executions.read";
   if (method === "GET" && (
     /^\/runs\/[^/]+\/trace(?:\/segments\/\d+)?$/u.test(pathname)
-    || pathname === "/runs/current" || pathname === "/trace/current"
+    || pathname === "/runs/current" || pathname === "/trace/current" || pathname === "/traces/storage"
     || pathname === "/budgets/costs" || pathname.startsWith("/triggers")
   )) return "executions.read";
   if (method === "GET" && pathname === "/health") return null;
@@ -11352,7 +11381,7 @@ export function requiredIdentityPermission(method, pathname) {
   if (pathname === "/packages/installed") return "projects.read";
   if (pathname === "/changes/apply" || pathname === "/changes/refuse") return "governance.apply";
   if (pathname.startsWith("/changes")) return "governance.read";
-  if (pathname === "/project/refresh") return "projects.manage";
+  if (pathname === "/project/refresh") return method === "GET" ? "projects.read" : "projects.manage";
   if (method === "GET") return "projects.read";
   return "projects.manage";
 }

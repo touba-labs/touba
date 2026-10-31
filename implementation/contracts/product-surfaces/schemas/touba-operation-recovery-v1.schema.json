@@ -90,6 +90,29 @@
         "enforced_by": { "const": "touba-project-server" }
       }
     },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "source", "rows"],
+      "properties": {
+        "status": { "enum": ["available", "unavailable"] },
+        "source": { "const": "checkpoint" },
+        "rows": {
+          "type": "array", "maxItems": 5,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["kind", "limit", "charged", "reserved", "remaining"],
+            "properties": {
+              "kind": { "enum": ["max_steps", "max_tool_calls", "max_agent_invocations", "max_provider_calls", "max_run_ms"] },
+              "limit": { "type": ["integer", "null"], "minimum": 1 },
+              "charged": { "type": "integer", "minimum": 0 },
+              "reserved": { "type": "integer", "minimum": 0 },
+              "remaining": { "type": ["integer", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
     "allowed_actions": {
       "type": "array",
       "items": {

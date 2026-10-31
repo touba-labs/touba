@@ -1,0 +1,7 @@
+{
+  "schema_version": "touba-trace-storage-status-v1",
+  "generated_at": "2026-10-31T12:00:00.000Z",
+  "status": "available",
+  "storage": { "kind": "sqlite", "retained_bytes": 2048, "limit_bytes": 4096, "segments": 1, "events": 8 },
+  "exports": [{ "name": "primary", "pending_events": 3, "status": "pending" }]
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-trace-storage-status-v1.schema.json",
+  "title": "touba-trace-storage-status-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "status", "storage", "exports"],
+  "properties": {
+    "schema_version": { "const": "touba-trace-storage-status-v1" },
+    "generated_at": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["available", "at_limit", "unavailable"] },
+    "storage": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "required": ["kind", "retained_bytes", "limit_bytes", "segments", "events"],
+      "properties": {
+        "kind": { "const": "sqlite" },
+        "retained_bytes": { "type": "integer", "minimum": 0 },
+        "limit_bytes": { "type": "integer", "minimum": 1 },
+        "segments": { "type": "integer", "minimum": 0 },
+        "events": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "exports": {
+      "type": "array", "maxItems": 8,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "pending_events", "status"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "pending_events": { "type": "integer", "minimum": 0 },
+          "status": { "enum": ["pending", "caught_up"] }
+        }
+      }
+    }
+  }
+}

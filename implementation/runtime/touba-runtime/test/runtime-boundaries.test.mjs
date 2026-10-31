@@ -461,6 +461,21 @@ test("normalizes agent decision provider options at a typed runtime boundary", (
   );
 });
 
+test("provider history metadata keeps its exact enums at the typed boundary", () => {
+  for (const [key, accepted] of Object.entries({ decision_interface: ["native", "structured"],
+    history_storage: ["memory", "host_adapter", "disabled"], history_summary: ["none", "host_callback"] })) {
+    for (const value of accepted) {
+      const provider = normalizeAgentDecisionProvider({ decide: () => ({}), metadata: { [key]: value } });
+      assert.deepEqual(provider.metadata, { [key]: value });
+      assert.equal(Object.isFrozen(provider.metadata), true);
+    }
+    for (const value of ["unexpected", "", 0, null]) {
+      assert.throws(() => normalizeAgentDecisionProvider({ decide: () => ({}), metadata: { [key]: value } }),
+        error => error instanceof ToubaRuntimeError && error.code === "InvalidAgentDecisionProvider");
+    }
+  }
+});
+
 test("normalizes skill pack declarations before model disclosure", () => {
   const skillPacks = normalizeSkillPacks([
     {
