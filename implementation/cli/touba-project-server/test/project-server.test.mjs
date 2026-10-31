@@ -12,6 +12,8 @@ import {
   acceptMobilePairing,
   acceptDecision,
   authorizeHumanIdentity,
+  bindDecisionSigner,
+  filterLiveStateForIdentity,
   buildAuthorityGraph,
   buildGovernanceReadiness,
   buildHandlerSandboxStatus,
@@ -54,6 +56,7 @@ import {
   refreshProject,
 } from "../src/serve.mjs";
 import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
+import { generateHandlerStubFromAirTool } from "../../touba-manifest/src/stub.mjs";
 import {
   archiveInteractionSession,
   completeInteractionOperation,
@@ -72,6 +75,22 @@ import {
 } from "../../../contracts/machine/contracts.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+
+test("refusing a change requires mutation authority just like applying it", () => {
+  for (const pathname of ["/changes/apply", "/changes/refuse"]) assert.equal(requiredIdentityPermission("POST", pathname), "governance.apply");
+});
+
+test("human decisions bind the signer to the authenticated subject", () => {
+  const decision = { schema_version: "touba-approval-decision-v1", user_ref: "user:alice", decided_by: "user:alice" };
+  assert.equal(bindDecisionSigner(decision, { active: true, user: { id: "alice" } }), decision);
+  assert.equal(bindDecisionSigner(decision, null), decision);
+  for (const identity of [{ active: false, user: { id: "alice" } }, { active: true, user: { id: "bob" } }, {}]) {
+    assert.throws(() => bindDecisionSigner(decision, identity), { code: "ToubaServeDecisionIdentityUnauthorized" });
+  }
+  assert.throws(() => bindDecisionSigner({ ...decision, decided_by: "user:bob" }, { active: true, user: { id: "alice" } }), { code: "ToubaServeDecisionIdentityUnauthorized" });
+  const review = { schema_version: "touba-human-review-decision-v1", user_ref: "user:alice", reviewed_by: "user:alice" };
+  assert.equal(bindDecisionSigner(review, { active: true, user: { id: "user:alice" } }), review);
+});
 
 test("contract index lists product-surface contracts without filesystem paths", () => {
   const index = buildContractIndex({ contractsRoot, generatedAt: "2026-06-22T00:00:00Z" });
@@ -106,7 +125,7 @@ test("element authoring preview renders and validates changes without mutating t
     assert.equal(preview.impact.update_count, 1);
     assert.match(preview.changes[0].diff, /\+memory ReviewMemory/u);
     assert.equal(readFileSync(sourcePath, "utf8"), source);
-    assert.equal(existsSync(join(root, ".touba", "project-change-proposals.json")), false);
+    assert.equal(existsSync(join(root, ".touba", "project-change-proposals.sqlite")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -191,7 +210,7 @@ test("project server ignores obsolete client change stores without modifying the
   const dataRoot = join(root, ".touba");
   mkdirSync(dataRoot, { recursive: true });
   const legacyPath = join(dataRoot, "studio-change-proposals.json");
-  const currentPath = join(dataRoot, "project-change-proposals.json");
+  const currentPath = join(dataRoot, "project-change-proposals.sqlite");
   writeFileSync(legacyPath, JSON.stringify({
     schema_version: "touba-studio-change-proposals-v0.1",
     proposals: [{
@@ -263,6 +282,9 @@ test("human identity permissions map project reads and governed actions", () => 
   assert.equal(requiredIdentityPermission("GET", "/state"), "projects.read");
   assert.equal(requiredIdentityPermission("GET", "/events"), "executions.read");
   assert.equal(requiredIdentityPermission("GET", "/runs/example/trace"), "executions.read");
+  for (const path of ["/runs/example/trace/segments/0", "/runs/example/trace/segments/123", "/runs/current", "/trace/current"]) {
+    assert.equal(requiredIdentityPermission("GET", path), "executions.read", path);
+  }
   assert.equal(
     requiredIdentityPermission("GET", "/operations/operation%3A17/recovery"),
     "executions.read",
@@ -332,6 +354,33 @@ test("human identity introspection separates active sessions from permissions", 
   });
   assert.equal(denied.active, false);
   assert.equal(denied.allowed, false);
+});
+
+test("Cloud identity uses its API prefix, refuses redirects and binds the registered root", async () => {
+  for (const root of ["/projects/invoice", "/projects/other"]) {
+    const result = await authorizeHumanIdentity({ accessToken: "project-grant", permission: "projects.read",
+      controlPlaneUrl: "https://cloud.example/api/v1/studio", serviceToken: "service-token",
+      expectedProjectRoot: "/projects/invoice", fetchImpl: async (url, options) => {
+        assert.equal(url.href, "https://cloud.example/api/v1/studio/auth/introspect");
+        assert.equal(options.redirect, "error");
+        return new Response(JSON.stringify({ active: true, user: { id: "user" }, project_root: root, permissions: ["projects.read"] }));
+      } });
+    assert.equal(result.allowed, root === "/projects/invoice");
+  }
+});
+
+test("composite project state does not bypass trace and decision permissions", () => {
+  const state = { project: { name: "demo" }, current_run: { id: "run" }, trace_timeline: { events: [] },
+    events: {}, pending_approval: { request_id: "private" }, pending_review: {}, mobile_notifications: {}, cost_observatory: {} };
+  const reader = filterLiveStateForIdentity(state, { active: true, permissions: ["projects.read"] });
+  assert.equal(reader.project, state.project);
+  for (const key of ["current_run", "trace_timeline", "events", "pending_approval", "pending_review", "mobile_notifications", "cost_observatory"]) assert.equal(reader[key], null, key);
+  const auditor = filterLiveStateForIdentity(state, { active: true, permissions: ["executions.read"] });
+  assert.equal(auditor.trace_timeline, state.trace_timeline);
+  assert.equal(auditor.pending_approval, null);
+  assert.deepEqual(filterLiveStateForIdentity(state, { active: true, permissions: ["*"] }), state);
+  assert.equal(filterLiveStateForIdentity(state, null), state);
+  assert.deepEqual(state.pending_approval, { request_id: "private" });
 });
 
 test("HTTP project server enforces human sessions and permissions", async () => {
@@ -413,6 +462,12 @@ test("HTTP project server enforces human sessions and permissions", async () => 
     });
     assert.equal(viewerWrite.status, 403);
     assert.equal((await viewerWrite.json()).code, "ToubaServeIdentityPermissionDenied");
+    for (const token of ["viewer-token", "operator-token", "governor-token"]) {
+      const prepare = await fetch(`${baseUrl}/project/prepare`, {
+        method: "POST", headers: { "content-type": "application/json", "x-touba-identity-token": token }, body: "{}",
+      });
+      assert.equal(prepare.status, 403, "preparation requires governance.apply, not read, project management or proposal alone");
+    }
 
     const operatorWrite = await fetch(`${baseUrl}/project/refresh`, {
       method: "POST",
@@ -850,7 +905,7 @@ test("operational project surfaces report supply chain, governance readiness and
       JSON.stringify(readJson("fixtures/valid/touba-product-identity-v1.json")),
       "utf8",
     );
-    writeFileSync(join(root, ".touba", "project-change-proposals.json"), JSON.stringify({
+    writeStoreFixture(join(root, ".touba", "project-change-proposals.sqlite"), {
       schema_version: "touba-project-change-proposals-v1",
       proposals: [
         {
@@ -867,7 +922,7 @@ test("operational project surfaces report supply chain, governance readiness and
           validations: [],
         },
       ],
-    }), "utf8");
+    });
     writeFileSync(join(root, ".touba", "trigger-status.json"), JSON.stringify({
       schema_version: "touba-trigger-status-v1",
       generated_at: "2026-06-23T00:00:00.000Z",
@@ -907,7 +962,7 @@ test("operational project surfaces report supply chain, governance readiness and
       contractsRoot,
       projectRoot: root,
       productIdentityPath: join(root, ".touba", "product-identity.json"),
-      changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+      changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
       generatedAt: "2026-06-23T00:00:02.000Z",
     });
     assertMatchesSchema("touba-governance-readiness-v1", readiness);
@@ -1198,7 +1253,7 @@ test("refresh project reports artifacts, stale state and changed files", () => {
 test("change proposals are stored, applied atomically and cannot be replayed", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-change-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
     const proposed = proposeProjectChange({
       projectRoot: root,
       changeProposalsPath,
@@ -1250,7 +1305,7 @@ test("multi-file change sets apply through a recoverable transaction", () => {
   try {
     mkdirSync(join(root, "src"), { recursive: true });
     writeFileSync(join(root, "src", "main.tb"), "module demo.main\n", "utf8");
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
     const proposed = proposeProjectChangeSet({
       projectRoot: root,
       changeProposalsPath,
@@ -1276,14 +1331,7 @@ test("multi-file change sets apply through a recoverable transaction", () => {
           {
             path: "handlers/demo/main/lookup_record.handler.mjs",
             role: "handler_stub",
-            content: [
-              "#!/usr/bin/env node",
-              "// Touba generated handler stub v0.1",
-              'const code = "HandlerStubNotImplemented";',
-              "process.stderr.write(`${code}\\n`);",
-              "process.exitCode = 1;",
-              "",
-            ].join("\n"),
+            content: generateHandlerStubFromAirTool({ id: "tool:demo.main/LookupRecord" }),
           },
         ],
       },
@@ -1323,7 +1371,7 @@ test("multi-file change sets restore already written targets when commit fails",
     const original = "module demo.main\n";
     writeFileSync(join(root, "src", "main.tb"), original, "utf8");
     writeFileSync(join(root, "blocked"), "not a directory\n", "utf8");
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
     proposeProjectChangeSet({
       projectRoot: root,
       changeProposalsPath,
@@ -1488,7 +1536,7 @@ test("governance relation changes edit compiled Touba source through review", ()
       "",
     ].join("\n");
     writeFileSync(sourcePath, original, "utf8");
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
 
     const proposed = proposeGovernanceRelationChange({
       projectRoot: root,
@@ -1580,7 +1628,7 @@ test("multi-agent governance edits uses and callable_by as one reviewed change",
       "    responsibility \"Coordinate work using only explicitly declared agents.\"",
       "",
     ].join("\n"), "utf8");
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
 
     proposeGovernanceRelationChange({
       projectRoot: root,
@@ -1668,7 +1716,7 @@ test("governance relation changes edit memory access and replace trigger targets
       "        timeout_ms as 30000",
       "",
     ].join("\n"), "utf8");
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
 
     proposeGovernanceRelationChange({
       projectRoot: root,
@@ -1768,7 +1816,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
       "        give request",
       "",
     ].join("\n"), "utf8");
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
     const request = {
       schema_version: "touba-governance-relation-change-v1",
       proposal_id: "guard_relation",
@@ -1839,7 +1887,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
 test("change history reports pending, applied and refused proposals without raw content", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-history-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
     proposeProjectChange({
       projectRoot: root,
       changeProposalsPath,
@@ -1939,7 +1987,7 @@ test("change detail rejects unknown proposal ids", () => {
     assert.throws(
       () => getProjectChangeDetail({
         projectRoot: root,
-        changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+        changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
         proposalId: "missing",
       }),
       /unknown/,
@@ -1952,7 +2000,7 @@ test("change detail rejects unknown proposal ids", () => {
 test("change proposals reject unsafe paths and invalid Touba JSON metadata", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-reject-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
     assert.throws(
       () => proposeProjectChange({
         projectRoot: root,
@@ -1989,7 +2037,7 @@ test("change proposals reject unsafe paths and invalid Touba JSON metadata", () 
 test("change proposals validate Touba project metadata schemas before review", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-metadata-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
     assert.throws(
       () => proposeProjectChange({
         projectRoot: root,
@@ -2088,7 +2136,7 @@ test("change proposals validate Touba project metadata schemas before review", (
 test("change proposals allow guarded handler stubs but reject arbitrary handler code", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-handler-stub-"));
   try {
-    const changeProposalsPath = join(root, ".touba", "project-change-proposals.json");
+    const changeProposalsPath = join(root, ".touba", "project-change-proposals.sqlite");
     const accepted = proposeProjectChange({
       projectRoot: root,
       changeProposalsPath,
@@ -2098,22 +2146,7 @@ test("change proposals allow guarded handler stubs but reject arbitrary handler 
         action: "write_text_file",
         target: { path: "handlers/studio/studio_draft_tool.handler.mjs" },
         requested_by: { kind: "studio", id: "touba-studio" },
-        content: [
-          "#!/usr/bin/env node",
-          "// Touba generated handler stub v0.1",
-          "const chunks = [];",
-          "for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));",
-          "const response = {",
-          "  protocol: \"touba-tool-handler-v1\",",
-          "  ok: false,",
-          "  error: {",
-          "    code: \"HandlerStubNotImplemented\",",
-          "    message: \"Complete this handler before binding it.\"",
-          "  }",
-          "};",
-          "process.stdout.write(`${JSON.stringify(response)}\\n`);",
-          "",
-        ].join("\n"),
+        content: generateHandlerStubFromAirTool({ id: "tool:studio/StudioDraftTool" }),
       },
     });
     assert.equal(accepted.status, "proposed");
@@ -2246,7 +2279,7 @@ test("HTTP project server rejects invalid client and Mobile contract payloads", 
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.sqlite"),
-    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
     port: 0,
     quiet: true,
   });
@@ -2458,7 +2491,7 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.sqlite"),
-    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
     port: 0,
     quiet: true,
   });
@@ -2727,7 +2760,7 @@ test("HTTP project server validates, reviews and applies semantic governance edi
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, ".touba", "human-decisions.sqlite"),
-    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
     port: 0,
     quiet: true,
   });
@@ -2781,7 +2814,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.sqlite"),
-    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
     port: 0,
     quiet: true,
   });
@@ -3122,6 +3155,18 @@ test("HTTP durable resume reconstructs the terminal result and coalesces one cla
     assert.deepEqual(recovery.allowed_actions.map((action) => action.action), ["resume"]);
     assert.equal(recovery.allowed_actions[0].required_permission, "executions.run");
     assert.equal(recovery.refusal, null);
+    const airPath = join(root, ".touba", "air", "demo", "main.air.json");
+    const originalAir = readFileSync(airPath), checkpointBeforePreview = readFileSync(checkpointPath);
+    writeFileSync(airPath, JSON.stringify({ ...JSON.parse(originalAir), preview_change: true }));
+    const incompatible = await getJson(`${baseUrl}/operations/${encodeURIComponent(record.operation_id)}/recovery`);
+    assert.deepEqual(incompatible.allowed_actions, []);
+    assert.equal(incompatible.refusal.code, "DurableResumeCheckpointIncompatible");
+    assert.notEqual(incompatible.freshness.state_digest, recovery.freshness.state_digest);
+    assert.deepEqual(readFileSync(checkpointPath), checkpointBeforePreview, "compatibility preview is read-only");
+    writeFileSync(airPath, originalAir);
+    const restored = await getJson(`${baseUrl}/operations/${encodeURIComponent(record.operation_id)}/recovery`);
+    assert.deepEqual(restored.allowed_actions.map(action => action.action), ["resume"]);
+    assert.equal(restored.freshness.state_digest, recovery.freshness.state_digest);
     const wrongVersion = await postJson(`${baseUrl}/runs/sandbox/resume`, {
       ...resumeRequest,
       schema_version: "touba-operation-resume-request-v0",
@@ -4147,7 +4192,7 @@ test("HTTP project server refuses sandbox runtime-only runs that may dispatch to
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.sqlite"),
-    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
     port: 0,
     quiet: true,
   });
@@ -4210,7 +4255,7 @@ test("HTTP project server runs sandbox agents through a configured decision prov
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.sqlite"),
-    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
     port: 0,
     quiet: true,
   });
@@ -4743,7 +4788,7 @@ test("HTTP project server requires bearer auth when configured", async () => {
     contractsRoot,
     projectRoot: root,
     humanDecisionsPath: join(root, "human-decisions.sqlite"),
-    changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+    changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
     port: 0,
     quiet: true,
   });
@@ -4967,7 +5012,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     projectServer = createToubaProjectServer({
       contractsRoot,
       projectRoot: root,
-      changeProposalsPath: join(root, ".touba", "project-change-proposals.json"),
+      changeProposalsPath: join(root, ".touba", "project-change-proposals.sqlite"),
       deploymentTargetUrl: `${targetAddress.protocol}://${targetAddress.host}:${targetAddress.port}`,
       deploymentTargetToken: token,
       port: 0,
@@ -5089,9 +5134,19 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(plan.status, "ready");
     assertMatchesSchema("touba-deployment-plan-v1", plan);
 
+    const missingReview = await postJson(`${baseUrl}/deployments/publish`, {
+      schema_version: "touba-deployment-action-v1", action: "publish", profile: "dev", actor: "user:reviewer",
+    });
+    assert.equal(missingReview.status, 400);
+    const stalePublish = await postJson(`${baseUrl}/deployments/publish`, {
+      schema_version: "touba-deployment-action-v1", action: "publish", profile: "dev", actor: "user:reviewer", bundle_sha256: "0".repeat(64),
+    });
+    assert.equal(stalePublish.status, 409);
+    assert.equal((await getJson(`${baseUrl}/deployments`)).revisions.length, 0);
     const firstPublish = await postJson(`${baseUrl}/deployments/publish`, {
       schema_version: "touba-deployment-action-v1",
       action: "publish",
+      bundle_sha256: plan.bundle_sha256,
       profile: "dev",
       actor: "user:reviewer",
     });
@@ -5103,6 +5158,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
       schema_version: "touba-deployment-action-v1",
       action: "activate",
       revision_id: firstRevision,
+      expected_state: firstStatus.state_digest,
       actor: "user:reviewer",
     });
     assert.equal(firstActivation.status, 202);
@@ -5128,26 +5184,39 @@ test("client authoring and deployment routes complete a governed project lifecyc
       reason: "Validated.",
     });
     assert.equal(secondApply.status, 202);
+    const secondPlan = await (await postJson(`${baseUrl}/deployments/plan`, {
+      schema_version: "touba-deployment-action-v1", action: "plan", profile: "dev", actor: "user:reviewer",
+    })).json();
     const secondPublish = await postJson(`${baseUrl}/deployments/publish`, {
       schema_version: "touba-deployment-action-v1",
       action: "publish",
+      bundle_sha256: secondPlan.bundle_sha256,
       profile: "dev",
       actor: "user:reviewer",
     });
     assert.equal(secondPublish.status, 202);
-    const secondRevision = (await secondPublish.json()).revision.revision_id;
+    const secondStatus = await secondPublish.json();
+    const secondRevision = secondStatus.revision.revision_id;
     assert.notEqual(secondRevision, firstRevision);
     const secondActivation = await postJson(`${baseUrl}/deployments/activate`, {
       schema_version: "touba-deployment-action-v1",
       action: "activate",
       revision_id: secondRevision,
+      expected_state: secondStatus.state_digest,
       actor: "user:reviewer",
     });
     assert.equal(secondActivation.status, 202);
+    const activatedStatus = await secondActivation.json();
+    const staleRollback = await postJson(`${baseUrl}/deployments/rollback`, {
+      schema_version: "touba-deployment-action-v1", action: "rollback", actor: "user:reviewer", expected_state: secondStatus.state_digest,
+    });
+    assert.equal(staleRollback.status, 409);
+    assert.equal((await getJson(`${baseUrl}/deployments`)).current_revision_id, secondRevision);
 
     const rollback = await postJson(`${baseUrl}/deployments/rollback`, {
       schema_version: "touba-deployment-action-v1",
       action: "rollback",
+      expected_state: activatedStatus.state_digest,
       actor: "user:reviewer",
     });
     assert.equal(rollback.status, 202);

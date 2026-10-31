@@ -115,6 +115,13 @@ limits run
     assert.equal(await page.locator('#resource-list button').evaluate(node=>document.activeElement===node),true);
     await page.locator('#detail button').filter({hasText:language==='fr'?'Ouvrir la source':'Open source'}).click();
     await page.locator('#source-dialog[open]').waitFor(); assert.match(await page.locator('#source-code').innerText(),/agent Specialist/); await page.locator('#close-source').click();
+    // Essential reading folds the signature and the file path into the technical details.
+    await page.locator('#display-toggle').click(); await page.locator('[data-pref="level"] [data-value="essential"]').click(); await page.keyboard.press('Escape');
+    assert.equal(await page.locator('html').getAttribute('data-level'),'essential');
+    assert.doesNotMatch((await page.locator('#detail > .detail-section > h3').allTextContents()).join('\n'),/^(Origine|Origin|Signature)$/mu);
+    await page.locator('#detail .technical summary').click(); assert.match(await page.locator('#detail .technical').innerText(),/src\/review\.tb:\d+/);
+    await page.locator('#display-toggle').click(); await page.locator('[data-pref="level"] [data-value="complete"]').click(); await page.keyboard.press('Escape');
+    assert.match(await page.locator('#detail > .detail-section').allInnerTexts().then(texts=>texts.join('\n')),/src\/review\.tb:\d+/);
     await page.locator('#diagnostic-only').check(); assert.equal(await page.locator('.node').count(),0);
     await page.locator('#reset').click(); assert.equal(await page.locator('#diagnostic-only').isChecked(),false);
     await page.locator('[data-view="governance"]').click();

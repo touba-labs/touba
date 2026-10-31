@@ -47,6 +47,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:test/TwoTools",
         "owner_ref": "skill:test/TwoTools"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -74,7 +80,11 @@
         "consumed_value": 1,
         "limit_value": 1,
         "authority_source": "manifest",
-        "target_ref": "tool:test/First"
+        "target_ref": "tool:test/First",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -100,7 +110,11 @@
       "payload": {
         "target_ref": "tool:test/First",
         "caller_ref": "skill:test/TwoTools",
-        "agent_ref": null
+        "agent_ref": null,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -122,7 +136,13 @@
         "handler_kind": "process",
         "effect_contract_kind": "none",
         "timeout_ms": 5000,
-        "max_payload_bytes": 1048576
+        "max_payload_bytes": 1048576,
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "tool:test/First",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:5"
+        }
       }
     },
     {
@@ -148,7 +168,12 @@
       "payload": {
         "target_ref": "tool:test/First",
         "caller_ref": "skill:test/TwoTools",
-        "result_binding": "first"
+        "result_binding": "first",
+        "call_started_event_id": "event:run-1:5",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -177,7 +202,11 @@
         "consumed_value": 1,
         "authority_source": "manifest",
         "target_ref": "tool:test/Second",
-        "reason": "budget_limit_exceeded"
+        "reason": "budget_limit_exceeded",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -206,7 +235,11 @@
         "consumed_value": 1,
         "target_ref": "tool:test/Second",
         "tool_ref": "tool:test/Second",
-        "runtime_error_code": "ToolCallBudgetExceeded"
+        "runtime_error_code": "ToolCallBudgetExceeded",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {

@@ -293,7 +293,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("SDK resumes successive durable approvals without replaying earlier instructions", async () => {
+for (const terminalDecision of ["approved", "rejected"]) test(`SDK resumes successive durable approvals once (${terminalDecision})`, async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-engine-successive-"));
   try {
     const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
@@ -365,7 +365,7 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
     const next = JSON.parse(readFileSync(join(root, "second.json"), "utf8"));
     assert.notEqual(next.approval_ref, checkpoint.approval_ref);
     assert.equal(next.run_id, checkpoint.run_id);
-    for (const decision of ["rejected", "approved"]) {
+    for (const decision of [terminalDecision]) {
       const result = await engine.run({ ...options, humanResumeCheckpoint: "second.json",
         humanCheckpointOut: "third.json", humanDecisions: { [next.approval_ref]: decision } });
       assert.equal(result.reason, decision === "approved" ? "completed" : "human_approval_rejected");
@@ -374,8 +374,10 @@ process.stdout.write(JSON.stringify({ ok: true, value: 'stored', effect_receipt:
       assert.equal(readFileSync(marker, "utf8"), decision === "approved" ? "before\nbetween\nafter\n" : "before\nbetween\n");
     }
     const entries = Object.values(readEffectJournalFixture(join(root, "run.effect-journal.sqlite")).entries);
-    assert.equal(entries.length, 3);
+    assert.equal(entries.length, terminalDecision === "approved" ? 3 : 2);
     assert.ok(entries.every(entry => entry.state === "applied"));
+    await assert.rejects(engine.run({ ...options, humanResumeCheckpoint: "second.json",
+      humanDecisions: { [next.approval_ref]: "approved" } }), error => error.code === "HumanApprovalCheckpointAlreadyConsumed");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

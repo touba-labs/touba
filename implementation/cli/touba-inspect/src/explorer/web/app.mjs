@@ -4,6 +4,8 @@ const strings = {
   en: { readonly:'Read-only',language:'Language',diagnostics:'Diagnostics',resources:'Project resources',search:'Search resources',kind:'Kind',module:'Module',package:'Package',architecture:'Architecture',flow:'Flow',governance:'Governance',group:'Group',groupTitle:'Group modules and packages',focus:'Focus',all:'All',both:'Both directions',incoming:'Incoming',outgoing:'Outgoing',depth:'Depth',reset:'Reset',empty:'No resources in this view. Adjust the filters.',errorEmpty:'No graph yet: the project could not be compiled. Open the diagnostics above to fix it.',fit:'Fit',fullscreen:'Full screen',exportSvg:'Export as SVG (vector)',exportPng:'Export as PNG (image)',exportError:'The image could not be exported. Try SVG.',themeDark:'Switch to dark theme',themeLight:'Switch to light theme',details:'Resource details',select:'Select a resource or a relationship to explore its contract and source.',hint:'Double-click a module or a package to explore its contents.',close:'Close',loading:'Reading project sources…',ready:'Up to date · compiled sources',stale:'Source errors · showing the last valid graph',error:'The project could not be compiled',source:'Open source',expand:'Explore contents',relations:'Relationships',outgoingRelations:'Outgoing',incomingRelations:'Incoming',origin:'Origin',count:'resources',limited:'Graph limited to 200 nodes. Refine the filters; the list includes all matches.',sourceError:'Source unavailable. Refresh the project and try again.',connection:'Connection lost. Reconnecting…',legendStructure:'Structure and flow',legendAuthority:'Declared authority',aggregate:'Grouped relationships',boundaryValue:'Implemented in JavaScript or Python, outside the Touba program.',noFlows:'Choose a strategy, skill or function to inspect its source-defined flow.',filters:'Filters',inspector:'Details',display:'Display',edgeLabels:'Relationship labels',labelsAll:'Always',labelsAuto:'Selection',labelsNone:'Hidden',orientation:'Orientation',vertical:'Vertical',horizontal:'Horizontal',density:'Density',comfortable:'Comfortable',compact:'Compact',panels:'Panels',resourcesShort:'Resources',hideResources:'Hide resources  [',showResources:'Show resources  [',hideDetails:'Hide details  ]',showDetails:'Show details  ]',focusMode:'Graph only  \\',exitFocus:'Show panels  \\',zoomIn:'Zoom in  +',zoomOut:'Zoom out  −',shortcuts:'Shortcuts: [ resources · ] details · \\ graph only · 0 fit · + and − zoom · Esc or a second click clear the selection',diagnosticOnly:'Files with diagnostics' },
   fr: { readonly:'Lecture seule',language:'Langue',diagnostics:'Diagnostics',resources:'Ressources du projet',search:'Rechercher une ressource',kind:'Type',module:'Module',package:'Package',architecture:'Architecture',flow:'Parcours',governance:'Gouvernance',group:'Regrouper',groupTitle:'Regrouper modules et packages',focus:'Voisinage',all:'Tous',both:'Les deux sens',incoming:'Entrant',outgoing:'Sortant',depth:'Profondeur',reset:'Réinitialiser',empty:'Aucune ressource dans cette vue. Ajustez les filtres.',errorEmpty:'Aucun graphe pour l’instant : le projet ne peut pas être compilé. Ouvrez les diagnostics ci-dessus pour le corriger.',fit:'Cadrer',fullscreen:'Plein écran',exportSvg:'Exporter en SVG (vectoriel)',exportPng:'Exporter en PNG (image)',exportError:'L’image n’a pas pu être exportée. Essayez le SVG.',themeDark:'Passer au thème sombre',themeLight:'Passer au thème clair',details:'Détails de la ressource',select:'Sélectionnez une ressource ou une relation pour consulter son contrat et sa source.',hint:'Double-cliquez sur un module ou un package pour explorer son contenu.',close:'Fermer',loading:'Lecture des sources du projet…',ready:'À jour · sources compilées',stale:'Erreurs dans les sources · dernier graphe valide affiché',error:'Le projet ne peut pas être compilé',source:'Ouvrir la source',expand:'Explorer le contenu',relations:'Relations',outgoingRelations:'Sortantes',incomingRelations:'Entrantes',origin:'Origine',count:'ressources',limited:'Graphe limité à 200 nœuds. Affinez les filtres ; la liste contient tous les résultats.',sourceError:'Source indisponible. Actualisez le projet puis réessayez.',connection:'Connexion interrompue. Reconnexion…',legendStructure:'Structure et parcours',legendAuthority:'Autorité déclarée',aggregate:'Relations regroupées',boundaryValue:'Implémenté en JavaScript ou en Python, hors du programme Touba.',noFlows:'Choisissez une stratégie, une compétence ou une fonction pour examiner son parcours.',filters:'Filtres',inspector:'Détails',display:'Affichage',edgeLabels:'Étiquettes des relations',labelsAll:'Toujours',labelsAuto:'Sélection',labelsNone:'Masquées',orientation:'Orientation',vertical:'Verticale',horizontal:'Horizontale',density:'Densité',comfortable:'Confortable',compact:'Compacte',panels:'Panneaux',resourcesShort:'Ressources',hideResources:'Masquer les ressources  [',showResources:'Afficher les ressources  [',hideDetails:'Masquer les détails  ]',showDetails:'Afficher les détails  ]',focusMode:'Graphe seul  \\',exitFocus:'Afficher les panneaux  \\',zoomIn:'Zoom avant  +',zoomOut:'Zoom arrière  −',shortcuts:'Raccourcis : [ ressources · ] détails · \\ graphe seul · 0 cadrer · + et − zoom · Échap ou second clic désélectionnent',diagnosticOnly:'Fichiers avec diagnostics' },
 };
+Object.assign(strings.en, { level:'Detail level', essential:'Essential', complete:'Complete', properties:'Properties', technicalData:'Technical details', copy:'Copy', copied:'Copied', copyFailed:'Unable to copy', file:'File', shortcutsTitle:'Shortcuts', shortcutResources:'Resources panel', shortcutDetails:'Details panel', shortcutFocus:'Graph only', shortcutGraph:'Fit and zoom the graph', shortcutClear:'Clear the selection', escape:'Esc' });
+Object.assign(strings.fr, { level:'Niveau de détail', essential:'Essentiel', complete:'Complet', properties:'Propriétés', technicalData:'Détails techniques', copy:'Copier', copied:'Copié', copyFailed:'Copie impossible', file:'Fichier', shortcutsTitle:'Raccourcis', shortcutResources:'Panneau des ressources', shortcutDetails:'Panneau des détails', shortcutFocus:'Graphe seul', shortcutGraph:'Cadrer et zoomer le graphe', shortcutClear:'Désélectionner', escape:'Échap' });
 const kinds = {
   en:{ module:'Module',package:'Package',agent:'Agent',skill:'Skill',tool:'Tool',strategy:'Strategy',function:'Function',type:'Type',constant:'Constant',memory:'Memory',trigger:'Trigger',secret_handle:'Secret name',capability:'Capability',call_agent:'Agent call',call_tool:'Tool call',call_skill:'Skill call',call_function:'Function call',call_strategy:'Strategy call',parallel_call:'Parallel call',human_approval:'Human approval',user_interaction:'Interaction',branch:'Condition',loop:'Loop',give:'Return',bind:'Binding',stop:'Stop',fallback:'Fallback',context:'Context procedure' },
   fr:{ module:'Module',package:'Package',agent:'Agent',skill:'Compétence',tool:'Outil',strategy:'Stratégie',function:'Fonction',type:'Type',constant:'Constante',memory:'Mémoire',trigger:'Déclencheur',secret_handle:'Nom de secret',capability:'Capacité',call_agent:'Appel agent',call_tool:'Appel outil',call_skill:'Appel compétence',call_function:'Appel fonction',call_strategy:'Appel stratégie',parallel_call:'Appel parallèle',human_approval:'Approbation humaine',user_interaction:'Interaction',branch:'Condition',loop:'Boucle',give:'Retour',bind:'Liaison',stop:'Arrêt',fallback:'Repli',context:'Procédure contextuelle' },
@@ -38,13 +40,14 @@ const uiIcons = {
   reset:'M4 12a8 8 0 1 0 2.4-5.7 M4 4v5h5', sliders:'M4 6h9 M17 6h3 M4 12h3 M11 12h9 M4 18h11 M19 18h1 M15 4v4 M9 10v4 M17 16v4',
   expand:'M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5', collapse:'M9 4v5H4 M15 4v5h5 M9 20v-5H4 M15 20v-5h5',
   minus:'M5 12h14', plus:'M5 12h14 M12 5v14', fit:'M4 8V4h4 M16 4h4v4 M20 16v4h-4 M8 20H4v-4 M9 9h6v6H9z', fullscreen:'M15 3h6v6 M9 21H3v-6 M21 3l-7 7 M3 21l7-7', download:'M12 4v11 M7 10l5 5 5-5 M5 20h14',
-  code:'M8 8l-4 4 4 4 M16 8l4 4-4 4 M14 4l-4 16', globe:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M3 12h18 M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9s1.3-6.4 3.8-9z', caret:'m8 10 4 4 4-4', open:'M3 7h7l2 2h9v11H3z M12 12v5 M9.5 14.5h5',
+  code:'M8 8l-4 4 4 4 M16 8l4 4-4 4 M14 4l-4 16', copy:'M9 9h11v11H9z M5 15H4V4h11v1', check:'m5 12 5 5 9-10', pointer:'M6 3l13 7-5.5 1.5L11 17z M14 13l5 5', globe:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M3 12h18 M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9s1.3-6.4 3.8-9z', caret:'m8 10 4 4 4-4', open:'M3 7h7l2 2h9v11H3z M12 12v5 M9.5 14.5h5',
 };
 const $ = id => document.getElementById(id), ns = 'http://www.w3.org/2000/svg';
-const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
+const embeddedHost = window.toubaExplorerHost ?? null;
+const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : embeddedHost;
 const stored = vscode?.getState() ?? {};
 const prefKey = 'touba-explorer-preferences';
-const prefChoices = { labels:['all','auto','none'], orientation:['vertical','horizontal'], density:['comfortable','compact'], theme:['light','dark',null] };
+const prefChoices = { labels:['all','auto','none'], orientation:['vertical','horizontal'], density:['comfortable','compact'], level:['complete','essential'], theme:['light','dark',null] };
 let prefs = loadPrefs();
 let lang = stored.lang ?? (navigator.language.startsWith('fr') ? 'fr' : 'en');
 let state = { status:'loading',graph:null,diagnostics:[] }, selected = stored.selected ?? null, selectedEdge = null;
@@ -61,7 +64,7 @@ const labelOf = id => { const node = nodeById(id); return node ? nodeLabel(node)
 const edgeText = e => `${e.kind === 'flow' && e.role ? roleText(e.role) : `${relations[lang][e.kind] ?? e.kind}${e.role ? ` · ${roleText(e.role)}` : ''}`}${e.count > 1 ? ` ×${e.count}` : ''}`;
 const family = kind => ['human_approval','user_interaction'].includes(kind) ? 'human' : ['module','package','context'].includes(kind) ? 'container' : ['give','stop','fallback','bind'].includes(kind) ? 'terminal' : 'default';
 function loadPrefs() {
-  const base = { resources:true, detail:true, filters:true, labels:'all', orientation:'vertical', density:'comfortable', theme:null };
+  const base = { resources:true, detail:true, filters:true, labels:'all', orientation:'vertical', density:'comfortable', level:'complete', theme:null };
   let saved = stored.prefs;
   if (!saved && !vscode) { try { saved = JSON.parse(localStorage.getItem(prefKey) ?? 'null'); } catch { saved = null; } }
   for (const [key, value] of Object.entries(saved && typeof saved === 'object' ? saved : {})) {
@@ -116,6 +119,7 @@ function renderStatus() {
 }
 function applyPanels() {
   const main = $('layout'); main.dataset.resources = prefs.resources ? 'open' : 'closed'; main.dataset.detail = prefs.detail ? 'open' : 'closed';
+  document.documentElement.dataset.level = prefs.level;
   $('show-resources').hidden = prefs.resources; $('show-detail').hidden = prefs.detail;
   const focused = !prefs.resources && !prefs.detail, focus = $('focus-mode');
   focus.setAttribute('aria-pressed', String(focused)); focus.dataset.i18nLabel = focused ? 'exitFocus' : 'focusMode';
@@ -266,8 +270,10 @@ function expand(n) {
   else { selected = n.id; view = 'flow'; $('direction').value = 'outgoing'; }
   box = null; render(); save();
 }
+// Essential reading folds what only matters to someone reading the AIR or the package contract.
+const technicalFields = new Set(['signature','type_ref','result_binding','condition_ref','collection_ref','item_binding','arguments','context','payload','constraints','default','min_length','max_length','format','min','max','value','limits','entrypoint','entrypoints','exports','dependencies','engines','hosts','touba','runtime_compatibility','air_profile','content_types','max_bytes','map','path','language','distinct_from','exclude_signers']);
 function detailValue(key, value) {
-  if (key === 'boundary') return el('p', text('boundaryValue'));
+  if (key === 'boundary') return el('p', text('boundaryValue'), 'prose');
   if (typeof value?.expression === 'string') return el('pre', value.expression, 'declared-expression');
   if (key === 'default' && value?.present === false) return el('code', 'none');
   if (key === 'default' && value?.present === true) return detailValue(key, value.value);
@@ -275,76 +281,117 @@ function detailValue(key, value) {
     const target = /_ref$/u.test(key) ? nodeById(value) : null;
     if (target) { const link = button(nodeLabel(target), () => revealNode(target.id)); link.className = 'link-button'; return link; }
     const shown = key === 'type_ref' ? typeName(value) : key === 'entrypoint' ? (lang === 'fr' ? 'Oui' : 'Yes') : /_ms$/u.test(key) ? duration(value) : /_ref$|_binding$/u.test(key) ? refName(value) : String(value);
-    return el('p', shown, typeof value === 'string' && value.length > 60 ? 'prose' : 'value');
+    return el(typeof value === 'string' && value.length > 60 ? 'p' : 'span', shown, typeof value === 'string' && value.length > 60 ? 'prose' : 'value');
   }
   if (Array.isArray(value)) {
-    const chips = el('div', undefined, value.some(item => item && typeof item === 'object') ? 'detail-items' : 'chips');
+    const items = el('div', undefined, value.some(item => item && typeof item === 'object') ? 'detail-items' : 'pills');
     for (const item of value) {
       if (item && typeof item === 'object') {
         const card = el('div', undefined, 'detail-item');
         if (item.name) card.append(el('h4', `${item.name}${item.type_ref ? ` · ${typeName(item.type_ref)}` : ''}`));
         const remaining = Object.fromEntries(Object.entries(item).filter(([field]) => !item.name || !['name', 'type_ref'].includes(field)));
-        card.append(detailValue(key, remaining)); chips.append(card);
+        card.append(detailValue(key, remaining)); items.append(card);
       } else {
         const target = nodeById(item);
-        chips.append(target ? button(nodeLabel(target), () => revealNode(target.id)) : el('span', String(item), 'chip'));
+        if (target) { const link = button(nodeLabel(target), () => revealNode(target.id)); link.className = 'pill link-pill'; items.append(link); }
+        else items.append(el('span', String(item), 'pill'));
       }
     }
-    return chips;
+    return items;
   }
-  const list = el('dl', undefined, 'facts');
-  for (const [subKey, subValue] of Object.entries(value ?? {})) {
-    if (subKey === 'source_ref' || subValue === undefined) continue;
-    // AIR run limits carry provenance alongside their value. Keep that contract
-    // intact and unwrap only this known field when presenting the limit.
-    const shown = key === 'budgets' ? subValue.value : subValue;
-    const detail = el('dd'); detail.append(detailValue(subKey, shown));
-    list.append(el('dt', fieldText(subKey)), detail);
-  }
+  // AIR run limits carry provenance alongside their value. Keep that contract
+  // intact and unwrap only this known field when presenting the limit.
+  return factsList(Object.entries(value ?? {}).filter(([subKey, subValue]) => subKey !== 'source_ref' && subValue !== undefined).map(([subKey, subValue]) => [subKey, key === 'budgets' ? subValue.value : subValue]));
+}
+function factsList(entries) {
+  const list = el('dl', undefined, 'props');
+  for (const [key, value] of entries) { const row = el('div', undefined, 'prop'), detail = el('dd'); detail.append(detailValue(key, value)); row.append(el('dt', fieldText(key)), detail); list.append(row); }
   return list;
+}
+async function copyText(value, node) {
+  try { await navigator.clipboard.writeText(value); }
+  catch { $('status').textContent = text('copyFailed'); return; }
+  const show = (name, key) => { uiIcon(name, node.querySelector('svg')); node.setAttribute('aria-label', text(key)); node.title = text(key); node.classList.toggle('done', key === 'copied'); };
+  show('check', 'copied'); setTimeout(() => show('copy', 'copy'), 1400);
+}
+function emptyDetail() {
+  const node = el('div', undefined, 'detail-empty'), mark = el('span', undefined, 'empty-mark'), keys = el('ul', undefined, 'shortcuts');
+  mark.append(uiIcon('pointer'));
+  for (const [caps, key] of [[['['], 'shortcutResources'], [[']'], 'shortcutDetails'], [['\\'], 'shortcutFocus'], [['0', '+', '−'], 'shortcutGraph'], [[text('escape')], 'shortcutClear']]) {
+    const li = el('li'), group = el('span', undefined, 'keys'); for (const cap of caps) group.append(el('kbd', cap));
+    li.append(el('span', text(key)), group); keys.append(li);
+  }
+  node.append(mark, el('h2', text('details')), el('p', text('select'), 'muted'), el('p', text('hint'), 'muted empty-hint'), el('p', text('shortcutsTitle'), 'shortcuts-title'), keys);
+  return node;
 }
 function renderDetails() {
   const panel = $('detail'); panel.replaceChildren();
-  const node = nodeById(selected);
+  const node = nodeById(selected), essential = prefs.level === 'essential';
+  const section = (title, content, target = panel) => { const block = el('section', undefined, 'detail-section'); block.append(el('h3', title), content); target.append(block); };
   if (selectedEdge) {
-    panel.append(el('h2', edgeText(selectedEdge)), el('p', `${labelOf(selectedEdge.from)} → ${labelOf(selectedEdge.to)}`, 'muted'));
+    const head = el('div', undefined, 'detail-head'), meta = el('div', undefined, 'detail-meta');
+    meta.append(el('span', `${labelOf(selectedEdge.from)} → ${labelOf(selectedEdge.to)}`));
+    head.append(el('h2', edgeText(selectedEdge)), meta); panel.append(head);
     if (selectedEdge.aggregated) panel.append(el('p', text('aggregate'), 'note'));
     const actions = el('div', undefined, 'detail-actions');
     for (const id of [selectedEdge.from, selectedEdge.to]) actions.append(button(labelOf(id), () => revealNode(id)));
     panel.append(actions);
     return;
   }
-  if (!node) { panel.append(el('h2', text('details')), el('p', text('select'), 'muted'), el('p', text('hint'), 'note')); return; }
-  const head = el('div', undefined, 'detail-head');
-  const mark = svg('svg', { viewBox:'0 0 24 24',class:'detail-icon','aria-hidden':'true','data-family':family(node.kind) }); mark.append(svg('path', { d:icon(node.kind) }));
-  const titles = el('div'); titles.append(el('h2', nodeLabel(node)), el('span', kindText(node.kind), 'badge kind-badge'));
-  head.append(mark, titles); panel.append(head);
+  if (!node) { panel.append(emptyDetail()); return; }
+  const head = el('div', undefined, 'detail-head'), top = el('div', undefined, 'head-top'), meta = el('div', undefined, 'detail-meta');
+  const mark = svg('svg', { viewBox:'0 0 24 24',class:'detail-icon','aria-hidden':'true' }); mark.append(svg('path', { d:icon(node.kind) }));
+  head.dataset.family = family(node.kind); top.append(mark); meta.append(el('span', kindText(node.kind), 'category-badge'));
+  if (node.graph && nodeById(node.owner)) meta.append(el('span', nodeById(node.owner).name));
+  head.append(top, el('h2', nodeLabel(node)), meta); panel.append(head);
   const actions = el('div', undefined, 'detail-actions');
   if (['module','package'].includes(node.kind) || state.graph.edges.some(e => e.kind === 'entry' && e.from === node.id)) actions.append(button(text('expand'), () => expand(node), 'open'));
   if (node.source_ref) actions.append(button(text('source'), () => openSource(node.id), 'code'));
   if (actions.children.length) panel.append(actions);
-  const section = (title, content) => { const block = el('section', undefined, 'detail-section'); block.append(el('h3', title), content); panel.append(block); };
+  const shown = { prose:[], rows:[], sections:[] }, folded = { prose:[], rows:[], sections:[] };
   for (const [key, value] of Object.entries(node.details ?? {})) {
     if (value === undefined) continue;
-    if (key === 'signature') {
-      const code = el('pre', `${(value.inputs ?? []).map(i => `${i.name}: ${typeName(i.type_ref)}`).join('\n')}\n→ ${typeName(value.output_type)}`);
-      section(fieldText(key), code);
-    } else section(fieldText(key), detailValue(key, value));
+    const bucket = essential && technicalFields.has(key) ? folded : shown;
+    const scalar = value === null || ['number','boolean'].includes(typeof value) || (typeof value === 'string' && value.length <= 60) || (Array.isArray(value) && !value.some(item => item && typeof item === 'object'));
+    if (key === 'signature') bucket.sections.push([fieldText(key), el('pre', `${(value.inputs ?? []).map(i => `${i.name}: ${typeName(i.type_ref)}`).join('\n')}\n→ ${typeName(value.output_type)}`, 'signature')]);
+    else if (key === 'boundary' || typeof value === 'string' && value.length > 60) bucket.prose.push([fieldText(key), detailValue(key, value)]);
+    else if (scalar) bucket.rows.push([key, value]);
+    else bucket.sections.push([fieldText(key), detailValue(key, value)]);
   }
-  if (node.source_ref) section(text('origin'), el('p', `${node.source_ref.source_id}:${node.source_ref.start_line + 1}`, 'mono'));
+  const origin = node.source_ref && `${node.source_ref.source_id}:${node.source_ref.start_line + 1}`;
+  const place = (bucket, target) => {
+    for (const [title, content] of bucket.prose) section(title, content, target);
+    if (bucket.rows.length) section(text('properties'), factsList(bucket.rows), target);
+    for (const [title, content] of bucket.sections) section(title, content, target);
+  };
+  place(shown, panel);
+  const originList = origin && el('dl', undefined, 'props');
+  if (originList) {
+    const row = el('div', undefined, 'prop'), path = el('dd'), tools = el('span', undefined, 'prop-tools'), copy = el('button', undefined, 'tool copy');
+    copy.type = 'button'; copy.append(uiIcon('copy')); copy.setAttribute('aria-label', text('copy')); copy.title = text('copy'); copy.addEventListener('click', () => void copyText(origin, copy));
+    path.append(el('span', origin, 'path')); tools.append(copy); row.append(el('dt', text('file')), path, tools); originList.append(row);
+    if (!essential) section(text('origin'), originList);
+  }
   const touching = state.graph.edges.filter(e => e.from === node.id || e.to === node.id);
-  if (!touching.length) return;
-  const block = el('section', undefined, 'detail-section'); block.append(el('h3', text('relations'))); panel.append(block);
-  for (const [outgoing, key] of [[true,'outgoingRelations'],[false,'incomingRelations']]) {
-    const group = touching.filter(e => (e.from === node.id) === outgoing); if (!group.length) continue;
-    block.append(el('p', text(key), 'relation-group'));
-    const list = el('ul', undefined, 'relations');
-    for (const e of group) {
-      const target = nodeById(outgoing ? e.to : e.from), li = el('li');
-      li.append(el('small', `${outgoing ? '→' : '←'} ${edgeText(e)}`), button(target ? nodeLabel(target) : '?', () => target && revealNode(target.id)));
-      list.append(li);
+  if (touching.length) {
+    const block = el('section', undefined, 'detail-section'); block.append(el('h3', text('relations'))); panel.append(block);
+    for (const [outgoing, key] of [[true,'outgoingRelations'],[false,'incomingRelations']]) {
+      const group = touching.filter(e => (e.from === node.id) === outgoing); if (!group.length) continue;
+      block.append(el('p', text(key), 'relation-group'));
+      const list = el('ul', undefined, 'relations');
+      for (const e of group) {
+        const target = nodeById(outgoing ? e.to : e.from), li = el('li');
+        li.append(el('small', `${outgoing ? '→' : '←'} ${edgeText(e)}`), button(target ? nodeLabel(target) : '?', () => target && revealNode(target.id)));
+        list.append(li);
+      }
+      block.append(list);
     }
-    block.append(list);
+  }
+  if (essential && (folded.prose.length || folded.rows.length || folded.sections.length || originList)) {
+    const technical = el('details', undefined, 'technical'), title = el('summary'), body = el('div', undefined, 'technical-body');
+    title.append(uiIcon('code'), el('span', text('technicalData'))); place(folded, body);
+    if (originList) section(text('origin'), originList, body);
+    technical.append(title, body); panel.append(technical);
   }
 }
 function applyBox() { if (box) $('graph').setAttribute('viewBox', `${box.x} ${box.y} ${box.w} ${box.h}`); save(); }
@@ -438,7 +485,7 @@ document.addEventListener('click', event => { if (!$('display-panel').hidden && 
 for (const group of document.querySelectorAll('[data-pref]')) for (const b of group.querySelectorAll('button')) b.addEventListener('click', () => {
   const pref = group.dataset.pref;
   if (pref === 'panels') { setPanel(b.dataset.value, !prefs[b.dataset.value]); return; }
-  prefs[pref] = b.dataset.value; if (pref !== 'labels') box = null; applyPanels(); savePrefs(); render();
+  prefs[pref] = b.dataset.value; if (!['labels','level'].includes(pref)) box = null; applyPanels(); savePrefs(); render();
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !$('display-panel').hidden) { toggleDisplay(false); $('display-toggle').focus(); return; }
@@ -462,7 +509,12 @@ new ResizeObserver(() => {
 translate();
 if (vscode) {
   window.addEventListener('message', event => {
+    if (embeddedHost && (event.source !== window.parent || event.origin !== location.origin)) return;
     const message=event.data;
+    if (message?.type==='preferences' && embeddedHost) {
+      if (['fr','en'].includes(message.lang)) { lang=message.lang; $('language').value=lang; translate(); }
+      if (['light','dark'].includes(message.theme)) applyTheme(message.theme);
+    }
     if (message?.type==='state') receive(message.state);
     if (message?.type==='select') revealNode(message.id);
     if (message?.type==='source') showSource(message.source);

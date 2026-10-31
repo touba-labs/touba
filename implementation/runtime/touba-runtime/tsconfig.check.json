@@ -20,6 +20,7 @@
     "src/hardened-execution-profile.mjs",
     "src/handler-protocol.mjs",
     "src/human-approval-checkpoints.mjs",
+    "src/human-checkpoint-store.mjs",
     "src/interactions.mjs",
     "src/payload-validation.mjs",
     "src/runtime-budgets.mjs",

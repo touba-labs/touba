@@ -18,6 +18,7 @@ import { assertResultHasNoResolvedSecret } from "./secret-redaction.mjs";
  *   initializeRunControls: (context: any) => void,
  *   traceRunCancelled: (context: any, details: Record<string, unknown>) => void,
  *   traceUnhandledRuntimeFailure: (context: any, error: RuntimeFailure) => void,
+ *   finalizeOutcome?: (outcome: {status: string, reason: string}) => void | Promise<void>,
  * }} operations
  */
 export async function executeRunLifecycle(context, execute, operations) {
@@ -53,6 +54,18 @@ export async function executeRunLifecycle(context, execute, operations) {
     } else {
       throw error;
     }
+  }
+
+  // Custody is durable before publishing a successful outcome or resumable wait.
+  try {
+    await operations.finalizeOutcome?.({ status, reason });
+  } catch (error) {
+    if (!(error instanceof RuntimeFailure)) throw error;
+    status = "failure";
+    reason = error.code;
+    result = undefined;
+    context.pendingHumanApprovalCheckpoint = null;
+    operations.traceUnhandledRuntimeFailure(context, error);
   }
 
   trace.push("run_completed", {

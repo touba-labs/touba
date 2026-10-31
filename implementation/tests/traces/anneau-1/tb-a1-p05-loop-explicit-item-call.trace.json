@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_loop_binding/BuildBatch",
         "owner_ref": "skill:examples.a1_loop_binding/BuildBatch"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_loop_binding/BuildBatch"
+        }
       }
     },
     {
@@ -55,7 +61,11 @@
         "condition_result": true,
         "selected_edge_role": "loop_next",
         "iteration_index": 0,
-        "condition_ref": "loop_has_next:value:requests"
+        "condition_ref": "loop_has_next:value:requests",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_loop_binding/BuildBatch"
+        }
       }
     },
     {
@@ -82,7 +92,11 @@
         "target_ref": "tool:examples.a1_loop_binding/FetchSource",
         "caller_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_loop_binding/BuildBatch"
+        }
       }
     },
     {
@@ -108,7 +122,12 @@
       "payload": {
         "target_ref": "tool:examples.a1_loop_binding/FetchSource",
         "caller_ref": "skill:examples.a1_loop_binding/BuildBatch",
-        "result_binding": "source"
+        "result_binding": "source",
+        "call_started_event_id": "event:run-1:4",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_loop_binding/BuildBatch"
+        }
       }
     },
     {
@@ -135,7 +154,11 @@
         "condition_result": true,
         "selected_edge_role": "loop_next",
         "iteration_index": 1,
-        "condition_ref": "loop_has_next:value:requests"
+        "condition_ref": "loop_has_next:value:requests",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_loop_binding/BuildBatch"
+        }
       }
     },
     {
@@ -162,7 +185,11 @@
         "target_ref": "tool:examples.a1_loop_binding/FetchSource",
         "caller_ref": "skill:examples.a1_loop_binding/BuildBatch",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_loop_binding/BuildBatch"
+        }
       }
     },
     {
@@ -188,7 +215,12 @@
       "payload": {
         "target_ref": "tool:examples.a1_loop_binding/FetchSource",
         "caller_ref": "skill:examples.a1_loop_binding/BuildBatch",
-        "result_binding": "source"
+        "result_binding": "source",
+        "call_started_event_id": "event:run-1:7",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_loop_binding/BuildBatch"
+        }
       }
     },
     {
@@ -215,7 +247,11 @@
         "condition_result": false,
         "selected_edge_role": "loop_exit",
         "iteration_index": 2,
-        "condition_ref": "loop_has_next:value:requests"
+        "condition_ref": "loop_has_next:value:requests",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_loop_binding/BuildBatch"
+        }
       }
     },
     {
@@ -230,7 +266,11 @@
         "node_id": "node:graph:skill:examples.a1_loop_binding/BuildBatch:3"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_loop_binding/BuildBatch"
+        }
       }
     },
     {

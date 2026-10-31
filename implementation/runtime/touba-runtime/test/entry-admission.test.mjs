@@ -77,7 +77,8 @@ test("known future ask and approval responses remain accepted", async () => {
 });
 
 test("authority failures cannot be classified as business or provider failures", () => {
-  for (const code of ["AgentCapabilityNotAllowed", "AgentProviderBudgetExceeded", "ToolHandlerSecretNotGranted", "ToolCapabilityNotGranted"]) {
+  for (const code of ["AgentCapabilityNotAllowed", "AgentProviderBudgetExceeded", "ToolHandlerSecretNotGranted", "ToolCapabilityNotGranted",
+    "HumanApprovalCheckpointIntegrityMismatch", "HumanApprovalCheckpointAlreadyConsumed", "HumanApprovalCheckpointBusy", "HumanApprovalCheckpointUntrusted"]) {
     assert.equal(failureFamilyForRuntimeCode(code), "authority", code);
   }
   assert.equal(failureFamilyForRuntimeCode("AgentDecisionProviderUnavailable"), "provider");

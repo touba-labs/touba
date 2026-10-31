@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-packages-v1.schema.json",
+  "title": "touba-project-packages-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "revision", "packages"],
+  "properties": {
+    "schema_version": { "const": "touba-project-packages-v1" },
+    "revision": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "package_lock_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "hosts": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ref", "kind", "language", "package", "version", "digest"],
+      "properties": {
+        "ref": { "type": "string", "pattern": "^pkg:[a-z0-9.-]+/[a-z][a-z0-9-]*$" },
+        "kind": { "enum": ["human_approval", "decision_provider"] },
+        "language": { "enum": ["javascript", "python"] },
+        "package": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    } },
+    "host_plan": { "oneOf": [{ "type": "null" }, {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "package_lock_digest", "hosts"],
+      "properties": {
+        "schema_version": { "const": "touba-package-host-plan-v1" },
+        "package_lock_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "hosts": { "type": "object", "additionalProperties": false, "properties": {
+          "human_approval": { "type": "string", "minLength": 1 },
+          "decision_provider": { "type": "string", "minLength": 1 }
+        } }
+      }
+    }] },
+    "host_plan_error": { "oneOf": [{ "type": "null" }, {
+      "type": "object", "additionalProperties": false, "required": ["code", "message"],
+      "properties": { "code": { "type": "string" }, "message": { "type": "string" } }
+    }] },
+    "packages": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["name", "version", "digest"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    } }
+  }
+}

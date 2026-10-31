@@ -77,14 +77,7 @@ export async function addRegistryPackage(name, options) {
 }
 
 async function installRegistryPackage(name, options, readBytes) {
-  const resolution = await resolveRegistryPackage({ registry: options.registry, trust: options.trust, version: options.version, packageRef: `pkg:${name}`, allowDraft: options["allow-draft"] === true, readBytes });
-  if (!semver.satisfies(runtimeVersion, resolution.compatibility.touba)) throw packageError("PackageVersionIncompatible", `registry requires Touba ${resolution.compatibility.touba}; installed ${runtimeVersion}`);
-  if (resolution.package.kind !== "touba_package") throw packageError("PackageSchemaMismatch", "registry entry must describe a Touba package");
-  const archives = resolution.artifacts.filter(artifact => artifact.kind === "package_archive");
-  if (archives.length !== 1) throw packageError("PackageArchiveInvalid", "registry must supply exactly one package_archive artifact");
-  const artifact = archives[0]; packagePath(artifact.path);
-  const index = resolution.registry.index_ref;
-  const location = /^https?:\/\//.test(index) ? new URL(artifact.path, new URL("./", index)).href : packageFile(dirname(resolve(index)), artifact.path);
+  const { artifact, location } = await resolveRegistryArchive(name, options, readBytes);
   const bytes = await readBytes(location, PACKAGE_LIMITS.totalBytes);
   if (packageDigest(bytes) !== artifact.digest) throw packageError("PackageIntegrityMismatch", "registry archive digest mismatch");
   const staging = mkdtempSync(join(tmpdir(), "touba-package-fetch-"));
@@ -95,6 +88,20 @@ async function installRegistryPackage(name, options, readBytes) {
     if (pkg.document.name !== name || pkg.document.version !== options.version) throw packageError("PackageDependencyConflict", "archive identity differs from selected registry entry");
     return await addPackage(path, options);
   } finally { rmSync(staging, { recursive: true, force: true }); }
+}
+
+/** Shared signed resolution for clients; no installation or host execution. */
+export async function resolveRegistryArchive(name, options, readBytes) {
+  if (!PACKAGE_NAME.test(name) || !options.registry || !options.version) throw packageError("PackageRegistryOptionMissing", "select a qualified package and exact version");
+  const resolution = await resolveRegistryPackage({ registry: options.registry, trust: options.trust, version: options.version, packageRef: `pkg:${name}`, allowDraft: options["allow-draft"] === true, readBytes });
+  if (!semver.satisfies(runtimeVersion, resolution.compatibility.touba)) throw packageError("PackageVersionIncompatible", `registry requires Touba ${resolution.compatibility.touba}; installed ${runtimeVersion}`);
+  if (resolution.package.kind !== "touba_package") throw packageError("PackageSchemaMismatch", "registry entry must describe a Touba package");
+  const archives = resolution.artifacts.filter(artifact => artifact.kind === "package_archive");
+  if (archives.length !== 1) throw packageError("PackageArchiveInvalid", "registry must supply exactly one package_archive artifact");
+  const artifact = archives[0]; packagePath(artifact.path);
+  const index = resolution.registry.index_ref;
+  const location = /^https?:\/\//.test(index) ? new URL(artifact.path, new URL("./", index)).href : packageFile(dirname(resolve(index)), artifact.path);
+  return { resolution, artifact, location };
 }
 
 export async function checkPackage(path, options = {}) {
@@ -133,6 +140,17 @@ export async function packPackage(path, { output, ...options } = {}) {
   const author = checked.closure.first;
   assertAuthorWritable(author.root);
   output = output ? resolve(output) : join(author.root, "dist", `${author.document.name}-${author.document.version}.tar.gz`);
+  return writeCheckedArchive(checked, output);
+}
+
+// Private transport snapshot, not a publication. Local consumers do not need
+// publisher metadata; content, closure, compiler and integrity checks still run.
+export async function snapshotPackage(path, { output, ...options } = {}) {
+  if (!output) throw packageError("PackageOutputRequired", "snapshot needs an explicit destination");
+  return writeCheckedArchive(await checkPackage(path, options), resolve(output));
+}
+
+function writeCheckedArchive(checked, output) {
   assertPlainDirectory(dirname(output));
   if (existsSync(output)) throw packageError("PackageAlreadyExists", "refusing to overwrite archive");
   const staging = mkdtempSync(join(tmpdir(), "touba-package-pack-"));

@@ -134,6 +134,22 @@
               "related_ref": {
                 "type": "string"
               },
+              "invocation_id": { "type": "string", "maxLength": 512 },
+              "span_id": { "type": "string", "maxLength": 512 },
+              "parent_span_id": { "type": "string", "maxLength": 512 },
+              "branch_id": { "type": "string", "maxLength": 512 },
+              "source_location": {
+                "type": "object", "additionalProperties": false, "required": ["source_id"],
+                "properties": {
+                  "source_id": { "type": "string", "maxLength": 2048 },
+                  "start_byte": { "type": "integer", "minimum": 0 },
+                  "end_byte": { "type": "integer", "minimum": 0 },
+                  "start_line": { "type": "integer", "minimum": 0 },
+                  "end_line": { "type": "integer", "minimum": 0 },
+                  "start_column": { "type": "integer", "minimum": 0 },
+                  "end_column": { "type": "integer", "minimum": 0 }
+                }
+              },
               "severity": {
                 "enum": [
                   "info",

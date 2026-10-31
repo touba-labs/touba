@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  lstatSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -14,6 +15,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath } from "node:url";
 
 import { loadToolBindingManifestFromJson } from "@touba/runtime";
+import { verifyInstalledPackages } from "../../touba-project/src/package-store.mjs";
+import { readPackageHostPlan } from "../../touba-project/src/package-host-plan.mjs";
 
 export const DEPLOYMENT_BUNDLE_SCHEMA_VERSION = "touba-deployment-bundle-v1";
 export const DEPLOYMENT_STATUS_SCHEMA_VERSION = "touba-deployment-status-v1";
@@ -30,6 +33,9 @@ const EXCLUDED_DIRECTORIES = new Set([
   "dist",
   ".next",
   ".turbo",
+  ".venv",
+  "__pycache__",
+  "packages",
 ]);
 const ROOT_FILES = new Set([
   "touba.project.json",
@@ -37,10 +43,18 @@ const ROOT_FILES = new Set([
   "touba.package.json",
   "touba.ownership.json",
   "touba.resources.json",
+  "touba.hosts.json",
   "resources.json",
   "touba.lock.json",
   "touba.run-plan.json",
   "touba.hardened-profile.json",
+  "touba.packages.lock.json",
+  "package.json",
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "pyproject.toml",
+  "uv.lock",
+  "requirements.txt",
 ]);
 const SECRET_PATH_PATTERN = /(^|\/)(\.env(?:\.|$)|[^/]*(?:secret|credential)[^/]*)(\/|$)/iu;
 const RAW_SECRET_KEYS = new Set([
@@ -59,6 +73,7 @@ export function buildDeploymentBundle({
   sourceRevision,
 } = {}) {
   const root = resolve(projectRoot ?? process.cwd());
+  readPackageHostPlan(root); // Review metadata only; never import host code.
   if (!["dev", "prod"].includes(profile)) {
     throw deploymentError("ToubaDeploymentProfileInvalid", "deployment profile must be dev or prod");
   }
@@ -135,6 +150,7 @@ export function verifyDeploymentBundle(bundle) {
     throw deploymentError("ToubaDeploymentBundleInvalid", "bundle artifact count is invalid");
   }
   const paths = new Set();
+  let totalBytes = 0;
   for (const artifact of bundle.artifacts) {
     if (!isRecord(artifact)) {
       throw deploymentError("ToubaDeploymentBundleInvalid", "bundle artifact must be an object");
@@ -145,6 +161,10 @@ export function verifyDeploymentBundle(bundle) {
     }
     paths.add(path);
     const content = decodeArtifact(artifact);
+    totalBytes += content.length;
+    if (content.length > MAX_ARTIFACT_BYTES || totalBytes > MAX_BUNDLE_BYTES) {
+      throw deploymentError("ToubaDeploymentBundleTooLarge", "bundle exceeds artifact or total byte limits");
+    }
     if (content.length !== artifact.size_bytes || sha256(content) !== artifact.sha256) {
       throw deploymentError("ToubaDeploymentArtifactDigestMismatch", `${path} does not match its digest`);
     }
@@ -201,7 +221,9 @@ export function deploymentReadinessChecks(bundle, { targetConfigured = false } =
 
 function isGeneratedHandlerStub(content) {
   return content.includes("// Touba generated handler stub v0.1")
-    || content.includes("// Touba Studio generated handler stub v0.1");
+    || content.includes("// Touba Studio generated handler stub v0.1")
+    || content.includes("# Touba generated handler stub")
+    || (content.includes("TOUBA_HANDLER_GENERATED_BY") && content.includes('"HandlerNotImplemented"'));
 }
 
 export function createRevisionStore({ storageRoot }) {
@@ -210,6 +232,16 @@ export function createRevisionStore({ storageRoot }) {
   const indexPath = join(root, "index.json");
   const currentPath = join(root, "current.json");
   mkdirSync(revisionsRoot, { recursive: true });
+
+  const verifiedRevision = record => {
+    const directory = join(revisionsRoot, record.revision_id);
+    const bytes = readFileSync(safeArtifactPath(directory, "bundle.json"));
+    if (sha256(bytes) !== record.bundle_file_sha256) throw deploymentError("ToubaDeploymentRevisionCorrupt", "stored bundle changed");
+    const bundle = JSON.parse(bytes.toString("utf8"));
+    if (verifyDeploymentBundle(bundle).bundle_sha256 !== record.revision_id) throw deploymentError("ToubaDeploymentRevisionCorrupt", "stored revision changed");
+    verifyMaterializedArtifacts(directory, bundle.artifacts);
+    return bundle;
+  };
 
   return {
     publish(bundle, { publishedBy = "deployment-client", publishedAt = new Date().toISOString() } = {}) {
@@ -258,10 +290,12 @@ export function createRevisionStore({ storageRoot }) {
       }
     },
 
-    activate(revisionId, { activatedBy = "deployment-client", activatedAt = new Date().toISOString() } = {}) {
+    activate(revisionId, { activatedBy = "deployment-client", activatedAt = new Date().toISOString(), expectedState } = {}) {
       const index = readRevisionIndex(indexPath);
-      const revision = requiredRevision(index, revisionId);
       const previous = readCurrent(currentPath);
+      assertDeploymentState(index, previous, expectedState);
+      const revision = requiredRevision(index, revisionId);
+      verifiedRevision(revision);
       const current = {
         schema_version: "touba-deployment-current-v1",
         revision_id: revision.revision_id,
@@ -287,13 +321,15 @@ export function createRevisionStore({ storageRoot }) {
       return deploymentStatus(index, current, revision, "active");
     },
 
-    rollback({ rolledBackBy = "deployment-client", rolledBackAt = new Date().toISOString() } = {}) {
+    rollback({ rolledBackBy = "deployment-client", rolledBackAt = new Date().toISOString(), expectedState } = {}) {
       const index = readRevisionIndex(indexPath);
       const current = readCurrent(currentPath);
+      assertDeploymentState(index, current, expectedState);
       if (current === null || current.previous_revision_id === null) {
         throw deploymentError("ToubaDeploymentRollbackUnavailable", "no previous active revision is available");
       }
       const target = requiredRevision(index, current.previous_revision_id);
+      verifiedRevision(target);
       const next = {
         schema_version: "touba-deployment-current-v1",
         revision_id: target.revision_id,
@@ -323,8 +359,7 @@ export function createRevisionStore({ storageRoot }) {
 
     readBundle(revisionId) {
       const index = readRevisionIndex(indexPath);
-      requiredRevision(index, revisionId);
-      return JSON.parse(readFileSync(join(revisionsRoot, revisionId, "bundle.json"), "utf8"));
+      return verifiedRevision(requiredRevision(index, revisionId));
     },
   };
 }
@@ -336,42 +371,97 @@ export async function deploymentTargetRequest({
   path,
   body,
   fetchImpl = fetch,
+  timeoutMs = 30_000,
+  maxResponseBytes = 16 * 1024 * 1024,
 }) {
   const base = new URL(targetUrl);
-  if (base.protocol !== "https:" && !isLoopbackHost(base.hostname)) {
+  if (base.username || base.password || base.hash
+    || !(base.protocol === "https:" || (base.protocol === "http:" && isLoopbackHost(base.hostname)))) {
     throw deploymentError("ToubaDeploymentInsecureTargetRejected", "remote deployment targets require HTTPS");
+  }
+  const destination = new URL(path, base);
+  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")
+    || destination.origin !== base.origin || destination.username || destination.password || destination.hash) {
+    throw deploymentError("ToubaDeploymentTargetPathInvalid", "deployment request must remain on the configured target");
   }
   if (typeof token !== "string" || token.length < 32) {
     throw deploymentError("ToubaDeploymentTokenInvalid", "deployment target token must contain at least 32 characters");
   }
-  let response;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
+    || !Number.isInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > 16 * 1024 * 1024) {
+    throw deploymentError("ToubaDeploymentTargetLimitsInvalid", "deployment response limits are invalid");
+  }
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), timeoutMs);
+  let reader;
   try {
-    response = await fetchImpl(new URL(path, base), {
+    const response = await fetchImpl(destination, {
       method,
+      redirect: "error",
+      signal: controller.signal,
       headers: {
         authorization: `Bearer ${token}`,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    if (Number(response.headers.get("content-length")) > maxResponseBytes || !response.body) {
+      throw deploymentError("ToubaDeploymentTargetResponseInvalid", "deployment response is empty or exceeds its size limit");
+    }
+    reader = response.body.getReader();
+    const chunks = [];
+    let bytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxResponseBytes) {
+        throw deploymentError("ToubaDeploymentTargetResponseInvalid", "deployment response exceeds its size limit");
+      }
+      chunks.push(value);
+    }
+    let payload;
+    try { payload = JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")); }
+    catch { throw deploymentError("ToubaDeploymentTargetResponseInvalid", "deployment response must be JSON"); }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw deploymentError("ToubaDeploymentTargetResponseInvalid", "deployment response must be a JSON object");
+    }
+    if (!response.ok) {
+      throw deploymentError(
+        typeof payload.code === "string" ? payload.code.slice(0, 128) : "ToubaDeploymentTargetRequestFailed",
+        typeof payload.message === "string" ? payload.message.slice(0, 4096) : `deployment target returned HTTP ${response.status}`,
+      );
+    }
+    return payload;
   } catch (cause) {
+    if (controller.signal.aborted) {
+      // A timeout is an unknown outcome for a mutation. Callers must read the
+      // target state; never retry publication/activation automatically.
+      throw deploymentError("ToubaDeploymentTargetTimeout", "deployment target did not finish within the deadline; inspect its state before another action");
+    }
+    if (cause?.code && typeof cause.code === "string" && cause.code.startsWith("Touba")) throw cause;
     throw deploymentError(
       "ToubaDeploymentTargetUnavailable",
       `deployment target is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
     );
+  } finally {
+    clearTimeout(deadline);
+    controller.abort();
+    if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); }
   }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw deploymentError(
-      payload.code ?? "ToubaDeploymentTargetRequestFailed",
-      payload.message ?? `deployment target returned HTTP ${response.status}`,
-    );
-  }
-  return payload;
 }
 
 function collectDeploymentPaths(root) {
   const paths = [];
+  const config = JSON.parse(readFileSync(join(root, "touba.project.json"), "utf8"));
+  const records = config.packages ?? [];
+  if (records.some(record => record.editable === true || !String(record.manifest).startsWith("packages/"))) {
+    throw deploymentError("ToubaDeploymentEditablePackage", "install package archives in packages/ before bundling");
+  }
+  const installed = verifyInstalledPackages(root, records);
+  for (const pkg of installed.packages) {
+    for (const file of pkg.files) paths.push(`packages/${pkg.name}/${file.path}`);
+  }
   const visit = (directory, depth) => {
     if (depth > 12) {
       throw deploymentError("ToubaDeploymentTreeTooDeep", "project artifact tree exceeds 12 levels");
@@ -408,7 +498,7 @@ function isDeploymentArtifact(path) {
   if (path.startsWith("src/") && path.endsWith(".tb")) {
     return true;
   }
-  if (path.startsWith("handlers/") && (path.endsWith(".mjs") || path.endsWith(".js"))) {
+  if (path.startsWith("handlers/") && /\.(mjs|js|py)$/u.test(path)) {
     return true;
   }
   if (path.startsWith("packages/") && (
@@ -426,12 +516,17 @@ function isDeploymentArtifact(path) {
 }
 
 function validateProjectArtifacts(root, artifacts) {
-  for (const artifact of artifacts.filter((item) => item.path.endsWith(".tb"))) {
+  // Installed packages are verified against their full installation lock.
+  // Compile application roots: Core resolves their imported package modules.
+  // A managed package is not an editable author workspace.
+  for (const artifact of artifacts.filter((item) => item.path.startsWith("src/") && item.path.endsWith(".tb"))) {
     const sourcePath = join(root, artifact.path);
     const result = spawnSync(process.execPath, [COMPILER_PATH, "compile", sourcePath, "--stdout"], {
       cwd: root,
       encoding: "utf8",
       env: process.env,
+      timeout: 30000,
+      maxBuffer: 16 * 1024 * 1024,
     });
     if (result.status !== 0) {
       throw deploymentError(
@@ -482,10 +577,12 @@ function validateArtifactContent(path, content) {
 }
 
 function decodeArtifact(artifact) {
-  if (typeof artifact.content_base64 !== "string") {
+  if (typeof artifact.content_base64 !== "string" || artifact.content_base64.length > Math.ceil(MAX_ARTIFACT_BYTES / 3) * 4) {
     throw deploymentError("ToubaDeploymentBundleInvalid", `${artifact.path} content is missing`);
   }
-  return Buffer.from(artifact.content_base64, "base64");
+  const content = Buffer.from(artifact.content_base64, "base64");
+  if (content.toString("base64") !== artifact.content_base64) throw deploymentError("ToubaDeploymentBundleInvalid", "artifact encoding is not canonical base64");
+  return content;
 }
 
 function assertDeployablePath(path) {
@@ -493,8 +590,10 @@ function assertDeployablePath(path) {
     typeof path !== "string"
     || path.trim() === ""
     || path.includes("\0")
+    || path.includes("\\")
+    || /^[A-Za-z]:/u.test(path)
     || isAbsolute(path)
-    || path.split("/").includes("..")
+    || path.split("/").some(part => ["", ".", "..", ".git", ".touba", "node_modules", ".venv", "__pycache__"].includes(part))
     || SECRET_PATH_PATTERN.test(path)
   ) {
     throw deploymentError("ToubaDeploymentArtifactPathRejected", "bundle artifact path is unsafe");
@@ -505,6 +604,13 @@ function assertDeployablePath(path) {
 function safeArtifactPath(root, path) {
   const normalized = assertDeployablePath(path);
   const absolute = resolve(root, normalized);
+  let current = resolve(root);
+  for (const part of ["", ...normalized.split("/")]) {
+    current = part ? join(current, part) : current;
+    try {
+      if (lstatSync(current).isSymbolicLink()) throw deploymentError("ToubaDeploymentArtifactPathRejected", "bundle artifact traverses a symbolic link");
+    } catch (cause) { if (cause.code !== "ENOENT") throw cause; }
+  }
   const relativePath = relative(root, absolute);
   if (relativePath === ".." || relativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(relativePath)) {
     throw deploymentError("ToubaDeploymentArtifactPathRejected", "bundle artifact escapes its root");
@@ -616,6 +722,7 @@ function deploymentStatus(index, current, revision, action) {
   return {
     schema_version: DEPLOYMENT_STATUS_SCHEMA_VERSION,
     status: "ok",
+    state_digest: deploymentStateDigest(index, current),
     action,
     current_revision_id: current?.revision_id ?? null,
     previous_revision_id: current?.previous_revision_id ?? null,
@@ -624,6 +731,18 @@ function deploymentStatus(index, current, revision, action) {
       .sort((left, right) => right.published_at.localeCompare(left.published_at))
       .map(publicRevision),
   };
+}
+
+// Include the append-only activation sequence: returning to the same pair of
+// revisions must not make an older confirmation current again (ABA).
+function deploymentStateDigest(index, current) {
+  return sha256(Buffer.from(canonicalJson({ current, sequence: index.activations.length }), "utf8"));
+}
+
+function assertDeploymentState(index, current, expected) {
+  if (expected !== undefined && expected !== deploymentStateDigest(index, current)) {
+    throw deploymentError("ToubaDeploymentStateConflict", "deployment target changed; refresh and review the operation again");
+  }
 }
 
 function publicRevision(revision) {

@@ -47,6 +47,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:test/BindThenGive",
         "owner_ref": "skill:test/BindThenGive"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/BindThenGive"
+        }
       }
     },
     {
@@ -73,7 +79,11 @@
         "budget_kind": "max_steps",
         "consumed_value": 1,
         "limit_value": 1,
-        "authority_source": "host_policy"
+        "authority_source": "host_policy",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/BindThenGive"
+        }
       }
     },
     {
@@ -99,7 +109,11 @@
       "payload": {
         "binding": "topic",
         "value_ref": "literal:string:budget",
-        "caller_ref": "skill:test/BindThenGive"
+        "caller_ref": "skill:test/BindThenGive",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/BindThenGive"
+        }
       }
     },
     {
@@ -127,7 +141,11 @@
         "limit_value": 1,
         "consumed_value": 1,
         "authority_source": "host_policy",
-        "reason": "budget_limit_exceeded"
+        "reason": "budget_limit_exceeded",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/BindThenGive"
+        }
       }
     },
     {

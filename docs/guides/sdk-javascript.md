@@ -1,5 +1,15 @@
 # SDK JavaScript
 
+## Reprises protégées
+
+Les SDK conservent l'intégrité et la consommation des checkpoints dans
+`.touba/approval-checkpoints.sqlite` du projet. Gardez cette base avec les
+journaux d'effets lors d'une sauvegarde. Les options `humanCheckpointStore`
+(JavaScript) et `human_checkpoint_store` (Python) permettent un autre chemin
+stable. Un checkpoint modifié, déjà consommé ou absent de cette base est refusé.
+Une reprise séquentielle interrompue pendant un effet demande un rapprochement
+avec le service métier avant toute nouvelle approbation.
+
 ## Packages hôtes et options d'exécution
 
 Les deux SDK acceptent un chemin de module ou un sélecteur

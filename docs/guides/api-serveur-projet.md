@@ -52,6 +52,42 @@ limité à 4 096 caractères. C'est du texte saisi par l'utilisateur ; seuls
 
 ## Préparer et démarrer
 
+### Modules hôtes fournis par un package
+
+Dans client, **Packages → Modules hôtes** présente les adaptateurs JS/Python
+installés. Sélectionnez l'attestation humaine et/ou le fournisseur de décisions,
+puis soumettez le plan à la revue dans **Changements**. Le plan
+`touba.hosts.json` est lié aux empreintes des packages installés.
+
+L'exploitant active cette sélection au prochain démarrage en ajoutant
+`--package-hosts` à sa commande `touba serve`, en conservant ses paramètres
+d'identité et de transport. Cette option remplace les options de chemins
+`--human-approval-host` et `--agent-decision-provider` ; elles ne se combinent
+pas. La vérification du verrou est refaite avant le chargement.
+
+Les modules hôtes sont du code de confiance exécuté par l'hôte. La revue et
+l'application du plan n'importent aucun module dans le serveur en cours.
+Un changement de package exige une nouvelle revue du plan. Pour désactiver
+une sélection, choisissez « Aucun », faites appliquer le plan, puis redémarrez.
+
+### Commande de démarrage
+
+Pour proposer l'installation depuis une registry dans client, ajouter à la
+commande du serveur :
+
+```sh
+--package-registry https://cloud.example/registry \
+--package-registry-trust /chemin/prive/registry-trust.json
+```
+
+L'exploitant choisit l'origine et les clés de confiance. client télécharge depuis
+son origine Cloud authentifiée ; le Core vérifie l'index signé, les métadonnées
+et l'archive avant de proposer l'installation. Le jeton du projet n'est pas
+transmis à la registry. Un aperçu expire après cinq minutes ; le serveur borne
+les transferts à une archive de 64 Mio et les aperçus à deux. L'installation
+et la revue n'activent aucun module hôte. **Préparer** appelle ensuite
+`POST /project/prepare`, avec confirmation et droit `governance.apply`.
+
 Depuis la racine du projet :
 
 ```sh
@@ -72,8 +108,16 @@ hôte de confiance, jamais un fichier fourni par un utilisateur du client.
 
 Le serveur lit directement la préparation `.touba/build/dev/` : aucune copie
 d'AIR n'est nécessaire. Il vérifie les empreintes de ses entrées avant une
-exécution. Après une modification, relancez `prepare`, puis
-`POST /project/refresh`. Une préparation périmée est refusée. Le sandbox utilise
+exécution. Après une modification ou une installation de package, client propose
+**Préparer** dans l'en-tête du projet. `POST /project/prepare` reçoit `{}` et
+appelle la préparation canonique en mode `write`, profil `dev`, puis actualise
+l'inventaire. Cette action exige `governance.apply` et renvoie
+`touba-project-preparation-v1` : `success`, `needs_changes` ou `error`, avec les
+diagnostics. Elle compile les sources sans exécuter les handlers ni ajouter de
+permissions au projet. Une seule préparation est admise à la fois ; les chemins,
+profils et commandes arbitraires sont refusés. Les CLI peuvent toujours utiliser
+`touba prepare --mode write`, puis `POST /project/refresh`.
+Une préparation périmée est refusée. Le sandbox utilise
 le profil de développement ; ce parcours ne constitue pas une activation de
 production. Sans préparation, des AIR explicitement compilés dans le projet
 restent utilisables.
@@ -92,6 +136,28 @@ Si vous maintenez un manifest explicite (notamment pour activer des triggers san
 Le fichier `--identity` doit rester à l'intérieur de `--project-root`. Son chemin relatif est résolu depuis cette racine. Un chemin extérieur est refusé avec `ToubaServeProductIdentityPathInvalid`, détaillé sous `ToubaServePreflightFailed`. Placez la configuration hôte dans le projet, sans y versionner de secret ni d'identifiants personnels.
 
 ## Entrées et hôtes du projet
+
+### Client web HTTPS
+
+Pour un client web hébergé, autorisez son origine exacte au démarrage :
+
+```sh
+touba serve --project-root . --auth-token-env TOUBA_SERVER_TOKEN \
+  --client-origin https://console.example.org
+```
+
+L'option est répétable, jusqu'à 16 origines HTTPS sans chemin ni joker.
+Elle exige une authentification serveur ou une identité Cloud configurée.
+Les droits sur chaque requête restent contrôlés ; l'autorisation CORS ne donne
+aucune permission d'exécution. Les clients locaux restent disponibles.
+Une origine non autorisée est refusée avant le traitement de la requête.
+
+Pour joindre un projet sur votre ordinateur depuis une page HTTPS, le navigateur
+peut demander une autorisation d'accès au réseau local. Accordez-la seulement
+au site attendu, sans désactiver les protections du navigateur. Un serveur
+distant doit être exposé en HTTPS par son exploitant.
+
+### Entrées exécutables
 
 Déclarez les parcours que l'application peut démarrer dans `touba.project.json` :
 
@@ -150,7 +216,8 @@ sont les valeurs exactes de `schema_version`, pas des noms de versions du logici
 
 | Méthode et route | Contrat envoyé ou rôle |
 | --- | --- |
-| `GET /health` | disponibilité du processus |
+| `GET /health` | disponibilité, `build_id`, versions des protocoles et endpoints exposés |
+| `GET /contracts` | index versionné des contrats disponibles ou absents |
 | `GET /project` | inspection, entrées et signatures exécutables |
 | `POST /project/refresh` | `touba-project-refresh-request-v1` |
 | `GET /identity` | identité de projet, appareils et affectations |
@@ -161,11 +228,12 @@ sont les valeurs exactes de `schema_version`, pas des noms de versions du logici
 | `GET /interactions/sessions/<session_id>` | messages, résultats et opérations |
 | `POST /interactions/sessions/<session_id>/messages` | `touba-interaction-message-request-v1`, réponse 202 avec opération |
 | `GET /interactions/sessions/<session_id>/operations/<operation_id>` | état de l'opération |
+| `GET /operations/<operation_id>/recovery` | état de reprise, refus et actions admises |
 | `GET /approvals/pending/current?run_id=<run_id>` | demande `touba-approval-request-v1` |
 | `GET /reviews/pending/current?run_id=<run_id>` | demande `touba-human-review-request-v1` |
 | `POST /decisions` | `touba-approval-decision-v1` ou `touba-human-review-decision-v1` |
-| `POST /runs/sandbox/resume` | objet `{ "request_id": "..." }` |
-| `POST /interactions/sessions/<session_id>/resume` | `touba-interaction-resume-request-v1` avec `request_id` |
+| `POST /runs/sandbox/resume` | approbation : `{ "request_id": "..." }` ; interruption : `touba-operation-resume-request-v1` |
+| `POST /interactions/sessions/<session_id>/resume` | approbation : `touba-interaction-resume-request-v1` ; interruption : `touba-operation-resume-request-v1` |
 | `GET /events` | SSE ; `Last-Event-ID` permet une reprise dans la rétention disponible |
 
 `/runs/sandbox` et `/triggers/fire` partagent un schéma mais ont des discriminants
@@ -191,6 +259,17 @@ Exemple d'exécution directe, avec la référence réellement publiée par
 option ne crée aucun grant et ne contourne aucune approbation.
 
 ## Session, approbation, décision, reprise
+
+Pour une interruption de processus, consultez d'abord la route `recovery`.
+Elle indique les actions possibles et les préconditions exactes du checkpoint.
+Si l'AIR actuel est incompatible, elle refuse la reprise sans modifier l'état.
+Le runtime revérifie l'ensemble des conditions lors de l'admission.
+
+Une reprise d'interaction passe par la route de sa session, pour conserver
+les messages et publier son résultat au bon endroit. La réponse 202 signifie
+que la reprise a été admise ; suivez ensuite l'opération jusqu'à sa fin.
+En cas de réponse réseau perdue, relisez l'opération et son `resume_request_id`
+avant toute autre action. Le client ne doit pas répéter automatiquement un POST.
 
 1. Créez une session avec `target_ref`, `target_kind: "strategy"`,
  `presentation: "workflow"`, `effect_policy` et `requested_by`.
@@ -371,7 +450,11 @@ Le démarrage conserve un audit exhaustif, proportionnel à l'historique.
 et sessions d'interaction, sur des copies privées. Un lien orphelin non admis
 par les règles de rétention est refusé, comme au démarrage. Le précontrôle
 ne répare ni ne modifie les fichiers d'origine.
-L'API d'historique des décisions reste exhaustive ; elle n'est pas paginée.
+L'historique des décisions et celui des changements utilisent des pages de
+50 lignes, au maximum 100, et un curseur SQLite décroissant. Les corps sont
+bornés à 16 Mio. Les compteurs portent sur l'ensemble du store ; dans client,
+la recherche textuelle des changements porte sur la page affichée, le filtre
+de statut sur le store entier. Une seule page est conservée dans l'interface.
 La fenêtre d'interaction de 100 sessions reste une projection bornée : son
 renouvellement ne supprime ni checkpoints ni décisions ni effets.
 Les écritures durables sont synchronisées sur disque ; mesurez leur coût avec
@@ -393,7 +476,7 @@ d'« exactement une fois ».
 
 ## Exploitation, sauvegarde et changement de build
 
-Conservez le résultat de `touba version --json` avec l'archive CLI, le SDK et
+Conservez le résultat de `touba version` avec l'archive CLI, le SDK et
 les configurations exactes utilisés. Deux builds de développement `1.0.0`
 ne constituent pas deux releases publiques ; comparez leur identité de build
 et les changements documentés avant de remplacer l'installation.
@@ -434,14 +517,19 @@ Les résultats persistés exigent maintenant `messages` et
 N'inventez pas un historique vide et ne supprimez pas le store pour démarrer.
 Avant de changer de build, testez une copie arrêtée de l'état avec la nouvelle
 installation. Si elle est incompatible, conservez l'ancienne installation
-isolée et terminez ses attentes avec son propre état et ses décisions valides.
+isolée et rapprochez chaque attente de ses preuves et des effets métier.
+Un checkpoint non fiable ne doit pas être repris avec son ancienne approbation.
 
 Une fois les opérations et effets rapprochés, conservez cet environnement en
 archive protégée. Préparez une nouvelle instance avec les sources et décisions
 hôte explicitement revues, sans y injecter l'état incompatible. Les anciens
 identifiants, décisions et preuves restent attachés à l'archive, pas fusionnés
-ni présentés comme natifs de la nouvelle instance. Aucun outil de conversion
-historique automatique n'est livré. Une attente non résolue bloque ce transfert.
+ni présentés comme natifs de la nouvelle instance. `touba state migrate` peut
+convertir les collections prises en charge, après validation stricte, vers une
+nouvelle base SQLite. Prévisualisation, application explicite et sauvegarde
+exacte de la source sont séparées ; aucun démarrage ne migre automatiquement
+les données. Cette conversion ne reconstruit pas les champs absents d'une
+preuve ni l'autorité d'une approbation. Une attente non résolue bloque le transfert.
 
 ### Frontières à connaître
 

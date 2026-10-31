@@ -71,6 +71,10 @@ export function createDecisionHistory(configuration, decisionInterface) {
   }
   if (config.onEvent !== undefined && typeof config.onEvent !== "function") fail("InvalidDecisionProviderOptions", "history.onEvent must be a function");
   return {
+    policy: Object.freeze({ history_storage: config.store ? "host_adapter" : "memory",
+      history_max_messages: String(maxMessages), history_max_bytes: String(maxBytes),
+      history_retained_max_bytes: String(maxRetainedBytes),
+      history_summary: config.summarize ? "host_callback" : "none" }),
     async run(request, model, execute) {
       for (const field of ["run_id", "invocation_id", "agent_ref"]) {
         if (typeof request[field] !== "string" || !request[field]) {

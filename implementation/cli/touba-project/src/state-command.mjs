@@ -4,7 +4,7 @@ import { migrateCompensationStore, createSqliteCompensationStore } from "../../.
 const usage = [
   "Usage: touba state migrate <kind> <source.json> --out <new.sqlite> [--apply]",
   "       touba state list effects|compensations <path.sqlite> [--after <cursor>] [--limit <1..1000>]",
-  "Kinds: effects, compensations, checkpoints, human-requests, human-decisions, interaction-sessions, interaction-assets",
+  "Kinds: effects, compensations, checkpoints, human-requests, human-decisions, changes, interaction-sessions, interaction-assets",
   "Migration previews validation; --apply creates a new database and an exact source backup.",
   "Stop state writers before migration. Sources and existing destinations are never overwritten.",
   "For server state, migrate related collections together, then run touba serve --check-state.",
@@ -32,6 +32,7 @@ export async function stateCommand(args) {
     if (!options["--out"]) throw new Error("state migrate requires --out <new.sqlite>");
     let migrate = { effects: migrateEffectJournal, compensations: migrateCompensationStore }[kind];
     if (kind === "checkpoints") migrate = (await import("../../touba-project-server/src/serve.mjs")).migrateSandboxCheckpoints;
+    if (kind === "changes") migrate = (await import("../../touba-project-server/src/change-store.mjs")).migrateChangeProposals;
     if (["human-requests", "human-decisions"].includes(kind)) {
       const module = await import("../../touba-project-server/src/human-stores.mjs");
       migrate = kind === "human-requests" ? module.migrateHumanRequests : module.migrateHumanDecisions;

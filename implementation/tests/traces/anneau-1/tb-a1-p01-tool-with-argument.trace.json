@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_tool_argument/BuildSource",
         "owner_ref": "skill:examples.a1_tool_argument/BuildSource"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_tool_argument/BuildSource"
+        }
       }
     },
     {
@@ -55,7 +61,11 @@
         "target_ref": "tool:examples.a1_tool_argument/FetchSource",
         "caller_ref": "skill:examples.a1_tool_argument/BuildSource",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_tool_argument/BuildSource"
+        }
       }
     },
     {
@@ -80,7 +90,12 @@
       },
       "payload": {
         "target_ref": "tool:examples.a1_tool_argument/FetchSource",
-        "caller_ref": "skill:examples.a1_tool_argument/BuildSource"
+        "caller_ref": "skill:examples.a1_tool_argument/BuildSource",
+        "call_started_event_id": "event:run-1:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_tool_argument/BuildSource"
+        }
       }
     },
     {
@@ -95,7 +110,11 @@
         "node_id": "node:graph:skill:examples.a1_tool_argument/BuildSource:2"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_tool_argument/BuildSource"
+        }
       }
     },
     {

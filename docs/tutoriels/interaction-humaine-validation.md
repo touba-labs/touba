@@ -6,6 +6,11 @@ checkpoint. Il requiert Touba et Node.js 24, sans SDK, secret ni modèle.
 
 ## 1. Créer les deux programmes
 
+Le checkpoint de ce tutoriel est à usage unique. Touba conserve son empreinte et
+son état dans `.touba/approval-checkpoints.sqlite`. Une modification du fichier
+ou une seconde reprise est refusée. Conservez cette base avec le projet et ses
+journaux ; une copie isolée du checkpoint ne suffit pas pour reprendre.
+
 Dans un terminal macOS/Linux, créez ce dossier puis les fichiers indiqués :
 
 ```sh title="Terminal"
@@ -152,6 +157,19 @@ Conservez-le dans un emplacement protégé, hors Git et journaux publics. Les
 secrets résolus ne doivent pas y entrer. Le checkpoint reprend la continuation
 sauvegardée sans rejouer les effets précédents. Relancer simplement
 `touba run` démarre une nouvelle exécution.
+
+## Après une interruption
+
+1. Arrêtez les reprises concurrentes et conservez checkpoint, registre SQLite,
+   journal d'effets et traces.
+2. Vérifiez dans le service métier si l'opération a été appliquée, à partir de
+   sa référence et de sa clé d'idempotence.
+3. Si elle a eu lieu, conservez son résultat. Si son état reste incertain,
+   poursuivez le rapprochement avant toute nouvelle demande d'approbation.
+
+Modifier le checkpoint ou supprimer son registre ne répare pas une opération
+interrompue. Un checkpoint ancien sans registre de confiance doit également
+être rapproché avant de créer une nouvelle demande.
 
 ## Pour continuer
 

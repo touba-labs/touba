@@ -4,6 +4,7 @@
 
 ```sh
 touba explore [projet] [--port <nombre>] [--no-open]
+touba trace explore [projet|trace.json|journal.sqlite] [--air <fichier>] [--port <nombre>] [--no-open]
 ```
 
 Ouvre les vues Architecture, Parcours et Gouvernance dans le navigateur local.
@@ -643,8 +644,17 @@ touba run program.air.json \
   --output trace
 ```
 
-Ce checkpoint local évite de redispatcher les effets déjà produits dans ce cas
-borné.
+La reprise vérifie le checkpoint complet dans le registre de l'hôte :
+`approval-checkpoints.sqlite`, à côté du magasin de traces. L'option
+`--human-checkpoint-store <path.sqlite>` permet de choisir un autre emplacement
+stable, identique pour la pause et la reprise. Une seule reprise peut réserver
+une attente. Un fichier modifié, consommé ou sans enregistrement est refusé.
+
+Conservez ensemble checkpoints, registre et journaux d'effets. Après une panne
+pendant une reprise séquentielle, vérifiez l'issue de l'opération auprès du
+service métier avant de demander une nouvelle approbation. Les anciens
+checkpoints sans registre de confiance doivent être rapprochés manuellement ;
+ils ne sont pas adoptés automatiquement.
 
 | Cas | Comportement |
 | --- | --- |

@@ -1,0 +1,40 @@
+module checkpoint_custody
+
+type Invoice
+    id is Text
+    amount is Int
+
+tool Pay
+    takes invoice as Invoice
+    gives Text
+
+strategy Process
+    takes invoice as Invoice
+    gives Text
+    uses Pay
+    do
+        human.approve
+            with context as invoice
+            with role as "finance"
+            into approval
+        Pay
+            with invoice as invoice
+            into payment
+        give payment
+
+strategy BeforeAndAfter
+    takes invoice as Invoice
+    gives Text
+    uses Pay
+    do
+        Pay
+            with invoice as invoice
+            into first
+        human.approve
+            with context as invoice
+            with role as "finance"
+            into approval
+        Pay
+            with invoice as invoice
+            into second
+        give second

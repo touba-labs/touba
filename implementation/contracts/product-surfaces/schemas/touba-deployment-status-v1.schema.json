@@ -16,6 +16,7 @@
   "properties": {
     "schema_version": { "const": "touba-deployment-status-v1" },
     "status": { "const": "ok" },
+    "state_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "action": { "enum": ["ready", "published", "active", "rolled_back"] },
     "current_revision_id": { "type": ["string", "null"] },
     "previous_revision_id": { "type": ["string", "null"] },

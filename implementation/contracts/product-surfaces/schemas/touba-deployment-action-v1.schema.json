@@ -10,6 +10,8 @@
     "action": { "enum": ["plan", "publish", "activate", "rollback"] },
     "profile": { "enum": ["dev", "prod"] },
     "revision_id": { "type": ["string", "null"] },
+    "bundle_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "expected_state": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "actor": { "type": "string" }
   }
 }

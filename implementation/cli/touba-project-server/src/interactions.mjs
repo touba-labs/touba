@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { canonicalDigest } from '../../../runtime/touba-runtime/src/execution-checkpoints.mjs';
 import {
   existsSync,
   mkdirSync,
@@ -55,11 +56,15 @@ export function createInteractionSession({
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
+  const candidates = withSessionStoreErrors(() => indexedSessionStore(sessionsPath).project(session => ({
+    session_id: session.session_id, updated_at: session.updated_at, created_at: session.created_at,
+    active: sessionHasActiveOperation(session),
+  }), { limit: MAX_SESSIONS }));
   const removeIds = [];
-  while (store.sessions.length >= MAX_SESSIONS) {
-    const evictable = store.sessions
-      .filter((session) => !sessionHasActiveOperation(session))
+  let store;
+  if (candidates.length >= MAX_SESSIONS) {
+    const evictable = candidates
+      .filter((session) => !session.active)
       .sort(compareInteractionSessionAge)[0];
     if (evictable === undefined) {
       throw interactionError(
@@ -67,11 +72,17 @@ export function createInteractionSession({
         `interaction store already has ${MAX_SESSIONS} sessions with active operations`,
       );
     }
+    // Re-read only the row to remove. Its revision and body are checked again
+    // in the atomic insertion/deletion transaction, as is the global count.
+    store = loadInteractionSessionStore(sessionsPath, [{ id: evictable.session_id }]);
+    if (store.sessions.length !== 1 || sessionHasActiveOperation(store.sessions[0])) {
+      throw interactionError('ToubaServeInteractionSessionCapacityExceeded', 'session capacity changed; refresh before creating a session');
+    }
     removeIds.push(evictable.session_id);
     store.sessions.splice(store.sessions.findIndex((session) => (
       session.session_id === evictable.session_id
     )), 1);
-  }
+  } else store = loadInteractionSessionStore(sessionsPath, [{ id: [] }]);
   const session = {
     schema_version: INTERACTION_SESSION_SCHEMA_VERSION,
     session_id: `interaction_${compactTimestamp(generatedAt)}_${randomBytes(4).toString("hex")}`,
@@ -105,13 +116,7 @@ function compareInteractionSessionAge(left, right) {
 }
 
 export function listInteractionSessions(sessionsPath) {
-  const store = loadInteractionSessionStore(sessionsPath);
-  return {
-    schema_version: INTERACTION_SESSION_LIST_SCHEMA_VERSION,
-    sessions: [...store.sessions]
-      .filter((session) => EXECUTABLE_INTERACTION_TARGET_KINDS.has(session.target_kind))
-      .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
-      .map((session) => ({
+  const sessions = withSessionStoreErrors(() => indexedSessionStore(sessionsPath).project(session => ({
         session_id: session.session_id,
         target_ref: session.target_ref,
         target_kind: session.target_kind,
@@ -125,7 +130,11 @@ export function listInteractionSessions(sessionsPath) {
         active_operation: session.operations.find((operation) => (
           ACTIVE_OPERATION_STATUSES.has(operation.status) || operation.status === "awaiting_human"
         )) ?? null,
-      })),
+      }), { limit: MAX_SESSIONS }));
+  return {
+    schema_version: INTERACTION_SESSION_LIST_SCHEMA_VERSION,
+    sessions: sessions.filter(session => EXECUTABLE_INTERACTION_TARGET_KINDS.has(session.target_kind))
+      .sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
   };
 }
 
@@ -133,6 +142,20 @@ export function listInteractionSessions(sessionsPath) {
 // retained across awaits or used to authorize a later write.
 export function readInteractionSessions(sessionsPath) {
   return loadInteractionSessionStore(sessionsPath).sessions;
+}
+
+/** Recovery compares digests of validated current bytes, not retained copies
+ * of every result. This projection is internal and never a writable snapshot. */
+export function readInteractionRecoveryProjections(sessionsPath) {
+  return withSessionStoreErrors(() => indexedSessionStore(sessionsPath).project(session => ({
+    session_id: session.session_id, target_ref: session.target_ref,
+    operations: session.operations.map(({ recent_events, current_event, ...operation }) => operation),
+    messages: session.messages.map(message => ({
+      role: message.role, operation_id: message.operation_id ?? null,
+      run_result_digest: message.run_result && typeof message.run_result === 'object' && !Array.isArray(message.run_result)
+        ? canonicalDigest(message.run_result) : null,
+    })),
+  }), { limit: MAX_SESSIONS }));
 }
 
 export function getInteractionSession({ sessionId, sessionsPath }) {
@@ -462,9 +485,14 @@ export function recoverInterruptedInteractionOperations({
   sessionsPath,
   generatedAt = new Date().toISOString(),
 }) {
-  const store = loadInteractionSessionStore(sessionsPath);
   const recovered = [];
-  for (const session of store.sessions) {
+  const candidates = withSessionStoreErrors(() => indexedSessionStore(sessionsPath).project(session => ({
+    session_id: session.session_id, active: session.operations.some(operation => ACTIVE_OPERATION_STATUSES.has(operation.status)),
+  }), { limit: MAX_SESSIONS }));
+  for (const candidate of candidates.filter(session => session.active)) {
+    const store = loadInteractionSessionStore(sessionsPath, [{ id: candidate.session_id }]);
+    const session = store.sessions[0];
+    if (!session) continue;
     for (const operation of session.operations) {
       if (!ACTIVE_OPERATION_STATUSES.has(operation.status)) continue;
       if (operation.status === "cancel_requested") {
@@ -490,8 +518,8 @@ export function recoverInterruptedInteractionOperations({
       session.updated_at = generatedAt;
       recovered.push(operation);
     }
+    saveInteractionSessionStore(sessionsPath, store);
   }
-  if (recovered.length > 0) saveInteractionSessionStore(sessionsPath, store);
   return recovered;
 }
 
@@ -610,8 +638,14 @@ export function migrateInteractionSessions(options) {
 }
 
 function loadInteractionSessionStore(path, filter) {
+  return withSessionStoreErrors(() => ({
+    schema_version: INTERACTION_SESSION_STORE_SCHEMA_VERSION, sessions: indexedSessionStore(path).read(filter),
+  }));
+}
+
+function withSessionStoreErrors(read) {
   try {
-    return { schema_version: INTERACTION_SESSION_STORE_SCHEMA_VERSION, sessions: indexedSessionStore(path).read(filter) };
+    return read();
   } catch (error) {
     if (error instanceof SyntaxError || typeof error.errno === "number" || error.code?.startsWith("ToubaStore") || error.code?.startsWith("ERR_SQLITE")) {
       throw interactionError("ToubaServeInteractionSessionStoreInvalid", "interaction session store is not a valid indexed state");

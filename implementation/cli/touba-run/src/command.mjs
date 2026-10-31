@@ -172,6 +172,7 @@ if (parsedArgs.positional.length !== 1) {
 
 const filePath = parsedArgs.positional[0];
 parsedArgs.traceStorePath ??= projectTracePath(filePath, parsedArgs.runPlanPath);
+parsedArgs.humanCheckpointStorePath ??= join(dirname(parsedArgs.traceStorePath), "approval-checkpoints.sqlite");
 let json;
 try {
   json = readFileSync(filePath, "utf8");
@@ -438,12 +439,20 @@ try {
     const database = canonicalPath(parsedArgs.traceStorePath);
     const otherPaths = [filePath, parsedArgs.traceOutPath, parsedArgs.evidenceOutPath,
       parsedArgs.humanCheckpointOutPath, parsedArgs.parallelCheckpointOutPath,
-      parsedArgs.effectJournalPath, parsedArgs.triggerStatePath];
+      parsedArgs.effectJournalPath, parsedArgs.triggerStatePath, parsedArgs.humanCheckpointStorePath];
     if (otherPaths.some(path => path !== undefined && canonicalPath(path) === database)) {
       throw new ToubaRuntimeError("InvalidRuntimeOption", "trace storage must have its own database path");
     }
     traceStorage = createSqliteTraceStore({ filename: database });
     process.once("exit", traceStorage.close);
+  }
+  const checkpointDatabase = canonicalPath(parsedArgs.humanCheckpointStorePath);
+  const checkpointOutputs = [filePath, parsedArgs.traceOutPath, parsedArgs.evidenceOutPath,
+    parsedArgs.humanCheckpointOutPath, parsedArgs.parallelCheckpointOutPath,
+    parsedArgs.humanResumeCheckpointPath, parsedArgs.parallelResumeCheckpointPath,
+    parsedArgs.effectJournalPath, parsedArgs.triggerStatePath];
+  if (checkpointOutputs.some(path => path !== undefined && canonicalPath(path) === checkpointDatabase)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", "checkpoint custody must have its own database path");
   }
   if (parsedArgs.handlerDiagnosticsPath !== undefined) {
     try { handlerDiagnostics = openLocalHandlerDiagnostics(parsedArgs.handlerDiagnosticsPath); }
@@ -459,6 +468,7 @@ try {
   }
   const effectRunId = effectHost ? (humanApprovalResumeCheckpoint?.run_id ?? `cli_${randomUUID()}`) : undefined;
   const executionOptions = {
+    humanCheckpointStorePath: parsedArgs.humanCheckpointStorePath,
     localHandlerDiagnostics: handlerDiagnostics,
     runId: effectRunId,
     effectScopeId: effectRunId,
@@ -1284,6 +1294,13 @@ function parseArgs(rawArgs) {
       const key = { "--parallel-checkpoint-out": "parallelCheckpointOutPath",
         "--parallel-resume-checkpoint": "parallelResumeCheckpointPath", "--parallel-limits-json": "parallelLimitsJson" }[flag];
       parsed[key] = value;
+    } else if (arg === "--human-checkpoint-store") {
+      index += 1;
+      parsed.humanCheckpointStorePath = rawArgs[index];
+      if (!parsed.humanCheckpointStorePath?.endsWith(".sqlite")) return { ...parsed, error: "--human-checkpoint-store requires a .sqlite path" };
+    } else if (arg.startsWith("--human-checkpoint-store=")) {
+      parsed.humanCheckpointStorePath = arg.slice("--human-checkpoint-store=".length);
+      if (!parsed.humanCheckpointStorePath.endsWith(".sqlite")) return { ...parsed, error: "--human-checkpoint-store requires a .sqlite path" };
     } else if (arg === "--human-checkpoint-out") {
       index += 1;
       if (index >= rawArgs.length) {
@@ -1809,6 +1826,7 @@ function printUsage() {
   stderr.write("--trace-pure-functions full|calls selects pure function detail (default full).\n");
   stderr.write("Traces persist in .touba/traces.sqlite by default; --trace-store PATH selects another journal; --trace-out exports JSON.\n");
   stderr.write("--human-approval-authority-timeout-ms <1..60000> bounds each identity attestation call (default 5000 ms).\n");
+  stderr.write("--human-checkpoint-store <path.sqlite> selects host-owned checkpoint custody (default: approval-checkpoints.sqlite beside the trace store); keep it with the effect journal.\n");
   stderr.write("Local development only: --handler-diagnostics <new-private-file.jsonl> requires a dev run plan on POSIX; unavailable in production.\n");
   stderr.write(
     "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.sqlite>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-approval-host <host.mjs>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path>] [--human-resume-checkpoint <path>] [--parallel-checkpoint-out <path>] [--parallel-resume-checkpoint <path>] [--parallel-limits-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.triggers.sqlite>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.triggers.sqlite>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json|json-reference] [--trace-store <path.sqlite>] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",

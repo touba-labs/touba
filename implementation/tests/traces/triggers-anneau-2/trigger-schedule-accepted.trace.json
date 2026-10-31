@@ -70,6 +70,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunDaily",
         "owner_ref": "strategy:test/RunDaily"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunDaily"
+        }
       }
     },
     {
@@ -84,7 +90,11 @@
         "node_id": "n1"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunDaily"
+        }
       }
     },
     {

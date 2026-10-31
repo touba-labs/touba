@@ -121,9 +121,12 @@ test("resumed agent loops retain their original step and global provider ceiling
   assert.deepEqual(writes, ["before", "child"]);
   assert.deepEqual(seen.map(s => s[0]), [0, 1]);
   assert.equal(seen[1][1], "finalization");
-  const capped = await resume(paused.checkpoint, { ...options, runLimits: { max_provider_calls: 1 } });
+  const fresh = await executeAirDocument(air, { ...options, entryRef: ref("RunDelegation"), inputs: { value: "parent" },
+    maxAgentSteps: 1, durableHumanApprovals: true });
+  const before = seen.length;
+  const capped = await resume(fresh.checkpoint, { ...options, runLimits: { max_provider_calls: 1 } });
   assert.equal(capped.reason, "AgentDecisionProviderBudgetExceeded", JSON.stringify(capped));
-  assert.equal(seen.length, 2);
+  assert.equal(seen.length, before);
 });
 
 test("a paused agent review retains its step ceiling through successive resumptions", async () => {
@@ -151,13 +154,16 @@ test("rejection, cancellation and a resumed child failure never become a success
   let providerCalls = 0;
   const options = { toolHandlers: recording(writes), agentDecisionProviderInitialMode: "capabilities",
     agentDecisionProvider: () => { providerCalls++; return { target_ref: ref("Work"), arguments: { value: "child" } }; } };
-  const paused = await executeAirDocument(air, { ...options, entryRef: ref("RunDelegation"), inputs: { value: "parent" }, durableHumanApprovals: true });
   for (const decision of ["rejected", "cancelled", "expired"]) {
+    providerCalls = 0; writes.length = 0;
+    const paused = await executeAirDocument(air, { ...options, entryRef: ref("RunDelegation"), inputs: { value: "parent" }, durableHumanApprovals: true });
     const stopped = await resume(paused.checkpoint, options, decision);
     assert.equal(stopped.status, "stopped", JSON.stringify(stopped));
     assert.equal(stopped.reason, `human_approval_${decision}`);
     assert.equal(providerCalls, 1);
   }
+  providerCalls = 0; writes.length = 0;
+  const paused = await executeAirDocument(air, { ...options, entryRef: ref("RunDelegation"), inputs: { value: "parent" }, durableHumanApprovals: true });
   const failed = await resume(paused.checkpoint, { ...options, toolHandlers: {
     "tool:agent.continuation/Record": () => { throw new Error("Controlled dispatch failure"); },
   } });
@@ -253,11 +259,12 @@ test("declared failure recovery after a resumed child uses the restored caller, 
   assert.equal(result.result, "parent");
   assert.deepEqual(writes, ["before", "child"]);
   assert.equal(result.trace.events.filter(e => e.kind === "fallback_selected").length, 1);
-  const rejected = await resume(paused.checkpoint, options, "rejected");
+  const pause = () => executeAirDocument(air, { ...options, entryRef: "skill:agent.continuation/Recover", inputs: { value: "parent" }, durableHumanApprovals: true });
+  const rejected = await resume((await pause()).checkpoint, options, "rejected");
   assert.equal(rejected.status, "stopped");
-  const budget = await resume(paused.checkpoint, { ...options, runLimits: { max_tool_calls: 1 } });
+  const budget = await resume((await pause()).checkpoint, { ...options, runLimits: { max_tool_calls: 1 } });
   assert.equal(budget.reason, "ToolCallBudgetExceeded");
-  assert.deepEqual(writes, ["before", "child"]);
+  assert.deepEqual(writes, ["before", "child", "before", "before"]);
 });
 
 test("a declared recovery can itself pause and resume without retrying the failed child", async () => {

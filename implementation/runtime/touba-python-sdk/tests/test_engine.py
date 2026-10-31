@@ -365,10 +365,9 @@ asyncio.run(define_tool(tool_ref="tool:approval_policy/Commit", run=run,
             self.assertEqual(result.trace["run"]["pure_function_detail"], "calls")
         self.assertEqual(marker.read_text(), "invoice\n")
         # Replaying this completed checkpoint must not duplicate its external write.
-        try:
+        with self.assertRaises(ToubaEngineError) as raised:
             ToubaEngine(**self.options).run(**resumed)
-        except ToubaEngineError:
-            pass
+        self.assertEqual(raised.exception.code, "HumanApprovalCheckpointAlreadyConsumed")
         self.assertEqual(marker.read_text(), "invoice\n")
 
     def test_python_approval_host_preserves_roles_separation_and_replay(self):

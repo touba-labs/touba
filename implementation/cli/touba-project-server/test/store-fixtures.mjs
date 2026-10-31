@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
 import { HUMAN_DECISION_INDEXES, HUMAN_REQUEST_INDEXES } from "../src/human-stores.mjs";
+import { CHANGE_INDEXES } from "../src/change-store.mjs";
 import { CHECKPOINT_INDEXES } from "../src/serve.mjs";
 
 function isIndexed(path) {
@@ -18,6 +19,7 @@ export function readStoreFixture(path) {
     const { schema_version } = db.prepare("SELECT schema_version FROM metadata").get();
     const records = db.prepare("SELECT body FROM records ORDER BY rowid").all().map(row => JSON.parse(row.body));
     if (schema_version === "touba-human-decisions-v1") return { schema_version, decisions: records };
+    if (schema_version === "touba-project-change-proposals-v1") return { schema_version, proposals: records };
     if (schema_version === "touba-interaction-sessions-v1") return { schema_version, sessions: records };
     if (schema_version === "touba-human-requests-v1") return { schema_version,
       approvals: records.filter(record => record.collection === "approvals").map(record => record.request),
@@ -34,15 +36,16 @@ export function writeStoreFixture(path, document) {
   const effects = document.schema_version === "touba-effect-journal-v1";
   const checkpoints = document.schema_version === "touba-sandbox-checkpoints-v1";
   const sessions = document.schema_version === "touba-interaction-sessions-v1";
+  const changes = document.schema_version === "touba-project-change-proposals-v1";
   const records = requests ? [
     ...document.approvals.map(request => ({ collection: "approvals", request })),
     ...document.reviews.map(request => ({ collection: "reviews", request })),
-  ] : decisions ? document.decisions : effects ? Object.values(document.entries) : sessions ? document.sessions : document.records;
+  ] : decisions ? document.decisions : effects ? Object.values(document.entries) : sessions ? document.sessions : changes ? document.proposals : document.records;
   const keyOf = record => requests ? record.request.request_id : decisions ? record.request_id : sessions ? record.session_id
-    : effects ? record.effect_id : JSON.stringify([record.record_kind, record.record_kind === "human" ? record.request_id : record.operation_id]);
-  if (!existsSync(path) && (requests || decisions || effects || checkpoints || sessions)) {
+    : effects ? record.effect_id : changes ? record.proposal_id : JSON.stringify([record.record_kind, record.record_kind === "human" ? record.request_id : record.operation_id]);
+  if (!existsSync(path) && (requests || decisions || effects || checkpoints || sessions || changes)) {
     const store = indexedStore({ path, schemaVersion: document.schema_version, keyOf, validate() {},
-      indexes: requests ? HUMAN_REQUEST_INDEXES : decisions ? HUMAN_DECISION_INDEXES : checkpoints ? CHECKPOINT_INDEXES : sessions ? {}
+      indexes: requests ? HUMAN_REQUEST_INDEXES : decisions ? HUMAN_DECISION_INDEXES : checkpoints ? CHECKPOINT_INDEXES : changes ? CHANGE_INDEXES : sessions ? {}
         : { effect_scope_id: "json_extract(body, '$.effect_scope_id')" } });
     store.initialize();
   }

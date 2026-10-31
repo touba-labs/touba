@@ -160,6 +160,11 @@ async function dispatch(rawArgs) {
     return stateCommand(rest);
   }
   if (command === "trace") {
+    if (rest[0] === "explore") {
+      const { traceExploreCommand } = await import("../../touba-inspect/src/trace-explorer/server.mjs");
+      await traceExploreCommand(rest.slice(1));
+      return { passthrough: true, exitCode: 0 };
+    }
     const { traceCommand } = await import("../../touba-run/src/trace-command.mjs");
     return traceCommand(rest);
   }
@@ -652,30 +657,32 @@ async function deployCommand(rawArgs) {
       token,
       method: "POST",
       path: `/revisions/${bundle.bundle_sha256}/activate`,
-      body: { activated_by: options.actor },
+      body: { activated_by: options.actor, expected_state: published.state_digest },
     });
     return { json: true, report: activated, exitCode: 0 };
   }
   if (subcommand === "activate") {
     const token = deploymentToken(options);
     const revision = requiredDeployOption(options.revision, "--revision");
+    const state = await deploymentTargetRequest({ targetUrl: requiredDeployOption(options.target, "--target"), token, path: "/revisions" });
     const result = await deploymentTargetRequest({
       targetUrl: requiredDeployOption(options.target, "--target"),
       token,
       method: "POST",
       path: `/revisions/${encodeURIComponent(revision)}/activate`,
-      body: { activated_by: options.actor },
+      body: { activated_by: options.actor, expected_state: state.state_digest },
     });
     return { json: true, report: result, exitCode: 0 };
   }
   if (subcommand === "rollback") {
     const token = deploymentToken(options);
+    const state = await deploymentTargetRequest({ targetUrl: requiredDeployOption(options.target, "--target"), token, path: "/revisions" });
     const result = await deploymentTargetRequest({
       targetUrl: requiredDeployOption(options.target, "--target"),
       token,
       method: "POST",
       path: "/rollback",
-      body: { rolled_back_by: options.actor },
+      body: { rolled_back_by: options.actor, expected_state: state.state_digest },
     });
     return { json: true, report: result, exitCode: 0 };
   }
@@ -1737,6 +1744,7 @@ function printUsage() {
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
   touba run (<program.air.json> | --project <path>) [--profile pure|dev|prod] [runtime options]
+  touba trace explore [project|trace.json|journal.sqlite] [--air <file>] [--port <number>] [--no-open]
   touba trace read --store <traces.sqlite> --reference-json <json> [--after <n>] [--limit <1..1000>]
   touba trace export --store <traces.sqlite> --postgres-env <NAME> [--watch] [--batch-size <1..1000>]
   touba state migrate <kind> <source.json> --out <new.sqlite> [--apply]

@@ -12,6 +12,8 @@ const AGENT_DECISION_PROVIDER_METADATA_FIELDS = Object.freeze([
   "model_id",
   "prompt_template_id",
   "decision_schema_version",
+  "decision_interface", "history_storage", "history_max_messages", "history_max_bytes",
+  "history_retained_max_bytes", "history_summary",
 ]);
 const AGENT_DECISION_PROVIDER_METADATA_FIELD_SET = new Set(AGENT_DECISION_PROVIDER_METADATA_FIELDS);
 const AGENT_DECISION_PROVIDER_METADATA_MAX_LENGTH = 200;
@@ -179,6 +181,11 @@ export function normalizeAgentDecisionProviderMetadata(metadata, fieldName, opti
       throw new ToubaRuntimeError("InvalidAgentDecisionProvider", `${fieldName}.${key} is too long`, {
         field: key,
       });
+    }
+    const allowed = { decision_interface: ["native", "structured"], history_storage: ["memory", "host_adapter", "disabled"],
+      history_summary: ["none", "host_callback"] };
+    if ((allowed[key] && !allowed[key].includes(value)) || (key.includes("_max_") && !/^[1-9][0-9]{0,15}$/.test(value))) {
+      throw new ToubaRuntimeError("InvalidAgentDecisionProvider", `${fieldName}.${key} is invalid`, { field: key });
     }
     normalized[key] = value;
   }

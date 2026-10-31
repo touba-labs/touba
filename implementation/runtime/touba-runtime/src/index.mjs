@@ -11,6 +11,8 @@ import {
 } from "./agent-provider-content.mjs";
 import { runAgentDecisionLoop, appendAgentCapabilityObservation } from "./agent-loop.mjs";
 import { createInvocationScope, snapshotInvocationValue } from "./invocation-scope.mjs";
+import { withTraceInvocation } from "./trace-context.mjs";
+import { createHumanCheckpointCustody, acceptedHumanApprovalState } from "./human-checkpoint-store.mjs";
 import { createParallelRuntime, parallelBoundary, parallelBudget, parallelExternal,
   parallelHuman, parallelRecord, trackParallelTransport, runParallelGroup,
   pendingParallelApprovals, pendingParallelInputs, validateParallelState, assertParallelOutcomesKnown, ParallelSuspend } from "./parallel-execution.mjs";
@@ -307,7 +309,7 @@ export async function executeAirDocument(document, options = {}) {
   const entryRef = options.entryRef ?? defaultEntryRef(document);
   const hardenedOptions = enforceHardenedExecutionProfile(document, options);
   const context = createExecutionContext(document, entryRef, { ...options, ...hardenedOptions });
-  return executeRunLifecycle(
+  return executeCheckpointLifecycle(
     context,
     async () => {
       // An entry has no structural caller. The host cannot impersonate a
@@ -344,7 +346,7 @@ export async function executeTriggerEvent(document, event, options = {}) {
   const entryRef = triggerEvent.triggerRef ?? "trigger:unknown";
   const hardenedOptions = enforceHardenedExecutionProfile(document, options);
   const context = createExecutionContext(document, entryRef, { ...options, ...hardenedOptions });
-  return executeRunLifecycle(
+  return executeCheckpointLifecycle(
     context,
     async () => {
       validateConfiguredInteractionReferences(document, context);
@@ -373,6 +375,35 @@ async function executeTriggerHumanApprovalResumeCheckpoint(document, entryRef, c
     }),
   });
   return result;
+}
+
+async function executeCheckpointLifecycle(context, execute, operations) {
+  return executeRunLifecycle(context, async () => {
+    if (context.humanApprovalResumeCheckpoint) {
+      context.humanCheckpointCustody.claim(context.humanApprovalResumeCheckpoint);
+      // Only a trusted host holding the accepted decision may provide this state.
+      // Integrity and the single-consumer reservation precede its use.
+      if (context.acceptedHumanApprovalState) {
+        context.approvalRuntime.state = context.acceptedHumanApprovalState;
+      }
+    }
+    return execute();
+  }, { ...operations, async finalizeOutcome({ status }) {
+    const pending = status === "stopped" && Boolean(context.pendingHumanApprovalCheckpoint);
+    if (pending) {
+      context.pendingHumanApprovalCheckpoint = context.humanCheckpointCustody.protect(context.pendingHumanApprovalCheckpoint);
+      // The final pause (including its elapsed budget) is authoritative. An
+      // observer may previously have persisted an intermediate group snapshot.
+      if (context.pendingHumanApprovalCheckpoint.kind === "parallel_group" && context.parallelRuntime.observer) {
+        await context.parallelRuntime.observer(context.trace.attach({
+          checkpoint: structuredClone(context.pendingHumanApprovalCheckpoint),
+        }));
+      }
+    } else {
+      context.pendingHumanApprovalCheckpoint = null;
+    }
+    context.humanCheckpointCustody.finish({ pending, retryable: status === "failure" });
+  } });
 }
 
 function createExecutionContext(document, entryRef, options = {}) {
@@ -429,7 +460,10 @@ function createExecutionContext(document, entryRef, options = {}) {
     "activeSkillPackRefs",
   );
   validateActiveSkillPackRefs(skillPacks, activeSkillPackRefs);
+  const humanCheckpointCustody = createHumanCheckpointCustody(options);
   const context = {
+    humanCheckpointCustody,
+    acceptedHumanApprovalState: acceptedHumanApprovalState(options.humanApprovalResumeCheckpoint),
     indexes,
     entryRef,
     trace,
@@ -525,7 +559,12 @@ function createExecutionContext(document, entryRef, options = {}) {
       || options.durable_human_approvals === true,
     humanApprovalResumeCheckpoint,
     pendingHumanApprovalCheckpoint: null,
-    parallelRuntime: createParallelRuntime(options),
+    parallelRuntime: createParallelRuntime({ ...options,
+      ...(options.parallelCheckpointObserver ? { parallelCheckpointObserver: async observation => {
+        observation.checkpoint = humanCheckpointCustody.protect(observation.checkpoint);
+        return options.parallelCheckpointObserver(observation);
+      } } : {}),
+    }),
     callStack: [],
     loopState: new Map(),
     maxLoopIterations: normalizePositiveRuntimeInteger(
@@ -3099,6 +3138,11 @@ async function executeTarget(targetRef, context, callArguments = null, options =
   }
   context = createInvocationScope(context);
   context.invocationDepth = (context.invocationDepth ?? 0) + 1;
+  return withTraceInvocation(context.trace, targetRef, context,
+    () => executeTargetInScope(targetRef, context, callArguments, options), options.traceCallEventId);
+}
+
+async function executeTargetInScope(targetRef, context, callArguments, options) {
   if (!options.dispatchAlreadyChecked) {
     assertRunCanDispatch(context, { targetRef });
   }
@@ -5844,6 +5888,7 @@ function assertNoResolvedSecretInEffectArtifact(value, toolRef, field, secretSto
 }
 
 function recordExternalToolDispatch(context) {
+  context.humanCheckpointCustody.markActivity({ parallel: Boolean(context.parallelBranch) });
   if (context.parallelBranch) {
     context.parallelCheckRun();
     context.parallelOperation.dispatched = true;
@@ -8551,12 +8596,12 @@ async function executeFallbackNode(graph, node, context) {
   const caller = context.activeCallerRef;
   context.callStack.push(frame);
   context.activeCallerRef = graph.owner_ref;
-  context.trace.push("call_started", { airRef: airRefForNode(graph, node),
+  const callEvent = context.trace.push("call_started", { airRef: airRefForNode(graph, node),
     payload: compactPayload({ target_ref: targetRef, caller_ref: graph.owner_ref, agent_ref: context.activeAgentRef,
       ...compensationCallIdentity(context) }) });
   try {
-    const result = await executeTarget(targetRef, context);
-    bindCompletedCall(graph, node, targetRef, result, context);
+    const result = await executeTarget(targetRef, context, null, { traceCallEventId: callEvent?.event_id });
+    bindCompletedCall(graph, node, targetRef, result, context, false, callEvent.event_id);
     return { edgeRole: successEdgeRole(graph, node.id), result };
   } finally {
     context.callStack.pop();
@@ -9018,7 +9063,7 @@ async function executeCallNode(graph, node, context) {
     });
   }
   const callArguments = resolveCallArguments(graph, node, context);
-  context.trace.push("call_started", {
+  const callEvent = context.trace.push("call_started", {
     airRef: airRefForNode(graph, node),
     payload: {
       target_ref: targetRef,
@@ -9042,12 +9087,13 @@ async function executeCallNode(graph, node, context) {
     try {
       result = await executeTarget(targetRef, context, callArguments, {
         dispatchAlreadyChecked: true,
+        traceCallEventId: callEvent?.event_id,
       });
     } finally {
       context.callStack.pop();
       context.activeCallerRef = previousCallerRef;
     }
-    bindCompletedCall(graph, node, targetRef, result, context);
+    bindCompletedCall(graph, node, targetRef, result, context, false, callEvent?.event_id);
     return {
       edgeRole: successEdgeRole(graph, node.id),
       result,
@@ -9057,7 +9103,7 @@ async function executeCallNode(graph, node, context) {
   }
 }
 
-function bindCompletedCall(graph, node, targetRef, result, context, resumed = false) {
+function bindCompletedCall(graph, node, targetRef, result, context, resumed = false, callEventId) {
   if (node.result_binding) {
     const bindingHandle = valueHandle(node.result_binding);
     context.values.set(bindingHandle, result);
@@ -9074,6 +9120,7 @@ function bindCompletedCall(graph, node, targetRef, result, context, resumed = fa
       agent_ref: context.activeAgentRef,
       result_binding: node.result_binding,
       resumed_from_checkpoint: resumed ? true : undefined,
+      call_started_event_id: callEventId,
       ...(context.compensation?.lastAttempt
         ? {
           compensation_id: context.compensation.config.envelope.compensation_id,
@@ -9351,6 +9398,7 @@ function consumeProviderBudget(context, details = {}) {
     ...details,
     provider: true,
   });
+  context.humanCheckpointCustody.markActivity({ parallel: Boolean(context.parallelBranch) });
 }
 
 function consumeRunBudget(context, budgetKind, amount, details = {}) {

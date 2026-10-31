@@ -13,6 +13,21 @@ import {
 
 const contractsRoot = new URL("../contracts/product-surfaces/", import.meta.url);
 
+test("canonical validation follows nested references and bounds values", () => {
+  const schema = { type: "object", required: ["field"], additionalProperties: false,
+    properties: { field: { $ref: "#/$defs/field" } },
+    $defs: { field: { anyOf: [
+      { type: "string", pattern: "^[0-9]+$", minLength: 2, maxLength: 4 },
+      { type: "integer", minimum: 1, maximum: 3 },
+    ] } } };
+  for (const field of ["12", "1234", 1, 3]) assert.deepEqual(validateObject(schema, { field }), []);
+  for (const field of ["a", "1", "12345", 0, 4, 1.5, null, {}]) assert.ok(validateObject(schema, { field }).length, JSON.stringify(field));
+  assert.ok(validateObject(schema, {}).length);
+  assert.ok(validateObject(schema, { field: 2, extra: true }).length);
+  assert.ok(validateObject({ $ref: "#/absent" }, {}).length);
+  assert.ok(validateObject({ type: "array", uniqueItems: true }, [{ a: 1, b: 2 }, { b: 2, a: 1 }]).length);
+});
+
 test("validates all product surface fixtures", () => {
   const report = buildProductSurfaceContractsReport();
 

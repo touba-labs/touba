@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,6 +11,8 @@ import {
   verifyDeploymentBundle,
 } from "../src/index.mjs";
 import { createDeploymentTargetService } from "../src/serve.mjs";
+import { newPackage, packPackage, addPackage } from "../../touba-project/src/packages.mjs";
+import { packageHostInventory } from "../../touba-project/src/package-host-plan.mjs";
 
 const TOKEN = "deployment-test-token-with-at-least-32-characters";
 
@@ -122,8 +124,10 @@ test("revision store publishes immutable artifacts, activates revisions and roll
     const firstActive = store.activate(first.bundle_sha256, {
       activatedBy: "user:khadim",
       activatedAt: "2026-07-23T00:00:02.000Z",
+      expectedState: firstPublished.state_digest,
     });
     assert.equal(firstActive.current_revision_id, first.bundle_sha256);
+    assert.throws(() => store.activate(first.bundle_sha256, { expectedState: firstPublished.state_digest }), { code: "ToubaDeploymentStateConflict" });
 
     writeFileSync(join(project.root, "src", "main.tb"), [
       "module demo.deploy",
@@ -151,6 +155,13 @@ test("revision store publishes immutable artifacts, activates revisions and roll
     });
     assert.equal(rolledBack.action, "rolled_back");
     assert.equal(rolledBack.current_revision_id, first.bundle_sha256);
+    const beforeAba = store.list();
+    store.rollback({ expectedState: beforeAba.state_digest });
+    store.rollback({ expectedState: store.list().state_digest });
+    assert.equal(store.list().current_revision_id, beforeAba.current_revision_id);
+    assert.equal(store.list().previous_revision_id, beforeAba.previous_revision_id);
+    assert.notEqual(store.list().state_digest, beforeAba.state_digest);
+    assert.throws(() => store.rollback({ expectedState: beforeAba.state_digest }), { code: "ToubaDeploymentStateConflict" });
     assert.equal(
       readFileSync(join(storageRoot, "revisions", first.bundle_sha256, "artifacts", "src", "main.tb"), "utf8"),
       "module demo.deploy\n",
@@ -182,10 +193,58 @@ test("revision store refuses a previously materialized artifact that no longer m
       () => store.publish(bundle),
       (error) => error.code === "ToubaDeploymentRevisionCorrupt",
     );
+    assert.throws(() => store.activate(bundle.bundle_sha256), { code: "ToubaDeploymentRevisionCorrupt" });
+    assert.throws(() => store.readBundle(bundle.bundle_sha256), { code: "ToubaDeploymentRevisionCorrupt" });
   } finally {
     project.dispose();
     rmSync(storageRoot, { recursive: true, force: true });
   }
+});
+
+test("bundle includes Python, SDK requirements and the full locked package inventory without runtime state", async () => {
+  const project = createProject();
+  const author = realpathSync(mkdtempSync(join(tmpdir(), "touba-deploy-package-")));
+  try {
+    const configPath = join(project.root, "touba.project.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    writeFileSync(configPath, JSON.stringify({ ...config, language: "python", sdk: "touba-sdk" }));
+    writeFileSync(join(project.root, "handlers/echo.py"), "from touba_sdk import serve_tool\n");
+    writeFileSync(join(project.root, "pyproject.toml"), '[project]\nname = "fixture"\nversion = "1.0.0"\ndependencies = ["touba-sdk==1.0.0"]\n');
+    writeFileSync(join(project.root, "uv.lock"), "version = 1\n");
+    mkdirSync(join(project.root, ".touba"));
+    writeFileSync(join(project.root, ".touba/checkpoint.json"), "{}");
+    mkdirSync(join(project.root, ".venv/lib"), { recursive: true });
+    writeFileSync(join(project.root, ".venv/lib/private.py"), "# excluded");
+    const pkg = newPackage("fixture.deploy", { root: author, publisher: "Fixture", description: "Package deployment", license: "Apache-2.0", version: "1.0.0" });
+    const packed = await packPackage(pkg.path, { output: join(author, "archive.tar.gz") });
+    await addPackage(packed.output, { root: project.root });
+    writeFileSync(join(project.root, 'touba.hosts.json'), JSON.stringify({
+      schema_version: 'touba-package-host-plan-v1', hosts: {}, package_lock_digest: packageHostInventory(project.root).package_lock_digest,
+    }));
+    const bundle = buildDeploymentBundle({ projectRoot: project.root, profile: "dev" });
+    const paths = bundle.artifacts.map(item => item.path);
+    for (const path of ["handlers/echo.py", "pyproject.toml", "uv.lock", "touba.hosts.json", "touba.packages.lock.json", "packages/fixture.deploy/README.md"]) assert.ok(paths.includes(path), path);
+    assert.ok(!paths.some(path => path.startsWith(".touba/") || path.startsWith(".venv/")));
+    const lock = JSON.parse(readFileSync(join(project.root, "touba.packages.lock.json")));
+    for (const file of lock.packages[0].files) assert.ok(paths.includes(`packages/fixture.deploy/${file.path}`));
+    writeFileSync(join(project.root, "packages/fixture.deploy/README.md"), "tampered");
+    assert.throws(() => buildDeploymentBundle({ projectRoot: project.root, profile: "dev" }), /differs from its lock/);
+  } finally { project.dispose(); rmSync(author, { recursive: true, force: true }); }
+});
+
+test("bundle refuses noncanonical paths and symlinked materialization", () => {
+  const project = createProject(), storageRoot = mkdtempSync(join(tmpdir(), "touba-deploy-paths-"));
+  try {
+    const bundle = buildDeploymentBundle({ projectRoot: project.root, profile: "dev" });
+    for (const path of ["x/../file", "x\\..\\file", "C:/file", "src//main.tb", "./main.tb", ".touba/checkpoint.json"]) {
+      const bad = structuredClone(bundle); bad.artifacts[0].path = path;
+      assert.throws(() => verifyDeploymentBundle(bad), { code: "ToubaDeploymentArtifactPathRejected" });
+    }
+    const store = createRevisionStore({ storageRoot }); store.publish(bundle);
+    const path = join(storageRoot, "revisions", bundle.bundle_sha256, "artifacts/src/main.tb");
+    rmSync(path); symlinkSync(join(project.root, "src/main.tb"), path);
+    assert.throws(() => store.activate(bundle.bundle_sha256), { code: "ToubaDeploymentArtifactPathRejected" });
+  } finally { project.dispose(); rmSync(storageRoot, { recursive: true, force: true }); }
 });
 
 test("deployment target requires strong authentication and TLS outside loopback", async () => {

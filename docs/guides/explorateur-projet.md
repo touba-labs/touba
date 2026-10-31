@@ -29,7 +29,7 @@ sélectionner l’élément situé sous le curseur.
 Les flèches portent leur relation. **Peut utiliser** correspond à `uses` ;
 **peut appeler l’agent** correspond à `callable_by`. Un appel écrit dans le
 code apparaît dans Architecture et Parcours. Les décisions prises pendant
-une exécution se consultent dans ses traces.
+une exécution se consultent dans ses [traces graphiques](explorer-traces.md).
 
 Une opération `parallel` présente sa cible et les bornes `max_concurrency`
 et `max_items`. Le nombre effectif de branches dépend de la liste reçue
@@ -60,7 +60,10 @@ Le bouton **Affichage** règle la présentation du graphe. Vos choix sont conser
 
 - **Étiquettes des relations** : toujours visibles, seulement autour de la sélection, ou masquées ;
 - **Orientation** : verticale ou horizontale ;
-- **Densité** : confortable ou compacte.
+- **Densité** : confortable ou compacte ;
+- **Niveau de détail** : **Complet** affiche tout ; **Essentiel** replie dans
+  **Détails techniques** la signature typée, les chemins de fichiers et les champs
+  propres à l’AIR ou au contrat de package.
 
 Les panneaux des ressources et des détails se masquent pour agrandir le graphe.
 Raccourcis clavier : `[` pour les ressources, `]` pour les détails, `\` pour le

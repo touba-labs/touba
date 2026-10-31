@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-package-preview-v1.schema.json",
+  "title": "touba-project-package-preview-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "id", "revision", "archive_digest", "expires_at", "name", "version", "packages", "validation"],
+  "properties": {
+    "schema_version": { "const": "touba-project-package-preview-v1" },
+    "id": { "type": "string", "format": "uuid" },
+    "revision": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "archive_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "name": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 },
+    "validation": { "const": "source_contracts" },
+    "packages": { "type": "array", "minItems": 1, "items": {
+      "type": "object", "additionalProperties": false, "required": ["name", "version", "digest"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    } }
+  }
+}

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 // Deliberate allowlist: credentials, manifests, handlers, AIR and SDKs stay put.
 const STATE_FILES = Object.freeze([
   "sandbox-checkpoints.sqlite", "human-requests.sqlite", "human-decisions.sqlite",
+  "project-change-proposals.sqlite",
   "traces.sqlite", "native-traces.sqlite",
   "project.effect-journal.sqlite", "interaction-sessions.sqlite", "interaction-assets.sqlite",
   "interaction-assets", "project-events.jsonl", "current-run-summary.json",

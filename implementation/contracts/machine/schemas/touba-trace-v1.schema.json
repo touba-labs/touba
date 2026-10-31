@@ -98,7 +98,22 @@
             "type": "object"
           },
           "payload": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "call_started_event_id": { "type": "string", "minLength": 1 },
+              "trace_context": {
+                "type": "object", "additionalProperties": false,
+                "required": ["span_id", "target_ref"],
+                "properties": {
+                  "span_id": { "type": "string", "pattern": "^span:" },
+                  "parent_span_id": { "type": "string", "minLength": 1 },
+                  "target_ref": { "type": "string", "minLength": 1 },
+                  "call_event_id": { "type": "string", "minLength": 1 },
+                  "agent_invocation_id": { "type": "string", "minLength": 1 },
+                  "agent_ref": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
           },
           "message": {
             "type": "string"

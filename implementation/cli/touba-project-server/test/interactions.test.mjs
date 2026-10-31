@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   archiveInteractionSession,
@@ -466,6 +468,63 @@ function createSession(sessionsPath) {
     sessionsPath,
   });
 }
+
+test("session summaries scan 100 MiB of synthetic history inside a 96 MiB JS heap", t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-session-summary-capacity-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sessionsPath = join(root, "sessions.sqlite");
+  const base = createSession(sessionsPath);
+  // Seed large histories independently of the normal execution recipes. The
+  // indexed store and complete canonical session validation remain real.
+  const db = new DatabaseSync(sessionsPath);
+  try {
+    db.exec("BEGIN; DELETE FROM records");
+    const insert = db.prepare("INSERT INTO records(id, revision, body) VALUES (?, 1, ?)");
+    for (let n = 0; n < 100; n++) {
+      const session = { ...base, session_id: `large-${n}`, messages: [{
+        message_id: `message-${n}`, role: "touba", created_at: base.created_at,
+        display_text: "Result retained", operation_id: `operation-${n}`, run_id: `run-${n}`,
+        run_status: "success", run_result: { result: "x".repeat(1024 * 1024) },
+      }] };
+      insert.run(session.session_id, JSON.stringify(session));
+    }
+    db.exec("COMMIT");
+  } finally { db.close(); }
+  const source = `import { listInteractionSessions, readInteractionRecoveryProjections, recoverInterruptedInteractionOperations, createInteractionSession } from ${JSON.stringify(new URL("../src/interactions.mjs", import.meta.url).href)};
+    global.gc(); const before = process.memoryUsage(), start = performance.now();
+    let last, projection;
+    for (let n = 0; n < 4; n++) { last = listInteractionSessions(process.argv[1]); projection = readInteractionRecoveryProjections(process.argv[1]); }
+    const recovered = recoverInterruptedInteractionOperations({ sessionsPath: process.argv[1] });
+    const created = createInteractionSession({ sessionsPath: process.argv[1], request: ${JSON.stringify(interactionSessionRequest())} });
+    global.gc(); const after = process.memoryUsage();
+    console.log(JSON.stringify({ heapGrowth: after.heapUsed - before.heapUsed,
+      elapsedMs: performance.now() - start, scans: 4, sessions: last.sessions.length,
+      bytes: Buffer.byteLength(JSON.stringify(last)), messageCounts: last.sessions.map(s => s.message_count),
+      recoveryBytes: Buffer.byteLength(JSON.stringify(projection)), digests: projection.every(s => /^sha256:/.test(s.messages[0].run_result_digest)),
+      recovered: recovered.length, created: Boolean(created.session_id), remaining: listInteractionSessions(process.argv[1]).sessions.length }));`;
+  const measured = JSON.parse(execFileSync(process.execPath,
+    ["--max-old-space-size=96", "--expose-gc", "--input-type=module", "-e", source, sessionsPath],
+    { encoding: "utf8", timeout: 30000 }));
+  assert.equal(measured.sessions, 100);
+  assert.deepEqual(measured.messageCounts, Array(100).fill(1));
+  assert.ok(measured.bytes < 65536);
+  assert.ok(measured.recoveryBytes < 65536);
+  assert.equal(measured.digests, true);
+  assert.equal(measured.recovered, 0);
+  assert.equal(measured.created, true);
+  assert.equal(measured.remaining, 100);
+  assert.ok(measured.heapGrowth < 16 * 1024 * 1024, JSON.stringify(measured));
+  assert.ok(measured.elapsedMs < 25000, JSON.stringify(measured));
+  const { messageCounts, ...diagnostic } = measured;
+  t.diagnostic(JSON.stringify(diagnostic));
+  // A new malformed body must still invalidate a later summary scan.
+  const corrupt = new DatabaseSync(sessionsPath);
+  try { corrupt.prepare("UPDATE records SET body=? WHERE id=?").run('{"status":"invalid"}', "large-99"); }
+  finally { corrupt.close(); }
+  assert.throws(() => listInteractionSessions(sessionsPath), { code: "ToubaServeInteractionSessionStoreInvalid" });
+  writeFileSync(sessionsPath, "invalid SQLite");
+  assert.throws(() => listInteractionSessions(sessionsPath), { code: "ToubaServeInteractionSessionStoreInvalid" });
+});
 
 function interactionSessionRequest() {
   return {

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { validateObject } from "../contracts/product-surfaces/validate.mjs";
+export { validateObject } from "../contracts/product-surfaces/validate.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -13,6 +15,9 @@ export const PRODUCT_SURFACE_CONTRACTS = Object.freeze([
   "touba-device-pairing-v1",
   "touba-identity-audit-v1",
   "touba-project-inspection-v1",
+  "touba-project-preparation-v1",
+  "touba-project-packages-v1",
+  "touba-project-package-preview-v1",
   "touba-effective-project-v1",
   "touba-project-refresh-request-v1",
   "touba-project-refresh-v1",
@@ -107,69 +112,6 @@ export function buildProductSurfaceContractsReport(options = {}) {
   };
 }
 
-export function validateObject(schema, value, path = "$") {
-  const diagnostics = [];
-  validateSchemaNode(schema, value, path, diagnostics);
-  return diagnostics;
-}
-
-function validateSchemaNode(schema, value, path, diagnostics) {
-  if (!isObject(schema)) {
-    diagnostics.push(error("SchemaNodeInvalid", `${path} schema node must be an object`, path));
-    return;
-  }
-  if (Object.hasOwn(schema, "const") && value !== schema.const) {
-    diagnostics.push(error("ConstMismatch", `${path} must be ${JSON.stringify(schema.const)}`, path));
-  }
-  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
-    diagnostics.push(error("EnumMismatch", `${path} must be one of ${schema.enum.join(", ")}`, path));
-  }
-  if (schema.type !== undefined && !matchesType(value, schema.type)) {
-    diagnostics.push(error("TypeMismatch", `${path} must be ${formatType(schema.type)}`, path));
-    return;
-  }
-  if (schema.type === "object" || (schema.properties && isObject(value))) {
-    validateObjectNode(schema, value, path, diagnostics);
-  }
-  if (schema.type === "array" || (schema.items && Array.isArray(value))) {
-    validateArrayNode(schema, value, path, diagnostics);
-  }
-}
-
-function validateObjectNode(schema, value, path, diagnostics) {
-  if (!isObject(value)) {
-    diagnostics.push(error("TypeMismatch", `${path} must be object`, path));
-    return;
-  }
-  for (const key of schema.required ?? []) {
-    if (!Object.hasOwn(value, key)) {
-      diagnostics.push(error("RequiredPropertyMissing", `${path}.${key} is required`, path));
-    }
-  }
-  const properties = schema.properties ?? {};
-  for (const [key, item] of Object.entries(value)) {
-    if (Object.hasOwn(properties, key)) {
-      validateSchemaNode(properties[key], item, `${path}.${key}`, diagnostics);
-    } else if (schema.additionalProperties === false) {
-      diagnostics.push(error("AdditionalPropertyRejected", `${path}.${key} is not allowed`, path));
-    }
-  }
-}
-
-function validateArrayNode(schema, value, path, diagnostics) {
-  if (!Array.isArray(value)) {
-    diagnostics.push(error("TypeMismatch", `${path} must be array`, path));
-    return;
-  }
-  if (typeof schema.minItems === "number" && value.length < schema.minItems) {
-    diagnostics.push(error("ArrayTooShort", `${path} must contain at least ${schema.minItems} item(s)`, path));
-  }
-  if (schema.items) {
-    for (const [index, item] of value.entries()) {
-      validateSchemaNode(schema.items, item, `${path}[${index}]`, diagnostics);
-    }
-  }
-}
 
 function readJson(path, diagnostics) {
   if (!existsSync(path)) {
@@ -182,36 +124,6 @@ function readJson(path, diagnostics) {
     diagnostics.push(error("JsonInvalid", `${path} is not valid JSON: ${cause.message}`, path));
     return null;
   }
-}
-
-function matchesType(value, expected) {
-  const expectedTypes = Array.isArray(expected) ? expected : [expected];
-  return expectedTypes.some((type) => {
-    if (type === "array") {
-      return Array.isArray(value);
-    }
-    if (type === "integer") {
-      return Number.isInteger(value);
-    }
-    if (type === "number") {
-      return typeof value === "number" && Number.isFinite(value);
-    }
-    if (type === "null") {
-      return value === null;
-    }
-    if (type === "object") {
-      return isObject(value);
-    }
-    return typeof value === type;
-  });
-}
-
-function formatType(type) {
-  return Array.isArray(type) ? type.join(" or ") : type;
-}
-
-function isObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function error(code, message, path) {

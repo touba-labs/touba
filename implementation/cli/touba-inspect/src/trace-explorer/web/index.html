@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src __CSP_SOURCE__; style-src __CSP_SOURCE__; connect-src 'self'; img-src __CSP_SOURCE__ blob:; font-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Touba Explorer · Traces</title>
+  <link rel="stylesheet" href="__ASSET_tokens.css__">
+  <link rel="stylesheet" href="__ASSET_style.css__">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 256 256" aria-hidden="true"><rect class="brand-plate" width="256" height="256" rx="56"/><path fill-rule="evenodd" d="M24 70Q24 61 31 56L62 33Q68 29 68 37V88H108V42Q108 32 118 32H138Q148 32 148 42V88H199Q232 88 232 121V179Q232 212 199 212H118Q108 212 108 202V124H68V166Q68 178 80 178H89Q94 178 94 183V207Q94 212 89 212H57Q24 212 24 179ZM148 124V178H181Q190 178 190 169V133Q190 124 181 124Z"/></svg>
+      <div class="brand-text"><strong>Touba Explorer</strong><small id="run-name">Traces</small></div>
+    </div>
+    <nav class="views" data-label="views">
+      <button type="button" data-view="timeline" aria-pressed="true"><svg class="ui-icon" data-icon="timeline" aria-hidden="true"></svg><span data-text="timeline"></span></button>
+      <button type="button" data-view="graph" aria-pressed="false"><svg class="ui-icon" data-icon="flow" aria-hidden="true"></svg><span data-text="graph"></span></button>
+      <button type="button" data-view="table" aria-pressed="false"><svg class="ui-icon" data-icon="table" aria-hidden="true"></svg><span data-text="table"></span></button>
+    </nav>
+    <div class="header-actions">
+      <div id="status" role="status" aria-live="polite"></div>
+      <button id="cancel" class="cancel-button" type="button" hidden><svg class="ui-icon" data-icon="close" aria-hidden="true"></svg><span data-text="cancel"></span></button>
+      <span class="badge"><svg class="ui-icon" data-icon="lock" aria-hidden="true"></svg><span data-text="readonly"></span></span>
+      <span class="language-field"><svg class="ui-icon" data-icon="globe" aria-hidden="true"></svg><select id="language" aria-label="Language" data-label="language"><option value="en">EN</option><option value="fr">FR</option></select><svg class="ui-icon caret" data-icon="caret" aria-hidden="true"></svg></span>
+      <button id="theme" class="icon-button" type="button" aria-pressed="false"><svg class="ui-icon theme-to-dark" data-icon="moon" aria-hidden="true"></svg><svg class="ui-icon theme-to-light" data-icon="sun" aria-hidden="true"></svg></button>
+    </div>
+  </header>
+  <main id="layout" data-runs="open" data-detail="open">
+    <aside class="panel runs" id="runs-panel" aria-labelledby="runs-title">
+      <div class="panel-head">
+        <h2 id="runs-title" data-text="runs"></h2>
+        <span class="head-actions">
+          <button id="refresh" class="icon-button ghost" type="button" data-label="refresh"><svg class="ui-icon" data-icon="refresh" aria-hidden="true"></svg></button>
+          <button id="hide-runs" class="icon-button ghost" type="button" data-label="hideRuns" aria-controls="runs-panel"><svg class="ui-icon" data-icon="collapseLeft" aria-hidden="true"></svg></button>
+        </span>
+      </div>
+      <form id="run-search" class="search-field">
+        <label for="run-filter" class="sr-only" data-text="runId"></label>
+        <svg class="ui-icon" data-icon="search" aria-hidden="true"></svg><input id="run-filter" type="search" autocomplete="off" maxlength="4096" data-placeholder="runId">
+        <button id="find-run" class="icon-button ghost" type="submit" data-label="findRun"><svg class="ui-icon" data-icon="arrowRight" aria-hidden="true"></svg></button>
+      </form>
+      <p id="run-count" class="count"></p>
+      <ul id="runs" data-label="runs"></ul>
+      <button id="more" class="more" type="button" data-text="more" hidden></button>
+    </aside>
+    <section class="workspace" aria-labelledby="title">
+      <div class="run-head">
+        <div class="run-title">
+          <div class="title-line"><h1 id="title" data-text="choose"></h1><span id="run-status" class="status-badge" hidden></span></div>
+          <p id="coverage" class="muted"></p>
+        </div>
+        <button id="export" type="button" disabled><svg class="ui-icon" data-icon="download" aria-hidden="true"></svg><span data-text="export"></span></button>
+      </div>
+      <div id="stats" class="stats"></div>
+      <form id="filters" class="toolbar">
+        <button id="show-runs" class="icon-button" type="button" data-label="showRuns" aria-controls="runs-panel" hidden><svg class="ui-icon" data-icon="panelLeft" aria-hidden="true"></svg></button>
+        <label class="search-field"><span class="sr-only" data-text="search"></span><svg class="ui-icon" data-icon="search" aria-hidden="true"></svg><input id="search" type="search" autocomplete="off" data-placeholder="search" maxlength="4096"></label>
+        <label class="select-field"><span class="sr-only" data-text="category"></span><select id="category" data-label="category"></select></label>
+        <div class="menu">
+          <button id="advanced-toggle" type="button" aria-expanded="false" aria-controls="advanced"><svg class="ui-icon" data-icon="filter" aria-hidden="true"></svg><span data-text="filtersShort"></span><span id="filter-count" class="count-pill" hidden></span></button>
+          <div id="advanced" class="popover" role="group" aria-labelledby="advanced-title" hidden>
+            <p id="advanced-title" class="popover-title" data-text="filters"></p>
+            <p class="hint" data-text="selectedSegment"></p>
+            <div class="filter-grid">
+              <label><span data-text="agent"></span><input name="agent" maxlength="4096" autocomplete="off"></label>
+              <label><span data-text="invocation"></span><input name="invocation" maxlength="4096" autocomplete="off"></label>
+              <label><span data-text="resource"></span><input name="resource" maxlength="4096" autocomplete="off"></label>
+              <label><span data-text="branch"></span><input name="branch" maxlength="4096" autocomplete="off"></label>
+              <label><span data-text="operation"></span><input name="operation" maxlength="4096" autocomplete="off"></label>
+              <label><span data-text="kind"></span><input name="kind" maxlength="4096" autocomplete="off"></label>
+              <label><span data-text="status"></span><input name="status" maxlength="4096" autocomplete="off"></label>
+              <span class="grid-gap" aria-hidden="true"></span>
+              <label><span data-text="from"></span><input name="from" type="datetime-local" step="1"></label>
+              <label><span data-text="to"></span><input name="to" type="datetime-local" step="1"></label>
+              <label><span data-text="start"></span><input name="start" type="number" min="0"></label>
+              <label><span data-text="end"></span><input name="end" type="number" min="0"></label>
+            </div>
+            <div class="popover-actions"><button type="submit" class="primary" data-text="apply"></button></div>
+          </div>
+        </div>
+        <button id="reset" type="button"><svg class="ui-icon" data-icon="reset" aria-hidden="true"></svg><span data-text="reset"></span></button>
+        <span class="spacer"></span>
+        <div class="menu">
+          <button id="display-toggle" type="button" aria-expanded="false" aria-controls="display-panel" data-label="display"><svg class="ui-icon" data-icon="sliders" aria-hidden="true"></svg><span data-text="display"></span></button>
+          <div id="display-panel" class="popover" role="group" aria-labelledby="display-title" hidden>
+            <p id="display-title" class="popover-title" data-text="display"></p>
+            <p class="option-label" data-text="detailLevel"></p>
+            <div class="segmented" data-pref="level"><button type="button" data-value="essential" data-text="essential"></button><button type="button" data-value="complete" data-text="complete"></button></div>
+            <p class="option-label" data-text="panels"></p>
+            <div class="segmented" data-pref="panels"><button type="button" data-value="runs" data-text="runsShort"></button><button type="button" data-value="detail" data-text="detailsShort"></button></div>
+            <p class="hint" data-text="shortcutsHint"></p>
+          </div>
+        </div>
+        <button id="focus-mode" class="icon-button" type="button" aria-pressed="false" data-label="focusMode"><svg class="ui-icon" data-icon="expand" aria-hidden="true"></svg></button>
+        <button id="show-detail" class="icon-button" type="button" data-label="showDetails" aria-controls="detail-panel" hidden><svg class="ui-icon" data-icon="panelRight" aria-hidden="true"></svg></button>
+      </form>
+      <div class="result-head">
+        <p id="result-count" class="count" role="status"></p>
+        <div id="level" class="segmented" role="group" data-label="level"><button type="button" data-value="technical" aria-pressed="true" data-text="technical"></button><button type="button" data-value="summary" aria-pressed="false" data-text="summary"></button><button type="button" data-value="governance" aria-pressed="false" data-text="governance"></button></div>
+        <div class="pagination" hidden><button id="previous" class="icon-button ghost" type="button" data-label="previous" disabled><svg class="ui-icon" data-icon="chevronLeft" aria-hidden="true"></svg></button><span id="page"></span><button id="next" class="icon-button ghost" type="button" data-label="next" disabled><svg class="ui-icon" data-icon="chevronRight" aria-hidden="true"></svg></button></div>
+      </div>
+      <div id="canvas-wrap">
+        <div id="events" tabindex="0" data-label="events" data-mode="timeline"></div>
+        <div id="graph-legend" class="legend" hidden><span class="legend-item"><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path d="M1 4h26"/></svg><span data-text="legendCall"></span></span><span class="legend-item"><svg class="legend-card" viewBox="0 0 20 14" aria-hidden="true"><rect x="1" y="1" width="18" height="12" rx="3"/></svg><span data-text="legendOutside"></span></span></div>
+        <div id="graph-controls" class="graph-actions" hidden>
+          <button id="zoom-out" class="icon-button" type="button" data-label="zoomOut"><svg class="ui-icon" data-icon="minus" aria-hidden="true"></svg></button>
+          <button id="fit" type="button"><svg class="ui-icon" data-icon="fit" aria-hidden="true"></svg><span data-text="fit"></span></button>
+          <button id="zoom-in" class="icon-button" type="button" data-label="zoomIn"><svg class="ui-icon" data-icon="plus" aria-hidden="true"></svg></button>
+        </div>
+      </div>
+    </section>
+    <aside class="panel detail-panel" id="detail-panel" aria-labelledby="detail-heading">
+      <div class="panel-head">
+        <h2 id="detail-heading" data-text="details"></h2>
+        <button id="hide-detail" class="icon-button ghost" type="button" data-label="hideDetails" aria-controls="detail-panel"><svg class="ui-icon" data-icon="collapseRight" aria-hidden="true"></svg></button>
+      </div>
+      <div id="detail" aria-live="polite"></div>
+    </aside>
+  </main>
+  <dialog id="source-dialog"><header><strong id="source-title"></strong><button id="close-source" type="button" data-text="close"></button></header><p class="note" data-text="sourceNotice"></p><pre id="source-content" tabindex="0"></pre></dialog>
+  <script type="module" src="__ASSET_app.mjs__"></script>
+</body>
+</html>

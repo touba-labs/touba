@@ -8,6 +8,18 @@ import { execFileSync } from "node:child_process";
 import { createAiSdkDecisionProvider, createMemoryDecisionHistoryStore, createOpenAiDecisionProvider } from "../src/index.mjs";
 import { createSqliteDecisionHistoryStore } from "../src/sqlite-decision-history.mjs";
 import { nativeCapabilityName } from "../src/native-decision.mjs";
+import { createDecisionHistory } from "../src/decision-history.mjs";
+
+test("history policy exposes actual bounds without application namespaces or host credentials", () => {
+  assert.deepEqual(createDecisionHistory(undefined, "native").policy, { history_storage: "memory", history_max_messages: "128",
+    history_max_bytes: "262144", history_retained_max_bytes: "8388608", history_summary: "none" });
+  const history = createDecisionHistory({ store: { transact() {} }, namespace: "tenant-private", maxMessages: 12,
+    maxBytes: 1024, maxRetainedBytes: 4096, summarize: () => "summary" }, "structured");
+  assert.equal(history.policy.history_storage, "host_adapter");
+  assert.equal(history.policy.history_max_messages, "12");
+  assert.equal(history.policy.history_summary, "host_callback");
+  assert.doesNotMatch(JSON.stringify(history.policy), /tenant-private/);
+});
 
 const target = "tool:history/Write", toolName = nativeCapabilityName(target);
 

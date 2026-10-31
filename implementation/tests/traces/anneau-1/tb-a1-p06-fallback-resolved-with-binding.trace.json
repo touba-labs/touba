@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/BuildSource",
         "owner_ref": "skill:examples.a1_fallback_binding/BuildSource"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_fallback_binding/BuildSource"
+        }
       }
     },
     {
@@ -55,7 +61,11 @@
         "target_ref": "tool:examples.a1_fallback_binding/FetchSource",
         "caller_ref": "skill:examples.a1_fallback_binding/BuildSource",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_fallback_binding/BuildSource"
+        }
       }
     },
     {
@@ -87,7 +97,11 @@
         "target_ref": "tool:examples.a1_fallback_binding/FetchSource",
         "tool_ref": "tool:examples.a1_fallback_binding/FetchSource",
         "caller_ref": "skill:examples.a1_fallback_binding/BuildSource",
-        "provider_cause": "bounded anneau 1 fallback trigger"
+        "provider_cause": "bounded anneau 1 fallback trigger",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_fallback_binding/BuildSource"
+        }
       },
       "message": "tool handler failed tool:examples.a1_fallback_binding/FetchSource: bounded anneau 1 fallback trigger"
     },
@@ -103,7 +117,11 @@
       },
       "payload": {
         "failure_path_ref": "failure:graph:skill:examples.a1_fallback_binding/BuildSource:1",
-        "target_node_id": "node:graph:skill:examples.a1_fallback_binding/BuildSource:3"
+        "target_node_id": "node:graph:skill:examples.a1_fallback_binding/BuildSource:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_fallback_binding/BuildSource"
+        }
       }
     },
     {
@@ -128,7 +146,11 @@
       },
       "payload": {
         "target_ref": "skill:examples.a1_fallback_binding/FallbackSource",
-        "caller_ref": "skill:examples.a1_fallback_binding/BuildSource"
+        "caller_ref": "skill:examples.a1_fallback_binding/BuildSource",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_fallback_binding/BuildSource"
+        }
       }
     },
     {
@@ -140,6 +162,14 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_fallback_binding/FallbackSource",
         "owner_ref": "skill:examples.a1_fallback_binding/FallbackSource"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.a1_fallback_binding/FallbackSource",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:6"
+        }
       }
     },
     {
@@ -154,7 +184,13 @@
         "node_id": "node:graph:skill:examples.a1_fallback_binding/FallbackSource:1"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.a1_fallback_binding/FallbackSource",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:6"
+        }
       }
     },
     {
@@ -179,7 +215,12 @@
       },
       "payload": {
         "target_ref": "skill:examples.a1_fallback_binding/FallbackSource",
-        "caller_ref": "skill:examples.a1_fallback_binding/BuildSource"
+        "caller_ref": "skill:examples.a1_fallback_binding/BuildSource",
+        "call_started_event_id": "event:run-1:6",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_fallback_binding/BuildSource"
+        }
       }
     },
     {
@@ -193,7 +234,11 @@
         "owner_ref": "skill:examples.a1_fallback_binding/BuildSource"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_fallback_binding/BuildSource"
+        }
       }
     },
     {

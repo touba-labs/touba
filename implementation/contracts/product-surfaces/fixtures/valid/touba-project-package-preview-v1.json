@@ -1,0 +1,9 @@
+{
+  "schema_version": "touba-project-package-preview-v1",
+  "id": "e57c0a4c-bd14-4eda-8d53-b8552cb0b5dd",
+  "revision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "archive_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "expires_at": "2026-10-30T12:00:00Z", "name": "example.echo", "version": "1.0.0",
+  "validation": "source_contracts",
+  "packages": [{ "name": "example.echo", "version": "1.0.0", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }]
+}

@@ -1,3 +1,10 @@
+export function isAuthoringTypeReference(value, depth = 0) {
+  if (typeof value !== "string" || value.length > 256 || depth > 16) return false;
+  if (/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$/u.test(value)) return true;
+  const generic = /^(List|Optional) of (.+)$/u.exec(value);
+  return Boolean(generic && isAuthoringTypeReference(generic[2], depth + 1));
+}
+
 export function buildAirInputContract({ air, definition, kind }) {
   const typeDefinitions = Array.isArray(air?.definitions?.types) ? air.definitions.types : [];
   if (kind === "agent") {
@@ -35,6 +42,7 @@ function declaredInputContract(inputs, typeDefinitions) {
     name: input.name,
     type_ref: input.type_ref,
     required: true,
+    ...fieldMetadata(input),
   }));
   if (fields.length === 0) {
     return emptyInputContract("none");
@@ -68,6 +76,7 @@ function reachableInputTypes(fields, typeDefinitions) {
       name: field.name,
       type_ref: field.type_ref,
       required: true,
+      ...fieldMetadata(field),
     }));
     reachable.set(nestedRef, {
       ref: nestedRef,
@@ -87,4 +96,13 @@ function reachableInputTypes(fields, typeDefinitions) {
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+// AIR defaults are validated literal values, not source expressions. Copy them
+// to the input surface without letting a consumer mutate the compiled contract.
+function fieldMetadata(field) {
+  return {
+    ...(field.constraints ? { constraints: structuredClone(field.constraints) } : {}),
+    ...(Object.hasOwn(field, "default") ? { default: structuredClone(field.default) } : {}),
+  };
 }

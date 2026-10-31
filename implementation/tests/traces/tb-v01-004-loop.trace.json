@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.loop/RunNormalization",
         "owner_ref": "strategy:examples.loop/RunNormalization"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.loop/RunNormalization"
+        }
       }
     },
     {
@@ -55,7 +61,11 @@
         "target_ref": "agent:examples.loop/Normalizer",
         "caller_ref": "strategy:examples.loop/RunNormalization",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.loop/RunNormalization"
+        }
       }
     },
     {
@@ -81,7 +91,11 @@
       "payload": {
         "caller_ref": "strategy:examples.loop/RunNormalization",
         "agent_ref": "agent:examples.loop/Normalizer",
-        "authority_source": "callable_by"
+        "authority_source": "callable_by",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.loop/RunNormalization"
+        }
       }
     },
     {
@@ -94,7 +108,14 @@
         "agent_ref": "agent:examples.loop/Normalizer",
         "caller_ref": "strategy:examples.loop/RunNormalization",
         "input_count": 1,
-        "output_type": "type:examples.loop/NormalizedItems"
+        "output_type": "type:examples.loop/NormalizedItems",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.loop/Normalizer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+        }
       }
     },
     {
@@ -156,7 +177,14 @@
             ],
             "memory_accesses": []
           }
-        ]
+        ],
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.loop/Normalizer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+        }
       }
     },
     {
@@ -169,7 +197,14 @@
         "agent_ref": "agent:examples.loop/Normalizer",
         "selected_ref": "skill:examples.loop/NormalizeItems",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.loop/Normalizer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+        }
       }
     },
     {
@@ -183,7 +218,14 @@
         "selected_ref": "skill:examples.loop/NormalizeItems",
         "authority_source": "uses",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.loop/Normalizer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+        }
       }
     },
     {
@@ -195,6 +237,15 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.loop/NormalizeItems",
         "owner_ref": "skill:examples.loop/NormalizeItems"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.loop/NormalizeItems",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -221,7 +272,14 @@
         "condition_result": true,
         "selected_edge_role": "loop_next",
         "iteration_index": 0,
-        "condition_ref": "loop_has_next:value:items"
+        "condition_ref": "loop_has_next:value:items",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.loop/NormalizeItems",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -248,7 +306,14 @@
         "target_ref": "function:examples.loop/NormalizeItem",
         "caller_ref": "skill:examples.loop/NormalizeItems",
         "agent_ref": "agent:examples.loop/Normalizer",
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.loop/NormalizeItems",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -260,6 +325,16 @@
       "air_ref": {
         "flow_graph_ref": "graph:function:examples.loop/NormalizeItem",
         "owner_ref": "function:examples.loop/NormalizeItem"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:4",
+          "target_ref": "function:examples.loop/NormalizeItem",
+          "parent_span_id": "span:run-1:0:3",
+          "call_event_id": "event:run-1:11",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -274,7 +349,15 @@
         "node_id": "node:graph:function:examples.loop/NormalizeItem:1"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:4",
+          "target_ref": "function:examples.loop/NormalizeItem",
+          "parent_span_id": "span:run-1:0:3",
+          "call_event_id": "event:run-1:11",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -300,7 +383,15 @@
       "payload": {
         "target_ref": "function:examples.loop/NormalizeItem",
         "caller_ref": "skill:examples.loop/NormalizeItems",
-        "agent_ref": "agent:examples.loop/Normalizer"
+        "agent_ref": "agent:examples.loop/Normalizer",
+        "call_started_event_id": "event:run-1:11",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.loop/NormalizeItems",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -327,7 +418,14 @@
         "condition_result": true,
         "selected_edge_role": "loop_next",
         "iteration_index": 1,
-        "condition_ref": "loop_has_next:value:items"
+        "condition_ref": "loop_has_next:value:items",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.loop/NormalizeItems",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -354,7 +452,14 @@
         "target_ref": "function:examples.loop/NormalizeItem",
         "caller_ref": "skill:examples.loop/NormalizeItems",
         "agent_ref": "agent:examples.loop/Normalizer",
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.loop/NormalizeItems",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -366,6 +471,16 @@
       "air_ref": {
         "flow_graph_ref": "graph:function:examples.loop/NormalizeItem",
         "owner_ref": "function:examples.loop/NormalizeItem"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:5",
+          "target_ref": "function:examples.loop/NormalizeItem",
+          "parent_span_id": "span:run-1:0:3",
+          "call_event_id": "event:run-1:16",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -380,7 +495,15 @@
         "node_id": "node:graph:function:examples.loop/NormalizeItem:1"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:5",
+          "target_ref": "function:examples.loop/NormalizeItem",
+          "parent_span_id": "span:run-1:0:3",
+          "call_event_id": "event:run-1:16",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -406,7 +529,15 @@
       "payload": {
         "target_ref": "function:examples.loop/NormalizeItem",
         "caller_ref": "skill:examples.loop/NormalizeItems",
-        "agent_ref": "agent:examples.loop/Normalizer"
+        "agent_ref": "agent:examples.loop/Normalizer",
+        "call_started_event_id": "event:run-1:16",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.loop/NormalizeItems",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -433,7 +564,14 @@
         "condition_result": false,
         "selected_edge_role": "loop_exit",
         "iteration_index": 2,
-        "condition_ref": "loop_has_next:value:items"
+        "condition_ref": "loop_has_next:value:items",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.loop/NormalizeItems",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -448,7 +586,14 @@
         "node_id": "node:graph:skill:examples.loop/NormalizeItems:3"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.loop/NormalizeItems",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "agent_ref": "agent:examples.loop/Normalizer"
+        }
       }
     },
     {
@@ -461,7 +606,14 @@
         "agent_ref": "agent:examples.loop/Normalizer",
         "caller_ref": "strategy:examples.loop/RunNormalization",
         "output_type": "type:examples.loop/NormalizedItems",
-        "result_type": "object"
+        "result_type": "object",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.loop/Normalizer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+        }
       }
     },
     {
@@ -487,7 +639,12 @@
       "payload": {
         "target_ref": "agent:examples.loop/Normalizer",
         "caller_ref": "strategy:examples.loop/RunNormalization",
-        "result_binding": "normalized"
+        "result_binding": "normalized",
+        "call_started_event_id": "event:run-1:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.loop/RunNormalization"
+        }
       }
     },
     {
@@ -502,7 +659,11 @@
         "node_id": "node:graph:strategy:examples.loop/RunNormalization:2"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.loop/RunNormalization"
+        }
       }
     },
     {

@@ -60,6 +60,7 @@ export function createDeploymentTargetService(options = {}) {
         const body = await readJsonBody(request);
         writeJson(response, 202, store.activate(activation[1], {
           activatedBy: actorId(body.activated_by),
+          expectedState: requiredState(body.expected_state),
         }));
         return;
       }
@@ -67,6 +68,7 @@ export function createDeploymentTargetService(options = {}) {
         const body = await readJsonBody(request);
         writeJson(response, 202, store.rollback({
           rolledBackBy: actorId(body.rolled_back_by),
+          expectedState: requiredState(body.expected_state),
         }));
         return;
       }
@@ -182,10 +184,18 @@ function writeJson(response, status, value) {
 }
 
 function statusForError(code) {
+  if (code === "ToubaDeploymentStateConflict") return 409;
   if (code === "ToubaDeploymentUnauthorized") return 401;
   if (code === "ToubaDeploymentRevisionNotFound") return 404;
   if (code === "ToubaDeploymentRevisionCorrupt") return 409;
   return 400;
+}
+
+function requiredState(value) {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw targetError("ToubaDeploymentStateRequired", "activation and rollback require the reviewed target state");
+  }
+  return value;
 }
 
 function requiredValue(option, args, index) {

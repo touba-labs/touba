@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { airDocumentDigest } from "./air-identity.mjs";
+import { currentTraceInvocation } from "./trace-context.mjs";
 import {
   TRACE_CAPABILITY_PROFILE,
   TRACE_PROTOCOL_VERSION,
@@ -66,6 +67,8 @@ export class TraceBuilder {
     this.maxPendingBytes = Math.min(65536, storage?.maxBatchBytes ?? 65536);
     if (!Number.isSafeInteger(this.maxPendingBytes) || this.maxPendingBytes < 1) throw new TypeError("trace batch byte limit must be a positive safe integer");
     this.eventCount = 0;
+    this.spanCount = 0;
+    this.spanRoot = this;
     /** @type {number} */
     this.initialSequenceIndex = initialSequenceIndex;
     /** @type {((event: TraceEvent) => void) | null} */
@@ -101,9 +104,11 @@ export class TraceBuilder {
           ),
       }
       : options.payload;
-    const payload = rawPayload === undefined
+    const traceContext = currentTraceInvocation(this);
+    const correlatedPayload = traceContext ? { ...rawPayload, trace_context: traceContext } : rawPayload;
+    const payload = correlatedPayload === undefined
       ? undefined
-      : jsonPortableTraceValue(rawPayload);
+      : jsonPortableTraceValue(correlatedPayload);
     const sequenceIndex = this.initialSequenceIndex + this.eventCount;
     if (!Number.isSafeInteger(sequenceIndex + 1)) throw new RangeError("trace sequence index cannot advance safely");
     const event = /** @type {TraceEvent} */ (compactPayload({
@@ -144,6 +149,14 @@ export class TraceBuilder {
   /** @returns {number} */
   nextSequenceIndex() {
     return this.initialSequenceIndex + this.eventCount;
+  }
+
+  allocateSpanId() {
+    // Delegating branch traces use Object.create(builder); the allocator must
+    // remain on the root builder, not on a shadow object for each branch.
+    const root = this.spanRoot ?? this;
+    root.spanRoot = root;
+    return `span:${root.runId}:${root.initialSequenceIndex}:${++root.spanCount}`;
   }
 
   flush() {

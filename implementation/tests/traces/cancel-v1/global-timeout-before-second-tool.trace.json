@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:test/TwoTools",
         "owner_ref": "skill:test/TwoTools"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -54,7 +60,11 @@
       "payload": {
         "target_ref": "tool:test/First",
         "caller_ref": "skill:test/TwoTools",
-        "agent_ref": null
+        "agent_ref": null,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -80,7 +90,12 @@
       "payload": {
         "target_ref": "tool:test/First",
         "caller_ref": "skill:test/TwoTools",
-        "result_binding": "first"
+        "result_binding": "first",
+        "call_started_event_id": "event:run-1:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -94,7 +109,11 @@
         "authority_source": "timeout",
         "elapsed_ms": 10,
         "scope": "runtime",
-        "reason": "global_timeout_exceeded"
+        "reason": "global_timeout_exceeded",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -106,7 +125,11 @@
       "payload": {
         "authority_source": "timeout",
         "reason": "global_timeout_exceeded",
-        "scope": "runtime"
+        "scope": "runtime",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {
@@ -132,7 +155,11 @@
       "payload": {
         "target_ref": "tool:test/Second",
         "reason": "global_timeout_exceeded",
-        "tool_ref": "tool:test/Second"
+        "tool_ref": "tool:test/Second",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/TwoTools"
+        }
       }
     },
     {

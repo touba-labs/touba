@@ -58,6 +58,7 @@ class RunOptions(TypedDict, total=False):
     require_supply_chain_lock: bool
     effect_journal: str
     human_checkpoint_out: str
+    human_checkpoint_store: str
     human_resume_checkpoint: str
     human_approval_host: str
     human_approval_authority_timeout_ms: int
@@ -97,6 +98,7 @@ PATHS = {
     "manifest": "manifest", "secrets": "secrets", "resource_bindings": "resource-bindings",
     "supply_chain_lock": "supply-chain-lock", "effect_journal": "effect-journal",
     "human_checkpoint_out": "human-checkpoint-out", "human_resume_checkpoint": "human-resume-checkpoint",
+    "human_checkpoint_store": "human-checkpoint-store",
     "human_approval_host": "human-approval-host", "parallel_checkpoint_out": "parallel-checkpoint-out",
     "parallel_resume_checkpoint": "parallel-resume-checkpoint", "agent_decision_provider": "agent-decision-provider",
     "trigger_state": "state", "trace_out": "trace-out", "trace_store": "trace-store",
@@ -360,6 +362,8 @@ class AsyncToubaEngine:
             args = ["run", air, "--output", "json-reference" if mode == "reference" else "json"]
             if "trace_store" not in options:
                 args.extend(["--trace-store", self._path(".touba/traces.sqlite")])
+            if "human_checkpoint_store" not in options:
+                args.extend(["--human-checkpoint-store", self._path(".touba/approval-checkpoints.sqlite")])
             for key, flag in PATHS.items():
                 if key in options:
                     selected = _text(options[key])

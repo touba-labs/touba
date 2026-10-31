@@ -5,7 +5,10 @@ import {
   statSync,
 } from "node:fs";
 import { basename, join, relative } from "node:path";
+import { isAuthoringTypeReference } from "../../../contracts/product-surfaces/input-contracts.mjs";
 import { effectContractToJson, normalizeEffectContract } from "../../touba-manifest/src/effect-contract.mjs";
+import { generateHandlerStubFromAirTool } from "../../touba-manifest/src/stub.mjs";
+import { projectPythonCommand } from "../../touba-manifest/src/python-sdk-dependency.mjs";
 
 export const ELEMENT_AUTHORING_SCHEMA_VERSION = "touba-element-authoring-request-v1";
 
@@ -29,7 +32,7 @@ const REQUIREMENTS = new Set([
 ]);
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const MODULE_REF = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/u;
-const TYPE_REF = /^[A-Za-z][A-Za-z0-9_.]*$/u;
+// The same lexical input contract is consumed by client; compilation resolves types.
 const SECRET_REF = /^[A-Z][A-Z0-9_]*$/u;
 const DECLARATION = /^(memory|function|tool|skill|agent|strategy|trigger)\s+([A-Za-z][A-Za-z0-9_]*)\b/gmu;
 const MODULE_LINE = /^module\s+([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)\s*$/mu;
@@ -55,7 +58,10 @@ export function buildElementAuthoringChangeSet({ projectRoot, request }) {
   }];
 
   if (normalized.element.kind === "tool") {
-    const handlerPath = handlerRelativePath(normalized.module_ref, normalized.element.name);
+    const configPath = join(projectRoot, "touba.project.json");
+    const language = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")).language ?? "javascript" : "javascript";
+    if (!["javascript", "python"].includes(language)) throw authoringError("ToubaServeElementAuthoringInvalid", "project SDK language is unsupported");
+    const handlerPath = handlerRelativePath(normalized.module_ref, normalized.element.name, language);
     changes.push({
       path: "touba.manifest.json",
       content: renderManifest({
@@ -63,15 +69,16 @@ export function buildElementAuthoringChangeSet({ projectRoot, request }) {
         moduleRef: normalized.module_ref,
         element: normalized.element,
         handlerPath,
+        language,
       }),
       role: "manifest",
     });
     changes.push({
       path: handlerPath,
-      content: renderHandlerStub({
-        moduleRef: normalized.module_ref,
-        name: normalized.element.name,
-      }),
+      content: generateHandlerStubFromAirTool({ id: elementRef, name: normalized.element.name,
+        signature: { inputs: normalized.element.takes, output_type: normalized.element.gives },
+        required_capabilities: normalized.element.requirements, required_secrets: normalized.element.secrets,
+      }, { language }),
       role: "handler_stub",
     });
   }
@@ -315,7 +322,7 @@ function renderTriggerBody(lines, trigger, moduleRef) {
   lines.push(`        timeout_ms as ${trigger.timeout_ms}`);
 }
 
-function renderManifest({ projectRoot, moduleRef, element, handlerPath }) {
+function renderManifest({ projectRoot, moduleRef, element, handlerPath, language }) {
   const manifest = readManifest(projectRoot);
   const toolRef = `tool:${moduleRef}/${element.name}`;
   if (Object.hasOwn(manifest.bindings, toolRef)) {
@@ -324,7 +331,7 @@ function renderManifest({ projectRoot, moduleRef, element, handlerPath }) {
   const binding = {
     handler: {
       kind: "process",
-      command: "node",
+      command: language === "python" ? projectPythonCommand(projectRoot) : "node",
       args: [handlerPath],
       cwd: ".",
     },
@@ -366,24 +373,6 @@ function renderTriggerManifest({ projectRoot, moduleRef, element }) {
     },
   };
   return stableJson(manifest);
-}
-
-function renderHandlerStub({ moduleRef, name }) {
-  return [
-    "#!/usr/bin/env node",
-    "// Touba generated handler stub v0.1",
-    `"use strict";`,
-    "",
-    `const handlerRef = ${JSON.stringify(`tool:${moduleRef}/${name}`)};`,
-    `const error = {`,
-    `  schema_version: "touba-handler-error-v1",`,
-    `  code: "HandlerStubNotImplemented",`,
-    `  message: \`\${handlerRef} has no implementation\`,`,
-    `};`,
-    `process.stderr.write(\`\${JSON.stringify(error)}\\n\`);`,
-    "process.exitCode = 1;",
-    "",
-  ].join("\n");
 }
 
 function validateElementReferences(request, declarations) {
@@ -646,8 +635,8 @@ function localRefName(value, moduleRef) {
   return parseElementRef(value, moduleRef).name;
 }
 
-function handlerRelativePath(moduleRef, name) {
-  return `handlers/${moduleRef.replaceAll(".", "/")}/${snakeCase(name)}.handler.mjs`;
+function handlerRelativePath(moduleRef, name, language) {
+  return `handlers/${moduleRef.replaceAll(".", "/")}/${snakeCase(name)}.handler.${language === "python" ? "py" : "mjs"}`;
 }
 
 function appendSourceBlock(content, block) {
@@ -710,7 +699,7 @@ function identifier(value, field) {
 
 function typeRef(value, field) {
   const normalized = nonEmptyString(value, field);
-  if (!TYPE_REF.test(normalized)) {
+  if (!isAuthoringTypeReference(normalized)) {
     throw authoringError("ToubaServeElementAuthoringInvalid", `${field} is not a valid Touba type reference`);
   }
   return normalized;

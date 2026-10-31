@@ -20,7 +20,8 @@
         "tool_call_count": { "type": "integer" },
         "duration_ms": { "type": "integer" },
         "estimated_cost": { "type": "number" },
-        "estimate_basis": { "type": "string" }
+        "estimate_basis": { "type": "string" },
+        "evidence_status": { "enum": ["available", "unavailable"] }
       }
     },
     "runs": {

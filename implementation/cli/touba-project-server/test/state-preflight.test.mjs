@@ -29,7 +29,7 @@ test("offline preflight covers interactions without changing bytes or importing 
     assert.equal(checked.stores.find(store => store.store === key).records, 1);
     assert.ok(checked.stores.find(store => store.store === key).schema_version);
   }
-  assert.equal(checked.stores.length, 6);
+  assert.equal(checked.stores.length, 7);
   assert.equal(existsSync(join(root, ".touba/state-origin.json")), false);
   [sessionsPath, assetsPath].forEach((path, index) => assert.deepEqual(readFileSync(path), before[index]));
   writeFileSync(assetsPath + "-wal", "unqualified snapshot");

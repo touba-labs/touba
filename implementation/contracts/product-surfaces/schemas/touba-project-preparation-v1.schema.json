@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-preparation-v1.schema.json",
+  "title": "touba-project-preparation-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "status", "profile", "diagnostics", "actions"],
+  "properties": {
+    "schema_version": { "const": "touba-project-preparation-v1" },
+    "status": { "enum": ["success", "needs_changes", "error"] },
+    "profile": { "const": "dev" },
+    "diagnostics": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["code", "message", "severity"],
+      "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "severity": { "enum": ["error", "warning", "info"] } }
+    } },
+    "actions": { "type": "array", "items": { "type": "string" } }
+  }
+}

@@ -1280,7 +1280,7 @@ for (const ending of ["cancel", "approve"]) test(`WAIT successive approvals surv
   } finally { await service.stop(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test("WAIT failed terminalization is valid only after an attempt, retries on one timer, and recovers at cap 100", async () => {
+test("WAIT failed terminalization retries on one timer and refuses rollback after completion", async () => {
   const root = createTestProject();
   const clock = controlledClock(Date.now() - DAY_MS - 2_000);
   const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
@@ -1368,12 +1368,51 @@ test("WAIT failed terminalization is valid only after an attempt, retries on one
       port: 0,
       quiet: true,
     });
+    // Replacing only the server projection cannot rearm the already consumed
+    // runtime continuation. The custody database is deliberately NOT rewound.
+    await assert.rejects(service.start(), { code: "ToubaServeSandboxCheckpointStoreInvalid" });
+    const refused = humanRecord(root, pending.request_id);
+    assert.equal(refused.status, "resolution_claimed");
+    assert.equal(refused.human_wait.terminalization.status, "failed");
+  } finally {
+    await service.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("WAIT failed terminalization recovers at cap 100 when its continuation is still unused", async () => {
+  const root = createTestProject({ withSentinel: true });
+  const clock = controlledClock(Date.now() - DAY_MS - 2_000);
+  const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
+  const airPath = join(root, ".touba", "air", "demo", "approval.air.json");
+  const originalAirBytes = readFileSync(airPath, "utf8");
+  const options = { contractsRoot, projectRoot: root, humanWaitRuntime: clock.runtime, port: 0, quiet: true };
+  let service = createToubaProjectServer(options);
+  try {
+    await service.start();
+    const baseUrl = serverBaseUrl(service);
+    await runSandbox(baseUrl, WAIT_TARGET);
+    const pending = await getJson(`${baseUrl}/approvals/pending/current`);
+    const incompatibleAir = JSON.parse(originalAirBytes);
+    incompatibleAir.definitions.strategies[0].description = "Changed after the durable checkpoint.";
+    writeJson(airPath, incompatibleAir);
+    clock.setNow(Date.parse(humanRecord(root, pending.request_id).human_wait.deadline_at));
+    clock.fire();
+    await waitForRecord(root, pending.request_id, record => record.human_wait.terminalization?.status === "failed");
+    await service.stop();
+    const store = readJson(checkpointPath);
+    store.records[0].human_wait.terminalization.attempt_count = 100;
+    writeJson(checkpointPath, store);
+    writeFileSync(airPath, originalAirBytes, "utf8");
+    clock.setNow(clock.runtime.nowMs() + 30_000);
+    service = createToubaProjectServer(options);
     await service.start();
     const repaired = humanRecord(root, pending.request_id);
     assert.equal(repaired.status, "completed");
     assert.equal(repaired.human_wait.terminalization.status, "completed");
     assert.equal(repaired.human_wait.terminalization.attempt_count, 100);
     assert.equal(clock.activeTimers().length, 0);
+    assert.equal(existsSync(join(root, ".touba", "sentinel-dispatched")), false);
   } finally {
     await service.stop();
     rmSync(root, { recursive: true, force: true });

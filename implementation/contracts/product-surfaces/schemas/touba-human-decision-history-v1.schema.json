@@ -8,6 +8,17 @@
   "properties": {
     "schema_version": { "const": "touba-human-decision-history-v1" },
     "generated_at": { "type": "string" },
+    "pagination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["limit", "cursor", "next_cursor", "order"],
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "cursor": { "type": ["string", "null"] },
+        "next_cursor": { "type": ["string", "null"] },
+        "order": { "const": "recorded_desc" }
+      }
+    },
     "summary": {
       "type": "object",
       "additionalProperties": false,

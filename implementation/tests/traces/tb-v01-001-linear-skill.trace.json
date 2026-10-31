@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.linear_skill/RunSourcedNote",
         "owner_ref": "strategy:examples.linear_skill/RunSourcedNote"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.linear_skill/RunSourcedNote"
+        }
       }
     },
     {
@@ -55,7 +61,11 @@
         "target_ref": "agent:examples.linear_skill/Researcher",
         "caller_ref": "strategy:examples.linear_skill/RunSourcedNote",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.linear_skill/RunSourcedNote"
+        }
       }
     },
     {
@@ -81,7 +91,11 @@
       "payload": {
         "caller_ref": "strategy:examples.linear_skill/RunSourcedNote",
         "agent_ref": "agent:examples.linear_skill/Researcher",
-        "authority_source": "callable_by"
+        "authority_source": "callable_by",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.linear_skill/RunSourcedNote"
+        }
       }
     },
     {
@@ -94,7 +108,14 @@
         "agent_ref": "agent:examples.linear_skill/Researcher",
         "caller_ref": "strategy:examples.linear_skill/RunSourcedNote",
         "input_count": 1,
-        "output_type": "type:examples.linear_skill/SourceNote"
+        "output_type": "type:examples.linear_skill/SourceNote",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.linear_skill/Researcher",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001"
+        }
       }
     },
     {
@@ -163,7 +184,14 @@
             ],
             "memory_accesses": []
           }
-        ]
+        ],
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.linear_skill/Researcher",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001"
+        }
       }
     },
     {
@@ -176,7 +204,14 @@
         "agent_ref": "agent:examples.linear_skill/Researcher",
         "selected_ref": "skill:examples.linear_skill/BuildNote",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.linear_skill/Researcher",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001"
+        }
       }
     },
     {
@@ -190,7 +225,14 @@
         "selected_ref": "skill:examples.linear_skill/BuildNote",
         "authority_source": "uses",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.linear_skill/Researcher",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001"
+        }
       }
     },
     {
@@ -202,6 +244,15 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.linear_skill/BuildNote",
         "owner_ref": "skill:examples.linear_skill/BuildNote"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.linear_skill/BuildNote",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001",
+          "agent_ref": "agent:examples.linear_skill/Researcher"
+        }
       }
     },
     {
@@ -228,7 +279,14 @@
         "target_ref": "tool:examples.linear_skill/FetchSource",
         "caller_ref": "skill:examples.linear_skill/BuildNote",
         "agent_ref": "agent:examples.linear_skill/Researcher",
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.linear_skill/BuildNote",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001",
+          "agent_ref": "agent:examples.linear_skill/Researcher"
+        }
       }
     },
     {
@@ -255,7 +313,15 @@
         "target_ref": "tool:examples.linear_skill/FetchSource",
         "caller_ref": "skill:examples.linear_skill/BuildNote",
         "agent_ref": "agent:examples.linear_skill/Researcher",
-        "result_binding": "source"
+        "result_binding": "source",
+        "call_started_event_id": "event:run-1:10",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.linear_skill/BuildNote",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001",
+          "agent_ref": "agent:examples.linear_skill/Researcher"
+        }
       }
     },
     {
@@ -270,7 +336,14 @@
         "node_id": "node:graph:skill:examples.linear_skill/BuildNote:2"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.linear_skill/BuildNote",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001",
+          "agent_ref": "agent:examples.linear_skill/Researcher"
+        }
       }
     },
     {
@@ -283,7 +356,14 @@
         "agent_ref": "agent:examples.linear_skill/Researcher",
         "caller_ref": "strategy:examples.linear_skill/RunSourcedNote",
         "output_type": "type:examples.linear_skill/SourceNote",
-        "result_type": "object"
+        "result_type": "object",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.linear_skill/Researcher",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001"
+        }
       }
     },
     {
@@ -309,7 +389,12 @@
       "payload": {
         "target_ref": "agent:examples.linear_skill/Researcher",
         "caller_ref": "strategy:examples.linear_skill/RunSourcedNote",
-        "result_binding": "note"
+        "result_binding": "note",
+        "call_started_event_id": "event:run-1:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.linear_skill/RunSourcedNote"
+        }
       }
     },
     {
@@ -324,7 +409,11 @@
         "node_id": "node:graph:strategy:examples.linear_skill/RunSourcedNote:2"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.linear_skill/RunSourcedNote"
+        }
       }
     },
     {

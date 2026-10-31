@@ -116,6 +116,8 @@ test("element authoring produces compilable source drafts for every Touba primit
     {
       kind: "agent",
       name: "ReviewAgent",
+      takes: [{ name: "request", type_ref: "List of Optional of Text" }],
+      gives: "List of Optional of Text",
       description: "Selects a governed review capability for the request.",
       responsibility: "Review the request using only the explicitly declared capability.",
       uses: [`skill:${MODULE_REF}/ExistingSkill`],
@@ -194,11 +196,32 @@ test("tool authoring creates a disabled-by-code stub and a sandboxed manifest bi
     assert.deepEqual(binding.sandbox, { required: true });
     assert.deepEqual(binding.effect_contract, { kind: "none" });
     const stub = result.changes.find((item) => item.role === "handler_stub");
-    assert.match(stub.content, /HandlerStubNotImplemented/u);
+    assert.match(stub.content, /HandlerNotImplemented/u);
+    assert.match(stub.content, /from "@touba\/sdk"/u);
     assert.doesNotMatch(stub.content, /process\.env|fetch\s*\(/u);
   } finally {
     project.dispose();
   }
+});
+
+test("tool authoring uses the canonical Python SDK and project interpreter", () => {
+  const project = createProject();
+  try {
+    writeFileSync(join(project.root, "touba.project.json"), JSON.stringify({ project_version: "touba-project-v1", language: "python", sdk: "touba-sdk", artifact_layout: "touba-artifacts-v1" }));
+    const result = buildElementAuthoringChangeSet({ projectRoot: project.root, request: requestFor({
+      kind: "tool", name: "PythonLookup", description: "Reads the selected record.", takes: [{ name: "request", type_ref: "Text" }], gives: "Text",
+      requirements: ["network"], handler: { effect_contract: { kind: "none" } },
+    }) });
+    const stub = result.changes.find(item => item.role === "handler_stub");
+    assert.ok(stub.path.endsWith(".py"));
+    assert.match(stub.content, /from touba_sdk import/);
+    assert.match(stub.content, /HandlerNotImplemented/);
+    const manifest = JSON.parse(result.changes.find(item => item.role === "manifest").content);
+    const binding = manifest.bindings[`tool:${MODULE_REF}/PythonLookup`];
+    assert.match(binding.handler.command, /python/);
+    assert.deepEqual(binding.handler.args, [stub.path]);
+    assertCompiles(project.root, result.changes[0].content);
+  } finally { project.dispose(); }
 });
 
 test("element authoring rejects duplicates, cross-module references and missing authority", () => {

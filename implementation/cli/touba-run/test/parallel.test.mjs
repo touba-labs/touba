@@ -64,6 +64,39 @@ strategy Run
         give results
 `;
 
+test("the last parallel observer snapshot is exactly the resumable returned pause", async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-final-parallel-pause-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const document = compile(approvalSource);
+  let latest;
+  let effects = 0;
+  const options = {
+    entryRef: "strategy:parallel.review/Run", inputs: { incidents: ["a", "b"] },
+    humanCheckpointStorePath: join(root, "approval-checkpoints.sqlite"),
+    toolHandlers: { "tool:parallel.review/Diagnose": ({ arguments: args }) => { effects++; return args.request; } },
+    parallelCheckpointObserver: async ({ checkpoint }) => { latest = structuredClone(checkpoint); await delay(5); },
+  };
+  const paused = await executeAirDocument(document, options);
+  assert.equal(paused.reason, "human_approval_pending");
+  assert.deepEqual(latest, paused.checkpoint);
+  let checkpoint;
+  let resumed = paused;
+  for (let attempt = 0; attempt < 4 && resumed.status === "stopped"; attempt++) {
+    assert.deepEqual(latest, resumed.checkpoint);
+    checkpoint = latest;
+    resumed = await executeAirDocument(document, { ...options, inputs: {}, humanApprovalResumeCheckpoint: checkpoint,
+      humanApprovalDecisions: Object.fromEntries(checkpoint.pending_approvals.map(item => [item.approval_ref, "approved"])) });
+  }
+  assert.equal(resumed.status, "success");
+  assert.deepEqual(resumed.result, ["a", "b"]);
+  assert.equal(effects, 2);
+  assert.equal((await executeAirDocument(document, { ...options, humanApprovalResumeCheckpoint: checkpoint })).reason,
+    "HumanApprovalCheckpointIntegrityMismatch");
+  assert.equal((await executeAirDocument(document, { ...options, humanApprovalResumeCheckpoint: latest })).reason,
+    "HumanApprovalCheckpointAlreadyConsumed");
+  assert.equal(effects, 2);
+});
+
 test("native multi-agent fan-out overlaps bounded calls and joins in input order", async () => {
   let active = 0, peak = 0;
   const identities = new Map();
@@ -86,6 +119,10 @@ test("native multi-agent fan-out overlaps bounded calls and joins in input order
   assert([...identities.values()].every(ids => ids.size === 1));
   assert.equal(new Set([...identities.values()].flatMap(ids => [...ids])).size, 6);
   assert.ok(result.trace.events.filter(e => e.kind === "agent_decision_provider_call_attempted").every(e => e.payload.branch_id));
+  const contexts = result.trace.events.filter(e => e.kind === "agent_decision_provider_call_attempted").map(e => e.payload.trace_context);
+  assert.ok(contexts.every(c => c?.target_ref === agentRef && c.parent_span_id));
+  assert.equal(new Set(contexts.map(c => c.span_id)).size, 6);
+  assert.deepEqual(new Set(contexts.map(c => c.agent_invocation_id)), new Set([...identities.values()].flatMap(ids => [...ids])));
 });
 
 test("parallel checkpoint observers retain the matching SQLite prefix after other branches advance", async t => {
@@ -152,7 +189,7 @@ test("two branch approvals remain distinct; resume never calls completed tools t
   assert.equal(calls, 3);
 });
 
-test("all-complete durable snapshot resumes the join without a new provider or handler call", async () => {
+test("an all-complete snapshot from a consumed run cannot start another continuation", async () => {
   let completed;
   const first = await executeAirDocument(air, { ...options, durableHumanApprovals: true,
     toolHandlers: { [toolRef]: async ({ arguments: args }) => args.request },
@@ -163,8 +200,7 @@ test("all-complete durable snapshot resumes the join without a new provider or h
   const resumed = await executeAirDocument(air, { ...options, inputs: undefined, parallelResumeCheckpoint: completed,
     agentDecisionProvider: () => { throw Error("must not run"); }, toolHandlers: { [toolRef]: () => { throw Error("must not run"); } },
   });
-  assert.equal(resumed.status, "success", resumed.reason);
-  assert.deepEqual(resumed.result, first.result);
+  assert.equal(resumed.reason, "HumanApprovalCheckpointAlreadyConsumed");
 });
 
 test("machine contract rejects malformed and incomplete parallel AIR", () => {
@@ -235,10 +271,10 @@ test("a decision for one occurrence cannot release another; rejected and expired
   let calls = 0;
   const config = { entryRef: "strategy:parallel.review/Run", inputs: { incidents: ["a", "b", "c"] },
     toolHandlers: { "tool:parallel.review/Diagnose": async ({ arguments: args }) => { calls++; await delay(5); return args.request; } } };
-  const first = await executeAirDocument(document, config);
-  assert.equal(first.checkpoint.pending_approvals.length, 1, "the other branch should stop at the next serializable boundary");
-  const [pending] = first.checkpoint.pending_approvals;
   for (const decision of ["rejected", "expired", "cancelled"]) {
+    const first = await executeAirDocument(document, config);
+    assert.equal(first.checkpoint.pending_approvals.length, 1, "the other branch should stop at the next serializable boundary");
+    const [pending] = first.checkpoint.pending_approvals;
     const before = calls;
     const result = await executeAirDocument(document, { ...config, inputs: undefined, humanApprovalResumeCheckpoint: structuredClone(first.checkpoint),
       humanApprovalDecisions: { [pending.approval_ref]: decision } });
@@ -246,6 +282,8 @@ test("a decision for one occurrence cannot release another; rejected and expired
     assert.equal(calls, before);
     assert.equal(result.checkpoint, undefined);
   }
+  const first = await executeAirDocument(document, config);
+  const [pending] = first.checkpoint.pending_approvals;
   const wrong = await executeAirDocument(document, { ...config, inputs: undefined, humanApprovalResumeCheckpoint: first.checkpoint,
     humanApprovalDecisions: { [`${pending.approval_ref}:wrong`]: "approved" } });
   assert.equal(wrong.reason, "UnknownApprovalReference");
@@ -271,7 +309,7 @@ test("checkpoint tampering and tighter restored budgets fail before another disp
   assert.equal(result.reason, "ToolCallBudgetExceeded");
 });
 
-test("partial crash snapshots refuse unjournaled uncertain calls rather than repeat them", async () => {
+test("a superseded partial snapshot cannot replay an earlier provider call", async () => {
   let snapshot, calls = 0;
   const result = await executeAirDocument(air, { ...options,
     agentDecisionProvider: async () => { calls++; await delay(5); return { action: "answer_directly", result: "ok" }; },
@@ -284,7 +322,7 @@ test("partial crash snapshots refuse unjournaled uncertain calls rather than rep
   const before = calls;
   const resumed = await executeAirDocument(air, { ...options, inputs: undefined, parallelResumeCheckpoint: snapshot,
     agentDecisionProvider: () => { calls++; return { action: "answer_directly", result: "wrong" }; } });
-  assert.equal(resumed.reason, "ParallelOutcomeUnknown");
+  assert.equal(resumed.reason, "HumanApprovalCheckpointIntegrityMismatch");
   assert.equal(calls, before);
 });
 
@@ -513,7 +551,7 @@ skill Recover
   assert.ok(result.trace.events.some(e => e.kind === "fallback_selected"));
 });
 
-test("a persisted in-flight external write reconciles its applied receipt without dispatching twice", async t => {
+test("a superseded in-flight external write snapshot cannot roll back a completed run", async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-parallel-reconcile-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const document = compile(approvalSource.replace("        human.approve\n            with context as result\n            into approval\n", "")
@@ -540,9 +578,47 @@ process.stdin.on('data', chunk => data += chunk); process.stdin.on('end', () => 
   assert.equal(first.status, "success", first.reason);
   assert.ok(interrupted);
   const resumed = await executeAirDocument(document, { ...config, inputs: undefined, parallelResumeCheckpoint: interrupted });
-  assert.equal(resumed.status, "success", resumed.reason);
-  assert.deepEqual(resumed.result, ["a"]);
+  assert.equal(resumed.reason, "HumanApprovalCheckpointIntegrityMismatch");
   assert.equal(readFileSync(marker, "utf8"), "a\n");
+});
+
+test("a process killed after storing an applied receipt resumes without paying twice", t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-parallel-receipt-crash-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const document = compile(approvalSource.replace("        human.approve\n            with context as result\n            into approval\n", "")
+    .replace("max_concurrency 2", "max_concurrency 1"));
+  writeFileSync(join(root, "air.json"), JSON.stringify(document));
+  const runtime = new URL("../../../runtime/touba-runtime/src/index.mjs", import.meta.url).href;
+  const journal = new URL("../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs", import.meta.url).href;
+  writeFileSync(join(root, "handler.mjs"), `import {appendFileSync} from 'node:fs';
+let raw=''; for await (const chunk of process.stdin) raw+=chunk;
+const request=JSON.parse(raw); appendFileSync('payments.txt', request.arguments.request+'\\n');
+process.stdout.write(JSON.stringify({ok:true,value:request.arguments.request,effect_receipt:{effect_id:request.effect.effect_id,request_digest:request.effect.request_digest,outcome:'applied'}}));`);
+  writeFileSync(join(root, "worker.mjs"), `import {readFileSync,writeFileSync} from 'node:fs';
+import {executeAirDocument} from ${JSON.stringify(runtime)};
+import {createSqliteEffectJournal} from ${JSON.stringify(journal)};
+const resume=process.argv.includes('--resume');
+const store=createSqliteEffectJournal('effects.sqlite');
+const result=await executeAirDocument(JSON.parse(readFileSync('air.json')), {
+  entryRef:'strategy:parallel.review/Run', effectScopeId:'synthetic-receipt',
+  effectJournal:{...store, writeEntry(entry){store.writeEntry(entry); if(!resume && entry.state==='applied') process.kill(process.pid,'SIGKILL');}},
+  ...(resume?{parallelResumeCheckpoint:JSON.parse(readFileSync('checkpoint.json'))}:{inputs:{incidents:['a']}}),
+  toolBindingManifest:{manifest_version:'touba-manifest-v1',bindings:{'tool:parallel.review/Diagnose':{
+    handler:{kind:'process',command:process.execPath,args:['handler.mjs']},grants:[],timeout_ms:10000,max_payload_bytes:65536,
+    effect_contract:{kind:'external_write',retry_mode:'none'}}}},
+  parallelCheckpointObserver:({checkpoint})=>writeFileSync('checkpoint.json',JSON.stringify(checkpoint))
+});
+writeFileSync('result.json',JSON.stringify(result));`);
+  const run = args => spawnSync(process.execPath, [join(root, "worker.mjs"), ...args], { cwd: root, encoding: "utf8", timeout: 30000 });
+  const killed = run([]);
+  assert.equal(killed.signal, "SIGKILL", killed.stderr);
+  assert.equal(readFileSync(join(root, "payments.txt"), "utf8"), "a\n");
+  const resumed = run(["--resume"]);
+  assert.equal(resumed.status, 0, resumed.stderr);
+  const result = JSON.parse(readFileSync(join(root, "result.json")));
+  assert.equal(result.status, "success", result.reason);
+  assert.deepEqual(result.result, ["a"]);
+  assert.equal(readFileSync(join(root, "payments.txt"), "utf8"), "a\n");
 });
 
 test("imported specialists and supervisors keep typed authority and isolated inputs inside native branches", async t => {

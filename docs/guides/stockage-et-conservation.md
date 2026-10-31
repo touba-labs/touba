@@ -67,7 +67,7 @@ touba trigger migrate-queue ancienne.queue.json --out .touba/trigger-queue.sqlit
 ```
 
 `state migrate` accepte `effects`, `compensations`, `checkpoints`,
-`human-requests`, `human-decisions`, `interaction-sessions` et `interaction-assets`.
+`human-requests`, `human-decisions`, `changes`, `interaction-sessions` et `interaction-assets`.
 Les formats doivent satisfaire les contrats courants. Les sources sont conservées
 avec une copie exacte `.source-backup.json`, et une destination existante est refusée.
 Les migrations ne déclenchent aucune exécution et n’inventent aucune approbation.
@@ -76,6 +76,21 @@ Pour le serveur projet, migrez ensemble les collections liées puis lancez
 `touba serve --check-state` avant de redémarrer. Conservez aussi les fichiers
 d’assets référencés par leurs métadonnées. Le programme, son manifest et ses
 modules hôtes doivent correspondre aux points de reprise conservés.
+
+L’historique des propositions d’édition utilise
+`.touba/project-change-proposals.sqlite`. Pour un historique JSON existant :
+
+```bash
+touba state migrate changes .touba/project-change-proposals.json --out .touba/project-change-proposals.sqlite
+touba state migrate changes .touba/project-change-proposals.json --out .touba/project-change-proposals.sqlite --apply
+```
+
+La migration valide au plus 16 Mio de JSON par opération. Elle conserve les
+identifiants, décisions et preuves présents ; une proposition ancienne sans
+preuve de révision doit être reproposée avant application. La présence du JSON
+empêche de démarrer silencieusement un historique vide. Conservez la build
+ayant produit les autres états et suivez le diagnostic `serve --check-state`
+avant tout changement de build.
 
 ## Exporter vers PostgreSQL
 

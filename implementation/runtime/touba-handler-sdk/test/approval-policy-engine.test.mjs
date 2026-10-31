@@ -7,6 +7,27 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ToubaEngine } from "../src/index.mjs";
 
+for (const [page, marker] of [
+  ["validation-avant-effet-externe", "APPROVAL_GRANTS_AND_SINGLE_ACQUIRED_WRITE_OK"],
+  ["orchestration-multi-agent-sequentielle", "THREE_AGENTS_APPROVAL_SCOPES_AND_ONE_ACQUIRED_WRITE_OK"],
+]) test(`the ${page} tutorial refuses checkpoint replay with a single acquired effect`, t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-approval-effect-tutorial-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const markdown = readFileSync(new URL(`../../../../docs/tutoriels/${page}.md`, import.meta.url), "utf8");
+  for (const match of markdown.matchAll(/```(?:touba|js|json) title="([^"]+)"\n([\s\S]*?)```/g)) {
+    const output = join(root, match[1]);
+    mkdirSync(join(output, ".."), { recursive: true });
+    writeFileSync(output, match[2]);
+  }
+  const bin = join(root, "bin"); mkdirSync(bin);
+  symlinkSync(fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url)), join(bin, "touba"));
+  mkdirSync(join(root, "node_modules/@touba"), { recursive: true });
+  symlinkSync(fileURLToPath(new URL("../", import.meta.url)), join(root, "node_modules/@touba/sdk"), "junction");
+  const options = { cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8", timeout: 30000 };
+  execFileSync(process.execPath, ["configure.mjs"], options);
+  assert.ok(execFileSync(process.execPath, ["exercise.mjs"], options).includes(marker));
+});
+
 test("the published roles tutorial compiles and executes its host evidence and refusal example", t => {
   const root = mkdtempSync(join(tmpdir(), "touba-approval-tutorial-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -67,4 +88,10 @@ process.stdout.write(JSON.stringify({ok:true,value:request.arguments.value,effec
     assert.equal(result.status, signer === "employee:one" ? "stopped" : "success");
   }
   assert.equal(readFileSync(marker, "utf8"), "invoice");
+  const completed = JSON.parse(readFileSync(join(root, "waiting.json")));
+  await assert.rejects(engine.run({ ...options, humanResumeCheckpoint: "waiting.json", humanDecisions: {
+    [completed.approval_ref]: { decision: "approved", evidence_ref: "receipt" },
+  } }), error => error.details.reason === "HumanApprovalCheckpointAlreadyConsumed");
+  assert.equal(readFileSync(marker, "utf8"), "invoice");
+  await engine.close();
 });

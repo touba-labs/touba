@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
         "owner_ref": "strategy:test/RunBuild"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunBuild"
+        }
       }
     },
     {
@@ -54,7 +60,11 @@
       "payload": {
         "target_ref": "agent:test/Builder",
         "caller_ref": "strategy:test/RunBuild",
-        "agent_ref": null
+        "agent_ref": null,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunBuild"
+        }
       }
     },
     {
@@ -80,7 +90,11 @@
       "payload": {
         "caller_ref": "strategy:test/RunBuild",
         "agent_ref": "agent:test/Builder",
-        "authority_source": "callable_by"
+        "authority_source": "callable_by",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunBuild"
+        }
       }
     },
     {
@@ -118,7 +132,14 @@
             "uses": [],
             "memory_accesses": []
           }
-        ]
+        ],
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:test/Builder",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001"
+        }
       }
     },
     {
@@ -131,7 +152,14 @@
         "agent_ref": "agent:test/Builder",
         "selected_ref": "skill:test/Build",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:test/Builder",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001"
+        }
       }
     },
     {
@@ -145,7 +173,14 @@
         "selected_ref": "skill:test/Build",
         "authority_source": "uses",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:test/Builder",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001"
+        }
       }
     },
     {
@@ -157,6 +192,15 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:test/Build",
         "owner_ref": "skill:test/Build"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:test/Build",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001",
+          "agent_ref": "agent:test/Builder"
+        }
       }
     },
     {
@@ -171,7 +215,14 @@
         "node_id": "b1"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:test/Build",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000001",
+          "agent_ref": "agent:test/Builder"
+        }
       }
     },
     {
@@ -196,7 +247,12 @@
       },
       "payload": {
         "target_ref": "agent:test/Builder",
-        "caller_ref": "strategy:test/RunBuild"
+        "caller_ref": "strategy:test/RunBuild",
+        "call_started_event_id": "event:run-1:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunBuild"
+        }
       }
     },
     {
@@ -211,7 +267,11 @@
         "node_id": "s2"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunBuild"
+        }
       }
     },
     {

@@ -7664,5 +7664,10 @@ function eventOf(trace, kind) {
 }
 
 function eventsOf(trace, kind) {
-  return trace.events.filter((event) => event.kind === kind);
+  // These assertions cover the business/governance payload exactly. Invocation
+  // correlation is tested on unmodified traces in trace-context.test.mjs.
+  return trace.events.filter((event) => event.kind === kind).map(event => {
+    const { trace_context, call_started_event_id, ...payload } = event.payload;
+    return { ...event, payload };
+  });
 }

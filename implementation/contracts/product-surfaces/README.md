@@ -232,7 +232,13 @@ versioned Touba contracts.
 stores them through the configured human decision backend and rejects replay for
 the same `schema_version` and `request_id`.
 
-`GET /decisions` returns `touba-human-decision-history-v1`.
+`GET /decisions?limit=50` returns `touba-human-decision-history-v1`, with up to
+50 decisions by default (1–100 allowed), newest recorded first. Its `summary`
+counts the whole history. Follow `pagination.next_cursor` as the next request's
+`cursor`; `null` marks the last page. The cursor is an exclusive storage key,
+so a new decision does not shift subsequent pages. Refresh the first page to
+see new records. Each response is a current observation, not a transaction
+spanning all pages. SQLite reads only the selected bodies, bounded to 16 MiB.
 `GET /decisions/<schema_version>/<request_id>` returns
 `touba-human-decision-detail-v1`. These routes expose a normalized, read-only
 view of accepted human decisions for host applications.
@@ -312,7 +318,16 @@ patches that fail `touba compile --stdout`.
 `touba-project-change-result-v1`. It applies or refuses a pending proposal,
 rejects replay and emits refresh/change events.
 
-`/changes` returns `touba-project-change-history-v1`.
+`/changes` returns `touba-project-change-history-v1`, with 50 rows by default
+and at most 100 (`limit`). `cursor` follows decreasing SQLite storage keys;
+`status=all|pending|applied|refused` filters the full history. Summary counters
+remain global. `pagination.next_cursor=null` marks the last page. New proposals
+appear after refreshing the first page. Each stored page is capped at 16 MiB
+before projection; proposal content is never included in the response.
+client consumes one page and uses its text search within that page.
+Current clients require this pagination metadata and must be paired with the
+corresponding Core. The local store is `project-change-proposals.sqlite`;
+old JSON needs the explicit `touba state migrate changes` maintenance command.
 `/changes/<proposal_id>` returns `touba-project-change-detail-v1`. These
 read-only routes expose status, target, actor, reason, content digest,
 validations and write evidence. They do not expose the raw patch content.

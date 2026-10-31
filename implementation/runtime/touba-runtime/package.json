@@ -9,6 +9,7 @@
     "./compensation": "./src/compensation.mjs",
     "./sqlite-compensation-store": "./src/sqlite-compensation-store.mjs",
     "./sqlite-effect-journal": "./src/sqlite-effect-journal.mjs",
+    "./human-checkpoint-store": "./src/human-checkpoint-store.mjs",
     "./sqlite-trace-store": "./src/sqlite-trace-store.mjs",
     "./postgres-trace-destination": "./src/postgres-trace-destination.mjs",
     "./trace-export-worker": "./src/trace-export-worker.mjs"

@@ -88,7 +88,18 @@ test("calls detail reduces stored events while preserving outcomes, budgets, cal
   validateTraceMachineContract(compact.trace);
   const internal = event => event.air_ref?.owner_ref?.startsWith("function:")
     && ["branch_evaluated", "loop_evaluated", "binding_created", "scope_entered", "scope_exited"].includes(event.kind);
-  const significant = trace => trace.events.filter(event => !internal(event)).map(({ kind, air_ref, payload }) => ({ kind, air_ref, payload }));
+  const significant = trace => {
+    // Compaction renumbers events. Compare the referenced call's ordinal while
+    // still checking that every correlation resolves to an actual call start.
+    const calls = new Map(trace.events.filter(event => event.kind === 'call_started').map((event, index) => [event.event_id, `call:${index}`]));
+    const call = id => { assert.ok(calls.has(id), `unresolved call ${id}`); return calls.get(id); };
+    return trace.events.filter(event => !internal(event)).map(({ kind, air_ref, payload }) => {
+      const normalized = structuredClone(payload);
+      if (normalized?.call_started_event_id) normalized.call_started_event_id = call(normalized.call_started_event_id);
+      if (normalized?.trace_context?.call_event_id) normalized.trace_context.call_event_id = call(normalized.trace_context.call_event_id);
+      return { kind, air_ref, payload: normalized };
+    });
+  };
   assert.deepEqual(significant(compact.trace), significant(full.trace));
   assert.ok(compact.trace.events.length < full.trace.events.length - 50);
   assert.ok(JSON.stringify(compact.trace).length < JSON.stringify(full.trace).length);

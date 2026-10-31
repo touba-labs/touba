@@ -39,6 +39,7 @@ export const HUMAN_REQUEST_INDEXES = Object.freeze({
 export const HUMAN_DECISION_INDEXES = Object.freeze({
   request_id: "json_extract(body, '$.request_id')",
   run_id: "json_extract(body, '$.run_id')",
+  schema_version: "json_extract(body, '$.schema_version')",
 });
 
 function requests(path) {
@@ -93,6 +94,28 @@ export function saveHumanRequestStore(path, store) {
 
 export function loadHumanDecisionStore(path, filter) {
   return { schema_version: DECISION_SCHEMA, decisions: read(decisions(path), filter) };
+}
+
+export function pageHumanDecisions(path, { cursor = null, limit = 50 } = {}) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
+    || (cursor !== null && (typeof cursor !== "string" || !/^[1-9][0-9]{0,15}$/.test(cursor)
+      || !Number.isSafeInteger(Number(cursor))))) {
+    throw Object.assign(new Error("decision history requires a limit from 1 to 100 and a valid cursor"),
+      { code: "ToubaServeDecisionPageInvalid" });
+  }
+  const store = decisions(path);
+  const page = store.page({ order: "rowid", direction: "desc", limit,
+    ...(cursor === null ? {} : { after: Number(cursor) }) });
+  const counts = store.countBy("schema_version");
+  return {
+    decisions: page.items,
+    summary: {
+      total: counts.reduce((total, row) => total + row.count, 0),
+      approvals: counts.find(row => row.value === "touba-approval-decision-v1")?.count ?? 0,
+      reviews: counts.find(row => row.value === "touba-human-review-decision-v1")?.count ?? 0,
+    },
+    pagination: { limit, cursor, next_cursor: page.hasMore ? String(page.next) : null, order: "recorded_desc" },
+  };
 }
 
 export function auditHumanStore(path, kind) {

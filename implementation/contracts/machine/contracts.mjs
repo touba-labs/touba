@@ -490,6 +490,19 @@ export function validateTraceMachineStream(header, events) {
   validateExecutionEvents(trace, events, true);
 }
 
+/** Validate an explicitly incomplete, frozen prefix without inventing a terminal.
+ * The result is not a complete trace contract and must not be used as such.
+ * @param {unknown} header
+ * @param {Iterable<unknown>} events
+ */
+export function validateTraceMachinePrefix(header, events) {
+  const trace = validateTraceHeader(header);
+  if (Object.hasOwn(trace, "events") || trace.run.admission !== undefined) {
+    fail("TraceStreamInvalid", "an execution prefix requires an execution header", "$");
+  }
+  validateExecutionEvents(trace, events, true, true);
+}
+
 /** Validate a bounded page without treating it as a complete execution.
  * @param {any} page @param {any} [reference] @param {number} [after] @param {number} [limit]
  */
@@ -520,6 +533,24 @@ function validateExecutionEventFields(event, index) {
   requireEnum(event.kind, TRACE_EVENT_KINDS, `$.events[${index}].kind`);
   if (event.kind === "admission_refused") fail("TraceAdmissionInvalid", "admission refusal cannot appear in an executed run", `$.events[${index}].kind`);
   rejectForbiddenTraceFields(event.payload, `$.events[${index}].payload`);
+  const correlation = event.payload?.trace_context;
+  if (correlation !== undefined) {
+    const path = `$.events[${index}].payload.trace_context`;
+    requireObject(correlation, path, "trace correlation");
+    rejectUnknownFields(correlation, new Set(["span_id", "parent_span_id", "target_ref", "call_event_id", "agent_invocation_id", "agent_ref"]), path);
+    for (const key of ["span_id", "target_ref", ...Object.keys(correlation)]) {
+      // These references retain the identifiers already accepted by the runtime.
+      // Reading surfaces enforce their own resource limits without invalidating
+      // an execution solely because its host supplied a long identifier.
+      requireString(correlation[key], `${path}.${key}`);
+    }
+    if (!correlation.span_id.startsWith("span:") || correlation.parent_span_id === correlation.span_id) {
+      fail("TraceCorrelationInvalid", "trace correlation requires a distinct parent and a span identifier", path);
+    }
+  }
+  if (event.payload?.call_started_event_id !== undefined) {
+    requireString(event.payload.call_started_event_id, `$.events[${index}].payload.call_started_event_id`);
+  }
   if (event.kind === "failure_detected") {
     requireString(event.payload?.runtime_error_code, `$.events[${index}].payload.runtime_error_code`);
     requireEnum(event.payload?.failure_family, TRACE_FAILURE_FAMILIES, `$.events[${index}].payload.failure_family`);
@@ -527,7 +558,7 @@ function validateExecutionEventFields(event, index) {
 }
 
 /** @param {Record<string, any>} trace @param {Iterable<unknown>} events @param {boolean} canonicalIds */
-function validateExecutionEvents(trace, events, canonicalIds) {
+function validateExecutionEvents(trace, events, canonicalIds, incomplete = false) {
   const run = trace.run, runId = run.run_id;
   if (typeof run.air_digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(run.air_digest)) {
     fail("TraceAirCommitmentInvalid", "trace requires the execution-time canonical AIR digest", "$.run.air_digest");
@@ -568,6 +599,7 @@ function validateExecutionEvents(trace, events, canonicalIds) {
     terminal = event;
     index++;
   }
+  if (incomplete && terminal?.kind !== "run_completed") return;
   if (index < 2 || terminal === null) fail("TraceTerminalInvalid", "trace requires start and terminal events", "$.events");
   if (terminal.kind !== "run_completed") fail("TraceTerminalInvalid", "last event must be run_completed", `$.events[${index - 1}].kind`);
   requireEnum(terminal.payload?.status, TERMINAL_STATUSES, `$.events[${index - 1}].payload.status`);
@@ -582,7 +614,7 @@ export function canonicalizeMachineValue(value) {
 /** @param {unknown} codeValue @param {unknown} [failureMode] @returns {string} */
 export function failureFamilyForRuntimeCode(codeValue, failureMode = undefined) {
   const code = String(codeValue ?? "RuntimeFailure");
-  if (/^HumanApproval(?:Authority|Evidence|Exclusion|Role|Signer|Identity|Initiator|Attestation|DecisionAlready|StateLimit|NotExpired)/u.test(code)
+  if (/^HumanApproval(?:Authority|Evidence|Exclusion|Role|Signer|Identity|Initiator|Attestation|DecisionAlready|StateLimit|NotExpired|Checkpoint)/u.test(code)
     || code === "InvalidHumanApprovalPolicy") return "authority";
   if (/^(InvalidParallel|ParallelContinuation|ParallelOutcome|Parallel.*LimitExceeded)/u.test(code)) return "authority";
   if (code === "RuntimeCancelled") return "cancelled";

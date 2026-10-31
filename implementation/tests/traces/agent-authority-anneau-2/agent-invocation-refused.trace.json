@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:test/RunBuild",
         "owner_ref": "strategy:test/RunBuild"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunBuild"
+        }
       }
     },
     {
@@ -54,7 +60,11 @@
       "payload": {
         "target_ref": "agent:test/Builder",
         "caller_ref": "strategy:test/RunBuild",
-        "agent_ref": null
+        "agent_ref": null,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunBuild"
+        }
       }
     },
     {
@@ -80,7 +90,11 @@
       "payload": {
         "caller_ref": "strategy:test/RunBuild",
         "agent_ref": "agent:test/Builder",
-        "reason": "caller_not_allowed"
+        "reason": "caller_not_allowed",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunBuild"
+        }
       }
     },
     {
@@ -110,7 +124,11 @@
         "target_ref": "agent:test/Builder",
         "selected_ref": "agent:test/Builder",
         "caller_ref": "strategy:test/RunBuild",
-        "agent_ref": "agent:test/Builder"
+        "agent_ref": "agent:test/Builder",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:test/RunBuild"
+        }
       },
       "message": "agent invocation refused: strategy:test/RunBuild is not authorized to invoke agent:test/Builder"
     },

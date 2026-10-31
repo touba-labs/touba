@@ -32,6 +32,10 @@ vsix-staging/
 *.vsix
 *.tgz
 
+# Host-owned runtime state created by local qualification.
+/.touba/
+/implementation/.touba/
+
 # Generated LaTeX artifacts
 *.aux
 *.bbl

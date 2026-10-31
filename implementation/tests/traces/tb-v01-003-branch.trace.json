@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.branch/RunReview",
         "owner_ref": "strategy:examples.branch/RunReview"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.branch/RunReview"
+        }
       }
     },
     {
@@ -54,7 +60,11 @@
       "payload": {
         "target_ref": "agent:examples.branch/Reviewer",
         "caller_ref": "strategy:examples.branch/RunReview",
-        "agent_ref": null
+        "agent_ref": null,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.branch/RunReview"
+        }
       }
     },
     {
@@ -80,7 +90,11 @@
       "payload": {
         "caller_ref": "strategy:examples.branch/RunReview",
         "agent_ref": "agent:examples.branch/Reviewer",
-        "authority_source": "callable_by"
+        "authority_source": "callable_by",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.branch/RunReview"
+        }
       }
     },
     {
@@ -142,7 +156,14 @@
             ],
             "memory_accesses": []
           }
-        ]
+        ],
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.branch/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003"
+        }
       }
     },
     {
@@ -155,7 +176,14 @@
         "agent_ref": "agent:examples.branch/Reviewer",
         "selected_ref": "skill:examples.branch/ReviewDraft",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.branch/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003"
+        }
       }
     },
     {
@@ -169,7 +197,14 @@
         "selected_ref": "skill:examples.branch/ReviewDraft",
         "authority_source": "uses",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.branch/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003"
+        }
       }
     },
     {
@@ -181,6 +216,15 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.branch/ReviewDraft",
         "owner_ref": "skill:examples.branch/ReviewDraft"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.branch/ReviewDraft",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003",
+          "agent_ref": "agent:examples.branch/Reviewer"
+        }
       }
     },
     {
@@ -206,7 +250,14 @@
       "payload": {
         "target_ref": "function:examples.branch/IsAcceptable",
         "caller_ref": "skill:examples.branch/ReviewDraft",
-        "agent_ref": "agent:examples.branch/Reviewer"
+        "agent_ref": "agent:examples.branch/Reviewer",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.branch/ReviewDraft",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003",
+          "agent_ref": "agent:examples.branch/Reviewer"
+        }
       }
     },
     {
@@ -218,6 +269,16 @@
       "air_ref": {
         "flow_graph_ref": "graph:function:examples.branch/IsAcceptable",
         "owner_ref": "function:examples.branch/IsAcceptable"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:4",
+          "target_ref": "function:examples.branch/IsAcceptable",
+          "parent_span_id": "span:run-1:0:3",
+          "call_event_id": "event:run-1:9",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003",
+          "agent_ref": "agent:examples.branch/Reviewer"
+        }
       }
     },
     {
@@ -232,7 +293,15 @@
         "node_id": "node:graph:function:examples.branch/IsAcceptable:1"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:4",
+          "target_ref": "function:examples.branch/IsAcceptable",
+          "parent_span_id": "span:run-1:0:3",
+          "call_event_id": "event:run-1:9",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003",
+          "agent_ref": "agent:examples.branch/Reviewer"
+        }
       }
     },
     {
@@ -258,7 +327,15 @@
       "payload": {
         "target_ref": "function:examples.branch/IsAcceptable",
         "caller_ref": "skill:examples.branch/ReviewDraft",
-        "agent_ref": "agent:examples.branch/Reviewer"
+        "agent_ref": "agent:examples.branch/Reviewer",
+        "call_started_event_id": "event:run-1:9",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.branch/ReviewDraft",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003",
+          "agent_ref": "agent:examples.branch/Reviewer"
+        }
       }
     },
     {
@@ -284,7 +361,14 @@
       "payload": {
         "condition_result": true,
         "selected_edge_role": "true",
-        "condition_ref": "value:accepted"
+        "condition_ref": "value:accepted",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.branch/ReviewDraft",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003",
+          "agent_ref": "agent:examples.branch/Reviewer"
+        }
       }
     },
     {
@@ -299,7 +383,14 @@
         "node_id": "node:graph:skill:examples.branch/ReviewDraft:3"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.branch/ReviewDraft",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000003",
+          "agent_ref": "agent:examples.branch/Reviewer"
+        }
       }
     },
     {
@@ -324,7 +415,12 @@
       },
       "payload": {
         "target_ref": "agent:examples.branch/Reviewer",
-        "caller_ref": "strategy:examples.branch/RunReview"
+        "caller_ref": "strategy:examples.branch/RunReview",
+        "call_started_event_id": "event:run-1:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.branch/RunReview"
+        }
       }
     },
     {
@@ -339,7 +435,11 @@
         "node_id": "node:graph:strategy:examples.branch/RunReview:2"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.branch/RunReview"
+        }
       }
     },
     {

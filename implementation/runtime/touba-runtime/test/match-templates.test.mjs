@@ -52,11 +52,11 @@ test("a selected branch requests and consumes its actual user interaction", asyn
 
 test("match snapshot survives durable approval and rejection executes no following node", async () => {
   const options = { entryRef: "strategy:selection/ApproveThenLabel", inputs: { status: "ready" }, durableHumanApprovals: true };
-  const paused = await executeAirDocument(air, options);
-  assert.equal(paused.status, "stopped");
-  assert.ok(paused.checkpoint);
-  const checkpoint = JSON.parse(JSON.stringify(paused.checkpoint));
   for (const decision of ["approved", "rejected"]) {
+    const paused = await executeAirDocument(air, options);
+    assert.equal(paused.status, "stopped");
+    assert.ok(paused.checkpoint);
+    const checkpoint = JSON.parse(JSON.stringify(paused.checkpoint));
     const resumed = await executeAirDocument(air, { entryRef: options.entryRef, durableHumanApprovals: true,
       humanApprovalResumeCheckpoint: checkpoint, humanApprovalDecisions: { [checkpoint.approval_ref]: decision } });
     assert.equal(resumed.status, decision === "approved" ? "success" : "stopped", JSON.stringify(resumed.trace));

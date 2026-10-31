@@ -23,10 +23,10 @@ export function providerCostCorrelation() {
     agent_ref: request.agent_ref, step_index: request.step_index ?? 0 };
 }
 
-export async function emitProviderModel(model) {
+export async function emitProviderModel(model, policy = {}) {
   const observer = calls.getStore()?.execution?.recordProviderMetadata;
   if (!observer || typeof model?.modelId !== "string" || typeof model?.provider !== "string") return;
-  const accepted = await observer({ provider_kind: "ai_sdk", provider_name: model.provider, model_id: model.modelId });
+  const accepted = await observer({ provider_kind: "ai_sdk", provider_name: model.provider, model_id: model.modelId, ...policy });
   if (accepted === false) costFail("ProviderRequestAborted", "provider invocation is no longer active");
 }
 

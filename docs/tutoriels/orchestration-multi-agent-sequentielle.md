@@ -257,8 +257,11 @@ const completed = await engine.run(resume);
 assert.equal(completed.status, "success");
 assert.equal(completed.result.service, "billing-worker");
 assert.equal(completed.result.action, "Review immediately with the on-call engineer");
-const repeatedResume = await engine.run(resume);
-assert.deepEqual(repeatedResume.result, completed.result);
+await assert.rejects(engine.run(resume), error => {
+  assert.ok(error instanceof ToubaEngineError);
+  assert.equal(error.details.reason, "HumanApprovalCheckpointAlreadyConsumed");
+  return true;
+});
 const lines = readFileSync("remediation-ledger.ndjson", "utf8").trim().split("\n").map(JSON.parse);
 assert.equal(lines.length, 1); assert.deepEqual(lines[0], completed.result);
 assert.ok(!JSON.stringify(completed).includes("isolated-ledger-credential"));
@@ -273,7 +276,7 @@ node exercise.mjs
 ```
 Marqueur attendu : THREE_AGENTS_APPROVAL_SCOPES_AND_ONE_ACQUIRED_WRITE_OK.
 Inspectez paused.trace.json et completed.trace.json pour les relais et la barrière
-humaine. Reprendre le même checkpoint avec le même journal réutilise l’effet acquis ;
+humaine. Une seconde reprise du checkpoint consommé est refusée ;
 une nouvelle invocation est une autre opération. Si le source, les données approuvées
 ou l’autorité changent, ne réécrivez pas le checkpoint. Cet exemple est séquentiel,
 sans exécution parallèle, consensus ni rollback distribué.

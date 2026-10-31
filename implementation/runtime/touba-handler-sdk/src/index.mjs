@@ -142,6 +142,7 @@ export class ToubaEngine {
       appendOptionalPath(args, "--effect-journal", options.effectJournal, this.projectRoot);
       appendOptionalPath(args, "--trace-store", options.traceStore ?? ".touba/traces.sqlite", this.projectRoot);
       appendOptionalPath(args, "--human-checkpoint-out", options.humanCheckpointOut, this.projectRoot);
+      appendOptionalPath(args, "--human-checkpoint-store", options.humanCheckpointStore ?? ".touba/approval-checkpoints.sqlite", this.projectRoot);
       appendOptionalPath(args, "--human-resume-checkpoint", options.humanResumeCheckpoint, this.projectRoot);
       appendOptionalPath(args, "--human-approval-host", options.humanApprovalHost, this.projectRoot);
       if (options.tracePureFunctions !== undefined) {
@@ -394,7 +395,8 @@ export function createAiSdkDecisionProvider(options = {}) {
   return bindProviderCostContext(async function decideAgentCapability(request) {
     validateAgentDecisionRequest(request);
     const model = await modelForDecisionRequest(normalized, request);
-    await emitProviderModel(model);
+    await emitProviderModel(model, { decision_interface: normalized.decisionInterface,
+      ...(history?.policy ?? { history_storage: "disabled" }) });
     const schemaEncoding = decisionSchemaEncoding(model, normalized.schemaEncoding);
     const allowHumanReview = await valueForRequest(normalized.allowHumanReview, request) !== false;
     const providerOptions = await valueForRequest(normalized.providerOptions, request);

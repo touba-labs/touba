@@ -61,6 +61,10 @@ test("bounded pages retain indexed OR filters, cursors and revision-checked writ
   second.items[0].status = "reviewed"; store.write(second.items);
   assert.equal(store.count([{ status: "reviewed" }]), 1);
   assert.equal(store.count(), 1005);
+  assert.deepEqual(store.countBy("status").map(row => ({ ...row })), [
+    { value: "done", count: 503 }, { value: "pending", count: 501 }, { value: "reviewed", count: 1 },
+  ]);
+  assert.throws(() => store.countBy("not_an_index"), { code: "ToubaStoreQueryInvalid" });
   assert.throws(() => store.page({ limit: 1001 }), { code: "ToubaStoreQueryInvalid" });
   assert.throws(() => store.page({ after: 3 }), { code: "ToubaStoreQueryInvalid" });
   assert.equal(store.page({ after: "zzzz" }).next, null);
@@ -80,6 +84,49 @@ test("conflicting writes roll back the whole batch and cannot erase unrelated hi
   assert.deepEqual(store.read().map(r => r.status), ["pending", "approved"]);
   first.pop();
   assert.throws(() => store.write(first), { code: "ToubaStoreDeletionRefused" });
+});
+
+test("bounded read-only projections validate whole records without creating writable snapshots", t => {
+  let validations = 0;
+  const { path, store } = fixture(t, { validate: () => validations++ });
+  const initial = store.read();
+  initial.push(...Array.from({ length: 12 }, (_, i) => ({ id: `row-${i}`, status: "done", payload: "x".repeat(1024 * 1024) })));
+  store.write(initial); validations = 0;
+  const before = readFileSync(path);
+  const projected = store.project(record => ({ id: record.id, status: record.status }), { limit: 12, maxOutputBytes: 1024 });
+  assert.equal(projected.length, 12); assert.equal(validations, 12);
+  assert.ok(!JSON.stringify(projected).includes("payload"));
+  assert.throws(() => store.write(projected), { code: "ToubaStoreSnapshotRequired" });
+  assert.throws(() => store.project(row => row, { limit: 11 }), { code: "ToubaStoreCapacityExceeded" });
+  assert.throws(() => store.project(row => row, { limit: 12, maxOutputBytes: 100 }), { code: "ToubaStoreCapacityExceeded" });
+  assert.throws(() => store.project(row => row, { limit: 1001 }), { code: "ToubaStoreQueryInvalid" });
+  assert.deepEqual(store.project(row => row.id, { limit: 1, filter: [{ id: "row-3" }] }), ["row-3"]);
+  assert.deepEqual(readFileSync(path), before);
+  const db = new DatabaseSync(path);
+  try { db.prepare("UPDATE records SET body=? WHERE id=?").run(JSON.stringify({ id: "row-3", status: false }), "row-3"); }
+  finally { db.close(); }
+  assert.throws(() => store.project(row => row.id, { limit: 12 }));
+});
+
+test("reverse pages keep a stable key boundary when new records arrive", t => {
+  let validations = 0;
+  const { store } = fixture(t, { validate: () => validations++ });
+  const initial = store.read();
+  initial.push(...["z", "b", "x", "a", "y"].map(id => ({ id, status: "done" })));
+  store.write(initial); validations = 0;
+  const first = store.page({ order: "rowid", direction: "desc", limit: 2 });
+  assert.equal(validations, 2);
+  assert.deepEqual(first.items.map(row => row.id), ["y", "a"]);
+  assert.equal(first.hasMore, true);
+  const added = store.read([{ id: "new" }]); added.push({ id: "new", status: "pending" }); store.write(added);
+  const second = store.page({ order: "rowid", direction: "desc", after: first.next, limit: 2 });
+  assert.deepEqual(second.items.map(row => row.id), ["x", "b"]);
+  assert.equal(second.hasMore, true);
+  const last = store.page({ order: "rowid", direction: "desc", after: second.next, limit: 2 });
+  assert.deepEqual(last.items.map(row => row.id), ["z"]);
+  assert.equal(last.hasMore, false);
+  assert.deepEqual(store.page({ order: "id", direction: "desc", filter: [{ status: "pending" }, { id: "z" }] }).items.map(row => row.id), ["z", "new"]);
+  assert.throws(() => store.page({ direction: "DESC; DELETE FROM records" }), { code: "ToubaStoreQueryInvalid" });
 });
 
 test("bounded physical-order audit pages retain filters, full validation and writable snapshots", t => {

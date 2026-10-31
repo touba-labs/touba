@@ -4,6 +4,19 @@ sidebar_position: 4
 
 # Référence traces
 
+## Lecture graphique et corrélations
+
+`touba trace explore` ouvre le journal du projet dans Touba Explorer.
+Le [guide dédié](../guides/explorer-traces.md) décrit les vues et les exports de sélection.
+
+Les nouveaux événements émis dans une invocation peuvent porter
+`payload.trace_context` : `span_id`, `target_ref`, `parent_span_id`,
+`call_event_id`, `agent_invocation_id` et `agent_ref`, selon le contexte disponible.
+`call_completed.payload.call_started_event_id` relie un retour à son début
+dans le segment courant. Chaque reprise a ses propres séquences et contextes.
+Ces identifiants opaques relient les événements. Les lecteurs conservent les
+traces sans ces champs et n’y inventent pas de relations.
+
 ## Choisir le détail des fonctions pures
 
 `--trace-pure-functions full` conserve le détail complet, actif par défaut.

@@ -40,7 +40,11 @@
       "kind": "dispatch_refused_cancelled",
       "payload": {
         "target_ref": "skill:test/Build",
-        "reason": "cancel_requested"
+        "reason": "cancel_requested",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:test/Build"
+        }
       }
     },
     {

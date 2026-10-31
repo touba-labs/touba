@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_skill_composition/RunPipeline",
         "owner_ref": "skill:examples.a1_skill_composition/RunPipeline"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
+        }
       }
     },
     {
@@ -55,7 +61,11 @@
         "target_ref": "skill:examples.a1_skill_composition/LoadSource",
         "caller_ref": "skill:examples.a1_skill_composition/RunPipeline",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
+        }
       }
     },
     {
@@ -67,6 +77,14 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_skill_composition/LoadSource",
         "owner_ref": "skill:examples.a1_skill_composition/LoadSource"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "skill:examples.a1_skill_composition/LoadSource",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3"
+        }
       }
     },
     {
@@ -93,7 +111,13 @@
         "target_ref": "tool:examples.a1_skill_composition/FetchSource",
         "caller_ref": "skill:examples.a1_skill_composition/LoadSource",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "skill:examples.a1_skill_composition/LoadSource",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3"
+        }
       }
     },
     {
@@ -119,7 +143,14 @@
       "payload": {
         "target_ref": "tool:examples.a1_skill_composition/FetchSource",
         "caller_ref": "skill:examples.a1_skill_composition/LoadSource",
-        "result_binding": "source"
+        "result_binding": "source",
+        "call_started_event_id": "event:run-1:5",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "skill:examples.a1_skill_composition/LoadSource",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3"
+        }
       }
     },
     {
@@ -134,7 +165,13 @@
         "node_id": "node:graph:skill:examples.a1_skill_composition/LoadSource:2"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "skill:examples.a1_skill_composition/LoadSource",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3"
+        }
       }
     },
     {
@@ -160,7 +197,12 @@
       "payload": {
         "target_ref": "skill:examples.a1_skill_composition/LoadSource",
         "caller_ref": "skill:examples.a1_skill_composition/RunPipeline",
-        "result_binding": "source"
+        "result_binding": "source",
+        "call_started_event_id": "event:run-1:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
+        }
       }
     },
     {
@@ -187,7 +229,11 @@
         "target_ref": "skill:examples.a1_skill_composition/BuildNote",
         "caller_ref": "skill:examples.a1_skill_composition/RunPipeline",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
+        }
       }
     },
     {
@@ -199,6 +245,14 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.a1_skill_composition/BuildNote",
         "owner_ref": "skill:examples.a1_skill_composition/BuildNote"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:4",
+          "target_ref": "skill:examples.a1_skill_composition/BuildNote",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:9"
+        }
       }
     },
     {
@@ -213,7 +267,13 @@
         "node_id": "node:graph:skill:examples.a1_skill_composition/BuildNote:1"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:4",
+          "target_ref": "skill:examples.a1_skill_composition/BuildNote",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:9"
+        }
       }
     },
     {
@@ -239,7 +299,12 @@
       "payload": {
         "target_ref": "skill:examples.a1_skill_composition/BuildNote",
         "caller_ref": "skill:examples.a1_skill_composition/RunPipeline",
-        "result_binding": "note"
+        "result_binding": "note",
+        "call_started_event_id": "event:run-1:9",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
+        }
       }
     },
     {
@@ -254,7 +319,11 @@
         "node_id": "node:graph:skill:examples.a1_skill_composition/RunPipeline:3"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
+        }
       }
     },
     {

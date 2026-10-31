@@ -1,0 +1,57 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mkdtempSync, realpathSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { initProject, newModule, prepareProject } from "../../touba-project/src/project.mjs";
+import { newPackage, packPackage } from "../../touba-project/src/packages.mjs";
+import { createProjectPackageSurface } from "../src/package-surface.mjs";
+import { readPreparedProject } from "../src/prepared-project.mjs";
+import { createProjectPreparation } from "../src/project-preparation.mjs";
+import { createToubaProjectServer } from "../src/serve.mjs";
+import { validateObject } from "../../../contracts/product-surfaces/validate.mjs";
+import schema from "../../../contracts/product-surfaces/schemas/touba-project-preparation-v1.schema.json" with { type: "json" };
+
+test("package installation and source editing need explicit preparation before execution", async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-preparation-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  initProject({ root }); const module = newModule("test.main", { root });
+  const source = 'module test.main\nskill Echo\n    gives Text\n    do\n        give "first"\n';
+  writeFileSync(module.source_path, source);
+  assert.equal((await prepareProject({ root, mode: "write" })).status, "success");
+  const pkg = newPackage("fixture.prepare", { root, publisher: "Fixture", description: "Source only", license: "Apache-2.0", version: "1.0.0" });
+  const archive = await packPackage(pkg.path, { output: join(root, "package.tar.gz") });
+  const packages = createProjectPackageSurface(root); t.after(() => packages.close());
+  await packages.apply("owner", await packages.preview("owner", readFileSync(archive.output)));
+  assert.throws(() => readPreparedProject(root), { code: "ToubaServePreparedProjectInvalid" });
+  writeFileSync(module.source_path, source.replace('"first"', '"edited"'));
+  const config = readFileSync(join(root, "touba.project.json"));
+  const preparation = createProjectPreparation(root);
+  const pending = preparation.prepare();
+  await assert.rejects(preparation.prepare(), { code: "ToubaServePreparationBusy" });
+  const report = await pending;
+  assert.deepEqual(validateObject(schema, report), []);
+  assert.equal(report.status, "success", JSON.stringify(report));
+  assert.deepEqual(readFileSync(join(root, "touba.project.json")), config, "preparation adds no configured grant");
+  readPreparedProject(root);
+  const tokenEnv = `TOUBA_PREPARATION_TEST_${process.pid}`;
+  process.env[tokenEnv] = "isolated-preparation-token";
+  t.after(() => { delete process.env[tokenEnv]; });
+  const server = createToubaProjectServer({ projectRoot: root, port: 0, quiet: true, authTokenEnv: tokenEnv });
+  await server.start(); t.after(() => server.stop());
+  const base = `http://127.0.0.1:${server.server.address().port}`;
+  const headers = { "content-type": "application/json", authorization: "Bearer isolated-preparation-token" };
+  assert.equal((await fetch(base + "/project/prepare", { method: "POST", body: "{}" })).status, 401);
+  const invalid = await fetch(base + "/project/prepare", { method: "POST", headers, body: JSON.stringify({ root: "/tmp", profile: "prod" }) });
+  assert.equal(invalid.status, 400);
+  const response = await fetch(base + "/runs/sandbox", { method: "POST", headers, body: JSON.stringify({
+    schema_version: "touba-sandbox-run-request-v1", execution_kind: "entrypoint", target_ref: "skill:test.main/Echo",
+    effect_policy: "runtime_only", inputs: {}, requested_by: { kind: "studio", id: "fixture" }, reason: "Qualify explicit preparation" }) });
+  const run = await response.json();
+  assert.equal(run.status, "success", JSON.stringify(run)); assert.equal(run.result, "edited");
+  writeFileSync(module.source_path, "this is not Touba");
+  const failed = await (await fetch(base + "/project/prepare", { method: "POST", headers, body: "{}" })).json();
+  assert.deepEqual(validateObject(schema, failed), []);
+  assert.equal(failed.status, "error"); assert.ok(failed.diagnostics.length);
+  assert.throws(() => readPreparedProject(root), { code: "ToubaServePreparedProjectInvalid" });
+});

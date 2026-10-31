@@ -29,6 +29,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.fallback/RunSourceLookup",
         "owner_ref": "strategy:examples.fallback/RunSourceLookup"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.fallback/RunSourceLookup"
+        }
       }
     },
     {
@@ -55,7 +61,11 @@
         "target_ref": "agent:examples.fallback/Researcher",
         "caller_ref": "strategy:examples.fallback/RunSourceLookup",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.fallback/RunSourceLookup"
+        }
       }
     },
     {
@@ -81,7 +91,11 @@
       "payload": {
         "caller_ref": "strategy:examples.fallback/RunSourceLookup",
         "agent_ref": "agent:examples.fallback/Researcher",
-        "authority_source": "callable_by"
+        "authority_source": "callable_by",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.fallback/RunSourceLookup"
+        }
       }
     },
     {
@@ -94,7 +108,14 @@
         "agent_ref": "agent:examples.fallback/Researcher",
         "caller_ref": "strategy:examples.fallback/RunSourceLookup",
         "input_count": 1,
-        "output_type": "type:examples.fallback/SourceText"
+        "output_type": "type:examples.fallback/SourceText",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.fallback/Researcher",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002"
+        }
       }
     },
     {
@@ -165,7 +186,14 @@
             ],
             "memory_accesses": []
           }
-        ]
+        ],
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.fallback/Researcher",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002"
+        }
       }
     },
     {
@@ -178,7 +206,14 @@
         "agent_ref": "agent:examples.fallback/Researcher",
         "selected_ref": "skill:examples.fallback/BuildSource",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.fallback/Researcher",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002"
+        }
       }
     },
     {
@@ -192,7 +227,14 @@
         "selected_ref": "skill:examples.fallback/BuildSource",
         "authority_source": "uses",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability"
+        "reason": "single declared capability",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.fallback/Researcher",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002"
+        }
       }
     },
     {
@@ -204,6 +246,15 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildSource",
         "owner_ref": "skill:examples.fallback/BuildSource"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.fallback/BuildSource",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002",
+          "agent_ref": "agent:examples.fallback/Researcher"
+        }
       }
     },
     {
@@ -230,7 +281,14 @@
         "target_ref": "tool:examples.fallback/FetchPrimarySource",
         "caller_ref": "skill:examples.fallback/BuildSource",
         "agent_ref": "agent:examples.fallback/Researcher",
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.fallback/BuildSource",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002",
+          "agent_ref": "agent:examples.fallback/Researcher"
+        }
       }
     },
     {
@@ -262,7 +320,14 @@
         "target_ref": "tool:examples.fallback/FetchPrimarySource",
         "tool_ref": "tool:examples.fallback/FetchPrimarySource",
         "caller_ref": "skill:examples.fallback/BuildSource",
-        "agent_ref": "agent:examples.fallback/Researcher"
+        "agent_ref": "agent:examples.fallback/Researcher",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.fallback/BuildSource",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002",
+          "agent_ref": "agent:examples.fallback/Researcher"
+        }
       },
       "message": "missing tool binding tool:examples.fallback/FetchPrimarySource"
     },
@@ -278,7 +343,14 @@
       },
       "payload": {
         "failure_path_ref": "failure:graph:skill:examples.fallback/BuildSource:1",
-        "target_node_id": "node:graph:skill:examples.fallback/BuildSource:3"
+        "target_node_id": "node:graph:skill:examples.fallback/BuildSource:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.fallback/BuildSource",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002",
+          "agent_ref": "agent:examples.fallback/Researcher"
+        }
       }
     },
     {
@@ -304,7 +376,14 @@
       "payload": {
         "target_ref": "skill:examples.fallback/BuildFallbackSource",
         "caller_ref": "skill:examples.fallback/BuildSource",
-        "agent_ref": "agent:examples.fallback/Researcher"
+        "agent_ref": "agent:examples.fallback/Researcher",
+        "trace_context": {
+          "span_id": "span:run-1:0:3",
+          "target_ref": "skill:examples.fallback/BuildSource",
+          "parent_span_id": "span:run-1:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002",
+          "agent_ref": "agent:examples.fallback/Researcher"
+        }
       }
     },
     {
@@ -316,6 +395,16 @@
       "air_ref": {
         "flow_graph_ref": "graph:skill:examples.fallback/BuildFallbackSource",
         "owner_ref": "skill:examples.fallback/BuildFallbackSource"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:5",
+          "target_ref": "skill:examples.fallback/BuildFallbackSource",
+          "parent_span_id": "span:run-1:0:3",
+          "call_event_id": "event:run-1:13",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002",
+          "agent_ref": "agent:examples.fallback/Researcher"
+        }
       }
     },
     {
@@ -330,7 +419,15 @@
         "node_id": "node:graph:skill:examples.fallback/BuildFallbackSource:1"
       },
       "payload": {
-        "status": "stopped"
+        "status": "stopped",
+        "trace_context": {
+          "span_id": "span:run-1:0:5",
+          "target_ref": "skill:examples.fallback/BuildFallbackSource",
+          "parent_span_id": "span:run-1:0:3",
+          "call_event_id": "event:run-1:13",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000002",
+          "agent_ref": "agent:examples.fallback/Researcher"
+        }
       }
     },
     {

@@ -106,6 +106,9 @@ test("a host router forwards the execution channel without exposing it to model 
   assert.equal(result.status, "success", JSON.stringify(result.trace));
   assert.deepEqual(result.trace.events.filter(e => e.kind === "provider_cost_recorded").map(e => e.payload.status), ["pending", "reported"]);
   assert.equal(JSON.stringify(received).includes("recordProviderCost"), false);
+  const metadata = result.trace.events.find(event => event.kind === "agent_decision_provider_model_resolved").payload.provider_metadata;
+  assert.equal(metadata.decision_interface, "native");
+  assert.equal(metadata.history_storage, "disabled");
 });
 
 test("token counting and generation share one budget and correlate both attempts", async t => {
