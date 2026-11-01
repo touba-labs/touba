@@ -5,8 +5,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { executeAirDocument } from "../src/index.mjs";
+import { executeAirDocument, loadToolBindingManifestFromJson, loadSecretsFromJson } from "../src/index.mjs";
 import { createSqliteHumanCheckpointStore } from "../src/human-checkpoint-store.mjs";
+import { createSqliteTraceStore } from "../src/sqlite-trace-store.mjs";
+import { validateTraceMachineContract, validateTraceMachineStream } from "../../../contracts/machine/contracts.mjs";
 
 let air;
 before(() => {
@@ -55,6 +57,61 @@ test("an unchanged approved continuation executes once; replay cannot call the a
   assert.equal(h.payments[0].amount, 100);
 });
 
+test("a changed host binding is refused before attestation or effect and preserves the original wait", async t => {
+  const h = setup(t);
+  const manifest = args => loadToolBindingManifestFromJson(JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {
+    "tool:checkpoint_custody/Pay": { handler: { kind: "process", command: process.execPath, args }, grants: [], timeout_ms: 5000, max_payload_bytes: 65536, effect_contract: { kind: "none" } },
+  } }));
+  h.options.toolBindingManifest = manifest(["original.mjs"]);
+  const cp = await h.pause();
+  assert.match(cp.host_contract_digest, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(cp.approval_state.requests[cp.approval_ref].review_context.values, [h.options.inputs.invoice]);
+  const refused = await h.resume(cp, { toolBindingManifest: manifest(["changed.mjs"]) });
+  assert.equal(refused.reason, "HumanApprovalCheckpointIncompatible");
+  assert.equal(h.attestations(), 0); assert.equal(h.payments.length, 0);
+  assert.equal((await h.resume(cp)).status, "success");
+  assert.equal(h.payments.length, 1);
+});
+
+for (const field of ["grants", "timeout_ms", "payload_constraints"]) {
+  test(`approval also binds the configured ${field}`, async t => {
+    const h = setup(t);
+    const original = { manifest_version: "touba-manifest-v1", bindings: {
+      "tool:checkpoint_custody/Pay": { handler: { kind: "process", command: process.execPath, args: ["original.mjs"] },
+        grants: [], timeout_ms: 5000, max_payload_bytes: 65536, effect_contract: { kind: "none" } },
+    } };
+    h.options.toolBindingManifest = loadToolBindingManifestFromJson(JSON.stringify(original));
+    const cp = await h.pause();
+    original.bindings["tool:checkpoint_custody/Pay"][field] = field === "grants" ? ["network"]
+      : field === "timeout_ms" ? 6000 : { input: { "invoice.amount": { max: 100 } } };
+    const result = await h.resume(cp, { toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(original)) });
+    assert.equal(result.reason, "HumanApprovalCheckpointIncompatible");
+    assert.equal(h.payments.length, 0); assert.equal(h.attestations(), 0);
+    assert.equal((await h.resume(cp)).status, "success");
+  });
+}
+
+test("human-only checkpoints bind host provenance without an execution checkpoint observer", async t => {
+  const h = setup(t);
+  h.options.executionCompatibility = { supply_chain_lock: { digest: "synthetic-original" } };
+  const cp = await h.pause();
+  const result = await h.resume(cp, { executionCompatibility: { supply_chain_lock: { digest: "synthetic-changed" } } });
+  assert.equal(result.reason, "HumanApprovalCheckpointIncompatible");
+  assert.equal(h.payments.length, 0); assert.equal(h.attestations(), 0);
+  assert.equal((await h.resume(cp)).status, "success");
+});
+
+test("rotating a credential value under an unchanged handle preserves the approval contract", async t => {
+  const h = setup(t);
+  const secretStore = value => loadSecretsFromJson(JSON.stringify({ secrets_version: "touba-secrets-v1",
+    secrets: { UNUSED_TOKEN: { source: "env", name: "UNUSED_TOKEN" } } }), { env: { UNUSED_TOKEN: value } });
+  h.options.secretStore = secretStore("synthetic-old-credential");
+  const cp = await h.pause();
+  assert.equal((await h.resume(cp, { secretStore: secretStore("synthetic-rotated-credential") })).status, "success");
+  assert.equal(h.payments.length, 1);
+  assert.doesNotMatch(JSON.stringify(cp), /synthetic-(old|rotated)-credential/);
+});
+
 for (const [name, mutate] of [
   ["payment amount", cp => { cp.values["value:invoice"].amount = 9000; }],
   ["displayed approval context", cp => { cp.context_values[0].amount = 9000; }],
@@ -89,6 +146,28 @@ test("two concurrent resumes reserve only one continuation", async t => {
   assert.ok(results.some(r => r.reason === "HumanApprovalCheckpointBusy"));
   assert.equal(h.payments.length, 1);
   assert.equal(h.attestations(), 1);
+});
+
+test("pause, rejected resume, approved resume and replay retain one run with disjoint exported event identities", async t => {
+  const h = setup(t);
+  const store = createSqliteTraceStore({ filename: join(h.root, "traces.sqlite") });
+  t.after(() => store.close());
+  h.options.traceStorage = store;
+  const cp = await h.pause();
+  assert.equal((await h.resume(cp, { humanApprovalAuthority: undefined })).reason, "HumanApprovalAuthorityRequired");
+  assert.equal((await h.resume(cp)).status, "success");
+  assert.equal((await h.resume(cp)).reason, "HumanApprovalCheckpointAlreadyConsumed");
+  const events = [], runs = new Set();
+  for (const segment of store.segments()) {
+    const snapshot = store.snapshot(segment.id);
+    validateTraceMachineContract(snapshot.document());
+    validateTraceMachineStream(snapshot.header, snapshot.events());
+    runs.add(snapshot.header.run.run_id);
+    events.push(...snapshot.events());
+  }
+  assert.equal(runs.size, 1);
+  assert.equal(new Set(events.map(event => event.event_id)).size, events.length);
+  assert.equal(h.payments.length, 1);
 });
 
 test("old unprotected snapshots and a new/empty authority store are refused", async t => {

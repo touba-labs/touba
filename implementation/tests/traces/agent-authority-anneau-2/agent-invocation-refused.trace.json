@@ -2,7 +2,7 @@
   "trace_protocol_version": "touba-trace-v1",
   "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
-    "run_id": "run-1",
+    "run_id": "run-00000000-0000-4000-8000-000000000003",
     "air_schema_version": "touba-air-v1",
     "air_digest": "sha256:c1c705acbfbf5756a7b6aa83b9a357d44a5aab496c0aba1019b490759384c66d",
     "module_ref": "module:test",
@@ -10,8 +10,8 @@
   },
   "events": [
     {
-      "event_id": "event:run-1:1",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:1",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 0,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
@@ -21,8 +21,8 @@
       }
     },
     {
-      "event_id": "event:run-1:2",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:2",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 1,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -32,14 +32,14 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "strategy:test/RunBuild"
         }
       }
     },
     {
-      "event_id": "event:run-1:3",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:3",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 2,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -62,14 +62,14 @@
         "caller_ref": "strategy:test/RunBuild",
         "agent_ref": null,
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "strategy:test/RunBuild"
         }
       }
     },
     {
-      "event_id": "event:run-1:4",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:4",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 3,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_invocation_refused",
@@ -92,14 +92,14 @@
         "agent_ref": "agent:test/Builder",
         "reason": "caller_not_allowed",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "strategy:test/RunBuild"
         }
       }
     },
     {
-      "event_id": "event:run-1:5",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:5",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 4,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "failure_detected",
@@ -126,15 +126,15 @@
         "caller_ref": "strategy:test/RunBuild",
         "agent_ref": "agent:test/Builder",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "strategy:test/RunBuild"
         }
       },
       "message": "agent invocation refused: strategy:test/RunBuild is not authorized to invoke agent:test/Builder"
     },
     {
-      "event_id": "event:run-1:6",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:6",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 5,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",

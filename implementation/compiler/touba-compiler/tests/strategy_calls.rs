@@ -34,7 +34,7 @@ fn strategy_calls_are_typed_and_linked_across_modules() {
 
 #[test]
 fn strategy_call_rejects_missing_interface_arguments_types_and_impure_function_use() {
-    let source = "module nested\nstrategy Child\n    takes count as Int\n    gives Int\n    do\n        give count\nstrategy Parent\n    gives Int\n    do\n        Child\n            with count as 1\n            into result\n        give result\n";
+    let source = "module nested\nstrategy Child\n    takes count as Int\n    gives Int\n    do\n        give count\nstrategy Parent\n    uses Child\n    gives Int\n    do\n        Child\n            with count as 1\n            into result\n        give result\n";
     assert!(
         compile_source_to_air("valid.tb", source)
             .diagnostics

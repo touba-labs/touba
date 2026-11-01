@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import queue
+import re
 import urllib.request
 import unittest
 from contextlib import closing
@@ -48,6 +49,20 @@ strategy Fail
 
 
 class EngineTests(unittest.TestCase):
+    def test_published_python_approval_tutorial(self):
+        page = (IMPLEMENTATION.parent / "docs/tutoriels/approbations-roles-delais.md").read_text()
+        for language, filename in [("touba", "approval.tb"), ("python", "host.py"), ("python", "exercise.py")]:
+            match = re.search(r'```' + language + r' title="' + re.escape(filename) + r'"\n(.*?)```', page, re.S)
+            self.assertIsNotNone(match, filename)
+            content = match[1]
+            if filename == "exercise.py":
+                content = content.replace('ToubaEngine(project_root=".")',
+                    f'ToubaEngine(project_root=".", command={NODE!r}, command_args={[str(CLI)]!r}, env={{"TOUBA_HOST_PYTHON": {sys.executable!r}}})')
+            (self.root / filename).write_text(content)
+        result = subprocess.run([sys.executable, "exercise.py"], cwd=self.root, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("APPROVAL_ROLE_AND_RESUME_OK", result.stdout)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="touba-python-test-")
         self.addCleanup(self.directory.cleanup)
@@ -214,6 +229,7 @@ skill Question
 strategy Batch
     takes topics as List of Text
     gives List of Text
+    uses Question
     do
         parallel Question
             each topic in topics
@@ -493,7 +509,9 @@ strategy Run
             return
         closed = self.root / "host-closed.txt"
         deadline = time.monotonic() + 10
-        while not closed.exists() and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
+            if closed.exists() and closed.read_text() == "closed":
+                break
             time.sleep(.02)
         self.assertTrue(closed.exists(), "the shared Python host must close after the forwarded POSIX signal")
         self.assertEqual(closed.read_text(), "closed")

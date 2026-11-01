@@ -2,7 +2,7 @@
   "trace_protocol_version": "touba-trace-v1",
   "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
-    "run_id": "run-1",
+    "run_id": "run-00000000-0000-4000-8000-000000000002",
     "air_schema_version": "touba-air-v1",
     "air_digest": "sha256:a130319dd63d4b945fc573b0d39b156a93c86108ef61c7256e406a8af81ee673",
     "module_ref": "module:test",
@@ -10,8 +10,8 @@
   },
   "events": [
     {
-      "event_id": "event:run-1:1",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:1",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 0,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
@@ -21,8 +21,8 @@
       }
     },
     {
-      "event_id": "event:run-1:2",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:2",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 1,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "budget_limit_checked",
@@ -39,8 +39,8 @@
       }
     },
     {
-      "event_id": "event:run-1:3",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:3",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 2,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -50,14 +50,14 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
           "target_ref": "skill:test/BindThenGive"
         }
       }
     },
     {
-      "event_id": "event:run-1:4",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:4",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 3,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "budget_consumed",
@@ -81,14 +81,14 @@
         "limit_value": 1,
         "authority_source": "host_policy",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
           "target_ref": "skill:test/BindThenGive"
         }
       }
     },
     {
-      "event_id": "event:run-1:5",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:5",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 4,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "binding_created",
@@ -111,14 +111,14 @@
         "value_ref": "literal:string:budget",
         "caller_ref": "skill:test/BindThenGive",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
           "target_ref": "skill:test/BindThenGive"
         }
       }
     },
     {
-      "event_id": "event:run-1:6",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:6",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 5,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "budget_limit_exceeded",
@@ -143,14 +143,14 @@
         "authority_source": "host_policy",
         "reason": "budget_limit_exceeded",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
           "target_ref": "skill:test/BindThenGive"
         }
       }
     },
     {
-      "event_id": "event:run-1:7",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:7",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 6,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "failure_detected",
@@ -167,8 +167,8 @@
       "message": "max_steps exceeded"
     },
     {
-      "event_id": "event:run-1:8",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:8",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 7,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",

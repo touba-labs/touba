@@ -775,7 +775,7 @@ test("continues a resumed trace segment at the checkpoint absolute sequence", as
   assert.equal(resumed.trace.events[0].sequence_index, appliedCheckpoint.trace_state.next_sequence_index);
   assert.equal(
     resumed.trace.events[0].event_id,
-    `event:run:durable:${appliedCheckpoint.trace_state.next_sequence_index + 1}`,
+    `event:run:durable:${resumed.trace.run.segment_id}:${appliedCheckpoint.trace_state.next_sequence_index + 1}`,
   );
   for (const [index, event] of resumed.trace.events.entries()) {
     assert.equal(event.sequence_index, appliedCheckpoint.trace_state.next_sequence_index + index);

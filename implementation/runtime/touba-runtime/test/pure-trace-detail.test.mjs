@@ -119,8 +119,8 @@ test("calls detail reduces stored events while preserving outcomes, budgets, cal
 test("compact traces retain pure failures, budget refusals and the entry function scope", async () => {
   for (const options of [{ entryRef: "strategy:pure_trace/Fail" },
     { entryRef: "strategy:pure_trace/Run", inputs: { values: [1, 2, 3] }, runLimits: { max_steps: 2 } }]) {
-    const full = await executeAirDocument(air, options);
-    const compact = await executeAirDocument(air, { ...options, tracePureFunctions: "calls" });
+    const full = await executeAirDocument(air, { ...options, runId: "pure-trace-comparison" });
+    const compact = await executeAirDocument(air, { ...options, runId: "pure-trace-comparison", tracePureFunctions: "calls" });
     assert.equal(compact.status, "failure");
     assert.equal(compact.reason, full.reason);
     assert.deepEqual(compact.trace.events.filter(event => /refused|exceeded|failure/.test(event.kind)).map(event => [event.kind, event.payload]),

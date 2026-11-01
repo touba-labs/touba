@@ -381,8 +381,10 @@ if (parsedArgs.agentDecisionProviderPath !== undefined) {
     agentDecisionProvider = await hostModules.decisionProvider(parsedArgs.agentDecisionProviderPath,
       { projectRoot: parsedArgs.runPlanPath ? dirname(resolve(parsedArgs.runPlanPath)) : undefined });
   } catch (e) {
-    stderr.write(`error: invalid agent decision provider ${parsedArgs.agentDecisionProviderPath}: ${e.message}\n`);
-    return await refuseAdmission("DecisionProviderInvalid", "provider", 1);
+    const code = ["PythonHostImportFailed", "PythonHostConfigurationInvalid", "PythonHostTimeout", "PythonHostPayloadInvalid", "PythonHostUnavailable"].includes(e.code)
+      ? e.code : "DecisionProviderInvalid";
+    stderr.write(`error: ${code}: check the selected provider module and its Python environment\n`);
+    return await refuseAdmission(code, "provider", 1);
   }
 }
 

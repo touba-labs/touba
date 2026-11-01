@@ -54,7 +54,7 @@ export const TRACE_EVENT_KINDS = Object.freeze([
   "run_cancelled", "run_completed", "run_started", "run_timeout_exceeded",
   "scope_entered", "scope_exited", "secret_handle_authorized", "secret_handle_refused",
   "skill_pack_activated", "skill_pack_activation_refused", "skill_pack_discovery_listed",
-  "skill_pack_resource_loaded", "skill_pack_resource_refused", "tool_binding_authorized",
+  "skill_pack_resource_loaded", "skill_pack_resource_refused", "tool_binding_authorized", "tool_execution_status",
   "trigger_event_accepted", "trigger_event_received", "trigger_event_refused",
   "trigger_execution_completed", "trigger_execution_failed", "trigger_execution_started",
   "trigger_runner_run_started", "trigger_runner_run_completed",
@@ -75,7 +75,7 @@ const TRACE_ROOT_FIELDS = new Set([
 ]);
 const TRACE_RUN_FIELDS = new Set([
   "run_id", "air_schema_version", "air_digest", "module_ref", "entry_ref", "admission",
-  "pure_function_detail",
+  "pure_function_detail", "segment_id",
 ]);
 const TRACE_EVENT_FIELDS = new Set([
   "event_id", "run_id", "sequence_index", "kind", "air_ref", "payload", "message", "observed_at",
@@ -436,6 +436,9 @@ function validateTraceHeader(value) {
   rejectUnknownFields(trace, TRACE_ROOT_FIELDS, "$");
   const run = requireObject(trace.run, "$.run", "trace run");
   rejectUnknownFields(run, TRACE_RUN_FIELDS, "$.run");
+  if (run.segment_id !== undefined && (typeof run.segment_id !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(run.segment_id))) {
+    fail("TraceSegmentInvalid", "segment_id requires a UUID", "$.run.segment_id");
+  }
   if (run.pure_function_detail !== undefined && !["full", "calls"].includes(run.pure_function_detail)) {
     fail("TraceDetailInvalid", "pure_function_detail must be full or calls", "$.run.pure_function_detail");
   }
@@ -593,7 +596,7 @@ function validateExecutionEvents(trace, events, canonicalIds, incomplete = false
         `$.events[${index}].sequence_index`,
       );
     }
-    if (canonicalIds && eventId !== `event:${runId}:${expectedSequenceIndex + 1}`) {
+    if (canonicalIds && eventId !== `event:${runId}:${run.segment_id ? `${run.segment_id}:` : ""}${expectedSequenceIndex + 1}`) {
       fail("TraceEventIdentityInvalid", "runtime event ID must match its run and sequence", `$.events[${index}].event_id`);
     }
     terminal = event;
@@ -614,6 +617,21 @@ export function canonicalizeMachineValue(value) {
 /** @param {unknown} codeValue @param {unknown} [failureMode] @returns {string} */
 export function failureFamilyForRuntimeCode(codeValue, failureMode = undefined) {
   const code = String(codeValue ?? "RuntimeFailure");
+  /** @type {Record<string, string>} */
+  const explicit = {
+    ToolPayloadConstraintViolation: "authority",
+    ToolInputSchemaInvalid: "business",
+    ToolInputSchemaViolation: "business",
+    ToolOutputSchemaInvalid: "handler",
+    ToolOutputSchemaViolation: "handler",
+    EffectOutcomeUnknown: "handler",
+    EffectReconciliationRequired: "handler",
+    EffectResultUnavailable: "handler",
+    EffectReceiptInvalid: "handler",
+    EffectRequestConflict: "authority",
+    EffectNotApplied: "business",
+  };
+  if (Object.hasOwn(explicit, code)) return explicit[code];
   if (/^HumanApproval(?:Authority|Evidence|Exclusion|Role|Signer|Identity|Initiator|Attestation|DecisionAlready|StateLimit|NotExpired|Checkpoint)/u.test(code)
     || code === "InvalidHumanApprovalPolicy") return "authority";
   if (/^(InvalidParallel|ParallelContinuation|ParallelOutcome|Parallel.*LimitExceeded)/u.test(code)) return "authority";
@@ -625,7 +643,7 @@ export function failureFamilyForRuntimeCode(codeValue, failureMode = undefined) 
   if (/Unauthorized|NotAllowed|NotGranted|Grant|Secret|Memory.*(?:Scope|Access|Grant)|Budget|LimitExceeded|KillSwitch|Authority|Permission|Caller/u.test(code)) {
     return "authority";
   }
-  if (/Provider/u.test(code)) return "provider";
+  if (/Provider|^PythonHost/u.test(code)) return "provider";
   if (/Handler|ToolBinding|ProcessProtocol/u.test(code)) return "handler";
   return "business";
 }

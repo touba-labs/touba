@@ -3,6 +3,8 @@ pub mod ast;
 pub mod diagnostics;
 
 mod air_json;
+mod capability_warnings;
+pub use capability_warnings::capability_description_warnings;
 mod ast_to_air;
 mod cst_to_ast;
 mod declaration_lowering;

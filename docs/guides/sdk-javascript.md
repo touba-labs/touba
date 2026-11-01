@@ -842,13 +842,13 @@ Une clé n’est pas requise pour le cas local standard. Si un endpoint compatib
 exige une clé, la passer par `TOUBA_AGENT_DECISION_OLLAMA_API_KEY`,
 `OLLAMA_API_KEY` ou une option hôte non committée.
 
-Ces deux helpers HTTP utilisent le transport Responses de leur provider AI SDK.
-Un endpoint annoncé « OpenAI-compatible » ne suffit donc pas : vérifier sa prise
-en charge de Responses, des appels de fonctions stricts et des sorties structurées
-pour le modèle choisi. Les formats d’appels et de résultats sont décrits dans la
+Ces deux helpers HTTP utilisent Responses par défaut ; `transport: "chat"`
+sélectionne Chat Completions. Vérifiez les sorties structurées et les appels
+de fonctions pris en charge par le serveur et le modèle choisis.
+Les formats d’appels et de résultats sont décrits dans la
 [documentation officielle OpenAI](https://developers.openai.com/api/docs/guides/function-calling).
 Le helper Ollama ne garantit pas ces fonctionnalités pour toute installation
-locale. Pour un autre transport, fournir un modèle adapté à
+locale. Pour un autre protocole, fournissez un modèle adapté à
 `createAiSdkDecisionProvider`.
 
 #### Borner le corps HTTP fournisseur
@@ -1025,6 +1025,8 @@ Voir les [adaptateurs tarifaires](./couts-fournisseurs.md).
 
 ## MCP
 
+L'importeur MCP génère `requires network` et le grant correspondant dans son brouillon. Pour un serveur stdio strictement local, révisez ensemble la déclaration et le manifest : `network` n'est pas imposé par le transport stdio. Les droits `process` exigés par le profil d'isolation restent nécessaires. Un serveur qui contacte Internet doit conserver l'autorisation réseau.
+
 `createMcpStdioToolBridge({ mcpToolName, config })` retourne un handler
 `bridge({ request, context })`. La configuration
 `touba-mcp-bridge-config-v1` est la même en Python. Le bridge lance le serveur
@@ -1171,3 +1173,38 @@ l’annulation et la remontée des coûts. Conservez cet objet tel quel, sépar�
 du prompt. Gardez les instances de providers entre les décisions pour préserver
 leur historique. Le guide Python présente le même routage avec le contexte
 propagé par son canal hôte.
+
+## Transport, délais et diagnostics
+
+Les helpers OpenAI et Ollama acceptent `transport: "responses"` (défaut)
+ou `transport: "chat"` pour `/chat/completions`. Le choix est explicite :
+Touba utilise le protocole configuré, sans bascule automatique entre les deux.
+
+```js
+const decideAgentCapability = createOllamaDecisionProvider({
+  model: "YOUR_LOCAL_MODEL",
+  transport: "chat",
+  decisionInterface: "structured",
+  maxOutputTokens: 4096,
+  maxRetries: 0,
+  timeoutMs: 120000,
+  maxProviderRequestBytes: 262144,
+});
+```
+
+Vérifiez que le serveur et le modèle choisis acceptent le schéma JSON ou les
+appels de fonctions demandés. Par défaut, les helpers réservent 4 096 tokens
+de sortie, n'effectuent aucune relance automatique et bornent chaque demande
+à 120 secondes. Ces valeurs sont configurables. Le runtime applique également
+ses budgets et son délai fournisseur ; son annulation est transmise au transport.
+
+Le comptage OpenAI par `context` utilise Responses. Avec Chat Completions,
+configurez une limite de corps HTTP et une politique de contexte adaptée au
+serveur. Pour le coût, choisissez l'adaptateur `openai-chat` ou
+`openai-responses` correspondant. Une requête interrompue sans relevé d'usage
+conserve sa réservation jusqu'au rapprochement du coût.
+
+Les observations `inline` sont étiquetées `external_content`. Les valeurs
+restent des données externes ; leur exactitude métier se vérifie dans le
+programme. `opaque_refs` conserve les références sans transmettre les valeurs.
+Les raisons libres du modèle restent hors de la trace publique.

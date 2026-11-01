@@ -12,8 +12,19 @@ import { createSqliteTraceStore } from '../../../runtime/touba-runtime/src/sqlit
 import { TraceReader } from '../src/trace-explorer/reader.mjs';
 import { TraceClient } from '../src/trace-explorer/client.mjs';
 import { startTraceExplorer, traceHtml } from '../src/trace-explorer/server.mjs';
-import { queryOptions, projectEvent } from '../src/trace-explorer/model.mjs';
-import { graphLayout } from '../src/trace-explorer/web/view.mjs';
+import { queryOptions, projectEvent, eventCategory } from '../src/trace-explorer/model.mjs';
+import { graphLayout, label } from '../src/trace-explorer/web/view.mjs';
+
+test('tool execution phases remain readable and classify refusals separately from output errors', () => {
+  const event = (phase, status) => ({ event_id:'event:test:1', run_id:'test', sequence_index:0,
+    kind:'tool_execution_status', payload:{ phase, status, effect_status:'unknown', result_origin:'handler' } });
+  const admission = projectEvent(event('admission', 'refused'));
+  const output = projectEvent(event('post_validation', 'refused'));
+  assert.equal(eventCategory(admission.kind, admission.payload), 'refusal'); assert.equal(eventCategory(output.kind, output.payload), 'error');
+  assert.equal(output.payload.effect_status, 'unknown');
+  assert.equal(label('post_validation', 'fr'), 'Validation du résultat');
+  assert.equal(label('journal_restore', 'en'), 'Journal restoration');
+});
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'touba-trace-view-test-'));

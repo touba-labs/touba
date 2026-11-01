@@ -388,8 +388,9 @@ test("native resume restores invocation history and human evidence without redis
   assert.equal(results[0].toolCallId, calls[0].toolCallId);
   assert.equal(results[0].output.value, "observed source");
   assert(userText(resumed.calls[0].options).includes(approvalRef(1)));
+  const budgetPause = await pausedAfterEffect();
   const exhausted = await execute({
-    options: { humanApprovalResumeCheckpoint: checkpoint, humanApprovalDecisions: { [approvalRef(1)]: "approved" }, toolHandlers: paused.toolHandlers,
+    options: { humanApprovalResumeCheckpoint: budgetPause.result.checkpoint, humanApprovalDecisions: { [approvalRef(1)]: "approved" }, toolHandlers: budgetPause.toolHandlers,
       runLimits: { max_provider_calls: 3, max_tool_calls: 1 } },
     decide: () => assert.fail("restored quota must refuse before a model call"),
   });
@@ -397,8 +398,9 @@ test("native resume restores invocation history and human evidence without redis
   assert.equal(failureCode(exhausted.result), "AgentDecisionProviderBudgetExceeded");
   assert.equal(exhausted.calls.length, 0);
   assert.equal(paused.dispatches(), 1);
+  const widerPause = await pausedAfterEffect();
   const widened = await execute({
-    options: { humanApprovalResumeCheckpoint: checkpoint, humanApprovalDecisions: { [approvalRef(1)]: "approved" }, toolHandlers: paused.toolHandlers,
+    options: { humanApprovalResumeCheckpoint: widerPause.result.checkpoint, humanApprovalDecisions: { [approvalRef(1)]: "approved" }, toolHandlers: widerPause.toolHandlers,
       runLimits: { max_provider_calls: 8, max_tool_calls: 1 } },
     decide: (request) => request.mode === "summary" ? catalogue() : select("Fetch"),
   });

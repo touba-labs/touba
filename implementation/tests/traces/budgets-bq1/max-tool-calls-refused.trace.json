@@ -2,7 +2,7 @@
   "trace_protocol_version": "touba-trace-v1",
   "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
-    "run_id": "run-1",
+    "run_id": "run-00000000-0000-4000-8000-000000000001",
     "air_schema_version": "touba-air-v1",
     "air_digest": "sha256:455cde1f29daa49b7ba5bb620e5ed62ada6d40d3f0607302f5ca07590a911fd2",
     "module_ref": "module:test",
@@ -10,8 +10,8 @@
   },
   "events": [
     {
-      "event_id": "event:run-1:1",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:1",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
       "sequence_index": 0,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
@@ -21,8 +21,8 @@
       }
     },
     {
-      "event_id": "event:run-1:2",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:2",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
       "sequence_index": 1,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "budget_limit_checked",
@@ -39,8 +39,8 @@
       }
     },
     {
-      "event_id": "event:run-1:3",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:3",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
       "sequence_index": 2,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -50,14 +50,14 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
           "target_ref": "skill:test/TwoTools"
         }
       }
     },
     {
-      "event_id": "event:run-1:4",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:4",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
       "sequence_index": 3,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "budget_consumed",
@@ -82,14 +82,14 @@
         "authority_source": "manifest",
         "target_ref": "tool:test/First",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
           "target_ref": "skill:test/TwoTools"
         }
       }
     },
     {
-      "event_id": "event:run-1:5",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:5",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
       "sequence_index": 4,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -112,14 +112,14 @@
         "caller_ref": "skill:test/TwoTools",
         "agent_ref": null,
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
           "target_ref": "skill:test/TwoTools"
         }
       }
     },
     {
-      "event_id": "event:run-1:6",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:6",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
       "sequence_index": 5,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "tool_binding_authorized",
@@ -137,18 +137,74 @@
         "effect_contract_kind": "none",
         "timeout_ms": 5000,
         "max_payload_bytes": 1048576,
+        "scope": "binding_only",
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:2",
           "target_ref": "tool:test/First",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:5"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000001:5"
         }
       }
     },
     {
-      "event_id": "event:run-1:7",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:7",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
       "sequence_index": 6,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:test/First",
+        "phase": "admission",
+        "status": "accepted",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:2",
+          "target_ref": "tool:test/First",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000001:5"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:8",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
+      "sequence_index": 7,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:test/First",
+        "phase": "dispatch",
+        "status": "started",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:2",
+          "target_ref": "tool:test/First",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000001:5"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:9",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
+      "sequence_index": 8,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:test/First",
+        "phase": "post_validation",
+        "status": "accepted",
+        "result_origin": "handler",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:2",
+          "target_ref": "tool:test/First",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000001:5"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:10",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
+      "sequence_index": 9,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
@@ -169,17 +225,17 @@
         "target_ref": "tool:test/First",
         "caller_ref": "skill:test/TwoTools",
         "result_binding": "first",
-        "call_started_event_id": "event:run-1:5",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000001:5",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
           "target_ref": "skill:test/TwoTools"
         }
       }
     },
     {
-      "event_id": "event:run-1:8",
-      "run_id": "run-1",
-      "sequence_index": 7,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:11",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
+      "sequence_index": 10,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "budget_limit_exceeded",
       "air_ref": {
@@ -204,15 +260,15 @@
         "target_ref": "tool:test/Second",
         "reason": "budget_limit_exceeded",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
           "target_ref": "skill:test/TwoTools"
         }
       }
     },
     {
-      "event_id": "event:run-1:9",
-      "run_id": "run-1",
-      "sequence_index": 8,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:12",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
+      "sequence_index": 11,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "dispatch_refused_budget_exceeded",
       "air_ref": {
@@ -237,15 +293,15 @@
         "tool_ref": "tool:test/Second",
         "runtime_error_code": "ToolCallBudgetExceeded",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000001:0:1",
           "target_ref": "skill:test/TwoTools"
         }
       }
     },
     {
-      "event_id": "event:run-1:10",
-      "run_id": "run-1",
-      "sequence_index": 9,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:13",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
+      "sequence_index": 12,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "failure_detected",
       "payload": {
@@ -262,9 +318,9 @@
       "message": "max_tool_calls exceeded"
     },
     {
-      "event_id": "event:run-1:11",
-      "run_id": "run-1",
-      "sequence_index": 10,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000001:14",
+      "run_id": "run-00000000-0000-4000-8000-000000000001",
+      "sequence_index": 13,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",
       "payload": {

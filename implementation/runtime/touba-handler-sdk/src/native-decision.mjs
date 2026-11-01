@@ -88,6 +88,7 @@ export async function decideNativeCapability(request, options) {
     model: options.model, system: `${options.system}\n\nRuntime context: ${JSON.stringify(context)}`, messages,
     temperature: options.temperature, maxRetries: options.maxRetries,
     maxOutputTokens: options.maxOutputTokens, providerOptions: options.providerOptions,
+    abortSignal: options.abortSignal,
   };
   if (!catalogue) {
     const schema = decisionSchemaForRequest(request, options, { allowHumanReview });

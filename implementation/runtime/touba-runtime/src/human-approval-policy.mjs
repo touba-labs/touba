@@ -40,7 +40,7 @@ export function validateApprovalState(state) {
     || Object.keys(state.requests).length + state.receipts.length > MAX_RECORDS) invalid();
   const ids = new Set();
   for (const [ref, request] of Object.entries(state.requests)) {
-    if (!identity(ref) || !exactKeys(request, ["request_id", "run_id", "approval_ref", "created_at", "deadline_at", "policy"])
+    if (!identity(ref) || !exactKeys(request, ["request_id", "run_id", "approval_ref", "created_at", "deadline_at", "policy", "review_context"])
       || !identity(request.request_id) || ids.has(request.request_id) || !identity(request.run_id)
       || request.approval_ref !== ref || !instant(request.created_at)) invalid();
     ids.add(request.request_id);
@@ -133,20 +133,22 @@ export function approvalStateSnapshot(runtime) {
   return runtime.enabled ? structuredClone(runtime.state) : undefined;
 }
 
-/** @param {any} runtime @param {string} runId @param {string} approvalRef @param {any} policy */
-export function approvalRequest(runtime, runId, approvalRef, policy) {
+/** @param {any} runtime @param {string} runId @param {string} approvalRef @param {any} policy @param {any} [reviewContext] */
+export function approvalRequest(runtime, runId, approvalRef, policy, reviewContext) {
   if (!runtime.enabled) return null;
   policy = validateApprovalPolicy(policy);
   if (policy?.distinct_from?.includes("initiator") && runtime.state.initiator === null) fail("HumanApprovalInitiatorRequired", "source separation requires a trusted host initiator");
   const old = runtime.state.requests[approvalRef];
   if (old) {
     if (old.run_id !== runId || !isDeepStrictEqual(old.policy, policy)) fail("HumanApprovalCheckpointIncompatible", "saved approval request differs from source constraints or run");
+    if (reviewContext !== undefined && !isDeepStrictEqual(old.review_context, reviewContext)) fail("HumanApprovalCheckpointIncompatible", "saved review context differs from this occurrence");
     return structuredClone(old);
   }
   if (Object.keys(runtime.state.requests).length + runtime.state.receipts.length >= MAX_RECORDS) fail("HumanApprovalStateLimitExceeded", "approval state limit reached before creating another request");
   const now = Date.now();
   const request = { request_id: `human:${randomUUID()}`, run_id: runId, approval_ref: approvalRef,
-    created_at: new Date(now).toISOString(), deadline_at: policy?.timeout_ms ? new Date(now + policy.timeout_ms).toISOString() : null, policy };
+    created_at: new Date(now).toISOString(), deadline_at: policy?.timeout_ms ? new Date(now + policy.timeout_ms).toISOString() : null, policy,
+    ...(reviewContext === undefined ? {} : { review_context: structuredClone(reviewContext) }) };
   runtime.state.requests[approvalRef] = request;
   return structuredClone(request);
 }

@@ -14,6 +14,7 @@ tool Diagnose
 skill Review
     takes request as Text
     gives Text
+    uses Diagnose
     do
         Diagnose
             with request as request
@@ -25,6 +26,7 @@ skill Review
 strategy Run
     takes incidents as List of Text
     gives List of Text
+    uses Review
     do
         parallel Review
             each incident in incidents
@@ -72,7 +74,7 @@ test("SDK persists and answers occurrence-specific parallel asks through the CLI
     copy.parallel_digest = canonicalDigest(copy);
     writeFileSync(join(root, "corrupt.json"), JSON.stringify(copy));
     await assert.rejects(engine.run({ ...config, parallelResumeCheckpoint: "corrupt.json" }), error =>
-      error.details.reason === "InvalidParallelCheckpoint" || /InvalidParallelCheckpoint/.test(error.details.stderr));
+      ["InvalidParallelCheckpoint", "HumanApprovalCheckpointIntegrityMismatch"].includes(error.code));
   }
 });
 
@@ -110,8 +112,8 @@ effect_id: request.effect.effect_id, request_digest: request.effect.request_dige
   const effects = readFileSync(marker, "utf8").trim().split("\n").map(JSON.parse);
   assert.equal(effects.length, 4);
   assert.equal(new Set(effects.map(effect => effect.effect)).size, 4);
-  const again = await engine.run({ ...config, parallelResumeCheckpoint: "progress.json" });
-  assert.equal(again.status, "success");
+  await assert.rejects(engine.run({ ...config, parallelResumeCheckpoint: "progress.json" }),
+    { code: "HumanApprovalCheckpointAlreadyConsumed" });
   assert.equal(readFileSync(marker, "utf8").trim().split("\n").length, 4);
 });
 

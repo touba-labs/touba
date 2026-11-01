@@ -60,7 +60,7 @@
     "validate:governance-cost-v1": "node tools/check-node-version.mjs && pnpm --filter @touba/governance-cost-v1-fixture test",
     "test:action-plan": "node tools/check-node-version.mjs && pnpm --filter @touba/action-plan test",
     "test:lsp": "node tools/check-node-version.mjs && pnpm --filter @touba/lsp-server test",
-    "test:trace-renderer": "node tools/check-node-version.mjs && pnpm --fail-if-no-match --filter touba-vscode test:renderer",
+    "test:trace-renderer": "node tools/check-node-version.mjs && pnpm --dir lsp/touba-vscode-ext test:renderer",
     "test:vscode-ext": "node tools/check-node-version.mjs && pnpm --filter touba-vscode test:smoke",
     "package:vscode-ext": "node tools/check-node-version.mjs && pnpm --filter touba-vscode package:vsix",
     "check:vscode-ext-install": "node tools/check-node-version.mjs && pnpm --filter touba-vscode check:vsix-install",

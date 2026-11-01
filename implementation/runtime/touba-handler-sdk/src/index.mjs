@@ -16,7 +16,7 @@ import { decideNativeCapability } from "./native-decision.mjs";
 import { createDecisionWireSchema, decisionSchemaEncoding, FLAT_OPTIONAL_INSTRUCTIONS } from "./decision-wire-schema.mjs";
 import { createDecisionHistory } from "./decision-history.mjs";
 import { createProviderContextFetch } from "./provider-context.mjs";
-import { bindProviderCostContext, emitProviderModel } from "./provider-cost-context.mjs";
+import { bindProviderCostContext, emitProviderModel, providerExecutionSignal } from "./provider-cost-context.mjs";
 import { createProviderCostFetch } from "./provider-cost.mjs";
 export { createProviderContextFetch } from "./provider-context.mjs";
 export { createProviderCostFetch } from "./provider-cost.mjs";
@@ -394,6 +394,7 @@ export function createAiSdkDecisionProvider(options = {}) {
 
   return bindProviderCostContext(async function decideAgentCapability(request) {
     validateAgentDecisionRequest(request);
+    const abortSignal = providerExecutionSignal(normalized.timeoutMs);
     const model = await modelForDecisionRequest(normalized, request);
     await emitProviderModel(model, { decision_interface: normalized.decisionInterface,
       ...(history?.policy ?? { history_storage: "disabled" }) });
@@ -416,7 +417,7 @@ export function createAiSdkDecisionProvider(options = {}) {
           generateObject: async generation => capture(await historyObjectGenerator(normalized), generation, "object"),
         } : {};
         return decideNativeCapability(request, {
-          ...normalized, ...historyOptions, model, allowHumanReview, system: effectiveSystem, providerOptions, schemaEncoding,
+          ...normalized, ...historyOptions, model, allowHumanReview, system: effectiveSystem, providerOptions, schemaEncoding, abortSignal,
         });
       }
       const generateObject = capture ? await historyObjectGenerator(normalized) : await aiSdkGenerateObject(normalized);
@@ -436,6 +437,7 @@ export function createAiSdkDecisionProvider(options = {}) {
         maxRetries: normalized.maxRetries,
         maxOutputTokens: normalized.maxOutputTokens,
         providerOptions,
+        abortSignal,
       });
       const result = capture ? await capture(generateObject, generation, "object") : await generateObject(generation);
 
@@ -463,6 +465,10 @@ async function historyObjectGenerator(options) {
 
 export function createOpenAiDecisionProvider(options = {}) {
   validateProviderRequestBudget(options);
+  const transport = normalizeOpenAiTransport(options);
+  if (transport === "chat" && options.context !== undefined) {
+    throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "context token counting requires Responses; use an explicit request byte limit for Chat Completions");
+  }
   const { maxProviderRequestBytes: _httpBudget, context, cost, ...providerOptions } = options;
   if (context !== undefined && cost !== undefined && !cost.counting) {
     throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "cost.counting must price context-count requests explicitly; both transports use the same budget");
@@ -475,7 +481,7 @@ export function createOpenAiDecisionProvider(options = {}) {
   });
   const normalized = {
     ...providerOptions,
-    responseProtocol: "openai-responses",
+    responseProtocol: transport === "responses" ? "openai-responses" : "openai-chat",
     source: options.source ?? (options.decisionInterface === "native" ? "openai_native_tools" : "openai_structured_output"),
     providerOptions: options.providerOptions ?? { openai: { store: false } },
     model: async (request) => {
@@ -495,7 +501,7 @@ export function createOpenAiDecisionProvider(options = {}) {
       const modelId = await valueForRequest(options.model, request)
         ?? process.env.TOUBA_OPENAI_MODEL
         ?? "gpt-4.1-nano";
-      return provider(modelId);
+      return transport === "chat" ? provider.chat(modelId) : provider.responses(modelId);
     },
   };
   return createAiSdkDecisionProvider(normalized);
@@ -503,10 +509,11 @@ export function createOpenAiDecisionProvider(options = {}) {
 
 export function createOllamaDecisionProvider(options = {}) {
   validateProviderRequestBudget(options);
+  const transport = normalizeOpenAiTransport(options);
   const { maxProviderRequestBytes: _httpBudget, ...providerOptions } = options;
   const normalized = {
     ...providerOptions,
-    responseProtocol: "openai-responses",
+    responseProtocol: transport === "responses" ? "openai-responses" : "openai-chat",
     source: options.source ?? "ollama_openai_compatible",
     providerOptions: options.providerOptions ?? { openai: { store: false } },
     model: async (request) => {
@@ -531,10 +538,18 @@ export function createOllamaDecisionProvider(options = {}) {
         ?? process.env.TOUBA_AGENT_DECISION_OLLAMA_MODEL
         ?? process.env.OLLAMA_MODEL
         ?? "llama3.2";
-      return provider(modelId);
+      return transport === "chat" ? provider.chat(modelId) : provider.responses(modelId);
     },
   };
   return createAiSdkDecisionProvider(normalized);
+}
+
+function normalizeOpenAiTransport(options) {
+  const transport = options.transport ?? "responses";
+  if (!["responses", "chat"].includes(transport)) {
+    throw new ToubaAgentDecisionProviderError("InvalidDecisionProviderOptions", "transport must be responses or chat");
+  }
+  return transport;
 }
 
 export function createMcpStdioToolBridge(options = {}) {
@@ -591,8 +606,9 @@ function normalizeAiSdkDecisionProviderOptions(options) {
       : options.decisionInterface === "native" ? "ai_sdk_native_tools" : "ai_sdk_structured_output",
     temperature: options.temperature === null ? undefined : options.temperature ?? 0,
     nativeToolChoice: options.nativeToolChoice ?? "required",
-    maxRetries: options.maxRetries ?? 1,
-    maxOutputTokens: normalizePositiveIntegerOption(options.maxOutputTokens ?? 700, "maxOutputTokens"),
+    maxRetries: options.maxRetries ?? 0,
+    timeoutMs: normalizePositiveIntegerOption(options.timeoutMs ?? 120000, "timeoutMs"),
+    maxOutputTokens: normalizePositiveIntegerOption(options.maxOutputTokens ?? 4096, "maxOutputTokens"),
   };
 }
 

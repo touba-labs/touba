@@ -2,7 +2,7 @@
   "trace_protocol_version": "touba-trace-v1",
   "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
-    "run_id": "run-1",
+    "run_id": "run-00000000-0000-4000-8000-000000000003",
     "air_schema_version": "touba-air-v1",
     "air_digest": "sha256:a81516a40bb1f02fa5c2431e7811c60663cfccd4b2e3330885fae1e807550310",
     "module_ref": "module:examples.a1_skill_composition",
@@ -10,8 +10,8 @@
   },
   "events": [
     {
-      "event_id": "event:run-1:1",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:1",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 0,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
@@ -21,8 +21,8 @@
       }
     },
     {
-      "event_id": "event:run-1:2",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:2",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 1,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -32,14 +32,14 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
         }
       }
     },
     {
-      "event_id": "event:run-1:3",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:3",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 2,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -63,14 +63,14 @@
         "agent_ref": null,
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
         }
       }
     },
     {
-      "event_id": "event:run-1:4",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:4",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 3,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -80,16 +80,16 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:2",
           "target_ref": "skill:examples.a1_skill_composition/LoadSource",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000003:3"
         }
       }
     },
     {
-      "event_id": "event:run-1:5",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:5",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 4,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -113,17 +113,72 @@
         "agent_ref": null,
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:2",
           "target_ref": "skill:examples.a1_skill_composition/LoadSource",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000003:3"
         }
       }
     },
     {
-      "event_id": "event:run-1:6",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:6",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
       "sequence_index": 5,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:examples.a1_skill_composition/FetchSource",
+        "phase": "admission",
+        "status": "accepted",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:3",
+          "target_ref": "tool:examples.a1_skill_composition/FetchSource",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000003:0:2",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000003:5"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:7",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 6,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:examples.a1_skill_composition/FetchSource",
+        "phase": "dispatch",
+        "status": "started",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:3",
+          "target_ref": "tool:examples.a1_skill_composition/FetchSource",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000003:0:2",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000003:5"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:8",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 7,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:examples.a1_skill_composition/FetchSource",
+        "phase": "post_validation",
+        "status": "accepted",
+        "result_origin": "handler",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:3",
+          "target_ref": "tool:examples.a1_skill_composition/FetchSource",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000003:0:2",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000003:5"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:9",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 8,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
@@ -144,19 +199,19 @@
         "target_ref": "tool:examples.a1_skill_composition/FetchSource",
         "caller_ref": "skill:examples.a1_skill_composition/LoadSource",
         "result_binding": "source",
-        "call_started_event_id": "event:run-1:5",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000003:5",
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:2",
           "target_ref": "skill:examples.a1_skill_composition/LoadSource",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000003:3"
         }
       }
     },
     {
-      "event_id": "event:run-1:7",
-      "run_id": "run-1",
-      "sequence_index": 6,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:10",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 9,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
@@ -167,17 +222,17 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:2",
           "target_ref": "skill:examples.a1_skill_composition/LoadSource",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000003:3"
         }
       }
     },
     {
-      "event_id": "event:run-1:8",
-      "run_id": "run-1",
-      "sequence_index": 7,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:11",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 10,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
@@ -198,17 +253,17 @@
         "target_ref": "skill:examples.a1_skill_composition/LoadSource",
         "caller_ref": "skill:examples.a1_skill_composition/RunPipeline",
         "result_binding": "source",
-        "call_started_event_id": "event:run-1:3",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000003:3",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
         }
       }
     },
     {
-      "event_id": "event:run-1:9",
-      "run_id": "run-1",
-      "sequence_index": 8,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:12",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 11,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
       "air_ref": {
@@ -231,15 +286,15 @@
         "agent_ref": null,
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
         }
       }
     },
     {
-      "event_id": "event:run-1:10",
-      "run_id": "run-1",
-      "sequence_index": 9,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:13",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 12,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
       "air_ref": {
@@ -248,17 +303,17 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:4",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:4",
           "target_ref": "skill:examples.a1_skill_composition/BuildNote",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:9"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000003:12"
         }
       }
     },
     {
-      "event_id": "event:run-1:11",
-      "run_id": "run-1",
-      "sequence_index": 10,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:14",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 13,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
@@ -269,17 +324,17 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:4",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:4",
           "target_ref": "skill:examples.a1_skill_composition/BuildNote",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:9"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000003:12"
         }
       }
     },
     {
-      "event_id": "event:run-1:12",
-      "run_id": "run-1",
-      "sequence_index": 11,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:15",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 14,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
@@ -300,17 +355,17 @@
         "target_ref": "skill:examples.a1_skill_composition/BuildNote",
         "caller_ref": "skill:examples.a1_skill_composition/RunPipeline",
         "result_binding": "note",
-        "call_started_event_id": "event:run-1:9",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000003:12",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
         }
       }
     },
     {
-      "event_id": "event:run-1:13",
-      "run_id": "run-1",
-      "sequence_index": 12,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:16",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 15,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
@@ -321,15 +376,15 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000003:0:1",
           "target_ref": "skill:examples.a1_skill_composition/RunPipeline"
         }
       }
     },
     {
-      "event_id": "event:run-1:14",
-      "run_id": "run-1",
-      "sequence_index": 13,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000003:17",
+      "run_id": "run-00000000-0000-4000-8000-000000000003",
+      "sequence_index": 16,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",
       "payload": {

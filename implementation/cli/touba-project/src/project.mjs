@@ -1673,7 +1673,7 @@ function expectedProjectConfigDocument(profile) {
   return document;
 }
 
-function readProjectConfig(path) {
+export function readProjectConfig(path) {
   if (!existsSync(path)) {
     return null;
   }

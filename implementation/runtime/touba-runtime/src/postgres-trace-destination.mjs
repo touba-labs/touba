@@ -85,7 +85,8 @@ export async function createPostgresTraceDestination({ pool, schema = "touba_tra
           || batch.through !== batch.after + batch.events.length || typeof batch.complete !== "boolean") throw new TypeError("invalid bounded export batch");
       for (const [i, event] of batch.events.entries()) {
         if (event.sequence_index !== batch.after + i + 1 || event.run_id !== batch.header.run?.run_id
-            || event.event_id !== `event:${event.run_id}:${event.sequence_index + 1}`
+            || (batch.header.run.segment_id !== undefined && batch.header.run.segment_id !== batch.segmentId)
+            || event.event_id !== `event:${event.run_id}:${batch.header.run.segment_id ? `${batch.header.run.segment_id}:` : ""}${event.sequence_index + 1}`
             || event.kind === "run_completed" && i !== batch.events.length - 1) throw new TypeError("invalid trace sequence");
       }
       if (batch.complete !== (batch.events.at(-1).kind === "run_completed")) throw new TypeError("invalid trace terminal marker");

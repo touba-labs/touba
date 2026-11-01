@@ -344,3 +344,21 @@ chemins sélectionnés. `HandlerSandboxPathInvalid` demande un interpréteur
 absolu existant et des fichiers `code_paths` individuels existants.
 `HardenedSandboxUnavailable` indique l'échec de la sonde hôte réelle ou une
 politique non qualifiée, sans autoriser une relance hors sandbox.
+
+## Composition, providers et reprise
+
+| Diagnostic | Action |
+| --- | --- |
+| `CapabilityNotDeclaredInUses` / `CompositionCapabilityNotAllowed` | Déclarer la cible dans le `uses` de la skill ou stratégie appelante, y compris fallback et appel parallèle. |
+| `AgentCapabilityDescriptionRequired` | Ajouter une description utile à la capacité du catalogue agent. L'avertissement localise l'agent concerné. |
+| `ToolBindingReviewRequired` | Relire le brouillon de manifest et choisir explicitement le contrat d'effet. |
+| `HumanApprovalCheckpointIncompatible` | Retrouver le contrat hôte de la demande ou créer une nouvelle demande revue. |
+| `HumanApprovalPauseRequiresDurableResume` | Activer le checkpoint durable avant une pause humaine dans l'agent. |
+| `TraceAirDigestMismatch` | Sélectionner l'AIR exact de cette exécution pour naviguer vers ses sources. |
+| `PythonHostImportFailed` / `PythonHostConfigurationInvalid` | Vérifier l'environnement du projet, les imports et le callback exporté. |
+| `PythonHostCallbackFailed` | Examiner le diagnostic local borné du module hôte. |
+| `PythonHostTlsFailed` / `PythonHostTransportFailed` / `PythonHostTimeout` | Vérifier certificat, destination et délai du transport fournisseur. |
+
+`ToolPayloadConstraintViolation` relève de l'autorité, les erreurs de sortie
+de handler de la famille `handler`. Une issue d'effet inconnue exige un
+rapprochement ; elle n'entre pas dans un fallback métier automatique.

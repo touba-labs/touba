@@ -8,6 +8,8 @@ export async function buildDifferentialReport() {
   const entry = "skill:conformance/Run";
   const pure = await observeBoth(baseAir(), entry);
   const refusedAuthorityAir = baseAir();
+  // Isolate callable_by refusal from the composition's own uses boundary.
+  refusedAuthorityAir.definitions.skills[0].uses = ["agent:conformance/Reviewer"];
   refusedAuthorityAir.execution_graphs[0].nodes = [{
     id: "call", kind: "call_agent", target_ref: "agent:conformance/Reviewer",
     arguments: [], trace_point_refs: [], source_ref: refusedAuthorityAir.module.source_ref,

@@ -1,6 +1,7 @@
 // Shared projection. Original events remain in the canonical trace journal.
 // Free-form messages, inputs, model output and credentials are not projected.
 const fields = new Set([
+  'phase', 'result_origin', 'effect_status', 'scope',
   'code', 'stage',
   'agent_ref', 'caller_ref', 'target_ref', 'tool_ref', 'memory_ref', 'scope_ref', 'selected_ref',
   'authority_source', 'decision_source', 'action', 'operation', 'access', 'access_kind', 'mode',
@@ -42,7 +43,8 @@ export function projectEvent(event) {
       .filter(([key, value]) => ['flow_graph_ref', 'node_id', 'owner_ref', 'module_ref'].includes(key) && typeof value === 'string')
       .map(([key, value]) => [key, value.slice(0, 4096)])) } : {}), payload };
 }
-export function eventCategory(kind) {
+export function eventCategory(kind, payload = {}) {
+  if (kind === 'tool_execution_status' && payload.status === 'refused') return payload.phase === 'admission' ? 'refusal' : 'error';
   if (/refused|rejected|denied/u.test(kind)) return 'refusal';
   if (/failure|failed|timeout_exceeded/u.test(kind)) return 'error';
   if (/human_|approval|review/u.test(kind)) return 'human';
@@ -57,7 +59,7 @@ export function eventSummary(event) {
   const p = event.payload ?? {}, c = p.trace_context ?? {};
   return {
     sequence: event.sequence_index, id: event.event_id, kind: event.kind,
-    category: eventCategory(event.kind), time: event.observed_at ?? '',
+    category: eventCategory(event.kind, p), time: event.observed_at ?? '',
     agent: p.agent_ref ?? c.agent_ref ?? '', invocation: c.agent_invocation_id ?? p.invocation_id ?? '',
     span: c.span_id ?? '', parent: c.parent_span_id ?? '',
     scope: c.target_ref ?? '',

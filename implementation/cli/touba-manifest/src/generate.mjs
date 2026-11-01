@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildManifestRequirements, unapprovedManifest } from "./requirements.mjs";
+import { projectPythonCommand } from "./python-sdk-dependency.mjs";
 
 const MANIFEST_VERSION = "touba-manifest-v1";
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -18,10 +19,12 @@ export function generateManifestFromAirDocument(airDocument, options = {}) {
     throw new Error("AIR document definitions.tools must be an array");
   }
 
+  const language = options.language ?? "javascript";
+  if (!["javascript", "python"].includes(language)) throw new Error("choose language javascript or python");
   const requirements = buildManifestRequirements([airDocument], {
-    handlerCommand: options.handlerCommand ?? process.execPath,
+    handlerCommand: options.handlerCommand ?? (language === "python" ? projectPythonCommand() : "node"),
     handlerRoot: options.handlerRoot ?? "handlers",
-    handlerExtension: options.handlerExtension ?? "mjs",
+    handlerExtension: options.handlerExtension ?? (language === "python" ? "py" : "mjs"),
     handlerCwd: options.handlerCwd ?? ".",
     timeoutMs: positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs"),
     maxPayloadBytes: positiveInteger(options.maxPayloadBytes, DEFAULT_MAX_PAYLOAD_BYTES, "maxPayloadBytes"),
@@ -209,6 +212,9 @@ function parseArgs(argv) {
       case "--handler-command":
         options.handlerCommand = requiredValue(arg, args);
         break;
+      case "--language":
+        options.language = requiredValue(arg, args);
+        break;
       case "--handler-root":
         options.handlerRoot = requiredValue(arg, args);
         break;
@@ -268,11 +274,12 @@ function printUsage() {
   touba-manifest <air.json> --stdout [options]
 
 Options:
+  --language <language>             javascript or python. Default: project language, then javascript.
   --out, -o <path>                  Write a manifest JSON artifact. Path must end with .manifest.json.
   --stdout                          Print the manifest JSON to stdout for explicit pipelines.
   --handler-command <command>       Handler executable in generated bindings.
   --handler-root <path>             Handler directory prefix. Default: handlers.
-  --handler-extension <ext>         Handler extension. Default: mjs.
+  --handler-extension <ext>         Handler extension. Default: mjs (JavaScript) or py (Python).
   --handler-cwd <path>              Optional handler cwd.
   --timeout-ms <number>             Binding timeout. Default: ${DEFAULT_TIMEOUT_MS}.
   --max-payload-bytes <number>      Payload limit. Default: ${DEFAULT_MAX_PAYLOAD_BYTES}.
@@ -316,16 +323,24 @@ function writeManifestOutput(outPath, manifest) {
 async function main() {
   try {
     const { airPath, options, output } = parseArgs(process.argv.slice(2));
+    // Use the project's canonical parser: malformed config is never ignored.
+    let root = process.cwd();
+    while (!existsSync(join(root, "touba.project.json")) && dirname(root) !== root) root = dirname(root);
+    if (existsSync(join(root, "touba.project.json"))) {
+      const { readProjectConfig } = await import("../../touba-project/src/project.mjs");
+      const config = readProjectConfig(join(root, "touba.project.json"));
+      if (options.language && options.language !== config.language) throw new Error("--language differs from touba.project.json; use the project's SDK language");
+      options.language = config.language;
+      if (options.handlerCwd === undefined) options.handlerCwd = relative(output.outPath ? dirname(resolve(output.outPath)) : process.cwd(), root) || ".";
+    }
     const airDocument = JSON.parse(readFileSync(airPath, "utf8"));
     if (options.handlerCwd === undefined && output.outPath) options.handlerCwd = relative(dirname(resolve(output.outPath)), process.cwd()) || ".";
     const manifest = generateManifestFromAirDocument(airDocument, options);
-    process.stderr.write("Generated a draft manifest without host grants or trigger activation. Review required_capabilities, required_secrets, memory_accesses and agent secret scopes in the AIR before granting them explicitly.\n");
     assertManifestJson(manifest);
     if (output.stdout === true) {
       process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
-      return;
-    }
-    writeManifestOutput(output.outPath, manifest);
+    } else writeManifestOutput(output.outPath, manifest);
+    process.stderr.write("Generated a draft manifest. Review each effect_contract and grant explicitly. In a project, use touba prepare to review the required configuration.\n");
   } catch (error) {
     process.stderr.write(`touba-manifest: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

@@ -4,6 +4,12 @@ import { costFail, providerCostError } from "./provider-cost-contract.mjs";
 
 const calls = new AsyncLocalStorage();
 
+export function providerExecutionSignal(timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const signal = calls.getStore()?.execution?.signal;
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 // Invocation-local, including concurrent agents. Never attached to the request
 // serialized for a model. The runtime alone owns the trace callback.
 export function bindProviderCostContext(decide) {

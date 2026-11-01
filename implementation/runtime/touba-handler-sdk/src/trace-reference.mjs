@@ -14,7 +14,7 @@ export function validateTraceReference(value) {
     || !Number.isSafeInteger(value.event_count) || value.event_count < 2 || !Number.isSafeInteger(end + 1)
     || !sha(value.header_digest) || !sha(value.trace_digest)
     || !exact(value.terminal, ["event_id", "digest", "status", "reason"])
-    || value.terminal.event_id !== `event:${value.run_id}:${end + 1}` || !sha(value.terminal.digest)
+    || ![`event:${value.run_id}:${end + 1}`, `event:${value.run_id}:${value.segment_id}:${end + 1}`].includes(value.terminal.event_id) || !sha(value.terminal.digest)
     || !["success", "stopped", "cancelled", "failure"].includes(value.terminal.status)
     || typeof value.terminal.reason !== "string" || !value.terminal.reason
     || Buffer.byteLength(JSON.stringify(value)) > 32768) throw new TypeError("InvalidTraceReference");
@@ -26,12 +26,14 @@ export function validateTracePage(page, reference, after, limit) {
   if (!exact(page, ["schema_version", "reference", "header", "events", "next", "done"])
     || page.schema_version !== "touba-trace-page-v1" || !isDeepStrictEqual(page.reference, reference)
     || digest(page.header) !== reference.header_digest || !Array.isArray(page.events) || page.events.length > limit
+    || page.header?.run?.run_id !== reference.run_id
+    || (page.header.run.segment_id !== undefined && page.header.run.segment_id !== reference.segment_id)
     || page.next !== after + page.events.length || page.next > end || page.done !== (page.next === end)
     || (!page.done && !page.events.length)) throw new TypeError("InvalidTracePage");
   for (const [index, event] of page.events.entries()) {
     const sequence = after + index + 1;
     if (event?.sequence_index !== sequence || event.run_id !== reference.run_id
-      || event.event_id !== `event:${reference.run_id}:${sequence + 1}` || typeof event.kind !== "string") throw new TypeError("InvalidTracePage");
+      || event.event_id !== `event:${reference.run_id}:${page.header.run.segment_id ? `${page.header.run.segment_id}:` : ""}${sequence + 1}` || typeof event.kind !== "string") throw new TypeError("InvalidTracePage");
     if (sequence !== end && event.kind === "run_completed") throw new TypeError("InvalidTracePage");
     if (sequence === end && (event.kind !== "run_completed" || digest(event) !== reference.terminal.digest
       || event.payload?.status !== reference.terminal.status || event.payload?.reason !== reference.terminal.reason)) throw new TypeError("InvalidTracePage");

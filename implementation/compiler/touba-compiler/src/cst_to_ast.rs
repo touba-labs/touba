@@ -71,7 +71,7 @@ impl<'a> AstLowerer<'a> {
                         self.push_error(
                             AstDiagnosticCode::DuplicateModule,
                             child,
-                            "Touba v0.1 accepts a single module declaration",
+                            "Touba accepts a single module declaration",
                         );
                     } else {
                         module = self.lower_module(child);
@@ -189,7 +189,7 @@ impl<'a> AstLowerer<'a> {
         let Some(module) = module else {
             self.diagnostics.push(AstDiagnostic::error(
                 AstDiagnosticCode::MissingModule,
-                "Touba v0.1 source requires a module declaration",
+                "Touba source requires a module declaration",
                 Some(self.source_ref(root)),
             ));
             return None;
@@ -613,7 +613,7 @@ impl<'a> AstLowerer<'a> {
                 AstDiagnosticCode::MissingExecutableBody,
                 node,
                 format!(
-                    "{declaration_kind} `{name}` requires an explicit `do` block in executable Touba v0.1"
+                    "{declaration_kind} `{name}` requires an explicit `do` block in executable Touba"
                 ),
             );
         }

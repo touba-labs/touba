@@ -31,7 +31,7 @@ def validate_reference(value):
             or not _integer(start) or start < 0 or not _integer(count) or count < 2 or not _integer(start + count)
             or not _sha(value["header_digest"]) or not _sha(value["trace_digest"])
             or not isinstance(terminal, dict) or set(terminal) != {"event_id", "digest", "status", "reason"}
-            or terminal["event_id"] != f"event:{value['run_id']}:{start + count}" or not _sha(terminal["digest"])
+            or terminal["event_id"] not in (f"event:{value['run_id']}:{start + count}", f"event:{value['run_id']}:{value['segment_id']}:{start + count}") or not _sha(terminal["digest"])
             or terminal["status"] not in ("success", "stopped", "cancelled", "failure")
             or not isinstance(terminal["reason"], str) or not terminal["reason"] or len(_json(value)) > 32768):
         raise ValueError("InvalidTraceReference")
@@ -43,17 +43,21 @@ def validate_page(page, reference, after, limit):
     # insufficient for the embedded protocol reference.
     validate_reference(page.get("reference") if isinstance(page, dict) else None)
     end = reference["start_index"] + reference["event_count"] - 1
+    run = page.get("header", {}).get("run", {}) if isinstance(page, dict) else {}
     if (not isinstance(page, dict) or set(page) != {"schema_version", "reference", "header", "events", "next", "done"}
             or page["schema_version"] != "touba-trace-page-v1" or page["reference"] != reference
             or _digest(page["header"]) != reference["header_digest"] or not isinstance(page["events"], list)
+            or run.get("run_id") != reference["run_id"]
+            or ("segment_id" in run and run["segment_id"] != reference["segment_id"])
             or len(page["events"]) > limit or not _integer(page["next"]) or type(page["done"]) is not bool
             or page["next"] != after + len(page["events"]) or page["next"] > end
             or page["done"] != (page["next"] == end) or (not page["done"] and not page["events"])):
         raise ValueError("InvalidTracePage")
     for index, event in enumerate(page["events"]):
         sequence = after + index + 1
+        namespace = f"{run['segment_id']}:" if "segment_id" in run else ""
         if (not isinstance(event, dict) or not _integer(event.get("sequence_index")) or event.get("sequence_index") != sequence
-                or event.get("run_id") != reference["run_id"] or event.get("event_id") != f"event:{reference['run_id']}:{sequence + 1}"
+                or event.get("run_id") != reference["run_id"] or event.get("event_id") != f"event:{reference['run_id']}:{namespace}{sequence + 1}"
                 or not isinstance(event.get("kind"), str)):
             raise ValueError("InvalidTracePage")
         if sequence != end and event["kind"] == "run_completed":

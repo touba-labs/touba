@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 import threading
+import ssl
 from .provider_errors import ToubaAgentDecisionProviderError, provider_diagnostic_details
 from ._host_context import execution_context
 
@@ -28,9 +29,15 @@ def main():
 
     filename = Path(sys.argv[1]).resolve()
     sys.path.insert(0, str(filename.parent))  # Explicitly trusted host imports.
-    spec = importlib.util.spec_from_file_location("touba_application_host", filename)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    import_failed = False
+    try:
+        spec = importlib.util.spec_from_file_location("touba_application_host", filename)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except BaseException as error:
+        from .handlers import _diagnostic
+        _diagnostic(error)
+        import_failed, module = True, None
     decide = getattr(module, "decide_agent_capability", getattr(module, "decide", None))
     attest = getattr(module, "attest_human_approval", None)
     resolve_initiator = getattr(module, "resolve_initiator", None)
@@ -55,6 +62,8 @@ def main():
         request_id = message["id"]
         token = execution_context.set(lambda value, event="provider_cost": record_cost(request_id, value, event))
         try:
+            if import_failed:
+                raise ToubaAgentDecisionProviderError("PythonHostImportFailed", "Python host import failed")
             if message["method"] == "describe":
                 result = {"decide": callable(decide), "attest": callable(attest),
                           "resolve_initiator": callable(resolve_initiator),
@@ -64,13 +73,19 @@ def main():
             else:
                 function = {"decide": decide, "attest": attest, "resolve_initiator": resolve_initiator}.get(message["method"])
                 if not callable(function):
-                    raise ValueError("host function unavailable")
+                    raise ToubaAgentDecisionProviderError("PythonHostConfigurationInvalid", "Requested Python host callback is unavailable")
                 result = function(message["request"])
                 if inspect.isawaitable(result):
                     result = asyncio.run(result)
             send({"protocol": "touba-python-host-v1", "id": request_id, "result": result})
         except BaseException as error:
-            code = error.code if isinstance(error, ToubaAgentDecisionProviderError) else "PythonHostUnavailable"
+            from .handlers import _diagnostic
+            _diagnostic(error)
+            code = error.code if isinstance(error, ToubaAgentDecisionProviderError) else (
+                "PythonHostTlsFailed" if isinstance(error, ssl.SSLError) else
+                "PythonHostTimeout" if isinstance(error, TimeoutError) else
+                "PythonHostTransportFailed" if isinstance(error, (ConnectionError, OSError)) else
+                "PythonHostCallbackFailed")
             send({"protocol": "touba-python-host-v1", "id": request_id, "error": {"code": code,
                 "details": provider_diagnostic_details(getattr(error, "details", None))}})
         finally:

@@ -150,7 +150,8 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
       if (!header || typeof header.run?.run_id !== "string" || !header.run.run_id || "events" in header) throw new TypeError("a trace header without events is required");
       const body = JSON.stringify(header), bytes = Buffer.byteLength(body);
       if (bytes > maxEventBytes) fail("TraceStorageLimitExceeded", "trace header exceeds the event size limit");
-      const id = randomUUID();
+      const id = header.run.segment_id ?? randomUUID();
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(id)) throw new TypeError("invalid segment identity");
       transaction(() => {
         reserve(bytes);
         db.prepare("INSERT INTO touba_trace_segments(id,run_id,header,header_hash,start_index,bytes) VALUES(?,?,?,?,?,?)")
@@ -172,8 +173,9 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
         let appended = 0;
         for (const { event, body, bytes } of batch) {
           const row = segment(id);
+          const namespace = JSON.parse(row.header).run.segment_id;
           if (!Number.isSafeInteger(event.sequence_index) || !Number.isSafeInteger(event.sequence_index + 1) || event.sequence_index < 0 || event.run_id !== row.run_id
-            || event.event_id !== `event:${row.run_id}:${event.sequence_index + 1}` || typeof event.kind !== "string") {
+            || event.event_id !== `event:${row.run_id}:${namespace ? `${namespace}:` : ""}${event.sequence_index + 1}` || typeof event.kind !== "string") {
             fail("TraceEventIdentityInvalid", "trace event identity does not match its segment");
           }
           const previous = db.prepare("SELECT * FROM touba_trace_events WHERE segment_id=? AND sequence_index=?").get(id, event.sequence_index);

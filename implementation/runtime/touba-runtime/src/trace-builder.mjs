@@ -43,8 +43,10 @@ export class TraceBuilder {
    * @param {number} [initialSequenceIndex]
    * @param {"full" | "calls"} [pureFunctionDetail]
    * @param {{openSegment: (header: any, start: number) => string, append: (id: string, event: TraceEvent) => unknown, appendBatch?: (id: string, events: TraceEvent[]) => number, maxBatchBytes?: number, document: (id: string) => any, snapshot: (id: string) => any, events?: (id: string) => Iterable<TraceEvent>} | null} [storage]
+   * @param {string | null} [segmentId] Unique identity for a resume attempt.
    */
-  constructor(airDocument, entryRef, runId, eventObserver = null, initialSequenceIndex = 0, pureFunctionDetail = "full", storage = null) {
+  constructor(airDocument, entryRef, runId, eventObserver = null, initialSequenceIndex = 0, pureFunctionDetail = "full", storage = null, segmentId = null) {
+    this.segmentId = segmentId;
     if (!["full", "calls"].includes(pureFunctionDetail)) throw new TypeError("pureFunctionDetail must be full or calls");
     this.pureFunctionDetail = pureFunctionDetail;
     this.pureGraphs = new Map((airDocument.execution_graphs ?? [])
@@ -54,6 +56,8 @@ export class TraceBuilder {
     }
     /** @type {TraceAirDocument} */
     this.airDocument = airDocument;
+    const definitions = /** @type {any} */ (airDocument).definitions ?? {};
+    this.knownReferences = new Set(Object.values(definitions).flatMap(values => Array.isArray(values) ? values.map(value => value.id) : []));
     this.airDigest = airDocumentDigest(airDocument);
     /** @type {string} */
     this.runId = runId;
@@ -104,22 +108,49 @@ export class TraceBuilder {
           ),
       }
       : options.payload;
+    // Free model explanations may repeat private business input. Keep their
+    // presence, not their text or an attackable public hash. This applies
+    // before storage, observers and export, including human-review events.
+    const publicPayload = rawPayload === undefined ? undefined : { ...rawPayload };
+    if (publicPayload) {
+      delete publicPayload.provider_cause;
+      // A rejected provider target may itself contain copied private input.
+      if (typeof publicPayload.selected_ref === "string" && !this.knownReferences.has(publicPayload.selected_ref)) {
+        delete publicPayload.selected_ref;
+        publicPayload.selected_ref_unresolved = true;
+      }
+      if (publicPayload.request_digest && kind.startsWith("agent_decision_provider")) {
+        publicPayload.request_digest_scope = "redacted_metadata";
+      }
+    }
+    if (publicPayload && (["agent_decision_recorded", "agent_direct_answer_returned", "agent_capability_selected",
+      "agent_decision_provider_returned", "agent_decision_catalog_requested", "agent_human_review_requested"].includes(kind)
+      || (kind.startsWith("human_approval") && publicPayload.mode === "agent_review" && kind !== "human_approval_pause_refused"))) {
+      if (publicPayload.reason !== undefined) {
+        publicPayload.reason_present = true;
+        delete publicPayload.reason;
+      }
+      for (const key of ["reported_reason", "review_reason", "review_prompt"]) {
+        if (publicPayload[key] !== undefined) { publicPayload[`${key}_present`] = true; delete publicPayload[key]; }
+      }
+    }
     const traceContext = currentTraceInvocation(this);
-    const correlatedPayload = traceContext ? { ...rawPayload, trace_context: traceContext } : rawPayload;
+    const correlatedPayload = traceContext ? { ...publicPayload, trace_context: traceContext } : publicPayload;
     const payload = correlatedPayload === undefined
       ? undefined
       : jsonPortableTraceValue(correlatedPayload);
     const sequenceIndex = this.initialSequenceIndex + this.eventCount;
     if (!Number.isSafeInteger(sequenceIndex + 1)) throw new RangeError("trace sequence index cannot advance safely");
     const event = /** @type {TraceEvent} */ (compactPayload({
-      event_id: `event:${this.runId}:${sequenceIndex + 1}`,
+      event_id: `event:${this.runId}:${this.segmentId ? `${this.segmentId}:` : ""}${sequenceIndex + 1}`,
       run_id: this.runId,
       sequence_index: sequenceIndex,
       observed_at: new Date().toISOString(),
       kind,
       air_ref: options.airRef,
       payload,
-      message: options.message,
+      message: ["AgentCapabilityNotAllowed", "CompositionCapabilityNotAllowed"].includes(publicPayload?.runtime_error_code)
+        ? "capability is outside the declared authority" : options.message,
     }));
     if (this.storage !== null && this.storageSegment !== null) {
       const pureDetail = pureOwner !== undefined && ["binding_created", "branch_evaluated", "loop_evaluated"].includes(kind);
@@ -156,7 +187,7 @@ export class TraceBuilder {
     // remain on the root builder, not on a shadow object for each branch.
     const root = this.spanRoot ?? this;
     root.spanRoot = root;
-    return `span:${root.runId}:${root.initialSequenceIndex}:${++root.spanCount}`;
+    return `span:${root.runId}:${root.segmentId ? `${root.segmentId}:` : ""}${root.initialSequenceIndex}:${++root.spanCount}`;
   }
 
   flush() {
@@ -234,6 +265,7 @@ export class TraceBuilder {
       trace_capability_profile: TRACE_CAPABILITY_PROFILE,
       run: {
         run_id: this.runId,
+        ...(this.segmentId ? { segment_id: this.segmentId } : {}),
         air_schema_version: this.airDocument.air_schema_version,
         air_digest: this.airDigest,
         module_ref: this.airDocument.module.id,

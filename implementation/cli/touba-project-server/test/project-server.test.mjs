@@ -5513,6 +5513,7 @@ function sandboxAirDocument({ withInput = false, withTool = false } = {}) {
         {
           id: "strategy:demo.sandbox/RunTool",
           name: "RunTool",
+          uses: ["tool:demo.sandbox/ReadExternal"],
           signature: { inputs: [], output_type: "builtin:Text" },
           flow_graph_ref: "graph:strategy:demo.sandbox/RunTool",
           source_ref: sourceRef(),

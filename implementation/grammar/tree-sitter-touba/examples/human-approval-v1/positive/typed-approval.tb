@@ -14,6 +14,8 @@ function Comment
         give receipt.comment
 
 strategy Decide
+    uses Notify
+    uses Commit
     takes dossier as Text
     gives Text
     do
@@ -42,6 +44,7 @@ strategy Receipt
         give receipt
 
 strategy Parallel
+    uses Decide
     takes dossiers as List of Text
     gives List of Text
     do

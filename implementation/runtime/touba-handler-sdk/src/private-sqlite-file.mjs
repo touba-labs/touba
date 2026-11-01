@@ -16,6 +16,8 @@ export function preparePrivateSqliteFile(filename, fail) {
       let before;
       try { before = lstatSync(filename + suffix); }
       catch (error) { if (error.code !== "ENOENT") throw error; }
+      // lstat can observe an inode concurrently unlinked by SQLite, too.
+      if (suffix && before?.isFile() && before.nlink === 0) continue;
       if (before && (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1)) {
         fail("database storage must be a regular file without links");
       }

@@ -123,6 +123,8 @@ export function agentDecisionProviderContent(inputs, observations, context) {
     return entry;
   });
   const observationEntries = observations.map((observation) => runtimeObservationEntry({
+    category: "runtime_observation",
+    trust: "external_content",
     step_index: observation.step_index,
     action: observation.action,
     target_ref: observation.target_ref,

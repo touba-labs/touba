@@ -182,6 +182,7 @@ skill Review
 strategy RunApproval
     takes values as List of Text
     gives List of Text
+    uses Review
     do
         parallel Review
             each value in values

@@ -2033,7 +2033,8 @@ test("runs an agent decision provider module through the CLI", () => {
 
     assert.equal(JSON.parse(stdout), "postgres");
     const trace = JSON.parse(readFileSync(tracePath, "utf8"));
-    assert.equal(eventOf(trace, "agent_decision_catalog_requested").payload.reason, "inspect available contracts");
+    assert.equal(eventOf(trace, "agent_decision_catalog_requested").payload.reason, undefined);
+    assert.equal(eventOf(trace, "agent_decision_catalog_requested").payload.reason_present, true);
     assert.equal(eventOf(trace, "agent_capability_selected").payload.selected_ref, "skill:examples.linear_skill/Answer");
     assert.equal(JSON.stringify(trace).includes("postgres"), false);
   } finally {
@@ -2237,7 +2238,8 @@ test("RP-1 prod run plan keeps explicit agent decision provider initial mode", (
     assert.equal(JSON.parse(stdout), "summary override");
     const trace = JSON.parse(readFileSync(tracePath, "utf8"));
     assert.equal(eventOf(trace, "agent_decision_requested").payload.mode, "summary");
-    assert.equal(eventOf(trace, "agent_decision_catalog_requested").payload.reason, "explicit summary mode respected");
+    assert.equal(eventOf(trace, "agent_decision_catalog_requested").payload.reason, undefined);
+    assert.equal(eventOf(trace, "agent_decision_catalog_requested").payload.reason_present, true);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -3712,6 +3714,7 @@ function importedToolDocument() {
             ],
             output_type: "type:examples.data_tools/DatasetSearchResult",
           },
+          uses: ["skill:examples.research_app/BuildDatasetBrief"],
           flow_graph_ref: "graph:strategy:examples.research_app/RunDatasetSearch",
           source_ref: sourceRef(),
         },

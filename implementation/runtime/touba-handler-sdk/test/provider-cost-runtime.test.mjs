@@ -160,7 +160,7 @@ test("insufficient budget sends no HTTP request and does not enter runtime retry
   assert.equal(result.trace.events.filter(e => e.kind === "agent_decision_provider_call_attempted").length, 1);
 });
 
-test("late usage settles SQLite but cannot append to a terminal trace", async t => {
+test("aborted HTTP keeps the conservative reservation and cannot append to a terminal trace", async t => {
   const { provider, received, budget } = await setup(t, { delay: 150 });
   const result = await executeAirDocument(air, { entryRef, agentDecisionProvider: provider("structured"),
     agentDecisionProviderTimeoutMs: 70, agentDecisionProviderMaxRetries: 0 });
@@ -168,7 +168,9 @@ test("late usage settles SQLite but cannot append to a terminal trace", async t 
   const trace = JSON.stringify(result.trace);
   await new Promise(done => setTimeout(done, 250));
   assert.equal(received.length, 1);
-  assert.equal(budget.snapshot().committedMicros, 3n);
+  // The response is aborted before reported usage arrives. Unknown charges
+  // retain their reservation even when the synthetic server later replies.
+  assert.equal(budget.snapshot().committedMicros, 164n);
   assert.equal(JSON.stringify(result.trace), trace);
 });
 

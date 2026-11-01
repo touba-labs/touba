@@ -2,7 +2,7 @@
   "trace_protocol_version": "touba-trace-v1",
   "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
-    "run_id": "run-1",
+    "run_id": "run-00000000-0000-4000-8000-000000000009",
     "air_schema_version": "touba-air-v1",
     "air_digest": "sha256:f20df5703da3c351c6518af4e459396e3b01625aede63a4dbcc52c1d67650944",
     "module_ref": "module:examples.strategy_agents",
@@ -10,8 +10,8 @@
   },
   "events": [
     {
-      "event_id": "event:run-1:1",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:1",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 0,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
@@ -21,8 +21,8 @@
       }
     },
     {
-      "event_id": "event:run-1:2",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:2",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 1,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -32,14 +32,14 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
           "target_ref": "strategy:examples.strategy_agents/RunChange"
         }
       }
     },
     {
-      "event_id": "event:run-1:3",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:3",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 2,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -63,14 +63,14 @@
         "agent_ref": null,
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
           "target_ref": "strategy:examples.strategy_agents/RunChange"
         }
       }
     },
     {
-      "event_id": "event:run-1:4",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:4",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 3,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_invocation_authorized",
@@ -93,14 +93,14 @@
         "agent_ref": "agent:examples.strategy_agents/Engineer",
         "authority_source": "callable_by",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
           "target_ref": "strategy:examples.strategy_agents/RunChange"
         }
       }
     },
     {
-      "event_id": "event:run-1:5",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:5",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 4,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_entered",
@@ -110,17 +110,17 @@
         "input_count": 1,
         "output_type": "type:examples.strategy_agents/ReviewedChange",
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:2",
           "target_ref": "agent:examples.strategy_agents/Engineer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000005"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010"
         }
       }
     },
     {
-      "event_id": "event:run-1:6",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:6",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 5,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capabilities_listed",
@@ -187,17 +187,17 @@
           }
         ],
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:2",
           "target_ref": "agent:examples.strategy_agents/Engineer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000005"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010"
         }
       }
     },
     {
-      "event_id": "event:run-1:7",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:7",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 6,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_decision_recorded",
@@ -205,19 +205,19 @@
         "agent_ref": "agent:examples.strategy_agents/Engineer",
         "selected_ref": "skill:examples.strategy_agents/MakeChange",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability",
+        "reason_present": true,
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:2",
           "target_ref": "agent:examples.strategy_agents/Engineer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000005"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010"
         }
       }
     },
     {
-      "event_id": "event:run-1:8",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:8",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 7,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capability_selected",
@@ -226,19 +226,19 @@
         "selected_ref": "skill:examples.strategy_agents/MakeChange",
         "authority_source": "uses",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability",
+        "reason_present": true,
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:2",
           "target_ref": "agent:examples.strategy_agents/Engineer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000005"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010"
         }
       }
     },
     {
-      "event_id": "event:run-1:9",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:9",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 8,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -248,17 +248,17 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:3",
           "target_ref": "skill:examples.strategy_agents/MakeChange",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000005",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010",
           "agent_ref": "agent:examples.strategy_agents/Engineer"
         }
       }
     },
     {
-      "event_id": "event:run-1:10",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:10",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 9,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -282,18 +282,79 @@
         "agent_ref": "agent:examples.strategy_agents/Engineer",
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:3",
           "target_ref": "skill:examples.strategy_agents/MakeChange",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000005",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010",
           "agent_ref": "agent:examples.strategy_agents/Engineer"
         }
       }
     },
     {
-      "event_id": "event:run-1:11",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:11",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
       "sequence_index": 10,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:examples.strategy_agents/ApplyChange",
+        "phase": "admission",
+        "status": "accepted",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:4",
+          "target_ref": "tool:examples.strategy_agents/ApplyChange",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:3",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:10",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010",
+          "agent_ref": "agent:examples.strategy_agents/Engineer"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:12",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 11,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:examples.strategy_agents/ApplyChange",
+        "phase": "dispatch",
+        "status": "started",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:4",
+          "target_ref": "tool:examples.strategy_agents/ApplyChange",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:3",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:10",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010",
+          "agent_ref": "agent:examples.strategy_agents/Engineer"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:13",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 12,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:examples.strategy_agents/ApplyChange",
+        "phase": "post_validation",
+        "status": "accepted",
+        "result_origin": "handler",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:4",
+          "target_ref": "tool:examples.strategy_agents/ApplyChange",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:3",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:10",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010",
+          "agent_ref": "agent:examples.strategy_agents/Engineer"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:14",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 13,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
@@ -315,20 +376,20 @@
         "caller_ref": "skill:examples.strategy_agents/MakeChange",
         "agent_ref": "agent:examples.strategy_agents/Engineer",
         "result_binding": "change",
-        "call_started_event_id": "event:run-1:10",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000009:10",
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:3",
           "target_ref": "skill:examples.strategy_agents/MakeChange",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000005",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010",
           "agent_ref": "agent:examples.strategy_agents/Engineer"
         }
       }
     },
     {
-      "event_id": "event:run-1:12",
-      "run_id": "run-1",
-      "sequence_index": 11,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:15",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 14,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
@@ -339,18 +400,18 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:3",
           "target_ref": "skill:examples.strategy_agents/MakeChange",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000005",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010",
           "agent_ref": "agent:examples.strategy_agents/Engineer"
         }
       }
     },
     {
-      "event_id": "event:run-1:13",
-      "run_id": "run-1",
-      "sequence_index": 12,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:16",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 15,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_result_returned",
       "payload": {
@@ -359,18 +420,18 @@
         "output_type": "type:examples.strategy_agents/ReviewedChange",
         "result_type": "object",
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:2",
           "target_ref": "agent:examples.strategy_agents/Engineer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000005"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000010"
         }
       }
     },
     {
-      "event_id": "event:run-1:14",
-      "run_id": "run-1",
-      "sequence_index": 13,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:17",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 16,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
@@ -391,17 +452,17 @@
         "target_ref": "agent:examples.strategy_agents/Engineer",
         "caller_ref": "strategy:examples.strategy_agents/RunChange",
         "result_binding": "change",
-        "call_started_event_id": "event:run-1:3",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000009:3",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
           "target_ref": "strategy:examples.strategy_agents/RunChange"
         }
       }
     },
     {
-      "event_id": "event:run-1:15",
-      "run_id": "run-1",
-      "sequence_index": 14,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:18",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 17,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
       "air_ref": {
@@ -424,15 +485,15 @@
         "agent_ref": null,
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
           "target_ref": "strategy:examples.strategy_agents/RunChange"
         }
       }
     },
     {
-      "event_id": "event:run-1:16",
-      "run_id": "run-1",
-      "sequence_index": 15,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:19",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 18,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_invocation_authorized",
       "air_ref": {
@@ -454,15 +515,15 @@
         "agent_ref": "agent:examples.strategy_agents/Reviewer",
         "authority_source": "callable_by",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
           "target_ref": "strategy:examples.strategy_agents/RunChange"
         }
       }
     },
     {
-      "event_id": "event:run-1:17",
-      "run_id": "run-1",
-      "sequence_index": 16,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:20",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 19,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_entered",
       "payload": {
@@ -471,18 +532,18 @@
         "input_count": 1,
         "output_type": "type:examples.strategy_agents/ReviewedChange",
         "trace_context": {
-          "span_id": "span:run-1:0:5",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:5",
           "target_ref": "agent:examples.strategy_agents/Reviewer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:15",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000006"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:18",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000011"
         }
       }
     },
     {
-      "event_id": "event:run-1:18",
-      "run_id": "run-1",
-      "sequence_index": 17,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:21",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 20,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capabilities_listed",
       "payload": {
@@ -539,38 +600,38 @@
           }
         ],
         "trace_context": {
-          "span_id": "span:run-1:0:5",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:5",
           "target_ref": "agent:examples.strategy_agents/Reviewer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:15",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000006"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:18",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000011"
         }
       }
     },
     {
-      "event_id": "event:run-1:19",
-      "run_id": "run-1",
-      "sequence_index": 18,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:22",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 21,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_decision_recorded",
       "payload": {
         "agent_ref": "agent:examples.strategy_agents/Reviewer",
         "selected_ref": "skill:examples.strategy_agents/ReviewChange",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability",
+        "reason_present": true,
         "trace_context": {
-          "span_id": "span:run-1:0:5",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:5",
           "target_ref": "agent:examples.strategy_agents/Reviewer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:15",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000006"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:18",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000011"
         }
       }
     },
     {
-      "event_id": "event:run-1:20",
-      "run_id": "run-1",
-      "sequence_index": 19,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:23",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 22,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capability_selected",
       "payload": {
@@ -578,20 +639,20 @@
         "selected_ref": "skill:examples.strategy_agents/ReviewChange",
         "authority_source": "uses",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability",
+        "reason_present": true,
         "trace_context": {
-          "span_id": "span:run-1:0:5",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:5",
           "target_ref": "agent:examples.strategy_agents/Reviewer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:15",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000006"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:18",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000011"
         }
       }
     },
     {
-      "event_id": "event:run-1:21",
-      "run_id": "run-1",
-      "sequence_index": 20,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:24",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 23,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
       "air_ref": {
@@ -600,18 +661,18 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:6",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:6",
           "target_ref": "skill:examples.strategy_agents/ReviewChange",
-          "parent_span_id": "span:run-1:0:5",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000006",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:5",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000011",
           "agent_ref": "agent:examples.strategy_agents/Reviewer"
         }
       }
     },
     {
-      "event_id": "event:run-1:22",
-      "run_id": "run-1",
-      "sequence_index": 21,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:25",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 24,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
@@ -622,18 +683,18 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:6",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:6",
           "target_ref": "skill:examples.strategy_agents/ReviewChange",
-          "parent_span_id": "span:run-1:0:5",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000006",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:5",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000011",
           "agent_ref": "agent:examples.strategy_agents/Reviewer"
         }
       }
     },
     {
-      "event_id": "event:run-1:23",
-      "run_id": "run-1",
-      "sequence_index": 22,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:26",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 25,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_result_returned",
       "payload": {
@@ -642,18 +703,18 @@
         "output_type": "type:examples.strategy_agents/ReviewedChange",
         "result_type": "object",
         "trace_context": {
-          "span_id": "span:run-1:0:5",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:5",
           "target_ref": "agent:examples.strategy_agents/Reviewer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:15",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000006"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000009:18",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000011"
         }
       }
     },
     {
-      "event_id": "event:run-1:24",
-      "run_id": "run-1",
-      "sequence_index": 23,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:27",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 26,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
@@ -674,17 +735,17 @@
         "target_ref": "agent:examples.strategy_agents/Reviewer",
         "caller_ref": "strategy:examples.strategy_agents/RunChange",
         "result_binding": "reviewed",
-        "call_started_event_id": "event:run-1:15",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000009:18",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
           "target_ref": "strategy:examples.strategy_agents/RunChange"
         }
       }
     },
     {
-      "event_id": "event:run-1:25",
-      "run_id": "run-1",
-      "sequence_index": 24,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:28",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 27,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
@@ -695,15 +756,15 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000009:0:1",
           "target_ref": "strategy:examples.strategy_agents/RunChange"
         }
       }
     },
     {
-      "event_id": "event:run-1:26",
-      "run_id": "run-1",
-      "sequence_index": 25,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000009:29",
+      "run_id": "run-00000000-0000-4000-8000-000000000009",
+      "sequence_index": 28,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",
       "payload": {

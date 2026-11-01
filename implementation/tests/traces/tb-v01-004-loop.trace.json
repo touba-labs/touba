@@ -2,7 +2,7 @@
   "trace_protocol_version": "touba-trace-v1",
   "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
-    "run_id": "run-1",
+    "run_id": "run-00000000-0000-4000-8000-000000000007",
     "air_schema_version": "touba-air-v1",
     "air_digest": "sha256:47d8490bfd0933af4681979593282c44201db7060e0cd626b90ba7db82a9582c",
     "module_ref": "module:examples.loop",
@@ -10,8 +10,8 @@
   },
   "events": [
     {
-      "event_id": "event:run-1:1",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:1",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 0,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
@@ -21,8 +21,8 @@
       }
     },
     {
-      "event_id": "event:run-1:2",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:2",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 1,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -32,14 +32,14 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
           "target_ref": "strategy:examples.loop/RunNormalization"
         }
       }
     },
     {
-      "event_id": "event:run-1:3",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:3",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 2,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -63,14 +63,14 @@
         "agent_ref": null,
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
           "target_ref": "strategy:examples.loop/RunNormalization"
         }
       }
     },
     {
-      "event_id": "event:run-1:4",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:4",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 3,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_invocation_authorized",
@@ -93,14 +93,14 @@
         "agent_ref": "agent:examples.loop/Normalizer",
         "authority_source": "callable_by",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
           "target_ref": "strategy:examples.loop/RunNormalization"
         }
       }
     },
     {
-      "event_id": "event:run-1:5",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:5",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 4,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_entered",
@@ -110,17 +110,17 @@
         "input_count": 1,
         "output_type": "type:examples.loop/NormalizedItems",
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
           "target_ref": "agent:examples.loop/Normalizer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000007:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008"
         }
       }
     },
     {
-      "event_id": "event:run-1:6",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:6",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 5,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capabilities_listed",
@@ -179,17 +179,17 @@
           }
         ],
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
           "target_ref": "agent:examples.loop/Normalizer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000007:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008"
         }
       }
     },
     {
-      "event_id": "event:run-1:7",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:7",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 6,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_decision_recorded",
@@ -197,19 +197,19 @@
         "agent_ref": "agent:examples.loop/Normalizer",
         "selected_ref": "skill:examples.loop/NormalizeItems",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability",
+        "reason_present": true,
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
           "target_ref": "agent:examples.loop/Normalizer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000007:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008"
         }
       }
     },
     {
-      "event_id": "event:run-1:8",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:8",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 7,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_capability_selected",
@@ -218,19 +218,19 @@
         "selected_ref": "skill:examples.loop/NormalizeItems",
         "authority_source": "uses",
         "decision_source": "uses_single_capability",
-        "reason": "single declared capability",
+        "reason_present": true,
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
           "target_ref": "agent:examples.loop/Normalizer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000007:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008"
         }
       }
     },
     {
-      "event_id": "event:run-1:9",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:9",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 8,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -240,17 +240,17 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
           "target_ref": "skill:examples.loop/NormalizeItems",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:10",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:10",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 9,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "loop_evaluated",
@@ -274,17 +274,17 @@
         "iteration_index": 0,
         "condition_ref": "loop_has_next:value:items",
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
           "target_ref": "skill:examples.loop/NormalizeItems",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:11",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:11",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 10,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -308,17 +308,17 @@
         "agent_ref": "agent:examples.loop/Normalizer",
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
           "target_ref": "skill:examples.loop/NormalizeItems",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:12",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:12",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 11,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -328,18 +328,18 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:4",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:4",
           "target_ref": "function:examples.loop/NormalizeItem",
-          "parent_span_id": "span:run-1:0:3",
-          "call_event_id": "event:run-1:11",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000007:11",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:13",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:13",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 12,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
@@ -351,18 +351,18 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:4",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:4",
           "target_ref": "function:examples.loop/NormalizeItem",
-          "parent_span_id": "span:run-1:0:3",
-          "call_event_id": "event:run-1:11",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000007:11",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:14",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:14",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 13,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
@@ -384,19 +384,19 @@
         "target_ref": "function:examples.loop/NormalizeItem",
         "caller_ref": "skill:examples.loop/NormalizeItems",
         "agent_ref": "agent:examples.loop/Normalizer",
-        "call_started_event_id": "event:run-1:11",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000007:11",
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
           "target_ref": "skill:examples.loop/NormalizeItems",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:15",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:15",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 14,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "loop_evaluated",
@@ -420,17 +420,17 @@
         "iteration_index": 1,
         "condition_ref": "loop_has_next:value:items",
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
           "target_ref": "skill:examples.loop/NormalizeItems",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:16",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:16",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 15,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -454,17 +454,17 @@
         "agent_ref": "agent:examples.loop/Normalizer",
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
           "target_ref": "skill:examples.loop/NormalizeItems",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:17",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:17",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 16,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -474,18 +474,18 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:5",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:5",
           "target_ref": "function:examples.loop/NormalizeItem",
-          "parent_span_id": "span:run-1:0:3",
-          "call_event_id": "event:run-1:16",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000007:16",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:18",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:18",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 17,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
@@ -497,18 +497,18 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:5",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:5",
           "target_ref": "function:examples.loop/NormalizeItem",
-          "parent_span_id": "span:run-1:0:3",
-          "call_event_id": "event:run-1:16",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000007:16",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:19",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:19",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 18,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
@@ -530,19 +530,19 @@
         "target_ref": "function:examples.loop/NormalizeItem",
         "caller_ref": "skill:examples.loop/NormalizeItems",
         "agent_ref": "agent:examples.loop/Normalizer",
-        "call_started_event_id": "event:run-1:16",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000007:16",
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
           "target_ref": "skill:examples.loop/NormalizeItems",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:20",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:20",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 19,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "loop_evaluated",
@@ -566,17 +566,17 @@
         "iteration_index": 2,
         "condition_ref": "loop_has_next:value:items",
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
           "target_ref": "skill:examples.loop/NormalizeItems",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:21",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:21",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 20,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
@@ -588,17 +588,17 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:3",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:3",
           "target_ref": "skill:examples.loop/NormalizeItems",
-          "parent_span_id": "span:run-1:0:2",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008",
           "agent_ref": "agent:examples.loop/Normalizer"
         }
       }
     },
     {
-      "event_id": "event:run-1:22",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:22",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 21,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "agent_interface_result_returned",
@@ -608,17 +608,17 @@
         "output_type": "type:examples.loop/NormalizedItems",
         "result_type": "object",
         "trace_context": {
-          "span_id": "span:run-1:0:2",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:2",
           "target_ref": "agent:examples.loop/Normalizer",
-          "parent_span_id": "span:run-1:0:1",
-          "call_event_id": "event:run-1:3",
-          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000004"
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000007:3",
+          "agent_invocation_id": "invocation:00000000-0000-4000-8000-000000000008"
         }
       }
     },
     {
-      "event_id": "event:run-1:23",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:23",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 22,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
@@ -640,16 +640,16 @@
         "target_ref": "agent:examples.loop/Normalizer",
         "caller_ref": "strategy:examples.loop/RunNormalization",
         "result_binding": "normalized",
-        "call_started_event_id": "event:run-1:3",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000007:3",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
           "target_ref": "strategy:examples.loop/RunNormalization"
         }
       }
     },
     {
-      "event_id": "event:run-1:24",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:24",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 23,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
@@ -661,14 +661,14 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000007:0:1",
           "target_ref": "strategy:examples.loop/RunNormalization"
         }
       }
     },
     {
-      "event_id": "event:run-1:25",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000007:25",
+      "run_id": "run-00000000-0000-4000-8000-000000000007",
       "sequence_index": 24,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",

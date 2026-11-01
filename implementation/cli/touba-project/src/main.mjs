@@ -970,7 +970,7 @@ function handlerCommand(rawArgs) {
   }
   if (subcommand === undefined || subcommand === "--help" || subcommand === "-h") {
     return {
-      text: "Usage: touba handler stub <air.json> [--tool-ref <tool_ref>] [--handler-root <path>] [--force]",
+      text: "Usage: touba handler stub <air.json> [--language javascript|python] [--tool-ref <tool_ref>] [--handler-root <path>] [--force]",
       exitCode: 0,
     };
   }
@@ -1765,7 +1765,7 @@ function printUsage() {
   touba rest scaffold <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--force] [--json]
   touba manifest generate <air.json> --out <touba.manifest.json>
   touba manifest generate <air.json> --stdout
-  touba handler stub <air.json> [--tool-ref <tool_ref>] [--handler-root <path>] [--force]
+  touba handler stub <air.json> [--language javascript|python] [--tool-ref <tool_ref>] [--handler-root <path>] [--force]
   touba version [--json]
   touba doctor [--json]
   touba update [--json]

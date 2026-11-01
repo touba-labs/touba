@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -19,6 +19,30 @@ import {
 const __dir = dirname(fileURLToPath(import.meta.url));
 const generatePath = join(__dir, "../src/generate.mjs");
 const stubPath = join(__dir, "../src/stub.mjs");
+
+for (const language of ["javascript", "python"]) test(`CLI honors the canonical ${language} project without overwriting its manifest`, t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-manifest-language-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, "touba.project.json"), JSON.stringify({ project_version: "touba-project-v1", artifact_layout: "touba-artifacts-v1", language,
+    sdk: language === "python" ? "touba-sdk" : "@touba/sdk" }));
+  writeFileSync(join(root, "source.air.json"), JSON.stringify(airDocument()));
+  const args = [generatePath, "source.air.json", "--out", "config/touba.manifest.json"];
+  const first = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8" });
+  assert.equal(first.status, 0, first.stderr);
+  const bytes = readFileSync(join(root, "config/touba.manifest.json"), "utf8");
+  const binding = JSON.parse(bytes).bindings["tool:examples.docs/SearchDatasets"];
+  assert.equal(binding.effect_contract, null);
+  assert.deepEqual(binding.grants, []);
+  assert.equal(binding.handler.cwd, "..");
+  assert.match(binding.handler.args[0], language === "python" ? /\.handler\.py$/ : /\.handler\.mjs$/);
+  assert.equal(binding.handler.command, language === "python" ? (process.platform === "win32" ? ".venv/Scripts/python.exe" : "./.venv/bin/python") : "node");
+  const again = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8" });
+  assert.equal(again.status, 1);
+  assert.equal(readFileSync(join(root, "config/touba.manifest.json"), "utf8"), bytes);
+  assert.doesNotMatch(again.stderr, /Generated a draft/);
+  const mismatch = spawnSync(process.execPath, [generatePath, "source.air.json", "--stdout", "--language", language === "python" ? "javascript" : "python"], { cwd: root, encoding: "utf8" });
+  assert.equal(mismatch.status, 1);
+});
 
 test("converts Touba tool names to handler file names", () => {
   assert.equal(toolNameToHandlerFile("SearchDatasets"), "search_datasets.handler.mjs");

@@ -374,6 +374,8 @@ et les règles communes d'[historique](./historique-conversationnel.md).
 
 ## MCP
 
+L'importeur MCP génère `requires network` et le grant correspondant dans son brouillon. Pour un serveur stdio strictement local, révisez ensemble la déclaration et le manifest : `network` n'est pas imposé par le transport stdio. Les droits `process` exigés par le profil d'isolation restent nécessaires. Un serveur qui contacte Internet doit conserver l'autorisation réseau.
+
 `create_mcp_stdio_tool_bridge(mcp_tool_name=..., config=...)` retourne
 un handler async `bridge(request, context)`. Le format
 `touba-mcp-bridge-config-v1` reste identique à JavaScript.
@@ -473,3 +475,28 @@ Le bridge Python propage le contexte d’invocation et les coûts dans son canal
 privé, y compris à travers ce wrapper asynchrone. Gardez l’appel dans ce contexte ;
 le prompt contient uniquement la requête métier. Le routeur JavaScript transmet
 explicitement son second argument `execution`.
+
+## Transport, délais et diagnostics
+
+`transport="responses"` (défaut) et `transport="chat"` sélectionnent
+respectivement Responses et Chat Completions, pour OpenAI comme Ollama.
+Les mêmes réglages qu'en JavaScript existent en Python :
+`max_output_tokens=4096`, `max_retries=0`, `timeout_ms=120000` par défaut.
+Le transport reste celui choisi par l'hôte ; un endpoint compatible doit
+prendre en charge les sorties structurées ou les appels de fonctions utilisés.
+
+Les codes `PythonHostImportFailed`, `PythonHostConfigurationInvalid`,
+`PythonHostCallbackFailed`, `PythonHostTlsFailed`,
+`PythonHostTransportFailed` et `PythonHostTimeout` identifient l'étape en défaut.
+Pour obtenir la classe d'erreur et sa ligne locale sans copier les messages,
+définissez `TOUBA_PYTHON_HOST_DIAGNOSTICS` vers un nouveau fichier privé.
+Le fichier est borné à 64 Kio et créé avec des droits restreints. Les traces
+publiques conservent seulement les codes structurés.
+
+Une annulation arrête le processus du module hôte Python et ses demandes
+en cours. L'application décide ensuite d'une nouvelle exécution.
+Les imports de `touba_sdk` chargent à la demande les composants utilisés ;
+un handler simple n'initialise pas les bridges de modèles, MCP ou SQLite.
+
+Le guide [SDK JavaScript](./sdk-javascript.md#transport-délais-et-diagnostics)
+détaille les limites de corps HTTP, de contexte et de coût communes aux deux SDK.

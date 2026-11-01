@@ -576,6 +576,8 @@ impl AirDiagnostic {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AirDiagnosticCode {
+    CapabilityNotDeclaredInUses,
+    AgentCapabilityDescriptionRequired,
     AstError,
     InvalidRunLimits,
     InvalidFieldConstraint,

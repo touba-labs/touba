@@ -810,6 +810,8 @@ function summarizeTrace(trace, sourcePath = undefined) {
     user_interactions: summarizeUserInteractionTrace(events),
     bindings: summarizeBindingTrace(events),
     agent_invocations: summarizeAgentInvocationTrace(events),
+    agent_capabilities: { selected: events.filter(event => event.kind === "agent_capability_selected").length,
+      refused: events.filter(event => event.kind === "agent_capability_refused").length },
     memory_accesses: summarizeMemoryAccessTrace(events),
     memory_metadata: summarizeMemoryMetadataTrace(events),
     triggers: summarizeTriggerTrace(events),
@@ -1807,6 +1809,7 @@ function renderTrace(lines, trace) {
   if (trace.bindings.created > 0) lines.push(`- bindings created=${trace.bindings.created}`);
   if (Object.values(trace.agent_invocations).some(value => typeof value === "number" && value > 0)) lines.push(
     `- agent_invocations authorized=${trace.agent_invocations.authorized} refused=${trace.agent_invocations.refused}`,
+    `- agent_capabilities selected=${trace.agent_capabilities.selected} refused=${trace.agent_capabilities.refused}`,
   );
   if (Object.values(trace.memory_accesses).some(value => typeof value === "number" && value > 0)) lines.push(
     `- memory_accesses authorized=${trace.memory_accesses.authorized} refused=${trace.memory_accesses.refused}`,

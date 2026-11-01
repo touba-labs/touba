@@ -10392,7 +10392,7 @@ function validateStoredHumanCheckpoint(record, index) {
     "next_call_index", "agent_invocation_id", "active_agent_ref", "active_caller_ref", "trace_prefix_digest", "loop_state",
     "parallel_state", "parallel_limits", "next_parallel_group", "pending_approvals", "parallel_digest",
     "max_agent_steps", "max_loop_iterations",
-    "approval_state", "custody",
+    "approval_state", "custody", "host_contract_digest", "next_sequence_index",
   ]);
   if (
     !isPlainObject(checkpoint)
@@ -10417,6 +10417,10 @@ function validateStoredHumanCheckpoint(record, index) {
     || !/^sha256:[a-f0-9]{64}$/u.test(checkpoint.trace_prefix_digest)
   ) {
     throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix} identity is invalid`);
+  }
+  if ((checkpoint.host_contract_digest !== undefined && !/^sha256:[a-f0-9]{64}$/u.test(checkpoint.host_contract_digest))
+    || (checkpoint.next_sequence_index !== undefined && (!Number.isSafeInteger(checkpoint.next_sequence_index) || checkpoint.next_sequence_index < 0))) {
+    throw serviceError("ToubaServeSandboxCheckpointStoreInvalid", `${prefix} host contract or trace cursor is invalid`);
   }
   const expectedScope = checkpoint.kind === "parallel_group" ? "parallel_group"
     : checkpoint.kind === "agent_human_review" ? "agent_decision_loop" : "graph_stack";

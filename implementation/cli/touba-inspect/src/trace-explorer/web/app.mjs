@@ -38,6 +38,7 @@ if (vscode) addEventListener('message', event => {
   if (embeddedHost && data?.type === 'preferences') {
     if (['en','fr'].includes(data.lang)) { language = data.lang; translate(); }
     if (['light','dark'].includes(data.theme)) applyTheme(data.theme);
+    if (['essential','complete'].includes(data.level) && data.level !== prefs.level) { prefs.level = data.level; applyPanels(); renderRuns(); if (page) renderPage(); renderDetail(detailResult); }
     return;
   }
   const item = pending.get(data?.id); if (!item) return;
@@ -334,13 +335,14 @@ function step(delta) {
 const REF = /^(agent|tool|skill|strategy|function|memory|module|type|trigger|constant):/u;
 const READABLE = new Set(['target_ref','caller_ref','selected_ref','tool_ref','memory_ref','owner_ref','reason','status','access','action','operation','mode','budget_name','used','limit','remaining','requested','maximum','consumed','count','timeout_ms',
   'capability_refs','allowed_refs','required_capabilities','granted_capabilities','missing_capabilities','required_secrets','missing_secrets','secret_handle','secret_handles_required','secret_handles_granted','secret_handles_used','secret_handles_refused',
-  'memory_accesses_required','memory_accesses_granted','required_memory_accesses']);
+  'memory_accesses_required','memory_accesses_granted','required_memory_accesses','phase','result_origin','effect_status','scope']);
 const shorten = value => value.length > 22 ? `${value.slice(0, 10)}…${value.slice(-8)}` : value;
 // Long codes such as budget_limit_exceeded wrap at their separators, never inside a word.
 function breakable(text) { const node = element('span'); for (const part of String(text).split(/(?<=[_/.:])/u)) node.append(part, element('wbr')); return node; }
 function stack(main, sub, title) { const node = element('span', undefined, 'ref'); node.append(element('strong', main)); if (sub) node.append(element('small', sub)); if (title) node.title = title; return node; }
 function refNode(value) { const path = shortRef(value), cut = path.lastIndexOf('/'); return cut < 0 ? stack(path, '', value) : stack(path.slice(cut + 1), path.slice(0, cut), value); }
 function valueNode(key, value) {
+  if (typeof value === 'string' && ['phase','result_origin','effect_status','scope'].includes(key)) return element('span', t(value));
   if (Array.isArray(value)) {
     const pills = element('span', undefined, 'pills');
     for (const item of value) {
@@ -499,6 +501,8 @@ document.addEventListener('click', event => {
 for (const group of document.querySelectorAll('[data-pref]')) for (const node of group.querySelectorAll('button')) node.addEventListener('click', () => {
   if (group.dataset.pref === 'panels') { setPanel(node.dataset.value, !prefs[node.dataset.value]); return; }
   prefs.level = node.dataset.value; applyPanels(); savePrefs(); renderRuns(); if (page) renderPage(); renderDetail(detailResult);
+  // An embedding host shares one detail level across its pages.
+  embeddedHost?.postMessage({ type: 'preferences', level: prefs.level });
 });
 for (const node of document.querySelectorAll('.views [data-view]')) node.addEventListener('click', () => {
   view = node.dataset.view; for (const other of document.querySelectorAll('.views [data-view]')) other.setAttribute('aria-pressed', String(other === node)); void load();

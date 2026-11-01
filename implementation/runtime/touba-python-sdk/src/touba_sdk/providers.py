@@ -18,7 +18,7 @@ def _options(value, keys):
 
 COMMON = {"model": "model", "source": "source", "decision_interface": "decisionInterface",
           "schema_encoding": "schemaEncoding",
-          "temperature": "temperature", "max_retries": "maxRetries", "max_output_tokens": "maxOutputTokens",
+          "temperature": "temperature", "max_retries": "maxRetries", "max_output_tokens": "maxOutputTokens", "timeout_ms": "timeoutMs",
           "allow_human_review": "allowHumanReview", "native_tool_choice": "nativeToolChoice",
           "system": "system", "instructions": "instructions", "provider_options": "providerOptions",
           "history": "history", "context": "context", "max_provider_request_bytes": "maxProviderRequestBytes"}
@@ -29,7 +29,7 @@ CONTEXT = {"context_window_tokens": "contextWindowTokens", "safety_margin_tokens
            "input_token_multiplier": "inputTokenMultiplier", "timeout_ms": "timeoutMs", "on_event": "onEvent"}
 HTTP = {"base_url": "baseURL", "api_key_env_names": "apiKeyEnvNames", "organization": "organization",
         "project": "project", "headers": "headers", "token_cost": "tokenCost",
-        "fetch": "fetch", "count_fetch": "countFetch"}
+        "fetch": "fetch", "count_fetch": "countFetch", "transport": "transport"}
 
 
 def _provider(kind, options, extra):

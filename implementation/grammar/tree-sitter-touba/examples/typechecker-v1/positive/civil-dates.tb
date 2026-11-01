@@ -39,6 +39,7 @@ tool ReadDate
     gives Date
 
 strategy Read
+    uses ReadDate
     gives Date
     do
         ReadDate

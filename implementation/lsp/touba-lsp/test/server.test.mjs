@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { SymbolKind } from "vscode-languageserver/node.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   completionForPosition,
@@ -14,6 +17,17 @@ import {
   toLspDiagnostic,
   tryParseCompilerEnvelopeFromExecError,
 } from "../src/server.mjs";
+
+test("catalogue descriptions produce editor warnings without rejecting deterministic programs", t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-catalogue-warning-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = join(root, "main.tb");
+  writeFileSync(source, 'module catalogue\ntool Read\n    gives Text\nagent Reader\n    responsibility "Read a note"\n    uses Read\n');
+  const result = runToubaCompileJson(source);
+  assert.equal(result.ok, true);
+  assert.equal(result.warnings[0].code, "AgentCapabilityDescriptionRequired");
+  assert.equal(toLspDiagnostic({ ...result.warnings[0], severity: "warning" }).severity, 2);
+});
 
 test("editor accepts pure list transformations and completes their builtins", () => {
   const source = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/list-transformations.tb", import.meta.url));

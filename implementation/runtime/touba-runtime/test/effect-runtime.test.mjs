@@ -51,7 +51,7 @@ test("canonical manifest requires an explicit effect contract and refuses old fo
   }));
   assert.deepEqual(load("touba-manifest-v1", { kind: "none" }).bindings.get("tool:test/Create").effectContract, { kind: "none" });
   for (const contract of [undefined, null, { kind: "none", retry_mode: "none" }, { kind: "external_write", retry_mode: "unsafe" }]) {
-    assert.throws(() => load("touba-manifest-v1", contract), { code: "InvalidToolBindingManifest" });
+    assert.throws(() => load("touba-manifest-v1", contract), { code: contract === null ? "ToolBindingReviewRequired" : "InvalidToolBindingManifest" });
   }
   for (const version of ["touba-manifest-v2", "touba-manifest-v3", "forged"]) {
     assert.throws(() => load(version, { kind: "none" }), { code: "InvalidToolBindingManifest" });
@@ -79,6 +79,8 @@ test("persists an applied result and serves its replay without redispatch", asyn
     assert.equal(replay.status, "success");
     assert.equal(first.result, "created:same");
     assert.equal(replay.result, first.result);
+    assert.ok(replay.trace.events.some(event => event.kind === "tool_execution_status" && event.payload.phase === "journal_restore"));
+    assert.equal(replay.trace.events.some(event => event.kind === "tool_execution_status" && event.payload.phase === "dispatch"), false);
     assert.equal(readFileSync(callsPath, "utf8"), "called\n");
     const [entry] = [...journal.entries.values()];
     assert.equal(entry.state, "applied");
@@ -584,6 +586,7 @@ test("keeps applied without result when output validation fails and never redisp
     const replay = await executeAirDocument(effectDocument(), { ...options, runId: "run:replay" });
 
     assert.equal(invalid.status, "failure");
+    assert.ok(invalid.trace.events.some(event => event.kind === "tool_execution_status" && event.payload.phase === "post_validation" && event.payload.status === "refused"));
     assert.equal(replay.status, "failure");
     assert.equal(failureCode(replay), "EffectResultUnavailable");
     assert.equal(readFileSync(callsPath, "utf8"), "called\n");

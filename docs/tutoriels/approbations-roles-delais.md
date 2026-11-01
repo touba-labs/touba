@@ -268,3 +268,82 @@ strategy Review
 
 La même fonction peut servir dans plusieurs branches. La décision et ses données
 restent explicites à chaque appel.
+
+## Même parcours avec le SDK Python
+
+Réutilisez `approval.tb` ci-dessus, puis installez le SDK avec
+`touba sdk install python`. L'adaptateur conserve le même contrat d'attestation
+que celui en JavaScript ; seules les conventions de noms Python changent.
+
+```python title="host.py"
+import json
+from pathlib import Path
+
+initiator_ref = "employee:requester"
+
+def attest_human_approval(payload):
+    folder = Path(__file__).parent
+    evidence = json.loads((folder / "host-evidence.json").read_text())
+    directory = json.loads((folder / "host-directory.json").read_text())
+    request = payload["request"]
+    if (evidence["id"] != payload["evidenceRef"]
+            or evidence["request_id"] != request["request_id"]
+            or evidence["run_id"] != request["run_id"]
+            or evidence["decision"] != payload["decision"]):
+        raise ValueError("Evidence does not match the current request")
+    roles = directory.get(evidence["subject_ref"])
+    if not isinstance(roles, list):
+        raise ValueError("Signer is not active")
+    return {"request_id": request["request_id"], "run_id": request["run_id"],
+            "decision": payload["decision"], "subject_ref": evidence["subject_ref"],
+            "roles": roles}
+```
+
+```python title="exercise.py"
+import json
+import os
+from pathlib import Path
+from touba_sdk import ToubaEngine, ToubaEngineError
+
+def save(path, value):
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as stream:
+        json.dump(value, stream)
+
+engine = ToubaEngine(project_root=".")
+options = dict(source="approval.tb",
+    entry_ref="strategy:examples.approval_roles/ApproveInvoice",
+    human_approval_host="host.py")
+paused = engine.run(**options, inputs={"invoice": "Invoice INV-42"},
+    human_checkpoint_out="approval.checkpoint.json")
+assert paused.reason == "human_approval_pending"
+checkpoint = json.loads(Path("approval.checkpoint.json").read_text())
+request = checkpoint["approval_state"]["requests"][checkpoint["approval_ref"]]
+save("host-evidence.json", {"id": "signed-decision:42",
+    "request_id": request["request_id"], "run_id": request["run_id"],
+    "decision": "approved", "subject_ref": "employee:reviewer"})
+decisions = {checkpoint["approval_ref"]: {
+    "decision": "approved", "evidence_ref": "signed-decision:42"}}
+resume = dict(human_resume_checkpoint="approval.checkpoint.json",
+    human_decisions=decisions)
+save("host-directory.json", {"employee:reviewer": []})
+try:
+    engine.run(**options, **resume)
+    raise AssertionError("Missing role was accepted")
+except ToubaEngineError as error:
+    assert error.code == "HumanApprovalRoleRequired"
+save("host-directory.json", {"employee:reviewer": ["finance"]})
+accepted = engine.run(**options, **resume)
+assert accepted.result == "Accepted by finance"
+try:
+    engine.run(**options, **resume)
+    raise AssertionError("Consumed approval was accepted")
+except ToubaEngineError as error:
+    assert error.code == "HumanApprovalCheckpointAlreadyConsumed"
+print("APPROVAL_ROLE_AND_RESUME_OK")
+```
+
+Depuis le projet, lancez `.venv/bin/python exercise.py`
+(`.venv\Scripts\python.exe exercise.py` sous Windows).
+Cette recette vérifie rôle manquant, reprise autorisée et refus du rejeu.
+Les deux fichiers de preuve sont privés et uniquement destinés à cet exemple local.

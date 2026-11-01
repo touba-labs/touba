@@ -118,11 +118,12 @@ test("a real deadline persists across pause and escalation requests a different 
 });
 
 test("authority outage and timeout cannot release the protected continuation", async () => {
-  const first = await executeAirDocument(air, { ...base, inputs: { dossier: "invoice" } });
   let calls = 0;
+  const toolHandlers = { "tool:approval_policy/Commit": () => { calls++; return "invoice"; } };
+  const first = await executeAirDocument(air, { ...base, inputs: { dossier: "invoice" }, toolHandlers });
   for (const authority of [() => { throw new Error("private identity service detail"); }, () => new Promise(() => {})]) {
     const denied = await resume(first.checkpoint, { humanApprovalAuthority: authority,
-      humanApprovalAuthorityTimeoutMs: 10, toolHandlers: { "tool:approval_policy/Commit": () => { calls++; return "invoice"; } } });
+      humanApprovalAuthorityTimeoutMs: 10, toolHandlers });
     assert.equal(denied.reason, "HumanApprovalAuthorityUnavailable");
     assert.ok(!JSON.stringify(denied).includes("private identity service detail"));
   }

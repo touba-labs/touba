@@ -195,7 +195,10 @@ export async function parallelHuman(context, metadata, execute) {
   if (record.replay && entry.approval_ref !== ref) throw new RuntimeFailure("invalid parallel approval identity", {}, "InvalidParallelCheckpoint");
   entry.approval_ref = ref;
   entry.metadata = metadata;
-  const request = approvalRequest(context.approvalRuntime, context.trace.runId, ref, metadata.approval_policy);
+  const reviewContext = metadata.mode === "agent_review"
+    ? { prompt: metadata.review_prompt, reason: metadata.review_reason ?? null }
+    : { refs: metadata.context_refs ?? [], values: metadata.context_values ?? [] };
+  const request = approvalRequest(context.approvalRuntime, context.trace.runId, ref, metadata.approval_policy, reviewContext);
   if (entry.state === "done") {
     await authorizeApprovalDecision(context.approvalRuntime, request, entry.value, { replay: true });
     return execute(entry.value, ref);

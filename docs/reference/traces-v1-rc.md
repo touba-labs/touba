@@ -317,3 +317,29 @@ L’ordre causal reste donné par `sequence_index` ; l’heure provient de l’h
 
 L’export OpenTelemetry reprend ces instants. Pour une trace antérieure sans
 horodatage, l’export indique explicitement sa projection temporelle synthétique.
+
+## Admission, effet et reprise
+
+| Événement ou phase | Lecture |
+| --- | --- |
+| `tool_binding_authorized`, `scope: binding_only` | Les droits du binding sont vérifiés. |
+| `tool_execution_status`, `admission/accepted` | Les contrôles d'entrée sont passés. |
+| `dispatch/started` | L'appel du handler commence. |
+| `post_validation/accepted` ou `refused` | Le résultat reçu est accepté ou refusé ; un effet peut déjà avoir eu lieu. |
+| `journal_restore/applied` | Un résultat appliqué est relu depuis le journal, sans nouvel appel du handler. |
+
+Les invocations d'agents et les capacités refusées ont des compteurs distincts.
+Les budgets comptent les tentatives selon leur contrat ; un refus ne rembourse
+pas une tentative. Le journal d'effets porte l'issue appliquée ou inconnue.
+
+Chaque run obtient un identifiant unique par défaut. Une reprise conserve son
+`run_id` et ajoute un `run.segment_id` unique : ses `event_id` et ses spans
+restent distincts, même après une tentative de reprise refusée. Les lecteurs
+acceptent aussi les traces antérieures sans ce champ.
+
+Les raisons libres du modèle, questions de revue et exceptions fournisseur
+ne figurent pas dans la trace publique. Des indicateurs de présence et des codes
+structurés permettent l'audit. Le `request_digest` fournisseur porte sur les
+métadonnées expurgées (`request_digest_scope: redacted_metadata`), pas sur le
+contenu métier intégral. Les checkpoints et historiques privés demandent leur
+propre contrôle d'accès.

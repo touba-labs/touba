@@ -37,6 +37,7 @@ skill Collect
     description "Collect the service health observation and show it."
     takes service as Text
     gives Text
+    uses Diagnose
     do
         Diagnose
             with service as service

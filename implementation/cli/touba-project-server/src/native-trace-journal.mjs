@@ -15,6 +15,12 @@ const PHASES = ["initial", "human_resume", "execution_resume", "human_terminal"]
 const STATES = ["recording", "paused", "terminal", "unavailable"];
 const REASONS = [null, "not_completed", "runtime_rejected", "trace_rejected", "storage_limit"];
 const active = new Set();
+// Segment identity varies on each resume; AIR, entry and run identity must not.
+// Each complete header (including segment_id) remains sealed by its reference.
+export function logicalRunDigest(run) {
+  const { segment_id, ...identity } = run;
+  return canonicalDigest(identity);
+}
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function seal(segment) { const { digest, ...body } = segment; return { ...body, digest: canonicalDigest(body) }; }
 function complete(value) { return value.segments[0].phase === "initial" && value.segments.every(s => ["paused", "terminal"].includes(s.state)) && value.segments.at(-1).state === "terminal"; }
@@ -91,7 +97,7 @@ export function* nativeTraceExportChunks(root, runId) {
       if (segment.reference) {
         store.readReference(segment.reference, { limit: 1 });
         reader = store.snapshot(segment.reference.segment_id);
-        const current = canonicalDigest(reader.header.run);
+        const current = logicalRunDigest(reader.header.run);
         if (identity && current !== identity) fail("ToubaServeNativeTraceStoreInvalid");
         identity = current;
       }
@@ -146,7 +152,7 @@ export async function withNativeTrace({ projectRoot, runId, phase, secretValues 
       validateReader(reader, runId, secretValues);
       store = journal(projectRoot, false);
       const previous = value.segments.find(s => s.reference)?.reference;
-      if (previous && canonicalDigest(store.header(previous.segment_id).run) !== canonicalDigest(reader.header.run)) fail("ToubaServeNativeTraceRejected");
+      if (previous && logicalRunDigest(store.header(previous.segment_id).run) !== logicalRunDigest(reader.header.run)) fail("ToubaServeNativeTraceRejected");
       let stored;
       if (reader.segmentId) {
         try { stored = store.snapshot(reader.segmentId); }

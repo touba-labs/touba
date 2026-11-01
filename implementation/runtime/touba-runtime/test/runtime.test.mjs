@@ -228,7 +228,7 @@ test("executes a linear skill with a bound tool and emits minimal traces", async
   assert.equal(result.status, "success");
   assert.equal(result.result, "done");
   assertTraceShape(result.trace, "skill:test/Build");
-  assertKinds(result.trace, ["run_started", "scope_entered", "call_started", "call_completed", "scope_exited", "run_completed"]);
+  assertKinds(result.trace, ["run_started", "scope_entered", "call_started", "tool_execution_status", "tool_execution_status", "tool_execution_status", "call_completed", "scope_exited", "run_completed"]);
 });
 
 test("checks manifest grants and secret scopes before dispatching a tool", async () => {
@@ -267,6 +267,7 @@ test("checks manifest grants and secret scopes before dispatching a tool", async
   assert.equal(firstCall.payload.caller_ref, "strategy:test/RunSearch");
   assert.equal(firstCall.payload.agent_ref, null);
   assert.deepEqual(eventOf(result.trace, "tool_binding_authorized").payload, {
+    scope: "binding_only",
     tool_ref: "tool:test/Search",
     caller_ref: "skill:test/SearchFlow",
     agent_ref: "agent:test/Researcher",
@@ -3208,14 +3209,14 @@ test("lets an agent select one declared capability through a governed decision",
     agent_ref: "agent:test/Researcher",
     selected_ref: "skill:test/UseMemorySearch",
     decision_source: "test_decision",
-    reason: "memory context requested",
+    reason_present: true,
   });
   assert.deepEqual(eventOf(result.trace, "agent_capability_selected").payload, {
     agent_ref: "agent:test/Researcher",
     selected_ref: "skill:test/UseMemorySearch",
     authority_source: "uses",
     decision_source: "test_decision",
-    reason: "memory context requested",
+    reason_present: true,
   });
   assert.equal(
     result.trace.events.some((event) => event.air_ref?.owner_ref === "skill:test/UseDatasetSearch"),
@@ -3445,7 +3446,7 @@ test("lets the runtime decision provider request a capability catalog and provid
   });
   assert.deepEqual(eventOf(result.trace, "agent_decision_catalog_requested").payload, {
     agent_ref: "agent:test/Researcher",
-    reason: "need contracts before selecting",
+    reason_present: true,
     capability_count: 2,
   });
   const {
@@ -3476,7 +3477,7 @@ test("lets the runtime decision provider request a capability catalog and provid
     step_index: 0,
     selected_ref: "skill:test/Answer",
     decision_source: "decision_provider",
-    reason: "answer skill matches the question",
+    reason_present: true,
     arguments_present: true,
   });
   assert.deepEqual(eventOf(result.trace, "agent_capability_result_returned").payload, {
@@ -4388,7 +4389,7 @@ test("retries ADP-1 provider unavailability within a bounded retry limit", async
   assert.equal(eventsOf(result.trace, "agent_decision_provider_call_attempted").length, 2);
 });
 
-test("records ADP-1 provider unavailable cause in failure evidence", async () => {
+test("records a bounded unavailable code without copying private provider exceptions", async () => {
   const result = await executeAirDocument(agentProviderDocument(), {
     agentDecisionProvider: () => {
       throw new Error("temporary provider outage");
@@ -4398,7 +4399,8 @@ test("records ADP-1 provider unavailable cause in failure evidence", async () =>
   assert.equal(result.status, "failure");
   const failure = eventOf(result.trace, "failure_detected");
   assert.equal(failure.payload.runtime_error_code, "AgentDecisionProviderUnavailable");
-  assert.equal(failure.payload.provider_cause, "temporary provider outage");
+  assert.equal(failure.payload.provider_cause, undefined);
+  assert.equal(JSON.stringify(result).includes("temporary provider outage"), false);
   assert.equal(eventsOf(result.trace, "agent_decision_provider_call_attempted").length, 1);
 });
 
@@ -4457,14 +4459,14 @@ test("lets a decision provider answer directly without presenting the capability
     agent_ref: "agent:test/Researcher",
     step_index: 0,
     action: "answer_directly",
-    decision_source: "test_direct_answer",
-    reason: "simple greeting does not need a capability catalog",
+    decision_source: "decision_provider",
+    reason_present: true,
   });
   assert.deepEqual(eventOf(result.trace, "agent_direct_answer_returned").payload, {
     agent_ref: "agent:test/Researcher",
     step_index: 0,
-    decision_source: "test_direct_answer",
-    reason: "simple greeting does not need a capability catalog",
+    decision_source: "decision_provider",
+    reason_present: true,
   });
   assert.equal(
     result.trace.events.some((event) => event.kind === "agent_capability_selected"),
@@ -5168,7 +5170,7 @@ test("lets an agent request human review from the catalog and continue after app
     agent_ref: "agent:test/Researcher",
     requester_ref: "agent:test/Researcher",
     step_index: 0,
-    reason: "need human judgement",
+    reason_present: true,
     review_prompt_present: true,
   });
   assert.deepEqual(eventOf(result.trace, "human_approval_resumed").payload, {
@@ -5821,7 +5823,7 @@ test("refuses unauthorized agent invocation before entering the target agent", a
 
 test("refuses agent invocation from non-agent non-strategy graph owners", async () => {
   const document = baseDocument({
-    skills: [skill("Orchestrate", "graph:skill:test/Orchestrate")],
+    skills: [{ ...skill("Orchestrate", "graph:skill:test/Orchestrate"), uses: ["agent:test/Builder"] }],
     agents: [
       {
         id: "agent:test/Builder",
@@ -7178,6 +7180,7 @@ function toolThenHumanApprovalDocument() {
       {
         id: "strategy:test/RunReview",
         name: "RunReview",
+        uses: ["tool:test/Fetch"],
         flow_graph_ref: "graph:strategy:test/RunReview",
         source_ref: sourceRef(),
       },

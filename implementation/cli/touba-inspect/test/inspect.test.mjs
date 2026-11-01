@@ -636,6 +636,23 @@ test("inspects agent invocation trace states from events only", () => {
   assert.doesNotMatch(rendered, /policy lens|\.env|secret value/i);
 });
 
+test("counts capability selections separately from agent invocations", t => {
+  const root = mkdtempSync(path.join(tmpdir(), "touba-capability-count-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const trace = JSON.parse(readFileSync(path.join(implementationDir,
+    "tests/traces/agent-authority-anneau-2/agent-invocation-refused.trace.json"), "utf8"));
+  const event = trace.events.find(event => event.kind === "agent_invocation_refused");
+  event.kind = "agent_capability_refused";
+  const filename = path.join(root, "refused.trace.json");
+  writeFileSync(filename, JSON.stringify(trace));
+  const inspected = inspectPath(filename);
+  assert.deepEqual(inspected.trace.agent_capabilities, { selected: 0, refused: 1 });
+  assert.deepEqual(inspected.trace.agent_invocations, { authorized: 0, refused: 0 });
+  event.kind = "agent_capability_selected";
+  writeFileSync(filename, JSON.stringify(trace));
+  assert.deepEqual(inspectPath(filename).trace.agent_capabilities, { selected: 1, refused: 0 });
+});
+
 test("inspects memory access trace states from events only", () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "touba-inspect-memory-trace-"));
   try {

@@ -2,7 +2,7 @@
   "trace_protocol_version": "touba-trace-v1",
   "trace_capability_profile": "touba-trace-capabilities-v1",
   "run": {
-    "run_id": "run-1",
+    "run_id": "run-00000000-0000-4000-8000-000000000002",
     "air_schema_version": "touba-air-v1",
     "air_digest": "sha256:cdaabe670e7a24f2da05750e918b928309dd5ed60bfe6250ed45947cd6c5856e",
     "module_ref": "module:examples.a1_tool_binding",
@@ -10,8 +10,8 @@
   },
   "events": [
     {
-      "event_id": "event:run-1:1",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:1",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 0,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_started",
@@ -21,8 +21,8 @@
       }
     },
     {
-      "event_id": "event:run-1:2",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:2",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 1,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_entered",
@@ -32,14 +32,14 @@
       },
       "payload": {
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
           "target_ref": "skill:examples.a1_tool_binding/BuildSource"
         }
       }
     },
     {
-      "event_id": "event:run-1:3",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:3",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 2,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_started",
@@ -63,15 +63,70 @@
         "agent_ref": null,
         "argument_count": 1,
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
           "target_ref": "skill:examples.a1_tool_binding/BuildSource"
         }
       }
     },
     {
-      "event_id": "event:run-1:4",
-      "run_id": "run-1",
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:4",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
       "sequence_index": 3,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:examples.a1_tool_binding/FetchSource",
+        "phase": "admission",
+        "status": "accepted",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:2",
+          "target_ref": "tool:examples.a1_tool_binding/FetchSource",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000002:3"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:5",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
+      "sequence_index": 4,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:examples.a1_tool_binding/FetchSource",
+        "phase": "dispatch",
+        "status": "started",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:2",
+          "target_ref": "tool:examples.a1_tool_binding/FetchSource",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000002:3"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:6",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
+      "sequence_index": 5,
+      "observed_at": "2026-01-01T00:00:00.000Z",
+      "kind": "tool_execution_status",
+      "payload": {
+        "tool_ref": "tool:examples.a1_tool_binding/FetchSource",
+        "phase": "post_validation",
+        "status": "accepted",
+        "result_origin": "handler",
+        "trace_context": {
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:2",
+          "target_ref": "tool:examples.a1_tool_binding/FetchSource",
+          "parent_span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
+          "call_event_id": "event:run-00000000-0000-4000-8000-000000000002:3"
+        }
+      }
+    },
+    {
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:7",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
+      "sequence_index": 6,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "call_completed",
       "air_ref": {
@@ -92,17 +147,17 @@
         "target_ref": "tool:examples.a1_tool_binding/FetchSource",
         "caller_ref": "skill:examples.a1_tool_binding/BuildSource",
         "result_binding": "source",
-        "call_started_event_id": "event:run-1:3",
+        "call_started_event_id": "event:run-00000000-0000-4000-8000-000000000002:3",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
           "target_ref": "skill:examples.a1_tool_binding/BuildSource"
         }
       }
     },
     {
-      "event_id": "event:run-1:5",
-      "run_id": "run-1",
-      "sequence_index": 4,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:8",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
+      "sequence_index": 7,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "scope_exited",
       "air_ref": {
@@ -113,15 +168,15 @@
       "payload": {
         "status": "success",
         "trace_context": {
-          "span_id": "span:run-1:0:1",
+          "span_id": "span:run-00000000-0000-4000-8000-000000000002:0:1",
           "target_ref": "skill:examples.a1_tool_binding/BuildSource"
         }
       }
     },
     {
-      "event_id": "event:run-1:6",
-      "run_id": "run-1",
-      "sequence_index": 5,
+      "event_id": "event:run-00000000-0000-4000-8000-000000000002:9",
+      "run_id": "run-00000000-0000-4000-8000-000000000002",
+      "sequence_index": 8,
       "observed_at": "2026-01-01T00:00:00.000Z",
       "kind": "run_completed",
       "payload": {

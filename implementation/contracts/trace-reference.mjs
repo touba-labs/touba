@@ -19,7 +19,7 @@ export function validateTraceReference(value) {
     || typeof value.header_digest !== "string" || !SHA.test(value.header_digest)
     || typeof value.trace_digest !== "string" || !SHA.test(value.trace_digest)
     || !exact(value.terminal, ["event_id", "digest", "status", "reason"])
-    || value.terminal.event_id !== `event:${value.run_id}:${end + 1}`
+    || ![`event:${value.run_id}:${end + 1}`, `event:${value.run_id}:${value.segment_id}:${end + 1}`].includes(value.terminal.event_id)
     || typeof value.terminal.digest !== "string" || !SHA.test(value.terminal.digest)
     || !["success", "stopped", "cancelled", "failure"].includes(value.terminal.status)
     || typeof value.terminal.reason !== "string" || !value.terminal.reason
@@ -59,13 +59,14 @@ export function validateTracePage(page, reference, after, limit = 1000) {
     || !exact(page, ["schema_version", "reference", "header", "events", "next", "done"])
     || page.schema_version !== "touba-trace-page-v1" || !isDeepStrictEqual(page.reference, reference)
     || traceJsonDigest(page.header) !== reference.header_digest || page.header?.run?.run_id !== reference.run_id
+    || (page.header.run.segment_id !== undefined && page.header.run.segment_id !== reference.segment_id)
     || !Array.isArray(page.events) || page.events.length > limit
     || page.next !== after + page.events.length || page.next > end || page.done !== (page.next === end)
     || (!page.done && !page.events.length)) throw new TypeError("InvalidTracePage");
   for (const [index, event] of page.events.entries()) {
     const sequence = after + index + 1;
     if (event?.sequence_index !== sequence || event.run_id !== reference.run_id
-      || event.event_id !== `event:${reference.run_id}:${sequence + 1}`
+      || event.event_id !== `event:${reference.run_id}:${page.header.run.segment_id ? `${page.header.run.segment_id}:` : ""}${sequence + 1}`
       || (sequence === reference.start_index && event.kind !== "run_started")
       || (sequence !== end && event.kind === "run_completed")) throw new TypeError("InvalidTracePage");
     if (sequence === end && (event.kind !== "run_completed" || traceJsonDigest(event) !== reference.terminal.digest

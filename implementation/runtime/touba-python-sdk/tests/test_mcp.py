@@ -69,7 +69,9 @@ process.stdout.write(JSON.stringify(await bridge({{request:{json.dumps(request)}
         for mode, code in [("large","McpPayloadTooLarge"), ("invalid","InvalidMcpJson"),
                            ("error","McpToolExecutionError"), ("image","UnsupportedMcpContent"), ("wait","McpRequestTimeout")]:
             with self.subTest(mode=mode), self.assertRaises(ToubaHandlerError) as raised:
-                asyncio.run(self.bridge()({"mode":mode}, {"limits":{"timeout_ms":150}}))
+                # Only the timeout case races a timer; other cases test parsing
+                # and must allow process startup on a busy native CI host.
+                asyncio.run(self.bridge()({"mode":mode}, {"limits":{"timeout_ms":150 if mode == "wait" else 5000}}))
             self.assertEqual(raised.exception.code, code)
         self.config["server"]["env"] = {"API_TOKEN":{"from_secret_handle":"MCP_CREDENTIAL"}}
         with self.assertRaises(ToubaHandlerError) as raised:

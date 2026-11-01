@@ -1,0 +1,52 @@
+module composition_boundaries
+
+tool Echo
+    description "Returns the supplied text."
+    takes value as Text
+    gives Text
+
+skill Fallback
+    takes value as Text
+    gives Text
+    do
+        give "fallback"
+
+skill Execute
+    takes value as Text
+    gives Text
+    uses Echo
+    uses Fallback
+    do
+        Echo
+            with value as value
+            into answer
+        give answer
+    on failure business
+        fallback Fallback
+
+agent Reader
+    responsibility "Return a response based on the supplied text."
+    takes value as Text
+    gives Text
+    uses Echo
+    callable_by strategy RunAgent
+
+strategy RunAgent
+    takes value as Text
+    gives Text
+    uses Reader
+    do
+        Reader
+            with value as value
+            into answer
+        give answer
+
+strategy Direct
+    takes value as Text
+    gives Text
+    uses Echo
+    do
+        Echo
+            with value as value
+            into answer
+        give answer

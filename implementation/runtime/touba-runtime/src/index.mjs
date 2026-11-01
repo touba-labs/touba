@@ -381,6 +381,10 @@ async function executeCheckpointLifecycle(context, execute, operations) {
   return executeRunLifecycle(context, async () => {
     if (context.humanApprovalResumeCheckpoint) {
       context.humanCheckpointCustody.claim(context.humanApprovalResumeCheckpoint);
+      if (context.humanApprovalResumeCheckpoint.host_contract_digest !== humanHostContractDigest(context)) {
+        throw new RuntimeFailure("host contracts changed since approval was requested; review the continuation again",
+          {}, "HumanApprovalCheckpointIncompatible");
+      }
       // Only a trusted host holding the accepted decision may provide this state.
       // Integrity and the single-consumer reservation precede its use.
       if (context.acceptedHumanApprovalState) {
@@ -391,6 +395,8 @@ async function executeCheckpointLifecycle(context, execute, operations) {
   }, { ...operations, async finalizeOutcome({ status }) {
     const pending = status === "stopped" && Boolean(context.pendingHumanApprovalCheckpoint);
     if (pending) {
+      // The lifecycle appends exactly one terminal event after custody is sealed.
+      context.pendingHumanApprovalCheckpoint.next_sequence_index = context.trace.nextSequenceIndex() + 1;
       context.pendingHumanApprovalCheckpoint = context.humanCheckpointCustody.protect(context.pendingHumanApprovalCheckpoint);
       // The final pause (including its elapsed budget) is authoritative. An
       // observer may previously have persisted an intermediate group snapshot.
@@ -430,9 +436,8 @@ function createExecutionContext(document, entryRef, options = {}) {
     );
   }
   const containsParallel = document.execution_graphs.some(graph => graph.nodes.some(node => node.kind === "parallel_call"));
-  const containsApprovalPolicy = document.execution_graphs.some(graph => graph.nodes.some(node => node.approval_policy));
   const runId = options.runId ?? options.run_id ?? executionResumeCheckpoint?.run_id ?? humanApprovalResumeCheckpoint?.run_id
-    ?? (containsParallel || containsApprovalPolicy ? `run-${randomUUID()}` : "run-1");
+    ?? `run-${randomUUID()}`;
   if (options.tracePureFunctions !== undefined && !["full", "calls"].includes(options.tracePureFunctions)) {
     throw new ToubaRuntimeError("InvalidRuntimeOption", "tracePureFunctions must be full or calls");
   }
@@ -446,10 +451,12 @@ function createExecutionContext(document, entryRef, options = {}) {
     runId,
     normalizeTraceEventObserver(options.traceEventObserver ?? options.trace_event_observer),
     executionResumeCheckpoint?.trace_state.next_sequence_index
+      ?? humanApprovalResumeCheckpoint?.next_sequence_index
       ?? internalCompensation?.trace_state?.next_sequence_index
       ?? 0,
     options.tracePureFunctions ?? "full",
     traceStorage,
+    executionResumeCheckpoint || humanApprovalResumeCheckpoint || internalCompensation ? randomUUID() : null,
   );
   const initialValues = normalizeInputs(options.inputs ?? {});
   const toolBindingManifest = normalizeOptionalToolBindingManifest(options.toolBindingManifest);
@@ -495,7 +502,7 @@ function createExecutionContext(document, entryRef, options = {}) {
       metadata: options.agentDecisionProviderMetadata ?? options.agent_decision_provider_metadata,
     }),
     agentDecisionProviderTimeoutMs: normalizeOptionalPositiveRuntimeInteger(
-      options.agentDecisionProviderTimeoutMs ?? options.agent_decision_provider_timeout_ms ?? null,
+      options.agentDecisionProviderTimeoutMs ?? options.agent_decision_provider_timeout_ms ?? 120000,
       "agentDecisionProviderTimeoutMs",
     ),
     agentDecisionProviderMaxRetries: normalizeOptionalNonNegativeRuntimeInteger(
@@ -645,6 +652,21 @@ function createEffectState() {
   };
 }
 
+function executionCompatibilityEvidence(options) {
+  const explicit = options.executionCompatibility ?? options.execution_compatibility ?? {};
+  if (!explicit || typeof explicit !== "object" || Array.isArray(explicit)) {
+    throw new ToubaRuntimeError("InvalidRuntimeOption", "executionCompatibility must be an object");
+  }
+  return {
+    ...explicit,
+    run_plan: explicit.run_plan ?? explicit.runPlan ?? options.runPlan ?? options.run_plan ?? null,
+    supply_chain_lock: explicit.supply_chain_lock ?? explicit.supplyChainLock
+      ?? options.supplyChainLock ?? options.supply_chain_lock ?? null,
+    hardened_profile: explicit.hardened_profile ?? explicit.hardenedProfile
+      ?? options.hardenedExecutionProfile ?? options.hardened_execution_profile ?? null,
+  };
+}
+
 function createExecutionDurabilityState({
   document,
   entryRef,
@@ -654,6 +676,7 @@ function createExecutionDurabilityState({
   observer,
   resumeCheckpoint,
 }) {
+  const evidence = executionCompatibilityEvidence(options);
   if (!enabled) {
     return {
       enabled: false,
@@ -661,6 +684,7 @@ function createExecutionDurabilityState({
       resumeCheckpoint: null,
       pendingDispatch: null,
       decisionsConsumed: [],
+      compatibilityEvidence: structuredClone(evidence),
     };
   }
   if (observer === null) {
@@ -691,31 +715,6 @@ function createExecutionDurabilityState({
       "effectScopeId must equal operationId for durable execution",
     );
   }
-  const explicitEvidence = options.executionCompatibility ?? options.execution_compatibility ?? {};
-  if (!explicitEvidence || typeof explicitEvidence !== "object" || Array.isArray(explicitEvidence)) {
-    throw new ToubaRuntimeError(
-      "InvalidRuntimeOption",
-      "executionCompatibility must be an object",
-    );
-  }
-  const evidence = {
-    ...explicitEvidence,
-    run_plan: explicitEvidence.run_plan
-      ?? explicitEvidence.runPlan
-      ?? options.runPlan
-      ?? options.run_plan
-      ?? null,
-    supply_chain_lock: explicitEvidence.supply_chain_lock
-      ?? explicitEvidence.supplyChainLock
-      ?? options.supplyChainLock
-      ?? options.supply_chain_lock
-      ?? null,
-    hardened_profile: explicitEvidence.hardened_profile
-      ?? explicitEvidence.hardenedProfile
-      ?? options.hardenedExecutionProfile
-      ?? options.hardened_execution_profile
-      ?? null,
-  };
   return {
     enabled: true,
     observer,
@@ -1555,6 +1554,19 @@ function durableManifestProjection(manifest) {
   });
 }
 
+function humanHostContractDigest(context) {
+  // Only contract metadata and secret handles participate; resolved credential
+  // values are deliberately excluded, so normal credential rotation is allowed.
+  const projection = {
+    manifest: durableManifestProjection(context.toolBindingManifest),
+    resources: durableResourceBindingsProjection(context.resourceBindings),
+    evidence: context.executionDurability.compatibilityEvidence,
+    in_process_tools: Object.keys(context.toolHandlers).sort(),
+  };
+  assertCheckpointHasNoResolvedSecret(projection, context, "host-contract");
+  return canonicalDigest(jsonPortableProjection(projection));
+}
+
 function durableResourceBindingsProjection(resourceBindings) {
   if (!resourceBindings) return null;
   return jsonPortableProjection(Object.fromEntries([...resourceBindings.bindings.entries()]
@@ -2329,6 +2341,7 @@ function createHumanApprovalCheckpoint(context, graph, node, payload) {
   const tracePrefixDigest = `sha256:${context.trace.digest()}`;
   const checkpoint = {
     checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
+    host_contract_digest: humanHostContractDigest(context),
     kind: "human_approval",
     ...(context.approvalRuntime.enabled ? { approval_state: approvalStateSnapshot(context.approvalRuntime) } : {}),
     scope: "graph_stack",
@@ -2399,6 +2412,7 @@ function createAgentHumanReviewCheckpoint(context, agent, decision, stepIndex, o
   const checkpoint = {
     checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION,
     kind: "agent_human_review",
+    host_contract_digest: humanHostContractDigest(context),
     ...(context.approvalRuntime.enabled ? { approval_state: approvalStateSnapshot(context.approvalRuntime) } : {}),
     scope: "agent_decision_loop",
     run_id: context.trace.runId,
@@ -3133,6 +3147,7 @@ function refuseTriggerAfterCancel(context, triggerRef, eventId, sourceKind) {
 }
 
 async function executeTarget(targetRef, context, callArguments = null, options = {}) {
+  assertCompositionCapability(context.activeCallerRef, targetRef, context);
   if ((context.invocationDepth ?? 0) >= Math.min(MAX_INVOCATION_FRAMES, context.parallelRuntime.limits.maxDepth)) {
     throw new RuntimeFailure("invocation depth exceeds the runtime limit", { limit: MAX_INVOCATION_FRAMES }, "InvocationDepthLimitExceeded");
   }
@@ -3523,7 +3538,7 @@ function executeAgentHumanReview(agent, decision, context, stepIndex, observatio
   if (context.parallelBranch) {
     const ref = agentHumanReviewApprovalRef(agent.id, stepIndex);
     return parallelHuman(context, { approval_ref: ref, mode: "agent_review", agent_ref: agent.id,
-      review_prompt: decision.reviewPrompt ?? "Review the requested agent decision.", step_index: stepIndex }, (value, authorityRef) => {
+      review_prompt: decision.reviewPrompt ?? "Review the requested agent decision.", review_reason: decision.reason ?? null, step_index: stepIndex }, (value, authorityRef) => {
       context.humanApprovalDecisions.set(ref, value);
       return executeAgentHumanReviewBody(agent, decision, context, stepIndex, observations, authorityRef);
     });
@@ -3551,7 +3566,9 @@ async function executeAgentHumanReviewBody(agent, decision, context, stepIndex, 
     payload: basePayload,
   });
 
-  const request = approvalRequest(context.approvalRuntime, context.trace.runId, authorityRef ?? approvalRef, null);
+  const reviewContext = { prompt: decision.reviewPrompt ?? "Review the requested agent decision.", reason: decision.reason ?? null };
+  assertCheckpointHasNoResolvedSecret(reviewContext, context, approvalRef);
+  const request = approvalRequest(context.approvalRuntime, context.trace.runId, authorityRef ?? approvalRef, null, reviewContext);
   const humanDecision = await authorizeApprovalDecision(context.approvalRuntime, request,
     context.humanApprovalDecisions.get(approvalRef), { replay: authorityRef !== null });
   if (!humanDecision) {
@@ -4723,15 +4740,18 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
     }),
   });
   const costEvidence = createProviderCostRecorder(request, context, value => assertResultHasNoResolvedSecret(value, context.secretStore));
+  const controller = new AbortController();
   try {
     const response = snapshotInvocationValue(await withAgentDecisionProviderTimeout(
       trackParallelTransport(context, Promise.resolve().then(() => context.agentDecisionProvider.decide(snapshotInvocationValue(request),
-        Object.freeze({ recordProviderCost: costEvidence.recordProviderCost, recordProviderMetadata: costEvidence.recordProviderMetadata })))),
+        Object.freeze({ signal: controller.signal, recordProviderCost: costEvidence.recordProviderCost, recordProviderMetadata: costEvidence.recordProviderMetadata })))),
       context.agentDecisionProviderTimeoutMs,
       request,
+      controller,
+      context,
     ), "AgentDecisionProviderSchemaViolation");
     assertResultHasNoResolvedSecret(response, context.secretStore);
-    const decision = normalizeAgentDecisionProviderResponse(request.agent_ref, response);
+    const decision = { ...normalizeAgentDecisionProviderResponse(request.agent_ref, response), source: "decision_provider" };
     if (decision.action === "cannot_complete" && request.mode !== "finalization") {
       throw new RuntimeFailure(
         `agent decision provider cannot_complete is only valid during finalization for ${request.agent_ref}`,
@@ -4771,20 +4791,19 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
     });
     return decision;
   } catch (error) {
-    if (error instanceof RuntimeFailure) {
+    if (error instanceof RuntimeFailure || error instanceof RuntimeCancelled) {
       throw error;
     }
-    const message = redactSecrets(
-      error instanceof Error ? error.message : String(error),
-      secretValuesForRedaction(context.secretStore),
-    );
+    const message = "provider request failed; inspect the trusted host locally";
     const localDecisionError = error?.name === "ToubaAgentDecisionProviderError"
       && new Set(["ProviderCostBoundUnavailable", "ProviderCostBudgetExceeded", "ProviderBudgetBlocked", "ProviderCostBoundViolated",
         "ProviderBudgetStorageUnsafe", "ProviderBudgetStorageUnavailable", "ProviderRequestAborted", "ProviderCostEvidenceInvalid",
         "InvalidProviderBudgetOptions", "ProviderBudgetMismatch", "ProviderBudgetSettlementConflict",
         "DecisionHistoryBusy", "DecisionHistoryMismatch", "DecisionHistoryClosed",
         "DecisionHistoryUnresolvedCall", "DecisionHistoryLimitExceeded", "ProviderContextWindowExceeded",
-        "DecisionHistorySummaryInvalid", "DecisionHistoryStorageUnsafe", "ProviderContextCountUnavailable"]).has(error.code);
+        "DecisionHistorySummaryInvalid", "DecisionHistoryStorageUnsafe", "ProviderContextCountUnavailable",
+        "PythonHostImportFailed", "PythonHostConfigurationInvalid", "PythonHostCallbackFailed", "PythonHostTlsFailed",
+        "PythonHostTransportFailed", "PythonHostTimeout", "PythonHostPayloadInvalid", "PythonHostUnavailable"]).has(error.code);
     const decisionError = error?.name === "ToubaAgentDecisionProviderError"
       && (new Set(["InvalidModelDecision", "IncompleteModelDecision", "InvalidAgentDecisionRequest",
         "UnsupportedDecisionTypeDescriptor", "DecisionHistoryBusy", "DecisionHistoryMismatch",
@@ -4948,18 +4967,21 @@ function agentProviderErrorCanRetry(error) {
     || error.code === "AgentDecisionProviderTimeout";
 }
 
-function withAgentDecisionProviderTimeout(promise, timeoutMs, request) {
-  if (timeoutMs === null) {
-    return Promise.resolve(promise);
-  }
+function withAgentDecisionProviderTimeout(promise, timeoutMs, request, controller, context) {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) {
-        return;
-      }
+    const cancellation = setInterval(() => {
+      try { assertRunCanContinue(context); }
+      catch (error) { finish(error); }
+    }, 50);
+    function finish(error, value) {
+      if (settled) return;
       settled = true;
-      reject(new RuntimeFailure(
+      clearTimeout(timer); clearInterval(cancellation);
+      if (error) { controller.abort(); reject(error); } else resolve(value);
+    }
+    const timer = setTimeout(() => {
+      finish(new RuntimeFailure(
         `agent decision provider timed out for ${request.agent_ref}`,
         {
           agentRef: request.agent_ref,
@@ -4972,22 +4994,8 @@ function withAgentDecisionProviderTimeout(promise, timeoutMs, request) {
     }, timeoutMs);
 
     Promise.resolve(promise).then(
-      (value) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timer);
-        reject(error);
-      },
+      (value) => finish(null, value),
+      (error) => finish(error),
     );
   });
 }
@@ -5220,11 +5228,29 @@ async function executeTool(tool, context) {
 }
 
 async function executeToolBody(tool, context) {
+  const previous = context.toolAttempt;
+  const attempt = { toolRef: tool.id, phase: "admission", restored: false };
+  context.toolAttempt = attempt;
+  try {
+    const value = await executeToolBodyUnchecked(tool, context);
+    context.trace.push("tool_execution_status", { payload: { tool_ref: tool.id,
+      phase: "post_validation", status: "accepted", result_origin: attempt.restored ? "journal" : "handler" } });
+    return value;
+  } catch (error) {
+    if (error instanceof RuntimeFailure && attempt.effectState) error.details = { ...error.details, state: attempt.effectState };
+    context.trace.push("tool_execution_status", { payload: { tool_ref: tool.id,
+      phase: attempt.phase, status: "refused", runtime_error_code: error instanceof RuntimeFailure ? error.code : "ToolHandlerFailed",
+      effect_status: attempt.effectState ?? (attempt.phase === "admission" ? "not_dispatched" : attempt.restored ? "previously_applied" : "requires_effect_evidence") } });
+    throw error;
+  } finally { context.toolAttempt = previous; }
+}
+
+async function executeToolBodyUnchecked(tool, context) {
   const toolRef = tool.id;
   const binding = validateToolBinding(tool, context);
   if (binding) {
     context.trace.push("tool_binding_authorized", {
-      payload: toolBindingTracePayload(tool, binding, context),
+      payload: { ...toolBindingTracePayload(tool, binding, context), scope: "binding_only" },
     });
   }
   const toolArguments = argumentObject(tool.signature, context);
@@ -5234,6 +5260,7 @@ async function executeToolBody(tool, context) {
   const handler = context.toolHandlers[toolRef];
   const resourceBindings = resourceBindingsForTool(tool, context);
   if (binding?.effectContract?.kind === "external_write") {
+    context.toolAttempt.effectful = true;
     if (handler) {
       throw new RuntimeFailure(
         `external write binding cannot use an in-process tool handler ${toolRef}`,
@@ -5285,6 +5312,7 @@ async function executeToolBody(tool, context) {
           : undefined,
       });
       const value = handlerResponse.value;
+      context.toolAttempt.phase = "post_validation";
       assertResultHasNoResolvedSecret(value, context.secretStore);
       observeToolMemoryMetadata(tool, handlerResponse.memoryMetadata, context);
       validateToolOutputPayload(tool, value, context);
@@ -5295,13 +5323,15 @@ async function executeToolBody(tool, context) {
   }
   try {
     recordExternalToolDispatch(context);
-    const value = snapshotInvocationValue(await handler(snapshotInvocationValue({
+    const response = await handler(snapshotInvocationValue({
       toolRef,
       arguments: toolArguments,
       values: Object.fromEntries(context.values),
       binding: binding ? bindingPublicView(binding) : undefined,
       resourceBindings,
-    })), "ToolOutputSchemaViolation");
+    }));
+    context.toolAttempt.phase = "post_validation";
+    const value = snapshotInvocationValue(response, "ToolOutputSchemaViolation");
     assertResultHasNoResolvedSecret(value, context.secretStore);
     validateToolOutputPayload(tool, value, context);
     validateToolPayloadConstraints("output", tool, value, binding?.payloadConstraints?.output ?? []);
@@ -5413,6 +5443,10 @@ async function executeEffectfulProcessTool(
       });
     }
     if (journalEntry.state === "applied") {
+      context.toolAttempt.effectState = "applied";
+      context.toolAttempt.restored = true;
+      context.toolAttempt.phase = "post_validation";
+      context.trace.push("tool_execution_status", { payload: { tool_ref: tool.id, phase: "journal_restore", status: "applied", effect_id: effectId } });
       return restoreAppliedEffectResult(tool, binding, journalEntry, context);
     }
     assertEffectCanRetry(journalEntry);
@@ -5575,6 +5609,7 @@ async function executeEffectfulProcessTool(
       throw error;
     }
     const receipt = effectReceiptFromRuntimeError(error, effect, context);
+    context.toolAttempt.effectState = receipt?.outcome ?? "unknown";
     if (receipt) {
       await writeEffectJournalEntry(effectJournal, {
         ...preparedEntry,
@@ -5603,11 +5638,13 @@ async function executeEffectfulProcessTool(
     throw error;
   }
 
+  context.toolAttempt.phase = "post_validation";
   const receipt = validateEffectReceipt(handlerResponse.effectReceipt, {
     effectId,
     requestDigest,
     secretValues: secretValuesForRedaction(context.secretStore),
   });
+  context.toolAttempt.effectState = receipt.outcome;
   if (receipt.outcome === "applied") {
     try {
       validateToolOutputPayload(tool, handlerResponse.value, context);
@@ -5894,6 +5931,12 @@ function recordExternalToolDispatch(context) {
     context.parallelOperation.dispatched = true;
   }
   context.effectState.externalToolDispatches += 1;
+  if (context.toolAttempt) {
+    context.trace.push("tool_execution_status", { payload: { tool_ref: context.toolAttempt.toolRef, phase: "admission", status: "accepted" } });
+    if (context.toolAttempt.effectful) context.toolAttempt.effectState = "unknown";
+    context.toolAttempt.phase = "dispatch";
+    context.trace.push("tool_execution_status", { payload: { tool_ref: context.toolAttempt.toolRef, phase: "dispatch", status: "started" } });
+  }
 }
 
 async function reserveDurableToolDispatch(tool, binding, context, effect = null) {
@@ -6952,6 +6995,16 @@ function ownerHasMemoryScope(memoryAccess, context, candidate) {
   );
 }
 
+function assertCompositionCapability(ownerRef, targetRef, context) {
+  if (!/^(skill|strategy):/.test(ownerRef ?? "") || !/^(tool|skill|agent|strategy):/.test(targetRef)) return;
+  const owner = definitionForOwnerRef(context, ownerRef);
+  if (!Array.isArray(owner?.uses) || !owner.uses.includes(targetRef)) {
+    throw new RuntimeFailure("composition target is absent from the declared uses", {
+      callerRef: ownerRef, targetRef, reason: "capability_not_declared_in_uses",
+    }, "CompositionCapabilityNotAllowed");
+  }
+}
+
 function definitionForOwnerRef(context, ownerRef) {
   if (typeof ownerRef !== "string") {
     return null;
@@ -7328,6 +7381,10 @@ function normalizeManifestEffectContract(toolRef, binding, manifestVersion) {
     );
   }
   const contract = binding.effect_contract;
+  if (contract === null) {
+    throw new ToubaRuntimeError("ToolBindingReviewRequired",
+      "draft binding requires an explicit effect_contract review; run touba prepare in the project and review the required configuration", { toolRef });
+  }
   if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
     throw new ToubaRuntimeError(
       "InvalidToolBindingManifest",
@@ -8366,6 +8423,7 @@ function parallelCheckpoint(context, graph, node, state) {
   const first = pending[0];
   const checkpoint = {
     checkpoint_schema_version: HUMAN_APPROVAL_CHECKPOINT_VERSION, kind: "parallel_group", scope: "parallel_group",
+    host_contract_digest: humanHostContractDigest(context),
     ...(context.approvalRuntime.enabled ? { approval_state: approvalStateSnapshot(context.approvalRuntime) } : {}),
     run_id: context.trace.runId, entry_ref: context.entryRef, module_ref: context.trace.airDocument.module.id,
     air_schema_version: context.trace.airDocument.air_schema_version, air_digest: airDocumentDigest(context.trace.airDocument),
@@ -8480,6 +8538,7 @@ async function resumeParallelCheckpoint(document, entryRef, context, checkpoint)
 }
 
 async function executeParallelNode(graph, node, context, restored = null) {
+  assertCompositionCapability(graph.owner_ref, node.target_ref, context);
   const runtime = context.parallelRuntime;
   const definition = definitionForCapability(node.target_ref, context);
   if (!definition?.signature?.output_type || !["skill", "strategy"].includes(graph.owner_ref.split(":")[0])) {
@@ -8592,6 +8651,7 @@ async function executeParallelNode(graph, node, context, restored = null) {
 
 async function executeFallbackNode(graph, node, context) {
   const targetRef = requiredTarget(node);
+  assertCompositionCapability(graph.owner_ref, targetRef, context);
   const frame = callFrameForNode(graph, node, targetRef, context);
   const caller = context.activeCallerRef;
   context.callStack.push(frame);
@@ -8675,7 +8735,9 @@ async function executeHumanApprovalNodeBody(graph, node, context, authorityRef =
     payload: basePayload,
   });
 
-  const request = approvalRequest(context.approvalRuntime, context.trace.runId, authorityRef ?? approvalRef, node.approval_policy);
+  const reviewContext = { refs: contextRefs, values: contextRefs.map(ref => resolveHandle(ref, context, graph)) };
+  assertCheckpointHasNoResolvedSecret(reviewContext, context, approvalRef);
+  const request = approvalRequest(context.approvalRuntime, context.trace.runId, authorityRef ?? approvalRef, node.approval_policy, reviewContext);
   const decision = await authorizeApprovalDecision(context.approvalRuntime, request,
     context.humanApprovalDecisions.get(approvalRef), { replay: authorityRef !== null || context.humanApprovalResumeCheckpoint?.approval_ref === approvalRef });
   if (!decision) {
@@ -9055,6 +9117,7 @@ function traceUserInteractionFailure(graph, node, context, error) {
 
 async function executeCallNode(graph, node, context) {
   const targetRef = requiredTarget(node);
+  assertCompositionCapability(graph.owner_ref, targetRef, context);
   if (!context.executionDurability.enabled) {
     assertRunCanDispatch(context, { targetRef, airRef: airRefForNode(graph, node) });
     consumeStepBudget(context, {
@@ -9141,7 +9204,11 @@ function handleCallFailure(graph, node, targetRef, context, error) {
   }
   const declaredFailurePath = failurePathForNode(graph, node.id);
   const failureFamily = runtimeFailureFamily(error);
-  const failurePath = declaredFailurePath?.failure_family === failureFamily
+  // Once an external effect is uncertain or applied without a usable result,
+  // recovery must reconcile the journal, never report a fallback success.
+  const reconciliationRequired = ["EffectOutcomeUnknown", "EffectReconciliationRequired", "EffectResultUnavailable", "EffectRequestConflict"].includes(error.code)
+    || ["unknown", "applied"].includes(error.details?.state);
+  const failurePath = !reconciliationRequired && declaredFailurePath?.failure_family === failureFamily
     ? declaredFailurePath
     : undefined;
   context.trace.push("failure_detected", {

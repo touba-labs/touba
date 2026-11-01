@@ -46,6 +46,7 @@ tool Echo
     gives Account
 
 strategy Check
+    uses Echo
     takes account as Account
     gives Account
     do

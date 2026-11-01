@@ -1676,3 +1676,25 @@ des rôles fournis par le client. Voir le [tutoriel exécutable](../tutoriels/ap
 Une échéance source atteinte permet une reprise sans décision ; utiliser un
 chemin distinct `--human-checkpoint-out` pour conserver la nouvelle attente
 d'escalade.
+
+## Génération par SDK et journaux directs
+
+`touba manifest generate` et `touba handler stub` acceptent
+`--language javascript|python`. Le manifest reprend la langue de
+`touba.project.json` dans un projet. Hors projet, le défaut est JavaScript.
+
+Pour une exécution directe avec écriture externe :
+
+```sh
+touba run program.air.json --manifest touba.manifest.json --effect-journal payment.effect-journal.sqlite
+```
+
+Le suffixe `.effect-journal.sqlite` identifie le journal local. Le SDK expose
+`effectJournal` en JavaScript et `effect_journal` en Python.
+Conservez-le avec le checkpoint et la base de garde des approbations lors des
+reprises et sauvegardes. Un journal neuf ne remplace pas celui d'une opération
+déjà commencée.
+
+Le code de sortie `1` couvre un refus d'admission ou une erreur d'exécution ;
+l'enveloppe précise le code et l'étape. Le code `4` couvre un arrêt explicite
+ou un rejet humain. Lisez `status` et `reason` pour les distinguer.

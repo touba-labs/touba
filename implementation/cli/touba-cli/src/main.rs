@@ -1,6 +1,6 @@
 use std::env;
 use std::process;
-use touba_compiler::{compile_module_sources, compile_project_sources, serialize_air_to_json};
+use touba_compiler::{compile_module_sources, compile_project_sources, serialize_air_to_json, capability_description_warnings};
 
 mod source_inputs;
 
@@ -24,6 +24,7 @@ fn main() {
         result.document =
             Some(serde_json::from_value(value).expect("source identities preserve AIR shape"));
     }
+    let warnings = result.document.as_ref().map(capability_description_warnings).unwrap_or_default();
     if inputs.json {
         let diag_json =
             serde_json::to_value(&result.diagnostics).unwrap_or(serde_json::Value::Null);
@@ -35,6 +36,7 @@ fn main() {
         let envelope = serde_json::json!({
             "ok": result.document.is_some(),
             "diagnostics": diag_json,
+            "warnings": warnings,
             "air": air_json,
             // Tooling-only location hint; never embedded in AIR or runtime traces.
             "source_root": inputs.source_root,
@@ -43,6 +45,12 @@ fn main() {
         process::exit(if result.document.is_some() { 0 } else { 1 });
     }
 
+    for warning in &warnings {
+        if let Some(source) = &warning.source_ref {
+            eprintln!("{}:{}:{}: warning {:?}: {}", source.source_id, source.start_line + 1,
+                source.start_column + 1, warning.code, warning.message);
+        }
+    }
     for diag in &result.diagnostics {
         if let Some(source) = &diag.source_ref {
             eprintln!(

@@ -865,7 +865,9 @@ test("createAiSdkDecisionProvider can answer directly from orientation input", a
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].model, "test-provider/test-model");
-  assert.equal(calls[0].maxOutputTokens, 700);
+  assert.equal(calls[0].maxOutputTokens, 4096);
+  assert.equal(calls[0].maxRetries, 0);
+  assert.ok(calls[0].abortSignal instanceof AbortSignal);
 	  assert.equal(jsonSchemaOf(calls[0]).title, "touba_agent_orientation_decision");
 	  assert.deepEqual(jsonSchemaOf(calls[0]).properties.decision.anyOf.map(branch => branch.properties.action.enum[0]), ["answer_directly", "request_capabilities"]);
 	  assert.match(calls[0].system, /human review, approval, validation, or judgment/);

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonicalDigest } from "@touba/runtime";
 import { validateTraceAuditArtifacts } from "../../touba-audit/src/audit.mjs";
-import { NATIVE_TRACE_SCHEMA, NATIVE_TRACE_LIMITS, readNativeTraceIndex, nativeTraceExportChunks } from "./native-trace-journal.mjs";
+import { NATIVE_TRACE_SCHEMA, NATIVE_TRACE_LIMITS, readNativeTraceIndex, nativeTraceExportChunks, logicalRunDigest } from "./native-trace-journal.mjs";
 export { NATIVE_TRACE_SCHEMA, NATIVE_TRACE_LIMITS, withNativeTrace, readNativeTraceIndex, readNativeTracePage, nativeTraceExportChunks } from "./native-trace-journal.mjs";
 const PHASES = ["initial", "human_resume", "execution_resume", "human_terminal"];
 const STATES = ["recording", "paused", "terminal", "unavailable"];
@@ -31,7 +31,7 @@ export function validateNativeTraceExport(value) {
     if (["paused", "terminal"].includes(segment.state)) {
       if (segment.reason !== null) fail("ToubaServeNativeTraceStoreInvalid");
       auditTrace(segment.trace, value.run_id);
-      const current = canonicalDigest(segment.trace.run);
+      const current = logicalRunDigest(segment.trace.run);
       if (identity !== null && current !== identity) fail("ToubaServeNativeTraceStoreInvalid");
       identity = current;
     } else if (segment.trace !== null || segment.reason === null

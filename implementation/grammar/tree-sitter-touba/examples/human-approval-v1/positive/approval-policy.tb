@@ -57,6 +57,7 @@ skill ReviewItem
         give dossier
 
 strategy ReviewBatch
+    uses ReviewItem
     takes dossiers as List of Text
     gives List of Text
     do

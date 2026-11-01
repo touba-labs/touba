@@ -3,6 +3,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -44,6 +45,68 @@ def generated(_options):
 
 
 class ProviderTests(unittest.TestCase):
+    def test_chat_http_both_interfaces_history_and_invalid_responses(self):
+        received = []
+        response_mode = ["valid"]
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                received.append((self.path, body))
+                native = any(tool.get("function", {}).get("name") == "touba_finish" for tool in body.get("tools", []))
+                message = {"role": "assistant", "content": json.dumps(generated({})["object"])}
+                if response_mode[0] == "history":
+                    message["content"] = json.dumps({"decision": {"action": "request_capabilities", "reason": "Read available contracts."}})
+                if native:
+                    message.update(content=None, tool_calls=[{"id": "call_local", "type": "function", "function": {
+                        "name": "touba_finish", "arguments": json.dumps({"reason": "Complete.", "result": "done"})}}])
+                if response_mode[0] in ("truncated", "invalid"):
+                    message = {"role": "assistant", "content": '{"decision":'}
+                result = {"id": "chatcmpl_local", "object": "chat.completion", "created": 1, "model": "fixture-model",
+                    "choices": [{"index": 0, "message": message, "finish_reason": "length" if response_mode[0] == "truncated" else "tool_calls" if native else "stop"}],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}}
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(json.dumps(result).encode())
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            for interface in ("structured", "native"):
+                with self.subTest(interface=interface):
+                    provider = create_ollama_decision_provider(model="fixture-model", transport="chat", decision_interface=interface,
+                        base_url=f"http://127.0.0.1:{server.server_port}/v1", timeout_ms=5000)
+                    try:
+                        req = request(interface); req.update(mode="capabilities", capabilities=[])
+                        self.assertEqual(asyncio.run(provider(req))["result"], "done")
+                    finally:
+                        provider.close()
+            provider = create_ollama_decision_provider(model="fixture-model", transport="chat",
+                base_url=f"http://127.0.0.1:{server.server_port}/v1", timeout_ms=5000)
+            try:
+                response_mode[0] = "history"
+                req = request("chat-history")
+                for step in range(2):
+                    req["step_index"] = step
+                    self.assertEqual(asyncio.run(provider(req))["action"], "request_capabilities")
+                self.assertTrue(any(message["role"] == "assistant" for message in received[-1][1]["messages"]))
+            finally:
+                provider.close()
+            for mode in ("truncated", "invalid"):
+                response_mode[0] = mode
+                before = len(received)
+                provider = create_ollama_decision_provider(model="fixture-model", transport="chat", history=False,
+                    base_url=f"http://127.0.0.1:{server.server_port}/v1", timeout_ms=5000)
+                try:
+                    with self.assertRaises(ToubaAgentDecisionProviderError):
+                        asyncio.run(provider(request(mode)))
+                    self.assertEqual(len(received), before + 1, "No hidden retry")
+                finally:
+                    provider.close()
+            self.assertTrue(all(path == "/v1/chat/completions" for path, _ in received))
+            self.assertTrue(all(body.get("max_tokens", body.get("max_completion_tokens")) == 4096 for _, body in received))
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
     def test_bounded_diagnostics_survive_backend_and_host_runtime_bridges(self):
         def incomplete(options):
             return {"finishReason": "length", "object": {}}
@@ -288,6 +351,34 @@ decide_agent_capability = create_ai_sdk_decision_provider(model="fixture", gener
                            agent_decision_provider_initial_mode="capabilities")
             self.assertIn("trace", raised.exception.details)
             self.assertNotEqual(raised.exception.code, "DecisionProviderInvalid")
+
+    def test_host_errors_are_classified_without_private_content(self):
+        for source, expected in [
+            ('import missing_private_dependency\n', 'PythonHostImportFailed'),
+            ('def decide_agent_capability(request):\n    raise ValueError("private-client@example.test")\n', 'PythonHostCallbackFailed'),
+            ('import ssl\ndef decide_agent_capability(request):\n    raise ssl.SSLError("private-client@example.test")\n', 'PythonHostTlsFailed'),
+            ('def decide_agent_capability(request):\n    raise ConnectionError("private-client@example.test")\n', 'PythonHostTransportFailed'),
+            ('def decide_agent_capability(request):\n    raise TimeoutError("private-client@example.test")\n', 'PythonHostTimeout'),
+        ]:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory(prefix="touba-py-diagnostic-") as folder:
+                root = Path(folder)
+                (root / "main.tb").write_text(SOURCE)
+                (root / "provider.py").write_text(source)
+                diagnostic = root / "diagnostic.jsonl"
+                env = {"TOUBA_HOST_PYTHON": sys.executable,
+                       "TOUBA_PYTHON_HOST_DIAGNOSTICS": str(diagnostic)}
+                engine = ToubaEngine(project_root=root, command=os.environ["TOUBA_TEST_NODE"],
+                    command_args=[os.environ["TOUBA_TEST_CLI"]], env=env)
+                with self.assertRaises(ToubaEngineError) as raised:
+                    engine.run(source="main.tb", entry_ref="strategy:python.providers/Run", agent_decision_provider="provider.py", timeout=20)
+                self.assertEqual(raised.exception.code, expected)
+                self.assertNotIn("private-client@example.test", json.dumps(raised.exception.details))
+                self.assertNotIn("missing_private_dependency", json.dumps(raised.exception.details))
+                records = [json.loads(line) for line in diagnostic.read_text().splitlines()]
+                self.assertTrue(records)
+                self.assertTrue(all(set(row) <= {"kind", "error_class", "handler_arg_index", "line", "column"} for row in records))
+                if os.name != "nt":
+                    self.assertEqual(diagnostic.stat().st_mode & 0o777, 0o600)
 
     def test_http_provider_native_and_structured_share_the_exact_ledger(self):
         received = []

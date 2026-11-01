@@ -117,7 +117,8 @@ function publishResult(uri, result, sourceUris, sourceText) {
   } else {
     airCache.delete(uri);
   }
-  const diagnostics = (result.diagnostics ?? []).map((diagnostic) => diagnosticForDocument(diagnostic, uri, sourceUris, sourceText));
+  const diagnostics = [...(result.diagnostics ?? []), ...(result.warnings ?? []).map(w => ({ ...w, severity: "warning" }))]
+    .map((diagnostic) => diagnosticForDocument(diagnostic, uri, sourceUris, sourceText));
   connection.sendDiagnostics({ uri, diagnostics });
 }
 
@@ -188,6 +189,10 @@ export function runToubaCompileJson(sourcePath, options = {}) {
 
 export function parseCompilerEnvelope(raw) {
   const result = JSON.parse(raw);
+  if (result?.warnings !== undefined && (!Array.isArray(result.warnings)
+    || result.warnings.some(d => !d || typeof d.code !== "string" || typeof d.message !== "string"))) {
+    throw new Error("Invalid Touba compiler warnings");
+  }
   if (!result || typeof result.ok !== "boolean" || !Array.isArray(result.diagnostics)
     || result.diagnostics.some(d => !d || typeof d.code !== "string" || typeof d.message !== "string")
     || (result.ok ? result.diagnostics.length !== 0 || !result.air
@@ -239,7 +244,7 @@ export function toLspDiagnostic(d, sourceText) {
     : { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
   return {
     range,
-    severity: DiagnosticSeverity.Error,
+    severity: d.severity === "warning" ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
     source: "touba",
     message: d.message,
     code: d.code,

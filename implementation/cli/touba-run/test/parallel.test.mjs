@@ -43,6 +43,7 @@ tool Diagnose
 skill Review
     takes request as Text
     gives Text
+    uses Diagnose
     do
         Diagnose
             with request as request
@@ -54,6 +55,7 @@ skill Review
 strategy Run
     takes incidents as List of Text
     gives List of Text
+    uses Review
     do
         parallel Review
             each incident in incidents
@@ -233,6 +235,7 @@ tool Read
 strategy Child
     takes values as List of Text
     gives List of Text
+    uses Read
     do
         parallel Read
             each value in values
@@ -244,6 +247,7 @@ strategy Child
 strategy Run
     takes batches as List of List of Text
     gives List of List of Text
+    uses Child
     do
         parallel Child
             each batch in batches
@@ -441,6 +445,7 @@ test("nested parallel human checkpoints preserve the whole tree without duplicat
   const document = compile(approvalSource + `strategy Nested
     takes batches as List of List of Text
     gives List of List of Text
+    uses Run
     do
         parallel Run
             each batch in batches
@@ -470,6 +475,7 @@ test("bounded agent revision cycles can run as independent native branches", asy
   const document = compile(source + `\nstrategy Batch
     takes drafts as List of Draft
     gives List of Draft
+    uses Iterate
     do
         parallel Iterate
             each draft in drafts
@@ -530,7 +536,7 @@ writeFileSync('result.json', JSON.stringify(result));`);
 
 
 test("a resumed group follows its declared handler recovery edge", async () => {
-  const document = compile(approvalSource.replace("strategy Run", "skill Run").replace("        Diagnose\n            with request as request\n            into result\n        human.approve\n            with context as result\n            into approval\n",
+  const document = compile(approvalSource.replace("strategy Run", "skill Run").replace("    uses Review", "    uses Review\n    uses Recover").replace("        Diagnose\n            with request as request\n            into result\n        human.approve\n            with context as result\n            into approval\n",
     "        human.approve\n            with context as request\n            into approval\n        Diagnose\n            with request as request\n            into result\n")
     + `    on failure handler
         fallback Recover

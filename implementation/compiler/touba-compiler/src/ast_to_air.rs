@@ -307,6 +307,28 @@ impl AirLowerer {
             }
         }
 
+        // Check resolved identities in every branch, loop, parallel call and
+        // fallback, including imports. Pure functions need no authority.
+        for graph in &execution_graphs {
+            let uses = definitions.skills.iter()
+                .find(|owner| owner.id == graph.owner_ref).map(|owner| &owner.uses)
+                .or_else(|| definitions.strategies.iter()
+                    .find(|owner| owner.id == graph.owner_ref).map(|owner| &owner.uses));
+            if let Some(uses) = uses {
+                for node in &graph.nodes {
+                    if let Some(target) = &node.target_ref {
+                        if ["tool:", "skill:", "agent:", "strategy:"].iter()
+                            .any(|prefix| target.starts_with(prefix)) && !uses.contains(target) {
+                            self.diagnostics.push(AirDiagnostic::new(
+                                AirDiagnosticCode::CapabilityNotDeclaredInUses,
+                                format!("`{target}` is not declared in `{}` uses", graph.owner_ref),
+                                Some(node.source_ref.clone()),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         let has_errors = !self.diagnostics.is_empty();
         AirBuildResult {
             document: if has_errors {
@@ -1640,7 +1662,7 @@ impl AirLowerer {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::UnsupportedTriggerTargetKind,
                 format!(
-                    "trigger target kind `{}` is outside tranche 1; expected `strategy`",
+                    "trigger target kind `{}` is unsupported; expected `strategy`",
                     target.kind
                 ),
                 Some(target.source_ref.clone()),
