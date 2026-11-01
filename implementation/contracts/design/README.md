@@ -1,7 +1,7 @@
 # Touba Design Tokens
 
 This directory contains the versioned visual token contract shared by Touba
-documentation site, Touba Hub and the Touba IDE extension.
+documentation site, Cloud, client, Explorer, Traces and IDE surfaces.
 
 The source contract is `touba-design-tokens-v1.json`. The CSS file is a direct
 web export for Docusaurus, Tauri, and other web-based surfaces. Flutter and
@@ -9,11 +9,7 @@ native clients should derive their constants from the JSON contract.
 
 Current consumers:
 
-- `documentation-site` keeps a generated CSS snapshot at
- `src/css/touba-design-tokens-v1.css` and validates it against this contract
- when the full workspace is available.
-- Touba IDE uses the same brand token family for icons and maps semantic roles
- to VS Code light and dark themes.
+## Interface requirements
 
 ## Themes
 
@@ -36,3 +32,5 @@ pnpm test:design-tokens
 
 The validator checks schema identity, required palette tokens, light/dark
 semantic contexts, hex color format, and CSS coverage.
+It does not verify layout, keyboard behavior, text contrast in a composed screen
+or real browser responsiveness; run the affected product's UI recipe as well.

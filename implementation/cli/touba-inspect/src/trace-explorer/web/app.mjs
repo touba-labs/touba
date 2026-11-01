@@ -1,4 +1,4 @@
-import { label, categories, shortRef, observedInterval, graphLayout } from './view.mjs';
+import { label, categories, shortRef, observedInterval, graphLayout, translations } from './view.mjs';
 const $ = id => document.getElementById(id), ns = 'http://www.w3.org/2000/svg';
 const element = (tag, text, cls) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (cls) node.className = cls; return node; };
 function svgNode(tag, attributes = {}, text) { const node = document.createElementNS(ns, tag); for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value)); if (text !== undefined) node.textContent = text; return node; }
@@ -35,6 +35,11 @@ const pending = new Map(); let requestId = 0;
 if (vscode) addEventListener('message', event => {
   if (embeddedHost && (event.source !== parent || event.origin !== location.origin)) return;
   const data = event.data;
+  // The host can open one execution, for example from a test result.
+  if (embeddedHost && data?.type === 'run' && typeof data.runId === 'string' && data.runId.length <= 4096) {
+    $('run-filter').value = data.runId; void list();
+    return;
+  }
   if (embeddedHost && data?.type === 'preferences') {
     if (['en','fr'].includes(data.lang)) { language = data.lang; translate(); }
     if (['light','dark'].includes(data.theme)) applyTheme(data.theme);
@@ -85,7 +90,8 @@ function renderStatus() {
 }
 function setStatus(kind, key, detail = '') { status = { kind, key, detail }; renderStatus(); }
 function notify(key) { setStatus('ready', key); }
-function fail(error) { setStatus('error', 'errorPrefix', String(error.message).slice(0, 500)); }
+// Known reader codes get a sentence; anything else keeps its code, bounded.
+function fail(error) { const code = String(error.message); setStatus('error', 'errorPrefix', (translations[language]?.[code] ?? translations.en[code] ?? code).slice(0, 500)); }
 function showReady() {
   if (!state) setStatus(runs.length ? 'ready' : 'idle', runs.length ? 'ready' : 'noRuns');
   else setStatus(state.closed ? 'ready' : 'stale', state.closed ? 'ready' : 'frozen');

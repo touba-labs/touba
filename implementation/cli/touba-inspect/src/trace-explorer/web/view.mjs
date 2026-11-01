@@ -26,6 +26,7 @@ Object.assign(translations.fr, {
   provider_call_count:'Appels fournisseur', tool_call_count:'Appels d’outils', resumed_from_checkpoint:'Reprise depuis un point de contrôle', budget_limit_checked:'Limite de budget vérifiée',
   shortcutsHint:'Raccourcis : [ exécutions · ] détails · \\ événements seuls · ↑ et ↓ parcourir · 0 cadrer · + et − zoom · Échap désélectionne',
   display:'Affichage', detailLevel:'Niveau de détail', essential:'Essentiel', complete:'Complet', panels:'Panneaux', runsShort:'Exécutions', detailsShort:'Détails', technicalShort:'Technique',
+  ToubaServeTraceExplorerBusy:'trop de lectures de traces sont ouvertes sur ce serveur. Réessayez dans quelques minutes.',
   language:'Langue', filtersShort:'Filtres', capability_refs:'Ressources proposées', allowed_refs:'Ressources autorisées', themeDark:'Passer au thème sombre', themeLight:'Passer au thème clair', runsCount:'exécutions', runsCountOne:'exécution', matchedOne:'événement correspondant', openFlag:'ouvert',
   hideRuns:'Masquer les exécutions  [', showRuns:'Afficher les exécutions  [', hideDetails:'Masquer les détails  ]', showDetails:'Afficher les détails  ]',
   focusMode:'Événements seuls  \\', exitFocus:'Afficher les panneaux  \\', eventDetails:'Détails de l’événement', context:'Contexte', integrity:'Intégrité',
@@ -37,6 +38,7 @@ Object.assign(translations.en, { findRun:'Search', stopped:'Stopped', cancelled:
 Object.assign(translations.en, {
   shortcutsHint:'Shortcuts: [ executions · ] details · \\ events only · ↑ and ↓ move · 0 fit · + and − zoom · Esc clears the selection',
   display:'Display', detailLevel:'Detail level', essential:'Essential', complete:'Complete', panels:'Panels', runsShort:'Executions', detailsShort:'Details', technicalShort:'Technical',
+  ToubaServeTraceExplorerBusy:'too many trace readings are open on this server. Try again in a few minutes.',
   language:'Language', filtersShort:'Filters', capability_refs:'Offered capabilities', allowed_refs:'Allowed references', themeDark:'Switch to dark theme', themeLight:'Switch to light theme', runsCount:'executions', runsCountOne:'execution', matchedOne:'matching event', openFlag:'open',
   hideRuns:'Hide executions  [', showRuns:'Show executions  [', hideDetails:'Hide details  ]', showDetails:'Show details  ]',
   focusMode:'Events only  \\', exitFocus:'Show panels  \\', eventDetails:'Event details', context:'Context', integrity:'Integrity',

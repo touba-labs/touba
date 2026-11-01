@@ -486,6 +486,8 @@ for (const group of document.querySelectorAll('[data-pref]')) for (const b of gr
   const pref = group.dataset.pref;
   if (pref === 'panels') { setPanel(b.dataset.value, !prefs[b.dataset.value]); return; }
   prefs[pref] = b.dataset.value; if (!['labels','level'].includes(pref)) box = null; applyPanels(); savePrefs(); render();
+  // An embedding host shares one detail level across its pages.
+  if (pref === 'level') embeddedHost?.postMessage({ type:'preferences', level:prefs.level });
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !$('display-panel').hidden) { toggleDisplay(false); $('display-toggle').focus(); return; }
@@ -514,6 +516,7 @@ if (vscode) {
     if (message?.type==='preferences' && embeddedHost) {
       if (['fr','en'].includes(message.lang)) { lang=message.lang; $('language').value=lang; translate(); }
       if (['light','dark'].includes(message.theme)) applyTheme(message.theme);
+      if (['essential','complete'].includes(message.level) && message.level !== prefs.level) { prefs.level = message.level; applyPanels(); render(); }
     }
     if (message?.type==='state') receive(message.state);
     if (message?.type==='select') revealNode(message.id);
