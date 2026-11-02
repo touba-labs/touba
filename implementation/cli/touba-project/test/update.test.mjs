@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { c, Header } from 'tar';
 import { gzipSync } from 'node:zlib';
 import { digest, chooseRelease, validatePolicy, verifyCatalogue } from '../src/update/protocol.mjs';
@@ -69,6 +69,15 @@ async function fixture(t) {
   };
   return { root, prefix, active: join(prefix, 'touba-toolchain'), old, next, archive, bytes, signed, checked, policy, privateKey, dependencies, calls, validations };
 }
+
+test('native installation receipt identifies the physical prefix', async t => {
+  const f = await fixture(t);
+  const metadata = readJson(join(f.active, 'TOOLCHAIN.json'));
+  const receipt = readJson(join(f.prefix, 'INSTALLATION.json'));
+  const paths = { receipt: realpathSync(receipt.prefix), parent: dirname(realpathSync(f.active)),
+    receiptPlatform: receipt.platform, payloadPlatform: metadata.platform, platform };
+  assert.doesNotThrow(() => installation(f.active), JSON.stringify(paths));
+});
 
 test('signature, expiry, origin, bounds, duplicate targets and catalogue rollback are checked', () => {
   const f = basic();

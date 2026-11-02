@@ -42,9 +42,12 @@ test('native CLI: TLS check, real update, compiler/doctor and offline rollback',
   packageLocalToolchain({ toolchainRoot: initial, buildCompiler: false, quiet: true });
   if (process.platform === 'darwin') {
     // This disposable fixture uses an ephemeral catalogue key. Intel Rust
-    // binaries have no implicit ad-hoc signature; seal this fixture explicitly.
+    // binaries and the relocated CI Node need their fixture signature sealed.
     // This is not Developer ID signing or notarization of a deliverable.
-    execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', join(initial, 'bin/touba-compile')], { stdio: 'pipe' });
+    for (const name of ['node', 'touba-compile']) {
+      execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', join(initial, 'bin', name)], { stdio: 'pipe' });
+      execFileSync('/usr/bin/codesign', ['--verify', '--strict', join(initial, 'bin', name)], { stdio: 'pipe' });
+    }
   }
   function identify(root, sequence) {
     writeFileSync(join(root, 'lib/cli/touba-project/src/update/trust.json'), JSON.stringify({ ...policy, build_sequence: sequence }));
