@@ -5,18 +5,14 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:https';
-import { X509Certificate } from 'node:crypto';
+import { createUpdateTlsFixture } from './update-tls-fixture.mjs';
 
 // Small native preflight: no toolchain build, network service or persistent CA.
 test('update TLS transport trusts only the supplied ephemeral CA', { timeout: 30000 }, async t => {
   const work = mkdtempSync(join(tmpdir(), 'touba-update-tls-'));
   t.after(() => rmSync(work, { recursive: true, force: true }));
-  const cert = join(work, 'ca.pem'), key = join(work, 'key.pem');
+  const { cert, key, certificate } = createUpdateTlsFixture(work);
   const openssl = process.env.OPENSSL ?? 'openssl';
-  execFileSync(openssl, ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-    '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1',
-    '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', key, '-out', cert], { stdio: 'pipe' });
-  const certificate = new X509Certificate(readFileSync(cert));
   t.diagnostic(JSON.stringify({ node: process.version, tls: process.versions.openssl,
     generator: execFileSync(openssl, ['version'], { encoding: 'utf8' }).trim(),
     ca: certificate.ca, subjectAltName: certificate.subjectAltName,

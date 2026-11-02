@@ -11,6 +11,7 @@ import { generateUpdateKey, signUpdateCatalogue } from './sign-update-catalogue.
 import { toolchainBuildIdentity } from './build-identity.mjs';
 import { installDesktop } from './desktop-install.mjs';
 import { ensureSpace } from '../../touba-project/src/update/platform.mjs';
+import { createUpdateTlsFixture } from './update-tls-fixture.mjs';
 
 const require = createRequire(new URL('../../touba-project/package.json', import.meta.url));
 const { c } = require('tar');
@@ -23,10 +24,7 @@ test('native CLI: TLS check, real update, compiler/doctor and offline rollback',
   ensureSpace(tmpdir(), 1600 * 1024 ** 2);
   const work = mkdtempSync(join(tmpdir(), 'touba-native-update-'));
   t.after(() => rmSync(work, { recursive: true, force: true }));
-  const cert = join(work, 'local-ca.pem'), tlsKey = join(work, 'local-key.pem');
-  execFileSync(process.env.OPENSSL ?? 'openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-    '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1', '-addext', 'basicConstraints=critical,CA:TRUE',
-    '-keyout', tlsKey, '-out', cert], { stdio: 'pipe' });
+  const { cert, key: tlsKey } = createUpdateTlsFixture(work);
   let catalogue, archive, archiveRequests = 0;
   const server = createServer({ key: readFileSync(tlsKey), cert: readFileSync(cert) }, (request, response) => {
     if (request.url === '/downloads/touba/updates.json') { response.writeHead(200); response.end(catalogue); }
@@ -40,6 +38,7 @@ test('native CLI: TLS check, real update, compiler/doctor and offline rollback',
   const policy = { schema: 'touba-update-trust-v1', channel: 'validation', build_sequence: 1,
     catalogue_url: `${origin}/downloads/touba/updates.json`, keys: [key] };
   const initial = join(work, 'initial');
+  console.info('Native update: assemble isolated toolchain');
   packageLocalToolchain({ toolchainRoot: initial, buildCompiler: false, quiet: true });
   if (process.platform === 'darwin') {
     // This disposable fixture uses an ephemeral catalogue key. Intel Rust
@@ -56,6 +55,7 @@ test('native CLI: TLS check, real update, compiler/doctor and offline rollback',
   }
   const old = identify(initial, 1), prefix = join(work, 'installed');
   const installed = installDesktop({ source: initial, prefix });
+  console.info('Native update: initial installation verified');
   mkdirSync(join(prefix, 'projects'));
   writeFileSync(join(prefix, 'projects/untouched.txt'), 'keep');
   const releaseName = `touba-v${old.touba_version}-${old.platform}`;
@@ -72,10 +72,12 @@ test('native CLI: TLS check, real update, compiler/doctor and offline rollback',
   catalogue = await signUpdateCatalogue({ policy, privateKey: readFileSync(keyPath), manifest: { sequence: 2,
     issued_at: new Date(now - 1000).toISOString(), expires_at: new Date(now + 3600000).toISOString(),
     artifacts: [{ archive, url: `${origin}/downloads/touba/build.tar.gz`, notes: 'Isolated native qualification only.' }] } });
+  console.info('Native update: archive and catalogue ready');
 
   const active = join(prefix, 'touba-toolchain');
   const cli = installed.cli_path;
   const run = args => new Promise((resolve, reject) => {
+    console.info(`Native update: CLI ${args.join(' ')}`);
     const child = process.platform === 'win32'
       ? spawn('cmd.exe', ['/d', '/s', '/c', `""${cli}" ${args.join(' ')}"`], { windowsVerbatimArguments: true, env: { ...process.env, NODE_EXTRA_CA_CERTS: cert } })
       : spawn(cli, args, { env: { ...process.env, NODE_EXTRA_CA_CERTS: cert } });
