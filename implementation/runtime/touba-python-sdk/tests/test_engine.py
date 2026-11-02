@@ -206,7 +206,8 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT count(*) FROM touba_trace_segments WHERE closed=1").fetchone()[0], 2)
 
     def test_installed_identity_and_sync_async_typed_values(self):
-        self.assertEqual(touba_sdk_metadata()["version"], "1.0.0")
+        from touba_sdk._version import VERSION
+        self.assertEqual(touba_sdk_metadata()["version"], VERSION)
         self.assertEqual(len(touba_sdk_metadata()["build_sha256"]), 64)
         self.assertEqual(self.engine.version()["schemas"]["air"], "touba-air-v1")
         air = self.engine.compile("source.tb").air_document

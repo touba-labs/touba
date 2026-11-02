@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -44,7 +45,7 @@ const DEFAULT_MCP_MAX_PAYLOAD_BYTES = 1048576;
 
 export const TOUBA_SDK_METADATA = Object.freeze({
   name: "@touba/sdk",
-  version: "1.0.0",
+  version: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version,
   protocol: PROTOCOL,
   status: "ok",
 });

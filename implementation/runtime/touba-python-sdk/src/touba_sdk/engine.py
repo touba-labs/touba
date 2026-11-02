@@ -14,6 +14,7 @@ from threading import Event
 from typing import Any, Literal, Mapping, Sequence, TypedDict, Unpack
 from ._engine_command import resolve_engine_command
 from ._trace_reference import validate_reference, validate_page
+from ._version import VERSION
 
 MAX_OUTPUT = 32 * 1024 * 1024
 
@@ -217,7 +218,7 @@ def touba_sdk_metadata() -> dict[str, str]:
         if not path.is_file() or path.stat().st_nlink != 1:
             raise ToubaEngineError("identity", "HandlerSdkInvalid")
         digest.update(path.relative_to(root).as_posix().encode()); digest.update(b"\0"); digest.update(path.read_bytes())
-    return {"name": "touba-sdk", "version": "1.0.0", "build_sha256": digest.hexdigest(),
+    return {"name": "touba-sdk", "version": VERSION, "build_sha256": digest.hexdigest(),
             "protocol": "touba-tool-handler-v1", "status": "ok"}
 
 

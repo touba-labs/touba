@@ -19,6 +19,8 @@ import {
 } from "../../touba-manifest/src/effect-contract.mjs";
 import { buildAirInputContract } from "../../../contracts/product-surfaces/input-contracts.mjs";
 
+const INSPECT_VERSION = JSON.parse(defaultReadFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
 export const INSPECT_ABSENT_DATA = [
   "policies",
   "permissions",
@@ -830,7 +832,7 @@ export function exportTraceToOpenTelemetry(trace, options = {}) {
     "service.name": "touba",
     "telemetry.sdk.name": "touba.inspect.otel",
     "telemetry.sdk.language": "javascript",
-    "telemetry.sdk.version": "1.0.0",
+    "telemetry.sdk.version": INSPECT_VERSION,
     "touba.trace.protocol_version": trace.trace_protocol_version,
     "touba.run.id": runId,
     "touba.module.ref": trace.run?.module_ref,
@@ -851,7 +853,7 @@ export function exportTraceToOpenTelemetry(trace, options = {}) {
             schemaUrl: OTEL_SEMCONV_SCHEMA_URL,
             scope: {
               name: "touba.inspect.otel",
-              version: "1.0.0",
+              version: INSPECT_VERSION,
             },
             spans,
           },

@@ -87,6 +87,18 @@ test("rejects Rust and Python component version drift", () => {
   } finally { rmSync(repoRoot, { recursive: true, force: true }); }
 });
 
+test("rejects a stale Python runtime identity before packaging", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
+  const implementationRoot = join(repoRoot, "implementation");
+  try {
+    writeFixtureRepo({ repoRoot, implementationRoot, version: "1.2.3" });
+    writeFileSync(join(implementationRoot, "runtime/touba-python-sdk/src/touba_sdk/_version.py"), 'VERSION = "1.2.2"\n');
+    const report = buildReleaseVersioningReport({ repoRoot, implementationRoot });
+    assert.equal(report.status, "failed");
+    assert.equal(report.diagnostics.filter(item => item.code === "SdkIdentityMismatch").length, 1);
+  } finally { rmSync(repoRoot, { recursive: true, force: true }); }
+});
+
 test("requires all four graphical installers in active releases", () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
   const implementationRoot = join(repoRoot, "implementation");
@@ -154,6 +166,9 @@ test("release validator rejects asset replacement", () => {
 });
 
 function writeFixtureRepo({ repoRoot, implementationRoot, version, childVersion = version, retiredCurrent = false, omitReleaseNote = false }) {
+  const identityDir = join(implementationRoot, "runtime/touba-python-sdk/src/touba_sdk");
+  mkdirSync(identityDir, { recursive: true });
+  writeFileSync(join(identityDir, "_version.py"), `VERSION = "${version}"\n`);
   for (const [directory, file, section] of [
     ["compiler/touba-compiler", "Cargo.toml", "package"],
     ["cli/touba-cli", "Cargo.toml", "package"],

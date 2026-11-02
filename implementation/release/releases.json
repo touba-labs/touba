@@ -1,7 +1,7 @@
 {
   "schema_version": "touba-release-index-v1",
   "product": "touba",
-  "current_version": "1.0.0",
+  "current_version": "1.1.0",
   "policy": {
     "versioning": "semver",
     "canonical_public_channel": "github_release",
@@ -16,6 +16,40 @@
     "win32-x64"
   ],
   "versions": [
+    {
+      "version": "1.1.0",
+      "tag": "v1.1.0",
+      "status": "candidate",
+      "summary": "Verified toolchain updates, clearer project exploration and strengthened approval checkpoint integrity and replay protection.",
+      "release_notes": "release/notes/v1.1.0.md",
+      "breaking_changes": [
+        "Existing suspended executions must remain with their original build. Unprotected or modified checkpoints are refused; no automatic migration is performed."
+      ],
+      "migration_guide": "release/notes/v1.1.0.md#migration",
+      "evidence": [
+        "implementation/cli/touba-run/test/checkpoint-custody.test.mjs",
+        "implementation/cli/touba-distribution/src/update-native.test.mjs"
+      ],
+      "compare_url": null,
+      "channels": [
+        "touba_hub"
+      ],
+      "artifacts": [
+        "touba-v1.1.0-darwin-arm64.tar.gz",
+        "touba-v1.1.0-darwin-x64.tar.gz",
+        "touba-v1.1.0-linux-x64.tar.gz",
+        "touba-v1.1.0-win32-x64.tar.gz",
+        "touba-v1.1.0-darwin-arm64-setup.dmg",
+        "touba-v1.1.0-darwin-x64-setup.dmg",
+        "touba-v1.1.0-linux-x64-setup.deb",
+        "touba-v1.1.0-win32-x64-setup.exe",
+        "SHA256SUMS",
+        "CHECKSUMS.json"
+      ],
+      "retirement": {
+        "status": "active"
+      }
+    },
     {
       "version": "1.0.0",
       "tag": "v1.0.0",

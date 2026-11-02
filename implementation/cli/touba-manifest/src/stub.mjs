@@ -11,7 +11,7 @@ const DEFAULT_HANDLER_EXTENSION = "mjs";
 const DEFAULT_SDK_IMPORT = "@touba/sdk";
 const HANDLER_STUB_GENERATOR_METADATA = Object.freeze({
   tool: "touba handler stub",
-  version: "1.0.0",
+  version: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version,
 });
 
 export function generateHandlerStubFromAirTool(tool, options = {}) {

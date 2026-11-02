@@ -5,10 +5,21 @@ notes remain the source of truth for version deltas, validation evidence,
 downloadable artifacts, checksums and platform-specific installation
 instructions.
 
-## 1.0.0 - Unreleased candidate
+## 1.1.0 - Release preparation
 
-This is the version being qualified, not a published release. Core, compiler,
-runtime, CLI and both SDKs use the same target version. The editor extension
+- Verified `touba update`, availability checks and offline rollback.
+- Approval checkpoint integrity, host-contract binding and durable replay checks.
+- Improved project Explorer details and navigation.
+- Clearer JavaScript/Python SDK errors, authority scope and trace metadata.
+- Graphical trace reader hidden while it matures; execution traces retained.
+- Correct Windows short/long installation path handling.
+
+See [migration and release notes](implementation/release/notes/v1.1.0.md).
+Existing approvals and project data are not migrated automatically.
+
+## 1.0.0 - Initial distribution and qualification history
+
+Core, compiler, runtime, CLI and both SDKs share a distribution version. The editor extension
 has its own release cycle.
 Package authors keep independent package versions and declare compatibility
 with Touba `>=1.0.0 <2.0.0`. The withdrawn private prototype is not a public

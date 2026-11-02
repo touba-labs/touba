@@ -95,7 +95,7 @@ function compensationEnvelope() {
 test("exposes descriptive SDK metadata without runtime authority fields", () => {
   assert.deepEqual(TOUBA_SDK_METADATA, {
     name: "@touba/sdk",
-    version: "1.0.0",
+    version: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version,
     protocol: "touba-tool-handler-v1",
     status: "ok",
   });

@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+
+const generatorVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
 const literal = value => `json.loads(${JSON.stringify(JSON.stringify(value))})`;
 function constants(tool) {
   return `TOOL_REF = ${literal(tool.id)}
@@ -14,7 +18,7 @@ from touba_sdk import ToubaHandlerError, define_tool, touba_sdk_metadata
 
 ${constants(tool)}
 TOUBA_HANDLER_SDK = touba_sdk_metadata()
-TOUBA_HANDLER_GENERATED_BY = {"tool": "touba handler stub", "version": "1.0.0"}
+TOUBA_HANDLER_GENERATED_BY = {"tool": "touba handler stub", "version": ${JSON.stringify(generatorVersion)}}
 
 
 async def run(request, context):

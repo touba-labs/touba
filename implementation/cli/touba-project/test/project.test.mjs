@@ -27,6 +27,7 @@ import { createToubaProjectServer } from "../../touba-project-server/src/serve.m
 const testDir = dirname(fileURLToPath(import.meta.url));
 const cliPath = new URL("../src/main.mjs", import.meta.url).pathname;
 const implementationRoot = join(testDir, "../../..");
+const releaseVersion = JSON.parse(readFileSync(join(implementationRoot, "package.json"), "utf8")).version;
 const linearAirFixture = join(implementationRoot, "tests/air/tb-v01-001-linear-skill.air.json");
 const projectInspectionSchema = join(
   implementationRoot,
@@ -2570,7 +2571,7 @@ test("CLI version keeps human output concise and does not claim an environment-s
   const env = { ...process.env, TOUBA_BUILD_ID: "spoofed-build", GITHUB_SHA: "a".repeat(40) };
   const result = spawnSync(process.execPath, [cliPath, "version"], { encoding: "utf8", env });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, "touba 1.0.0\nbuild source-local\n");
+  assert.equal(result.stdout, `touba ${releaseVersion}\nbuild source-local\n`);
   assert.equal(result.stderr, "");
   const json = spawnSync(process.execPath, [cliPath, "version", "--json"], { encoding: "utf8", env });
   assert.equal(json.status, 0, json.stderr);
@@ -2581,13 +2582,9 @@ test("CLI version reports public command and schema versions", () => {
   const result = spawnSync(process.execPath, [cliPath, "version", "--json"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
-  assert.equal(report.cli, "1.0.0");
-  assert.equal(report.runtime, "1.0.0");
-  assert.equal(report.inspect, "1.0.0");
-  assert.equal(report.audit, "1.0.0");
-  assert.equal(report.supply_chain, "1.0.0");
-  assert.equal(report.manifest, "1.0.0");
-  assert.equal(report.sdk, "1.0.0");
+  for (const component of ["cli", "runtime", "inspect", "audit", "supply_chain", "manifest", "sdk"]) {
+    assert.equal(report[component], releaseVersion, component);
+  }
   assert.equal(report.schemas.air, "touba-air-v1");
   assert.equal(report.schemas.trace, "touba-trace-v1");
   assert.equal(report.schemas.manifest, "touba-manifest-v1");
@@ -2619,7 +2616,7 @@ test("CLI doctor reports installation health and public feature surface", () => 
   const report = JSON.parse(result.stdout);
   assert.equal(report.doctor_schema_version, "touba-doctor-v1");
   assert.equal(report.status, "ok");
-  assert.equal(report.version.cli, "1.0.0");
+  assert.equal(report.version.cli, releaseVersion);
   assert.equal(report.version.commands.supply_chain_validate, true);
   assert.equal(report.version.commands.registry_resolve, true);
   assert.equal(report.version.commands.run_profile, true);

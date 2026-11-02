@@ -60,6 +60,10 @@ export function buildReleaseVersioningReport(options = {}) {
 }
 
 function validateNativeAndPythonVersions(root, version, diagnostics) {
+  const identityPath = "runtime/touba-python-sdk/src/touba_sdk/_version.py";
+  const identity = existsSync(join(root, identityPath))
+    ? readFileSync(join(root, identityPath), "utf8").match(/^VERSION = "([^"]+)"$/mu)?.[1] : undefined;
+  if (identity !== version) diagnostics.push(error("SdkIdentityMismatch", `Python SDK identity ${identity ?? "missing"} must match ${version}`, identityPath));
   for (const [path, section] of [
     ["compiler/touba-compiler/Cargo.toml", "package"],
     ["cli/touba-cli/Cargo.toml", "package"],

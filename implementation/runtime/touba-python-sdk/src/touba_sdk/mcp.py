@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 from .handlers import ToubaHandlerError
+from ._version import VERSION
 
 MCP_BRIDGE_CONFIG_VERSION = "touba-mcp-bridge-config-v1"
 
@@ -166,7 +167,7 @@ def create_mcp_stdio_tool_bridge(*, mcp_tool_name, config=None, config_path=None
                     await asyncio.gather(task, return_exceptions=True)
         try:
             await bounded_call(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
-                "clientInfo": {"name": "touba-mcp-bridge", "version": "1.0.0"}})
+                "clientInfo": {"name": "touba-mcp-bridge", "version": VERSION}})
             await send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
             result = await bounded_call(2, "tools/call", {"name": mcp_tool_name, "arguments": request})
             if not isinstance(result, dict):
