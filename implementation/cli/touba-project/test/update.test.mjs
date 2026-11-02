@@ -75,8 +75,10 @@ test('native installation receipt identifies the physical prefix', async t => {
   const metadata = readJson(join(f.active, 'TOOLCHAIN.json'));
   const receipt = readJson(join(f.prefix, 'INSTALLATION.json'));
   const paths = { receipt: realpathSync(receipt.prefix), parent: dirname(realpathSync(f.active)),
+    nativeReceipt: realpathSync.native(receipt.prefix), nativeParent: dirname(realpathSync.native(f.active)),
     receiptPlatform: receipt.platform, payloadPlatform: metadata.platform, platform };
   assert.doesNotThrow(() => installation(f.active), JSON.stringify(paths));
+  assert.doesNotThrow(() => installation(realpathSync.native(f.active)), JSON.stringify(paths));
 });
 
 test('signature, expiry, origin, bounds, duplicate targets and catalogue rollback are checked', () => {
