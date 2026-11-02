@@ -4,10 +4,10 @@ sidebar_position: 4
 
 # Référence traces
 
-## Lecture graphique et corrélations
+## Lecture et corrélations
 
-`touba trace explore` ouvre le journal du projet dans Touba Explorer.
-Le [guide dédié](../guides/explorer-traces.md) décrit les vues et les exports de sélection.
+`touba inspect trace.json` résume l’exécution exportée et ses événements marquants.
+Le [guide de lecture](../guides/explorer-traces.md) explique comment les examiner.
 
 Les nouveaux événements émis dans une invocation peuvent porter
 `payload.trace_context` : `span_id`, `target_ref`, `parent_span_id`,

@@ -4,7 +4,6 @@
 
 ```sh
 touba explore [projet] [--port <nombre>] [--no-open]
-touba trace explore [projet|trace.json|journal.sqlite] [--air <fichier>] [--port <nombre>] [--no-open]
 ```
 
 Ouvre les vues Architecture, Parcours et Gouvernance dans le navigateur local.
@@ -89,7 +88,7 @@ Ce document n'active pas le trigger à la place du manifest hôte.
 | `touba manifest generate` | Génère un manifest de binding à partir d’un AIR |
 | `touba handler stub` | Génère un squelette de handler pour les tools |
 | `touba version` | Affiche la version Touba et la build ; détails avec `--json` |
-| `touba update` | Explique la politique de mise à jour du canal courant |
+| `touba update` | Vérifie et installe une mise à jour de la toolchain |
 
 ## `touba sdk`
 
@@ -1629,19 +1628,29 @@ projet. Il permet d'abord de savoir si le bon binaire est utilisé.
 ## `touba update`
 
 ```sh title="Terminal"
+touba update --check
 touba update
-touba update --json
+touba update --rollback
 ```
 
-Explique la politique de mise à jour du canal courant.
+Vérifie le dernier build signé pour votre plateforme, puis demande confirmation
+avant de l’installer. `--check` consulte la disponibilité sans remplacer
+l’installation. `--yes` confirme une installation non interactive ; `--rollback`
+restaure explicitement le build précédent conservé, sans accès réseau.
 
-La commande affiche la version installée, le canal, la plateforme, le lien
-Touba Hub, l’archive attendue et les commandes de réinstallation. `--json`
-renvoie le même contrat sous forme machine-readable.
+Touba vérifie le catalogue, l’archive et la nouvelle installation. En cas d’échec
+d’un contrôle après remplacement, le build précédent est rétabli. Arrêtez les
+services utilisant cette installation avant la mise à jour. Les projets,
+leurs données, leurs packages et leurs SDK restent inchangés.
 
-La V1 utilise une réinstallation explicite depuis une archive plus récente ou
-depuis le canal de package manager qui a installé Touba. L’update automatique
-reste une couche de distribution ultérieure.
+Ce parcours est préparé pour le prochain build. Les builds déjà distribués
+qui affichent une politique de réinstallation passent une première fois par
+l’installateur du [Hub](/hub/telechargements). Les installations système, dont
+le paquet DEB, restent mises à jour par leur gestionnaire de paquets.
+
+Retour : `0` pour une vérification ou une installation réussie, `2` pour une
+annulation, un refus ou une erreur. La [page Installation](../demarrer/installation.md)
+explique la mise à jour des SDK et la reprise des traitements en attente.
 
 ## Exécutions parallèles
 

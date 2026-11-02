@@ -69,9 +69,8 @@ touba run hello.air.json
 
 Add `--output trace` to the run command to inspect the execution events.
 
-With the current development build, `touba trace explore` opens a read-only
-timeline, call graph and filtered event table for the project journal.
-Use **Touba: Explore Traces** for the same view inside VS Code.
+Export with `--trace-out trace.json`, then use `touba inspect trace.json`
+for a summary or **Touba: Render Trace** in VS Code to read the events.
 
 For a project with generated handler scaffolding, choose the host language:
 

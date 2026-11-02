@@ -61,3 +61,15 @@ test("installer command executes through a symlinked temporary parent", t => {
   assert.equal(report.build_id, a.build.id);
   assert.equal(existsSync(join(report.install_root, "bin/touba-test.mjs")), true);
 });
+
+test("commit failure restores the old payload; pre-activation failure never moves it", t => {
+  const { candidate, prefix } = fixture(t);
+  const a = candidate('previous'), b = candidate('candidate');
+  installToolchainPayload({ source: a.dir, prefix });
+  for (const hook of ['beforeActivate', 'commit']) {
+    assert.throws(() => installToolchainPayload({ source: b.dir, prefix, force: true,
+      [hook]() { throw new Error('injected failure'); } }), /injected failure/);
+    assert.deepEqual(toolchainBuildIdentity(join(prefix, 'touba-toolchain')), a.build);
+    assert.equal(existsSync(join(prefix, '.install.lock')), false);
+  }
+});

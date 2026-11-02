@@ -10,7 +10,14 @@ test("CLI protects the invoice and effect identity with fixed original host evid
   const root = mkdtempSync(join(tmpdir(), "touba-custody-cli-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const implementation = fileURLToPath(new URL("../../../", import.meta.url));
-  const air = execFileSync(join(implementation, `target/debug/touba-compile${process.platform === "win32" ? ".exe" : ""}`),
+  // Native release qualification runs the same regression against the assembled
+  // payload, with its own Node, compiler and runtime in fresh processes.
+  const payload = process.env.TOUBA_TEST_TOOLCHAIN_ROOT;
+  const node = payload ? join(payload, "bin", process.platform === "win32" ? "node.exe" : "node") : process.execPath;
+  const library = payload ? join(payload, "lib") : implementation;
+  const compiler = payload ? join(payload, "bin", process.platform === "win32" ? "touba-compile.exe" : "touba-compile")
+    : process.env.TOUBA_COMPILE_BIN ?? join(implementation, `target/debug/touba-compile${process.platform === "win32" ? ".exe" : ""}`);
+  const air = execFileSync(compiler,
     [join(implementation, "runtime/touba-runtime/test/fixtures/checkpoint-custody.tb")]);
   writeFileSync(join(root, "source.air.json"), air);
   writeFileSync(join(root, "host.mjs"), `import { readFileSync } from 'node:fs';
@@ -23,11 +30,11 @@ appendFileSync(${JSON.stringify(join(root, "payments.jsonl"))}, JSON.stringify(r
 process.stdout.write(JSON.stringify({ok:true,value:'paid',effect_receipt:{effect_id:request.effect.effect_id,request_digest:request.effect.request_digest,outcome:'applied'}}));
 `);
   writeFileSync(join(root, "manifest.json"), JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {
-    "tool:checkpoint_custody/Pay": { handler: { kind: "process", command: process.execPath, args: [join(root, "pay.mjs")] },
+    "tool:checkpoint_custody/Pay": { handler: { kind: "process", command: node, args: [join(root, "pay.mjs")] },
       grants: [], timeout_ms: 10000, max_payload_bytes: 65536, effect_contract: { kind: "external_write", retry_mode: "none" } },
   } }));
   const invoke = extra => {
-    const result = spawnSync(process.execPath, [join(implementation, "cli/touba-run/src/run.mjs"), join(root, "source.air.json"),
+    const result = spawnSync(node, [join(library, "cli/touba-run/src/run.mjs"), join(root, "source.air.json"),
       "--manifest", join(root, "manifest.json"), "--human-approval-host", join(root, "host.mjs"),
       "--effect-journal", join(root, "effects.effect-journal.sqlite"), "--trace-store", join(root, "traces.sqlite"),
       "--entry", "strategy:checkpoint_custody/Process", "--output", "json", ...extra],
@@ -49,10 +56,18 @@ process.stdout.write(JSON.stringify({ok:true,value:'paid',effect_receipt:{effect
     assert.equal(resume(altered).reason, "HumanApprovalCheckpointIntegrityMismatch");
     assert.equal(existsSync(join(root, "payments.jsonl")), false);
   }
+  const manifestPath = join(root, "manifest.json"), manifest = readFileSync(manifestPath, "utf8");
+  const changed = JSON.parse(manifest);
+  changed.bindings["tool:checkpoint_custody/Pay"].timeout_ms++;
+  writeFileSync(manifestPath, JSON.stringify(changed));
+  assert.equal(resume(checkpoint).reason, "HumanApprovalCheckpointIncompatible");
+  assert.equal(existsSync(join(root, "payments.jsonl")), false);
+  writeFileSync(manifestPath, manifest);
   assert.equal(resume(checkpoint).status, "success");
   assert.equal(resume(checkpoint).reason, "HumanApprovalCheckpointAlreadyConsumed");
   const replay = structuredClone(original); replay.effect_state.next_effect_index++;
   writeFileSync(altered, JSON.stringify(replay));
   assert.equal(resume(altered).reason, "HumanApprovalCheckpointIntegrityMismatch");
   assert.deepEqual(readFileSync(join(root, "payments.jsonl"), "utf8").trim().split("\n").map(JSON.parse), [{ id: "synthetic-only", amount: 100 }]);
+  t.diagnostic(payload ? "Verified packaged Node/compiler/runtime: tampering, host-contract drift and replay refused; exactly one synthetic payment." : "Verified source runtime.");
 });

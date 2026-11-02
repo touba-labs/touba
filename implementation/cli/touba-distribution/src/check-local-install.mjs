@@ -91,13 +91,8 @@ function checkInstall(toolchainRoot) {
     const audit = runTouba(["audit", "--trace", tracePath, "--output", "json"], env, 0);
     assertEqual(JSON.parse(audit.stdout).validationReport.status, "ok", "clean-room audit status");
 
-    const update = runTouba(["update"], env, 1);
-    if (!update.stdout.includes("Status: manual_reinstall_required")) {
-      throw new Error("update command did not explain the local archive policy");
-    }
-    if (!update.stdout.includes("Expected archive:")) {
-      throw new Error("update command did not report the expected archive");
-    }
+    const update = runTouba(["update", "--help"], env, 0);
+    if (!update.stdout.includes("--check | --rollback")) throw new Error("verified update command is unavailable");
 
     const secondInstall = installLocalToolchain({
       source: toolchainRoot,
@@ -107,7 +102,7 @@ function checkInstall(toolchainRoot) {
     assertEqual(secondInstall.cli_path, firstInstall.cli_path, "reinstall cli path");
     assertFile(join(prefix, "INSTALLATION.json"));
     const installation = JSON.parse(readFileSync(join(prefix, "INSTALLATION.json"), "utf8"));
-    assertEqual(installation.update_policy.includes("manual reinstall"), true, "installation update policy");
+    assertEqual(installation.update_policy.includes("signed-catalogue"), true, "installation update policy");
 
     process.stdout.write(`INSTALLED ${prefix}\n`);
   } finally {

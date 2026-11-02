@@ -4,6 +4,21 @@ import { pathToFileURL } from "node:url";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
 
 function fail(code) { throw Object.assign(new Error(code), { code }); }
+const heldLocks = new WeakSet();
+export function withInstallationLock(prefix, action) {
+  regularDirectory(prefix);
+  const path = join(prefix, '.install.lock');
+  let fd;
+  try { fd = openSync(path, 'wx', 0o600); }
+  catch (error) { if (error.code === 'EEXIST') fail('InstallationInProgress'); throw error; }
+  const token = { prefix: realpathSync(prefix) }; heldLocks.add(token);
+  const release = () => { heldLocks.delete(token); closeSync(fd); unlinkSync(path); };
+  try {
+    const result = action(token);
+    if (result?.then) return result.finally(release);
+    release(); return result;
+  } catch (error) { if (heldLocks.has(token)) release(); throw error; }
+}
 function regularDirectory(path) {
   const stat = lstatSync(path);
   if (!stat.isDirectory() || stat.isSymbolicLink()) fail("InstallationPathUnsafe");
@@ -35,7 +50,7 @@ function identity(root, requireDeclared = false) {
 }
 
 /** Preserve the prior payload; never migrate application state or run handlers. */
-export function installToolchainPayload({ source, prefix, force = false }) {
+export function installToolchainPayload({ source, prefix, force = false, lock, validate, beforeActivate, commit }) {
   source = resolve(source); prefix = resolve(prefix);
   regularDirectory(source);
   if (dirname(prefix) === prefix) fail("InstallationPrefixUnsafe");
@@ -45,10 +60,8 @@ export function installToolchainPayload({ source, prefix, force = false }) {
   const archives = join(prefix, "builds");
   // Compare physical parents as well as user spelling, before staging or rename.
   if (overlap(realpathSync(source), realpathSync(prefix))) fail("InstallationPathsOverlap");
-  const lock = join(prefix, ".install.lock");
-  let lockFd;
-  try { lockFd = openSync(lock, "wx", 0o600); }
-  catch (error) { if (error.code === "EEXIST") fail("InstallationInProgress"); throw error; }
+  if (!lock) return withInstallationLock(prefix, token => installToolchainPayload({ source, prefix, force, lock:token, validate, beforeActivate, commit }));
+  if (!heldLocks.has(lock) || lock.prefix !== realpathSync(prefix)) fail('InstallationLockInvalid');
   let staging, archived, moved = false;
   try {
     const nextId = identity(source, true);
@@ -71,13 +84,24 @@ export function installToolchainPayload({ source, prefix, force = false }) {
     const candidate = join(staging, "touba-toolchain");
     cpSync(source, candidate, { recursive: true, errorOnExist: true, force: false });
     if (identity(candidate, true) !== nextId) fail("InstallationBuildMismatch");
+    validate?.(candidate);
+    beforeActivate?.();
     if (archived) { renameSync(installRoot, archived); moved = true; }
-    try { renameSync(candidate, installRoot); }
-    catch (error) { if (moved && !existsSync(installRoot)) { renameSync(archived, installRoot); moved = false; } throw error; }
-    return { install_root: installRoot, build_id: nextId, preserved_build: archived ?? null, unchanged: false };
+    try {
+      renameSync(candidate, installRoot);
+      validate?.(installRoot);
+      const report = { install_root: installRoot, build_id: nextId, preserved_build: archived ?? null, unchanged: false };
+      commit?.(report);
+      return report;
+    } catch (error) {
+      if (moved) {
+        if (existsSync(installRoot)) renameSync(installRoot, join(staging, 'failed-candidate'));
+        renameSync(archived, installRoot); moved = false;
+      }
+      throw error;
+    }
   } finally {
     if (staging) rmSync(staging, { recursive: true, force: true });
-    closeSync(lockFd); unlinkSync(lock);
   }
 }
 

@@ -24,7 +24,7 @@ const implementationRoot = resolve(currentDir, "../../..");
 const distRoot = join(packageRoot, "dist");
 const platform = `${process.platform}-${process.arch}`;
 const toolchainName = `touba-toolchain-${platform}`;
-const toolchainRoot = join(distRoot, toolchainName);
+const defaultToolchainRoot = join(distRoot, toolchainName);
 
 const copiedPackages = [
   "cli/touba-project",
@@ -48,6 +48,8 @@ const nodeModuleAliases = [
 ];
 
 export function packageLocalToolchain(options = {}) {
+  const toolchainRoot = options.toolchainRoot ? resolve(options.toolchainRoot) : defaultToolchainRoot;
+  if (options.toolchainRoot && existsSync(toolchainRoot)) throw new Error('isolated toolchain output must not already exist');
   if (options.buildCompiler !== false) {
     buildCompiler();
   }
@@ -57,9 +59,14 @@ export function packageLocalToolchain(options = {}) {
   mkdirSync(join(toolchainRoot, "lib"), { recursive: true });
   copyFileSync(join(implementationRoot, "../LICENSE"), join(toolchainRoot, "LICENSE"));
 
-  copyNodeRuntime();
-  copyCompiler();
-  copyToubaPackages();
+  copyNodeRuntime(toolchainRoot);
+  copyCompiler(toolchainRoot);
+  copyToubaPackages(toolchainRoot);
+  const updateSupport = join(toolchainRoot, 'lib/cli/touba-distribution/src');
+  mkdirSync(updateSupport, { recursive: true });
+  for (const name of ['build-identity.mjs', 'install-toolchain-payload.mjs']) {
+    copyFileSync(join(currentDir, name), join(updateSupport, name));
+  }
   for (const packagePath of copiedPackages.filter(path => path !== "runtime/touba-handler-sdk")) {
     const sourceRoot = join(implementationRoot, packagePath);
     const dependencies = JSON.parse(readFileSync(join(sourceRoot, "package.json"), "utf8")).dependencies ?? {};
@@ -73,14 +80,14 @@ export function packageLocalToolchain(options = {}) {
     }
     if (inventory.size) for (const destination of destinations) writeFileSync(join(destination, "DEPENDENCIES.json"), JSON.stringify([...inventory.values()], null, 2) + "\n");
   }
-  copyRuntimeContracts();
+  copyRuntimeContracts(toolchainRoot);
   mkdirSync(join(toolchainRoot, "lib/tools"), { recursive: true });
   copyFileSync(join(implementationRoot, "tools/validate-product-surface-contracts.mjs"),
     join(toolchainRoot, "lib/tools/validate-product-surface-contracts.mjs"));
   const sdk = packageSdk(implementationRoot, toolchainRoot);
   const pythonSdk = packagePythonSdk(implementationRoot, toolchainRoot);
-  writeLaunchers();
-  writeMetadata(sdk, pythonSdk);
+  writeLaunchers(toolchainRoot);
+  writeMetadata(sdk, pythonSdk, toolchainRoot);
 
   if (options.quiet !== true) {
     process.stdout.write(`TOOLCHAIN ${toolchainRoot}\n`);
@@ -116,7 +123,7 @@ function buildCompiler() {
   }
 }
 
-function copyNodeRuntime() {
+function copyNodeRuntime(toolchainRoot) {
   const nodeName = process.platform === "win32" ? "node.exe" : "node";
   const nodeSource = resolveNodeRuntimeSource(nodeName);
   copyFileSync(nodeSource, join(toolchainRoot, "bin", nodeName));
@@ -139,7 +146,7 @@ function resolveNodeRuntimeSource(nodeName) {
   return realpathSync(process.execPath);
 }
 
-function copyCompiler() {
+function copyCompiler(toolchainRoot) {
   const executableName = process.platform === "win32" ? "touba-compile.exe" : "touba-compile";
   const compilerSource = join(implementationRoot, "target", "release", executableName);
   if (!existsSync(compilerSource)) {
@@ -156,7 +163,7 @@ function copyCompiler() {
   }
 }
 
-function copyToubaPackages() {
+function copyToubaPackages(toolchainRoot) {
   for (const relativePackage of copiedPackages) {
     copyPackage(relativePackage, join(toolchainRoot, "lib", relativePackage));
   }
@@ -198,7 +205,7 @@ function copyPackage(relativePackage, destination) {
   }
 }
 
-function copyRuntimeContracts() {
+function copyRuntimeContracts(toolchainRoot) {
   for (const root of ["lib/contracts"]) {
     mkdirSync(join(toolchainRoot, root), { recursive: true });
     for (const name of ["resource-bindings.mjs", "run-outcome.mjs", "trace-reference.mjs"]) {
@@ -216,13 +223,17 @@ function copyRuntimeContracts() {
   }
 }
 
-function writeLaunchers() {
+function writeLaunchers(toolchainRoot) {
   const shellLauncher = `#!/bin/sh
 case "$0" in
   */*) SCRIPT_DIR="\${0%/*}" ;;
   *) SCRIPT_DIR="." ;;
 esac
 ROOT="$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)"
+if [ -e "$ROOT/../.install.lock" ] && [ "\${1:-}" != "update" ]; then
+  echo "Touba installation is being updated. Retry after the update finishes." >&2
+  exit 2
+fi
 export TOUBA_DISTRIBUTION_CHANNEL="\${TOUBA_DISTRIBUTION_CHANNEL:-local-archive}"
 export TOUBA_COMPILE_BIN="$ROOT/bin/touba-compile"
 export PATH="$ROOT/bin:$PATH"
@@ -233,15 +244,24 @@ exec "$ROOT/bin/node" "$ROOT/lib/cli/touba-project/src/main.mjs" "$@"
 
   const cmdLauncher = `@echo off
 set "ROOT=%~dp0.."
+if /I "%~1"=="update" goto touba_update
+if exist "%ROOT%\\..\\.install.lock" (
+  echo Touba installation is being updated. Retry after the update finishes. 1>&2
+  exit /b 2
+)
 if "%TOUBA_DISTRIBUTION_CHANNEL%"=="" set "TOUBA_DISTRIBUTION_CHANNEL=local-archive"
 set "TOUBA_COMPILE_BIN=%ROOT%\\bin\\touba-compile.exe"
 set "PATH=%ROOT%\\bin;%PATH%"
 "%ROOT%\\bin\\node.exe" "%ROOT%\\lib\\cli\\touba-project\\src\\main.mjs" %*
+exit /b %ERRORLEVEL%
+:touba_update
+powershell.exe -NoProfile -File "%ROOT%\\lib\\cli\\touba-project\\src\\update\\windows-bootstrap.ps1" %*
+exit /b %ERRORLEVEL%
 `;
   writeFileSync(join(toolchainRoot, "bin", "touba.cmd"), cmdLauncher, "utf8");
 }
 
-function writeMetadata(sdk, pythonSdk) {
+function writeMetadata(sdk, pythonSdk, toolchainRoot) {
   const metadata = {
     toolchain_profile: "touba-local-toolchain-v1",
     platform,
@@ -274,7 +294,7 @@ function writeMetadata(sdk, pythonSdk) {
     ],
     limitations: [
       "local archive profile only",
-      "manual reinstall update policy",
+      "updates require a signed catalogue and a managed per-user installation",
       "checksums and signatures are applied by release packaging, not by this local toolchain archive",
     ],
   };

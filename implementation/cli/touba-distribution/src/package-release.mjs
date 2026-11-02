@@ -315,7 +315,7 @@ cat > "$PREFIX/INSTALLATION.json" <<EOF
   "validation_status": "${plan.validationStatus}",
   "prefix": "$PREFIX",
   "cli_path": "$PREFIX/bin/touba",
-  "update_policy": "${plan.publicRelease ? "reinstall from a newer GitHub Release archive or package-manager channel" : "rerun install.sh --force from a newer local release archive"}",
+  "update_policy": "signed-catalogue; project SDKs are updated separately",
   "public_release": ${String(plan.publicRelease)}
 }
 EOF
@@ -420,9 +420,7 @@ echo "Removed Touba files from $PREFIX"
 export function renderWindowsCmdLauncher(plan) {
   return `@echo off
 if "%TOUBA_DISTRIBUTION_CHANNEL%"=="" set "TOUBA_DISTRIBUTION_CHANNEL=${plan.channel}"
-set "TOUBA_COMPILE_BIN=%~dp0..\\touba-toolchain\\bin\\touba-compile.exe"
-set "PATH=%~dp0..\\touba-toolchain\\bin;%PATH%"
-"%~dp0..\\touba-toolchain\\bin\\node.exe" "%~dp0..\\touba-toolchain\\lib\\cli\\touba-project\\src\\main.mjs" %*
+"%~dp0..\\touba-toolchain\\bin\\touba.cmd" %*
 `;
 }
 
@@ -476,7 +474,7 @@ $Installation = [ordered]@{
   validation_status = "${plan.validationStatus}"
   prefix = $Prefix
   cli_path = (Join-Path $Prefix "bin\\touba.cmd")
-  update_policy = "${plan.publicRelease ? "reinstall from a newer GitHub Release archive or package-manager channel" : "rerun install.ps1 -Force from a newer local release archive"}"
+  update_policy = "signed-catalogue; project SDKs are updated separately"
   public_release = $${plan.publicRelease ? "true" : "false"}
 }
 $Installation | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $Prefix "INSTALLATION.json") -Encoding UTF8
@@ -699,7 +697,7 @@ function releaseLimitations({ platformLimitation, validationStatus, publicReleas
   if (publicRelease) {
     return [
       "packaging does not qualify this build; promotion requires current-candidate release-readiness evidence",
-      "manual update policy; automatic self-update is not enabled in V1",
+      "verified updates require a separately approved signed catalogue",
       "signing and package-manager channels are separate release hardening tracks",
     ];
   }

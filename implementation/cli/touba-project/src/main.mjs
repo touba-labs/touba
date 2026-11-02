@@ -101,29 +101,9 @@ const PUBLIC_COMMANDS = Object.freeze({
   handler_stub: true,
   version: true,
   update_policy: true,
+  verified_update: true,
 });
 const REQUIRED_COMPONENTS = Object.freeze(["cli", "runtime", "inspect", "audit", "supply_chain", "manifest"]);
-const TOUBA_HUB_URL = "https://toubalang.org/hub/";
-const TOUBA_INSTALLATION_GUIDE_URL = "https://toubalang.org/docs/demarrer/installation";
-const TOUBA_RELEASE_BASE_URL = "https://github.com/touba-labs/touba/releases/download";
-const UPDATE_PLATFORM_PROFILES = Object.freeze({
-  "darwin-arm64": Object.freeze({
-    label: "macOS Apple Silicon",
-    installer: "sh",
-  }),
-  "darwin-x64": Object.freeze({
-    label: "macOS Intel",
-    installer: "sh",
-  }),
-  "linux-x64": Object.freeze({
-    label: "Linux x64",
-    installer: "sh",
-  }),
-  "win32-x64": Object.freeze({
-    label: "Windows x64",
-    installer: "powershell",
-  }),
-});
 
 try {
   const result = await dispatch(args);
@@ -161,6 +141,9 @@ async function dispatch(rawArgs) {
   }
   if (command === "trace") {
     if (rest[0] === "explore") {
+      if (process.env.TOUBA_EXPERIMENTAL_TRACE_VIEWER !== "1") {
+        throw new Error("The graphical trace viewer is not available in this build. Use touba inspect or touba audit.");
+      }
       const { traceExploreCommand } = await import("../../touba-inspect/src/trace-explorer/server.mjs");
       await traceExploreCommand(rest.slice(1));
       return { passthrough: true, exitCode: 0 };
@@ -287,7 +270,8 @@ async function dispatch(rawArgs) {
     return doctorCommand(rest);
   }
   if (command === "update") {
-    return updateCommand(rest);
+    const { updateCommand } = await import("./update/command.mjs");
+    return updateCommand(rest, resolve(implementationRoot, ".."));
   }
   printUsage();
   return { usage: true, exitCode: 2 };
@@ -1029,41 +1013,6 @@ function doctorCommand(rawArgs) {
   };
 }
 
-function updateCommand(rawArgs) {
-  const options = parseUpdateOptions(rawArgs);
-  if (options.help === true) {
-    return {
-      text: "Usage: touba update [--json]",
-      exitCode: 0,
-    };
-  }
-  const report = toubaUpdatePolicy();
-  if (options.json === true) {
-    return {
-      text: JSON.stringify(report, null, 2),
-      exitCode: 1,
-    };
-  }
-  return {
-    text: renderUpdatePolicyText(report),
-    exitCode: 1,
-  };
-}
-
-function parseUpdateOptions(rawArgs) {
-  const options = { json: false, help: false };
-  for (const arg of rawArgs) {
-    if (arg === "--json") {
-      options.json = true;
-    } else if (arg === "--help" || arg === "-h") {
-      options.help = true;
-    } else {
-      throw new Error(`unknown option ${arg}`);
-    }
-  }
-  return options;
-}
-
 function parseDoctorOptions(rawArgs) {
   const options = { json: false, help: false };
   for (const arg of rawArgs) {
@@ -1076,87 +1025,6 @@ function parseDoctorOptions(rawArgs) {
     }
   }
   return options;
-}
-
-function toubaUpdatePolicy() {
-  const versions = toubaVersions();
-  const tag = `v${versions.cli}`;
-  const platform = versions.distribution.platform;
-  const profile = UPDATE_PLATFORM_PROFILES[platform];
-  const releaseName = profile === undefined ? null : `touba-${tag}-${platform}`;
-  const archiveName = releaseName === null ? null : `${releaseName}.tar.gz`;
-  const archiveUrl = archiveName === null ? null : `${TOUBA_RELEASE_BASE_URL}/${tag}/${archiveName}`;
-  return {
-    update_schema_version: "touba-update-policy-v1",
-    status: "manual_reinstall_required",
-    automatic_update: false,
-    installed_version: versions.cli,
-    channel: versions.distribution.channel,
-    platform,
-    platform_label: profile?.label ?? "Unsupported platform",
-    hub_url: TOUBA_HUB_URL,
-    installation_guide_url: TOUBA_INSTALLATION_GUIDE_URL,
-    release_tag: tag,
-    expected_archive: archiveName === null
-      ? {
-        supported: false,
-        name: null,
-        url: null,
-      }
-      : {
-        supported: true,
-        name: archiveName,
-        url: archiveUrl,
-      },
-    reinstall: {
-      summary: archiveName === null
-        ? "Use Touba Hub to choose a supported archive or build from source for this platform."
-        : "Download the expected archive, extract it, then rerun the installer with replacement enabled.",
-      commands: reinstallCommands({ archiveName, releaseName, installer: profile?.installer }),
-    },
-  };
-}
-
-function reinstallCommands({ archiveName, releaseName, installer }) {
-  if (archiveName === null || releaseName === null) {
-    return [];
-  }
-  if (installer === "powershell") {
-    return [
-      `tar -xzf ${archiveName}`,
-      `powershell -ExecutionPolicy Bypass -File .\\${releaseName}\\install.ps1 -Prefix "$HOME\\.touba" -Force`,
-    ];
-  }
-  return [
-    `tar -xzf ${archiveName}`,
-    `sh ${releaseName}/install.sh --prefix "$HOME/.touba" --force`,
-  ];
-}
-
-function renderUpdatePolicyText(report) {
-  const lines = [
-    "Touba Update",
-    `Status: ${report.status}`,
-    "Automatic update: unavailable for this channel",
-    `Installed version: ${report.installed_version}`,
-    `Channel: ${report.channel}`,
-    `Platform: ${report.platform}`,
-    `Hub: ${report.hub_url}`,
-    `Installation guide: ${report.installation_guide_url}`,
-  ];
-  if (report.expected_archive.supported === true) {
-    lines.push(`Expected archive: ${report.expected_archive.name}`);
-    lines.push(`Download: ${report.expected_archive.url}`);
-    lines.push("Reinstall:");
-    for (const command of report.reinstall.commands) {
-      lines.push(`  ${command}`);
-    }
-  } else {
-    lines.push("Expected archive: no published archive for this platform");
-    lines.push(`Reinstall: ${report.reinstall.summary}`);
-  }
-  lines.push("No automatic update was performed.");
-  return lines.join("\n");
 }
 
 function runNodeScript(relativePath, rawArgs) {
@@ -1744,7 +1612,6 @@ function printUsage() {
   touba compile <source.tb> --out <program.air.json>
   touba compile <source.tb> --stdout
   touba run (<program.air.json> | --project <path>) [--profile pure|dev|prod] [runtime options]
-  touba trace explore [project|trace.json|journal.sqlite] [--air <file>] [--port <number>] [--no-open]
   touba trace read --store <traces.sqlite> --reference-json <json> [--after <n>] [--limit <1..1000>]
   touba trace export --store <traces.sqlite> --postgres-env <NAME> [--watch] [--batch-size <1..1000>]
   touba state migrate <kind> <source.json> --out <new.sqlite> [--apply]
@@ -1768,6 +1635,6 @@ function printUsage() {
   touba handler stub <air.json> [--language javascript|python] [--tool-ref <tool_ref>] [--handler-root <path>] [--force]
   touba version [--json]
   touba doctor [--json]
-  touba update [--json]
+  touba update [--check | --rollback] [--yes] [--json]
 `);
 }

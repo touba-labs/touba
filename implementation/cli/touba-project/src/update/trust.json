@@ -1,0 +1,12 @@
+{
+  "schema": "touba-update-trust-v1",
+  "channel": "validation",
+  "build_sequence": 1,
+  "catalogue_url": "https://toubalang.org/downloads/touba/updates.json",
+  "keys": [
+    {
+      "id": "374c167d45fefcd2816738e50e1a558a351f9b70c684b0d892bccc6a5514b66c",
+      "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApDKKucpRCGn9cP4/q7fMwPzeZl1Bebx00aRoaXdmn7w=\n-----END PUBLIC KEY-----\n"
+    }
+  ]
+}

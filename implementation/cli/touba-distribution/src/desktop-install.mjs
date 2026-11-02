@@ -39,7 +39,7 @@ export function installDesktop({ source, prefix = join(homedir(), ".touba"), for
     installation_profile: "touba-desktop-install-v1", prefix, cli_path: launcher,
     channel: "local-desktop", platform: metadata.platform, touba_version: metadata.touba_version,
     build: metadata.build, validation_status: "pending_validation", public_release: false,
-    update_policy: "Explicit reinstall from a verified installer; project SDKs are updated separately",
+    update_policy: "signed-catalogue; project SDKs are updated separately",
   }, null, 2) + "\n");
   const check = spawnSync(join(installed.install_root, "bin", process.platform === "win32" ? "node.exe" : "node"),
     [join(installed.install_root, "lib/cli/touba-project/src/main.mjs"), "version", "--json"], { encoding: "utf8", windowsHide: true });

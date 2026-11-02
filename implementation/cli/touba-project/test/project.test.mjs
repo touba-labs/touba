@@ -2492,7 +2492,7 @@ test("CLI help prints usage without a synthetic report", () => {
   assert.match(result.stdout, /--state <path\.sqlite>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --out <touba\.manifest\.json>/);
   assert.match(result.stdout, /touba manifest generate <air\.json> --stdout/);
-  assert.match(result.stdout, /touba handler stub <air\.json> \[--tool-ref <tool_ref>\] \[--handler-root <path>\] \[--force\]/);
+  assert.match(result.stdout, /touba handler stub <air\.json> \[--language javascript\|python\] \[--tool-ref <tool_ref>\] \[--handler-root <path>\] \[--force\]/);
   assert.match(result.stdout, /touba doctor \[--json\]/);
   assert.match(result.stdout, /--ownership <touba\.ownership\.json>/);
   assert.match(result.stdout, /touba audit --trace <trace\.json>/);
@@ -2637,36 +2637,26 @@ test("CLI doctor rejects Node releases below the security baseline", () => {
   assert.equal(check.details.expected, ">=24.22.1 <25");
 });
 
-test("CLI update reports the manual reinstall policy", () => {
+test("CLI update identifies a source checkout without fetching an update", () => {
   const result = spawnSync(process.execPath, [cliPath, "update"], { encoding: "utf8" });
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /Status: manual_reinstall_required/);
-  assert.match(result.stdout, /Installed version: 1\.0\.0/);
-  assert.match(result.stdout, /Channel: local-development/);
-  assert.match(result.stdout, new RegExp(`Platform: ${process.platform}-${process.arch}`));
-  assert.match(result.stdout, /Hub: https:\/\/toubalang\.org\/hub\//);
-  assert.match(result.stdout, /Expected archive:/);
-  assert.match(result.stdout, /No automatic update was performed/);
+  assert.equal(result.status, 2);
+  assert.match(result.stdout, /UpdateUnmanagedInstallation/);
+  assert.match(result.stdout, /installer/);
 });
 
-test("CLI update can render a machine-readable reinstall policy", () => {
+test("CLI update reports an unmanaged installation in its machine contract", () => {
   const result = spawnSync(process.execPath, [cliPath, "update", "--json"], { encoding: "utf8" });
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 2);
   const report = JSON.parse(result.stdout);
-  assert.equal(report.update_schema_version, "touba-update-policy-v1");
-  assert.equal(report.status, "manual_reinstall_required");
-  assert.equal(report.automatic_update, false);
-  assert.equal(report.installed_version, "1.0.0");
-  assert.equal(report.channel, "local-development");
-  assert.equal(report.platform, `${process.platform}-${process.arch}`);
-  assert.equal(report.hub_url, "https://toubalang.org/hub/");
-  assert.equal(report.installation_guide_url, "https://toubalang.org/docs/demarrer/installation");
+  assert.equal(report.schema, "touba-update-result-v1");
+  assert.equal(report.status, "refused");
+  assert.equal(report.code, "UpdateUnmanagedInstallation");
 });
 
 test("CLI update help is available without reporting a failed update", () => {
   const result = spawnSync(process.execPath, [cliPath, "update", "--help"], { encoding: "utf8" });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /Usage: touba update \[--json\]/);
+  assert.match(result.stdout, /Usage: touba update \[--check \| --rollback\] \[--yes\] \[--json\]/);
 });
 
 test("CLI compile delegates to the configured compiler binary", () => {

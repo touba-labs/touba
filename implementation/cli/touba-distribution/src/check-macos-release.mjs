@@ -143,13 +143,8 @@ function checkRelease(release) {
     assertEqual(trace.trace_protocol_version, "touba-trace-v1", "trace protocol");
     assertEqual(trace.events.at(-1).payload.status, "success", "runtime status");
 
-    const update = runTouba(["update"], env, 1);
-    if (!update.stdout.includes("Status: manual_reinstall_required")) {
-      throw new Error("update command did not explain the local release policy");
-    }
-    if (!update.stdout.includes("Expected archive:")) {
-      throw new Error("update command did not report the expected archive");
-    }
+    const update = runTouba(["update", "--help"], env, 0);
+    if (!update.stdout.includes("--check | --rollback")) throw new Error("verified update command is unavailable");
 
     runShell(join(release.release_dir, "install.sh"), ["--prefix", prefix, "--force"], 0, shellEnv);
     assertFile(join(prefix, "bin", "touba"));

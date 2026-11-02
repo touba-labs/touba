@@ -127,13 +127,8 @@ function checkReleaseArchive(plan) {
       process.stdout.write("CHECKED_RELEASE_SIGNALS launcher PID, group, child exit and port reuse\n");
     }
 
-    const update = runTouba(cliPath, ["update"], cliEnv, 1);
-    if (!update.stdout.includes("Status: manual_reinstall_required")) {
-      throw new Error("update command did not explain the release update policy");
-    }
-    if (!update.stdout.includes("Expected archive:")) {
-      throw new Error("update command did not report the expected archive");
-    }
+    const update = runTouba(cliPath, ["update", "--help"], cliEnv, 0);
+    if (!update.stdout.includes("--check | --rollback")) throw new Error("verified update command is unavailable");
 
     const stateProject = join(workspace, "pending operation");
     const stateProbe = fileURLToPath(new URL("./state-transition-smoke.mjs", import.meta.url));

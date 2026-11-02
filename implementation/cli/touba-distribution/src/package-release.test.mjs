@@ -70,7 +70,7 @@ test("release plan supports public GitHub Release artifacts for supported build 
   assert.equal(plan.installationProfile, "touba-github-release-install-v1");
   assert.equal(plan.releaseScope, "public_distribution");
   assert.equal(plan.publicRelease, true);
-  assert.ok(plan.limitations.includes("manual update policy; automatic self-update is not enabled in V1"));
+  assert.ok(plan.limitations.includes("verified updates require a separately approved signed catalogue"));
   assert.equal(plan.limitations.includes("not published through a public update channel"), false);
 });
 
@@ -147,9 +147,8 @@ test("Windows cmd launcher preserves quoting and bundled paths", () => {
 
   const launcher = renderWindowsCmdLauncher(plan);
   assert.match(launcher, /TOUBA_DISTRIBUTION_CHANNEL=local-release-experimental/u);
-  assert.match(launcher, /TOUBA_COMPILE_BIN=%~dp0\.\.\\touba-toolchain\\bin\\touba-compile\.exe/u);
-  assert.match(launcher, /"%~dp0\.\.\\touba-toolchain\\bin\\node\.exe"/u);
-  assert.match(launcher, /"%~dp0\.\.\\touba-toolchain\\lib\\cli\\touba-project\\src\\main\.mjs" %\*/u);
+  assert.match(launcher, /"%~dp0\.\.\\touba-toolchain\\bin\\touba\.cmd" %\*/u);
+  assert.doesNotMatch(launcher, /node\.exe|main\.mjs/u);
 });
 
 test("PowerShell install script writes touba.cmd and INSTALLATION metadata", () => {
@@ -184,7 +183,7 @@ test("PowerShell install script marks public release metadata", () => {
   assert.match(script, /installation_profile = "touba-github-release-install-v1"/u);
   assert.match(script, /validation_status = "pending_validation"/u);
   assert.match(script, /public_release = \$true/u);
-  assert.match(script, /newer GitHub Release archive/u);
+  assert.match(script, /signed-catalogue/u);
 });
 
 test("PowerShell uninstall script removes launcher, toolchain and metadata paths", () => {
