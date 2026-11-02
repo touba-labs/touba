@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:https';
-import { createReadStream, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createReadStream, cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -69,12 +69,14 @@ test('native CLI: TLS check, real update, compiler/doctor and offline rollback',
   const candidate = join(work, releaseName, 'touba-toolchain');
   mkdirSync(join(work, releaseName));
   // Reuse the assembled source as the candidate; do not retain another full copy.
-  cpSync(initial, candidate, { recursive: true });
-  rmSync(initial, { recursive: true });
+  renameSync(initial, candidate);
+  console.info('Native update: candidate moved without a duplicate copy');
   const next = identify(candidate, 2);
   archive = join(work, 'build.tar.gz');
   c({ file: archive, gzip: true, sync: true, portable: true, cwd: work }, [releaseName]);
+  console.info('Native update: archive created');
   rmSync(join(work, releaseName), { recursive: true });
+  console.info('Native update: verify and sign the archive');
   const now = Date.now();
   catalogue = await signUpdateCatalogue({ policy, privateKey: readFileSync(keyPath), manifest: { sequence: 2,
     issued_at: new Date(now - 1000).toISOString(), expires_at: new Date(now + 3600000).toISOString(),
