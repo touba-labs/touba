@@ -25,11 +25,13 @@ export function atomicJson(path, value) {
   } finally { if (fd !== undefined) closeSync(fd); rmSync(temporary,{force:true}); }
 }
 export function installation(root) {
-  regular(root,true); root=realpathSync(root);
+  // Windows may enter through an 8.3 path (RUNNER~1) while the module loader
+  // resolves its long form. Compare physical native paths, not these aliases.
+  regular(root,true); root=realpathSync.native(root);
   const prefix=dirname(root);
   if (relative(prefix,root) !== 'touba-toolchain') fail('UpdateUnmanagedInstallation','Use the latest Touba installer once to enable updates for this installation.');
   const receipt=readJson(join(prefix,'INSTALLATION.json'));
-  if (realpathSync(receipt.prefix) !== prefix || receipt.platform !== `${process.platform}-${process.arch}`) fail('UpdateInstallationInvalid');
+  if (realpathSync.native(receipt.prefix) !== prefix || receipt.platform !== `${process.platform}-${process.arch}`) fail('UpdateInstallationInvalid');
   if (!['touba-desktop-install-v1','touba-local-install-v1','touba-local-release-install-v1','touba-local-release-install-experimental-v1','touba-github-release-install-v1'].includes(receipt.installation_profile)) fail('UpdatePackageManagerRequired','Update this system installation through its package manager.');
   // System/package-manager installations remain under their owner's control.
   if (prefix === '/usr' || prefix.startsWith('/usr/') || prefix === '/opt' || prefix.startsWith('/opt/')) fail('UpdatePackageManagerRequired');

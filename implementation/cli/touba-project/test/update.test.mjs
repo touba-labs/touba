@@ -79,6 +79,10 @@ test('native installation receipt identifies the physical prefix', async t => {
     receiptPlatform: receipt.platform, payloadPlatform: metadata.platform, platform };
   assert.doesNotThrow(() => installation(f.active), JSON.stringify(paths));
   assert.doesNotThrow(() => installation(realpathSync.native(f.active)), JSON.stringify(paths));
+  const different = join(f.root, 'different-installation');
+  mkdirSync(different);
+  writeFileSync(join(f.prefix, 'INSTALLATION.json'), JSON.stringify({ ...receipt, prefix: different }));
+  assert.throws(() => installation(f.active), { code: 'UpdateInstallationInvalid' });
 });
 
 test('signature, expiry, origin, bounds, duplicate targets and catalogue rollback are checked', () => {

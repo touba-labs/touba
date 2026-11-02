@@ -39,7 +39,11 @@ test('native CLI: TLS check, real update, compiler/doctor and offline rollback',
     catalogue_url: `${origin}/downloads/touba/updates.json`, keys: [key] };
   const initial = join(work, 'initial');
   console.info('Native update: assemble isolated toolchain');
-  packageLocalToolchain({ toolchainRoot: initial, buildCompiler: false, quiet: true });
+  if (process.env.TOUBA_QUALIFY_UPDATE_TOOLCHAIN) {
+    // CI reuses the actual packaged payload, never the user's installation.
+    cpSync(process.env.TOUBA_QUALIFY_UPDATE_TOOLCHAIN, initial, { recursive: true });
+    assert.equal(toolchainBuildIdentity(initial).id, JSON.parse(readFileSync(join(initial, 'TOOLCHAIN.json'))).build.id);
+  } else packageLocalToolchain({ toolchainRoot: initial, buildCompiler: false, quiet: true });
   if (process.platform === 'darwin') {
     // This disposable fixture uses an ephemeral catalogue key. Intel Rust
     // binaries and the relocated CI Node need their fixture signature sealed.
