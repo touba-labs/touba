@@ -25,6 +25,26 @@ import {
 
 const validateScript = path.join(implementationDir, "cli/touba-supply-chain/src/validate.mjs");
 
+test("strict admission accepts the shipped JavaScript and Python SDK releases", () => {
+  const javascriptVersion = JSON.parse(readFileSync(path.join(implementationDir, "runtime/touba-handler-sdk/package.json"), "utf8")).version;
+  const pythonVersion = readFileSync(path.join(implementationDir, "runtime/touba-python-sdk/pyproject.toml"), "utf8").match(/^version = "([^"]+)"/m)[1];
+  for (const [name, version] of [["@touba/sdk", javascriptVersion], ["touba-sdk", pythonVersion]]) {
+    withFixtureProject((fixture) => {
+      Object.assign(fixture.lock.handlers[0].sdk, { name, version });
+      writeJson(fixture.paths.lock, fixture.lock);
+      const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths), { strict: true, requireReview: true });
+      assert.equal(report.status, "ok", JSON.stringify(report.diagnostics));
+      assert.equal(report.handlers[0].sdk_status, "ok");
+      // A released SDK still cannot select a different handler protocol.
+      fixture.lock.handlers[0].sdk.protocol = "other-protocol";
+      writeJson(fixture.paths.lock, fixture.lock);
+      const refused = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
+      assert.equal(refused.handlers[0].sdk_status, "unsupported");
+      assertDiagnostic(refused, "HandlerSdkUnsupported");
+    });
+  }
+});
+
 test("validates coherent AIR, manifest and handler artifacts", () => {
   withFixtureProject((fixture) => {
     const report = validateSupplyChainArtifacts(loadSupplyChainArtifacts(fixture.paths));
