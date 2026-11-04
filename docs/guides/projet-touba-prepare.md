@@ -84,6 +84,54 @@ l'autorité d'exécution ; aucun second registre n'est créé. Un lock existant
 doit être vérifié et renouvelé explicitement après une modification d'autorité.
 Ne passez aucune valeur secrète sur la ligne de commande.
 
+## Ressources déclarées et déclencheurs
+
+Référencez les fichiers de ressources dans la configuration du projet :
+
+```json title="Extrait de touba.project.json"
+{
+  "configuration": {
+    "resource_bindings": ["config/memory.json", "config/providers.json"]
+  }
+}
+```
+
+`prepare` vérifie ces fichiers ensemble et en conserve les empreintes.
+`run --project`, le serveur projet et les SDK en mode projet transmettent les
+liaisons à l'entrée sélectionnée. Chaque handler reçoit les ressources de son
+tool, les droits read/write nécessaires à cet appel et les handles de secrets
+déclarés. Les valeurs de connexion restent dans le profil de secrets.
+
+Un doublon de ressource ou un fichier modifié après préparation est refusé.
+Après revue des changements, relancez `prepare --mode write`.
+Une option explicite `run --resource-bindings fichier.json` remplace l'ensemble
+préparé pour cet appel ; elle reste soumise aux contrôles du runtime.
+
+Pour activer un trigger déclaré, ajoutez une décision hôte :
+
+```json title="host-decisions.json"
+{
+  "triggers": {
+    "trigger:examples.daily_research/DailyResearchSchedule": {
+      "enabled": true,
+      "limits": {"max_runs_per_day": 1, "timeout_ms": 5000}
+    }
+  }
+}
+```
+
+```sh
+touba prepare --mode plan --host-decisions host-decisions.json
+touba prepare --mode write --host-decisions host-decisions.json
+touba prepare --mode check --host-decisions host-decisions.json
+```
+
+Les triggers sont désactivés à leur création. Leurs limites hôtes peuvent être
+plus strictes que celles du source. Pour désactiver un trigger, choisissez
+`enabled: false`. Les fragments décrivent les bindings de tools ;
+`triggers` et `agent_secret_scopes` se placent dans les décisions hôtes.
+Les clés inconnues, y compris imbriquées, sont refusées avec leur emplacement.
+
 ## Convention de module
 
 Les clés de `touba.project.json` et de son objet `configuration` sont fermées :

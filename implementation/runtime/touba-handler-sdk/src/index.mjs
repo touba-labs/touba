@@ -133,8 +133,14 @@ export class ToubaEngine {
     if (options.traceMode !== undefined && !["inline", "reference"].includes(options.traceMode)) throw new ToubaEngineError("options", "traceMode must be inline or reference");
     const tempRoot = await mkdtemp(join(tmpdir(), "touba-engine-"));
     try {
-      const airPath = await this.#materializeAir(options, tempRoot);
-      const args = ["run", airPath, "--output", referenceMode ? "json-reference" : "json"];
+      if (options.project !== undefined && [options.source, options.air, options.airJson].some(value => value !== undefined)) {
+        throw new ToubaEngineError("options", "project cannot be combined with source, air or airJson");
+      }
+      const selection = options.project !== undefined
+        ? ["--project", resolvePath(this.projectRoot, requireString(options.project, "run.project"))]
+        : [await this.#materializeAir(options, tempRoot)];
+      const args = ["run", ...selection, "--output", referenceMode ? "json-reference" : "json"];
+      if (options.profile !== undefined) args.push("--profile", requireString(options.profile, "run.profile"));
       appendOptionalPath(args, "--trace-out", options.traceOut, this.projectRoot);
 
       appendOptionalPath(args, "--manifest", options.manifest, this.projectRoot);
@@ -317,6 +323,38 @@ export class ToubaEngine {
     const result = await this.#runCommand("trace", args, { signal });
     try { return validateTracePage(JSON.parse(result.stdout), reference, after, limit); }
     catch { throw new ToubaEngineError("trace", "Invalid trace page", { code: "InvalidTracePage" }); }
+  }
+
+  async createCompensation(options) { return this.#compensate("create", options); }
+  async resumeCompensation(options) { return this.#compensate("resume", options); }
+
+  async #compensate(operation, options = {}) {
+    if (this.closed) throw new ToubaEngineError("compensation", "Engine is closed", { code: "EngineClosed" });
+    const paths = { air: "air", manifest: "manifest", effectJournal: "effect-journal", store: "store", authorityHost: "authority-host",
+      secrets: "secrets", resourceBindings: "resource-bindings", traceStore: "trace-store" };
+    const allowed = new Set([...Object.keys(paths), "request", "runLimits", "authorityTimeoutMs", "signal"]);
+    if (!options || typeof options !== "object" || Object.keys(options).some(key => !allowed.has(key))) throw new ToubaEngineError("options", "Unknown compensation option");
+    const args = ["compensation", operation];
+    for (const key of ["air", "manifest", "effectJournal", "store", "authorityHost"]) requireString(options[key], `compensation.${key}`);
+    for (const [key, flag] of Object.entries(paths)) appendOptionalPath(args, `--${flag}`, options[key], this.projectRoot);
+    if (!options.request || typeof options.request !== "object" || Array.isArray(options.request)) throw new ToubaEngineError("options", "compensation.request must be an object");
+    appendOptionalJson(args, "--request-json", options.request, "request");
+    appendOptionalJson(args, "--run-limits-json", options.runLimits, "runLimits");
+    if (options.authorityTimeoutMs !== undefined) {
+      const timeout = requirePositiveInteger(options.authorityTimeoutMs, "authorityTimeoutMs");
+      if (timeout > 5000) throw new ToubaEngineError("options", "authorityTimeoutMs must not exceed 5000");
+      args.push("--authority-timeout-ms", String(timeout));
+    }
+    const response = await this.#runCommand("compensation", args, { allowFailure: true, signal: options.signal });
+    let result;
+    try { result = JSON.parse(response.stdout); } catch { /* A malformed transport is an error, never a successful inverse. */ }
+    if (response.status !== 0 || result?.schema_version !== "touba-compensation-result-v1" || !result.record
+      || !["ready", "running", "action_required", "terminal"].includes(result.record.state)
+      || !Number.isSafeInteger(result.record.revision) || result.record.revision < 1) {
+      const code = result?.schema_version === "touba-compensation-error-v1" && /^[A-Za-z]{1,100}$/.test(result.code) ? result.code : "CompensationTransportInvalid";
+      throw new ToubaEngineError("compensation", code, { code, exitCode: response.status });
+    }
+    return { record: result.record };
   }
 
   async #materializeAir(options, tempRoot) {

@@ -46,6 +46,8 @@ class RunResult:
 
 
 class RunOptions(TypedDict, total=False):
+    project: str
+    profile: str
     source: str
     air: str
     air_json: str | dict[str, Any]
@@ -318,6 +320,45 @@ class AsyncToubaEngine:
                 task.cancel()
             await asyncio.gather(monitor, collection, *readers, return_exceptions=True)
 
+    async def create_compensation(self, **options) -> dict[str, Any]:
+        return await self._compensate("create", options)
+
+    async def resume_compensation(self, **options) -> dict[str, Any]:
+        return await self._compensate("resume", options)
+
+    async def _compensate(self, operation: str, options: dict[str, Any]) -> dict[str, Any]:
+        paths = {"air": "air", "manifest": "manifest", "effect_journal": "effect-journal", "store": "store",
+                 "authority_host": "authority-host", "secrets": "secrets", "resource_bindings": "resource-bindings", "trace_store": "trace-store"}
+        allowed = set(paths) | {"request", "run_limits", "authority_timeout_ms", "timeout", "cancel_event"}
+        if options.keys() - allowed:
+            raise ToubaEngineError("options", "UnknownCompensationOption")
+        for key in ("air", "manifest", "effect_journal", "store", "authority_host"):
+            _text(options.get(key))
+        if not isinstance(options.get("request"), dict):
+            raise ToubaEngineError("options", "JsonObjectRequired")
+        args = ["compensation", operation, "--request-json", _json(options["request"])]
+        for key, flag in paths.items():
+            if key in options:
+                args.extend(["--" + flag, self._path(options[key])])
+        if "run_limits" in options:
+            if not isinstance(options["run_limits"], dict):
+                raise ToubaEngineError("options", "JsonObjectRequired")
+            args.extend(["--run-limits-json", _json(options["run_limits"])])
+        if "authority_timeout_ms" in options:
+            value = options["authority_timeout_ms"]
+            if type(value) is not int or value < 1 or value > 5000:
+                raise ToubaEngineError("options", "InvalidAuthorityTimeout")
+            args.extend(["--authority-timeout-ms", str(value)])
+        code, raw = await self._execute("compensation", args, timeout=options.get("timeout"), cancel_event=options.get("cancel_event"))
+        result = _parse(raw, "compensation")
+        if code != 0:
+            reason = result.get("code") if isinstance(result, dict) else None
+            raise ToubaEngineError("compensation", reason if isinstance(reason, str) and reason.isascii() and reason.isalpha() and len(reason) <= 100 else "CompensationTransportInvalid")
+        record = result.get("record") if isinstance(result, dict) else None
+        if not isinstance(record, dict) or result.get("schema_version") != "touba-compensation-result-v1" or record.get("state") not in ("ready", "running", "action_required", "terminal") or type(record.get("revision")) is not int or record["revision"] < 1:
+            raise ToubaEngineError("compensation", "CompensationTransportInvalid")
+        return {"record": record}
+
     async def version(self) -> dict[str, Any]:
         code, raw = await self._execute("version", ["version", "--json"])
         if code != 0:
@@ -343,10 +384,12 @@ class AsyncToubaEngine:
         mode = options.get("trace_mode", "inline")
         if mode not in ("inline", "reference"):
             raise ToubaEngineError("options", "InvalidTraceMode")
-        if sum(key in options for key in ("source", "air", "air_json")) != 1:
+        if sum(key in options for key in ("source", "air", "air_json", "project")) != 1:
             raise ToubaEngineError("options", "ExactlyOneProgramRequired")
         with tempfile.TemporaryDirectory(prefix="touba-python-engine-") as temporary:
-            if "air" in options:
+            if "project" in options:
+                air = None
+            elif "air" in options:
                 air = self._path(options["air"])
             else:
                 document = options.get("air_json")
@@ -360,7 +403,10 @@ class AsyncToubaEngine:
                 air = str(Path(temporary) / "program.air.json")
                 Path(air).write_text(_json(document), encoding="utf-8")
                 os.chmod(air, 0o600)
-            args = ["run", air, "--output", "json-reference" if mode == "reference" else "json"]
+            selection = ["--project", self._path(_text(options["project"]))] if "project" in options else [air]
+            args = ["run", *selection, "--output", "json-reference" if mode == "reference" else "json"]
+            if "profile" in options:
+                args.extend(["--profile", _text(options["profile"])])
             if "trace_store" not in options:
                 args.extend(["--trace-store", self._path(".touba/traces.sqlite")])
             if "human_checkpoint_store" not in options:
@@ -452,6 +498,12 @@ class ToubaEngine:
 
     def run(self, **options: Unpack[RunOptions]) -> RunResult:
         return self._run(self._async.run(**options))
+
+    def create_compensation(self, **options) -> dict[str, Any]:
+        return self._run(self._async.create_compensation(**options))
+
+    def resume_compensation(self, **options) -> dict[str, Any]:
+        return self._run(self._async.resume_compensation(**options))
 
     def read_trace(self, *, trace_store: str, reference: dict[str, Any], after: int | None = None,
                    limit: int = 100, timeout: float | None = None, cancel_event: Event | None = None) -> dict[str, Any]:

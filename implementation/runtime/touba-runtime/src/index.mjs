@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { failureFamilyForRuntimeCode } from "../../../contracts/machine/contracts.mjs";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
+import { assertManifestFields } from "../../../contracts/manifest-fields.mjs";
 import { createProviderCostRecorder } from "./provider-cost-evidence.mjs";
 import {
   agentDecisionProviderContent,
@@ -1571,7 +1572,7 @@ function durableResourceBindingsProjection(resourceBindings) {
   if (!resourceBindings) return null;
   return jsonPortableProjection(Object.fromEntries([...resourceBindings.bindings.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([resourceRef, binding]) => [resourceRef, publicResourceBindingView(binding)])));
+    .map(([resourceRef, binding]) => [resourceRef, resourceBindingProjection(binding)])));
 }
 
 function jsonPortableProjection(value) {
@@ -6233,10 +6234,25 @@ function resourceBindingsForTool(tool, context) {
   return [...resourceRefs]
     .map((resourceRef) => context.resourceBindings.bindings.get(resourceRef))
     .filter((binding) => binding !== undefined)
-    .map(publicResourceBindingView);
+    .map(binding => publicResourceBindingView(binding, tool));
 }
 
-function publicResourceBindingView(binding) {
+function publicResourceBindingView(binding, tool) {
+  const grants = [...new Set((tool.memory_accesses ?? []).filter(access => access.memory_ref === binding.resourceRef)
+    .map(access => access.access === "write" ? "memory.write" : "memory.read"))];
+  if (grants.some(grant => !binding.grants.includes(grant))) {
+    throw new RuntimeFailure("resource binding lacks the requested memory grant", { resourceRef: binding.resourceRef }, "ResourceBindingGrantMissing");
+  }
+  const secrets = binding.secrets.filter(handle => (tool.required_secrets ?? []).includes(handle));
+  if (binding.requiredSecrets.some(handle => !secrets.includes(handle))) {
+    throw new RuntimeFailure("resource requires a secret not declared by this tool", { resourceRef: binding.resourceRef }, "ResourceBindingSecretMissing");
+  }
+  return { ...resourceBindingProjection(binding), grants, secret_handles: secrets };
+}
+
+// Checkpoints bind the complete resource configuration; handlers receive the
+// narrower per-call view above. Keep these projections distinct.
+function resourceBindingProjection(binding) {
   return compactPayload({
     resource_ref: binding.resourceRef,
     kind: binding.kind,
@@ -7084,6 +7100,8 @@ function normalizeToolBindingManifest(manifest) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     throw new ToubaRuntimeError("InvalidToolBindingManifest", "manifest must be an object");
   }
+  try { assertManifestFields(manifest); }
+  catch (error) { throw new ToubaRuntimeError("InvalidToolBindingManifest", error.message, error.details); }
   if (manifest.manifest_version !== TOOL_BINDING_MANIFEST_VERSION) {
     throw new ToubaRuntimeError(
       "InvalidToolBindingManifest",

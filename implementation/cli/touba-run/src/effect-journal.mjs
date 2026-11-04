@@ -3,6 +3,13 @@ import { basename, dirname, join, resolve } from "node:path";
 import { createSqliteEffectJournal } from "../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs";
 import { ToubaRuntimeError } from "../../../runtime/touba-runtime/src/runtime-errors.mjs";
 
+export function effectJournalPathDiagnostic(path) {
+  if (typeof path === "string" && path.endsWith(".effect-journal.sqlite")) return null;
+  return "--effect-journal requires a .effect-journal.sqlite path. For an old JSON journal, stop its writers, preview: "
+    + "touba state migrate effects <source.json> --out .touba/effects.effect-journal.sqlite; "
+    + "then repeat with --apply. Keep the source and related approval/checkpoint stores; do not rename JSON or start an empty journal to resume prior effects.";
+}
+
 // The CLI execution is single-writer. A lease spans the whole execution,
 // including pauses in a process; a crashed lease is never stolen automatically.
 export function openCliEffectJournal(inputPath, secretValues = []) {

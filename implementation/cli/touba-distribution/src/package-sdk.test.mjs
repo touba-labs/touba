@@ -136,6 +136,16 @@ print("PYTHON_ARCHIVE_OK")`], workspace, { PYTHONPATH: "" }), /PYTHON_ARCHIVE_OK
     assert.equal(readFileSync(sdkPath, "utf8"), before, "CLI reinstall must not mutate project SDK");
     assert.match(run(node, ["sdk-smoke.mjs", cli], projects[0]), /SDK_ARCHIVE_OK/);
 
+    // Exercise the public host API through the installed archive and its SDKs.
+    // In particular, this catches omitted shared contracts in the payload.
+    run(node, ["--test", join(here, "../../touba-project/test/compensation-command.test.mjs")], workspace, {
+      TOUBA_TEST_CLI: cli,
+      TOUBA_TEST_SDK: sdkPath,
+      TOUBA_HOST_PYTHON: client,
+      PYTHONPATH: "",
+      PATH: `${join(installed.install_root, "bin")}${process.platform === "win32" ? ";" : ":"}${process.env.PATH}`,
+    });
+
     run(node, [cli, "init", "--root", projects[0]], workspace);
     const port = await freePort();
     const child = spawn(node, [cli, "serve", "--project-root", projects[0], "--host", "127.0.0.1", "--port", String(port)], {

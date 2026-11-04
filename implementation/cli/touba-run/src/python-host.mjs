@@ -106,6 +106,7 @@ export async function loadPythonHost(filename, options = {}) {
   try {
     const metadata = await call("describe");
     return { metadata, decide: (request, execution) => call("decide", request, execution),
-      attest: request => call("attest", request), resolveInitiator: request => call("resolve_initiator", request), close: stop };
+      attest: request => call("attest", request), compensation: request => call("compensation", request),
+      resolveInitiator: request => call("resolve_initiator", request), close: stop };
   } catch (error) { stop(); throw error; }
 }

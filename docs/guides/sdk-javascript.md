@@ -123,6 +123,21 @@ Le paquet s’installe sous `@touba/sdk`. Les helpers de test sont dans son sous
 
 ## Exécuter un programme
 
+Pour utiliser l'entrée, le profil et les ressources d'un projet préparé :
+
+```js
+const result = await engine.run({project: ".", profile: "dev"});
+```
+
+Choisissez `project` ou l'une des entrées `source`, `air`, `airJson`.
+Le mode projet charge les fichiers de ressources explicitement déclarés et
+vérifie leurs empreintes. Les modes AIR/source utilisent les options fournies
+par l'hôte. `resourceBindings` remplace explicitement l'ensemble préparé.
+
+Pour une inverse métier, `engine.createCompensation(options)` puis
+`engine.resumeCompensation(options)` fournissent le parcours hôte décrit dans
+[Compensations explicites](compensations-explicites.md).
+
 <!-- touba-example: compile -->
 ```touba title="program.tb"
 module sdk.engine

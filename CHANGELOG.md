@@ -5,7 +5,22 @@ notes remain the source of truth for version deltas, validation evidence,
 downloadable artifacts, checksums and platform-specific installation
 instructions.
 
-## 1.1.0 - Release preparation
+## Unreleased
+
+- Prepared resource files now reach CLI, project-server and JavaScript/Python
+ project runs, with fingerprint checks and per-call memory permissions.
+- Preparation and runtime reject unknown binding fields. Host decisions can
+ explicitly enable declared triggers and lower their limits.
+- Effect-journal diagnostics explain preview/apply migration to a
+ `.effect-journal.sqlite` file. Retain related checkpoint and approval stores;
+ existing state is never replaced or migrated automatically.
+- Host compensation creation/resumption is available through the CLI and both
+ SDKs, using the existing authority checks, journals and revision-bound records.
+
+These changes target the next qualified distribution. The documentation source
+and local test artifacts do not change the already published 1.1.0 build.
+
+## 1.1.0
 
 - Verified `touba update`, availability checks and offline rollback.
 - Approval checkpoint integrity, host-contract binding and durable replay checks.

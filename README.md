@@ -33,9 +33,9 @@ correctness of a model's answer.
 
 ## Get started
 
-The first public release, `1.0.0`, is being qualified. Public downloads are not
-open yet. The instructions below apply to a Touba build supplied by the
-maintainers.
+Touba is available from the [downloads page](https://toubalang.org/hub/).
+Use `touba version` to identify the installed version and build, and
+`touba update --check` to check for an available update.
 
 The [installation guide](https://toubalang.org/docs/demarrer/installation)
 covers archives, graphical installers and checksum verification. The release

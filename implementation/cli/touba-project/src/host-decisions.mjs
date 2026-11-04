@@ -98,7 +98,7 @@ function normalizeField(field, value, required) {
 // Pure, atomic proposal. No input is persisted, executed or treated as a secret value.
 export function applyHostDecisions(manifest, decisions, requirements, fragmentToolRefs = new Set(), packageHandlers = new Map()) {
   if (decisions === undefined) return { manifest, changes: [] };
-  knownKeys(decisions, new Set(["bindings", "modules", "agent_secret_scopes", "remove_bindings"]));
+  knownKeys(decisions, new Set(["bindings", "modules", "agent_secret_scopes", "remove_bindings", "triggers"]));
   decisions = expandModuleDecisions(decisions, requirements);
   const proposed = structuredClone(manifest);
   const changes = [];
@@ -153,6 +153,29 @@ export function applyHostDecisions(manifest, decisions, requirements, fragmentTo
           : normalize(value);
         change(ref, field, proposed.bindings[ref], selected,
           ["grants", "secrets", "memories"].includes(field) ? required[field] ?? [] : undefined, normalize);
+      }
+    }
+  }
+  if (decisions.triggers !== undefined) {
+    requireObject(decisions.triggers);
+    for (const [ref, patch] of Object.entries(decisions.triggers)) {
+      if (!Object.hasOwn(requirements.triggers ?? {}, ref)) fail("HostDecisionTargetUnknown", { target_ref: diagnosticKey(ref), path: "triggers" });
+      knownKeys(patch, new Set(["enabled", "limits"]), `triggers.${diagnosticKey(ref)}`);
+      const target = proposed.triggers[ref];
+      if (patch.enabled !== undefined) {
+        if (typeof patch.enabled !== "boolean") fail("HostDecisionTriggerInvalid", { target_ref: ref });
+        change(ref, "enabled", target, patch.enabled, undefined, value => typeof value === "boolean" ? value : null);
+      }
+      if (patch.limits !== undefined) {
+        knownKeys(patch.limits, new Set(["max_runs_per_day", "timeout_ms"]), `triggers.${diagnosticKey(ref)}.limits`);
+        const normalize = value => {
+          requireObject(value);
+          for (const [key, limit] of Object.entries(value)) {
+            if (!Number.isSafeInteger(limit) || limit <= 0 || limit > requirements.triggers[ref].limits[key]) fail("HostDecisionLimitInvalid", { target_ref: ref, field: key });
+          }
+          return structuredClone(value);
+        };
+        change(ref, "limits", target, normalize({ ...target.limits, ...patch.limits }), requirements.triggers[ref].limits, normalize);
       }
     }
   }

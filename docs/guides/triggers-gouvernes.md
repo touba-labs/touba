@@ -70,6 +70,13 @@ argument ; un champ manquant est refusé avant l’exécution.
 
 ## 3. Activer le trigger dans le manifest
 
+Dans un projet préparé, utilisez les
+[décisions hôtes de triggers](projet-touba-prepare.md#ressources-déclarées-et-déclencheurs)
+avec `prepare --host-decisions`. La préparation crée les entrées désactivées ;
+la décision hôte sélectionne celles à activer et peut abaisser leurs limites.
+Le manifest ci-dessous illustre le résultat attendu et le parcours hors projet
+avec des artefacts explicites.
+
 ```json title="touba.manifest.json"
 {
   "manifest_version": "touba-manifest-v1",

@@ -135,6 +135,10 @@ try {
 
 async function dispatch(rawArgs) {
   const [command, ...rest] = rawArgs;
+  if (command === "compensation") {
+    const { compensationCommand } = await import("./compensation-command.mjs");
+    return compensationCommand(rest);
+  }
   if (command === "state") {
     const { stateCommand } = await import("./state-command.mjs");
     return stateCommand(rest);
@@ -1616,6 +1620,7 @@ function printUsage() {
   touba trace export --store <traces.sqlite> --postgres-env <NAME> [--watch] [--batch-size <1..1000>]
   touba state migrate <kind> <source.json> --out <new.sqlite> [--apply]
   touba state list effects|compensations <path.sqlite> [--after <cursor>] [--limit <1..1000>]
+  touba compensation create|resume --air <air.json> --manifest <manifest.json> --effect-journal <journal.effect-journal.sqlite> --store <compensations.sqlite> --authority-host <host.mjs|host.py> --request-json <json>
   touba serve [--project-root <path>] [--contracts-root <path>] [--human-decisions <human-decisions.sqlite>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--identity-control-plane-url URL] [--identity-service-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict]
   touba deploy plan|publish|list|activate|rollback|target ...
   touba refresh --url <touba-serve-url> [--auth-token-env NAME] [--reason <text>]

@@ -12,7 +12,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
+import { assertKnownFields, assertManifestFields, assertBindingFields } from "../../../contracts/manifest-fields.mjs";
+import { loadResourceBindingFiles, snapshotResourceBindings } from "../../../contracts/resource-binding-files.mjs";
 import { applyHostDecisions } from "./host-decisions.mjs";
+import { normalizeTriggerEntries } from "../../touba-manifest/src/generate.mjs";
 import { loadSkillPack, projectContextSelections, normalizeProjectContexts } from "./skill-packs.mjs";
 import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, readPackage } from "./package-contract.mjs";
 import { PACKAGE_LOCK, assertPackageDirectory, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
@@ -422,6 +425,14 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
     throw new Error(`prepared run plan is missing: ${runPlanPath}; run touba prepare --root ${JSON.stringify(projectRoot)} --mode write --profile ${profileName}, with --entry <air-ref> if the project has several entry points`);
   }
   const runPlan = JSON.parse(readFileSync(runPlanPath, "utf8"));
+  if (runPlan.resource_bindings !== undefined || projectConfig.configuration?.resource_bindings?.length) {
+    const effectivePath = join(dirname(runPlanPath), "touba.effective-project.json");
+    const effective = existsSync(effectivePath) ? JSON.parse(readFileSync(effectivePath, "utf8")) : null;
+    if (effective?.inputs?.find(input => input.kind === "project")?.digest_sha256 !== packageDigest(readFileSync(configPath))
+      || effective?.inputs?.find(input => input.kind === "run_plan")?.digest_sha256 !== packageDigest(readFileSync(runPlanPath))) {
+      throw packageError("ResourceBindingsPreparationStale", "project resource selection changed; run touba prepare --mode write");
+    }
+  }
   if (existsSync(join(projectRoot, PACKAGE_LOCK))) {
     const effectivePath = join(dirname(runPlanPath), "touba.effective-project.json");
     const effective = existsSync(effectivePath) ? JSON.parse(readFileSync(effectivePath, "utf8")) : null;
@@ -634,6 +645,8 @@ export async function prepareProject(options = {}) {
     maxPayloadBytes: options.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES,
     handlerCwd: toPosixPath(relative(dirname(manifestPath), root) || "."),
   });
+  const triggerRequirements = Object.assign({}, ...preparedAirDocuments.map(({ document }) => normalizeTriggerEntries(document.definitions?.triggers)));
+  if (Object.keys(triggerRequirements).length) expectedManifest.triggers = triggerRequirements;
   const bindingFragmentPaths = normalizeBindingFragmentPaths(root, configuredBindingFragments);
   const manifestRequirements = structuredClone(expectedManifest);
   const bindingFragmentComposition = composeBindingFragments({
@@ -686,6 +699,8 @@ export async function prepareProject(options = {}) {
       entryRef,
       manifestPath,
       expectedToolRefs,
+      hasTriggers: Object.keys(triggerRequirements).length > 0,
+      resourceBindingsPaths,
       secretProfiles,
       projectConfig: projectConfigResolution.document ?? expectedProjectConfigDocument(languageProfile),
       profile: runProfile,
@@ -864,7 +879,7 @@ export async function prepareProject(options = {}) {
       mkdirSync(dirname(outputPath), { recursive: true });
       writeFileSync(outputPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
     }
-    if (expectedToolRefs.length > 0 || currentManifest !== null) {
+    if (expectedToolRefs.length > 0 || Object.keys(triggerRequirements).length > 0 || currentManifest !== null) {
       const mergedManifest = proposedManifest;
       if (!hasErrorDiagnostics(diagnostics) && JSON.stringify(mergedManifest) !== JSON.stringify(currentManifest)) {
         mkdirSync(dirname(manifestPath), { recursive: true });
@@ -2924,6 +2939,13 @@ function readBindingFragment(fragmentPath, diagnostics) {
     return null;
   }
   const sourceKind = document.source.kind;
+  try {
+    assertKnownFields(document, ["fragment_schema_version", "source", "bindings"], "fragment");
+    assertKnownFields(document.source, ["kind", "module", "package"], "fragment.source");
+  } catch (error) {
+    diagnostics.push(errorDiagnostic(error.code, error.message, { fragment_path: fragmentPath, ...error.details }));
+    return null;
+  }
   if (!["module", "package_local", "project"].includes(sourceKind)) {
     diagnostics.push(errorDiagnostic("BindingFragmentSchemaMismatch", "binding fragment source.kind is unsupported", {
       fragment_path: fragmentPath,
@@ -2973,6 +2995,8 @@ function validateBindingFragmentBinding(binding, expected, diagnostics, fragment
 }
 
 function validateManifestBindingShape(binding, diagnostics, fragmentPath, toolRef) {
+  try { assertBindingFields(binding, `bindings.${toolRef}`); }
+  catch (error) { diagnostics.push(errorDiagnostic(error.code, error.message, { fragment_path: fragmentPath, ...error.details })); }
   if (!binding.handler || typeof binding.handler !== "object" || Array.isArray(binding.handler)) {
     diagnostics.push(errorDiagnostic("BindingFragmentSchemaMismatch", `binding ${toolRef} handler must be an object`, {
       fragment_path: fragmentPath,
@@ -3249,6 +3273,8 @@ function validateResourceBindingsForAir({ resourceBindingsPaths, airDocuments, d
   const documents = [];
   const boundResources = new Set();
   const explicitlyRequired = new Set();
+  try { loadResourceBindingFiles(resourceBindingsPaths.map(path => ({ path })), process.cwd()); }
+  catch (error) { diagnostics.push(errorDiagnostic(error.code ?? "ResourceBindingsReadFailed", error.message)); }
 
   for (const resourceBindingsPath of resourceBindingsPaths) {
     const document = readResourceBindingsDocument(resourceBindingsPath, diagnostics);
@@ -4094,6 +4120,8 @@ function buildExpectedRunPlan({
   entryRef,
   manifestPath,
   expectedToolRefs,
+  hasTriggers = false,
+  resourceBindingsPaths,
   secretProfiles,
   projectConfig,
   profile,
@@ -4134,6 +4162,10 @@ function buildExpectedRunPlan({
   };
 
   const declaredEntries = projectEntrypoints(projectConfig);
+  if (resourceBindingsPaths?.length) {
+    try { document.resource_bindings = snapshotResourceBindings(resourceBindingsPaths, dirname(runPlanPath)); }
+    catch (error) { diagnostics.push(errorDiagnostic(error.code ?? "ResourceBindingsReadFailed", error.message)); }
+  }
   if (declaredEntries.length > 0 && !declaredEntries.includes(entry.ref)) {
     diagnostics.push(errorDiagnostic("ProjectEntrypointNotAllowed", "selected entry is not declared in the project", { entry_ref: entry.ref }));
     return null;
@@ -4146,7 +4178,7 @@ function buildExpectedRunPlan({
     }).filter(Boolean);
   }
 
-  if (expectedToolRefs.length > 0) {
+  if (expectedToolRefs.length > 0 || hasTriggers) {
     document.manifest = relativeRunPlanPath(runPlanPath, manifestPath);
   }
 
@@ -4339,8 +4371,18 @@ function inspectEffectiveProject({ path, expected, diagnostics, actions, mode })
 }
 
 function inspectManifest({ currentManifest, reviewedManifest = currentManifest, fragmentToolRefs = new Set(), expectedManifest, manifestPath, diagnostics, actions, mode }) {
+  for (const [ref, expected] of Object.entries(expectedManifest.triggers ?? {})) {
+    const actual = reviewedManifest?.triggers?.[ref];
+    if (!actual || typeof actual.enabled !== "boolean" || actual.source?.kind !== expected.source.kind
+      || ["max_runs_per_day", "timeout_ms"].some(key => !Number.isSafeInteger(actual.limits?.[key])
+        || actual.limits[key] <= 0 || actual.limits[key] > expected.limits[key])) {
+      diagnostics.push(errorDiagnostic("ManifestTriggerInvalid", "trigger configuration must match its declared source and stay within its limits", {
+        manifest_path: manifestPath, trigger_ref: ref,
+      }));
+    }
+  }
   const expectedToolRefs = Object.keys(expectedManifest.bindings);
-  if (expectedToolRefs.length === 0) {
+  if (expectedToolRefs.length === 0 && Object.keys(expectedManifest.triggers ?? {}).length === 0) {
     if (reviewedManifest?.bindings && Object.keys(reviewedManifest.bindings).length > 0) {
       diagnostics.push(errorDiagnostic("ManifestHasUnexpectedBindings", "manifest has bindings but project AIR declares no tools", {
         manifest_path: manifestPath,
@@ -4807,6 +4849,7 @@ function canonicalRunPlan(document) {
     air: document.air,
     ...(document.entries === undefined ? {} : { entries: document.entries }),
     ...(document.manifest !== undefined ? { manifest: document.manifest } : {}),
+    ...(document.resource_bindings !== undefined ? { resource_bindings: document.resource_bindings } : {}),
     ...(document.secrets_profile !== undefined ? { secrets_profile: document.secrets_profile } : {}),
     profile: document.profile,
     ...(document.supply_chain_lock !== undefined ? { supply_chain_lock: document.supply_chain_lock } : {}),
@@ -4834,6 +4877,10 @@ function findForbiddenRunPlanField(value, path = []) {
 }
 
 function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestPath) {
+  if (currentManifest) {
+    try { assertManifestFields(currentManifest); }
+    catch (error) { diagnostics.push(errorDiagnostic(error.code, error.message, { manifest_path: manifestPath, ...error.details })); }
+  }
   if (currentManifest === null) {
     return expectedManifest;
   }
@@ -4847,9 +4894,18 @@ function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestP
     ...currentManifest,
     manifest_version: TOUBA_MANIFEST_V1,
     bindings: { ...currentManifest.bindings },
+    ...(currentManifest.triggers === undefined ? {} : {triggers: structuredClone(currentManifest.triggers)}),
   };
   for (const [toolRef, expectedBinding] of Object.entries(expectedManifest.bindings)) {
     if (merged.bindings[toolRef] === undefined) merged.bindings[toolRef] = structuredClone(expectedBinding);
+  }
+  for (const [ref, trigger] of Object.entries(expectedManifest.triggers ?? {})) {
+    merged.triggers ??= {};
+    if (merged.triggers[ref] === undefined) merged.triggers[ref] = structuredClone(trigger);
+  }
+  for (const ref of Object.keys(merged.triggers ?? {})) {
+    if (!Object.hasOwn(expectedManifest.triggers ?? {}, ref)) diagnostics.push(errorDiagnostic(
+      "ManifestTriggerObsolete", "manifest trigger is absent from current source; remove its host configuration explicitly", { trigger_ref: ref }));
   }
   // Existing host grants, handlers, scopes and effect contracts are authoritative.
   // Source requirements never authorize an expansion or replace a host decision.

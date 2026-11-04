@@ -54,7 +54,7 @@ import {
   unavailableAirInputContract,
 } from "../../../contracts/product-surfaces/input-contracts.mjs";
 import { buildInteractionContract } from "../../../contracts/product-surfaces/interaction-contracts.mjs";
-import { readPreparedProject } from "./prepared-project.mjs";
+import { readPreparedProject, loadPreparedResourceBindings } from "./prepared-project.mjs";
 import { validatedRecordCodec } from "./validated-records.mjs";
 import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
 import { migrateRecordState } from "../../../runtime/touba-runtime/src/sqlite-state-migration.mjs";
@@ -3892,6 +3892,7 @@ export async function executeProjectSandboxRun({
   try {
     const runtimeOptions = {
       ...loadProjectContexts(projectRoot, resolved.document),
+      resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
       humanCheckpointStorePath: join(projectRoot, ".touba", "approval-checkpoints.sqlite"),
       agentDecisionProvider,
       agentDecisionProviderContentMode,
@@ -4189,6 +4190,7 @@ export async function resumeProjectSandboxRun({
   try {
     const runtimeOptions = {
       ...loadProjectContexts(projectRoot, resolved.document),
+      resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
       humanCheckpointStorePath: join(projectRoot, ".touba", "approval-checkpoints.sqlite"),
       agentDecisionProvider,
       agentDecisionProviderContentMode,
@@ -4347,6 +4349,7 @@ async function terminalizeAutomaticHumanWait({
     const startedMs = Date.now();
     const runtimeOptions = {
       ...loadProjectContexts(projectRoot, resolved.document),
+      resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
       humanCheckpointStorePath: join(projectRoot, ".touba", "approval-checkpoints.sqlite"),
       agentDecisionProvider,
       agentDecisionProviderContentMode,
@@ -4505,6 +4508,7 @@ async function resumeProjectDurableSandboxRun({
     };
     const runtimeOptions = {
       ...loadProjectContexts(projectRoot, resolved.document),
+      resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
       humanCheckpointStorePath: join(projectRoot, ".touba", "approval-checkpoints.sqlite"),
       agentDecisionProvider,
       agentDecisionProviderContentMode,

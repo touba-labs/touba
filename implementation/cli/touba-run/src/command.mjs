@@ -1,7 +1,7 @@
 import { closeSync, constants, existsSync, fchmodSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { openCliEffectJournal } from "./effect-journal.mjs";
+import { openCliEffectJournal, effectJournalPathDiagnostic } from "./effect-journal.mjs";
 import { writeParallelCheckpoint } from "./parallel-checkpoint-file.mjs";
 import { traceOutputChunks, writeChunks, writeTraceFile } from "./trace-output.mjs";
 import { buildRunSummary } from "./trace-summary.mjs";
@@ -12,6 +12,7 @@ import { createHostModuleLoader } from "./host-modules.mjs";
 import { openLocalHandlerDiagnostics } from "../../../runtime/touba-runtime/src/handler-diagnostics.mjs";
 import { resolvedSecretEntries } from "../../../runtime/touba-runtime/src/secret-redaction.mjs";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
+import { loadResourceBindingFiles, selectResourceBindings } from "../../../contracts/resource-binding-files.mjs";
 import { publicRunResult, publicReferencedRunResult, runExitCode } from "../../../contracts/run-outcome.mjs";
 import { loadSkillPack } from "../../touba-project/src/skill-packs.mjs";
 import { verifyManifestPackages } from "../../touba-project/src/handler-packages.mjs";
@@ -208,10 +209,11 @@ try {
 }
 
 let resourceBindings;
-if (parsedArgs.resourceBindingsPath !== undefined || parsedArgs.requireResourceBindings) {
+if (parsedArgs.resourceBindingsPath !== undefined || parsedArgs.preparedResourceBindings !== undefined || parsedArgs.requireResourceBindings) {
   try {
     resourceBindings = validateResourceBindingsForAir({
       resourceBindingsPath: parsedArgs.resourceBindingsPath,
+      preparedDocument: selectResourceBindings(parsedArgs.preparedResourceBindings, document),
       requireAll: parsedArgs.requireResourceBindings,
       document,
     });
@@ -693,6 +695,10 @@ function applyRunPlan(parsed, runPlan) {
   parsed.positional = [airPath];
   parsed.runPlanPath = runPlan.path;
   parsed.runPlanProfile = plan.profile;
+  // An explicit CLI file replaces the prepared set; it is never merged as an implicit grant.
+  if (parsed.resourceBindingsPath === undefined && plan.resource_bindings !== undefined) {
+    parsed.preparedResourceBindings = loadResourceBindingFiles(plan.resource_bindings, runPlan.baseDir);
+  }
 
   if (parsed.entryRef === undefined) {
     parsed.entryRef = plan.entry_ref;
@@ -922,13 +928,13 @@ function airRequiresSecretsProfile(document) {
   return (document.definitions?.tools ?? []).some((tool) => (tool.required_secrets ?? []).length > 0);
 }
 
-function validateResourceBindingsForAir({ resourceBindingsPath, requireAll, document }) {
+function validateResourceBindingsForAir({ resourceBindingsPath, preparedDocument, requireAll, document }) {
   const inventory = buildResourceInventory(document);
   const boundResources = new Set();
   let bindingsDocument;
 
-  if (resourceBindingsPath !== undefined) {
-    bindingsDocument = readResourceBindingsDocument(resourceBindingsPath);
+  if (resourceBindingsPath !== undefined || preparedDocument !== undefined) {
+    bindingsDocument = resourceBindingsPath !== undefined ? readResourceBindingsDocument(resourceBindingsPath) : preparedDocument;
     for (const [resourceRef, binding] of Object.entries(bindingsDocument.resources)) {
       validateResourceBindingEntry(resourceRef, binding, inventory, resourceBindingsPath);
       if (binding?.active !== false) {
@@ -1285,10 +1291,10 @@ function parseArgs(rawArgs) {
     } else if (arg === "--effect-journal") {
       index += 1;
       parsed.effectJournalPath = rawArgs[index];
-      if (!parsed.effectJournalPath?.endsWith(".effect-journal.sqlite")) return { ...parsed, error: "--effect-journal requires a .effect-journal.sqlite path" };
+      if (effectJournalPathDiagnostic(parsed.effectJournalPath)) return { ...parsed, error: effectJournalPathDiagnostic(parsed.effectJournalPath) };
     } else if (arg.startsWith("--effect-journal=")) {
       parsed.effectJournalPath = arg.slice("--effect-journal=".length);
-      if (!parsed.effectJournalPath.endsWith(".effect-journal.sqlite")) return { ...parsed, error: "--effect-journal requires a .effect-journal.sqlite path" };
+      if (effectJournalPathDiagnostic(parsed.effectJournalPath)) return { ...parsed, error: effectJournalPathDiagnostic(parsed.effectJournalPath) };
     } else if (["--parallel-checkpoint-out", "--parallel-resume-checkpoint", "--parallel-limits-json"].includes(arg.split("=")[0])) {
       const flag = arg.split("=")[0];
       const value = arg.includes("=") ? arg.slice(flag.length + 1) : rawArgs[++index];

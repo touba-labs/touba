@@ -131,6 +131,22 @@ Le paquet d’installation s’appelle `touba-sdk`, le module importé `touba_sd
 
 ## Exécuter un programme
 
+Pour utiliser l'entrée, le profil et les ressources d'un projet préparé :
+
+```python
+result = engine.run(project=".", profile="dev")
+```
+
+Choisissez `project` ou l'une des entrées `source`, `air`, `air_json`.
+Le mode projet charge les fichiers de ressources explicitement déclarés et
+vérifie leurs empreintes. Les modes AIR/source utilisent les options fournies
+par l'hôte. `resource_bindings` remplace explicitement l'ensemble préparé.
+
+Pour une inverse métier, `engine.create_compensation(**options)` puis
+`engine.resume_compensation(**options)` fournissent le parcours hôte décrit dans
+[Compensations explicites](compensations-explicites.md).
+`AsyncToubaEngine` expose les mêmes méthodes avec `await`.
+
 <!-- touba-example: compile -->
 ```touba title="program.tb"
 module sdk.engine

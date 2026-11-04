@@ -81,7 +81,7 @@ function normalizeMemoryAccesses(values) {
   });
 }
 
-function normalizeTriggerEntries(values) {
+export function normalizeTriggerEntries(values) {
   if (values === undefined) {
     return {};
   }

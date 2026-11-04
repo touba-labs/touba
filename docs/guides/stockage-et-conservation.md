@@ -11,9 +11,9 @@ choisit les emplacements, les quotas et la durée de conservation.
 | Traces | `.touba/traces.sqlite` | `--trace-store` ; service webhook : `--trace-max-bytes` |
 | Événements admis et quotas journaliers | `.touba/triggers.sqlite` | `--state`, `--state-max-bytes` |
 | File webhook | `.touba/trigger-queue.sqlite` | `--queue`, `--queue-max-bytes`, `--queue-max-entries` |
-| Journal d’effets | chemin `.sqlite` choisi par l’hôte | `--effect-journal` |
+| Journal d’effets | chemin `.effect-journal.sqlite` choisi par l’hôte | `--effect-journal` |
 | Approbations, points de reprise et interactions | bases distinctes dans `.touba/` | serveur projet |
-| Compensations | chemin `.sqlite` choisi par l’hôte | `createSqliteCompensationStore` |
+| Compensations | chemin `.sqlite` choisi par l’hôte | `touba compensation --store` ; SDK hôte |
 
 Le quota par base est de 512 Mio par défaut ; la file accepte 10 000 entrées.
 Pour les traces, ce quota compte les en-têtes et événements JSON ; les index et
@@ -60,8 +60,8 @@ Arrêtez les processus qui écrivent les données. Validez d’abord la migratio
 puis créez la nouvelle base :
 
 ```bash
-touba state migrate effects ancien.effect-journal.json --out .touba/effects.sqlite
-touba state migrate effects ancien.effect-journal.json --out .touba/effects.sqlite --apply
+touba state migrate effects ancien.effect-journal.json --out .touba/effects.effect-journal.sqlite
+touba state migrate effects ancien.effect-journal.json --out .touba/effects.effect-journal.sqlite --apply
 touba trigger migrate-state ancien.trigger-state.json --out .touba/triggers.sqlite --apply
 touba trigger migrate-queue ancienne.queue.json --out .touba/trigger-queue.sqlite --apply
 ```
@@ -71,6 +71,14 @@ touba trigger migrate-queue ancienne.queue.json --out .touba/trigger-queue.sqlit
 Les formats doivent satisfaire les contrats courants. Les sources sont conservées
 avec une copie exacte `.source-backup.json`, et une destination existante est refusée.
 Les migrations ne déclenchent aucune exécution et n’inventent aucune approbation.
+
+Lisez ensuite la base avec
+`touba state list effects .touba/effects.effect-journal.sqlite`.
+Pour une nouvelle exécution, passez ce même chemin à `touba run --effect-journal`.
+Pour une reprise, conservez également le checkpoint, sa base de garde et les
+décisions liées : la migration du journal seule ne renouvelle pas une approbation.
+Une issue `unknown` reste incertaine après migration. Gardez cet état jusqu'à
+vérification de l'effet auprès du service métier.
 
 Pour le serveur projet, migrez ensemble les collections liées puis lancez
 `touba serve --check-state` avant de redémarrer. Conservez aussi les fichiers

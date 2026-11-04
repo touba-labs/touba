@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
+import { loadResourceBindingFiles, selectResourceBindings } from "../../../contracts/resource-binding-files.mjs";
+
+export function loadPreparedResourceBindings(projectRoot, air) {
+  const prepared = readPreparedProject(projectRoot);
+  const entries = prepared?.inputs.filter(input => input.kind === "resource_bindings") ?? [];
+  return selectResourceBindings(loadResourceBindingFiles(entries, projectRoot), air);
+}
 
 const schema = JSON.parse(readFileSync(new URL("../../../contracts/product-surfaces/schemas/touba-effective-project-v1.schema.json", import.meta.url), "utf8"));
 

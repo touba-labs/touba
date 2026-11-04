@@ -26,6 +26,7 @@ export function createHostModuleLoader() {
       return {
         decideAgentCapability: host.metadata.decide ? host.decide : undefined,
         attestHumanApproval: host.metadata.attest ? host.attest : undefined,
+        checkCompensationAuthority: host.metadata.compensation ? host.compensation : undefined,
         initiatorRef: host.metadata.initiator_ref ?? undefined,
         resolveInitiator: host.metadata.resolve_initiator ? host.resolveInitiator : undefined,
         provider_metadata: host.metadata.provider_metadata ?? undefined,
@@ -50,6 +51,14 @@ export function createHostModuleLoader() {
       if (typeof module.attestHumanApproval !== "function") throw Object.assign(new Error(
         "host must export attestHumanApproval (JavaScript) or attest_human_approval (Python)"), { code: "HumanApprovalAuthorityUnavailable" });
       return { humanApprovalAuthority: module.attestHumanApproval, humanApprovalInitiator: module.resolveInitiator ?? module.initiatorRef };
+    },
+    async compensationHost(filename) {
+      // Package activation has its own closed kinds; this surface selects a local trusted host explicitly.
+      if (filename.startsWith("pkg:")) throw Object.assign(new Error("select an explicit compensation authority host file"), { code: "CompensationAuthorityRefused" });
+      const module = await load(filename);
+      if (typeof module.checkCompensationAuthority !== "function") throw Object.assign(new Error(
+        "host must export checkCompensationAuthority (JavaScript) or check_compensation_authority (Python)"), { code: "CompensationAuthorityRefused" });
+      return { check: module.checkCompensationAuthority };
     },
     close() { closed = true; for (const host of hosts) host.close(); hosts.clear(); modules.clear(); },
   };
