@@ -1,7 +1,7 @@
 {
   "schema_version": "touba-release-index-v1",
   "product": "touba",
-  "current_version": "1.1.0",
+  "current_version": "1.2.0",
   "policy": {
     "versioning": "semver",
     "canonical_public_channel": "github_release",
@@ -16,6 +16,42 @@
     "win32-x64"
   ],
   "versions": [
+    {
+      "version": "1.2.0",
+      "tag": "v1.2.0",
+      "status": "candidate",
+      "summary": "Prepared resources across execution interfaces, strict host configuration and governed compensation APIs for JavaScript and Python.",
+      "release_notes": "release/notes/v1.2.0.md",
+      "breaking_changes": [
+        "Unknown manifest and host-configuration fields are now rejected; correct misspelled or unsupported fields before preparing a project."
+      ],
+      "migration_guide": "release/notes/v1.2.0.md#migration",
+      "evidence": [
+        "implementation/cli/touba-project/test/prepared-resources.test.mjs",
+        "implementation/cli/touba-project/test/strict-configuration.test.mjs",
+        "implementation/cli/touba-project/test/compensation-command.test.mjs",
+        "implementation/cli/touba-distribution/src/package-sdk.test.mjs"
+      ],
+      "compare_url": null,
+      "channels": [
+        "touba_hub"
+      ],
+      "artifacts": [
+        "touba-v1.2.0-darwin-arm64.tar.gz",
+        "touba-v1.2.0-darwin-x64.tar.gz",
+        "touba-v1.2.0-linux-x64.tar.gz",
+        "touba-v1.2.0-win32-x64.tar.gz",
+        "touba-v1.2.0-darwin-arm64-setup.dmg",
+        "touba-v1.2.0-darwin-x64-setup.dmg",
+        "touba-v1.2.0-linux-x64-setup.deb",
+        "touba-v1.2.0-win32-x64-setup.exe",
+        "SHA256SUMS",
+        "CHECKSUMS.json"
+      ],
+      "retirement": {
+        "status": "active"
+      }
+    },
     {
       "version": "1.1.0",
       "tag": "v1.1.0",

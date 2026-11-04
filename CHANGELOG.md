@@ -5,7 +5,7 @@ notes remain the source of truth for version deltas, validation evidence,
 downloadable artifacts, checksums and platform-specific installation
 instructions.
 
-## Unreleased
+## 1.2.0 - Local candidate
 
 - Prepared resource files now reach CLI, project-server and JavaScript/Python
  project runs, with fingerprint checks and per-call memory permissions.
@@ -19,6 +19,8 @@ instructions.
 
 These changes target the next qualified distribution. The documentation source
 and local test artifacts do not change the already published 1.1.0 build.
+
+See [migration and release notes](implementation/release/notes/v1.2.0.md).
 
 ## 1.1.0
 
