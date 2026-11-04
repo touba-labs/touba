@@ -5,6 +5,15 @@ notes remain the source of truth for version deltas, validation evidence,
 downloadable artifacts, checksums and platform-specific installation
 instructions.
 
+## 1.3.0 - Local candidate
+
+- Tool-level approval covers exact arguments on direct, composed and agent-selected calls.
+- JavaScript and Python handlers receive execution provenance; update SDKs with the runtime.
+- SDK diagnostics preserve safe CLI errors; Python preparation identifies linked environments precisely.
+- LSP and Explorer expose tool approval requirements.
+
+See [migration and release notes](implementation/release/notes/v1.3.0.md).
+
 ## 1.2.0 - Local candidate
 
 - Prepared resource files now reach CLI, project-server and JavaScript/Python

@@ -197,8 +197,17 @@ def _envelope(request, tool_ref, required_grants, required_secret_handles):
     if any(handle not in secrets for handle in required_secret_handles):
         _error("MissingSecretHandle", "Required secret handle missing from handler request")
     _object(request, ["protocol", "operation", "tool_ref", "call_id", "arguments", "grants", "memory_accesses",
-                      "resource_bindings", "secret_handles", "limits", "effect", "compensation"],
+                      "resource_bindings", "secret_handles", "limits", "effect", "compensation", "execution_context"],
             "InvalidCompensation" if request["operation"] == "compensate" else "InvalidHandlerRequest")
+    if "execution_context" in request:
+        context = request["execution_context"]
+        def identity(value):
+            return isinstance(value, str) and 0 < len(value) <= 1024 and not any(ord(c) < 32 or ord(c) == 127 for c in value)
+        if (type(context) is not dict or set(context) != {"run_id", "caller_ref", "agent_ref", "agent_invocation_id"}
+                or not identity(context["run_id"])
+                or any(context[key] is not None and not identity(context[key]) for key in ("caller_ref", "agent_ref", "agent_invocation_id"))
+                or (context["agent_ref"] is None and context["agent_invocation_id"] is not None)):
+            _error("InvalidHandlerRequest", "Invalid runtime execution context")
     if request["operation"] == "compensate":
         return _effect(request.get("effect")), _compensation(request.get("compensation"))
     if "compensation" in request:
@@ -268,6 +277,7 @@ async def handle_tool_request(raw_input: str, expected_tool_ref: str, handler: C
         effect, compensation = _envelope(request, expected_tool_ref, required_grants, required_secret_handles)
         envelope = {"request": request, "raw_input": raw_input, "arguments": request.get("arguments", {}),
                     "grants": request.get("grants", []), "memory_accesses": request.get("memory_accesses", []),
+                    "execution_context": deepcopy(request.get("execution_context")),
                     "resource_bindings": request.get("resource_bindings", []), "secret_handles": request.get("secret_handles", []),
                     "limits": request.get("limits", {}), "env": dict(os.environ),
                     "effect": deepcopy(effect), "compensation": deepcopy(compensation),

@@ -150,7 +150,14 @@ def _parse(raw: bytes, phase: str) -> Any:
 
 
 def _result(raw: bytes, exit_code: int, trace_mode: str = "inline") -> RunResult:
-    data = _parse(raw, "run")
+    try:
+        data = _parse(raw, "run")
+    except ToubaEngineError:
+        raise ToubaEngineError("run", "EngineCommandFailed" if exit_code else "InvalidJsonResult",
+                              {"exit_code": exit_code, "stage": "result_transport"}) from None
+    if (exit_code == 1 and isinstance(data, dict)
+            and data == {"schema_version": "touba-command-error-v1", "code": "ExecutionInterrupted", "stage": "execution"}):
+        raise ToubaEngineError("run", "ExecutionInterrupted", {"exit_code": exit_code, "stage": "execution"})
     if not isinstance(data, dict):
         raise ToubaEngineError("run", "InvalidRunResult")
     status, reason = data.get("status"), data.get("reason")
@@ -184,7 +191,7 @@ def _result(raw: bytes, exit_code: int, trace_mode: str = "inline") -> RunResult
         raise ToubaEngineError("run", "InvalidRunResult")
     expected = (0 if status == "success" else 5 if status == "cancelled" or reason == "human_approval_cancelled"
                 else (3 if reason in ("human_approval_pending", "user_input_pending") else 4) if status == "stopped" else 1)
-    if not (admission or terminal) or exit_code != expected:
+    if not (admission or terminal) or (exit_code not in (1, 2) if admission else exit_code != expected):
         raise ToubaEngineError("run", "InvalidRunResult", {"exit_code": exit_code})
     if status == "failure":
         raise ToubaEngineError("run", reason, {"exit_code": exit_code, "status": status, "reason": reason, "trace": trace,

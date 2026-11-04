@@ -1,0 +1,23 @@
+module operation_approval
+
+type Payment
+    invoice_id is Text
+    vendor is Text
+    amount is Int
+
+tool Pay
+    takes payment as Payment
+    gives Int
+    human.approve
+        with role as "finance"
+        with distinct_from as "initiator"
+
+strategy Direct
+    takes payment as Payment
+    gives Int
+    uses Pay
+    do
+        Pay
+            with payment as payment
+            into result
+        give result

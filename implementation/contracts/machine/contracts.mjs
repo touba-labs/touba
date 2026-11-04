@@ -54,7 +54,7 @@ export const TRACE_EVENT_KINDS = Object.freeze([
   "run_cancelled", "run_completed", "run_started", "run_timeout_exceeded",
   "scope_entered", "scope_exited", "secret_handle_authorized", "secret_handle_refused",
   "skill_pack_activated", "skill_pack_activation_refused", "skill_pack_discovery_listed",
-  "skill_pack_resource_loaded", "skill_pack_resource_refused", "tool_binding_authorized", "tool_execution_status",
+  "skill_pack_resource_loaded", "skill_pack_resource_refused", "tool_binding_authorized", "tool_execution_status", "tool_approval_authorized",
   "trigger_event_accepted", "trigger_event_received", "trigger_event_refused",
   "trigger_execution_completed", "trigger_execution_failed", "trigger_execution_started",
   "trigger_runner_run_started", "trigger_runner_run_completed",
@@ -64,7 +64,7 @@ export const TRACE_EVENT_KINDS = Object.freeze([
 
 const AIR_ROOT_FIELDS = new Set([
   "air_schema_version", "air_capability_profile", "air_json_profile", "module", "imports",
-  "budgets", "definitions", "execution_graphs", "trace_points",
+  "budgets", "definitions", "execution_graphs", "trace_points", "required_features",
 ]);
 const AIR_DEFINITION_COLLECTIONS = new Set([
   "types", "constants", "functions", "tools", "memories", "skills", "agents",
@@ -105,6 +105,17 @@ export function validateAirMachineContract(value) {
   requireString(module.name, "$.module.name");
   const definitions = requireObject(document.definitions, "$.definitions", "AIR definitions");
   rejectUnknownFields(definitions, AIR_DEFINITION_COLLECTIONS, "$.definitions");
+  const features = document.required_features === undefined ? [] : requireArray(document.required_features, "$.required_features");
+  if (new Set(features).size !== features.length || features.some(feature => feature !== "tool_operation_approval")) {
+    fail("AirFeatureUnsupported", "this runtime does not implement a required AIR feature", "$.required_features");
+  }
+  for (const item of definitions.tools === undefined ? [] : requireArray(definitions.tools, "$.definitions.tools")) {
+    const tool = requireObject(item, "$.definitions.tools[]", "AIR tool");
+    if (Object.hasOwn(tool, "approval_policy")) {
+      if (!features.includes("tool_operation_approval")) fail("AirFeatureRequired", "tool approval requires an explicit runtime feature", "$.required_features");
+      validateSourceApprovalPolicy(tool.approval_policy, `$.definitions.tools.${tool.id}.approval_policy`, true);
+    }
+  }
   const graphs = requireArray(document.execution_graphs, "$.execution_graphs");
   requireArray(document.trace_points, "$.trace_points");
   if (document.budgets !== undefined) {
@@ -308,6 +319,22 @@ function validateFunctionPurity(definitions, graphs) {
   }
 }
 
+/** @param {unknown} value @param {string} path @param {boolean} [allowEmpty] */
+function validateSourceApprovalPolicy(value, path, allowEmpty = false) {
+  const policy = requireObject(value, path, "approval policy");
+  /** @param {unknown} value */
+  const label = value => typeof value === "string" && value.trim() === value && value.length > 0
+    && new TextEncoder().encode(value).length <= 128 && !/[\x00-\x1f\x7f]/u.test(value);
+  if ((!allowEmpty && Object.keys(policy).length === 0)
+    || Object.keys(policy).some(key => !["role", "timeout_ms", "distinct_from", "exclude_signers"].includes(key))
+    || (Object.hasOwn(policy, "role") && !label(policy.role))
+    || (Object.hasOwn(policy, "exclude_signers") && !label(policy.exclude_signers))
+    || (Object.hasOwn(policy, "timeout_ms") && (!Number.isSafeInteger(policy.timeout_ms) || policy.timeout_ms < 1 || policy.timeout_ms > 2592000000))
+    || (Object.hasOwn(policy, "distinct_from") && !["initiator", "previous", "initiator_and_previous"].includes(policy.distinct_from))) {
+    fail("InvalidHumanApprovalPolicy", "invalid static source approval constraints", path);
+  }
+}
+
 /** @param {unknown} value @param {Set<string>} allIds @param {string} path */
 function validateGraph(value, allIds, path) {
   const graph = requireObject(value, path, "AIR graph");
@@ -323,17 +350,8 @@ function validateGraph(value, allIds, path) {
     requireEnum(node.kind, AIR_NODE_KINDS, `${path}.nodes[${index}].kind`);
     if (Object.hasOwn(node, "approval_policy")) {
       const policyPath = `${path}.nodes[${index}].approval_policy`;
-      const policy = requireObject(node.approval_policy, policyPath, "approval policy");
-      const label = (/** @type {unknown} */ value) => typeof value === "string" && value.trim() === value && value.length > 0
-        && new TextEncoder().encode(value).length <= 128 && !/[\x00-\x1f\x7f]/u.test(value);
-      if (node.kind !== "human_approval" || Object.keys(policy).length === 0
-        || Object.keys(policy).some(key => !["role", "timeout_ms", "distinct_from", "exclude_signers"].includes(key))
-        || (Object.hasOwn(policy, "role") && !label(policy.role))
-        || (Object.hasOwn(policy, "exclude_signers") && !label(policy.exclude_signers))
-        || (Object.hasOwn(policy, "timeout_ms") && (!Number.isSafeInteger(policy.timeout_ms) || policy.timeout_ms < 1 || policy.timeout_ms > 2592000000))
-        || (Object.hasOwn(policy, "distinct_from") && !["initiator", "previous", "initiator_and_previous"].includes(policy.distinct_from))) {
-        fail("InvalidHumanApprovalPolicy", "invalid static source approval constraints", policyPath);
-      }
+      if (node.kind !== "human_approval") fail("InvalidHumanApprovalPolicy", "approval policy requires a human approval node", policyPath);
+      validateSourceApprovalPolicy(node.approval_policy, policyPath);
     }
     const parallelFields = ["collection_ref", "item_binding", "max_concurrency", "max_items"];
     if (node.kind === "parallel_call") {
@@ -619,6 +637,8 @@ export function failureFamilyForRuntimeCode(codeValue, failureMode = undefined) 
   const code = String(codeValue ?? "RuntimeFailure");
   /** @type {Record<string, string>} */
   const explicit = {
+    ToolApprovalRequired: "authority",
+    ToolApprovalOperationMismatch: "authority",
     ToolPayloadConstraintViolation: "authority",
     ToolInputSchemaInvalid: "business",
     ToolInputSchemaViolation: "business",

@@ -200,6 +200,10 @@ if (parsedArgs.runPlanPath !== undefined) {
 }
 
 let skillPacks;
+if (parsedArgs.entryRef !== undefined && !airEntryExists(document, parsedArgs.entryRef)) {
+  stderr.write("error [EntryNotFound]: --entry must name a callable declared in this program\n");
+  return await refuseAdmission("EntryNotFound", "entry", 1);
+}
 try {
   skillPacks = parsedArgs.skillPackPaths.map(path => loadSkillPack(path, document));
 } catch (error) {
@@ -540,6 +544,12 @@ try {
     // Effects may already have happened. Never replace the incomplete durable
     // evidence with an admission refusal claiming that no execution began.
     stderr.write("error: execution interrupted; inspect the incomplete trace journal and effect receipts before resuming\n");
+    if (["json", "json-reference"].includes(parsedArgs.outputMode)) {
+      // A transport error is not a completed run and not an admission refusal.
+      // Keep diagnostics bounded and exclude exception text and private inputs.
+      stdout.write(serializeJson({ schema_version: "touba-command-error-v1",
+        code: "ExecutionInterrupted", stage: "execution" }));
+    }
     return await exitAfterFlush(1);
   }
   const code = e instanceof ToubaRuntimeError && HARDENED_ERROR_CODES.includes(e.code)

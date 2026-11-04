@@ -40,3 +40,19 @@ test("Python SDK identity covers nested source paths and refuses linked director
     assert.throws(() => pythonSdkSourceIdentity(root), /must not contain links/);
   }
 });
+
+test("linked project environments have an actionable diagnostic, including dangling links", { skip: process.platform === "win32" }, t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-python-linked-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const shared = join(root, "shared"), project = join(root, "project");
+  mkdirSync(shared); mkdirSync(project);
+  writeFileSync(join(shared, "pyvenv.cfg"), "home = unused\n");
+  symlinkSync(shared, join(project, ".venv"));
+  for (const dangling of [false, true]) {
+    if (dangling) rmSync(shared, { recursive: true });
+    const result = inspectPythonSdkDependency(project);
+    assert.equal(result.code, "HandlerSdkInvalid");
+    assert.match(result.message, /\.venv is a symbolic link/);
+    assert.match(result.message, /dedicated .venv directory/);
+  }
+});

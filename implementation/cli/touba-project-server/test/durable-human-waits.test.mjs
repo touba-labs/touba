@@ -44,6 +44,48 @@ const REVIEW_TARGET = "strategy:demo.review/RunReview";
 const USER_REF = "user:test-reviewer";
 const DEVICE_REF = "device:test-suite";
 
+test("tool operation approval pauses before its handler and survives an HTTP server restart", async t => {
+  const root = createTestProject();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = join(root, "src/demo/approval.tb");
+  writeFileSync(source, `module demo.approval
+tool Sentinel
+    gives Text
+    requires network
+    human.approve
+strategy RunApproval
+    gives Text
+    uses Sentinel
+    do
+        Sentinel
+            into result
+        give result
+`);
+  const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
+    fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
+  writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
+  const marker = join(root, "payment.log");
+  configureSentinelHandler(root, marker);
+  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+  try {
+    await service.start();
+    const paused = await runSandbox(serverBaseUrl(service), WAIT_TARGET, "allow_declared_external_effects");
+    assert.equal(paused.reason, "human_approval_pending", JSON.stringify(paused));
+    assert.equal(existsSync(marker), false);
+    const pending = await getJson(`${serverBaseUrl(service)}/approvals/pending/current`);
+    await service.stop();
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    const base = serverBaseUrl(service);
+    assert.equal((await postJson(`${base}/decisions`, decisionFor(pending))).status, 202);
+    const response = await postJson(`${base}/runs/sandbox/resume`, { request_id: pending.request_id });
+    assert.equal(response.status, 200, await response.clone().text());
+    const done = await response.json();
+    assert.equal(done.status, "success", JSON.stringify(done));
+    assert.equal(readFileSync(marker, "utf8"), "dispatched\n");
+  } finally { await service.stop(); }
+});
+
 for (const journal of [false, true]) for (const delegated of [false, true]) test(`compiled ${delegated ? "agent-selected" : "source"} continuation survives server restart and validates persisted scopes (${journal ? "host SQLite journal" : "default SQLite journal"})`, async t => {
   const root = createTestProject();
   const traceStorage = journal ? createSqliteTraceStore({ filename: join(root, "traces.sqlite"), maxDocumentBytes: 1 }) : undefined;

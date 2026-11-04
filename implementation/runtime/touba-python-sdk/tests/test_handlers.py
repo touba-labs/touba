@@ -23,6 +23,16 @@ def request(**values):
 
 
 class HandlerTests(unittest.TestCase):
+    def test_runtime_execution_provenance_is_validated_before_handler(self):
+        provenance = {"run_id": "run:one", "caller_ref": "skill:demo/Write", "agent_ref": "agent:demo/Writer", "agent_invocation_id": "invocation:one"}
+        value = self.invoke(request(execution_context=provenance), lambda request, context: context["execution_context"])
+        self.assertEqual(value["value"], provenance)
+        for invalid in [None, {}, {**provenance, "roles": ["admin"]}, {**provenance, "agent_ref": None}, {**provenance, "run_id": "bad\nidentity"}]:
+            def forbidden(request, context):
+                self.fail("invalid provenance reached business code")
+            result = self.invoke(request(execution_context=invalid), forbidden)
+            self.assertEqual(result["error"]["code"], "InvalidHandlerRequest")
+
     def test_documented_zero_one_multiple_argument_shapes(self):
         for names, arguments, expected in [([], {}, {}), (["value"], {"value": 7}, 7),
                                           (["left", "right"], {"left": 2, "right": 3}, {"left": 2, "right": 3})]:
@@ -43,6 +53,8 @@ class HandlerTests(unittest.TestCase):
             for failure, expected in [("ToubaHandlerError('ExternalServiceDown', 'Database unavailable')", "ExternalServiceDown"),
                                       ("RuntimeError('private database details')", "UnhandledHandlerError")]:
                 handler.write_text(f'''import asyncio
+import sys
+sys.path.insert(0, {str(ROOT / "runtime/touba-python-sdk/src")!r})
 from touba_sdk import ToubaHandlerError, define_tool
 def run(request, context):
     raise {failure}

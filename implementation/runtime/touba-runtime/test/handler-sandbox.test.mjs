@@ -138,6 +138,6 @@ test("manifest sandbox contract is normalized and rejects unknown fields", () =>
     })),
     (error) => error instanceof ToubaRuntimeError
       && error.code === "InvalidToolBindingManifest"
-      && /unknown fields/u.test(error.message),
+      && /unknown configuration field: bindings\.tool:demo\/Read\.sandbox\.fallback/u.test(error.message),
   );
 });

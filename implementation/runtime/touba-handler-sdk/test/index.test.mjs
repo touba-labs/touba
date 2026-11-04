@@ -30,6 +30,23 @@ import {
 const TOOL_REF = "tool:examples.sdk/SearchDatasets";
 const testDir = dirname(fileURLToPath(import.meta.url));
 
+test("runtime execution provenance reaches handlers without model-controlled identity fields", async () => {
+  const provenance = { run_id: "run:one", caller_ref: "skill:demo/Write", agent_ref: "agent:demo/Writer", agent_invocation_id: "invocation:one" };
+  const handler = createToolHandler({ toolRef: TOOL_REF, run: ({ context }) => {
+    assert.ok(Object.isFrozen(context.executionContext));
+    return context.executionContext;
+  } });
+  const request = { protocol: "touba-tool-handler-v1", operation: "invoke", tool_ref: TOOL_REF,
+    arguments: { agent_ref: "forged" }, execution_context: provenance };
+  assert.deepEqual((await handleToolRequest(JSON.stringify(request), TOOL_REF, handler)).value, provenance);
+  for (const invalid of [null, {}, { ...provenance, roles: ["admin"] }, { ...provenance, agent_ref: null }, { ...provenance, run_id: "bad\nidentity" }]) {
+    let invoked = false;
+    const result = await handleToolRequest(JSON.stringify({ ...request, execution_context: invalid }), TOOL_REF, () => { invoked = true; });
+    assert.equal(result.error.code, "InvalidHandlerRequest");
+    assert.equal(invoked, false);
+  }
+});
+
 test("explicit tool result transports memory provenance separately from business data", async () => {
   const metadata = [{ memory_ref: "memory:examples.sdk/Notes", operation: "read", source_kind: "backend_import" }];
   const input = JSON.stringify({ protocol: "touba-tool-handler-v1", operation: "invoke", tool_ref: TOOL_REF, arguments: {} });
@@ -827,8 +844,10 @@ test("ToubaEngine redacts known secret values from command failures", async () =
       (error) => {
         assert.ok(error instanceof ToubaEngineError);
         assert.equal(error.phase, "run");
-        assert.match(error.details.stderr, /redacted/);
-        assert.doesNotMatch(error.details.stderr, /sdk-engine-secret/);
+        assert.equal(error.code, "EngineCommandFailed");
+        assert.equal(error.details.stage, "result_transport");
+        assert.equal(error.details.stderr, undefined);
+        assert.doesNotMatch(JSON.stringify(error), /sdk-engine-secret/);
         return true;
       },
     );

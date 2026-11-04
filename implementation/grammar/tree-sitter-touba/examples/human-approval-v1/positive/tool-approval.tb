@@ -1,0 +1,94 @@
+module operation_approval
+
+tool Pay
+    description "Schedule a payment after human approval of its exact arguments."
+    takes amount as Int
+    gives Int
+    human.approve
+        with role as "finance"
+        with timeout_ms as 3600000
+        with distinct_from as "initiator"
+
+skill Commit
+    description "Request an approved payment through the payment tool."
+    takes amount as Int
+    gives Int
+    uses Pay
+    do
+        Pay
+            with amount as amount
+            into result
+        give result
+
+strategy Direct
+    takes amount as Int
+    gives Int
+    uses Pay
+    do
+        Pay
+            with amount as amount
+            into result
+        give result
+
+strategy Nested
+    takes amount as Int
+    gives Int
+    uses Commit
+    do
+        Commit
+            with amount as amount
+            into result
+        give result
+
+agent Clerk
+    responsibility "Schedule the requested payment through an authorized tool."
+    takes amount as Int
+    gives Int
+    uses Pay
+    uses Commit
+    callable_by strategy AgentPath
+
+strategy AgentPath
+    takes amount as Int
+    gives Int
+    uses Clerk
+    do
+        Clerk
+            with amount as amount
+            into result
+        give result
+
+strategy Batch
+    takes amounts as List of Int
+    gives List of Int
+    uses Commit
+    do
+        parallel Commit
+            each amount in amounts
+            with amount as amount
+            max_concurrency 2
+            max_items 10
+            into results
+        give results
+
+strategy Fixed
+    gives Int
+    uses Pay
+    do
+        Pay
+            with amount as 7
+            into result
+        give result
+
+strategy Twice
+    takes amount as Int
+    gives Int
+    uses Pay
+    do
+        Pay
+            with amount as amount
+            into first
+        Pay
+            with amount as amount
+            into second
+        give second

@@ -34,8 +34,12 @@ export function pythonSdkSourceIdentity(root) {
 export function inspectPythonSdkDependency(root) {
   const issue = (code, message = hint) => ({ status: "unavailable", code, message });
   const venv = join(root, ".venv");
-  if (!existsSync(venv) || !existsSync(join(venv, "pyvenv.cfg"))) return issue("HandlerSdkMissing");
-  if (lstatSync(venv).isSymbolicLink()) return issue("HandlerSdkInvalid");
+  // lstat also identifies dangling links: they are an invalid project layout,
+  // not a missing SDK that another install would repair.
+  const venvStat = lstatSync(venv, { throwIfNoEntry: false });
+  if (venvStat?.isSymbolicLink()) return issue("HandlerSdkInvalid",
+    "The project .venv is a symbolic link. Create a dedicated .venv directory in this project, then run touba sdk install python.");
+  if (!venvStat || !existsSync(join(venv, "pyvenv.cfg"))) return issue("HandlerSdkMissing");
   let candidates = [];
   if (process.platform === "win32") candidates = [join(venv, "Lib/site-packages/touba_sdk")];
   else if (existsSync(join(venv, "lib"))) candidates = readdirSync(join(venv, "lib"))
@@ -44,7 +48,8 @@ export function inspectPythonSdkDependency(root) {
   if (candidates.length !== 1) return issue("HandlerSdkMissing");
   try {
     const installed = candidates[0];
-    if (lstatSync(installed).isSymbolicLink()) return issue("HandlerSdkInvalid");
+    if (lstatSync(installed).isSymbolicLink()) return issue("HandlerSdkInvalid",
+      "The installed touba_sdk directory is a symbolic link. Install a materialized SDK in the project environment with touba sdk install python.");
     const build = pythonSdkSourceIdentity(installed);
     const source = join(implementationRoot, "runtime/touba-python-sdk/src/touba_sdk");
     const toolchainMetadata = join(implementationRoot, "../TOOLCHAIN.json");
@@ -53,5 +58,6 @@ export function inspectPythonSdkDependency(root) {
     if (!expected) return issue("HandlerSdkInvalid", "This distribution has no Python SDK build identity; reinstall a complete distribution.");
     if (build !== expected) return { ...issue("HandlerSdkBuildMismatch", `Python SDK source differs from this toolchain. ${hint}`), build, expected_build: expected };
     return { status: "ready", path: installed, build, command: projectPythonCommand() };
-  } catch { return issue("HandlerSdkInvalid"); }
+  } catch { return issue("HandlerSdkInvalid",
+    "The Python SDK source inventory cannot be verified. Use regular SDK files without linked directories or hard-linked source files. Run touba sdk install python to install this toolchain's SDK."); }
 }

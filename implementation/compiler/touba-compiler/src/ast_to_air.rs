@@ -310,15 +310,26 @@ impl AirLowerer {
         // Check resolved identities in every branch, loop, parallel call and
         // fallback, including imports. Pure functions need no authority.
         for graph in &execution_graphs {
-            let uses = definitions.skills.iter()
-                .find(|owner| owner.id == graph.owner_ref).map(|owner| &owner.uses)
-                .or_else(|| definitions.strategies.iter()
-                    .find(|owner| owner.id == graph.owner_ref).map(|owner| &owner.uses));
+            let uses = definitions
+                .skills
+                .iter()
+                .find(|owner| owner.id == graph.owner_ref)
+                .map(|owner| &owner.uses)
+                .or_else(|| {
+                    definitions
+                        .strategies
+                        .iter()
+                        .find(|owner| owner.id == graph.owner_ref)
+                        .map(|owner| &owner.uses)
+                });
             if let Some(uses) = uses {
                 for node in &graph.nodes {
                     if let Some(target) = &node.target_ref {
-                        if ["tool:", "skill:", "agent:", "strategy:"].iter()
-                            .any(|prefix| target.starts_with(prefix)) && !uses.contains(target) {
+                        if ["tool:", "skill:", "agent:", "strategy:"]
+                            .iter()
+                            .any(|prefix| target.starts_with(prefix))
+                            && !uses.contains(target)
+                        {
                             self.diagnostics.push(AirDiagnostic::new(
                                 AirDiagnosticCode::CapabilityNotDeclaredInUses,
                                 format!("`{target}` is not declared in `{}` uses", graph.owner_ref),
@@ -338,6 +349,15 @@ impl AirLowerer {
                     air_schema_version: AIR_SCHEMA_VERSION.to_string(),
                     air_capability_profile: AIR_CAPABILITY_PROFILE.to_string(),
                     air_json_profile: AIR_JSON_PROFILE.to_string(),
+                    required_features: if definitions
+                        .tools
+                        .iter()
+                        .any(|tool| tool.approval_policy.is_some())
+                    {
+                        vec!["tool_operation_approval".to_string()]
+                    } else {
+                        Vec::new()
+                    },
                     module,
                     imports,
                     budgets,
@@ -1007,7 +1027,9 @@ impl AirLowerer {
         };
         let date_literal = if let AstExpression::DateConversion { .. } = &declaration.value {
             crate::field_contracts::literal(&declaration.value)
-        } else { None };
+        } else {
+            None
+        };
         let actual_type = enum_value
             .as_ref()
             .map(|(type_ref, _)| type_ref.clone())
@@ -1028,7 +1050,8 @@ impl AirLowerer {
             id: constant_id(&self.module_name, &declaration.name),
             name: declaration.name.clone(),
             type_ref,
-            literal_text: enum_value.map(|(_, member)| member)
+            literal_text: enum_value
+                .map(|(_, member)| member)
                 .or_else(|| date_literal.and_then(|(_, value)| value.as_str().map(str::to_string))),
             literal_boolean: None,
             literal_int: None,
@@ -1170,6 +1193,19 @@ impl AirLowerer {
             name: declaration.name.clone(),
             description: declaration.description.clone(),
             signature,
+            approval_policy: declaration.approval.as_ref().map(|approval| {
+                if approval.mode != AstHumanApprovalMode::RequiredApproval
+                    || approval.result_binding.is_some()
+                    || approval.expired_branch.is_some() || approval.rejected_branch.is_some()
+                    || approval.arguments.iter().any(|argument| !["role", "timeout_ms", "distinct_from", "exclude_signers"].contains(&argument.name.as_str())) {
+                    self.diagnostics.push(AirDiagnostic::new(
+                        AirDiagnosticCode::InvalidHumanApprovalPolicy,
+                        "tool human.approve accepts only static approval constraints; its context is the exact operation".to_string(),
+                        Some(approval.source_ref.clone()),
+                    ));
+                }
+                FlowGraphBuilder::lower_human_approval_policy(approval, &mut self.diagnostics).unwrap_or_default()
+            }),
             binding_ref: None,
             required_capabilities,
             required_secrets,
@@ -2806,7 +2842,7 @@ impl<'a> FlowGraphBuilder<'a> {
             return FlowFragment::empty();
         }
         let context_refs = self.lower_human_approval_context_refs(statement);
-        let approval_policy = self.lower_human_approval_policy(statement);
+        let approval_policy = Self::lower_human_approval_policy(statement, &mut self.diagnostics);
         let result_binding = statement.result_binding.as_ref().and_then(|binding| {
             self.lower_result_binding(binding, Some(BUILTIN_APPROVAL.to_string()))
         });
@@ -2868,8 +2904,8 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     fn lower_human_approval_policy(
-        &mut self,
         statement: &AstHumanApprovalStatement,
+        diagnostics: &mut Vec<AirDiagnostic>,
     ) -> Option<AirApprovalPolicy> {
         let mut policy = AirApprovalPolicy::default();
         for argument in &statement.arguments {
@@ -2911,7 +2947,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 _ => continue,
             };
             if !valid {
-                self.diagnostics.push(AirDiagnostic::new(
+                diagnostics.push(AirDiagnostic::new(
                     AirDiagnosticCode::InvalidHumanApprovalPolicy,
                     format!(
                         "human approval {} requires a valid static literal",
@@ -3887,7 +3923,10 @@ impl<'a> FlowGraphBuilder<'a> {
                 if !crate::field_contracts::matches(&literal, &expected.constraints) {
                     self.diagnostics.push(AirDiagnostic::new(
                         AirDiagnosticCode::InvalidFieldConstraint,
-                        format!("record field `{name}` violates constraints {:?}", expected.constraints),
+                        format!(
+                            "record field `{name}` violates constraints {:?}",
+                            expected.constraints
+                        ),
                         Some(field.source_ref.clone()),
                     ));
                 }

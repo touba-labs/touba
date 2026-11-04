@@ -12,6 +12,8 @@ pub struct AirDocument {
     pub air_schema_version: String,
     pub air_capability_profile: String,
     pub air_json_profile: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_features: Vec<String>,
     pub module: AirModule,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imports: Vec<AirImport>,
@@ -148,6 +150,8 @@ pub struct AirTool {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub signature: AirSignature,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<AirApprovalPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -12,6 +12,7 @@ import {
 } from "./agent-provider-content.mjs";
 import { runAgentDecisionLoop, appendAgentCapabilityObservation } from "./agent-loop.mjs";
 import { createInvocationScope, snapshotInvocationValue } from "./invocation-scope.mjs";
+import { createToolApprovalGraphs, approvedOperation, grantToolApproval, consumeToolApproval, toolApprovalPolicy } from "./tool-approval.mjs";
 import { withTraceInvocation } from "./trace-context.mjs";
 import { createHumanCheckpointCustody, acceptedHumanApprovalState } from "./human-checkpoint-store.mjs";
 import { createParallelRuntime, parallelBoundary, parallelBudget, parallelExternal,
@@ -418,6 +419,7 @@ function createExecutionContext(document, entryRef, options = {}) {
     options.__compensationExecutionContext,
   );
   const indexes = indexAirDocument(document);
+  const toolApprovalGraphs = createToolApprovalGraphs(indexes);
   const executionResumeCheckpoint = normalizeOptionalExecutionCheckpoint(
     options.executionResumeCheckpoint ?? options.execution_resume_checkpoint,
   );
@@ -473,6 +475,7 @@ function createExecutionContext(document, entryRef, options = {}) {
     humanCheckpointCustody,
     acceptedHumanApprovalState: acceptedHumanApprovalState(options.humanApprovalResumeCheckpoint),
     indexes,
+    toolApprovalGraphs,
     entryRef,
     trace,
     toolHandlers: options.toolHandlers ?? {},
@@ -486,7 +489,7 @@ function createExecutionContext(document, entryRef, options = {}) {
     humanApprovalDecisions: normalizeHumanApprovalDecisions(
       options.humanApprovalDecisions ?? options.humanApprovals ?? {},
     ),
-    approvalRuntime: createApprovalRuntime(document, options, humanApprovalResumeCheckpoint ?? executionResumeCheckpoint),
+    approvalRuntime: createApprovalRuntime({ ...document, execution_graphs: [...indexes.graphs.values()] }, options, humanApprovalResumeCheckpoint ?? executionResumeCheckpoint),
     userInputs: normalizeUserInputs(options.userInputs ?? options.interactionInputs ?? {}),
     userInputProvider: normalizeUserInputProvider(options.userInputProvider),
     dispatchAuthorityProvider: normalizeDispatchAuthorityProvider(
@@ -614,7 +617,7 @@ function validateConfiguredInteractionReferences(document, context) {
   }
   const approvals = new Set();
   const interactions = new Set();
-  for (const graph of document.execution_graphs) {
+  for (const graph of context.indexes.graphs.values()) {
     for (const node of graph.nodes) {
       if (node.kind === "human_approval") approvals.add(node.approval_ref ?? `approval:${graph.id}:${node.id}`);
       if (node.kind === "user_interaction" && node.interaction_mode === "ask") {
@@ -1410,6 +1413,12 @@ function durableLinearNodes(graph) {
 function validateDurableToolNode(graph, node, context) {
   const toolRef = requiredTarget(node);
   const tool = context.indexes.tools.get(toolRef);
+  // RESUME-1 has a single linear cursor and preavailable decisions. Operation
+  // approval uses a nested, one-use human continuation, so admit it only through
+  // that checkpoint protocol. Reject the entire closure before any effect.
+  if (tool && toolApprovalPolicy(tool) !== undefined) {
+    throw durableUnsupported(graph.id, node.id, "operation_approval_requires_human_checkpoint");
+  }
   const manifest = context.toolBindingManifest;
   const binding = manifest?.bindings.get(toolRef);
   if (
@@ -2079,6 +2088,7 @@ function checkpointContinuationInvalid(message, incompatible = false) {
 
 function graphOwnerDefinition(graphRef, context) {
   const graph = requireDefinition(context.indexes.graphs, graphRef);
+  if (context.toolApprovalGraphs.get(graph.owner_ref) === graph) return requireDefinition(context.indexes.tools, graph.owner_ref);
   const owner = context.indexes.strategies.get(graph.owner_ref)
     ?? context.indexes.skills.get(graph.owner_ref) ?? context.indexes.functions.get(graph.owner_ref);
   if (!owner || (owner.flow_graph_ref ?? owner.body_graph_ref) !== graphRef) {
@@ -2580,7 +2590,7 @@ function callFrameForNode(graph, node, targetRef, context) {
     result_binding: node.result_binding,
     success_edge_role: edgeRole,
     resume_target_ref: nextNodeId(graph, node.id, edgeRole),
-    caller_scope: ["call_function", "call_skill", "call_strategy", "call_agent", "fallback"].includes(node.kind) && context.durableHumanApprovals
+    caller_scope: ["call_function", "call_tool", "call_skill", "call_strategy", "call_agent", "fallback"].includes(node.kind) && context.durableHumanApprovals
       ? checkpointCallerScope(context) : undefined,
   });
 }
@@ -3316,7 +3326,7 @@ async function executeTargetInScope(targetRef, context, callArguments, options) 
       tool.signature,
       callArguments,
       context,
-      () => executeTool(tool, context),
+      () => executeApprovedTool(tool, context),
       { markInputValues: options.inputValueArguments === true, entryInputs: options.entryInputs === true },
     );
   }
@@ -5200,7 +5210,20 @@ function validateAgentCapabilityArgumentValues(targetRef, inputs, values, contex
   return values;
 }
 
+async function executeApprovedTool(tool, context) {
+  const graph = context.toolApprovalGraphs.get(tool.id);
+  if (!graph) return executeTool(tool, context);
+  // Reject inadmissible operations before asking a human. Recheck at dispatch.
+  const binding = validateToolBinding(tool, context);
+  const args = argumentObject(tool.signature, context);
+  validateToolInputPayload(tool, args, context);
+  validateToolPayloadConstraints("input", tool, args, binding?.payloadConstraints?.input ?? []);
+  assertNoSecretValueInToolArguments(tool, binding, args, context);
+  return executeTypedGraph(tool, graph.id, context);
+}
+
 async function executeTool(tool, context) {
+  consumeToolApproval(tool, context);
   if (context.parallelBranch) {
     const binding = validateToolBinding(tool, context);
     const args = argumentObject(tool.signature, context);
@@ -5287,6 +5310,7 @@ async function executeToolBodyUnchecked(tool, context) {
         protocol: TOOL_HANDLER_PROTOCOL_VERSION,
         operation: "invoke",
         tool_ref: tool.id,
+        execution_context: handlerExecutionContext(context),
         call_id: durableReservation?.call_id
           ?? `call:${context.trace.runId}:${context.nextCallIndex}`,
         arguments: toolArguments,
@@ -5330,6 +5354,7 @@ async function executeToolBodyUnchecked(tool, context) {
       values: Object.fromEntries(context.values),
       binding: binding ? bindingPublicView(binding) : undefined,
       resourceBindings,
+      executionContext: handlerExecutionContext(context),
     }));
     context.toolAttempt.phase = "post_validation";
     const value = snapshotInvocationValue(response, "ToolOutputSchemaViolation");
@@ -5549,6 +5574,7 @@ async function executeEffectfulProcessTool(
     protocol: TOOL_HANDLER_PROTOCOL_VERSION,
     operation: context.compensation ? "compensate" : "invoke",
     tool_ref: toolRef,
+    execution_context: handlerExecutionContext(context),
     call_id: callId,
     arguments: toolArguments,
     grants: [...binding.grants],
@@ -8396,6 +8422,14 @@ function activeElapsedMilliseconds(context) {
 
 async function executeNode(graph, node, context) {
   switch (node.kind) {
+    case "internal_tool_dispatch": {
+      if (context.toolApprovalGraphs.get(graph.owner_ref) !== graph || node !== graph.nodes[1]) {
+        throw new RuntimeFailure("tool dispatch continuation is internal", {}, "ToolApprovalRequired");
+      }
+      assertRunCanDispatch(context, { targetRef: graph.owner_ref });
+      const result = await executeTool(requireDefinition(context.indexes.tools, graph.owner_ref), context);
+      return { done: true, status: "success", result };
+    }
     case "parallel_call":
       return executeParallelNode(graph, node, context);
     case "call_function":
@@ -8725,6 +8759,8 @@ function executeHumanApprovalNode(graph, node, context) {
       ...(node.approval_policy ? { approval_policy: node.approval_policy } : {}),
       ...(nextNodeId(graph, node.id, "expired") ? { expiration_branch: true } : {}),
       ...(nextNodeId(graph, node.id, "rejected") ? { rejection_branch: true } : {}),
+      ...(context.toolApprovalGraphs.get(graph.owner_ref) === graph
+        ? { operation: approvedOperation(context.indexes.tools.get(graph.owner_ref), context) } : {}),
       context_values: (node.context_refs ?? []).map(ref => resolveHandle(ref, context, graph)) }, (value, authorityRef) => {
       context.humanApprovalDecisions.set(ref, value);
       return executeHumanApprovalNodeBody(graph, node, context, authorityRef);
@@ -8754,6 +8790,9 @@ async function executeHumanApprovalNodeBody(graph, node, context, authorityRef =
   });
 
   const reviewContext = { refs: contextRefs, values: contextRefs.map(ref => resolveHandle(ref, context, graph)) };
+  if (context.toolApprovalGraphs.get(graph.owner_ref) === graph) {
+    reviewContext.operation = approvedOperation(context.indexes.tools.get(graph.owner_ref), context);
+  }
   assertCheckpointHasNoResolvedSecret(reviewContext, context, approvalRef);
   const request = approvalRequest(context.approvalRuntime, context.trace.runId, authorityRef ?? approvalRef, node.approval_policy, reviewContext);
   const decision = await authorizeApprovalDecision(context.approvalRuntime, request,
@@ -8863,6 +8902,7 @@ async function executeHumanApprovalNodeBody(graph, node, context, authorityRef =
   });
 
   if (transition.approved) {
+    grantToolApproval(graph, context, request);
     context.trace.push("human_approval_resumed", {
       airRef: airRefForNode(graph, node),
       payload: compactPayload({
@@ -10350,6 +10390,11 @@ function argumentObject(signature, context) {
       return [input.name, context.values.get(handle)];
     }),
   );
+}
+
+function handlerExecutionContext(context) {
+  return { run_id: context.trace.runId, caller_ref: context.activeCallerRef ?? null,
+    agent_ref: context.activeAgentRef ?? null, agent_invocation_id: context.agentInvocationId ?? null };
 }
 
 function valueHandle(nameOrHandle) {

@@ -485,6 +485,7 @@ function runUsage() {
     "  --secrets <touba.secrets.json>",
     "  --resource-bindings <touba.resources.json> [--require-resource-bindings]",
     "  --supply-chain-lock <touba.lock.json> [--require-supply-chain-lock]",
+    "  --effect-journal <run.effect-journal.sqlite> (durable journal required for external writes)",
     "  --inputs-json <json-object>",
     "  --human-decisions <path> | --human-decisions-json <json-object>",
     "  --human-approval-host <path|pkg:organization.name/host-id> (trusted identity and role attestation)",

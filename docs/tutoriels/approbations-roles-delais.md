@@ -1,5 +1,9 @@
 # Approbations avec rôles, délais et escalade
 
+Pour protéger tous les chemins vers une opération, consultez aussi
+[l’approbation déclarée sur un outil](../guides/approbation-operation-et-unicite.md),
+préparée pour le prochain build.
+
 ## Délai du service d'attestation
 
 La réponse technique de l'adaptateur est attendue pendant 5 000 ms par défaut.

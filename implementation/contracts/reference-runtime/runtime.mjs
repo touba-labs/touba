@@ -24,6 +24,7 @@ export async function executeReferenceAir(document, {
   let result;
   let failureCode = null;
   try {
+    if (document.required_features?.length) throw refusal("ReferenceFeatureOutsideProfile", "authority");
     if ((document.definitions.types ?? []).some(type => type.variants)) throw refusal("ReferenceEnumOutsideProfile", "business");
     if (document.execution_graphs.some(graph => (graph.expressions ?? []).some(expression => expression.kind.startsWith("optional_")))
       || Object.values(document.definitions).flat().some(definition =>

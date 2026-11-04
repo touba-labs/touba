@@ -171,7 +171,8 @@ test("storage failure after an actual handler never becomes false admission evid
   assert.ok(existsSync(marker), child.stderr + child.stdout);
   assert.equal(readFileSync(marker, "utf8"), "applied");
   assert.match(child.stderr, /incomplete trace journal/);
-  assert.equal(child.stdout, "");
+  assert.deepEqual(JSON.parse(child.stdout), { schema_version: "touba-command-error-v1",
+    code: "ExecutionInterrupted", stage: "execution" });
   assert.equal(readdirSync(root).includes("trace.json"), false);
   const store = createSqliteTraceStore({ filename: database });
   try {

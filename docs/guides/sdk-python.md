@@ -1,5 +1,8 @@
 # SDK Python
 
+Le prochain build prépare l’[approbation par opération et la provenance des
+écritures](./approbation-operation-et-unicite.md), avec le même contrat dans les deux SDK.
+
 ## Reprises protégées
 
 Les SDK conservent l'intégrité et la consommation des checkpoints dans
@@ -88,6 +91,11 @@ touba sdk install python --python python3.12
 ```
 
 Un `.venv` existant est conservé ; `--python` ne remplace pas son interpréteur.
+
+Le répertoire `.venv` appartient au projet : un lien symbolique vers un autre
+environnement est refusé. Si `prepare` signale cette disposition, créez un
+environnement dédié et relancez `touba sdk install python`. Conservez l’ancien
+environnement tant que ses dépendances servent à d’autres projets.
 Activez-le avant d'exécuter votre application :
 
 ```sh

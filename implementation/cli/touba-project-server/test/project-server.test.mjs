@@ -2858,8 +2858,8 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
       requested_by: { kind: "studio", id: "test-suite" },
       reason: "test sandbox run",
     });
-    assert.equal(runResponse.status, 200);
     const run = await runResponse.json();
+    assert.equal(runResponse.status, 200, JSON.stringify(run));
     assertMatchesSchema("touba-sandbox-run-result-v1", run);
     assert.equal(run.status, "success");
     assert.equal(run.result, "ready");
@@ -3144,8 +3144,8 @@ test("HTTP durable resume reconstructs the terminal result and coalesces one cla
       requested_by: { kind: "studio", id: "test-suite" },
       reason: "create a real durable checkpoint",
     });
-    assert.equal(initialResponse.status, 200);
     const initial = await initialResponse.json();
+    assert.equal(initialResponse.status, 200, JSON.stringify(initial));
     await service.stop();
 
     const checkpointPath = join(root, ".touba", "sandbox-checkpoints.sqlite");
@@ -4159,7 +4159,7 @@ test("HTTP project server persists adaptive interaction sessions and governed as
     const accepted = await messageResponse.json();
     assertMatchesSchema("touba-interaction-operation-v1", accepted);
     const terminal = await waitForInteractionOperation(baseUrl, created.session_id, accepted.operation_id);
-    assert.equal(terminal.status, "succeeded");
+    assert.equal(terminal.status, "succeeded", JSON.stringify(terminal));
     assert.ok(terminal.event_count > 0);
     const completed = await getJson(`${baseUrl}/interactions/sessions/${created.session_id}`);
     assert.equal(completed.messages.length, 2);
@@ -5709,10 +5709,7 @@ function sandboxManifestDocument() {
         enabled: true,
         source: {
           kind: "schedule",
-          value: "every 1h",
         },
-        target_ref: "strategy:demo.sandbox/RunTriggered",
-        target_kind: "strategy",
         limits: {
           max_runs_per_day: 24,
           timeout_ms: 30000,

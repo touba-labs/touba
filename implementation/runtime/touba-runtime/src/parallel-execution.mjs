@@ -197,7 +197,8 @@ export async function parallelHuman(context, metadata, execute) {
   entry.metadata = metadata;
   const reviewContext = metadata.mode === "agent_review"
     ? { prompt: metadata.review_prompt, reason: metadata.review_reason ?? null }
-    : { refs: metadata.context_refs ?? [], values: metadata.context_values ?? [] };
+    : { refs: metadata.context_refs ?? [], values: metadata.context_values ?? [],
+        ...(metadata.operation ? { operation: metadata.operation } : {}) };
   const request = approvalRequest(context.approvalRuntime, context.trace.runId, ref, metadata.approval_policy, reviewContext);
   if (entry.state === "done") {
     await authorizeApprovalDecision(context.approvalRuntime, request, entry.value, { replay: true });

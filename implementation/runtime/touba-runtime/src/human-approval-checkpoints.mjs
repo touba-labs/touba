@@ -45,7 +45,7 @@ function validateCheckpointContinuationBody(checkpoint) {
   if (checkpoint.kind === "agent_human_review") validateAgentContinuationState(checkpoint.agent_loop_state);
   for (const frame of checkpoint.call_stack) {
     if (!frame || typeof frame !== "object" || Array.isArray(frame)
-      || !["call_function", "call_skill", "call_strategy", "call_agent", "fallback", "agent_capability"].includes(frame.kind)) invalid();
+      || !["call_function", "call_tool", "call_skill", "call_strategy", "call_agent", "fallback", "agent_capability"].includes(frame.kind)) invalid();
     if (frame.kind === "agent_capability") {
       const fields = ["kind", "agent_ref", "caller_ref", "target_ref", "decision_mode", "capability_refs",
         "arguments", "caller_scope", "step_index", "next_step_index", "max_steps", "observations"];

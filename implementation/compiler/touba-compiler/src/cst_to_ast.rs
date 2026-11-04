@@ -309,6 +309,7 @@ impl<'a> AstLowerer<'a> {
         let mut signature = AstSignature::default();
         let mut required_capabilities = Vec::new();
         let mut required_secrets = Vec::new();
+        let mut approval = None;
         let mut memory_accesses = Vec::new();
         let mut body = None;
 
@@ -322,6 +323,17 @@ impl<'a> AstLowerer<'a> {
                 }
                 "secrets_clause" => {
                     required_secrets.extend(self.lower_secrets_clause(child));
+                }
+                "human_approval_statement" => {
+                    if approval.is_some() {
+                        self.push_error(
+                            AstDiagnosticCode::UnsupportedCstNode,
+                            child,
+                            "a tool has one human.approve requirement".to_string(),
+                        );
+                    } else {
+                        approval = self.lower_human_approval_statement(child);
+                    }
                 }
                 "tool_memory_access_clause" => {
                     if let Some(access) = self.lower_memory_access(child) {
@@ -348,6 +360,7 @@ impl<'a> AstLowerer<'a> {
             signature,
             required_capabilities,
             required_secrets,
+            approval,
             memory_accesses,
             body,
             source_ref: self.source_ref(node),
@@ -1644,5 +1657,7 @@ pub(crate) fn parse_error_message(source: &str) -> String {
 
 fn named_children<'b>(node: Node<'b>) -> Vec<Node<'b>> {
     let mut cursor = node.walk();
-    node.named_children(&mut cursor).filter(|child| child.kind() != "comment").collect()
+    node.named_children(&mut cursor)
+        .filter(|child| child.kind() != "comment")
+        .collect()
 }

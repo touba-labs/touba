@@ -254,6 +254,18 @@ export class ToubaEngine {
       const result = await this.#runCommand("run", args, { allowFailure: true, signal: options.signal });
       let envelope;
       try { envelope = JSON.parse(result.stdout); } catch { /* Admission and launch failures may have no result. */ }
+      if (!envelope && result.status !== 0) {
+        throw new ToubaEngineError("run", "Touba command failed before returning a result", {
+          code: "EngineCommandFailed", exitCode: result.status, stage: "result_transport",
+        });
+      }
+      if (result.status === 1 && envelope?.schema_version === "touba-command-error-v1"
+        && envelope.code === "ExecutionInterrupted" && envelope.stage === "execution"
+        && Object.keys(envelope).length === 3) {
+        throw new ToubaEngineError("run", "Execution interrupted; inspect durable evidence before retrying", {
+          code: "ExecutionInterrupted", exitCode: result.status, stage: "execution",
+        });
+      }
       let reference;
       if (referenceMode && envelope?.schema_version === "touba-run-reference-v1") {
         try { reference = validateTraceReference(envelope.trace_reference); } catch { /* Rejected by validEnvelope below. */ }
@@ -285,7 +297,7 @@ export class ToubaEngine {
       const expectedExit = envelope?.status === "success" ? 0
         : envelope?.status === "cancelled" || envelope?.reason === "human_approval_cancelled" ? 5
           : envelope?.status === "stopped" ? (["human_approval_pending", "user_input_pending"].includes(envelope.reason) ? 3 : 4) : 1;
-      if (!validEnvelope || result.status !== expectedExit || envelope.status === "failure") {
+      if (!validEnvelope || (admissionRefused ? ![1, 2].includes(result.status) : result.status !== expectedExit) || envelope.status === "failure") {
         throw new ToubaEngineError("run", "touba run failed", {
           exitCode: result.status,
           ...(validEnvelope ? { status: envelope.status, reason: envelope.reason, messages: envelope.messages } : {}),
@@ -1197,6 +1209,7 @@ export function createToolHandler(definition) {
       arguments: args,
       grants: envelope.grants,
       memoryAccesses: envelope.memoryAccesses,
+      executionContext: envelope.executionContext,
       resourceBindings: envelope.resourceBindings,
       secretHandles: envelope.secretHandles,
       limits: envelope.limits,
@@ -1251,6 +1264,7 @@ export async function handleToolRequest(rawInput, expectedToolRef, handler, opti
       arguments: request.arguments ?? {},
       grants: request.grants ?? [],
       memoryAccesses: request.memory_accesses ?? [],
+      executionContext: request.execution_context === undefined ? undefined : Object.freeze({ ...request.execution_context }),
       resourceBindings: request.resource_bindings ?? [],
       secretHandles: request.secret_handles ?? [],
       limits: request.limits ?? {},
@@ -1510,6 +1524,7 @@ function validateEnvelope(request, expectedToolRef, options) {
     "arguments",
     "grants",
     "memory_accesses",
+    "execution_context",
     "resource_bindings",
     "secret_handles",
     "limits",
@@ -1518,6 +1533,17 @@ function validateEnvelope(request, expectedToolRef, options) {
   ]);
   if (Object.keys(request).some((key) => !allowed.has(key))) {
     throw new ToubaHandlerError(request.operation === "compensate" ? "InvalidCompensation" : "InvalidHandlerRequest", "handler request contains unknown fields");
+  }
+  if (request.execution_context !== undefined) {
+    const context = request.execution_context;
+    const identity = value => typeof value === "string" && value.length > 0 && value.length <= 1024 && !/[\x00-\x1f\x7f]/u.test(value);
+    if (!context || typeof context !== "object" || Array.isArray(context)
+      || Object.keys(context).sort().join(",") !== "agent_invocation_id,agent_ref,caller_ref,run_id"
+      || !identity(context.run_id)
+      || ["caller_ref", "agent_ref", "agent_invocation_id"].some(key => context[key] !== null && !identity(context[key]))
+      || (context.agent_ref === null && context.agent_invocation_id !== null)) {
+      throw new ToubaHandlerError("InvalidHandlerRequest", "invalid runtime execution context");
+    }
   }
   if (request.operation === "compensate") {
     return Object.freeze({

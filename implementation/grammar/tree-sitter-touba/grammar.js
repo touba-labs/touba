@@ -149,6 +149,7 @@ export default grammar({
         $.tool_memory_access_clause,
         $.requires_clause,
         $.secrets_clause,
+        $.human_approval_statement,
         $.indent_error,
       )),
     ),

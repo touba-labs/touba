@@ -1,5 +1,8 @@
 # SDK JavaScript
 
+Le prochain build prépare l’[approbation par opération et la provenance des
+écritures](./approbation-operation-et-unicite.md), avec le même contrat dans les deux SDK.
+
 ## Reprises protégées
 
 Les SDK conservent l'intégrité et la consommation des checkpoints dans

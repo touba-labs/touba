@@ -2925,6 +2925,7 @@ fn reports_empty_flow_graph_for_empty_ast_body_with_source_ref() {
             },
             required_capabilities: Vec::new(),
             required_secrets: Vec::new(),
+            approval: None,
             memory_accesses: Vec::new(),
             body: Some(AstBody {
                 statements: Vec::new(),

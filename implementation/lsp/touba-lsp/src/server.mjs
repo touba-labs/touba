@@ -392,6 +392,10 @@ export function renderHoverDeclaration({ kind, item }) {
   pushTriggerLimits(lines, item.limits);
   pushList(lines, "required_capabilities", item.required_capabilities);
   pushList(lines, "required_secrets", item.required_secrets);
+  if (item.approval_policy !== undefined) {
+    lines.push("human.approve: required for each operation");
+    for (const [key, value] of Object.entries(item.approval_policy)) pushIfPresent(lines, key, value);
+  }
   pushIfPresent(lines, "responsibility", item.responsibility);
   pushIfPresent(lines, "target_ref", item.target_ref);
   pushIfPresent(lines, "target_kind", item.target_kind);

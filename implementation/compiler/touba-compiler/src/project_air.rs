@@ -426,6 +426,17 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
         self.include_memory_accesses(&declaration.memory_accesses);
 
         if self.seen_definitions.insert(declaration.id.clone()) {
+            if declaration.approval_policy.is_some()
+                && !self
+                    .assembled
+                    .required_features
+                    .iter()
+                    .any(|feature| feature == "tool_operation_approval")
+            {
+                self.assembled
+                    .required_features
+                    .push("tool_operation_approval".to_string());
+            }
             self.assembled.definitions.tools.push(declaration.clone());
         }
         self.collect_module_imports_by_name(module_name.as_str());

@@ -538,6 +538,30 @@ strategy Run
             with self.assertRaises(ToubaEngineError):
                 _result(raw, 0)
 
+    def test_unknown_entry_diagnostic_survives_sync_and_async_transport(self):
+        with self.assertRaises(ToubaEngineError) as failed:
+            self.engine.run(source="source.tb", entry_ref="strategy:python.test/Missing")
+        self.assertEqual(failed.exception.code, "EntryNotFound")
+        self.assertEqual(failed.exception.details["exit_code"], 1)
+        async def exercise():
+            with self.assertRaises(ToubaEngineError) as failed:
+                await AsyncToubaEngine(**self.options).run(source="source.tb", entry_ref="strategy:python.test/Missing")
+            self.assertEqual(failed.exception.code, "EntryNotFound")
+        asyncio.run(exercise())
+
+    def test_failed_command_keeps_exit_code_without_exposing_private_stderr(self):
+        (self.root / "failed.mjs").write_text('process.stderr.write("PRIVATE_TOKEN=hidden"); process.exit(17);')
+        engine = ToubaEngine(self.root, command=NODE, command_args=[str(self.root / "failed.mjs")])
+        with self.assertRaises(ToubaEngineError) as failed:
+            engine.run(air_json={})
+        self.assertEqual(failed.exception.code, "EngineCommandFailed")
+        self.assertEqual(failed.exception.details["exit_code"], 17)
+        self.assertNotIn("PRIVATE", str(failed.exception.details))
+        interrupted = b'{"schema_version":"touba-command-error-v1","code":"ExecutionInterrupted","stage":"execution"}'
+        with self.assertRaises(ToubaEngineError) as failed:
+            _result(interrupted, 1)
+        self.assertEqual(failed.exception.code, "ExecutionInterrupted")
+
     def test_timeout_and_sync_cancellation_kill_dedicated_process(self):
         (self.root / "blocked.mjs").write_text('setInterval(()=>{}, 1000);')
         engine = ToubaEngine(self.root, command=NODE, command_args=[str(self.root / "blocked.mjs")])

@@ -41,7 +41,13 @@ export function projectExplorer(airs, { name, revision, files, packages = [], en
         for (const key of ['signature', 'description', 'responsibility', 'fields', 'variants', 'type_ref', 'limits', 'memory_scopes', 'memory_accesses', 'event', 'payload', 'required_capabilities', 'required_secrets']) {
           if (d[key] !== undefined) details[key] = d[key];
         }
-        if (kind === 'tool') details.boundary = 'External handler (JavaScript or Python)';
+        if (kind === 'tool') {
+          details.boundary = 'External handler (JavaScript or Python)';
+          if (d.approval_policy !== undefined) {
+            details.approval_required = true;
+            details.approval_policy = d.approval_policy;
+          }
+        }
         if (kind === 'constant') details.value = { expression: formatConstant(d.id) };
         if (d.arguments?.length) details.arguments = Object.fromEntries(d.arguments.map(arg => [arg.input, { expression: formatConstant(arg.value_ref) }]));
         if (entrypoints.includes(d.id)) details.entrypoint = true;

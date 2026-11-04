@@ -4749,6 +4749,10 @@ function sandboxRunMaySuspendForHuman({ executionKind, projectRoot, request }) {
 function targetMayReachHumanWait(document, targetRef, seen = new Set()) {
   if (seen.has(targetRef)) return false;
   seen.add(targetRef);
+  if (targetRef.startsWith("tool:")) {
+    const tool = document.definitions?.tools?.find(candidate => candidate.id === targetRef);
+    return tool === undefined || tool.approval_policy !== undefined;
+  }
   if ((document.definitions?.agents ?? []).some((candidate) => candidate.id === targetRef)) {
     return true;
   }
@@ -4760,7 +4764,7 @@ function targetMayReachHumanWait(document, targetRef, seen = new Set()) {
     if (typeof nestedRef !== "string") return true;
     if (nestedRef.startsWith("agent:")) return true;
     if (
-      /^(skill|strategy|function):/u.test(nestedRef)
+      /^(tool|skill|strategy|function):/u.test(nestedRef)
       && targetMayReachHumanWait(document, nestedRef, seen)
     ) {
       return true;
@@ -4774,7 +4778,7 @@ function targetMayReachHumanWait(document, targetRef, seen = new Set()) {
     if (nestedRef?.startsWith("agent:")) return true;
     if (
       nestedRef
-      && /^(skill|strategy|function):/u.test(nestedRef)
+      && /^(tool|skill|strategy|function):/u.test(nestedRef)
       && targetMayReachHumanWait(document, nestedRef, seen)
     ) {
       return true;
@@ -4805,6 +4809,7 @@ function sandboxDurableResumeCandidate({ document, inputs, targetRef, toolBindin
   // input-bearing sandbox runs functional without silently claiming they are
   // durable; the direct runtime boundary remains fail-closed if forced.
   if (isPlainObject(inputs) && Object.keys(inputs).length > 0) return false;
+  if (targetMayReachHumanWait(document, targetRef)) return false;
   const graph = executionGraphForTarget(document, targetRef);
   if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return false;
   const allowedKinds = new Set(["bind", "call_tool", "give", "stop"]);

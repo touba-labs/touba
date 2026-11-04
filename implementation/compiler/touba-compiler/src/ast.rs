@@ -152,6 +152,7 @@ pub struct AstCallableDeclaration {
     pub signature: AstSignature,
     pub required_capabilities: Vec<AstCapabilityRequirement>,
     pub required_secrets: Vec<AstSecretRequirement>,
+    pub approval: Option<AstHumanApprovalStatement>,
     pub memory_accesses: Vec<AstMemoryAccess>,
     pub body: Option<AstBody>,
     pub source_ref: SourceRef,
