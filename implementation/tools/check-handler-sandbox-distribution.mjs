@@ -25,7 +25,7 @@ const scratch = mkdtempSync(path.join(tmpdir(), "touba-sandbox-distribution-"));
 try {
   const testFile = path.join(scratch, filename);
   writeFileSync(testFile, source);
-  const env = { ...process.env, TOUBA_TEST_BWRAP: "/usr/bin/bwrap",
+  const env = { ...process.env, TOUBA_TEST_BWRAP: process.env.TOUBA_TEST_BWRAP ?? "/usr/bin/bwrap",
     TOUBA_TEST_SANDBOX_LAUNCHER: path.join(payload, "bin/touba-sandbox") };
   for (const key of ["NODE_OPTIONS", "ELECTRON_RUN_AS_NODE", "TOUBA_IMPLEMENTATION_DIR"]) delete env[key];
   if (process.platform === "linux") assert.ok(existsSync(env.TOUBA_TEST_SANDBOX_LAUNCHER) && existsSync(env.TOUBA_TEST_BWRAP));
