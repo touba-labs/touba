@@ -3,23 +3,24 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { ToubaEngine } from "../src/index.mjs";
 
 let air;
-before(() => { air = compileTestAir(new URL("../../touba-runtime/test/fixtures/approved-invoice.tb", import.meta.url).pathname); });
+before(() => { air = compileTestAir(fileURLToPath(new URL("../../touba-runtime/test/fixtures/approved-invoice.tb", import.meta.url))); });
 
 for (const executionMode of ["process", "persistent"]) test(`tool-bound approval through real CLI/SDK ${executionMode}`, async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-operation-sdk-"));
   const database = join(root, "business.sqlite"), db = new DatabaseSync(database);
   const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
-    commandArgs: [new URL("../../../cli/touba-project/src/main.mjs", import.meta.url).pathname] });
+    commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
   t.after(async () => { await engine.close(); db.close(); rmSync(root, { recursive: true, force: true }); });
   db.exec("CREATE TABLE orders(invoice_id TEXT PRIMARY KEY, amount INTEGER, vendor TEXT); INSERT INTO orders VALUES ('INV-001', 7, 'vendor:trusted'); CREATE TABLE payments(invoice_id TEXT PRIMARY KEY, amount INTEGER, call_id TEXT, provenance TEXT)");
   writeFileSync(join(root, "manifest.json"), JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {
     "tool:operation_approval/Pay": { handler: { kind: "process", command: process.execPath,
-      args: [new URL("../../touba-runtime/test/fixtures/approved-payment.handler.mjs", import.meta.url).pathname, database] },
+      args: [fileURLToPath(new URL("../../touba-runtime/test/fixtures/approved-payment.handler.mjs", import.meta.url)), database] },
       grants: [], secrets: [], timeout_ms: 10000, max_payload_bytes: 32768,
       effect_contract: { kind: "external_write", retry_mode: "idempotency_key" } },
   } }));

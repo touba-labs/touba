@@ -9,12 +9,13 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { projectExplorer } from "../../../cli/touba-inspect/src/explorer/model.mjs";
 import { renderHoverDeclaration } from "../../../lsp/touba-lsp/src/server.mjs";
 
 let air, invoiceAir;
-before(() => { air = compile(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/tool-approval.tb", import.meta.url).pathname); });
-before(() => { invoiceAir = compile(new URL("./fixtures/approved-invoice.tb", import.meta.url).pathname); });
+before(() => { air = compile(fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/tool-approval.tb", import.meta.url))); });
+before(() => { invoiceAir = compile(fileURLToPath(new URL("./fixtures/approved-invoice.tb", import.meta.url))); });
 const toolRef = "tool:operation_approval/Pay";
 const approvalRef = `approval:${toolRef}`;
 const authority = (subject = "employee:reviewer", roles = ["finance"]) => ({ request, decision }) => ({
@@ -272,7 +273,7 @@ for (const sdk of ["javascript", "python"]) {
     const db = new DatabaseSync(path);
     t.after(() => { db.close(); rmSync(root, { recursive: true, force: true }); });
     db.exec("CREATE TABLE orders(invoice_id TEXT PRIMARY KEY, amount INTEGER, vendor TEXT); INSERT INTO orders VALUES ('INV-001', 7, 'vendor:trusted'); CREATE TABLE payments(invoice_id TEXT PRIMARY KEY, amount INTEGER, call_id TEXT, provenance TEXT)");
-    const handler = new URL(`./fixtures/approved-payment.handler.${sdk === "javascript" ? "mjs" : "py"}`, import.meta.url).pathname;
+    const handler = fileURLToPath(new URL(`./fixtures/approved-payment.handler.${sdk === "javascript" ? "mjs" : "py"}`, import.meta.url));
     const manifestDocument = { manifest_version: "touba-manifest-v1", bindings: {
       [toolRef]: { handler: { kind: "process", command: sdk === "javascript" ? process.execPath : "python3", args: [handler, path] },
         grants: [], secrets: [], timeout_ms: 10000, max_payload_bytes: 32768,

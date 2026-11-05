@@ -5,14 +5,16 @@ notes remain the source of truth for version deltas, validation evidence,
 downloadable artifacts, checksums and platform-specific installation
 instructions.
 
-## 1.3.1 - Local candidate
+## 1.3.1
 
+- Includes operation-bound tool approvals, prepared resources, strict host configuration and host-controlled compensation since 1.1.0.
 - Prepared projects retain approval requirements on imported tools, including package and transitive imports.
 - A protected tool invocation consumes one tool-call budget unit across approval and resume.
 - CLI and JavaScript/Python SDKs report `ProjectEntrypointNotAllowed` and `EffectJournalBusy` precisely.
 
 See [migration and release notes](implementation/release/notes/v1.3.1.md).
-Existing local candidates and published archives remain unchanged.
+Update the runtime and project SDKs together. Preserve suspended executions
+with their original build. Previously distributed archives remain unchanged.
 
 ## 1.3.0 - Local candidate
 
