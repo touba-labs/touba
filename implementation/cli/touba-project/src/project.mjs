@@ -2235,6 +2235,11 @@ function assembleEntryAirDocument(entryDocument, byModule, options = {}) {
       seenDefinitions.add(located.definition.id);
       ensureDefinitionArray(assembled.definitions, "tools").push(cloneJson(located.definition));
     }
+    if (Object.hasOwn(located.definition, "approval_policy")) {
+      assembled.required_features = [...new Set([
+        ...(assembled.required_features ?? []), "tool_operation_approval",
+      ])].sort();
+    }
     includeModuleImports(located.document);
   }
 

@@ -46,6 +46,12 @@ mémoire et budgets restent requis. Un checkpoint `human.approve` placé dans un
 stratégie conserve son rôle de contrôle de continuation ; l’obligation sur le
 tool couvre aussi les autres chemins d’appel.
 
+Un appel protégé consomme une seule unité de `max_tool_calls`, conservée pendant
+l’attente et la reprise. Avec une limite de `1`, une opération approuvée peut
+s’exécuter ; un deuxième appel atteint la limite. Chaque branche parallèle
+partage le budget du run. Après modification des imports ou des politiques
+d’outil, régénérez les artefacts avec `touba prepare --mode write`.
+
 ## Contrôles complémentaires
 
 | Vérification | Où l’appliquer |

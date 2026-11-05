@@ -1,4 +1,25 @@
-# Unreleased: operation-bound approval and duel regressions
+# Unreleased
+
+## Local candidate 1.3.1: retest corrections
+
+Assigned to the [1.3.1 local candidate](v1.3.1.md).
+
+- Project preparation retains `tool_operation_approval` when linking a protected
+  tool directly, through a skill, or from an installed package. Regenerate prepared
+  artifacts with `touba prepare --mode write` after updating the toolchain.
+- A protected call consumes one `max_tool_calls` unit across approval and resume.
+  A second call consumes its own unit. Cancellation, tighter host limits and
+  shared parallel budgets still apply before dispatch.
+- Project-entry refusal reaches the CLI and both SDKs as
+  `ProjectEntrypointNotAllowed`; a held effect journal yields `EffectJournalBusy`.
+  Wait for its owner to release the journal before retrying. No automatic retry
+  or lease removal is introduced.
+
+The source corrections are locally qualified. A new build identity and artifact
+qualification are required before installation or publication. The existing
+1.3.0 candidate and earlier archives are unchanged.
+
+## Previous local candidate: operation-bound approval
 
 Assigned to the local [1.3.0 candidate](v1.3.0.md).
 Published 1.1.0 and archived 1.2.0 builds are unchanged.

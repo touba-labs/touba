@@ -1,6 +1,6 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { compileTestAir as compile } from "../../../tests/helpers/compile.mjs";
 import { executeAirDocument, loadToolBindingManifestFromJson } from "../src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { executeReferenceAir } from "../../../contracts/reference-runtime/runtime.mjs";
@@ -13,18 +13,96 @@ import { projectExplorer } from "../../../cli/touba-inspect/src/explorer/model.m
 import { renderHoverDeclaration } from "../../../lsp/touba-lsp/src/server.mjs";
 
 let air, invoiceAir;
-before(() => { air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path",
-  new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--",
-  new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/tool-approval.tb", import.meta.url).pathname], { encoding: "utf8" })); });
-before(() => { invoiceAir = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path",
-  new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--",
-  new URL("./fixtures/approved-invoice.tb", import.meta.url).pathname], { encoding: "utf8" })); });
+before(() => { air = compile(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/tool-approval.tb", import.meta.url).pathname); });
+before(() => { invoiceAir = compile(new URL("./fixtures/approved-invoice.tb", import.meta.url).pathname); });
 const toolRef = "tool:operation_approval/Pay";
 const approvalRef = `approval:${toolRef}`;
 const authority = (subject = "employee:reviewer", roles = ["finance"]) => ({ request, decision }) => ({
   request_id: request.request_id, run_id: request.run_id, decision, subject_ref: subject, roles,
 });
 const approve = checkpoint => ({ [checkpoint.approval_ref]: { decision: "approved", evidence_ref: "host-proof" } });
+
+for (const entry of [toolRef, "strategy:operation_approval/Direct", "strategy:operation_approval/Nested", "strategy:operation_approval/AgentPath"]) {
+  test(`one approved invocation consumes one tool budget unit: ${entry}`, async () => {
+    let calls = 0;
+    const options = { entryRef: entry, durableHumanApprovals: true, runLimits: { max_tool_calls: 1 },
+      humanApprovalInitiator: "employee:initiator", humanApprovalAuthority: authority(),
+      toolHandlers: { [toolRef]: ({ arguments: args }) => { calls++; return args.amount; } },
+      agentDecisions: { "agent:operation_approval/Clerk": { action: "select_capability", target_ref: toolRef, arguments: { amount: 7 } } } };
+    const pending = await executeAirDocument(air, { ...options, inputs: { amount: 7 } });
+    assert.equal(pending.reason, "human_approval_pending");
+    assert.equal(calls, 0);
+    const resumed = await executeAirDocument(air, { ...options, humanApprovalResumeCheckpoint: pending.checkpoint,
+      humanApprovalDecisions: approve(pending.checkpoint) });
+    assert.equal(resumed.status, "success", JSON.stringify(resumed));
+    assert.equal(resumed.result, 7);
+    assert.equal(calls, 1);
+    const replay = await executeAirDocument(air, { ...options, humanApprovalResumeCheckpoint: pending.checkpoint,
+      humanApprovalDecisions: approve(pending.checkpoint) });
+    assert.equal(replay.status, "failure");
+    assert.equal(calls, 1);
+  });
+}
+
+test("a second protected invocation cannot reuse the first invocation's budget", async () => {
+  let calls = 0;
+  const options = { entryRef: "strategy:operation_approval/Twice", durableHumanApprovals: true,
+    runLimits: { max_tool_calls: 1 }, humanApprovalInitiator: "employee:initiator", humanApprovalAuthority: authority(),
+    toolHandlers: { [toolRef]: () => { calls++; return 7; } } };
+  const pending = await executeAirDocument(air, { ...options, inputs: { amount: 7 } });
+  const resumed = await executeAirDocument(air, { ...options, humanApprovalResumeCheckpoint: pending.checkpoint,
+    humanApprovalDecisions: approve(pending.checkpoint) });
+  assert.equal(resumed.reason, "ToolCallBudgetExceeded");
+  assert.equal(calls, 1);
+});
+
+test("an immediate decision consumes one unit and a cancelled resume dispatches nothing", async () => {
+  let calls = 0;
+  const options = { entryRef: "strategy:operation_approval/Direct", durableHumanApprovals: true,
+    runLimits: { max_tool_calls: 1 }, humanApprovalInitiator: "employee:initiator", humanApprovalAuthority: authority(),
+    toolHandlers: { [toolRef]: () => { calls++; return 7; } } };
+  const immediate = await executeAirDocument(air, { ...options, inputs: { amount: 7 },
+    humanApprovalDecisions: { [approvalRef]: { decision: "approved", evidence_ref: "host-proof" } } });
+  assert.equal(immediate.status, "success", JSON.stringify(immediate));
+  assert.equal(calls, 1);
+  const pending = await executeAirDocument(air, { ...options, inputs: { amount: 7 } });
+  const cancelled = await executeAirDocument(air, { ...options, cancelRequested: true,
+    humanApprovalResumeCheckpoint: pending.checkpoint, humanApprovalDecisions: approve(pending.checkpoint) });
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(calls, 1);
+});
+
+test("a tighter host budget on resume still rejects a previously reserved call", async () => {
+  let calls = 0;
+  const options = { entryRef: "strategy:operation_approval/Twice", durableHumanApprovals: true,
+    runLimits: { max_tool_calls: 2 }, humanApprovalInitiator: "employee:initiator", humanApprovalAuthority: authority(),
+    toolHandlers: { [toolRef]: () => { calls++; return 7; } } };
+  const first = await executeAirDocument(air, { ...options, inputs: { amount: 7 } });
+  const second = await executeAirDocument(air, { ...options, humanApprovalResumeCheckpoint: first.checkpoint,
+    humanApprovalDecisions: approve(first.checkpoint) });
+  assert.equal(second.reason, "human_approval_pending");
+  assert.equal(calls, 1);
+  const refused = await executeAirDocument(air, { ...options, runLimits: { max_tool_calls: 1 },
+    humanApprovalResumeCheckpoint: second.checkpoint, humanApprovalDecisions: approve(second.checkpoint) });
+  assert.equal(refused.reason, "ToolCallBudgetExceeded");
+  assert.equal(calls, 1);
+});
+
+test("parallel approved calls respect the exact shared tool budget", async () => {
+  for (const max_tool_calls of [1, 2]) {
+    const calls = [];
+    const options = { entryRef: "strategy:operation_approval/Batch", durableHumanApprovals: true,
+      runLimits: { max_tool_calls }, humanApprovalInitiator: "employee:initiator", humanApprovalAuthority: authority(),
+      toolHandlers: { [toolRef]: ({ arguments: args }) => { calls.push(args.amount); return args.amount; } } };
+    const pending = await executeAirDocument(air, { ...options, inputs: { amounts: [7, 9] } });
+    assert.equal(pending.reason, "human_approval_pending", JSON.stringify(pending));
+    const decisions = Object.fromEntries(pending.checkpoint.pending_approvals.map(item => [item.approval_ref,
+      { decision: "approved", evidence_ref: "host-proof" }]));
+    const done = await executeAirDocument(air, { ...options, parallelResumeCheckpoint: pending.checkpoint, humanApprovalDecisions: decisions });
+    if (max_tool_calls === 2) { assert.equal(done.status, "success", JSON.stringify(done)); assert.deepEqual(calls.sort(), [7, 9]); }
+    else { assert.equal(done.status, "failure"); assert.equal(calls.length, 1); }
+  }
+});
 
 for (const entry of ["tool:operation_approval/Pay", "strategy:operation_approval/Direct", "strategy:operation_approval/Nested", "strategy:operation_approval/AgentPath"]) {
   test(`tool obligation survives ${entry} and guards the exact arguments`, async () => {
@@ -61,9 +139,7 @@ test("a compiled imported tool keeps its mandatory approval on a new caller path
   t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, "protected.tb"), 'module protected\ntool Pay\n    gives Int\n    human.approve\n        with role as "finance"\n');
   writeFileSync(join(root, "consumer.tb"), 'module consumer\nimport tool Pay from protected\nstrategy Alternate\n    gives Int\n    uses Pay\n    do\n        Pay\n            into paid\n        give paid\n');
-  const imported = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path",
-    new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--",
-    "--source-root", root, join(root, "consumer.tb")], { encoding: "utf8" }));
+  const imported = compile("--source-root", root, join(root, "consumer.tb"));
   let calls = 0;
   const options = { entryRef: "strategy:consumer/Alternate", durableHumanApprovals: true,
     humanApprovalAuthority: authority(), toolHandlers: { "tool:protected/Pay": () => { calls++; return 7; } } };

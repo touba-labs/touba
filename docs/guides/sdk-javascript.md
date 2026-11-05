@@ -266,6 +266,15 @@ Les échecs de compilation, d'admission, d'exécution ou de lancement lèvent
 n'exposent pas le checkpoint privé. Les décisions humaines doivent cibler les
 références de l'AIR effectivement exécuté, jamais celles d'un autre programme.
 
+Deux codes d’admission utiles, disponibles dans les deux SDK :
+
+| `error.code` | Action |
+| --- | --- |
+| `ProjectEntrypointNotAllowed` | Choisir une entrée déclarée dans `touba.project.json`, ou la déclarer puis préparer le projet. |
+| `EffectJournalBusy` | Attendre la libération du journal par son processus détenteur. |
+
+Ces refus arrivent avant l’exécution, en mode `process` comme `persistent`.
+
 ### Conserver les traces
 
 ```js

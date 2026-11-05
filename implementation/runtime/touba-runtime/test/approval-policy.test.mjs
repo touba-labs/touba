@@ -1,13 +1,12 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { executeAirDocument } from "../src/index.mjs";
 import { validateApprovalState } from "../src/human-approval-policy.mjs";
 
 let air;
 before(() => {
-  air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path", new URL("../../../Cargo.toml", import.meta.url).pathname,
-    "-p", "touba-cli", "--bin", "touba-compile", "--", new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/approval-policy.tb", import.meta.url).pathname], { encoding: "utf8" }));
+  air = compileTestAir(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/approval-policy.tb", import.meta.url).pathname);
 });
 const copy = value => JSON.parse(JSON.stringify(value));
 const base = { entryRef: "strategy:approval_policy/ApproveTwice", durableHumanApprovals: true, humanApprovalInitiator: "employee:initiator" };

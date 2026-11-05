@@ -221,6 +221,15 @@ ne contient aucun état privé de continuation.
 
 `engine.version()` identifie la CLI ; `touba_sdk_metadata()` distingue les builds du SDK par leur empreinte.
 
+Deux codes d’admission utiles, disponibles dans les deux SDK :
+
+| `error.code` | Action |
+| --- | --- |
+| `ProjectEntrypointNotAllowed` | Choisir une entrée déclarée dans `touba.project.json`, ou la déclarer puis préparer le projet. |
+| `EffectJournalBusy` | Attendre la libération du journal par son processus détenteur. |
+
+Ces refus arrivent avant l’exécution, avec `ToubaEngine` comme `AsyncToubaEngine`.
+
 ### Conserver les traces
 
 ```python

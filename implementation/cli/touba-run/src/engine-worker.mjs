@@ -1,6 +1,7 @@
 import { createWriteStream } from "node:fs";
 import { executeRunCommand } from "./command.mjs";
 import { resolveProjectRunArgs } from "../../touba-project/src/project.mjs";
+import { projectAdmissionFailure } from "../../touba-project/src/run-admission.mjs";
 
 const VERSION = "touba-engine-v1";
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
@@ -44,7 +45,14 @@ export async function startEngineWorker() {
     active.set(request.id, controller);
     const stdout = captureOutput(), stderr = captureOutput();
     try {
-      const args = resolveProjectRunArgs(request.args);
+      let args;
+      try { args = resolveProjectRunArgs(request.args); }
+      catch (error) {
+        const refusal = projectAdmissionFailure(error);
+        if (!refusal) throw error;
+        await send({ id: request.id, status: 2, stdout: JSON.stringify(refusal), stderr: "" });
+        return;
+      }
       const status = await executeRunCommand(args, { stdout, stderr, signal: controller.signal });
       await send({ id: request.id, status, stdout: stdout.text(), stderr: stderr.text(),
         metrics: { rss_bytes: process.memoryUsage().rss, cpu_us: process.cpuUsage() } });

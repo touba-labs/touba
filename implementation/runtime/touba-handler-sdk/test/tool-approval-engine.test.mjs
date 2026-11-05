@@ -3,14 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { ToubaEngine } from "../src/index.mjs";
 
 let air;
-before(() => { air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path",
-  new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--",
-  new URL("../../touba-runtime/test/fixtures/approved-invoice.tb", import.meta.url).pathname], { encoding: "utf8" })); });
+before(() => { air = compileTestAir(new URL("../../touba-runtime/test/fixtures/approved-invoice.tb", import.meta.url).pathname); });
 
 for (const executionMode of ["process", "persistent"]) test(`tool-bound approval through real CLI/SDK ${executionMode}`, async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-operation-sdk-"));

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { runPassthrough } from "./passthrough.mjs";
+import { projectAdmissionFailure, requestsJsonRunOutput } from "./run-admission.mjs";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -467,7 +468,13 @@ function runCommand(rawArgs) {
   if (rawArgs.length === 0 || rawArgs.includes("--help") || rawArgs.includes("-h")) {
     return { text: runUsage(), exitCode: 0 };
   }
-  const profiledArgs = resolveProjectRunArgs(rawArgs);
+  let profiledArgs;
+  try { profiledArgs = resolveProjectRunArgs(rawArgs); }
+  catch (error) {
+    const refusal = projectAdmissionFailure(error);
+    if (!refusal || !requestsJsonRunOutput(rawArgs)) throw error;
+    return { text: JSON.stringify(refusal), exitCode: 2 };
+  }
   return runNodeScript(["cli", "touba-run", "src", "run.mjs"], profiledArgs);
 }
 

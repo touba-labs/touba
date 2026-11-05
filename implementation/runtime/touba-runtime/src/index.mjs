@@ -8426,7 +8426,9 @@ async function executeNode(graph, node, context) {
       if (context.toolApprovalGraphs.get(graph.owner_ref) !== graph || node !== graph.nodes[1]) {
         throw new RuntimeFailure("tool dispatch continuation is internal", {}, "ToolApprovalRequired");
       }
-      assertRunCanDispatch(context, { targetRef: graph.owner_ref });
+      // The invocation was charged before entering its approval continuation.
+      // Recheck controls and restored limits without charging that call again.
+      assertApprovedToolCanDispatch(context, { targetRef: graph.owner_ref });
       const result = await executeTool(requireDefinition(context.indexes.tools, graph.owner_ref), context);
       return { done: true, status: "success", result };
     }
@@ -9348,6 +9350,14 @@ function assertRunCanDispatch(context, details) {
   assertRuntimeRunCanDispatch(context, details, {
     observeRunTimeBudget: () => observeRunTimeBudget(context, details),
     consumeDispatchBudget: () => consumeDispatchBudget(context, details),
+  });
+}
+
+function assertApprovedToolCanDispatch(context, details) {
+  parallelBoundary(context);
+  assertRuntimeRunCanDispatch(context, details, {
+    observeRunTimeBudget: () => observeRunTimeBudget(context, details),
+    consumeDispatchBudget: () => assertDurableBudgetCountersWithinLimits(context, details),
   });
 }
 
