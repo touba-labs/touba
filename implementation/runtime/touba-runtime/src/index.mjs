@@ -5,6 +5,7 @@ import { isAbsolute, resolve } from "node:path";
 import { failureFamilyForRuntimeCode } from "../../../contracts/machine/contracts.mjs";
 import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
 import { assertManifestFields } from "../../../contracts/manifest-fields.mjs";
+import { normalizeToolApprovalPolicy } from "../../../contracts/tool-approval-policy.mjs";
 import { createProviderCostRecorder } from "./provider-cost-evidence.mjs";
 import {
   agentDecisionProviderContent,
@@ -14,6 +15,8 @@ import { runAgentDecisionLoop, appendAgentCapabilityObservation } from "./agent-
 import { createInvocationScope, snapshotInvocationValue } from "./invocation-scope.mjs";
 import { createToolApprovalGraphs, approvedOperation, grantToolApproval, consumeToolApproval, toolApprovalPolicy } from "./tool-approval.mjs";
 import { withTraceInvocation } from "./trace-context.mjs";
+import { withTraceApproval } from "./trace-context.mjs";
+import { packageAdmissionEvidence } from "../../../contracts/package-admission.mjs";
 import { createHumanCheckpointCustody, acceptedHumanApprovalState } from "./human-checkpoint-store.mjs";
 import { createParallelRuntime, parallelBoundary, parallelBudget, parallelExternal,
   parallelHuman, parallelRecord, trackParallelTransport, runParallelGroup,
@@ -419,7 +422,8 @@ function createExecutionContext(document, entryRef, options = {}) {
     options.__compensationExecutionContext,
   );
   const indexes = indexAirDocument(document);
-  const toolApprovalGraphs = createToolApprovalGraphs(indexes);
+  const toolBindingManifest = normalizeOptionalToolBindingManifest(options.toolBindingManifest);
+  const toolApprovalGraphs = createToolApprovalGraphs(indexes, toolBindingManifest);
   const executionResumeCheckpoint = normalizeOptionalExecutionCheckpoint(
     options.executionResumeCheckpoint ?? options.execution_resume_checkpoint,
   );
@@ -462,7 +466,6 @@ function createExecutionContext(document, entryRef, options = {}) {
     executionResumeCheckpoint || humanApprovalResumeCheckpoint || internalCompensation ? randomUUID() : null,
   );
   const initialValues = normalizeInputs(options.inputs ?? {});
-  const toolBindingManifest = normalizeOptionalToolBindingManifest(options.toolBindingManifest);
   const resourceBindings = normalizeOptionalResourceBindings(options.resourceBindings);
   const skillPacks = normalizeSkillPacks(options.skillPacks ?? options.skill_packs ?? []);
   const activeSkillPackRefs = normalizeStringSet(
@@ -471,7 +474,10 @@ function createExecutionContext(document, entryRef, options = {}) {
   );
   validateActiveSkillPackRefs(skillPacks, activeSkillPackRefs);
   const humanCheckpointCustody = createHumanCheckpointCustody(options);
+  const packageAdmission = packageAdmissionEvidence(options.packageAdmission);
   const context = {
+    packageAdmission,
+    packagesByTool: new Map((packageAdmission?.packages ?? []).flatMap(pkg => pkg.tools.map(ref => [ref, pkg]))),
     humanCheckpointCustody,
     acceptedHumanApprovalState: acceptedHumanApprovalState(options.humanApprovalResumeCheckpoint),
     indexes,
@@ -1534,6 +1540,7 @@ function durableManifestProjection(manifest) {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([toolRef, binding]) => [toolRef, {
         handler: { ...binding.handler },
+        ...(binding.approvalPolicy === undefined ? {} : { approval_policy: binding.approvalPolicy }),
         sandbox: { ...binding.sandbox },
         grants: [...binding.grants],
         secrets: [...binding.secrets],
@@ -1571,6 +1578,7 @@ function humanHostContractDigest(context) {
     manifest: durableManifestProjection(context.toolBindingManifest),
     resources: durableResourceBindingsProjection(context.resourceBindings),
     evidence: context.executionDurability.compatibilityEvidence,
+    ...(context.packageAdmission ? { package_admission: context.packageAdmission.admission_id } : {}),
     in_process_tools: Object.keys(context.toolHandlers).sort(),
   };
   assertCheckpointHasNoResolvedSecret(projection, context, "host-contract");
@@ -5223,7 +5231,11 @@ async function executeApprovedTool(tool, context) {
 }
 
 async function executeTool(tool, context) {
-  consumeToolApproval(tool, context);
+  const requestId = consumeToolApproval(tool, context);
+  return withTraceApproval(context.trace, requestId, () => executeAuthorizedTool(tool, context));
+}
+
+async function executeAuthorizedTool(tool, context) {
   if (context.parallelBranch) {
     const binding = validateToolBinding(tool, context);
     const args = argumentObject(tool.signature, context);
@@ -5271,6 +5283,10 @@ async function executeToolBody(tool, context) {
 
 async function executeToolBodyUnchecked(tool, context) {
   const toolRef = tool.id;
+  const pkg = context.packagesByTool.get(toolRef);
+  if (pkg) context.trace.push("package_tool_admitted", { payload: { tool_ref: toolRef,
+    package_name: pkg.name, package_version: pkg.version, package_digest: pkg.digest,
+    admission_id: context.packageAdmission.admission_id } });
   const binding = validateToolBinding(tool, context);
   if (binding) {
     context.trace.push("tool_binding_authorized", {
@@ -7335,6 +7351,9 @@ function normalizeManifestBinding(toolRef, binding, manifestVersion) {
     });
   }
   const effectContract = normalizeManifestEffectContract(toolRef, binding, manifestVersion);
+  let approvalPolicy;
+  try { approvalPolicy = normalizeToolApprovalPolicy(binding.approval_policy); }
+  catch { throw new ToubaRuntimeError("InvalidToolBindingManifest", "invalid binding approval policy", { toolRef }); }
   if (!binding.handler || typeof binding.handler !== "object" || Array.isArray(binding.handler)) {
     throw new ToubaRuntimeError("InvalidToolBindingManifest", "binding handler must be an object", {
       toolRef,
@@ -7412,6 +7431,7 @@ function normalizeManifestBinding(toolRef, binding, manifestVersion) {
     }),
     payloadConstraints,
     effectContract,
+    ...(approvalPolicy === undefined ? {} : { approvalPolicy: Object.freeze(approvalPolicy) }),
   });
 }
 
@@ -8900,6 +8920,12 @@ async function executeHumanApprovalNodeBody(graph, node, context, authorityRef =
     payload: {
       approval_ref: approvalRef,
       decision,
+      request_id: request.request_id,
+      ...(result.subject_ref.present ? {
+        signer_ref: canonicalDigest({ run_id: context.trace.runId, subject_ref: result.subject_ref.value }),
+        attested_roles: node.approval_policy?.role ? [node.approval_policy.role] : [],
+        accepted_at: result.accepted_at,
+      } : {}),
     },
   });
 

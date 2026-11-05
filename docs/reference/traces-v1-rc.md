@@ -4,6 +4,34 @@ sidebar_position: 4
 
 # Référence traces
 
+## Provenance des packages et des approbations
+
+**Prochain build — en qualification locale.**
+
+Une exécution issue d'un projet préparé enregistre `package_admission_verified`
+après `run_started`. Cet inventaire contient les noms, versions et empreintes
+vérifiées des packages installés, l'empreinte du verrou packages, de la
+configuration et du manifest. Un verrou supply-chain accepté est indiqué
+`verified`, avec son empreinte ; `absent` indique qu'aucun n'a été admis.
+Un verrou refusé arrête l'exécution et produit une trace d'admission refusée.
+
+`package_tool_admitted` relie l'outil à cet inventaire par `admission_id`.
+`tool_approval_authorized` nomme la demande exacte et l'empreinte de sa
+politique effective. Les événements de l'appel et de son effet portent
+`approval_request_id`. La décision conserve une empreinte du signataire attesté,
+liée au run, le rôle exigé et l'instant d'acceptation. L'identité brute et les
+autres rôles restent dans le reçu de l'hôte ; aucun jeton d'attestation,
+commentaire libre ni argument métier n'est ajouté à ces métadonnées.
+
+L'inventaire est capturé à l'admission puis conservé dans SQLite et dans l'export.
+Une reprise vérifie la même identité d'admission avant de poursuivre.
+Les sources éditables sont comptées séparément. Un AIR autonome ou une ancienne
+trace sans inventaire ne fournit pas de preuve de version de package.
+La configuration et le système de fichiers restent sous la responsabilité de
+l'hôte de confiance.
+
+
+
 ## Lecture et corrélations
 
 `touba inspect trace.json` résume l’exécution exportée et ses événements marquants.

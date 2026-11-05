@@ -13,6 +13,31 @@ import {
   projectInspectionContract,
   renderInspection,
 } from "../src/inspect.mjs";
+import { projectExplorer } from "../src/explorer/model.mjs";
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
+
+test("inspection and Explorer expose source and consumer tool approval requirements", () => {
+  const source = path.join(implementationDir, "grammar/tree-sitter-touba/examples/human-approval-v1/positive/tool-approval.tb");
+  const inspected = inspectPath(source);
+  assert.equal(inspected.air.tool_approval_policies.length, 1);
+  assert.equal(inspected.air.tool_approval_policies[0].policy.role, "finance");
+  assert.match(renderInspection(inspected), /tool_approval tool:operation_approval\/Pay origin=source/);
+  assert.deepEqual(projectInspectionContract(inspected).approval_policies, inspected.air.tool_approval_policies);
+  const air = compileTestAir(source);
+  delete air.definitions.tools[0].approval_policy;
+  const graph = projectExplorer([air], { name: "consumer", revision: "test", files: [],
+    toolPolicies: { "tool:operation_approval/Pay": { role: "reviewer", timeout_ms: 5000 } } });
+  const tool = graph.nodes.find(node => node.id === "tool:operation_approval/Pay");
+  assert.equal(tool.details.approval_required, true);
+  assert.equal(tool.details.approval_origin, "consumer");
+  assert.equal(tool.details.approval_policy.role, "reviewer");
+  const checkpoints = inspectPath(path.join(implementationDir,
+    "grammar/tree-sitter-touba/examples/human-approval-v1/positive/approval-policy.tb"));
+  assert.equal(checkpoints.air.checkpoint_approval_policies.length, checkpoints.air.human_approvals);
+  assert.ok(checkpoints.air.checkpoint_approval_policies.length > 0);
+  assert.ok(checkpoints.air.checkpoint_approval_policies.every(item => typeof item.approval_ref === "string"));
+  assert.match(renderInspection(checkpoints), /checkpoint_approval.*finance/);
+});
 
 test("inspects a Touba source by compiling it to AIR without attaching unprovided traces", () => {
   const sourcePath = path.join(

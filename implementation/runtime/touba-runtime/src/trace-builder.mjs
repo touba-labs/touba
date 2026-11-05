@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { airDocumentDigest } from "./air-identity.mjs";
-import { currentTraceInvocation } from "./trace-context.mjs";
+import { currentTraceInvocation, currentTraceApproval } from "./trace-context.mjs";
 import {
   TRACE_CAPABILITY_PROFILE,
   TRACE_PROTOCOL_VERSION,
@@ -112,6 +112,8 @@ export class TraceBuilder {
     // presence, not their text or an attackable public hash. This applies
     // before storage, observers and export, including human-review events.
     const publicPayload = rawPayload === undefined ? undefined : { ...rawPayload };
+    const approvalRequestId = currentTraceApproval(this);
+    if (publicPayload && approvalRequestId) publicPayload.approval_request_id = approvalRequestId;
     if (publicPayload) {
       delete publicPayload.provider_cause;
       // A rejected provider target may itself contain copied private input.

@@ -13,6 +13,38 @@
     "diagnostics"
   ],
   "properties": {
+    "checkpoint_approval_policies": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["approval_ref", "origin", "policy"],
+        "properties": {
+          "approval_ref": { "type": "string" },
+          "origin": { "const": "checkpoint" },
+          "policy": { "$ref": "#/properties/approval_policies/items/properties/policy" }
+        }
+      }
+    },
+    "approval_policies": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["tool_ref", "origin", "policy"],
+        "properties": {
+          "tool_ref": { "type": "string" },
+          "origin": { "enum": ["source", "consumer"] },
+          "policy": {
+            "type": "object", "additionalProperties": false,
+            "properties": {
+              "role": { "type": "string" },
+              "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 2592000000 },
+              "distinct_from": { "enum": ["initiator", "previous", "initiator_and_previous"] },
+              "exclude_signers": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
     "schema_version": {
       "const": "touba-project-inspection-v1"
     },

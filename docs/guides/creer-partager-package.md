@@ -271,6 +271,73 @@ Après publication, conservez l'identité `organisation.nom` : changer de nom
 crée un autre package. Une version publiée conserve son contenu. Faites évoluer
 description, licence, README ou exports dans une nouvelle version.
 
+## Revoir la gouvernance d'une mise à jour
+
+**Prochain build — en qualification locale.** La version publique 1.3.1 ne contient pas encore ce contrat.
+
+L'application conserve ses exigences dans `touba.project.json` :
+`configuration.package_contracts` décrit les contrats revus et
+`configuration.tool_policies` fixe ses approbations minimales. Versionnez ces
+données avec le projet. Retirer un package ou nettoyer `.touba/build/` les conserve.
+
+```sh
+touba prepare --mode plan
+```
+
+Le plan montre les changements d'approbation, de rôle, de délai, de séparation
+des signataires, de droits, de secrets, d'accès mémoire et de signature.
+Un contrat modifié produit `PackageGovernanceReviewRequired`.
+Pour adopter la version après revue, recopiez son empreinte exacte affichée
+par le plan dans les décisions hôte :
+
+```json title="package-review.json"
+{
+  "review_packages": {
+    "example.export": "sha256:EXACT_DIGEST_FROM_THE_PLAN"
+  }
+}
+```
+
+```sh
+touba prepare --mode plan --host-decisions package-review.json
+touba prepare --mode write --host-decisions package-review.json
+touba prepare --mode check
+```
+
+Cette revue accepte le contrat du package ; elle conserve le minimum de
+l'application. Pour définir ce minimum explicitement, utilisez la même procédure
+avec `tool_policies` :
+
+```json title="Décisions hôte"
+{
+  "tool_policies": {
+    "tool:example.export/Export": {
+      "role": "reviewer",
+      "timeout_ms": 60000,
+      "distinct_from": "initiator"
+    }
+  }
+}
+```
+
+Une approbation de l'opération satisfait les contraintes compatibles des deux
+origines : délai le plus court et séparations cumulées. Des rôles ou règles
+d'exclusion différents demandent un arbitrage explicite
+(`ToolApprovalPolicyConflict`). Les checkpoints séparés du programme gardent
+leur propre décision. La valeur `null`, choisie explicitement dans
+`tool_policies`, retire le minimum de l'application pour cet outil ; les
+exigences encore présentes dans le package continuent de s'appliquer.
+
+La première préparation écrite adopte les approbations des packages et examine
+les anciens AIR disponibles. Sans historique conservé, elle établit une première
+base à relire. Un outil renommé reste une nouvelle identité. Les règles métier
+et l'unicité des opérations restent dans le service qui réalise l'effet.
+
+La préparation inscrit ces exigences dans le manifest utilisé à l'exécution.
+Pour exécuter directement un AIR avec le SDK, fournissez ce manifest ou un
+binding `approval_policy` équivalent : le SDK ne recherche pas la configuration
+d'un projet à partir d'un AIR seul.
+
 ## Dépendances et développement local
 
 Une seule version exacte par nom, aucun choix implicite de « dernière version ».

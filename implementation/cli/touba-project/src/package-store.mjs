@@ -87,7 +87,9 @@ export function readPackageLock(root) {
   const path = join(root, PACKAGE_LOCK);
   if (!existsSync(path)) return { lock_schema_version: PACKAGE_LOCK_SCHEMA, packages: [] };
   if (lstatSync(path).isSymbolicLink()) throw packageError("PackageSymlinkForbidden", "installation lock cannot be a link");
-  const value = JSON.parse(readFileSync(path, "utf8"));
+  let value;
+  try { value = JSON.parse(readFileSync(path, "utf8")); }
+  catch { throw packageError("PackageLockInvalid", "package installation lock is unreadable or invalid JSON"); }
   if (value.lock_schema_version !== PACKAGE_LOCK_SCHEMA || !Array.isArray(value.packages)) throw packageError("PackageLockInvalid", "invalid package installation lock");
   const names = new Set();
   for (const item of value.packages) {

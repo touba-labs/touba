@@ -15,6 +15,7 @@ import { requiredResourceReferences } from "../../../contracts/resource-bindings
 import { assertKnownFields, assertManifestFields, assertBindingFields } from "../../../contracts/manifest-fields.mjs";
 import { loadResourceBindingFiles, snapshotResourceBindings } from "../../../contracts/resource-binding-files.mjs";
 import { applyHostDecisions } from "./host-decisions.mjs";
+import { proposePackageGovernance, normalizeConsumerPolicies, normalizePackageContracts, applyConsumerPolicies } from "./package-governance.mjs";
 import { normalizeTriggerEntries } from "../../touba-manifest/src/generate.mjs";
 import { loadSkillPack, projectContextSelections, normalizeProjectContexts } from "./skill-packs.mjs";
 import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, readPackage } from "./package-contract.mjs";
@@ -433,10 +434,11 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
       throw packageError("ResourceBindingsPreparationStale", "project resource selection changed; run touba prepare --mode write");
     }
   }
-  if (existsSync(join(projectRoot, PACKAGE_LOCK))) {
+  if (existsSync(join(projectRoot, PACKAGE_LOCK)) || Object.keys(projectConfig.configuration?.tool_policies ?? {}).length) {
     const effectivePath = join(dirname(runPlanPath), "touba.effective-project.json");
     const effective = existsSync(effectivePath) ? JSON.parse(readFileSync(effectivePath, "utf8")) : null;
     for (const [kind, path] of [["project", configPath], ["package_lock", join(projectRoot, PACKAGE_LOCK)]]) {
+      if (kind === "package_lock" && !existsSync(path)) continue;
       if (effective?.inputs?.find(input => input.kind === kind)?.digest_sha256 !== packageDigest(readFileSync(path))) throw packageError("PackagePreparationStale", "project packages changed since preparation; run touba prepare --mode write before running");
     }
   }
@@ -637,6 +639,31 @@ export async function prepareProject(options = {}) {
     if (mode === "check") diagnostics.push(errorDiagnostic("ProjectEntryMissing", "declare the project entry with touba prepare --mode write"));
   }
 
+  let governance;
+  if (!hasErrorDiagnostics(diagnostics)) {
+    try {
+      const previous = preparedAirDocuments.filter(entry => entry.sourcePath !== undefined).flatMap(({ document }) => {
+        const path = airOutputPath(root, document.module.name, airRoot);
+        return existsSync(path) ? [JSON.parse(readFileSync(path, "utf8"))] : [];
+      });
+      governance = proposePackageGovernance({ configuration: configured,
+        packages: packageResolution.packages, entries: [...airDocuments, ...packageResolution.entries],
+        previous, decisions: options.hostDecisions, mode });
+      diagnostics.push(...governance.diagnostics);
+      actions.push(...governance.changes.map(change => action(change.kind, projectConfigPath, change)));
+      if (governance.changed) {
+        const base = projectConfigWrite !== undefined ? JSON.parse(projectConfigWrite)
+          : existsSync(projectConfigPath) ? JSON.parse(readFileSync(projectConfigPath, "utf8")) : expectedProjectConfigDocument(languageProfile);
+        base.configuration = governance.configuration;
+        projectConfigWrite = `${JSON.stringify(base, null, 2)}\n`;
+        if (projectConfigResolution.document) projectConfigResolution.document.configuration = governance.configuration;
+        actions.push(action(mode === "write" ? "write_package_governance" : "would_write_package_governance", projectConfigPath));
+      }
+    } catch (error) {
+      diagnostics.push(errorDiagnostic(error.code ?? "PackageGovernanceInvalid", "package governance configuration or review is invalid"));
+    }
+  }
+
   let expectedManifest = buildManifestRequirements(preparedAirDocuments.map((entry) => entry.document), {
     handlerRoot: options.handlerRoot ?? DEFAULT_HANDLER_ROOT,
     handlerCommand: options.handlerCommand ?? (languageProfile.language === "python" ? projectPythonCommand(root) : languageProfile.handlerCommand),
@@ -750,8 +777,9 @@ export async function prepareProject(options = {}) {
     try {
       const proposal = applyHostDecisions(proposedManifest, options.hostDecisions, manifestRequirements,
         bindingFragmentComposition.toolRefs, packageHandlerProposals(packageResolution.packages, root, manifestPath));
-      proposedManifest = proposal.manifest;
+      proposedManifest = structuredClone(proposal.manifest);
       hostChanges = proposal.changes;
+    applyConsumerPolicies(proposedManifest, expectedManifest, governance?.policies ?? {}, preparedAirDocuments.map(entry => entry.document));
     } catch (error) {
       diagnostics.push(errorDiagnostic(error.code ?? "HostDecisionInvalid",
         `invalid host decision${error.details?.path ? ` at ${error.details.path}` : ""}${error.details?.target_ref ? ` for ${error.details.target_ref}` : ""}${error.details?.field ? `, field ${error.details.field}` : ""}; no preparation changes were written`,
@@ -1048,6 +1076,18 @@ export function renderReport(report) {
         lines.push(`  ${item.target_ref} ${item.field}: ${JSON.stringify(item.before)} -> ${JSON.stringify(item.after)}`);
         if (item.source_required !== undefined) lines.push(`  source_required: ${JSON.stringify(item.source_required)}`);
       }
+      if (["review_package_contract", "adopt_package_contract"].includes(item.kind)) {
+        lines.push(`  ${item.package} ${item.digest} reviewed=${item.reviewed}`);
+        const before = item.before?.tools ?? {}, after = item.after?.tools ?? {};
+        for (const ref of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
+          for (const field of ["approval_policy", "required_capabilities", "required_secrets", "memory_accesses", "signature"]) {
+            if (JSON.stringify(before[ref]?.[field]) !== JSON.stringify(after[ref]?.[field])) {
+              lines.push(`  ${ref} ${field}: ${JSON.stringify(before[ref]?.[field] ?? null)} -> ${JSON.stringify(after[ref]?.[field] ?? null)}`);
+            }
+          }
+        }
+      }
+      if (item.kind === "configure_consumer_approval") lines.push(`  ${item.tool_ref}: ${JSON.stringify(item.before)} -> ${JSON.stringify(item.after)}`);
     }
   }
   if (report.diagnostics?.length > 0) {
@@ -1141,6 +1181,7 @@ async function loadLocalPackages({
     packages.push({
       name: loaded.name,
       version: loaded.version,
+      digest: loaded.digest,
       manifest_path: manifestPath,
       root: loaded.root,
       modules: acceptedEntries.map((packageEntry) => packageEntry.document.module.name).sort(),
@@ -1367,7 +1408,7 @@ function validatePackageManifest(document, { manifestPath, record, diagnostics }
 
 function packageMetadata(pkg) {
   const exports = Object.fromEntries(Object.keys(PACKAGE_EXPORT_COLLECTIONS).map(kind => [kind, pkg.document.exports[kind] ?? []]));
-  return { name: pkg.document.name, version: pkg.document.version, root: pkg.root, exports,
+  return { name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, root: pkg.root, exports,
     handlers: pkg.document.handlers ?? [], contexts: (pkg.document.contexts ?? []).map(context => context.id), dependencies: pkg.document.dependencies ?? {},
     exports_by_module: packageExportsByModule(exports), contract_tests: (pkg.document.contract_tests ?? []).map(path => join(pkg.root, path)) };
 }
@@ -1751,11 +1792,13 @@ function normalizeProjectConfiguration(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("project config configuration must be an object");
   }
-  assertProjectConfigFields(value, ["binding_fragments", "resource_bindings", "contexts", "ownership"], "configuration");
+  assertProjectConfigFields(value, ["binding_fragments", "resource_bindings", "contexts", "ownership", "package_contracts", "tool_policies"], "configuration");
   return {
     binding_fragments: normalizeProjectPathList(value.binding_fragments, "configuration.binding_fragments"),
     resource_bindings: normalizeProjectPathList(value.resource_bindings, "configuration.resource_bindings"),
     ...(value.contexts === undefined ? {} : { contexts: normalizeProjectContexts(value.contexts) }),
+    ...(value.package_contracts === undefined ? {} : { package_contracts: normalizePackageContracts(value.package_contracts) }),
+    ...(value.tool_policies === undefined ? {} : { tool_policies: normalizeConsumerPolicies(value.tool_policies) }),
     ownership: normalizeOptionalProjectRef(value.ownership, "configuration.ownership"),
   };
 }
@@ -4160,6 +4203,7 @@ function buildExpectedRunPlan({
     run_plan_schema_version: TOUBA_RUN_PLAN_SCHEMA_VERSION,
     entry_ref: entry.ref,
     air: relativeRunPlanPath(runPlanPath, runPlanAirPathForEntry(root, entry.entry, airRoot)),
+    project: relativeRunPlanPath(runPlanPath, join(root, DEFAULT_PROJECT_CONFIG_PATH)),
     profile,
     outputs: {
       mode: "show",
@@ -4852,6 +4896,7 @@ function canonicalRunPlan(document) {
     run_plan_schema_version: document.run_plan_schema_version,
     entry_ref: document.entry_ref,
     air: document.air,
+    ...(document.project === undefined ? {} : { project: document.project }),
     ...(document.entries === undefined ? {} : { entries: document.entries }),
     ...(document.manifest !== undefined ? { manifest: document.manifest } : {}),
     ...(document.resource_bindings !== undefined ? { resource_bindings: document.resource_bindings } : {}),

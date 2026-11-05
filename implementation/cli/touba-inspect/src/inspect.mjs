@@ -529,6 +529,12 @@ export function projectInspectionContract(inspection, options = {}) {
     artifacts: projectInspectionArtifacts(inspection),
     entrypoints: projectInspectionEntrypoints(inspection),
     packages: [],
+    approval_policies: [
+      ...(inspection.air?.tool_approval_policies ?? []),
+      ...(inspection.manifest?.bindings ?? []).filter(binding => binding.approval_policy !== undefined)
+        .map(binding => ({ tool_ref: binding.tool_ref, origin: "consumer", policy: binding.approval_policy })),
+    ],
+    checkpoint_approval_policies: inspection.air?.checkpoint_approval_policies ?? [],
     diagnostics: projectInspectionDiagnostics(inspection),
   };
 }
@@ -755,6 +761,11 @@ function summarizeAir(air) {
     result_bindings: countResultBindings(air.execution_graphs),
     local_bindings: countFlowNodesByKind(air.execution_graphs, "bind"),
     human_approvals: countHumanApprovals(air.execution_graphs),
+    checkpoint_approval_policies: (air.execution_graphs ?? []).flatMap(graph => graph.nodes
+      .filter(node => node.kind === "human_approval")
+      .map(node => ({ approval_ref: node.approval_ref, origin: "checkpoint", policy: structuredClone(node.approval_policy ?? {}) }))),
+    tool_approval_policies: (air.definitions?.tools ?? []).filter(tool => tool.approval_policy !== undefined)
+      .map(tool => ({ tool_ref: tool.id, origin: "source", policy: structuredClone(tool.approval_policy) })),
     user_interactions: countUserInteractions(air.execution_graphs),
     failure_paths: countFailurePaths(air.execution_graphs),
     required_capabilities: countToolRequirement(air, "required_capabilities"),
@@ -780,6 +791,7 @@ function summarizeTrace(trace, sourcePath = undefined) {
     "human_approval_requested", "human_approval_decided", "human_approval_rejected",
     "human_approval_expired", "human_approval_cancelled", "user_interaction_paused",
     "failure_detected", "run_cancelled", "budget_limit_exceeded", "fallback_selected",
+    "package_admission_verified", "package_tool_admitted", "tool_approval_authorized",
   ]);
   return {
     present: true,
@@ -789,6 +801,7 @@ function summarizeTrace(trace, sourcePath = undefined) {
     module_ref: trace.run?.module_ref,
     entry_ref: trace.run?.entry_ref,
     air_digest: trace.run?.air_digest,
+    package_admission: events.find(event => event.kind === "package_admission_verified")?.payload ?? null,
     status: trace.run?.admission === "refused" ? "admission_refused" : finalRunStatus(events) ?? "absent",
     events: events.length,
     reason: events.at(-1)?.payload?.reason,
@@ -802,7 +815,7 @@ function summarizeTrace(trace, sourcePath = undefined) {
       ...(typeof event.payload?.reason === "string" && event.payload.reason.length > 0
         ? { reported_reason: event.payload.reason } : {}),
       ...Object.fromEntries(Object.entries(event.payload ?? {}).filter(([key, value]) =>
-        ["action", "selected_ref", "target_ref", "tool_ref", "agent_ref", "approval_ref", "interaction_ref", "decision", "runtime_error_code", "status"].includes(key)
+        ["action", "selected_ref", "target_ref", "tool_ref", "agent_ref", "approval_ref", "interaction_ref", "decision", "runtime_error_code", "status", "request_id", "approval_request_id", "package_name", "package_version", "package_digest", "admission_id"].includes(key)
         && typeof value === "string")),
     })),
     effective_limits: events.filter(event => event.kind === "budget_limit_checked").map(event => ({
@@ -1061,6 +1074,7 @@ function summarizeManifest(manifest) {
         }))
       : [],
     timeout_ms: binding.timeout_ms,
+    ...(binding.approval_policy !== undefined ? { approval_policy: structuredClone(binding.approval_policy) } : {}),
     max_payload_bytes: binding.max_payload_bytes,
     ...(validatedEffects.has(toolRef)
       ? { effect_contract: effectContractToJson(validatedEffects.get(toolRef)) }
@@ -1693,6 +1707,9 @@ function summarizeEffectiveProject(artifact) {
     input_count: (artifact.inputs ?? []).length,
     sections,
     ...(effectContracts.length > 0 ? { effect_contracts: effectContracts } : {}),
+    approval_policies: (artifact.contract?.handlers?.bindings ?? [])
+      .filter(binding => binding.approval_policy !== undefined)
+      .map(binding => ({ tool_ref: binding.tool_ref, origin: binding.approval_origin, policy: binding.approval_policy })),
     document: artifact,
   };
 }
@@ -1756,6 +1773,12 @@ function renderAir(lines, air) {
   );
   for (const memory of air.memory_model.memories) {
     lines.push(`- memory ${memory.memory_ref} name=${memory.name}`);
+  }
+  for (const approval of air.tool_approval_policies ?? []) {
+    lines.push(`- tool_approval ${approval.tool_ref} origin=source policy=${JSON.stringify(approval.policy)}`);
+  }
+  for (const approval of air.checkpoint_approval_policies ?? []) {
+    lines.push(`- checkpoint_approval ${approval.approval_ref} policy=${JSON.stringify(approval.policy)}`);
   }
   for (const access of air.memory_model.tool_accesses) {
     lines.push(`- tool_memory ${access.tool_ref} ${access.access} ${access.memory_ref}`);
@@ -1878,6 +1901,9 @@ function renderManifest(lines, manifest) {
     );
     if (binding.handler_cwd) {
       lines.push(`  cwd=${binding.handler_cwd}`);
+    }
+    if (binding.approval_policy !== undefined) {
+      lines.push(`  approval origin=consumer policy=${JSON.stringify(binding.approval_policy)}`);
     }
     if (binding.effect_contract) {
       lines.push(`  effect_contract=${formatEffectContract(binding.effect_contract)}`);
@@ -2306,6 +2332,9 @@ function renderEffectiveProject(lines, effectiveProject) {
     lines.push(
       `- ${section.name} provenance=${section.status} sources=[${section.sources.join(",")}]`,
     );
+  }
+  for (const item of effectiveProject.approval_policies ?? []) {
+    lines.push(`- tool_approval ${item.tool_ref} origin=${item.origin} policy=${JSON.stringify(item.policy)}`);
   }
   for (const binding of effectiveProject.effect_contracts ?? []) {
     lines.push(

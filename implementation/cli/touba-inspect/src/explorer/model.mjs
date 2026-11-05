@@ -1,10 +1,11 @@
 import { validateAirMachineContract } from '../../../../contracts/machine/contracts.mjs';
 import { expressionFormatter } from './expressions.mjs';
+import { combineToolApprovalPolicies } from '../../../../contracts/tool-approval-policy.mjs';
 
 export const EXPLORER_VERSION = 'touba-project-explorer-v1';
 const collections = { types: 'type', constants: 'constant', functions: 'function', tools: 'tool', memories: 'memory', skills: 'skill', agents: 'agent', strategies: 'strategy', triggers: 'trigger' };
 // This is a display projection. AIR remains the authority for every relationship.
-export function projectExplorer(airs, { name, revision, files, packages = [], entrypoints = [] }) {
+export function projectExplorer(airs, { name, revision, files, packages = [], entrypoints = [], toolPolicies = {} }) {
   const nodes = new Map(), edges = new Map();
   const add = node => { if (!nodes.has(node.id)) nodes.set(node.id, node); };
   const edge = (kind, from, to, source_ref, extra = {}) => {
@@ -43,9 +44,12 @@ export function projectExplorer(airs, { name, revision, files, packages = [], en
         }
         if (kind === 'tool') {
           details.boundary = 'External handler (JavaScript or Python)';
-          if (d.approval_policy !== undefined) {
+          const effectivePolicy = combineToolApprovalPolicies(d.approval_policy, toolPolicies[d.id] ?? undefined);
+          if (effectivePolicy !== undefined) {
             details.approval_required = true;
-            details.approval_policy = d.approval_policy;
+            details.approval_policy = effectivePolicy;
+            details.approval_origin = d.approval_policy !== undefined
+              ? (toolPolicies[d.id] != null ? 'source_and_consumer' : 'source') : 'consumer';
           }
         }
         if (kind === 'constant') details.value = { expression: formatConstant(d.id) };

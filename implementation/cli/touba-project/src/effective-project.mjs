@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
+import { combineToolApprovalPolicies } from "../../../contracts/tool-approval-policy.mjs";
 
 import {
   effectContractToJson,
@@ -29,6 +30,13 @@ export function buildEffectiveProjectDocument(options) {
     evidenceRoot,
   } = options;
   const documents = preparedAirDocuments.map((entry) => entry.document);
+  const tools = new Map(documents.flatMap(document => document.definitions.tools.map(tool => [tool.id, tool])));
+  const approvalProjection = (ref, binding) => {
+    const source = tools.get(ref)?.approval_policy;
+    const policy = combineToolApprovalPolicies(source, binding.approval_policy);
+    return policy === undefined ? {} : { approval_policy: policy,
+      approval_origin: source !== undefined ? (binding.approval_policy !== undefined ? "source_and_consumer" : "source") : "consumer" };
+  };
   const modules = documents.map((document) => document.module.name).sort();
   const sourcePaths = sources.map((source) => relativePath(root, source.path)).sort();
   const airPaths = documents
@@ -84,6 +92,7 @@ export function buildEffectiveProjectDocument(options) {
           bindings: toolBindings.map(([toolRef, binding]) => ({
             tool_ref: toolRef,
             kind: binding.handler?.kind ?? "unknown",
+            ...approvalProjection(toolRef, binding),
             ...(Object.hasOwn(binding, "effect_contract")
               ? {
                 effect_contract: binding.effect_contract === null ? null : effectContractToJson(normalizeEffectContract(

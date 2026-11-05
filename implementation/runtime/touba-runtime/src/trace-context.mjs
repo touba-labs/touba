@@ -3,6 +3,20 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // Observability only: no authority, values or executable state is held here.
 // Async scopes keep concurrent branches and nested host invocations separate.
 const scopes = new AsyncLocalStorage();
+const approvals = new AsyncLocalStorage();
+/** @template T
+ * @param {{spanRoot?: object}} trace
+ * @param {string | undefined} requestId
+ * @param {() => T} callback
+ * @returns {T} */
+export function withTraceApproval(trace, requestId, callback) {
+  return approvals.run({ root: trace.spanRoot ?? trace, requestId }, callback);
+}
+/** @param {{spanRoot?: object}} trace */
+export function currentTraceApproval(trace) {
+  const value = approvals.getStore();
+  return value?.root === (trace.spanRoot ?? trace) ? value.requestId : undefined;
+}
 /** @template T
  * @param {{spanRoot?: object, allocateSpanId: () => string}} trace
  * @param {string} targetRef

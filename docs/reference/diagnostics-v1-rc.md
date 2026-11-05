@@ -4,6 +4,24 @@ sidebar_position: 8
 
 # Référence diagnostics
 
+## Gouvernance et intégrité des packages
+
+**Prochain build — en qualification locale.**
+
+| Code | Action |
+| --- | --- |
+| `PackageGovernanceReviewRequired` | Relire les changements affichés par `prepare --mode plan`, puis sélectionner le digest exact dans `review_packages`. |
+| `PackageGovernanceStale` | Vérifier la configuration du consommateur et refaire la préparation. |
+| `ToolApprovalPolicyConflict` | Choisir explicitement des rôles et règles compatibles côté application et package. |
+| `PackagePreparationStale` | Préparer à nouveau après un changement du projet, du package, du manifest ou du plan. |
+| `PackageIntegrityMismatch` | Conserver l'archive attendue, examiner la modification, puis réinstaller une copie vérifiée. |
+| `PackageLockInvalid` / `PackageLockMismatch` | Corriger la cohérence du projet et du verrou ; conserver les éléments pour diagnostic. |
+
+La CLI et les SDK JavaScript/Python conservent ces codes d'admission.
+`EngineCommandFailed` reste le diagnostic de transport lorsqu'aucun résultat
+structuré exploitable n'a été reçu ; le code de sortie est alors disponible.
+Les messages privés de stderr ne sont pas recopiés dans le diagnostic public.
+
 ## Données typées et admission
 
 | Code | Cause | Action |

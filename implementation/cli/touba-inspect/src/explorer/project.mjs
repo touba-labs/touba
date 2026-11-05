@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { compilerInputsForFile } from '../../../touba-project/src/project.mjs';
 import { projectEntrypoints } from '../../../touba-project/src/project-entrypoints.mjs';
 import { projectExplorer } from './model.mjs';
+import { normalizeConsumerPolicies } from '../../../touba-project/src/package-governance.mjs';
 
 export const implementationRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const ignored = new Set(['node_modules', '.git', '.touba', 'artifacts', 'dist', 'build', 'target', 'packages']);
@@ -62,6 +63,7 @@ export { safeRead as readProjectSource };
 export async function captureProject(root) {
   const files = [], metadata = [], roots = [], diagnostics = [], packages = [];
   let entrypoints = [];
+  let toolPolicies = {};
   const packageSummary = document => {
     if (packages.some(p => p.name === document.name)) return;
     packages.push({ ...Object.fromEntries(['name', 'version', 'description', 'publisher', 'license', 'touba', 'exports', 'dependencies', 'engines', 'hosts'].filter(key => document[key] !== undefined).map(key => [key, document[key]])), contexts:(document.contexts ?? []).map(c => ({ id:c.id, description:c.description, activation:c.activation, execution_links:c.execution_links })) });
@@ -97,6 +99,7 @@ export async function captureProject(root) {
       }
       if (name === 'touba.project.json') {
         entrypoints = projectEntrypoints(JSON.parse(bytes));
+        toolPolicies = normalizeConsumerPolicies(JSON.parse(bytes).configuration?.tool_policies);
         for (const record of JSON.parse(bytes).packages ?? []) {
           if (typeof record.manifest !== 'string' || !inside(root, await realpath(resolve(root, record.manifest)))) throw new Error('ExplorerPackageOutsideProject');
         }
@@ -123,7 +126,7 @@ export async function captureProject(root) {
     }
   }
   const revision = digest(JSON.stringify([metadata, files.map(f => [f.path, f.digest]), diagnostics]));
-  return { root, name: basename(root), files, roots, revision, diagnostics, packages, entrypoints };
+  return { root, name: basename(root), files, roots, revision, diagnostics, packages, entrypoints, toolPolicies };
 }
 
 async function compilerBinary() {

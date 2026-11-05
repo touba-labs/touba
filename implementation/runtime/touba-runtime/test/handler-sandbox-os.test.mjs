@@ -4,7 +4,8 @@ import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, symlinkSync, rmSyn
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
-import { runProcessToolHandler } from "../src/handler-protocol.mjs";
+import { runProcessToolHandler, buildHandlerSandboxPlan } from "../src/handler-protocol.mjs";
+import { spawnSync } from "node:child_process";
 
 test("macOS enforces file scopes, inherited child restrictions and separate Unix sockets", { skip: process.platform !== "darwin" }, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "tb-sb-")));
@@ -50,4 +51,58 @@ unix:await connect({path:${JSON.stringify(socketPath)}})
   await assert.rejects(run([], { read_paths: [canary] }), error => error.code === "HandlerSandboxGrantMissing");
   await assert.rejects(run([], { code_paths: [allowed] }), error => error.code === "HandlerSandboxPathInvalid");
   await assert.rejects(run([], { code_paths: [join(root, "missing.mjs")] }), error => error.code === "HandlerSandboxPathInvalid");
+});
+
+test("macOS package Python handler starts, refuses project files and network, then allows exact grants", { skip: process.platform !== "darwin" }, async t => {
+  // Inventory a trusted local interpreter, never a package-supplied executable.
+  // Individual runtime files are code_paths; no project directory is granted.
+  const probe = spawnSync(process.env.TOUBA_TEST_SANDBOX_PYTHON ?? "/usr/bin/python3", ["-B", "-c", `import json,os,sys
+files=[]
+for root,dirs,names in os.walk(sys.base_prefix):
+ dirs[:]=[d for d in dirs if d not in ('site-packages','__pycache__','test','tests')]
+ for name in names:
+  p=os.path.realpath(os.path.join(root,name))
+  if name.endswith(('.py','.so','.dylib','.zip')) or name in ('Python','Python3','pyvenv.cfg'):
+   files.append(p)
+native=os.path.join(sys.base_prefix,'Resources/Python.app/Contents/MacOS/Python')
+print(json.dumps({'command':os.path.realpath(native if os.path.isfile(native) else sys.executable),'files':sorted(set(files))}))`], { encoding: "utf8", timeout: 15000 });
+  assert.equal(probe.status, 0, probe.stderr);
+  const interpreter = JSON.parse(probe.stdout);
+  assert.ok(interpreter.files.length > 0 && interpreter.files.length < 4096);
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "tb-package-python-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = join(root, "packages/example.reader/handlers"); mkdirSync(directory, { recursive: true });
+  const code = join(directory, "reader.py"), secret = join(root, "app.env");
+  writeFileSync(secret, "synthetic-private-value");
+  const server = createServer(socket => socket.end());
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  writeFileSync(code, `import json,sys,socket,os
+request=json.load(sys.stdin)
+try:
+ with open(${JSON.stringify(secret)}) as f: content=f.read()
+except OSError: content=None
+try:
+ s=socket.create_connection(('127.0.0.1',${server.address().port}),timeout=1); s.close(); network=True
+except OSError: network=False
+print(json.dumps({'ok':True,'value':{'started':True,'content':content,'network':network,'secret_env':os.getenv('TOUBA_SYNTHETIC_SECRET')}}))
+`);
+  const run = async (grants, read_paths = []) => {
+    const input = { toolRef: "tool:example.reader/Read", secretHandles: [], secretStore: undefined,
+    request: { arguments: {} }, env: { ...process.env, TOUBA_SYNTHETIC_SECRET: "private-env-test" }, binding: {
+      handler: { command: interpreter.command, args: ["-B", code], cwd: root }, grants,
+      limits: { timeout_ms: 10000, max_payload_bytes: 65536 },
+      sandbox: { required: true, code_paths: interpreter.files, read_paths },
+    } };
+    // Synthetic fixture only: make interpreter startup failures actionable.
+    const plan = buildHandlerSandboxPlan({ binding: input.binding });
+    const startup = spawnSync(plan.command, plan.args, { cwd: root, env: { PYTHONDONTWRITEBYTECODE: "1" },
+      input: '{"arguments":{}}\n', encoding: "utf8", timeout: 10000 });
+    assert.equal(startup.status, 0, startup.stderr);
+    return runProcessToolHandler(input);
+  };
+  assert.deepEqual((await run([])).value, { started: true, content: null, network: false, secret_env: null });
+  assert.deepEqual((await run(["filesystem_read"], [secret])).value,
+    { started: true, content: "synthetic-private-value", network: false, secret_env: null });
+  assert.deepEqual((await run(["network"])).value, { started: true, content: null, network: true, secret_env: null });
 });

@@ -34,6 +34,7 @@ export async function executeRunLifecycle(context, execute, operations) {
   let reason = "completed";
   let result;
   try {
+    if (context.packageAdmission) trace.push("package_admission_verified", { payload: context.packageAdmission });
     operations.initializeRunControls(context);
     const value = await execute();
     assertResultHasNoResolvedSecret(value, context.secretStore);

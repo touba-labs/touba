@@ -4,7 +4,10 @@ import { projectAdmissionFailure, requestsJsonRunOutput } from "../src/run-admis
 import { validateRunResult } from "../../../contracts/run-outcome.mjs";
 
 test("project admission exposes only controlled codes and a bounded refusal", () => {
-  for (const code of ["ProjectEntrypointNotAllowed", "ProjectEntrypointsInvalid"]) {
+  for (const code of ["ProjectEntrypointNotAllowed", "ProjectEntrypointsInvalid",
+    "PackageIntegrityMismatch", "PackageLockMismatch", "PackageNotInstalled", "PackageUnexpectedFile",
+    "PackageInstallationIncomplete", "PackageInstalledReadOnly", "PackagePreparationStale",
+    "PackageNameConflict", "PackageGovernanceReviewRequired", "PackageGovernanceInvalid", "PackageGovernanceStale"]) {
     const result = projectAdmissionFailure(Object.assign(new Error("private path and inputs"), { code }));
     validateRunResult(result);
     assert.equal(result.reason, code);

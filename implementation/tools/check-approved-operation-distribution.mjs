@@ -55,6 +55,8 @@ try {
     ["runtime/touba-handler-sdk/test/engine-diagnostics.test.mjs", "diagnostics.test.mjs"],
     ["cli/touba-project/test/tool-approval-project.test.mjs", "project.test.mjs"],
     ["cli/touba-project/test/run-admission.test.mjs", "admission.test.mjs"],
+    ["cli/touba-project/test/package-governance.test.mjs", "package-governance.test.mjs"],
+    ["cli/touba-project/test/package-admission.test.mjs", "package-admission.test.mjs"],
   ]) {
     let source = read(relative);
     const resolveLocation = specifier => {
@@ -63,7 +65,9 @@ try {
       let target;
       if (normalized.startsWith("runtime/touba-handler-sdk/src/")) target = sdk;
       else if (normalized.includes("/test/fixtures/")) target = path.join(scratch, "fixtures", path.basename(original));
-      else if (["tests/helpers/", "grammar/", "lsp/touba-lsp/src/", "contracts/reference-runtime/"].some(prefix => normalized.startsWith(prefix))) target = original;
+      // The source Python path is the fallback for source-only tests. With
+      // TOUBA_HOST_PYTHON above it is unused: the wheel in the venv is exercised.
+      else if (normalized === "runtime/touba-python-sdk/src" || ["tests/helpers/", "grammar/", "lsp/touba-lsp/src/", "contracts/reference-runtime/"].some(prefix => normalized.startsWith(prefix))) target = original;
       else target = path.join(payload, "lib", normalized);
       assert.ok(existsSync(target), `Missing qualified dependency: ${target}`);
       return pathToFileURL(target).href;
@@ -81,10 +85,10 @@ try {
     files.push(file);
   }
   const output = run(["--test", "--test-concurrency=1", "--test-reporter=tap", ...files]);
-  assert.match(output, /# tests 36\b/);
+  assert.match(output, /# tests 47\b/);
   assert.match(output, /# fail 0\b/);
   assert.match(output, /# skipped 0\b/);
-  console.log("APPROVED_OPERATION_DISTRIBUTION_OK: 36 canonical tests against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.");
+  console.log("APPROVED_OPERATION_DISTRIBUTION_OK: 47 canonical tests against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.");
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

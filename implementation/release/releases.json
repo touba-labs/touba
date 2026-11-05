@@ -1,7 +1,7 @@
 {
   "schema_version": "touba-release-index-v1",
   "product": "touba",
-  "current_version": "1.3.1",
+  "current_version": "1.4.0",
   "policy": {
     "versioning": "semver",
     "canonical_public_channel": "github_release",
@@ -16,6 +16,44 @@
     "win32-x64"
   ],
   "versions": [
+    {
+      "version": "1.4.0",
+      "update_build_sequence": 3,
+      "tag": "v1.4.0",
+      "status": "candidate",
+      "summary": "Consumer-owned package approval requirements, semantic update review, verified package provenance and precise admission diagnostics.",
+      "release_notes": "release/notes/v1.4.0.md",
+      "breaking_changes": [
+        "Prepared projects retain package approval requirements and require explicit review of changed contracts. Keep existing suspended runs with their original toolchain.",
+        "New project configuration and manifest approval fields require the matching 1.4.0 toolchain; older tools reject these fields."
+      ],
+      "migration_guide": "release/notes/v1.4.0.md#migration",
+      "evidence": [
+        "implementation/cli/touba-project/test/package-governance.test.mjs",
+        "implementation/cli/touba-project/test/package-admission.test.mjs",
+        "implementation/runtime/touba-runtime/test/tool-approval.test.mjs",
+        "implementation/tools/check-approved-operation-distribution.mjs"
+      ],
+      "compare_url": null,
+      "channels": [
+        "touba_hub"
+      ],
+      "artifacts": [
+        "touba-v1.4.0-darwin-arm64.tar.gz",
+        "touba-v1.4.0-darwin-x64.tar.gz",
+        "touba-v1.4.0-linux-x64.tar.gz",
+        "touba-v1.4.0-win32-x64.tar.gz",
+        "touba-v1.4.0-darwin-arm64-setup.dmg",
+        "touba-v1.4.0-darwin-x64-setup.dmg",
+        "touba-v1.4.0-linux-x64-setup.deb",
+        "touba-v1.4.0-win32-x64-setup.exe",
+        "SHA256SUMS",
+        "CHECKSUMS.json"
+      ],
+      "retirement": {
+        "status": "active"
+      }
+    },
     {
       "version": "1.3.1",
       "update_build_sequence": 2,

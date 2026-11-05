@@ -1,5 +1,31 @@
 # Unreleased
 
+## Package governance and audit evidence — 1.4.0 candidate
+
+Assigned to the [1.4.0 candidate](v1.4.0.md). Version and private native
+qualification authorized; publication remains a separate decision.
+
+- The consuming project retains tool approval requirements across package
+  removal, reinstallation and build cleanup. Changed contracts require an
+  exact-digest review during preparation. Compatible source/consumer requirements
+  use one operation approval; conflicting roles require an explicit resolution.
+- Inspection and Explorer expose tool approval requirements. Prepared manifests
+  enforce consumer policies on direct, skill, agent and resumed calls.
+- Prepared executions retain verified package/lock provenance and correlate
+  tool approvals, attested signer references and effects in traces.
+- Package integrity failures retain their precise admission code through
+  JavaScript process/persistent and Python SDK transports.
+- Required macOS sandbox qualification covers Node and Python startup, scoped
+  reads and network denial. Python module loading can enumerate selected code
+  directories without permission to read unselected files. Windows confinement
+  remains V2; trusted-handler execution remains available.
+
+Regenerate prepared projects after installing the future candidate. Keep
+`configuration.package_contracts` and `configuration.tool_policies` under
+version control. New schema fields require the matching toolchain.
+Published 1.3.1 archives remain unchanged. Native archive qualification and
+independent retesting precede any new publication.
+
 ## Local candidate 1.3.1: retest corrections
 
 Assigned to the [1.3.1 local candidate](v1.3.1.md).

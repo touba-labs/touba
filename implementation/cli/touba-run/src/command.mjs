@@ -16,6 +16,9 @@ import { loadResourceBindingFiles, selectResourceBindings } from "../../../contr
 import { publicRunResult, publicReferencedRunResult, runExitCode } from "../../../contracts/run-outcome.mjs";
 import { loadSkillPack } from "../../touba-project/src/skill-packs.mjs";
 import { verifyManifestPackages } from "../../touba-project/src/handler-packages.mjs";
+import { admitPreparedPackages } from "../../touba-project/src/package-admission.mjs";
+import { PACKAGE_ADMISSION_CODES } from "../../touba-project/src/run-admission.mjs";
+import { withSupplyChainAdmission } from "../../../contracts/package-admission.mjs";
 import { createInterface } from "node:readline/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { TraceBuilder } from "../../../runtime/touba-runtime/src/trace-builder.mjs";
@@ -145,7 +148,7 @@ if (parsedArgs.runPlanPath !== undefined) {
     applyRunPlanProfileDefaults(parsedArgs);
   } catch (e) {
     stderr.write(`run plan error [${e.code ?? "RunPlanInvalid"}]: ${e.message}\n`);
-    return await refuseAdmission("RunPlanInvalid", "run_plan", 1);
+    return await refuseAdmission(PACKAGE_ADMISSION_CODES.has(e.code) ? e.code : "RunPlanInvalid", "run_plan", 1);
   }
 }
 
@@ -172,6 +175,16 @@ if (parsedArgs.positional.length !== 1) {
 }
 
 const filePath = parsedArgs.positional[0];
+if (parsedArgs.preparedPackagePlan !== undefined) {
+  try {
+    parsedArgs.packageAdmission = admitPreparedPackages(parsedArgs.runPlanPath,
+      parsedArgs.preparedPackagePlan, filePath, parsedArgs.manifestPath);
+  } catch (error) {
+    const code = PACKAGE_ADMISSION_CODES.has(error.code) ? error.code : "RunPlanInvalid";
+    stderr.write(`package admission refused [${code}]\n`);
+    return await refuseAdmission(code, "package_admission", 1);
+  }
+}
 parsedArgs.traceStorePath ??= projectTracePath(filePath, parsedArgs.runPlanPath);
 parsedArgs.humanCheckpointStorePath ??= join(dirname(parsedArgs.traceStorePath), "approval-checkpoints.sqlite");
 let json;
@@ -235,7 +248,7 @@ if (parsedArgs.manifestPath !== undefined) {
     toolBindingManifest = loadManifestFromPath(parsedArgs.manifestPath);
   } catch (e) {
     stderr.write(`error: invalid manifest ${parsedArgs.manifestPath}: ${e.message}\n`);
-    return await refuseAdmission("ManifestInvalid", "manifest", 1);
+    return await refuseAdmission(PACKAGE_ADMISSION_CODES.has(e.code) ? e.code : "ManifestInvalid", "manifest", 1);
   }
 }
 
@@ -255,6 +268,9 @@ if (parsedArgs.supplyChainLockPath !== undefined) {
     return await refuseAdmission("SupplyChainAdmissionRefused", "supply_chain", 1);
   }
   supplyChainValidated = true;
+  parsedArgs.packageAdmission = withSupplyChainAdmission(parsedArgs.packageAdmission, {
+    state: "verified", required: parsedArgs.requireSupplyChainLock === true, digest: `sha256:${supplyChainGate.digest}`,
+  });
 }
 
 let hardenedExecutionProfile;
@@ -484,6 +500,7 @@ try {
     inputs,
     toolHandlers,
     toolBindingManifest,
+    packageAdmission: parsedArgs.packageAdmission,
     resourceBindings,
     secretStore,
     humanApprovalDecisions,
@@ -716,6 +733,7 @@ function applyRunPlan(parsed, runPlan) {
   if (parsed.manifestPath === undefined && plan.manifest !== undefined) {
     parsed.manifestPath = resolveRunPlanPath(runPlan, plan.manifest);
   }
+  parsed.preparedPackagePlan = plan;
   if (parsed.secretsPath === undefined && plan.secrets_profile !== undefined) {
     parsed.secretsPath = resolveRunPlanPath(runPlan, plan.secrets_profile);
   }
@@ -1857,6 +1875,7 @@ function runOutputModesLabel() {
 
 function validateSupplyChainGate({ lockPath, airPath, manifestPath, requireLock }) {
   let report;
+  let digest;
   try {
     const artifacts = loadSupplyChainArtifacts({
       lock: lockPath,
@@ -1864,6 +1883,7 @@ function validateSupplyChainGate({ lockPath, airPath, manifestPath, requireLock 
       manifest: manifestPath,
     });
     report = validateSupplyChainArtifacts(artifacts);
+    digest = artifacts.lock.digest;
   } catch (error) {
     return {
       accepted: false,
@@ -1889,6 +1909,7 @@ function validateSupplyChainGate({ lockPath, airPath, manifestPath, requireLock 
   return {
     accepted: true,
     report,
+    digest,
   };
 }
 

@@ -3,6 +3,17 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
 import { loadResourceBindingFiles, selectResourceBindings } from "../../../contracts/resource-binding-files.mjs";
+import { admitPreparedPackages } from "../../touba-project/src/package-admission.mjs";
+
+export function loadPreparedPackageAdmission(projectRoot, airPath) {
+  const prepared = readPreparedProject(projectRoot);
+  const planRecord = prepared?.inputs.find(input => input.kind === "run_plan");
+  if (!planRecord) return undefined;
+  const planPath = resolve(projectRoot, planRecord.path);
+  const manifest = prepared.inputs.find(input => input.kind === "manifest");
+  return admitPreparedPackages(planPath, JSON.parse(readFileSync(planPath, "utf8")), resolve(projectRoot, airPath),
+    manifest ? resolve(projectRoot, manifest.path) : undefined);
+}
 
 export function loadPreparedResourceBindings(projectRoot, air) {
   const prepared = readPreparedProject(projectRoot);

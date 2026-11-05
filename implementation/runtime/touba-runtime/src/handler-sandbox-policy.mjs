@@ -75,6 +75,12 @@ export function macosHandlerPolicy(binding, command) {
     "/opt/homebrew/etc/openssl@4/openssl.cnf", "/usr/local/etc/openssl@4/openssl.cnf"]
     .filter(existsSync).map(canonicalPath);
   for (const path of [...paths.code, ...runtimeLibraries(paths.command), ...cryptoConfig]) rules.push(`(allow file-read* (literal ${JSON.stringify(path)}))`);
+  // Python's import finder enumerates the directory containing each selected
+  // module. Literal directory reads allow that inventory, never file contents
+  // below the directory (unlike a subpath read grant).
+  for (const directory of new Set(paths.code.map(dirname))) {
+    rules.push(`(allow file-read-data (literal ${JSON.stringify(directory)}))`);
+  }
   for (const [items, operation] of [[paths.read, "file-read*"], [paths.write, "file-write*"]]) {
     for (const path of items) rules.push(`(allow ${operation} (subpath ${JSON.stringify(path)}))`);
   }

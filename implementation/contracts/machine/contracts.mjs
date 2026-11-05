@@ -51,7 +51,7 @@ export const TRACE_EVENT_KINDS = Object.freeze([
   "loop_evaluated", "memory_access_authorized", "memory_access_refused",
   "memory_integrity_observed", "memory_integrity_refused", "memory_metadata_refused",
   "memory_provenance_observed", "run_cancel_requested",
-  "run_cancelled", "run_completed", "run_started", "run_timeout_exceeded",
+  "run_cancelled", "run_completed", "run_started", "run_timeout_exceeded", "package_admission_verified", "package_tool_admitted",
   "scope_entered", "scope_exited", "secret_handle_authorized", "secret_handle_refused",
   "skill_pack_activated", "skill_pack_activation_refused", "skill_pack_discovery_listed",
   "skill_pack_resource_loaded", "skill_pack_resource_refused", "tool_binding_authorized", "tool_execution_status", "tool_approval_authorized",

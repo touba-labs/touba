@@ -1,6 +1,6 @@
 {
   "name": "@touba/action-plan",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "private": true,
   "description": "Touba memory action plan validator.",
   "type": "module",

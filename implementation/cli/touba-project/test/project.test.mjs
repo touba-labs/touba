@@ -1066,6 +1066,7 @@ test("prepare write creates an explicit RP-1 run plan for a pure Touba entry", a
       run_plan_schema_version: "touba-run-plan-v1",
       entry_ref: "strategy:local.run/Run",
       air: ".touba/build/dev/air/local/run.air.json",
+      project: "touba.project.json",
       profile: "dev",
       outputs: {
         mode: "show",
@@ -3076,7 +3077,14 @@ test("CLI run applies project dev and prod supply-chain profiles", () => {
         "--inputs-json", JSON.stringify({ request: { topic: "profile-" + profile } }),
         "--output", "trace"], { cwd: root, encoding: "utf8" });
       assert.equal(result.status, 0, result.stderr);
-      assert.equal(JSON.parse(result.stdout).events.at(-1).payload.status, "success");
+      const trace = JSON.parse(result.stdout);
+      assert.equal(trace.events.at(-1).payload.status, "success");
+      if (profile === "prod") {
+        const admission = trace.events.find(event => event.kind === "package_admission_verified").payload;
+        assert.equal(admission.supply_chain.state, "verified");
+        assert.equal(admission.supply_chain.required, true);
+        assert.match(admission.supply_chain.digest, /^sha256:[a-f0-9]{64}$/);
+      }
     }
   } finally { cleanup(root); }
 });

@@ -54,7 +54,7 @@ import {
   unavailableAirInputContract,
 } from "../../../contracts/product-surfaces/input-contracts.mjs";
 import { buildInteractionContract } from "../../../contracts/product-surfaces/interaction-contracts.mjs";
-import { readPreparedProject, loadPreparedResourceBindings } from "./prepared-project.mjs";
+import { readPreparedProject, loadPreparedResourceBindings, loadPreparedPackageAdmission } from "./prepared-project.mjs";
 import { validatedRecordCodec } from "./validated-records.mjs";
 import { indexedStore } from "../../../runtime/touba-runtime/src/sqlite-record-store.mjs";
 import { migrateRecordState } from "../../../runtime/touba-runtime/src/sqlite-state-migration.mjs";
@@ -3892,6 +3892,7 @@ export async function executeProjectSandboxRun({
   try {
     const runtimeOptions = {
       ...loadProjectContexts(projectRoot, resolved.document),
+      packageAdmission: resolved.packageAdmission,
       resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
       humanCheckpointStorePath: join(projectRoot, ".touba", "approval-checkpoints.sqlite"),
       agentDecisionProvider,
@@ -4190,6 +4191,7 @@ export async function resumeProjectSandboxRun({
   try {
     const runtimeOptions = {
       ...loadProjectContexts(projectRoot, resolved.document),
+      packageAdmission: resolved.packageAdmission,
       resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
       humanCheckpointStorePath: join(projectRoot, ".touba", "approval-checkpoints.sqlite"),
       agentDecisionProvider,
@@ -4349,6 +4351,7 @@ async function terminalizeAutomaticHumanWait({
     const startedMs = Date.now();
     const runtimeOptions = {
       ...loadProjectContexts(projectRoot, resolved.document),
+      packageAdmission: resolved.packageAdmission,
       resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
       humanCheckpointStorePath: join(projectRoot, ".touba", "approval-checkpoints.sqlite"),
       agentDecisionProvider,
@@ -4508,6 +4511,7 @@ async function resumeProjectDurableSandboxRun({
     };
     const runtimeOptions = {
       ...loadProjectContexts(projectRoot, resolved.document),
+      packageAdmission: resolved.packageAdmission,
       resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
       humanCheckpointStorePath: join(projectRoot, ".touba", "approval-checkpoints.sqlite"),
       agentDecisionProvider,
@@ -4631,7 +4635,8 @@ function resolveSandboxAirDocument({ projectRoot, targetRef }) {
     try {
       const document = loadAirFromJson(readFileSync(path, "utf8"));
       if (airDocumentContainsRef(document, targetRef)) {
-        return { document, relativePath: artifact.relative_path };
+        return { document, relativePath: artifact.relative_path,
+          packageAdmission: loadPreparedPackageAdmission(projectRoot, artifact.relative_path) };
       }
     } catch (cause) {
       diagnostics.push(serviceDiagnostic(
@@ -4740,6 +4745,11 @@ function targetMayDispatchExternalTool(document, targetRef, seen = new Set()) {
 function sandboxRunMaySuspendForHuman({ executionKind, projectRoot, request }) {
   const targetRef = requiredNonEmptyString(request?.target_ref, "target_ref");
   const resolved = resolveSandboxAirDocument({ projectRoot, targetRef });
+  const manifest = loadOptionalProjectManifest({ projectRoot });
+  for (const tool of resolved.document.definitions?.tools ?? []) {
+    const policy = manifest?.bindings.get(tool.id)?.approvalPolicy;
+    if (policy !== undefined) tool.approval_policy = policy;
+  }
   const executionRef = executionKind === "trigger"
     ? sandboxTriggerTargetRef(resolved.document, targetRef)
     : targetRef;

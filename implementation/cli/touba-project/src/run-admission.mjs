@@ -2,13 +2,21 @@ import { createAdmissionRefusalTrace } from "../../../runtime/touba-runtime/src/
 import { publicRunResult } from "../../../contracts/run-outcome.mjs";
 
 const PROJECT_ADMISSION_CODES = new Set(["ProjectEntrypointNotAllowed", "ProjectEntrypointsInvalid"]);
+export const PACKAGE_ADMISSION_CODES = new Set([
+  "PackageIntegrityMismatch", "PackageLockMismatch", "PackageNotInstalled",
+  "PackageUnexpectedFile", "PackageInstallationIncomplete", "PackageInstalledReadOnly",
+  "PackagePreparationStale", "PackageNameConflict", "PackageGovernanceReviewRequired",
+  "PackageGovernanceInvalid", "PackageGovernanceStale",
+  "PackageLockInvalid", "PackageSymlinkForbidden", "PackageFileMissing", "PackagePathInvalid",
+  "PackageDirectoryRequired", "ToolApprovalPolicyConflict", "ToolApprovalPolicyInvalid",
+]);
 
 // Shared by the CLI and persistent Engine. Never serialize exception messages,
 // private paths or arbitrary error codes across the SDK boundary.
 export function projectAdmissionFailure(error) {
-  if (!(error instanceof Error) || !PROJECT_ADMISSION_CODES.has(error.code)) return null;
+  if (!(error instanceof Error) || !(PROJECT_ADMISSION_CODES.has(error.code) || PACKAGE_ADMISSION_CODES.has(error.code))) return null;
   return publicRunResult({ status: "failure", reason: error.code, result: null, messages: [],
-    trace: createAdmissionRefusalTrace(error.code, "project_entry") });
+    trace: createAdmissionRefusalTrace(error.code, PACKAGE_ADMISSION_CODES.has(error.code) ? "package_admission" : "project_entry") });
 }
 
 export function requestsJsonRunOutput(args) {

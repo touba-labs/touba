@@ -1,7 +1,7 @@
 {
   "schema": "touba-update-trust-v1",
   "channel": "validation",
-  "build_sequence": 2,
+  "build_sequence": 3,
   "catalogue_url": "https://toubalang.org/downloads/touba/updates.json",
   "keys": [
     {

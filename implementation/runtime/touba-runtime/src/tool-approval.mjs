@@ -3,6 +3,7 @@
 import { RuntimeFailure } from "./runtime-errors.mjs";
 import { validateApprovalPolicy } from "./human-approval-policy.mjs";
 import { canonicalDigest } from "./execution-checkpoints.mjs";
+import { combineToolApprovalPolicies } from "../../../contracts/tool-approval-policy.mjs";
 
 const permits = new WeakMap();
 
@@ -15,9 +16,17 @@ export function toolApprovalPolicy(tool) {
   return Object.keys(policy).length ? validateApprovalPolicy(policy) : null;
 }
 
-export function createToolApprovalGraphs(indexes) {
+export function createToolApprovalGraphs(indexes, manifest) {
   const graphs = new Map();
-  for (const tool of indexes.tools.values()) {
+  for (let tool of indexes.tools.values()) {
+    const consumer = manifest?.bindings.get(tool.id)?.approvalPolicy;
+    if (consumer !== undefined) {
+      let policy;
+      try { policy = combineToolApprovalPolicies(tool.approval_policy, consumer); }
+      catch (error) { throw new RuntimeFailure("source and consumer approval policies cannot be combined", {}, error.code); }
+      tool = { ...tool, approval_policy: policy };
+      indexes.tools.set(tool.id, tool);
+    }
     const policy = toolApprovalPolicy(tool);
     if (policy === undefined) continue;
     const id = `graph:tool-approval:${tool.id}`;
@@ -63,5 +72,7 @@ export function consumeToolApproval(tool, context) {
   if (!permit || permit.digest !== canonicalDigest(approvedOperation(tool, context))) {
     throw new RuntimeFailure("tool dispatch requires approval of this exact operation", { toolRef: tool.id }, "ToolApprovalRequired");
   }
-  context.trace.push("tool_approval_authorized", { payload: { tool_ref: tool.id, request_id: permit.request_id } });
+  context.trace.push("tool_approval_authorized", { payload: { tool_ref: tool.id, request_id: permit.request_id,
+    approval_policy_digest: canonicalDigest(tool.approval_policy) } });
+  return permit.request_id;
 }

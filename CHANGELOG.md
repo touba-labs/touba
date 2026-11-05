@@ -5,6 +5,17 @@ notes remain the source of truth for version deltas, validation evidence,
 downloadable artifacts, checksums and platform-specific installation
 instructions.
 
+## 1.4.0 - Candidate
+
+- Preserve the application's approval requirements across package updates and reinstallation.
+- Review tool contract changes against the exact package digest before preparation.
+- Inspect effective approval policies and their source/application origins.
+- Trace verified package versions, lock digests and operation approvals.
+- Preserve precise package admission diagnostics in JavaScript and Python.
+
+See [migration and candidate notes](implementation/release/notes/v1.4.0.md).
+Native qualification is required before distribution. Published versions remain unchanged.
+
 ## 1.3.1
 
 - Includes operation-bound tool approvals, prepared resources, strict host configuration and host-controlled compensation since 1.1.0.

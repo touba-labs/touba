@@ -24,8 +24,8 @@ const fields = {
 };
 Object.assign(fields.en, { value:'Declared value', arguments:'Declared arguments', context:'Context', payload:'Input mapping', constraints:'Constraints', default:'Default value', min_length:'Minimum length', max_length:'Maximum length', format:'Format', min:'Minimum', max:'Maximum', entrypoint:'Project entrypoint', entrypoints:'Project entrypoints', exports:'Exports', dependencies:'Dependencies', engines:'Host requirements', hosts:'Declared host modules', publisher:'Publisher', license:'License', touba:'Touba compatibility', runtime_compatibility:'Runtime version', air_profile:'AIR profile', content_types:'Content types', max_bytes:'Maximum bytes', map:'Mapping', path:'Path', language:'Language', distinct_from:'Different signer', exclude_signers:'Excluded signers rule' });
 Object.assign(fields.fr, { value:'Valeur déclarée', arguments:'Arguments déclarés', context:'Contexte', payload:'Correspondance des entrées', constraints:'Contraintes', default:'Valeur par défaut', min_length:'Longueur minimale', max_length:'Longueur maximale', format:'Format', min:'Minimum', max:'Maximum', entrypoint:'Entrée du projet', entrypoints:'Entrées du projet', exports:'Exports', dependencies:'Dépendances', engines:'Prérequis hôtes', hosts:'Modules hôtes déclarés', publisher:'Éditeur', license:'Licence', touba:'Compatibilité Touba', runtime_compatibility:'Version du runtime', air_profile:'Profil AIR', content_types:'Types de contenu', max_bytes:'Octets maximum', map:'Correspondance', path:'Chemin', language:'Langage', distinct_from:'Signataire différent', exclude_signers:'Règle de signataires exclus' });
-Object.assign(fields.en, { approval_required:'Human approval required' });
-Object.assign(fields.fr, { approval_required:'Approbation humaine obligatoire' });
+Object.assign(fields.en, { approval_required:'Human approval required', approval_origin:'Approval requirement' });
+Object.assign(fields.fr, { approval_required:'Approbation humaine obligatoire', approval_origin:'Origine de l’exigence' });
 const icons = {
   module:'M3 7h7l2 2h9v11H3z M3 7V4h7l2 3', package:'m3 7 9-4 9 4v10l-9 4-9-4z M3 7l9 4 9-4 M12 11v10',
   agent:'M5 9h14v12H5z M9 14h.1 M15 14h.1 M9 18h6 M12 3v6 M9 3h6', skill:'m13 2-9 12h7l-1 8 10-13h-7z',
@@ -276,6 +276,11 @@ function expand(n) {
 const technicalFields = new Set(['signature','type_ref','result_binding','condition_ref','collection_ref','item_binding','arguments','context','payload','constraints','default','min_length','max_length','format','min','max','value','limits','entrypoint','entrypoints','exports','dependencies','engines','hosts','touba','runtime_compatibility','air_profile','content_types','max_bytes','map','path','language','distinct_from','exclude_signers']);
 function detailValue(key, value) {
   if (key === 'boundary') return el('p', text('boundaryValue'), 'prose');
+  if (key === 'approval_origin') return el('span', ({
+    source: lang === 'fr' ? 'Déclaration de l’outil' : 'Tool declaration',
+    consumer: lang === 'fr' ? 'Application' : 'Application',
+    source_and_consumer: lang === 'fr' ? 'Outil et application' : 'Tool and application',
+  })[value] ?? value, 'value');
   if (typeof value?.expression === 'string') return el('pre', value.expression, 'declared-expression');
   if (key === 'default' && value?.present === false) return el('code', 'none');
   if (key === 'default' && value?.present === true) return detailValue(key, value.value);

@@ -130,6 +130,7 @@ test("a manually copied unregistered package gives a registration hint and is ne
 import skill Echo from example.echo
 strategy Run
     gives Text
+    uses Echo
     do
         Echo
             with value as "registered"

@@ -23,6 +23,33 @@ const authority = (subject = "employee:reviewer", roles = ["finance"]) => ({ req
 });
 const approve = checkpoint => ({ [checkpoint.approval_ref]: { decision: "approved", evidence_ref: "host-proof" } });
 
+test("consumer binding keeps a removed source approval and composes compatible constraints once", async () => {
+  for (const keepSource of [false, true]) {
+   for (const entryRef of [toolRef, "strategy:operation_approval/Direct", "strategy:operation_approval/Nested", "strategy:operation_approval/AgentPath"]) {
+    const document = structuredClone(air);
+    if (!keepSource) delete document.definitions.tools.find(tool => tool.id === toolRef).approval_policy;
+    let calls = 0;
+    const manifest = { manifest_version: "touba-manifest-v1", bindings: { [toolRef]: {
+      handler: { kind: "process", command: process.execPath, args: ["unused.mjs"] },
+      grants: [], secrets: [], effect_contract: { kind: "none" }, timeout_ms: 1000, max_payload_bytes: 4096,
+      approval_policy: { role: "finance", timeout_ms: 10000, distinct_from: "initiator" },
+    } } };
+    const options = { entryRef, durableHumanApprovals: true,
+      agentDecisions: { "agent:operation_approval/Clerk": { action: "select_capability", target_ref: toolRef, arguments: { amount: 7 } } },
+      toolBindingManifest: manifest, humanApprovalInitiator: "employee:initiator", humanApprovalAuthority: authority(),
+      toolHandlers: { [toolRef]: () => { calls++; return 7; } } };
+    const pending = await executeAirDocument(document, { ...options, inputs: { amount: 7 } });
+    assert.equal(pending.reason, "human_approval_pending", JSON.stringify(pending));
+    assert.equal(calls, 0);
+    const resumed = await executeAirDocument(document, { ...options, humanApprovalResumeCheckpoint: pending.checkpoint,
+      humanApprovalDecisions: approve(pending.checkpoint) });
+    assert.equal(resumed.status, "success", JSON.stringify(resumed));
+    assert.equal(calls, 1);
+    assert.equal(resumed.trace.events.filter(e => e.kind === "tool_approval_authorized").length, 1);
+   }
+  }
+});
+
 for (const entry of [toolRef, "strategy:operation_approval/Direct", "strategy:operation_approval/Nested", "strategy:operation_approval/AgentPath"]) {
   test(`one approved invocation consumes one tool budget unit: ${entry}`, async () => {
     let calls = 0;

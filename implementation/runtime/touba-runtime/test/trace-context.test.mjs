@@ -2,11 +2,33 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { TraceBuilder } from "../src/trace-builder.mjs";
-import { withTraceInvocation } from "../src/trace-context.mjs";
+import { withTraceInvocation, withTraceApproval } from "../src/trace-context.mjs";
 import { executeAirDocument } from "../src/index.mjs";
 import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
 
 const header = { air_schema_version: "touba-air-v1", module: { id: "module:test" } };
+test("approval correlation stays within its run and concurrent operation", async () => {
+  const trace = new TraceBuilder(header, "strategy:test/Run", "run:approvals");
+  const other = new TraceBuilder(header, "strategy:test/Run", "run:other");
+  await Promise.all([0, 1].map(i => withTraceApproval(Object.create(trace), `request:${i}`, async () => {
+    trace.push("tool_binding_authorized", { payload: { tool_ref: `tool:test/T${i}` } });
+    await new Promise(resolve => setImmediate(resolve));
+    trace.push("tool_handler_completed", { payload: { tool_ref: `tool:test/T${i}` } });
+    other.push("tool_handler_completed", { payload: { tool_ref: "tool:test/Other" } });
+    withTraceApproval(trace, undefined, () => trace.push("tool_handler_completed", { payload: { tool_ref: "tool:test/Unprotected" } }));
+  })));
+  for (const i of [0, 1]) {
+    const events = trace.events.filter(event => event.payload?.tool_ref === `tool:test/T${i}`);
+    assert.equal(events.length, 2);
+    assert.ok(events.every(event => event.payload.approval_request_id === `request:${i}`));
+  }
+  for (const event of [...other.events, ...trace.events.filter(event => event.payload?.tool_ref === "tool:test/Unprotected")]) {
+    assert.equal(event.payload.approval_request_id, undefined);
+  }
+  const after = trace.push("tool_handler_completed", { payload: { tool_ref: "tool:test/After" } });
+  assert.equal(after.payload.approval_request_id, undefined);
+});
+
 test("concurrent invocation correlation is isolated and survives awaits without changing payloads", async () => {
   const trace = new TraceBuilder(header, "strategy:test/Run", "run:scope");
   trace.push("run_started");
