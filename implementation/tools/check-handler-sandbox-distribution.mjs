@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -29,6 +29,21 @@ try {
     TOUBA_TEST_SANDBOX_LAUNCHER: path.join(payload, "bin/touba-sandbox") };
   for (const key of ["NODE_OPTIONS", "ELECTRON_RUN_AS_NODE", "TOUBA_IMPLEMENTATION_DIR"]) delete env[key];
   if (process.platform === "linux") assert.ok(existsSync(env.TOUBA_TEST_SANDBOX_LAUNCHER) && existsSync(env.TOUBA_TEST_BWRAP));
+  if (process.platform === "linux") {
+    const launcherProbe = spawnSync(env.TOUBA_TEST_SANDBOX_LAUNCHER, ["--probe"], {env:{},encoding:"utf8",timeout:5000});
+    console.log("NATIVE_SANDBOX_LAUNCHER", JSON.stringify({status:launcherProbe.status,stdout:launcherProbe.stdout,stderr:launcherProbe.stderr}));
+    const {linuxHandlerSandboxPlan} = await import(pathToFileURL(path.join(payload,"lib/runtime/touba-runtime/src/linux-handler-sandbox.mjs")));
+    const plan = linuxHandlerSandboxPlan({handler:{command:"/usr/bin/true",args:[],cwd:"/"},grants:[],sandbox:{}},"/usr/bin/true",
+      {bwrap:env.TOUBA_TEST_BWRAP,launcher:env.TOUBA_TEST_SANDBOX_LAUNCHER});
+    const filter=path.join(scratch,"probe.filter"),policy=path.join(scratch,"probe.policy");
+    writeFileSync(filter,plan.seccomp,{mode:0o600});writeFileSync(policy,plan.policy,{mode:0o600});
+    const fds=[openSync(filter,"r"),openSync(policy,"r")];
+    try {
+      const probe=spawnSync(plan.command,plan.args,{env:{},encoding:"utf8",timeout:5000,stdio:["ignore","pipe","pipe","ignore",...fds]});
+      console.log("NATIVE_SANDBOX_POLICY",JSON.stringify({status:probe.status,stdout:probe.stdout,stderr:probe.stderr}));
+      assert.equal(probe.status,0,"Required sandbox must start the permitted control before native tests");
+    } finally {fds.forEach(fd=>closeSync(fd));}
+  }
   const result = spawnSync(path.join(payload, "bin/node"), ["--test", "--test-reporter=tap", testFile],
     { cwd: scratch, env, encoding: "utf8", timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
   process.stdout.write(result.stdout ?? ""); process.stderr.write(result.stderr ?? "");
