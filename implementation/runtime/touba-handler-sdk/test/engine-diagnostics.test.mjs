@@ -8,11 +8,16 @@ import { ToubaEngine } from "../src/index.mjs";
 
 for (const executionMode of ["process", "persistent"]) test(`entry admission diagnostic survives ${executionMode} transport`, async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-entry-diagnostic-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  let engine;
+  t.after(async () => {
+    // Windows retains a live worker's current directory. Close it before
+    // removing the fixture; do not depend on the order of separate hooks.
+    await engine?.close();
+    rmSync(root, { recursive: true, force: true });
+  });
   writeFileSync(join(root, "main.tb"), "module diagnostic\nstrategy Main\n    gives Int\n    do\n        give 1\n");
-  const engine = new ToubaEngine({ projectRoot: root, executionMode, command: process.execPath,
+  engine = new ToubaEngine({ projectRoot: root, executionMode, command: process.execPath,
     commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
-  t.after(() => engine.close());
   await assert.rejects(engine.run({ source: "main.tb", entryRef: "strategy:diagnostic/Missing" }), error => {
     assert.equal(error.code, "EntryNotFound");
     assert.equal(error.details.exitCode, 1);
