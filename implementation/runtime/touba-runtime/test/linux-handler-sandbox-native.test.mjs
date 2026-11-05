@@ -93,10 +93,13 @@ print(json.dumps({"ok": True, "value": {"content": content, "input": request["ar
   assert.equal(denied.content, null);
   assert.equal(allowed.content, "isolated-python-canary");
   assert.deepEqual(allowed.input, { message: "hello" });
-  // Bubblewrap supplies the selected cwd and Python may coerce its locale.
-  // Neither is inherited host configuration or authority.
+  // The protocol fixes no-bytecode mode; bubblewrap supplies the selected cwd
+  // and Python may coerce its locale. None is inherited host authority.
   assert.equal(allowed.env.PWD, root);
-  assert.deepEqual(Object.keys(allowed.env).filter(name => !["LC_CTYPE", "PWD"].includes(name)), []);
+  assert.equal(allowed.env.PYTHONDONTWRITEBYTECODE, "1");
+  assert.equal(denied.env.PYTHONDONTWRITEBYTECODE, "1");
+  assert.deepEqual(Object.keys(allowed.env).filter(name => !["LC_CTYPE", "PWD", "PYTHONDONTWRITEBYTECODE"].includes(name)), []);
+  assert.deepEqual(Object.keys(denied.env).filter(name => !["LC_CTYPE", "PWD", "PYTHONDONTWRITEBYTECODE"].includes(name)), []);
 });
 
 test("native Linux handler timeout tears down detached descendants before returning", nativeOnly, async t => {
