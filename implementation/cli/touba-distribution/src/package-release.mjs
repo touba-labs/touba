@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { packageLocalToolchain } from "./package-local-toolchain.mjs";
+import { checkReleaseUpdateSequence } from "./release-update-policy.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -56,6 +57,7 @@ function publicReleasePlatform(label) {
 
 export function packageRelease(options = {}) {
   const plan = createReleasePlan(options);
+  if (plan.publicRelease) checkReleaseUpdateSequence(implementationRoot);
   const { toolchainRoot, platform } = packageLocalToolchain({
     buildCompiler: options.buildCompiler,
     quiet: options.quiet,
