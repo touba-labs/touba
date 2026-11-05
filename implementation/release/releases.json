@@ -20,7 +20,8 @@
       "version": "1.3.1",
       "update_build_sequence": 2,
       "tag": "v1.3.1",
-      "status": "candidate",
+      "status": "published",
+      "released_on": "2026-11-04",
       "summary": "Operation-bound approvals, prepared resources, host compensation and precise SDK diagnostics, including protected import and budget corrections.",
       "release_notes": "release/notes/v1.3.1.md",
       "breaking_changes": [
