@@ -627,10 +627,16 @@ test("prepare composes explicit binding fragments into the project manifest", as
     const fragment = JSON.parse(readFileSync(join(root, "bindings.search.json"), "utf8"));
     fragment.bindings["tool:donnees_quebec.live_search/SearchDatasets"].timeout_ms = 13000;
     writeJson(join(root, "bindings.search.json"), fragment);
-    const drift = await prepareProject(conflictOptions);
-    assert.equal(drift.status, "error");
-    assert.ok(drift.diagnostics.some(d => d.code === "BindingFragmentManifestDrift"));
+    const plan = await prepareProject({ ...conflictOptions, mode: "plan" });
+    assert.equal(plan.status, "needs_changes", JSON.stringify(plan.diagnostics));
+    assert.ok(plan.actions.some(action => action.kind === "would_update_fragment_binding"
+      && action.field === "timeout_ms" && action.before === 12000 && action.after === 13000));
     assert.equal(readFileSync(report.manifest_path, "utf8"), manifestBeforeConflict);
+    const updated = await prepareProject(conflictOptions);
+    assert.equal(updated.status, "success", JSON.stringify(updated.diagnostics));
+    assert.equal(JSON.parse(readFileSync(report.manifest_path, "utf8"))
+      .bindings["tool:donnees_quebec.live_search/SearchDatasets"].timeout_ms, 13000);
+    assert.equal((await prepareProject({ ...conflictOptions, mode: "check" })).status, "success");
     assert.deepEqual(binding.payload_constraints.input.request, { non_empty: true, max_length: 80 });
     assert.deepEqual(binding.payload_constraints.input["request.tags"], { min_items: 1, max_items: 5 });
     assert.deepEqual(binding.payload_constraints.input["request.mode"], { allowed_values: ["dry_run", "review"] });

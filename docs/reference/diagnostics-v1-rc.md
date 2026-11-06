@@ -73,7 +73,11 @@ invalide. Sans preuve d'application, l'effet reste d'issue inconnue.
 | `HostDecisionTargetUnknown` / `HostDecisionSelectionInvalid` | Cible, grant, handle ou accès non déclaré, ou sélection répétée | Vérifier les besoins source et sélectionner explicitement les droits légitimes |
 | `HostDecisionEffectInvalid` / `HostDecisionLimitInvalid` | Contrat d'effet ou limite invalide | Déclarer le contrat exact et des limites entières strictement positives |
 | `HostDecisionDrift` | Décisions demandées non appliquées | Revoir le diff en `plan`, appliquer en `write`, puis vérifier en `check` |
-| `HostDecisionFragmentConflict` / `BindingFragmentManifestDrift` | Décision concurrente ou dérive d'un fragment | Réconcilier explicitement le fragment et le manifest, sans élargissement automatique |
+| `HostDecisionFragmentConflict` | Décision concurrente sur un binding de fragment | Modifier le fragment source |
+| `BindingFragmentManifestDrift` | Manifest différent de sa référence ; ou ancien projet sans référence | Restaurer la projection connue ; sans référence, relire le plan et son empreinte `review_fragments` |
+| `BindingFragmentBaselineMissing` / `BindingFragmentChangePending` | Référence à adopter ou modification à appliquer | `prepare --mode plan`, puis `write` et `check` |
+| `BindingFragmentReviewInvalid` / `BindingFragmentReviewStale` | Revue invalide ou périmée | Refaire le plan et sélectionner son empreinte exacte |
+| `BindingFragmentBaselineInvalid` | Référence mal formée ou hors limites | Restaurer `configuration.fragment_baselines` depuis la configuration versionnée |
 | `HandlerDiagnosticsForbidden` | Diagnostic privé hors profil local autorisé | Utiliser un run plan `dev` sur POSIX, sans lock obligatoire ni profil durci |
 | `HandlerDiagnosticsUnavailable` | Destination absente, existante ou non inscriptible | Choisir un fichier nouveau dans un répertoire accessible ; aucun fichier n'est écrasé |
 

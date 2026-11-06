@@ -254,7 +254,10 @@ def _diagnostic(error):
         sources = json.loads(os.environ.get("TOUBA_LOCAL_DIAGNOSTIC_SOURCES", "[]"))
         if not isinstance(sources, list) or len(sources) > 8:
             return
-        error_class = "TypeError" if isinstance(error, TypeError) else "SyntaxError" if isinstance(error, SyntaxError) else "ReferenceError" if isinstance(error, NameError) else "Error"
+        classes = (PermissionError, FileNotFoundError, ModuleNotFoundError, ImportError,
+                   OSError, TypeError, SyntaxError, ValueError, RuntimeError)
+        error_class = next((kind.__name__ for kind in classes if isinstance(error, kind)),
+                           "ReferenceError" if isinstance(error, NameError) else "Error")
         data = {"error_class": error_class}
         for frame in reversed(traceback.extract_tb(error.__traceback__, limit=32)):
             found = next((source for source in sources if type(source) is dict and source.get("path") == frame.filename and type(source.get("index")) is int), None)

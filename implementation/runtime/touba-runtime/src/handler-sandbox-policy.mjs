@@ -79,6 +79,9 @@ export function macosHandlerPolicy(binding, command) {
   // module. Literal directory reads allow that inventory, never file contents
   // below the directory (unlike a subpath read grant).
   const directories = new Set(paths.code.map(dirname));
+  // macOS getcwd needs access to this directory itself. A literal directory
+  // permission allows its names to be listed, never the contents of its files.
+  directories.add(canonicalPath(binding.handler.cwd ?? process.cwd()));
   // A package import first enumerates the search directory containing that
   // package, then its selected __init__.py. No recursive content read is added.
   for (const path of paths.code) if (basename(path) === "__init__.py") directories.add(dirname(dirname(path)));

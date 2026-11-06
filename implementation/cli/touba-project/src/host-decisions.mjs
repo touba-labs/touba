@@ -98,7 +98,7 @@ function normalizeField(field, value, required) {
 // Pure, atomic proposal. No input is persisted, executed or treated as a secret value.
 export function applyHostDecisions(manifest, decisions, requirements, fragmentToolRefs = new Set(), packageHandlers = new Map()) {
   if (decisions === undefined) return { manifest, changes: [] };
-  knownKeys(decisions, new Set(["bindings", "modules", "agent_secret_scopes", "remove_bindings", "triggers", "tool_policies", "review_packages"]));
+  knownKeys(decisions, new Set(["bindings", "modules", "agent_secret_scopes", "remove_bindings", "triggers", "tool_policies", "review_packages", "review_fragments"]));
   decisions = expandModuleDecisions(decisions, requirements);
   const proposed = structuredClone(manifest);
   const changes = [];

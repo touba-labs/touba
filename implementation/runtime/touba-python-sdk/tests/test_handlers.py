@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from touba_sdk import (ToubaHandlerError, create_tool_handler, create_tool_result,
                       create_effect_receipt, create_compensation_receipt, handle_tool_request)
@@ -23,6 +24,17 @@ def request(**values):
 
 
 class HandlerTests(unittest.TestCase):
+    def test_private_diagnostic_preserves_os_class_without_message_or_path(self):
+        from touba_sdk.handlers import _diagnostic
+        for exception, expected in [(PermissionError, "PermissionError"), (FileNotFoundError, "FileNotFoundError"),
+                                    (OSError, "OSError"), (ValueError, "ValueError"), (NameError, "ReferenceError")]:
+            with patch.dict(os.environ, {"TOUBA_LOCAL_DIAGNOSTIC_FD": "3", "TOUBA_LOCAL_DIAGNOSTIC_SOURCES": "[]"}), \
+                    patch("touba_sdk.handlers.os.write") as output:
+                _diagnostic(exception("private-message /private/secret.env"))
+                output.assert_called_once()
+                self.assertEqual(output.call_args.args[0], 3)
+                self.assertEqual(json.loads(output.call_args.args[1]), {"error_class": expected})
+
     def test_runtime_execution_provenance_is_validated_before_handler(self):
         provenance = {"run_id": "run:one", "caller_ref": "skill:demo/Write", "agent_ref": "agent:demo/Writer", "agent_invocation_id": "invocation:one"}
         value = self.invoke(request(execution_context=provenance), lambda request, context: context["execution_context"])

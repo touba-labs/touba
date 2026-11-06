@@ -15,6 +15,7 @@ import { requiredResourceReferences } from "../../../contracts/resource-bindings
 import { assertKnownFields, assertManifestFields, assertBindingFields } from "../../../contracts/manifest-fields.mjs";
 import { loadResourceBindingFiles, snapshotResourceBindings } from "../../../contracts/resource-binding-files.mjs";
 import { applyHostDecisions } from "./host-decisions.mjs";
+import { normalizeFragmentBaselines, reconcileFragmentBindings, updateFragmentBaselines } from "./fragment-governance.mjs";
 import { proposePackageGovernance, normalizeConsumerPolicies, normalizePackageContracts, applyConsumerPolicies } from "./package-governance.mjs";
 import { normalizeTriggerEntries } from "../../touba-manifest/src/generate.mjs";
 import { loadSkillPack, projectContextSelections, normalizeProjectContexts } from "./skill-packs.mjs";
@@ -776,13 +777,18 @@ export async function prepareProject(options = {}) {
   let hostChanges = [];
   if (!hasErrorDiagnostics(diagnostics)) {
     try {
+      // Compare with the persisted consumer policy before applying a newly
+      // proposed policy. The baseline records that composed projection.
+      applyConsumerPolicies(expectedFragmentManifest, expectedManifest, configured?.tool_policies ?? {});
+      const fragments = reconcileFragmentBindings({ baselines: configured?.fragment_baselines, profile: runProfile,
+        refs: bindingFragmentComposition.toolRefs, current: currentManifest, expected: expectedFragmentManifest,
+        proposed: proposedManifest, reviews: options.hostDecisions?.review_fragments, mode });
+      diagnostics.push(...fragments.diagnostics);
+      actions.push(...fragments.actions.map(change => action(change.kind, manifestPath, change)));
       const proposal = applyHostDecisions(proposedManifest, options.hostDecisions, manifestRequirements,
         bindingFragmentComposition.toolRefs, packageHandlerProposals(packageResolution.packages, root, manifestPath));
       proposedManifest = structuredClone(proposal.manifest);
       hostChanges = proposal.changes;
-      // Compare the persisted projection against the persisted consumer policy,
-      // not the raw fragment or a policy change being proposed in this call.
-      applyConsumerPolicies(expectedFragmentManifest, expectedManifest, configured?.tool_policies ?? {});
       applyConsumerPolicies(proposedManifest, expectedManifest, governance?.policies ?? {}, preparedAirDocuments.map(entry => entry.document));
     } catch (error) {
       diagnostics.push(errorDiagnostic(error.code ?? "HostDecisionInvalid",
@@ -832,14 +838,29 @@ export async function prepareProject(options = {}) {
   inspectManifest({
     currentManifest,
     reviewedManifest: proposedManifest,
-    fragmentToolRefs: bindingFragmentComposition.toolRefs,
-    expectedFragmentManifest,
     expectedManifest,
     manifestPath,
     diagnostics,
     actions,
     mode,
   });
+  if (!hasErrorDiagnostics(diagnostics)) {
+    try {
+      const fragments = updateFragmentBaselines({ baselines: configured?.fragment_baselines, profile: runProfile,
+        refs: bindingFragmentComposition.toolRefs, manifest: proposedManifest });
+      if (fragments.changed) {
+        const base = projectConfigWrite !== undefined ? JSON.parse(projectConfigWrite)
+          : existsSync(projectConfigPath) ? JSON.parse(readFileSync(projectConfigPath, "utf8")) : expectedProjectConfigDocument(languageProfile);
+        base.configuration ??= {};
+        base.configuration.fragment_baselines = fragments.baselines;
+        projectConfigWrite = `${JSON.stringify(base, null, 2)}\n`;
+        if (projectConfigResolution.document) projectConfigResolution.document.configuration = base.configuration;
+        actions.push(action(mode === "write" ? "write_fragment_baselines" : "would_write_fragment_baselines", projectConfigPath));
+      }
+    } catch (error) {
+      diagnostics.push(errorDiagnostic(error.code ?? "BindingFragmentBaselineInvalid", "fragment baseline is invalid or exceeds its limits"));
+    }
+  }
   const expectedEffectiveProject = hasErrorDiagnostics(diagnostics) ? null : assertEffectiveProjectSafe(buildEffectiveProjectDocument({
       root,
       profile: runProfile,
@@ -1093,6 +1114,10 @@ export function renderReport(report) {
         }
       }
       if (item.kind === "configure_consumer_approval") lines.push(`  ${item.tool_ref}: ${JSON.stringify(item.before)} -> ${JSON.stringify(item.after)}`);
+      if (["update_fragment_binding", "would_update_fragment_binding"].includes(item.kind)) {
+        lines.push(`  ${item.tool_ref} ${item.field}: ${JSON.stringify(item.before)} -> ${JSON.stringify(item.after)}`);
+      }
+      if (item.kind === "review_fragment_binding") lines.push(`  ${item.tool_ref} ${item.digest} reviewed=${item.reviewed}; fields: ${item.changed_fields.join(", ")}`);
     }
   }
   if (report.diagnostics?.length > 0) {
@@ -1797,9 +1822,10 @@ function normalizeProjectConfiguration(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("project config configuration must be an object");
   }
-  assertProjectConfigFields(value, ["binding_fragments", "resource_bindings", "contexts", "ownership", "package_contracts", "tool_policies"], "configuration");
+  assertProjectConfigFields(value, ["binding_fragments", "fragment_baselines", "resource_bindings", "contexts", "ownership", "package_contracts", "tool_policies"], "configuration");
   return {
     binding_fragments: normalizeProjectPathList(value.binding_fragments, "configuration.binding_fragments"),
+    ...(value.fragment_baselines === undefined ? {} : { fragment_baselines: normalizeFragmentBaselines(value.fragment_baselines) }),
     resource_bindings: normalizeProjectPathList(value.resource_bindings, "configuration.resource_bindings"),
     ...(value.contexts === undefined ? {} : { contexts: normalizeProjectContexts(value.contexts) }),
     ...(value.package_contracts === undefined ? {} : { package_contracts: normalizePackageContracts(value.package_contracts) }),
@@ -4424,8 +4450,8 @@ function inspectEffectiveProject({ path, expected, diagnostics, actions, mode })
   }
 }
 
-function inspectManifest({ currentManifest, reviewedManifest = currentManifest, fragmentToolRefs = new Set(), expectedManifest,
-  expectedFragmentManifest = expectedManifest, manifestPath, diagnostics, actions, mode }) {
+function inspectManifest({ currentManifest, reviewedManifest = currentManifest, expectedManifest,
+  manifestPath, diagnostics, actions, mode }) {
   for (const [ref, expected] of Object.entries(expectedManifest.triggers ?? {})) {
     const actual = reviewedManifest?.triggers?.[ref];
     if (!actual || typeof actual.enabled !== "boolean" || actual.source?.kind !== expected.source.kind
@@ -4493,11 +4519,6 @@ function inspectManifest({ currentManifest, reviewedManifest = currentManifest, 
         }));
       }
       continue;
-    }
-    if (fragmentToolRefs.has(toolRef) && stableJson(actual) !== stableJson(expectedFragmentManifest.bindings[toolRef])) {
-      diagnostics.push(errorDiagnostic("BindingFragmentManifestDrift",
-        "current manifest differs from an explicit binding fragment; reconcile the host configuration before preparation",
-        { manifest_path: manifestPath, tool_ref: toolRef }));
     }
     validateBindingCoverage(reviewedManifest.bindings[toolRef], expected, diagnostics, manifestPath, toolRef);
   }

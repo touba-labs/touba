@@ -25,6 +25,7 @@ const safe = fn => { try { fn(); return true; } catch { return false; } };
 const connect = options => new Promise(resolve => { const s=net.createConnection(options); const done=v=>{s.destroy();resolve(v)};s.once('connect',()=>done(true));s.once('error',()=>done(false));s.setTimeout(500,()=>done(false)); });
 const child=spawnSync(process.execPath,['-e', 'try { require("node:fs").readFileSync('+JSON.stringify(${JSON.stringify(canary)})+'); process.exit(0); } catch { process.exit(7); }']);
 process.stdout.write(JSON.stringify({ok:true,value:{
+cwd:process.cwd(),
 read:safe(()=>fs.readFileSync(${JSON.stringify(canary)})),
 linked:safe(()=>fs.readFileSync(${JSON.stringify(join(allowed, "linked.txt"))})),
 write:safe(()=>fs.writeFileSync(${JSON.stringify(output)},'canary')),
@@ -38,9 +39,9 @@ unix:await connect({path:${JSON.stringify(socketPath)}})
     return await runProcessToolHandler({ toolRef: "tool:isolated/Probe", secretHandles: [], secretStore: undefined, request: { arguments: {} }, binding });
   };
   const denied = (await run([], {})).value;
-  assert.deepEqual(denied, { read: false, linked: false, write: false, child: null, childDenied: true, tcp: false, unix: false });
+  assert.deepEqual(denied, { cwd: root, read: false, linked: false, write: false, child: null, childDenied: true, tcp: false, unix: false });
   const processAllowed = (await run(["process", "filesystem_read", "network_local"], { read_paths: [allowed], local_sockets: [socketPath] })).value;
-  assert.deepEqual(processAllowed, { read: false, linked: false, write: false, child: 7, childDenied: false, tcp: false, unix: true });
+  assert.deepEqual(processAllowed, { cwd: root, read: false, linked: false, write: false, child: 7, childDenied: false, tcp: false, unix: true });
   const permitted = (await run(["filesystem_read", "filesystem_write"], { read_paths: [canary], write_paths: [output] })).value;
   assert.equal(permitted.read, true); assert.equal(permitted.write, true);
   assert.equal(permitted.tcp, false); assert.equal(permitted.unix, false);
@@ -78,6 +79,7 @@ print(json.dumps({'command':os.path.realpath(native if os.path.isfile(native) el
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   writeFileSync(code, `import json,sys,socket,os
+from pathlib import Path
 request=json.load(sys.stdin)
 try:
  with open(${JSON.stringify(secret)}) as f: content=f.read()
@@ -85,7 +87,7 @@ except OSError: content=None
 try:
  s=socket.create_connection(('127.0.0.1',${server.address().port}),timeout=1); s.close(); network=True
 except OSError: network=False
-print(json.dumps({'ok':True,'value':{'started':True,'content':content,'network':network,'secret_env':os.getenv('TOUBA_SYNTHETIC_SECRET')}}))
+print(json.dumps({'ok':True,'value':{'started':True,'cwd':str(Path.cwd()),'content':content,'network':network,'secret_env':os.getenv('TOUBA_SYNTHETIC_SECRET')}}))
 `);
   const run = async (grants, read_paths = []) => {
     const input = { toolRef: "tool:example.reader/Read", secretHandles: [], secretStore: undefined,
@@ -101,8 +103,8 @@ print(json.dumps({'ok':True,'value':{'started':True,'content':content,'network':
     assert.equal(startup.status, 0, startup.stderr);
     return runProcessToolHandler(input);
   };
-  assert.deepEqual((await run([])).value, { started: true, content: null, network: false, secret_env: null });
+  assert.deepEqual((await run([])).value, { started: true, cwd: root, content: null, network: false, secret_env: null });
   assert.deepEqual((await run(["filesystem_read"], [secret])).value,
-    { started: true, content: "synthetic-private-value", network: false, secret_env: null });
-  assert.deepEqual((await run(["network"])).value, { started: true, content: null, network: true, secret_env: null });
+    { started: true, cwd: root, content: "synthetic-private-value", network: false, secret_env: null });
+  assert.deepEqual((await run(["network"])).value, { started: true, cwd: root, content: null, network: true, secret_env: null });
 });

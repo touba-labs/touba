@@ -267,6 +267,12 @@ effets et limites dans le manifest. `plan` montre le diff, `check` refuse
 un diff non appliqué, `write` applique les décisions idempotemment. Voir
 [le guide projet](../guides/projet-touba-prepare.md).
 
+Les modifications de fragments suivent aussi `plan`, `write`, `check`. Touba
+conserve leurs empreintes par profil dans `configuration.fragment_baselines`.
+Pour réconcilier un ancien projet dont le fragment diffère déjà du manifest,
+`review_fragments` associe une référence d'outil à l'empreinte exacte de revue
+fournie par le plan. Voir la [procédure de migration](../guides/projet-touba-prepare.md#modifier-un-fragment-déjà-préparé).
+
 ```sh title="Terminal"
 touba prepare --mode plan
 touba prepare --mode write

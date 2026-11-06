@@ -1,6 +1,9 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   AIR_CAPABILITY_PROFILE,
@@ -10,12 +13,22 @@ import {
   RUNTIME_CAPABILITIES,
   TRACE_PROTOCOL_VERSION,
   ToubaRuntimeError,
-  executeAirDocument,
-  executeTriggerEvent,
+  executeAirDocument as execute,
+  executeTriggerEvent as executeTrigger,
   loadAirFromJson,
   loadSecretsFromJson,
   loadToolBindingManifestFromJson,
 } from "../src/index.mjs";
+
+// Keep real durable custody, isolated from other parallel suites and source-tree state.
+const stateRoot = mkdtempSync(join(tmpdir(), "touba-runtime-state-"));
+after(() => rmSync(stateRoot, { recursive: true, force: true }));
+const executeAirDocument = (document, options = {}) => execute(document, {
+  humanCheckpointStorePath: join(stateRoot, "approvals.sqlite"), ...options,
+});
+const executeTriggerEvent = (document, event, options = {}) => executeTrigger(document, event, {
+  humanCheckpointStorePath: join(stateRoot, "approvals.sqlite"), ...options,
+});
 
 test("loads AIR V1 machine contract and rejects unsupported schema versions", () => {
   const document = baseDocument();

@@ -77,12 +77,57 @@ Les champs omis sont conservés ; une liste vide révoque le champ sélectionné
 Une permission manquante reste signalée, sans complément automatique.
 
 Répéter les mêmes décisions ne change rien. Un objet invalide empêche toutes
-les écritures. Un binding fourni par fragment doit être modifié dans son
-fragment, pas avec cette option ; toute divergence avec le manifest courant
-est refusée et demande une réconciliation explicite. Le manifest reste
-l'autorité d'exécution ; aucun second registre n'est créé. Un lock existant
+les écritures. Un binding fourni par fragment se modifie dans son fragment,
+selon le parcours ci-dessous. Le manifest reste l'autorité d'exécution. Un lock existant
 doit être vérifié et renouvelé explicitement après une modification d'autorité.
 Ne passez aucune valeur secrète sur la ligne de commande.
+
+### Modifier un fragment déjà préparé
+
+Modifiez le fragment, par exemple son `timeout_ms` ou sa configuration `sandbox`,
+puis utilisez le même parcours :
+
+```sh title="Terminal"
+touba prepare --mode plan
+touba prepare --mode write
+touba prepare --mode check
+```
+
+Le plan montre les champs modifiés. Les nombres sont affichés directement ; les
+objets et arguments sont comparés par empreinte pour garder le rapport compact.
+`write` applique la configuration ; `check` signale une modification à appliquer.
+Les exigences d'approbation du consommateur restent actives.
+
+Touba conserve automatiquement `configuration.fragment_baselines` dans
+`touba.project.json` : des empreintes par profil, à versionner avec le projet.
+Elles permettent de distinguer la modification du fragment de celle du manifest
+généré et de montrer les changements après nettoyage de `.touba/build`.
+Leur rôle est la comparaison ; les permissions restent déclarées par l'hôte.
+
+Pour un projet préparé par une ancienne build, lancez une première fois `write`
+avant de modifier ses fragments. Si le fragment et le manifest diffèrent déjà,
+le plan fournit une action `review_fragment_binding` avec une empreinte de revue.
+Après vérification du fragment et des champs indiqués, renseignez cette empreinte
+exacte dans un fichier de décisions, puis appliquez-le :
+
+```json title="fragment-review.json"
+{
+  "review_fragments": {
+    "tool:orders.review/ReadOrder": "sha256:<empreinte affichée par le plan>"
+  }
+}
+```
+
+```sh title="Terminal"
+touba prepare --mode plan --host-decisions fragment-review.json
+touba prepare --mode write --host-decisions fragment-review.json
+touba prepare --mode check
+```
+
+Cette revue lie le profil, l'état observé et le fragment proposé. Régénérez-la
+si l'un change ; retirez-la des commandes après application. Avec une référence
+déjà enregistrée, une altération du manifest produit `BindingFragmentManifestDrift` :
+restaurez sa dernière projection connue avant d'appliquer le fragment.
 
 ## Ressources déclarées et déclencheurs
 
