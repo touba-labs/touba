@@ -100,6 +100,8 @@ touba sdk install python --manager uv
 touba sdk install python --manager pip
 touba sdk path javascript
 touba sdk path python
+touba sdk sandbox javascript --handler handlers/read.mjs
+touba sdk sandbox python --handler packages/example.reader/handlers/read.py
 ```
 
 `install` travaille dans le dossier courant, ou celui de `--root <projet>`.
@@ -111,6 +113,13 @@ utilisez `path` et ce gestionnaire, sans créer un second lockfile.
 La distribution installée doit inclure les archives SDK ; un checkout source
 non packagé n'en fabrique pas implicitement.
 Détails : [choisir le SDK](../demarrer/installation.md#choisir-le-sdk-de-son-application).
+
+`sandbox` produit les sections `handler` et `sandbox` pour le fichier choisi,
+sans les écrire dans la configuration. Il vérifie le SDK et sélectionne ses
+fichiers de code ; pour Python, il interroge explicitement l'interpréteur de
+confiance du projet, hooks de démarrage désactivés. Relisez l'inventaire avant
+de l'appliquer au fragment. Les grants et chemins de données restent à choisir.
+Exemple complet : [confinement d'un package Python](../guides/profil-execution-durci.md#python--package-et-fragment-explicite).
 
 ## `touba init`
 

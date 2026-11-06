@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { sandboxSdkConfig } from "./sdk-sandbox.mjs";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -10,6 +11,7 @@ const help = `Usage:
   touba sdk install javascript [--root <project>]
   touba sdk install python [--root <project>] [--python <executable>] [--manager auto|uv|pip]
   touba sdk path javascript|python
+  touba sdk sandbox javascript|python --handler <path> [--root <project>]
 
 Install the matching bundled SDK offline in this project, never globally.
 JavaScript requires npm; Python requires Python 3.11+ and uv or pip.
@@ -150,14 +152,16 @@ export function installSdk(language, { root = process.cwd(), python, manager = "
 export function sdkCommand(args) {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) return { text: help, exitCode: 0 };
   const [action, language, ...rest] = args;
-  if (!["path", "install"].includes(action)) fail(help);
+  if (!["path", "install", "sandbox"].includes(action)) fail(help);
   const options = {};
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
-    if (action !== "install" || !["--root", "--python", "--manager"].includes(flag) || Object.hasOwn(options, flag.slice(2)) || !rest[i + 1] || rest[i + 1].startsWith("--")) fail(`Unknown, duplicate or incomplete SDK option: ${flag}`);
+    const flags = action === "install" ? ["--root", "--python", "--manager"] : action === "sandbox" ? ["--root", "--handler"] : [];
+    if (!flags.includes(flag) || Object.hasOwn(options, flag.slice(2)) || !rest[i + 1] || rest[i + 1].startsWith("--")) fail(`Unknown, duplicate or incomplete SDK option: ${flag}`);
     options[flag.slice(2)] = rest[++i];
   }
   if (action === "path") return { text: bundledSdk(language).path, exitCode: 0 };
+  if (action === "sandbox") return { text: JSON.stringify(sandboxSdkConfig(language, options), null, 2), exitCode: 0 };
   const report = installSdk(language, options);
   return { text: `Installed ${report.package} ${report.version} (${language}) in ${report.root}\nArchive: ${report.archive}\nVerify: ${report.verify}\nCommit vendor/touba-sdk with your dependency declarations; do not commit .venv or node_modules.`, exitCode: 0 };
 }

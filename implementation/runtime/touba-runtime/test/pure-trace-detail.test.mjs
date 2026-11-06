@@ -1,6 +1,6 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -66,8 +66,7 @@ strategy Approval
             into approval
         give label
 `);
-    air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path",
-      new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
+    air = compileTestAir(source);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

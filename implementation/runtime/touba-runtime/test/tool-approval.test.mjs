@@ -1,7 +1,7 @@
-import test, { before } from "node:test";
+import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { compileTestAir as compile } from "../../../tests/helpers/compile.mjs";
-import { executeAirDocument, loadToolBindingManifestFromJson } from "../src/index.mjs";
+import { executeAirDocument as execute, loadToolBindingManifestFromJson } from "../src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { executeReferenceAir } from "../../../contracts/reference-runtime/runtime.mjs";
 import { createSqliteEffectJournal } from "../src/sqlite-effect-journal.mjs";
@@ -14,6 +14,13 @@ import { projectExplorer } from "../../../cli/touba-inspect/src/explorer/model.m
 import { renderHoverDeclaration } from "../../../lsp/touba-lsp/src/server.mjs";
 
 let air, invoiceAir;
+// A private durable store avoids coupling this suite to other test workers
+// and to state left in the runtime source directory by earlier runs.
+const stateRoot = mkdtempSync(join(tmpdir(), "touba-tool-approval-state-"));
+after(() => rmSync(stateRoot, { recursive: true, force: true }));
+const executeAirDocument = (document, options = {}) => execute(document, {
+  humanCheckpointStorePath: join(stateRoot, "approvals.sqlite"), ...options,
+});
 before(() => { air = compile(fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/tool-approval.tb", import.meta.url))); });
 before(() => { invoiceAir = compile(fileURLToPath(new URL("./fixtures/approved-invoice.tb", import.meta.url))); });
 const toolRef = "tool:operation_approval/Pay";

@@ -11,6 +11,11 @@ Current consumers:
 
 ## Interface requirements
 
+Shared UI requirements use fixed application roles (12/14/18/24 px), flat underlined page submenus,
+aligned controls, shared heading actions and compact in-app confirmations.
+Product guides own their component mappings and responsive recipes; the JSON
+remains the token source. Never hand-edit a generated consumer snapshot.
+
 ## Themes
 
 The contract defines two semantic contexts:

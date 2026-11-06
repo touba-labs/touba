@@ -56,6 +56,7 @@ try {
     ["cli/touba-project/test/tool-approval-project.test.mjs", "project.test.mjs"],
     ["cli/touba-project/test/run-admission.test.mjs", "admission.test.mjs"],
     ["cli/touba-project/test/package-governance.test.mjs", "package-governance.test.mjs"],
+    ["cli/touba-project/test/package-fragment-governance.test.mjs", "package-fragment-governance.test.mjs"],
     ["cli/touba-project/test/package-admission.test.mjs", "package-admission.test.mjs"],
   ]) {
     let source = read(relative);
@@ -85,10 +86,10 @@ try {
     files.push(file);
   }
   const output = run(["--test", "--test-concurrency=1", "--test-reporter=tap", ...files]);
-  assert.match(output, /# tests 47\b/);
+  assert.match(output, /# tests 49\b/);
   assert.match(output, /# fail 0\b/);
   assert.match(output, /# skipped 0\b/);
-  console.log("APPROVED_OPERATION_DISTRIBUTION_OK: 47 canonical tests against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.");
+  console.log("APPROVED_OPERATION_DISTRIBUTION_OK: 49 canonical tests against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.");
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

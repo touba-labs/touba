@@ -772,6 +772,7 @@ export async function prepareProject(options = {}) {
     required: expectedToolRefs.length > 0,
   });
   let proposedManifest = mergeManifest(currentManifest, expectedManifest, diagnostics, manifestPath);
+  const expectedFragmentManifest = structuredClone(expectedManifest);
   let hostChanges = [];
   if (!hasErrorDiagnostics(diagnostics)) {
     try {
@@ -779,7 +780,10 @@ export async function prepareProject(options = {}) {
         bindingFragmentComposition.toolRefs, packageHandlerProposals(packageResolution.packages, root, manifestPath));
       proposedManifest = structuredClone(proposal.manifest);
       hostChanges = proposal.changes;
-    applyConsumerPolicies(proposedManifest, expectedManifest, governance?.policies ?? {}, preparedAirDocuments.map(entry => entry.document));
+      // Compare the persisted projection against the persisted consumer policy,
+      // not the raw fragment or a policy change being proposed in this call.
+      applyConsumerPolicies(expectedFragmentManifest, expectedManifest, configured?.tool_policies ?? {});
+      applyConsumerPolicies(proposedManifest, expectedManifest, governance?.policies ?? {}, preparedAirDocuments.map(entry => entry.document));
     } catch (error) {
       diagnostics.push(errorDiagnostic(error.code ?? "HostDecisionInvalid",
         `invalid host decision${error.details?.path ? ` at ${error.details.path}` : ""}${error.details?.target_ref ? ` for ${error.details.target_ref}` : ""}${error.details?.field ? `, field ${error.details.field}` : ""}; no preparation changes were written`,
@@ -829,6 +833,7 @@ export async function prepareProject(options = {}) {
     currentManifest,
     reviewedManifest: proposedManifest,
     fragmentToolRefs: bindingFragmentComposition.toolRefs,
+    expectedFragmentManifest,
     expectedManifest,
     manifestPath,
     diagnostics,
@@ -4419,7 +4424,8 @@ function inspectEffectiveProject({ path, expected, diagnostics, actions, mode })
   }
 }
 
-function inspectManifest({ currentManifest, reviewedManifest = currentManifest, fragmentToolRefs = new Set(), expectedManifest, manifestPath, diagnostics, actions, mode }) {
+function inspectManifest({ currentManifest, reviewedManifest = currentManifest, fragmentToolRefs = new Set(), expectedManifest,
+  expectedFragmentManifest = expectedManifest, manifestPath, diagnostics, actions, mode }) {
   for (const [ref, expected] of Object.entries(expectedManifest.triggers ?? {})) {
     const actual = reviewedManifest?.triggers?.[ref];
     if (!actual || typeof actual.enabled !== "boolean" || actual.source?.kind !== expected.source.kind
@@ -4468,7 +4474,7 @@ function inspectManifest({ currentManifest, reviewedManifest = currentManifest, 
   const expectedSet = new Set(expectedToolRefs);
   for (const toolRef of Object.keys(currentManifest.bindings).sort()) {
     if (!expectedSet.has(toolRef) && Object.hasOwn(reviewedManifest?.bindings ?? {}, toolRef)) {
-      diagnostics.push(errorDiagnostic("ManifestBindingObsolete", `manifest binding ${toolRef} is not declared by current project AIR`, {
+      diagnostics.push(errorDiagnostic("ManifestBindingObsolete", `manifest binding ${toolRef} is not declared by current project AIR; review its removal with host decisions remove_bindings`, {
         manifest_path: manifestPath,
         tool_ref: toolRef,
       }));
@@ -4488,7 +4494,7 @@ function inspectManifest({ currentManifest, reviewedManifest = currentManifest, 
       }
       continue;
     }
-    if (fragmentToolRefs.has(toolRef) && stableJson(actual) !== stableJson(expected)) {
+    if (fragmentToolRefs.has(toolRef) && stableJson(actual) !== stableJson(expectedFragmentManifest.bindings[toolRef])) {
       diagnostics.push(errorDiagnostic("BindingFragmentManifestDrift",
         "current manifest differs from an explicit binding fragment; reconcile the host configuration before preparation",
         { manifest_path: manifestPath, tool_ref: toolRef }));

@@ -4,7 +4,7 @@ import { spawn as spawnProcess } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import { startupHandlerDiagnostic, validatedHandlerDiagnostic } from "./handler-diagnostics.mjs";
-import { macosHandlerPolicy } from "./handler-sandbox-policy.mjs";
+import { macosHandlerPolicy, macosHandlerLaunch } from "./handler-sandbox-policy.mjs";
 import { linuxHandlerSandboxPlan, linuxSandboxOptions } from "./linux-handler-sandbox.mjs";
 import { windowsHandlerSandboxPlan, windowsSandboxOptions } from "./windows-handler-sandbox.mjs";
 import {
@@ -119,7 +119,7 @@ export async function runProcessToolHandler(input) {
     try { return realpathSync(path); } catch { return path; }
   };
   const diagnosticSources = diagnostics ? binding.handler.args.flatMap((arg, index) =>
-    /\.(?:mjs|cjs|js)$/u.test(arg) && !arg.startsWith("-")
+    /\.(?:mjs|cjs|js|py)$/u.test(arg) && !arg.startsWith("-")
       ? [{ index, path: diagnosticSourcePath(arg) }] : []).slice(0, 8) : [];
   if (diagnostics) {
     childEnv.TOUBA_LOCAL_DIAGNOSTIC_FD = "3";
@@ -313,12 +313,12 @@ export async function runProcessToolHandler(input) {
             { toolRef, exitCode: code, signal }, "ToolHandlerSandboxAccessDenied"));
           return;
         }
-        const missingSdk = /Cannot find package ['"]@touba\/sdk['"]|Cannot find module ['"]@touba\/sdk['"]/u.test(stderr);
+        const missingSdk = /Cannot find package ['"]@touba\/sdk['"]|Cannot find module ['"]@touba\/sdk['"]|ModuleNotFoundError: No module named ['"]touba_sdk['"]/u.test(stderr);
         const missingProviderDependency = /Cannot find package ['"](?:ai|@ai-sdk\/[^'"]+|zod)['"]/u.test(stderr);
         if (missingSdk || missingProviderDependency) {
           finishReject(new RuntimeFailure(
             missingSdk
-              ? "handler SDK is missing; install the SDK tarball shown by touba version --json in the project with npm install --offline --ignore-scripts --save-exact <archive.tgz>"
+              ? "handler cannot load its SDK; use touba sdk install for its language and, under confinement, review the inventory from touba sdk sandbox"
               : "handler SDK provider dependency is missing; reinstall the complete SDK tarball in the project",
             { toolRef }, missingSdk ? "ToolHandlerSdkMissing" : "ToolHandlerSdkDependencyMissing",
           ));
@@ -414,12 +414,14 @@ export function buildHandlerSandboxPlan({
   }
   if (platform === "darwin") {
     const command = env.TOUBA_SANDBOX_EXEC_COMMAND || "sandbox-exec";
-    const policy = macosHandlerPolicy(binding, handlerCommand);
+    const launch = macosHandlerLaunch(binding, handlerCommand);
+    const policy = macosHandlerPolicy(binding, launch.command);
     return {
       enabled: true,
       mechanism: "sandbox-exec",
       command,
-      args: ["-p", policy, handlerCommand, ...binding.handler.args.map((arg, index) => {
+      environment: launch.environment,
+      args: ["-p", policy, launch.command, ...binding.handler.args.map((arg, index) => {
         // Resolve selected script paths before Node attempts process.cwd in confinement.
         const file = resolvePath(binding.handler.cwd ?? process.cwd(), arg);
         // Generated bindings put the entrypoint first. Never rewrite business

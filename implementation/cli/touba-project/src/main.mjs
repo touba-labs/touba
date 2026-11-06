@@ -1614,6 +1614,7 @@ function printUsage() {
   touba init [--root <path>] [--language javascript|python]
   touba sdk install javascript|python [--root <path>] [--python <executable>]
   touba sdk path javascript|python
+  touba sdk sandbox javascript|python --handler <path> [--root <path>]
   touba new module <domain.module> [--root <path>] [--force]
   touba package new|check|test|version|pack|checkout|submit|publish|add|list|remove ... (touba package --help)
   touba prepare [--root <path>] [--mode plan|check|write] [--source <file.tb>] [--air <file.air.json>] [--package <touba.package.json>] [--binding-fragment <fragment.json>] [--host-decisions <file.json> | --host-decisions-json <json>] [--resource-bindings <resources.json>] [--require-resource-bindings] [--run-plan <path>] [--ownership <touba.ownership.json>] [--require-ownership] [--entry <air-ref>] [--profile pure|dev|prod] [--manifest <path>] [--handler-root <path>] [--handler-command <path>] [--json]

@@ -25,7 +25,8 @@ async function processHandler(body) {
 test("a missing project SDK has an actionable process diagnostic", async () => {
   await assert.rejects(processHandler('import "@touba/sdk";'), error => {
     assert.equal(error.code, "ToolHandlerSdkMissing");
-    assert.match(error.message, /touba version --json/);
+    assert.match(error.message, /touba sdk install/);
+    assert.match(error.message, /touba sdk sandbox/);
     return true;
   });
 });

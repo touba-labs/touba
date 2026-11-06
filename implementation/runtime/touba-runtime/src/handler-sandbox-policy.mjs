@@ -1,6 +1,6 @@
 // @ts-check
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { RuntimeFailure } from "./runtime-errors.mjs";
 // Node supplies its own loaded-library inventory. Do not execute the handler
 // or a system inspection tool to discover dependencies. Other interpreters
@@ -78,7 +78,11 @@ export function macosHandlerPolicy(binding, command) {
   // Python's import finder enumerates the directory containing each selected
   // module. Literal directory reads allow that inventory, never file contents
   // below the directory (unlike a subpath read grant).
-  for (const directory of new Set(paths.code.map(dirname))) {
+  const directories = new Set(paths.code.map(dirname));
+  // A package import first enumerates the search directory containing that
+  // package, then its selected __init__.py. No recursive content read is added.
+  for (const path of paths.code) if (basename(path) === "__init__.py") directories.add(dirname(dirname(path)));
+  for (const directory of directories) {
     rules.push(`(allow file-read-data (literal ${JSON.stringify(directory)}))`);
   }
   for (const [items, operation] of [[paths.read, "file-read*"], [paths.write, "file-write*"]]) {
@@ -88,4 +92,20 @@ export function macosHandlerPolicy(binding, command) {
   if (paths.grants.has("network")) rules.push("(allow network*)");
   for (const path of paths.sockets) rules.push(`(allow network-outbound (remote unix-socket (path-literal ${JSON.stringify(path)})))`);
   return rules.join("\n");
+}
+
+/** Resolve CPython's framework launcher without granting general process exec.
+ * The host must select the real interpreter as a code file. The launch path
+ * (including .venv) is preserved using CPython's own launcher protocol.
+ * @param {any} binding @param {string} command
+ */
+export function macosHandlerLaunch(binding, command) {
+  const paths = handlerSandboxPaths(binding, command);
+  const match = /^(.*\/Python\.framework\/Versions\/3\.\d+)\/bin\/python3(?:\.\d+)?$/.exec(paths.command);
+  if (!match) return { command, environment: undefined };
+  const native = join(match[1], "Resources/Python.app/Contents/MacOS/Python");
+  if (!existsSync(native) || !statSync(native).isFile() || !paths.code.includes(realpathSync(native))) {
+    throw new RuntimeFailure("Python framework interpreter is missing from sandbox.code_paths; generate the inventory with touba sdk sandbox python", {}, "HandlerSandboxPythonRuntimeMissing");
+  }
+  return { command: realpathSync(native), environment: { __PYVENV_LAUNCHER__: command } };
 }

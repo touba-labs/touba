@@ -360,6 +360,15 @@ distribué dans les ressources de package.
 non qualifié. `HandlerSandboxGrantMissing` demande le grant correspondant aux
 chemins sélectionnés. `HandlerSandboxPathInvalid` demande un interpréteur
 absolu existant et des fichiers `code_paths` individuels existants.
+`HandlerSandboxPythonRuntimeMissing` indique que l'interpréteur natif d'une
+installation CPython framework macOS manque dans cet inventaire. Générez et
+relisez la sélection avec `touba sdk sandbox python --handler <fichier.py>`.
+`SdkSandboxConfigurationInvalid` demande de vérifier le handler local, le SDK
+et l'interpréteur choisis avant de générer l'inventaire.
+`ToolHandlerSdkMissing` couvre aussi l'import Python `touba_sdk` inaccessible.
+Vérifiez l'installation du SDK puis, sous confinement, ses fichiers de code.
+Le diagnostic local Python conserve uniquement une classe d'erreur connue et
+la ligne du handler sélectionné ; les messages et chemins privés restent exclus.
 `HardenedSandboxUnavailable` indique l'échec de la sonde hôte réelle ou une
 politique non qualifiée, sans autoriser une relance hors sandbox.
 

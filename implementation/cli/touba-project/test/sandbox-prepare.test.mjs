@@ -6,6 +6,7 @@ import {tmpdir} from "node:os";
 import {fileURLToPath} from "node:url";
 import {prepareProject} from "../src/project.mjs";
 import {runProcessToolHandler} from "../../../runtime/touba-runtime/src/handler-protocol.mjs";
+import {sandboxSdkConfig} from "../src/sdk-sandbox.mjs";
 
 test("prepared relative handler boots its SDK inside macOS sandbox without opening project data", {skip: process.platform !== "darwin"}, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-prepared-sandbox-")));
@@ -55,11 +56,16 @@ strategy Run
 import {readFileSync} from 'node:fs';
 await defineTool({toolRef:${JSON.stringify(tool)}, inputSignature:[{name:'path', type_ref:'builtin:Text'}], outputType:'builtin:Text',
 requiredGrants:['filesystem_read'], run: async ({request}) => {try {return readFileSync(request, 'utf8');} catch {return 'denied';}}});`);
+  const explicit = sandboxSdkConfig("javascript", {root, handler: binding.handler.args[0]});
+  assert.equal(explicit.handler.command, process.execPath);
+  assert.equal(explicit.handler.cwd, root);
+  assert.ok(explicit.sandbox.code_paths.some(path => path.endsWith('/src/index.mjs')));
   const run = sandbox => runProcessToolHandler({toolRef: tool, request: {protocol: "touba-tool-handler-v1", operation: "invoke", tool_ref: tool,
       arguments: {path: privatePath}, grants: ["filesystem_read"], secret_handles: []}, secretHandles: [],
     binding: {...binding, handler: {...binding.handler, command: process.execPath, cwd}, sandbox,
       limits: {timeout_ms: 5000, max_payload_bytes: 65536}}});
   assert.equal((await run(binding.sandbox)).value, "denied");
+  assert.equal((await run(explicit.sandbox)).value, "denied");
   assert.equal((await run({...binding.sandbox, read_paths: [privatePath]})).value, "private-value");
   // Node may report an unreadable module as missing rather than EPERM. Do not
   // invent a sandbox-denial diagnosis when the OS does not provide it.

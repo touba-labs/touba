@@ -25,6 +25,10 @@ test("SDK commands describe both SDKs and handler scope", () => {
   assert.throws(() => sdkCommand(["path", "python", "--root", "."]), /option/);
   assert.throws(() => sdkCommand(["install", "python", "--python"]), /option/);
   assert.match(sdkCommand([]).text, /--manager auto\|uv\|pip/);
+  assert.match(sdkCommand([]).text, /sdk sandbox javascript\|python --handler/);
+  assert.throws(() => sdkCommand(["sandbox", "python"]), /--handler/);
+  assert.throws(() => sdkCommand(["sandbox", "python", "--manager", "pip"]), /option/);
+  assert.throws(() => sdkCommand(["sandbox", "python", "--handler", "a", "--handler", "b"]), /duplicate/);
   assert.throws(() => sdkCommand(["install", "python", "--manager", "uv", "--manager", "pip"]), /duplicate/);
   assert.throws(() => installSdk("python", { manager: "unknown" }), /auto, uv or pip/);
 });
@@ -46,6 +50,22 @@ test("Python manager preflight preserves unsupported locks and rejects unsafe pa
   const project = join(root, "unsafe"); mkdirSync(project);
   symlinkSync(join(root, "TOOLCHAIN.json"), join(project, "pyproject.toml"));
   assert.throws(() => installSdk("python", { root: project, distributionRoot: root }), /regular file/);
+  assert.equal(existsSync(join(project, ".venv")), false);
+});
+
+test("sandbox inventory rejects an escaped handler and missing SDK without executing code", t => {
+  const { root } = fixture(t);
+  const project = join(root, "consumer"); mkdirSync(project);
+  const handler = join(root, "outside.py");
+  writeFileSync(handler, "raise RuntimeError('must not execute')");
+  for (const language of ["javascript", "python"]) {
+    assert.throws(() => sdkCommand(["sandbox", language, "--root", project, "--handler", handler]), /inside this project/);
+    symlinkSync(handler, join(project, `linked-${language}.py`));
+    assert.throws(() => sdkCommand(["sandbox", language, "--root", project, "--handler", `linked-${language}.py`]), /inside this project/);
+    writeFileSync(join(project, "handler.py"), "raise RuntimeError('must not execute')");
+    assert.throws(() => sdkCommand(["sandbox", language, "--root", project, "--handler", "handler.py"]), /SDK|sdk/);
+  }
+  assert.equal(existsSync(join(project, "touba.project.json")), false);
   assert.equal(existsSync(join(project, ".venv")), false);
 });
 
