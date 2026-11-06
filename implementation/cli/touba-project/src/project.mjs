@@ -4959,7 +4959,9 @@ function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestP
     catch (error) { diagnostics.push(errorDiagnostic(error.code, error.message, { manifest_path: manifestPath, ...error.details })); }
   }
   if (currentManifest === null) {
-    return expectedManifest;
+    // Fragment reconciliation mutates the proposal. Keep requirements separate
+    // so first preparation composes the same policies as subsequent checks.
+    return structuredClone(expectedManifest);
   }
   if (currentManifest.manifest_version !== TOUBA_MANIFEST_V1 || !currentManifest.bindings) {
     diagnostics.push(errorDiagnostic("ManifestCannotMerge", "existing manifest is invalid and cannot be updated safely", {
