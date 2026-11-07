@@ -32,7 +32,14 @@ test("package installation and source editing need explicit preparation before e
   const report = await pending;
   assert.deepEqual(validateObject(schema, report), []);
   assert.equal(report.status, "success", JSON.stringify(report));
-  assert.deepEqual(readFileSync(join(root, "touba.project.json")), config, "preparation adds no configured grant");
+  const after = JSON.parse(readFileSync(join(root, "touba.project.json")));
+  assert.deepEqual(Object.keys(after.configuration.package_contracts), ["fixture.prepare"]);
+  assert.equal(after.configuration.package_contracts["fixture.prepare"].version, "1.0.0");
+  assert.deepEqual(after.configuration.package_contracts["fixture.prepare"].tools, {});
+  delete after.configuration.package_contracts;
+  assert.deepEqual(after.configuration, { binding_fragments: [], resource_bindings: [] });
+  delete after.configuration;
+  assert.deepEqual(after, JSON.parse(config), "preparation records the package baseline but adds no configured grant");
   readPreparedProject(root);
   const tokenEnv = `TOUBA_PREPARATION_TEST_${process.pid}`;
   process.env[tokenEnv] = "isolated-preparation-token";

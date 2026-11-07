@@ -6,6 +6,7 @@ import { readChangeProposals, saveChangeProposals, pageChangeProposals, countCha
 import { createProjectTraceExplorer } from "./trace-explorer-surface.mjs";
 import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT } from "./package-surface.mjs";
 import { createProjectPreparation } from "./project-preparation.mjs";
+import { toolApprovalReview, PARALLEL_APPROVAL_METADATA_FIELDS, validateParallelApprovalMetadata } from "./tool-approval-review.mjs";
 import { projectOperationBudgets } from "./operation-budgets.mjs";
 import { projectTraceStorageStatus } from "./trace-storage-status.mjs";
 import { isCanonicalHandlerStub } from "../../touba-manifest/src/stub-validation.mjs";
@@ -1277,6 +1278,8 @@ function createProjectServerWithLease(options, takeLease) {
             project_refresh: "/project/refresh",
             project_refresh_status: "/project/refresh",
             project_prepare: "/project/prepare",
+            project_prepare_preview: "/project/prepare/preview",
+            project_prepare_apply: "/project/prepare/apply",
             packages: "/packages/installed",
             package_preview: "/packages/preview",
             package_local_preview: "/packages/local/preview",
@@ -2637,17 +2640,31 @@ function createProjectServerWithLease(options, takeLease) {
         writeJson(response, 200, getProjectChangeDetail({ projectRoot, changeProposalsPath, proposalId }));
         return;
       }
-      if (request.method === "POST" && url.pathname === "/project/prepare") {
+      if (request.method === "POST" && url.pathname === "/project/prepare/preview") {
         const body = await readJsonBody(request);
         if (!isPlainObject(body) || Object.keys(body).length !== 0) {
+          throw serviceError("ToubaServePreparationInvalid", "Expected an empty object");
+        }
+        const principal = humanIdentity === null ? "project-bearer" : `${humanIdentity.user.id}:${humanIdentity.session_id ?? ""}`;
+        writeJson(response, 200, await projectPreparation.preview(JSON.stringify([principal, humanIdentity?.organization_id ?? null]))); return;
+      }
+      if (request.method === "POST" && ["/project/prepare", "/project/prepare/apply"].includes(url.pathname)) {
+        const body = await readJsonBody(request);
+        const reviewed = url.pathname.endsWith("/apply");
+        if (reviewed) validateContractPayload({ contractsRoot, schemaVersion: "touba-project-preparation-apply-v1",
+          value: body, errorCode: "ToubaServePreparationInvalid", message: "Invalid preparation review" });
+        else if (!isPlainObject(body) || Object.keys(body).length !== 0) {
           throw serviceError("ToubaServePreparationInvalid", "Expected an empty object; preparation uses the project's dev profile");
         }
-        const result = await projectPreparation.prepare();
+        const principal = humanIdentity === null ? "project-bearer" : `${humanIdentity.user.id}:${humanIdentity.session_id ?? ""}`;
+        const result = reviewed ? await projectPreparation.apply(JSON.stringify([principal, humanIdentity?.organization_id ?? null]), body) : await projectPreparation.prepare();
         const refreshed = refreshProject({ projectRoot, previousSnapshot: projectSnapshot,
           request: { schema_version: PROJECT_REFRESH_REQUEST_SCHEMA_VERSION, reason: "project:prepared" } });
         projectSnapshot = refreshed.snapshot;
         publishRefreshEvents(eventClients, refreshed.report, nextEvent);
         publishEvent(eventClients, "project.prepared", { status: result.status,
+          ...(reviewed ? { review_digest: body.review_digest, review_id: body.id,
+            authentication: humanIdentity ? "human_session" : "project_bearer" } : {}),
           actor_id: humanIdentity?.user?.id ?? null }, nextEvent);
         writeJson(response, 200, result); return;
       }
@@ -3966,6 +3983,7 @@ export async function executeProjectSandboxRun({
   if (runtimeResult.checkpoint) {
     persistSandboxCheckpoint({
       checkpoint: runtimeResult.checkpoint,
+      toolReview: toolApprovalReview(runtimeResult.checkpoint, { ...resolved, toolBindingManifest }),
       contractsRoot,
       createdAt: completedAt,
       effectPolicy,
@@ -4267,6 +4285,7 @@ export async function resumeProjectSandboxRun({
   if (runtimeResult.checkpoint) {
     completeHumanDecisionWithSuccessor({
       checkpoint: runtimeResult.checkpoint,
+      toolReview: toolApprovalReview(runtimeResult.checkpoint, { ...resolved, toolBindingManifest }),
       completedAt,
       contractsRoot,
       createdAt: completedAt,
@@ -4420,6 +4439,7 @@ async function terminalizeAutomaticHumanWait({
     if (runtimeResult.checkpoint) {
       const completed = completeHumanDecisionWithSuccessor({
         automatic: true, checkpoint: runtimeResult.checkpoint, completedAt, createdAt: completedAt,
+        toolReview: toolApprovalReview(runtimeResult.checkpoint, { ...resolved, toolBindingManifest }),
         contractsRoot, effectPolicy: record.effect_policy, executionKind: record.execution_kind,
         humanRequestsPath, operationId: record.operation_id, previousRequestId: requestId,
         result, sandboxCheckpointsPath, targetRef: record.target_ref,
@@ -9098,6 +9118,7 @@ function portableHumanCheckpointSnapshot(checkpoint) {
 
 function persistSandboxCheckpoint({
   checkpoint,
+  toolReview,
   contractsRoot,
   createdAt,
   effectPolicy,
@@ -9113,6 +9134,7 @@ function persistSandboxCheckpoint({
     ?? `${durableCheckpoint.approval_ref}:${durableCheckpoint.run_id}`;
   const humanRequest = humanRequestFromCheckpoint({
     checkpoint: durableCheckpoint,
+    toolReview,
     createdAt,
     requestId,
   });
@@ -9182,6 +9204,7 @@ function persistSandboxCheckpoint({
 function completeHumanDecisionWithSuccessor({
   automatic = false,
   checkpoint,
+  toolReview,
   completedAt,
   contractsRoot,
   createdAt,
@@ -9197,7 +9220,7 @@ function completeHumanDecisionWithSuccessor({
   const durableCheckpoint = portableHumanCheckpointSnapshot(checkpoint);
   const requestId = durableCheckpoint.approval_state?.requests[durableCheckpoint.approval_ref]?.request_id
     ?? `${durableCheckpoint.approval_ref}:${durableCheckpoint.run_id}`;
-  const humanRequest = humanRequestFromCheckpoint({ checkpoint: durableCheckpoint, createdAt, requestId });
+  const humanRequest = humanRequestFromCheckpoint({ checkpoint: durableCheckpoint, createdAt, requestId, toolReview });
   validateContractPayload({
     contractsRoot,
     schemaVersion: humanRequest.schema_version,
@@ -9729,7 +9752,7 @@ function boundedResumeErrorText(value, maxLength) {
   return String(value ?? "Durable resume failed").slice(0, maxLength);
 }
 
-function humanRequestFromCheckpoint({ checkpoint, createdAt, requestId }) {
+function humanRequestFromCheckpoint({ checkpoint, createdAt, requestId, toolReview }) {
   const createdAtMs = parseHumanWaitInstant(createdAt, "checkpoint created_at");
   const expiresAt = checkpoint.approval_state?.requests[checkpoint.approval_ref]?.deadline_at
     ?? new Date(createdAtMs + HUMAN_WAIT_TTL_MS).toISOString();
@@ -9754,11 +9777,12 @@ function humanRequestFromCheckpoint({ checkpoint, createdAt, requestId }) {
     request_id: requestId,
     run_id: checkpoint.run_id,
     mode: "approval",
-    requester_ref: checkpoint.requester_ref ?? checkpoint.caller_ref ?? checkpoint.entry_ref,
-    capability_ref: checkpoint.required_by_ref ?? checkpoint.graph_ref ?? checkpoint.entry_ref,
+    requester_ref: toolReview?.caller_ref ?? checkpoint.requester_ref ?? checkpoint.caller_ref ?? checkpoint.entry_ref,
+    capability_ref: toolReview?.tool_ref ?? checkpoint.required_by_ref ?? checkpoint.graph_ref ?? checkpoint.entry_ref,
     reason: `Approval required by ${checkpoint.graph_ref ?? checkpoint.entry_ref}.`,
-    summary: approvalContextSummary(checkpoint)
+    summary: toolReview ? `Approve this invocation of ${toolReview.tool_ref}.` : approvalContextSummary(checkpoint)
       ?? `Resume ${checkpoint.entry_ref} at its declared human approval boundary.`,
+    ...(toolReview ? { tool_operation: toolReview } : {}),
     allowed_decisions: ["approve", "reject"],
     policy: structuredClone(checkpoint.approval_state?.requests[checkpoint.approval_ref]?.policy ?? {}),
     expires_at: expiresAt,
@@ -10413,6 +10437,10 @@ function validateStoredHumanCheckpoint(record, index) {
     "max_agent_steps", "max_loop_iterations",
     "approval_state", "custody", "host_contract_digest", "next_sequence_index",
   ]);
+  if (checkpoint?.kind === "parallel_group") {
+    for (const field of PARALLEL_APPROVAL_METADATA_FIELDS) allowed.add(field);
+    validateParallelApprovalMetadata(checkpoint);
+  }
   if (
     !isPlainObject(checkpoint)
     || Object.keys(checkpoint).some((field) => !allowed.has(field))
@@ -11399,6 +11427,8 @@ export function requiredIdentityPermission(method, pathname) {
   }
   if (pathname === "/packages/apply") return "governance.apply";
   if (pathname === "/project/prepare") return "governance.apply";
+  if (pathname === "/project/prepare/preview") return "governance.propose";
+  if (pathname === "/project/prepare/apply") return "governance.apply";
   if (pathname === "/packages/preview" || pathname === "/packages/local/preview" || pathname === "/packages/cancel"
     || pathname === '/packages/registry/resolve' || /^\/packages\/registry\/[a-f0-9-]{36}\/preview$/.test(pathname)) return "governance.propose";
   if (pathname === "/packages/installed") return "projects.read";
@@ -11933,6 +11963,9 @@ function publishRefreshEvents(eventClients, report, nextEvent) {
 }
 
 function httpStatusForError(code) {
+  if (code === "ProjectPreparationReviewStale") return 409;
+  if (code === "ToubaServePreparationReviewMissing") return 409;
+  if (code === "ToubaServePreparationLimit") return 429;
   if (["ToubaServeDeploymentStale", "ToubaDeploymentStateConflict"].includes(code)) return 409;
   if (code === "ToubaServePreparationInvalid") return 400;
   if (["ToubaServePackageBusy", "ToubaServePackageCapacity", "ToubaServePreparationBusy"].includes(code)) return 429;

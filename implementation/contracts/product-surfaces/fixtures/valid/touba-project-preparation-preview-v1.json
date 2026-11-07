@@ -1,0 +1,10 @@
+{
+  "schema_version": "touba-project-preparation-preview-v1",
+  "id": "12345678-1234-1234-1234-123456789abc",
+  "review_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expires_at": "2026-11-06T12:05:00.000Z",
+  "can_apply": true,
+  "status": "needs_changes", "profile": "dev", "diagnostics": [],
+  "actions": ["would_update_fragment_binding"],
+  "changes": [{ "kind": "update_fragment_binding", "subject": "tool:demo.main/Read", "field": "timeout_ms", "before": "5000", "after": "7000" }]
+}

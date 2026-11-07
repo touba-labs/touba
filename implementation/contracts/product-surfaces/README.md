@@ -206,13 +206,54 @@ POST /changes/propose
 POST /changes/apply
 POST /elements/preview
 POST /elements/propose
+POST /project/prepare/preview
+POST /project/prepare/apply
 ```
+
+Preparation preview accepts `{}` and requires `governance.propose`. Its
+`touba-project-preparation-preview-v1` response exposes contract changes,
+diagnostics, a five-minute expiry and an opaque review digest. Core retains
+the package/fragment decisions server-side, scoped to the authenticated session;
+at most eight reviews are retained, with one per session. No files or handlers
+are written or executed by preview.
+
+Apply requires `governance.apply` and `touba-project-preparation-apply-v1`:
+only `schema_version`, `id` and `review_digest`. It consumes the review once and
+passes its expected digest to canonical preparation, checked before any write.
+An expired/consumed review or changed plan returns 409. The response remains
+`touba-project-preparation-v1`. Review accepts the selected package contract,
+preserves consumer approval minima and grants no additional authority. Raw
+handler arguments and host plans are not projected; fragment changes use Core's
+redacted values. Oversized interactive reviews return 429 and require CLI review.
+The legacy empty-object `/project/prepare` remains available, without an implicit
+acceptance of package contract changes. client uses only the reviewed routes.
 
 The two `pending/current` routes accept an optional `run_id` query parameter.
 With it, the server returns only an undecided request for that exact run, or
 `ToubaServePendingHumanRequestNotFound` (404). Without it, the first pending
 request is preserved for existing clients. Reading a targeted request does not
 consume or approve any queue entry; the client uses it for the active interaction.
+
+For a tool-bound approval, `touba-approval-request-v1` additionally carries
+`tool_operation`. Core derives it from the runtime checkpoint and the AIR,
+manifest and package admission used for that execution. It identifies the tool,
+caller, active agent when present, policy origin (`source`, `consumer` or
+`source_and_consumer`) and verified package version/fingerprints when applicable.
+Operation and argument commitments identify the bound values without projecting
+their contents. The argument commitment is scoped to the run and request.
+The summary of a tool request never serializes its input arguments. Existing
+explicit continuation contexts retain their bounded, private projection.
+
+`prior_signers` contains at most eight earlier approved receipts from this run,
+using the same run-scoped signer pseudonym as the runtime trace and at most eight
+attested roles per receipt. Truncation is explicit. These are previous approvals,
+not evidence that the pending operation has been approved. No identity is
+inferred from a Cloud role, and no receipt is fabricated for an anonymous signer.
+All metadata stays on authenticated request routes; it is not copied to public
+progress notifications. The decision POST still accepts only its canonical
+decision schema, never an operation, package policy or replacement arguments.
+Old request documents remain valid. Distribute updated strict consumers with
+this producer: clients carrying an older closed schema cannot read the new field.
 
 `GET /operations/<operation_id>/recovery` projects the durable checkpoint,
 human wait and effect journal without exposing receipts, handler payloads or

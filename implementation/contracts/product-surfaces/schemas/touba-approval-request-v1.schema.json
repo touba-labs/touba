@@ -14,6 +14,44 @@
     "capability_ref": { "type": "string" },
     "reason": { "type": "string" },
     "summary": { "type": "string" },
+    "tool_operation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tool_ref", "caller_ref", "agent_ref", "policy_origin", "operation_digest", "arguments_digest", "prior_signers", "prior_signers_truncated"],
+      "properties": {
+        "tool_ref": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "caller_ref": { "type": ["string", "null"], "minLength": 1, "maxLength": 1024 },
+        "agent_ref": { "type": ["string", "null"], "minLength": 1, "maxLength": 1024 },
+        "policy_origin": { "enum": ["source", "consumer", "source_and_consumer"] },
+        "operation_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "arguments_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "package": {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "version", "digest", "admission_id", "lock_digest", "manifest_digest"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+            "admission_id": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+            "lock_digest": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" },
+            "manifest_digest": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" }
+          }
+        },
+        "prior_signers": {
+          "type": "array", "maxItems": 8,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["signer_ref", "accepted_at", "roles", "roles_truncated"],
+            "properties": {
+              "signer_ref": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+              "accepted_at": { "type": "string", "maxLength": 32 },
+              "roles": { "type": "array", "maxItems": 8, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+              "roles_truncated": { "type": "boolean" }
+            }
+          }
+        },
+        "prior_signers_truncated": { "type": "boolean" }
+      }
+    },
     "policy": {
       "type": "object",
       "additionalProperties": false,

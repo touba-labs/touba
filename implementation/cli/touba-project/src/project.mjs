@@ -919,6 +919,24 @@ export async function prepareProject(options = {}) {
     });
   }
 
+  // Bind interactive preparation to the exact proposal and its current inputs.
+  // Computed before any write, independently of plan/write action labels. The
+  // digest contains no secret values; callers receive only the hash.
+  const reviewDigest = packageDigest(Buffer.from(JSON.stringify({
+    outputs_before: [...new Set([projectConfigPath, manifestPath, runPlanPath, effectiveProjectPath,
+      ...preparedAirDocuments.filter(entry => entry.sourcePath !== undefined).map(({ document }) => airOutputPath(root, document.module.name, airRoot)),
+      ...stubs.map(stub => stub.path), ...secretProfiles.map(profile => profile.path),
+    ].filter(Boolean))].sort().map(path => [path, existsSync(path) ? packageDigest(readFileSync(path)) : null]),
+    project: existsSync(projectConfigPath) ? readFileSync(projectConfigPath, "utf8") : null,
+    project_after: projectConfigWrite ?? null, manifest_before: currentManifest,
+    manifest_after: proposedManifest, air: preparedAirDocuments,
+    run_plan: expectedRunPlan, effective_project: expectedEffectiveProject,
+    fragments: bindingFragmentComposition.fragments, resources: resourceBindingsValidation.documents,
+    stubs: stubs.map(({ path, content }) => ({ path, content, exists: existsSync(path) })),
+  })));
+  if (options.expectedReviewDigest !== undefined && options.expectedReviewDigest !== reviewDigest) {
+    throw Object.assign(new Error("Project changed since preparation preview; review it again"), { code: "ProjectPreparationReviewStale" });
+  }
   if (mode === "write" && !hasErrorDiagnostics(diagnostics)) {
     if (projectConfigWrite !== undefined) {
       writeFileSync(projectConfigPath, projectConfigWrite, "utf8");
@@ -970,6 +988,7 @@ export async function prepareProject(options = {}) {
   return {
     workflow_version: PROJECT_MANIFEST_VERSION,
     command: "prepare",
+    review_digest: reviewDigest,
     mode,
     status,
     root,
