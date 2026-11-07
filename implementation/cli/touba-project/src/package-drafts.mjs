@@ -5,6 +5,7 @@ import { authorizePublication, publicationBytes, publicationDocument, publicatio
 import { PACKAGE_LIMITS, PACKAGE_NAME, exactPackageVersion, packageDigest, packageError, packagePath, readPackage } from './package-contract.mjs';
 import { assertAuthorWritable, assertPlainDirectory, findPackageWorkspace } from './package-store.mjs';
 import { checkPackageArchive, packPackage, unpackPackage } from './packages.mjs';
+import { automationIdentity, automationDescriptor, automationRequestId } from './package-automation.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
@@ -80,8 +81,10 @@ export async function checkoutPackageDraft(id, options = {}) {
   return cancellable(options, async signal => {
     let identity, temporary, destination, owned = false;
     try {
-      identity = await authorizePublication(registry, { noBrowser: options['no-browser'] === true, signal, notify: options.notify });
-      const row = descriptor(accepted(await publicationDocument(`${registry}/drafts/${id}`, requestOptions(identity.token, signal))), id);
+      identity = options.automation ? automationIdentity(registry, options) : await authorizePublication(registry, { noBrowser: options['no-browser'] === true, signal, notify: options.notify });
+      const api = identity.api ?? registry;
+      const response = accepted(await publicationDocument(`${api}/drafts/${id}`, requestOptions(identity.token, signal)));
+      const row = descriptor(options.automation ? automationDescriptor(response) : response, id);
       const name = row.name.split('.').at(-1);
       packagePath(name);
       if (name === 'packages') throw packageError('PackageReservedName', 'packages is reserved for managed dependencies');
@@ -89,7 +92,7 @@ export async function checkoutPackageDraft(id, options = {}) {
       assertAuthorWritable(destination);
       if (readdirSync(root).some(entry => entry.toLowerCase() === name.toLowerCase())) throw packageError('PackageAlreadyExists', 'checkout requires a new author folder');
       temporary = mkdtempSync(join(root, '.touba-package-checkout-'));
-      const fetched = await publicationBytes(`${registry}/drafts/${id}/archive`, requestOptions(identity.token, signal, 60000), PACKAGE_LIMITS.totalBytes);
+      const fetched = await publicationBytes(`${api}/drafts/${id}/archive`, requestOptions(identity.token, signal, 60000), PACKAGE_LIMITS.totalBytes);
       if (!fetched.ok) throw packageError('PackageDraftRefused', 'draft archive is unavailable; no project was created');
       if (fetched.headers.get('x-touba-digest') !== row.archive_digest || packageDigest(fetched.bytes) !== row.archive_digest) throw packageError('PackageDraftIntegrityMismatch', 'downloaded archive differs from the selected draft');
       const archive = join(temporary, 'package.tar.gz');
@@ -115,6 +118,7 @@ export async function checkoutPackageDraft(id, options = {}) {
 }
 
 export async function submitPackageDraft(path, options = {}) {
+  if (options.automation) automationRequestId(options['request-id']);
   path ??= findPackageWorkspace(options.root, { author: true });
   const author = readPackage(path, { publishing: true });
   const root = author.root;
@@ -138,18 +142,23 @@ export async function submitPackageDraft(path, options = {}) {
         const packed = await packPackage(root, { output: join(temporary, 'package.tar.gz') });
         const checked = await checkPackageArchive(packed.output, { publishing: true });
         if (checked.manifest.name !== author.document.name || checked.manifest.version !== author.document.version) throw packageError('PackageProjectChanged', 'package identity changed while preparing the submission');
-        identity = await authorizePublication(registry, { noBrowser: options['no-browser'] === true, signal, notify: options.notify });
+        identity = options.automation ? automationIdentity(registry, options) : await authorizePublication(registry, { noBrowser: options['no-browser'] === true, signal, notify: options.notify });
+        const api = identity.api ?? registry;
         let previous;
         if (selected) {
-          previous = descriptor(accepted(await publicationDocument(`${registry}/drafts/${selected}`, requestOptions(identity.token, signal))), selected);
+          const response = accepted(await publicationDocument(`${api}/drafts/${selected}`, requestOptions(identity.token, signal)));
+          previous = descriptor(options.automation ? automationDescriptor(response) : response, selected);
           if (previous.name !== checked.manifest.name || previous.version !== checked.manifest.version) throw packageError('PackageDraftTargetMismatch', 'the selected draft has a different package identity or version');
           if (matching && linked.registry === registry && linked.id === selected && previous.archive_digest !== linked.archive_digest) throw packageError('PackageDraftConflict', 'the remote archive changed; review it before submitting your local changes');
         }
         const request = requestOptions(identity.token, signal, 210000);
-        const result = await publicationDocument(`${registry}/drafts${selected ? `/${selected}` : ''}`, { ...request, method: selected ? 'PUT' : 'POST',
+        const result = await publicationDocument(`${api}/drafts${selected ? `/${selected}${options.automation ? '/archive' : ''}` : ''}`, { ...request, method: selected ? 'PUT' : 'POST',
           headers: { ...request.headers, 'Content-Type': 'application/gzip', 'X-Touba-Namespace': checked.manifest.name.split('.').slice(0, -1).join('.'),
-            ...(previous ? { 'X-Touba-Draft-Revision': String(previous.revision) } : {}) }, body: readFileSync(packed.output) });
-        const row = descriptor(accepted(result));
+            ...(previous ? { 'X-Touba-Draft-Revision': String(previous.revision) } : {}),
+            ...(options.automation ? { 'Idempotency-Key': options['request-id'], 'X-Touba-Package': checked.manifest.name,
+              ...(previous ? { 'X-Touba-Revision': String(previous.revision) } : {}) } : {}) }, body: readFileSync(packed.output) });
+        const response = accepted(result);
+        const row = descriptor(options.automation ? automationDescriptor(response) : response);
         if (row.name !== checked.manifest.name || row.version !== checked.manifest.version || row.archive_digest !== packed.digest) throw packageError('PackageDraftResponseInvalid', 'the service did not confirm the submitted bytes; inspect Cloud before retrying');
         // Preserve a truthful success if the remote commit succeeded but local bookkeeping fails.
         let saved = true;
