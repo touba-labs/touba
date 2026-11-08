@@ -819,20 +819,28 @@ Options principales :
 | `--trace-dir <dir>` | écrit une trace JSON par entrée traitée |
 | `--max-events <n>` | arrête le service après `n` entrées traitées |
 | `--max-attempts <n>` | borne les retries des échecs non structurels |
-| `--processing-timeout-ms <n>` | remet en queue une entrée `processing` périmée |
+| `--processing-timeout-ms <n>` | signale une interruption après disparition du worker ; ne relance pas sa stratégie |
 | `--effect-journal <path>` | persiste `touba-effect-journal-v1` pour les bindings `external_write` |
 | `--auth-token-env <NAME>` | exige un bearer token ou `x-touba-trigger-token` |
 | `--signature-secret-env <NAME>` | exige `x-touba-signature: sha256=<hex>` |
 | `--secrets <path>` | résout les handles de secrets déclarés par les runs déclenchés |
+| `--agent-decision-provider <path>` | charge explicitement un fournisseur JavaScript ou Python |
+| `--human-approval-host <path>` | charge l'hôte d'attestation des décisions humaines |
+| `--human-checkpoint-store <path.sqlite>` | garde privée et à usage unique des continuations |
+| `--management-token-env <NAME>` | jeton distinct pour les routes privées `/_touba/approvals` |
+| `--project-root <path>` | racine des modules hôtes de package explicitement activés |
+| `--agent-decision-provider-timeout-ms <n>` | borne un appel du fournisseur, de 1 à 60 000 ms |
+| `--human-approval-authority-timeout-ms <n>` | borne une attestation, de 1 à 60 000 ms |
 
 Le service utilise un worker unique par processus et réveille de lui-même les
 retries arrivés à `next_attempt_at`. Un couple `--queue` / `--state` ne doit pas
-être partagé entre plusieurs processus. Après récupération d’une entrée
-`processing` périmée, `recovery_effect_outcome: "unknown"` signale que l’effet
-externe précédent peut avoir eu lieu. La livraison de queue reste
-at-least-once ; le contrat V1 ci-dessous décide si le redispatch de l'effet est
-sûr ou doit être bloqué. Les remplacements atomiques des fichiers ne
-constituent pas une transaction avec l’effet externe.
+être partagé entre plusieurs processus. Une pause devient `awaiting_human`,
+sans retry. Sa reprise vérifie la demande, l'attestation et le checkpoint
+conservé. Après disparition d'un worker actif, l'entrée devient `interrupted` :
+`recovery_effect_outcome: "unknown"` signale qu'un effet peut avoir eu lieu.
+La stratégie n'est pas relancée automatiquement. Les transactions SQLite ne
+constituent pas une transaction avec l'effet externe. Voir le
+[parcours d'approbation du webhook](../guides/triggers-gouvernes.md#modèles-et-approbations-du-service-autonome).
 
 `--effect-journal` devient obligatoire si le manifest V1 contient au moins un
 binding `external_write` ; son chemin doit se terminer par

@@ -55,6 +55,14 @@ export function createSqliteHumanCheckpointStore(filename = resolve(".touba/appr
     return rows;
   }
   return Object.freeze({
+    /** Read-only eligibility check. It neither claims nor rearms a checkpoint.
+     * @param {any} checkpoint */
+    ready(checkpoint) {
+      const proof = checkpoint?.custody;
+      if (!proof || typeof proof.id !== "string") return false;
+      const row = read(proof.id)[0];
+      return Boolean(row && row.state === "ready" && row.generation === proof.generation && row.digest === digest(checkpoint));
+    },
     /** @param {any} checkpoint */
     claim(checkpoint) {
       const proof = checkpoint?.custody;

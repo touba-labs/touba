@@ -470,8 +470,9 @@ test("rejects mapped webhook payload arguments that do not match the target sign
   }
 });
 
-test("recovers stale processing queue entries when the service starts", async () => {
+test("marks legacy stale processing entries interrupted instead of replaying unknown effects", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-recover-"));
+  let child;
   try {
     const fixture = writeFixture(workspace);
     writeQueueFixture(fixture.queuePath, JSON.stringify({
@@ -495,15 +496,15 @@ test("recovers stale processing queue entries when the service starts", async ()
         },
       ],
     }, null, 2), "utf8");
-    const child = spawnService(fixture, ["--max-events", "1", "--processing-timeout-ms", "1"]);
+    child = spawnService(fixture, ["--max-events", "1", "--processing-timeout-ms", "1"]);
     await waitForStart(child);
-    const exit = await once(child, "exit");
-    assert.equal(exit[0], 0);
+    await waitForQueueEntryStatus(fixture.queuePath, "evt-webhook-stale", "interrupted");
 
     const queue = readQueue(fixture.queuePath);
-    assert.equal(queue.entries[0].status, "succeeded");
+    assert.equal(queue.entries[0].status, "interrupted");
     assert.equal(queue.entries[0].recovery_reason, "processing_timeout");
   } finally {
+    await terminateChild(child);
     rmSync(workspace, { recursive: true, force: true });
   }
 });
@@ -783,14 +784,13 @@ test("marks the previous external outcome unknown when recovering a crash after 
       "1",
     ]);
     await waitForStart(recovered);
-    const recoveredExit = await once(recovered, "exit");
-    assert.equal(recoveredExit[0], 0);
+    await waitForQueueEntryStatus(fixture.queuePath, "evt-crash-after-effect", "interrupted");
 
     const queue = readQueue(fixture.queuePath);
-    assert.equal(queue.entries[0].status, "succeeded");
-    assert.equal(queue.entries[0].attempt_count, 2);
+    assert.equal(queue.entries[0].status, "interrupted");
+    assert.equal(queue.entries[0].attempt_count, 1);
     assert.equal(queue.entries[0].recovery_effect_outcome, "unknown");
-    assert.equal(effectInvocationCount(fixture.effectLogPath), 2);
+    assert.equal(effectInvocationCount(fixture.effectLogPath), 1);
   } finally {
     await terminateChild(crashed);
     await terminateChild(recovered);
@@ -846,7 +846,7 @@ test("refuses an external-write service before listen when its durable journal i
   }
 });
 
-test("redelivery during a crash lease reuses one queue and effect identity, then resumes automatically", async () => {
+test("redelivery during a crash lease preserves one effect and waits for reconciliation", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-idempotent-crash-"));
   let crashed;
   let recovered;
@@ -924,21 +924,20 @@ test("redelivery during a crash lease reuses one queue and effect identity, then
     assert.equal(external.mutationCount(), 1);
     assert.equal(readQueue(fixture.queuePath).entries.length, 1);
 
-    const recoveredExit = await once(recovered, "exit");
-    assert.equal(recoveredExit[0], 0);
+    await waitForQueueEntryStatus(fixture.queuePath, "evt-idempotent-host-crash", "interrupted");
 
     const queue = readQueue(fixture.queuePath);
     assert.equal(queue.entries.length, 1);
     assert.equal(queue.entries[0].queue_id, firstDelivery.queue_id);
-    assert.equal(queue.entries[0].status, "succeeded");
-    assert.equal(queue.entries[0].attempt_count, 2);
+    assert.equal(queue.entries[0].status, "interrupted");
+    assert.equal(queue.entries[0].attempt_count, 1);
     const journal = readEffectJournalFixture(fixture.effectJournalPath);
     const entries = Object.values(journal.entries);
     assert.equal(entries.length, 1);
-    assert.equal(entries[0].state, "applied");
-    assert.equal(entries[0].attempt_count, 2);
+    assert.equal(entries[0].state, "dispatched");
+    assert.equal(entries[0].attempt_count, 1);
     assert.match(entries[0].effect_id, /^effect:sha256:[a-f0-9]{64}$/u);
-    assert.equal(external.requestCount(), 2);
+    assert.equal(external.requestCount(), 1);
     assert.equal(external.mutationCount(), 1);
     assert.equal(new Set(external.effectIds()).size, 1);
   } finally {

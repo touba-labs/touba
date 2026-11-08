@@ -45,7 +45,9 @@
             "properties": {
               "pending": { "type": "integer" },
               "processing": { "type": "integer" },
-              "dead_letter": { "type": "integer" }
+              "dead_letter": { "type": "integer" },
+              "awaiting_human": { "type": "integer", "minimum": 0 },
+              "interrupted": { "type": "integer", "minimum": 0 }
             }
           }
         }

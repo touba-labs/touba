@@ -9,6 +9,8 @@ import { projectTracePath } from "../../../runtime/touba-runtime/src/project-tra
 import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
 import { writeTraceFile } from "../../touba-run/src/trace-output.mjs";
 import { createSqliteTriggerQueue } from "./sqlite-queue.mjs";
+import { createHostModuleLoader } from "../../touba-run/src/host-modules.mjs";
+import { createSqliteHumanCheckpointStore } from "../../../runtime/touba-runtime/src/human-checkpoint-store.mjs";
 import {
   executeTriggerEvent,
   loadAirFromJson,
@@ -104,16 +106,34 @@ export async function createTriggerService(options) {
     );
   }
 
-  const effectJournal = effectJournalPath === undefined ? undefined
-    : createSqliteEffectJournal(effectJournalPath, {
+  const managementToken = options.managementTokenEnv === undefined ? undefined : process.env[options.managementTokenEnv];
+  if (options.managementTokenEnv !== undefined && (!managementToken || managementToken.trim() === "" || managementToken === authToken)) {
+    throw serviceError("TriggerManagementTokenInvalid", "management requires a non-empty token distinct from the ingress token");
+  }
+  const checkpointPath = resolve(options.humanCheckpointStorePath ?? join(dirname(queuePath), "approval-checkpoints.sqlite"));
+  assertSuffix(checkpointPath, ".sqlite", "HumanApprovalCheckpointStoreInvalid");
+  if ([statePath, queuePath, tracePath, effectJournalPath].includes(checkpointPath)) {
+    throw serviceError("HumanApprovalCheckpointStoreInvalid", "checkpoint custody must use its own database");
+  }
+  const hostModules = createHostModuleLoader();
+  let agentDecisionProvider, humanApprovalHost;
+  try {
+    if (options.agentDecisionProviderPath) agentDecisionProvider = await hostModules.decisionProvider(options.agentDecisionProviderPath, { projectRoot: options.projectRoot });
+    humanApprovalHost = options.humanApprovalHostPath
+      ? await hostModules.approvalHost(options.humanApprovalHostPath, { projectRoot: options.projectRoot }) : {};
+  } catch (error) { hostModules.close(); throw error; }
+  const checkpointStore = createSqliteHumanCheckpointStore(checkpointPath);
+
+  let effectJournal, triggerState, queue, traceStorage;
+  try {
+    effectJournal = effectJournalPath === undefined ? undefined
+      : createSqliteEffectJournal(effectJournalPath, {
       secretValues: secretStore?.resolvedSecretEntries?.().map(entry => entry.value) ?? [],
     });
-  const triggerState = createSqliteTriggerStore({ filename: statePath, maxBytes: options.stateMaxBytes });
-  let queue, traceStorage;
-  try {
+    triggerState = createSqliteTriggerStore({ filename: statePath, maxBytes: options.stateMaxBytes });
     queue = createSqliteTriggerQueue({ filename: queuePath, maxEntries: options.queueMaxEntries, maxBytes: options.queueMaxBytes });
     traceStorage = createSqliteTraceStore({ filename: tracePath, maxBytes: options.traceMaxBytes });
-  } catch (error) { triggerState.close(); queue?.close(); throw error; }
+  } catch (error) { triggerState?.close(); queue?.close(); hostModules.close(); throw error; }
   const serverState = {
     processedCount: 0,
     stopping: false,
@@ -138,6 +158,13 @@ export async function createTriggerService(options) {
     maxAttempts,
     processingTimeoutMs,
     effectJournal,
+    executionHost: {
+      agentDecisionProvider, ...humanApprovalHost,
+      humanCheckpointStore: checkpointStore,
+      durableHumanApprovals: true,
+      agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
+      humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
+    },
   };
 
   const server = createServer(async (request, response) => {
@@ -165,6 +192,23 @@ export async function createTriggerService(options) {
           queue,
         }));
         return;
+      }
+
+      const managementUrl = new URL(request.url, "http://127.0.0.1");
+      if (managementUrl.pathname.startsWith("/_touba/")) {
+        if (!managementToken) { writeJson(response, 404, { code: "TriggerRouteNotFound" }); return; }
+        if (!authorized(request, managementToken)) { writeJson(response, 401, { code: "TriggerUnauthorized" }); return; }
+        if (request.method === "GET" && managementUrl.pathname === "/_touba/approvals") {
+          const page = queue.page({ after: managementUrl.searchParams.get("after") ?? "", limit: 100 });
+          writeJson(response, 200, { approvals: page.entries.filter(entry => entry.status === "awaiting_human").map(pendingApproval), next: page.next });
+          return;
+        }
+        if (request.method === "POST" && managementUrl.pathname === "/_touba/approvals") {
+          const body = await readBoundedBody(request, 16 * 1024);
+          const result = await resumeApproval(JSON.parse(body.buffer.toString("utf8")));
+          writeJson(response, 200, result); return;
+        }
+        writeJson(response, 404, { code: "TriggerRouteNotFound" }); return;
       }
 
       const route = matchRoute(routes, request.method, request.url);
@@ -236,6 +280,7 @@ export async function createTriggerService(options) {
         event_id: eventId,
         source_kind: "request",
         status: "queued",
+        guarded_execution: true,
         received_at: new Date().toISOString(),
         http: {
           method: route.method,
@@ -275,13 +320,40 @@ export async function createTriggerService(options) {
   const closeStores = () => {
     if (storesClosed) return;
     storesClosed = true;
-    triggerState.close(); queue.close(); traceStorage.close();
+    triggerState.close(); queue.close(); traceStorage.close(); hostModules.close();
   };
   server.once("close", () => {
     serverState.stopping = true;
     clearRetryWake(serverState);
     Promise.resolve(serverState.workerPromise).finally(closeStores).catch(() => {});
   });
+
+  async function resumeApproval(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input)
+      || Object.keys(input).some(key => !["queue_id", "request_id", "decision"].includes(key))
+      || typeof input.queue_id !== "string" || typeof input.request_id !== "string"
+      || !input.decision || typeof input.decision !== "object" || Array.isArray(input.decision)
+      || Object.keys(input.decision).some(key => !["decision", "evidence_ref", "client_ref", "comment"].includes(key))
+      || !["approved", "rejected"].includes(input.decision.decision)
+      || Object.values(input.decision).some(value => typeof value !== "string" || value.length > 8192)) {
+      throw serviceError("TriggerApprovalInvalid", "provide the pending queue_id, request_id and an attested approval decision");
+    }
+    if (!humanApprovalHost.humanApprovalAuthority) throw serviceError("HumanApprovalAuthorityUnavailable", "configure a trusted human approval host");
+    if (serverState.stopping || serverState.workerPromise) throw serviceError("TriggerWorkerBusy", "the single execution worker is busy");
+    const entry = queue.continue(input.queue_id, input.request_id);
+    clearRetryWake(serverState);
+    const work = executeQueueEntry({ ...workerOptions, server }, entry, input.decision);
+    serverState.workerPromise = work;
+    try {
+      await work;
+      const stored = queue.get(entry.queue_id);
+      return { queue_id: stored.queue_id, status: stored.status, runtime_error_code: stored.runtime_error_code,
+        ...(stored.status === "awaiting_human" ? { approval: pendingApproval(stored) } : {}) };
+    } finally {
+      serverState.workerPromise = undefined;
+      if (!serverState.stopping) requestQueueProcessing({ ...workerOptions, server });
+    }
+  }
 
   return {
     async start() {
@@ -318,7 +390,18 @@ export async function createTriggerService(options) {
       }));
     },
     server,
+    // Trusted local callers use the same custody and attestation as the private
+    // management endpoint. This method cannot submit a checkpoint or new inputs.
+    resumeApproval,
   };
+}
+
+function pendingApproval(entry) {
+  const checkpoint = entry.checkpoint;
+  const request = checkpoint?.approval_state?.requests?.[checkpoint.approval_ref];
+  return { queue_id: entry.queue_id, trigger_ref: entry.trigger_ref, event_id: entry.event_id,
+    run_id: checkpoint?.run_id, approval_ref: checkpoint?.approval_ref,
+    request_id: request?.request_id, role: request?.policy?.role ?? null };
 }
 
 function requestQueueProcessing(workerOptions) {
@@ -399,31 +482,24 @@ function clearRetryWake(serverState) {
   serverState.retryDueAt = undefined;
 }
 
-async function processQueue({
-  document,
-  manifest,
-  secretStore,
-  statePath,
-  triggerState,
-  queue,
-  queuePath,
-  traceDir,
-  traceStorage,
-  server,
-  serverState,
-  maxEvents,
-  maxAttempts,
-  processingTimeoutMs,
-  effectJournal,
-}) {
+async function processQueue(workerOptions) {
+  const { queue, serverState, processingTimeoutMs } = workerOptions;
   if (serverState.stopping) {
     return;
   }
   while (!serverState.stopping) {
-    const entry = queue.claim(processingTimeoutMs);
+    const entry = queue.claim(processingTimeoutMs, Date.now(), { guardUnknown: true });
     if (!entry) {
       return queue.nextWake(processingTimeoutMs);
     }
+    await executeQueueEntry(workerOptions, entry);
+  }
+}
+
+async function executeQueueEntry({ document, manifest, secretStore, statePath, triggerState,
+  queue, traceDir, traceStorage, server, serverState, maxEvents, maxAttempts, effectJournal, executionHost }, entry, decision) {
+  const checkpoint = decision ? entry.checkpoint : undefined;
+  try {
 
     // TD-1 consumes an external event once. A later attempt owned by the same
     // queue entry may retry its target without recording a second event.
@@ -436,10 +512,13 @@ async function processQueue({
       arguments: entry.arguments,
     };
     const result = await executeTriggerEventWithState(document, event, {
+      ...executionHost,
       toolBindingManifest: manifest,
       secretStore,
       statePath,
-      runId: `trigger-service-${entry.queue_id.replaceAll(/[^A-Za-z0-9_-]/gu, "-")}-attempt-${entry.attempt_count}`,
+      runId: checkpoint?.run_id ?? `trigger-service-${entry.queue_id.replaceAll(/[^A-Za-z0-9_-]/gu, "-")}-attempt-${entry.attempt_count}`,
+      humanApprovalResumeCheckpoint: checkpoint,
+      humanApprovalDecisions: checkpoint ? { [checkpoint.approval_ref]: decision } : undefined,
       triggerAdmission: request => triggerState.admit({ ...request, ownerId: entry.queue_id,
         attempt: entry.attempt_count, retry: retryingConsumedEvent }),
       effectScopeId: entry.queue_id,
@@ -449,14 +528,15 @@ async function processQueue({
 
     const stored = entry;
     if (stored) {
-      let refusal, executionFailure;
+      let refusal, executionFailure, failure;
       for (const event of result.traceReader?.events() ?? result.trace.events) {
+        if (event.kind === "failure_detected") failure = event;
         if (event.payload?.trigger_ref !== entry.trigger_ref) continue;
         if (event.kind === "trigger_event_refused" && (event.payload.event_id === undefined || event.payload.event_id === entry.event_id)) refusal = event;
         if (event.kind === "trigger_execution_failed") executionFailure = event;
       }
       const runtimeErrorCode = refusal?.payload?.runtime_error_code
-        ?? executionFailure?.payload?.runtime_error_code;
+        ?? executionFailure?.payload?.runtime_error_code ?? failure?.payload?.runtime_error_code;
       stored.completed_at = new Date().toISOString();
       stored.run_id = result.trace?.run?.run_id;
       stored.runtime_status = result.status;
@@ -464,18 +544,31 @@ async function processQueue({
       stored.refusal_reason = refusal?.payload?.reason;
       if (traceDir !== undefined) {
         mkdirSync(resolve(traceDir), { recursive: true });
-        const tracePath = join(resolve(traceDir), `${safeFilePart(entry.queue_id)}.attempt-${entry.attempt_count}.trace.json`);
+        const segment = checkpoint ? `.continuation-${entry.continuation_count}` : "";
+        const tracePath = join(resolve(traceDir), `${safeFilePart(entry.queue_id)}.attempt-${entry.attempt_count}${segment}.trace.json`);
         await writeTraceFile(tracePath, result.traceReader);
         stored.trace_path = tracePath;
       }
-      if (result.status === "success") {
+      if (result.status === "stopped" && result.checkpoint && result.reason === "human_approval_pending") {
+        stored.status = "awaiting_human";
+        stored.checkpoint = result.checkpoint;
+        delete stored.completed_at;
+      } else if (checkpoint && result.status === "failure"
+        && !["HumanApprovalRejected", "HumanApprovalExpired"].includes(runtimeErrorCode)
+        && executionHost.humanCheckpointStore.ready(checkpoint)) {
+        // The runtime, not the queue, decides whether a refused attestation left
+        // the exact original continuation available. No effect can be rearmed here.
+        stored.status = "awaiting_human";
+        delete stored.completed_at;
+      } else if (result.status === "success") {
         stored.status = "succeeded";
-      } else if (shouldRetryQueueEntry(stored, runtimeErrorCode, maxAttempts, effectJournal)) {
+        delete stored.checkpoint;
+      } else if (!checkpoint && result.status === "failure" && shouldRetryQueueEntry(stored, runtimeErrorCode, maxAttempts, effectJournal)) {
         stored.status = "queued";
         stored.next_attempt_at = new Date(Date.now() + retryDelayMs(stored.attempt_count ?? 1)).toISOString();
       } else {
         const unknownRetryDecision = unknownEffectRetryDecisionForEntry(stored, effectJournal);
-        stored.status = isNonRetryableRuntimeErrorCode(runtimeErrorCode)
+        stored.status = checkpoint || result.status === "stopped" || isNonRetryableRuntimeErrorCode(runtimeErrorCode)
           || unknownRetryDecision === false
           ? "failed"
           : "dead_lettered";
@@ -483,7 +576,15 @@ async function processQueue({
       }
     }
     queue.finish(stored);
-
+  } catch (error) {
+    // An exception may follow a real effect or durable pause. Keep the evidence
+    // and stop this entry; a fresh worker must not replay the entire strategy.
+    entry.status = "interrupted";
+    entry.runtime_error_code = "TriggerExecutionInterrupted";
+    entry.recovery_effect_outcome = "unknown";
+    queue.finish(entry);
+    throw error;
+  } finally {
     serverState.processedCount += 1;
     if (maxEvents !== undefined && serverState.processedCount >= maxEvents) {
       serverState.stopping = true;
@@ -525,6 +626,7 @@ function buildRequestRoutes(document, manifest, triggerRef) {
     .filter((trigger) => triggerRef === undefined || trigger.id === triggerRef)
     .map((trigger) => {
       const parsed = parseRequestEventValue(trigger.event.value);
+      if (parsed?.path.startsWith("/_touba/")) throw serviceError("TriggerServiceReservedRoute", "the /_touba/ path prefix is reserved for service management");
       const manifestTrigger = manifest.triggers.get(trigger.id);
       if (!manifestTrigger || manifestTrigger.enabled !== true || manifestTrigger.source?.kind !== "request") {
         return null;
@@ -940,6 +1042,16 @@ function parseArgs(rawArgs) {
       parsed.secretsPath = requiredValue(rawArgs, ++index, "--secrets");
     } else if (arg.startsWith("--secrets=")) {
       parsed.secretsPath = nonEmptyValue(arg.slice("--secrets=".length), "--secrets");
+    } else if (["--agent-decision-provider", "--human-approval-host", "--human-checkpoint-store", "--management-token-env", "--project-root"].includes(arg.split("=")[0])) {
+      const option = arg.split("=")[0];
+      const field = { "--agent-decision-provider": "agentDecisionProviderPath", "--human-approval-host": "humanApprovalHostPath",
+        "--human-checkpoint-store": "humanCheckpointStorePath", "--management-token-env": "managementTokenEnv", "--project-root": "projectRoot" }[option];
+      parsed[field] = arg.includes("=") ? nonEmptyValue(arg.slice(option.length + 1), option) : requiredValue(rawArgs, ++index, option);
+    } else if (["--agent-decision-provider-timeout-ms", "--human-approval-authority-timeout-ms"].includes(arg.split("=")[0])) {
+      const option = arg.split("=")[0];
+      const value = parsePositiveInteger(arg.includes("=") ? arg.slice(option.length + 1) : requiredValue(rawArgs, ++index, option), option);
+      if (value > 60000) throw serviceError("TriggerServiceUsage", `${option} must be <= 60000`);
+      parsed[option === "--agent-decision-provider-timeout-ms" ? "agentDecisionProviderTimeoutMs" : "humanApprovalAuthorityTimeoutMs"] = value;
     } else if (arg === "--trigger") {
       parsed.triggerRef = requiredValue(rawArgs, ++index, "--trigger");
     } else if (arg.startsWith("--trigger=")) {
@@ -1010,10 +1122,17 @@ function usage() {
     "  --effect-journal <path>          Persist touba-effect-journal-v1 for external writes",
     "  --max-events <n>                Stop after n processed entries, useful for tests and supervised jobs",
     "  --max-attempts <n>              Retry target failures up to n attempts, default 3",
-    "  --processing-timeout-ms <n>     Requeue stale processing entries after n ms, default 300000",
+    "  --processing-timeout-ms <n>     Mark exited workers interrupted after n ms, default 300000",
     "  --auth-token-env <NAME>         Require bearer token or x-touba-trigger-token from the named env var",
     "  --signature-secret-env <NAME>   Require x-touba-signature: sha256=<hex> HMAC using the named env var",
     "  --secrets <touba.secrets.json>  Resolve declared secret handles for triggered runs",
+    "  --agent-decision-provider <path>  Explicit trusted JavaScript or Python decision host",
+    "  --agent-decision-provider-timeout-ms <n>  Bound each provider call (1..60000 ms)",
+    "  --human-approval-host <path>     Explicit trusted human attestation host",
+    "  --human-approval-authority-timeout-ms <n>  Bound each attestation (1..60000 ms)",
+    "  --human-checkpoint-store <path.sqlite>  Private single-use checkpoint custody",
+    "  --management-token-env <NAME>   Separate management token for /_touba/approvals",
+    "  --project-root <path>           Project root for explicitly activated package hosts",
   ].join("\n");
 }
 
@@ -1025,7 +1144,7 @@ function required(value, label) {
 }
 
 function requiredValue(args, index, option) {
-  if (index >= args.length) {
+  if (index >= args.length || args[index].startsWith("--")) {
     throw serviceError("TriggerServiceUsage", `${option} requires a value`);
   }
   return nonEmptyValue(args[index], option);
@@ -1094,7 +1213,7 @@ function serviceError(code, message) {
 
 function httpStatusForServiceError(code) {
   if (code === "TriggerQueueCapacityExceeded" || code === "TriggerStateUnavailable") return 503;
-  if (code === "TriggerEventPayloadConflict" || code === "TriggerReplayRejected") {
+  if (["TriggerEventPayloadConflict", "TriggerReplayRejected", "TriggerApprovalConflict", "TriggerWorkerBusy"].includes(code)) {
     return 409;
   }
   if (code === "TriggerPayloadTooLarge") {

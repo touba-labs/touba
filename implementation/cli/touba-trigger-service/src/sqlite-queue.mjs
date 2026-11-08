@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { migrateJsonState } from "../../../runtime/touba-runtime/src/sqlite-state-migration.mjs";
 
 const FORMAT = "touba-trigger-queue-storage-v1";
-const statuses = new Set(["queued", "processing", "succeeded", "failed", "dead_lettered"]);
+const statuses = new Set(["queued", "processing", "awaiting_human", "continuing", "interrupted", "succeeded", "failed", "dead_lettered"]);
 const error = (code, message) => Object.assign(new Error(message), { code });
 const alive = pid => {
   if (!Number.isSafeInteger(pid) || pid < 1) return false;
@@ -80,7 +80,7 @@ export function createSqliteTriggerQueue({ filename, maxEntries = 10000, maxByte
   function update(entry, workerPid) {
     const body = validate(entry), revision = versions.get(entry);
     if (revision === undefined) throw error("TriggerQueueWriteConflict", "queue update requires a fresh snapshot");
-    const due = entry.status === "processing" ? Date.parse(entry.started_at) : Date.parse(entry.next_attempt_at ?? entry.received_at);
+    const due = ["processing", "continuing"].includes(entry.status) ? Date.parse(entry.started_at) : Date.parse(entry.next_attempt_at ?? entry.received_at);
     if (!Number.isFinite(due)) throw error("TriggerQueueEntryInvalid", "invalid processing date");
     const result = db.prepare("UPDATE queue_entries SET status=?,due_ms=?,worker_pid=?,body=?,revision=revision+1 WHERE id=? AND revision=?")
       .run(entry.status, due, workerPid ?? null, body, entry.queue_id, revision);
@@ -110,36 +110,54 @@ export function createSqliteTriggerQueue({ filename, maxEntries = 10000, maxByte
   return {
     path,
     find(triggerRef, eventId) { return decode(db.prepare("SELECT * FROM queue_entries WHERE trigger_ref=? AND event_id=?").get(triggerRef, eventId)); },
+    get(id) { return decode(db.prepare("SELECT * FROM queue_entries WHERE id=?").get(id)); },
     enqueue(entry) {
       transaction(() => insert(entry));
     },
-    claim(processingTimeoutMs, now = Date.now()) {
+    claim(processingTimeoutMs, now = Date.now(), { guardUnknown = false } = {}) {
       return transaction(() => {
-        for (const row of db.prepare("SELECT * FROM queue_entries WHERE status='processing' AND due_ms<=? ORDER BY due_ms,id").iterate(now - processingTimeoutMs)) {
+        for (const row of db.prepare("SELECT * FROM queue_entries WHERE status IN ('processing','continuing') AND due_ms<=? ORDER BY due_ms,id").iterate(now - processingTimeoutMs)) {
           if (alive(row.worker_pid)) continue;
           const entry = decode(row);
-          entry.status = "queued"; entry.recovered_at = new Date(now).toISOString();
+          // A continuation or an explicitly guarded worker can have performed
+          // effects before a crash. Never start its strategy again automatically.
+          entry.status = guardUnknown || row.status === "continuing" || entry.guarded_execution ? "interrupted" : "queued";
+          entry.recovered_at = new Date(now).toISOString();
           entry.recovery_reason = "processing_timeout"; entry.recovery_effect_outcome = "unknown";
           update(entry);
         }
         const entry = decode(db.prepare("SELECT * FROM queue_entries WHERE status='queued' AND due_ms<=? ORDER BY due_ms,received_ms,id LIMIT 1").get(now));
         if (!entry) return undefined;
         entry.status = "processing"; entry.started_at = new Date(now).toISOString();
+        if (guardUnknown) entry.guarded_execution = true;
         entry.attempt_count = (entry.attempt_count ?? 0) + 1; delete entry.next_attempt_at;
         update(entry, process.pid); return entry;
       });
     },
     finish(entry) { transaction(() => update(entry)); },
+    continue(id, requestId) {
+      return transaction(() => {
+        const entry = decode(db.prepare("SELECT * FROM queue_entries WHERE id=?").get(id));
+        const checkpoint = entry?.checkpoint;
+        if (entry?.status !== "awaiting_human" || !checkpoint
+          || checkpoint.approval_state?.requests?.[checkpoint.approval_ref]?.request_id !== requestId) {
+          throw error("TriggerApprovalConflict", "the pending approval changed or is already being continued");
+        }
+        entry.status = "continuing"; entry.started_at = new Date().toISOString();
+        entry.continuation_count = (entry.continuation_count ?? 0) + 1;
+        update(entry, process.pid); return entry;
+      });
+    },
     nextWake(processingTimeoutMs, now = Date.now()) {
-      const row = db.prepare("SELECT min(CASE WHEN status='processing' THEN due_ms+? ELSE due_ms END) AS due FROM queue_entries WHERE status IN ('queued','processing')").get(processingTimeoutMs);
+      const row = db.prepare("SELECT min(CASE WHEN status IN ('processing','continuing') THEN due_ms+? ELSE due_ms END) AS due FROM queue_entries WHERE status IN ('queued','processing','continuing')").get(processingTimeoutMs);
       // Avoid a tight timer loop while another live worker owns an overdue run.
       return row.due === null ? undefined : Math.max(25, row.due - now);
     },
     counts(triggerRef) {
-      const result = { pending: 0, processing: 0, dead_letter: 0 };
+      const result = { pending: 0, processing: 0, dead_letter: 0, awaiting_human: 0, interrupted: 0 };
       for (const row of db.prepare("SELECT status,count(*) AS n FROM queue_entries WHERE trigger_ref=? GROUP BY status").all(triggerRef)) {
-        const key = { queued: "pending", processing: "processing", dead_lettered: "dead_letter" }[row.status];
-        if (key) result[key] = row.n;
+        const key = { queued: "pending", processing: "processing", continuing: "processing", dead_lettered: "dead_letter", awaiting_human: "awaiting_human", interrupted: "interrupted" }[row.status];
+        if (key) result[key] += row.n;
       }
       return result;
     },

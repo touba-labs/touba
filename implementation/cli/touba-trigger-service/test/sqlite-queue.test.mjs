@@ -90,6 +90,23 @@ test("archival verifies successful entries and leaves active, failed and uncerta
   assert.throws(() => store.archive({ ...options, apply: true }));
 });
 
+test("a crashed continuation is never eligible for automatic admission", async t => {
+  const {store,filename}=fixture(t); store.enqueue(entry());
+  const pending=store.claim(10); pending.status='awaiting_human'; pending.checkpoint={approval_ref:'approval:test',
+    approval_state:{requests:{'approval:test':{request_id:'request-one'}}}};
+  store.finish(pending); assert.equal(store.claim(10),undefined);
+  assert.throws(()=>store.continue('queue:1','old-request'),{code:'TriggerApprovalConflict'});
+  const result=await child(`import {createSqliteTriggerQueue} from ${JSON.stringify(moduleUrl)};
+    const store=createSqliteTriggerQueue({filename:${JSON.stringify(filename)}});
+    store.continue('queue:1','request-one'); process.kill(process.pid,'SIGKILL');`);
+  assert.equal(result.signal,'SIGKILL');
+  assert.equal(store.claim(1,Date.now()+10),undefined);
+  const interrupted=store.get('queue:1'); assert.equal(interrupted.status,'interrupted');
+  assert.equal(interrupted.attempt_count,1); assert.equal(interrupted.continuation_count,1);
+  assert.equal(store.counts(entry().trigger_ref).interrupted,1);
+  assert.throws(()=>store.continue('queue:1','request-one'),{code:'TriggerApprovalConflict'});
+});
+
 test("queue migration validates a preview, preserves the source and refuses duplicate identities", t => {
   const { filename } = fixture(t);
   const source = filename + ".json", destination = filename + ".migrated.sqlite";

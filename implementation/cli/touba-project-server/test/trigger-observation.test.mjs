@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { initProject, prepareProject } from "../../touba-project/src/project.mjs";
 import { readPreparedProject } from "../src/prepared-project.mjs";
 import { createTriggerService } from "../../touba-trigger-service/src/serve.mjs";
+import { createSqliteTriggerQueue } from "../../touba-trigger-service/src/sqlite-queue.mjs";
 import { createToubaProjectServer, readProjectTriggerStatus } from "../src/serve.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
@@ -103,6 +104,15 @@ trigger Scheduled
   assert.equal(health.summary.trigger_count, 3);
   assert.equal(health.summary.dead_letter, 1);
   assert.deepEqual(readFileSync(join(root, ".touba/trigger-queue.sqlite")), before, "observing leaves queue bytes intact");
+  const queue = createSqliteTriggerQueue({filename:join(root,'.touba/trigger-queue.sqlite')});
+  try {
+    for(const status of ['awaiting_human','interrupted']) queue.enqueue({queue_id:`queue:${status}`,event_id:status,
+      trigger_ref:'trigger:test.webhooks/Good',status,received_at:new Date().toISOString()});
+  } finally { queue.close(); }
+  const waitingHealth = await (await fetch(`${base}/triggers/queue-health`)).json();
+  assert.equal(waitingHealth.summary.awaiting_human,1);
+  assert.equal(waitingHealth.summary.interrupted,1);
+  assert.equal(waitingHealth.triggers.find(item=>item.trigger_ref.endsWith('/Good')).status,'blocked');
   // The public CLI already forwards runtime host options to its bounded runner.
   // Exercise that actual entry point with a real agent, without a paid provider.
   writeFileSync(join(root, "provider.mjs"), `export function decideAgentCapability() {

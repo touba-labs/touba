@@ -5799,6 +5799,8 @@ export function buildTriggerQueueHealth({
       processing: sumIntegerField(triggers, "processing"),
       retry: sumIntegerField(triggers, "retry"),
       dead_letter: sumIntegerField(triggers, "dead_letter"),
+      awaiting_human: sumIntegerField(triggers, "awaiting_human"),
+      interrupted: sumIntegerField(triggers, "interrupted"),
       replay_rejected: sumIntegerField(triggers, "replay_rejected"),
       rate_limited: sumIntegerField(triggers, "rate_limited"),
     },
@@ -5960,18 +5962,21 @@ function triggerQueueHealthRow(trigger, journalEvents) {
   const pending = nonNegativeInteger(trigger.queue?.pending);
   const processing = nonNegativeInteger(trigger.queue?.processing);
   const deadLetter = nonNegativeInteger(trigger.queue?.dead_letter);
+  const awaitingHuman = nonNegativeInteger(trigger.queue?.awaiting_human);
+  const interrupted = nonNegativeInteger(trigger.queue?.interrupted);
   const refused = nonNegativeInteger(trigger.state?.refused_count);
   const relatedEvents = journalEvents.filter((event) => eventReferencesTrigger(event, trigger.trigger_ref));
   const replayRejected = relatedEvents.filter((event) => eventMatchesAny(event, ["replay"])).length;
   const rateLimited = relatedEvents.filter((event) => eventMatchesAny(event, ["rate", "quota", "limit"])).length;
   const retry = relatedEvents.filter((event) => eventMatchesAny(event, ["retry"])).length;
   let status = "healthy";
-  if (trigger.status === "blocked" || deadLetter > 0) {
+  if (trigger.status === "blocked" || deadLetter > 0 || interrupted > 0) {
     status = "blocked";
   } else if (
     trigger.status === "paused"
     || pending > 0
     || processing > 0
+    || awaitingHuman > 0
     || retry > 0
     || refused > 0
     || replayRejected > 0
@@ -5988,6 +5993,8 @@ function triggerQueueHealthRow(trigger, journalEvents) {
     processing,
     retry,
     dead_letter: deadLetter,
+    awaiting_human: awaitingHuman,
+    interrupted,
     replay_rejected: replayRejected,
     rate_limited: rateLimited,
     refused,

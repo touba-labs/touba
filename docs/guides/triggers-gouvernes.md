@@ -248,10 +248,55 @@ envoyer `Authorization: Bearer <token>` ou `x-touba-trigger-token: <token>`.
 
 Les arguments issus de `payload.map` deviennent les inputs typés de la stratégie
 déclenchée et restent accessibles à ses agents sous la frontière de contenu du
-decision provider. Le service de triggers ne fournit pas encore la reprise
-générale d'une opération suspendue ; cette capacité relève d'une tranche
-ultérieure. Il ne faut donc pas assimiler un checkpoint runtime ou un
-`operation_id` du serveur de projet au `queue_id` durable décrit ici.
+decision provider.
+
+### Modèles et approbations du service autonome
+
+Sélectionnez les mêmes modules hôtes de confiance que pour une exécution CLI :
+
+```sh title="Terminal"
+touba trigger serve program.air.json \
+  --manifest touba.manifest.json \
+  --agent-decision-provider hosts/decisions.mjs \
+  --human-approval-host hosts/approvals.mjs \
+  --human-checkpoint-store .touba/approval-checkpoints.sqlite \
+  --auth-token-env TOUBA_TRIGGER_TOKEN \
+  --management-token-env TOUBA_TRIGGER_MANAGEMENT_TOKEN
+```
+
+Les modules JavaScript ou Python sont chargés au démarrage explicite. Un module
+Python utilise l'interpréteur du SDK installé, sélectionnable par
+`TOUBA_HOST_PYTHON`. Ajoutez `--secrets` et `--effect-journal` selon les contrats
+du projet. Les délais du fournisseur et de l'attestation sont configurables
+par `--agent-decision-provider-timeout-ms` et
+`--human-approval-authority-timeout-ms`.
+
+Une pause d'approbation devient `awaiting_human`. Le checkpoint complet reste
+dans la file privée, lié à sa garde SQLite. Le service continue à recevoir les
+autres événements sans relancer cette stratégie. Après redémarrage, l'attente
+et son identité sont conservées.
+
+L'interface d'administration autonome est distincte de l'arrivée des webhooks :
+
+| Route privée | Contenu |
+| --- | --- |
+| `GET /_touba/approvals?after=…` | Références des attentes, rôle demandé et curseur ; aucun argument ou checkpoint brut |
+| `POST /_touba/approvals` | `queue_id`, `request_id` et `decision` avec `decision: "approved"` ou `"rejected"`, puis `evidence_ref` |
+
+Ces routes exigent le jeton de gestion, différent du jeton d'entrée. Elles sont
+absentes sans `--management-token-env`. Gardez-les derrière votre accès privé
+et HTTPS. Le jeton de gestion permet de soumettre une décision ; l'hôte
+d'attestation doit encore vérifier sa preuve, son signataire, son rôle et la
+demande exacte. Une référence inventée ne constitue pas une approbation.
+
+La reprise utilise exclusivement le checkpoint conservé. Elle ne reçoit ni
+nouveaux arguments, ni nouvelle politique. Une décision périmée, un checkpoint
+modifié ou un rejeu ne déclenche pas l'effet. Une seconde approbation produit
+une nouvelle demande. Les traces de chaque segment sont conservées séparément.
+`/status` distingue les attentes humaines et les interruptions ; client les lit
+depuis les magasins déclarés dans **Opérations**. Pour le parcours humain intégré
+dans **Décisions**, utilisez le serveur projet administré : ses sessions et
+identités Cloud sont distinctes de ce service autonome.
 
 ## 6. Tester les checks sans exécuter
 
@@ -361,11 +406,13 @@ Une entrée expirée reste réservée à son processus tant que celui-ci est viv
 Déployez un seul service par projet ; la coordination des effets entre hôtes
 nécessite un protocole de reprise supplémentaire.
 
-La reprise d’une entrée `processing` périmée conserve
-`recovery_effect_outcome: "unknown"`, car un effet externe a pu réussir avant
-l'interruption. Le contrat d'effet V1 est obligatoire : le journal autorise
-une nouvelle tentative d'écriture inconnue
-uniquement pour `idempotency_key` et bloque `reconcile` ou `none`. La queue,
+Une entrée `processing` ou `continuing` dont le processus a disparu devient
+`interrupted`, avec `recovery_effect_outcome: "unknown"`. Aucun redémarrage de
+stratégie n'est automatique après cette interruption. Examinez les traces et
+les reçus du service externe avant toute nouvelle demande. Les retries d'un
+échec dont le résultat est connu restent bornés par `--max-attempts` et le
+contrat d'effet : une écriture inconnue exige `idempotency_key`, tandis que
+`reconcile` et `none` la bloquent. La queue,
 le journal et l’état des déclencheurs utilisent des transactions SQLite.
 L’admission est durable avant le lancement de la stratégie.
 Ces écritures ne forment pas une transaction avec l’effet externe. Le service ne promet
@@ -381,8 +428,8 @@ donc pas `exactly-once` ni un rapprochement automatique.
 - L’état de trigger enregistre les `event_id` consommés et les refus de replay.
 - Les contrats de payload du manifest mappent des champs JSON explicites vers
  les arguments de la stratégie cible.
-- Les signatures HMAC, retries bornés, reprises d’entrées `processing` et états
- dead-letter sont supportés par le service webhook.
+- Le service webhook gère les signatures HMAC, retries bornés, attentes humaines
+ durables, interruptions à réconcilier et états dead-letter.
 - La propriété de queue et du journal est locale à un processus. Le package
  doit honorer réellement la clé idempotente ou le rapprochement déclaré.
 - La CLI, le SDK, le service de triggers et le serveur projet raccordent un

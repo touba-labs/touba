@@ -36,7 +36,8 @@ export function buildWorkspaceSummary({ identity, project, reads, generatedAt = 
     schema_version: "touba-workspace-summary-v1", generated_at: generatedAt, project,
     run_status: run?.status ?? null,
     attention: { decisions, drift: supply?.summary?.drift ?? null,
-      triggers: triggers ? triggers.summary.pending + triggers.summary.dead_letter : null },
+      triggers: triggers ? triggers.summary.pending + triggers.summary.dead_letter
+        + (triggers.summary.awaiting_human ?? 0) + (triggers.summary.interrupted ?? 0) : null },
     activity: activity ?? [], activity_limit: 100, failures,
   };
 }
