@@ -116,3 +116,25 @@ export function layoutGraph(nodes, edges, { direction = 'vertical', density = 'c
   const crossExtent = 40 + columns * pitchCross, mainExtent = main - pitchMain + (vertical ? size.height : size.width) + 40;
   return { positions, width: vertical ? crossExtent : mainExtent, height: vertical ? mainExtent : crossExtent, nodeWidth: size.width, nodeHeight: size.height, direction: vertical ? 'vertical' : 'horizontal' };
 }
+export function formatDuration(ms, language = 'en') {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return null;
+  if (ms === 0) return '0 ms';
+  const parts = [];
+  for (const [size, label] of [[86400000, language === 'fr' ? 'j' : 'd'], [3600000, 'h'], [60000, 'min'], [1000, 's']]) {
+    const count = Math.floor(ms / size);
+    if (count) { parts.push(`${count} ${label}`); ms -= count * size; }
+  }
+  if (ms) parts.push(`${ms} ms`);
+  return parts.join(' ');
+}
+
+export function fitGraphViewport(layout, rect, readable = false) {
+  const ratio = rect.width / rect.height, margin = 24;
+  const fullWidth = Math.max(layout.width + margin * 2, (layout.height + margin * 2) * ratio, rect.width);
+  const width = readable ? Math.min(fullWidth, rect.width) : fullWidth, height = width / ratio;
+  if (width === fullWidth) return { x: (layout.width - width) / 2, y: (layout.height - height) / 2, w: width, h: height };
+  const first = [...layout.positions.values()].sort((a, b) => layout.direction === 'horizontal' ? a.x - b.x || a.y - b.y : a.y - b.y || a.x - b.x)[0] ?? { x: 0, y: 0 };
+  return { x: layout.direction === 'horizontal' ? first.x - margin : Math.max(-margin, first.x + layout.nodeWidth / 2 - width / 2),
+    y: layout.direction === 'horizontal' ? Math.max(-margin, first.y + layout.nodeHeight / 2 - height / 2) : first.y - margin,
+    w: width, h: height };
+}

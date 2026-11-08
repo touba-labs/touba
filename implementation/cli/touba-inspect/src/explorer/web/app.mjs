@@ -1,4 +1,4 @@
-import { visibleGraph, layoutGraph, viewForNode, LAYOUT_SIZES } from './view.mjs';
+import { visibleGraph, layoutGraph, viewForNode, LAYOUT_SIZES, formatDuration, fitGraphViewport } from './view.mjs';
 
 const strings = {
   en: { readonly:'Read-only',language:'Language',diagnostics:'Diagnostics',resources:'Project resources',search:'Search resources',kind:'Kind',module:'Module',package:'Package',architecture:'Architecture',flow:'Flow',governance:'Governance',group:'Group',groupTitle:'Group modules and packages',focus:'Focus',all:'All',both:'Both directions',incoming:'Incoming',outgoing:'Outgoing',depth:'Depth',reset:'Reset',empty:'No resources in this view. Adjust the filters.',errorEmpty:'No graph yet: the project could not be compiled. Open the diagnostics above to fix it.',fit:'Fit',fullscreen:'Full screen',exportSvg:'Export as SVG (vector)',exportPng:'Export as PNG (image)',exportError:'The image could not be exported. Try SVG.',themeDark:'Switch to dark theme',themeLight:'Switch to light theme',details:'Resource details',select:'Select a resource or a relationship to explore its contract and source.',hint:'Double-click a module or a package to explore its contents.',close:'Close',loading:'Reading project sources…',ready:'Up to date · compiled sources',stale:'Source errors · showing the last valid graph',error:'The project could not be compiled',source:'Open source',expand:'Explore contents',relations:'Relationships',outgoingRelations:'Outgoing',incomingRelations:'Incoming',origin:'Origin',count:'resources',limited:'Graph limited to 200 nodes. Refine the filters; the list includes all matches.',sourceError:'Source unavailable. Refresh the project and try again.',connection:'Connection lost. Reconnecting…',legendStructure:'Structure and flow',legendAuthority:'Declared authority',aggregate:'Grouped relationships',boundaryValue:'Implemented in JavaScript or Python, outside the Touba program.',noFlows:'Choose a strategy, skill or function to inspect its source-defined flow.',filters:'Filters',inspector:'Details',display:'Display',edgeLabels:'Relationship labels',labelsAll:'Always',labelsAuto:'Selection',labelsNone:'Hidden',orientation:'Orientation',vertical:'Vertical',horizontal:'Horizontal',density:'Density',comfortable:'Comfortable',compact:'Compact',panels:'Panels',resourcesShort:'Resources',hideResources:'Hide resources  [',showResources:'Show resources  [',hideDetails:'Hide details  ]',showDetails:'Show details  ]',focusMode:'Graph only  \\',exitFocus:'Show panels  \\',zoomIn:'Zoom in  +',zoomOut:'Zoom out  −',shortcuts:'Shortcuts: [ resources · ] details · \\ graph only · 0 fit · + and − zoom · Esc or a second click clear the selection',diagnosticOnly:'Files with diagnostics' },
@@ -83,7 +83,7 @@ function button(label, fn, iconName) { const b = el('button'); b.type = 'button'
 function save() { vscode?.setState({ lang, selected, view, box, prefs }); }
 function options() { return { view, selected, search:$('search').value, kind:$('kind').value, module:$('module').value, package:$('package').value, group:$('group').checked, direction:$('direction').value, depth:Number($('depth').value), diagnosticOnly:$('diagnostic-only').checked, diagnosticFiles:state.diagnostics.map(d=>d.source_ref?.source_id).filter(Boolean) }; }
 function setOptions(id, values) { const select = $(id), previous = select.value; select.replaceChildren(new Option(text('all'), ''), ...values.map(([value, label]) => new Option(label, value))); if (values.some(([v]) => v === previous)) select.value = previous; }
-function duration(ms) { if (typeof ms !== 'number') return null; if (ms >= 60000 && ms % 60000 === 0) return `${ms / 60000} min`; return ms >= 1000 ? `${Number((ms / 1000).toFixed(1))} s` : `${ms} ms`; }
+function duration(ms) { return formatDuration(ms, lang); }
 function refName(value) { const node = nodeById(value); return node ? nodeLabel(node) : String(value).replace(/^value:/u, '').replace(/^[a-z_]+:(?:[\w.-]+\/)?/u, ''); }
 function typeName(ref) { return typeof ref === 'string' ? ref.replaceAll('builtin:', '').replaceAll('list:', 'List of ').replace(/\btype:(?:[\w.-]+\/)?/gu, '') : ''; }
 function nodeSubtitle(n) {
@@ -192,7 +192,7 @@ function render() {
   drawGraph(visible, edges);
   $('empty').hidden = Boolean(visible.length); $('empty').textContent = !graph && state.status === 'error' ? text('errorEmpty') : text('empty');
   $('export').disabled = $('export-png').disabled = !visible.length;
-  if (!box || autoFit) fit(); else applyBox(); renderDetails();
+  if (!box) fit(view === 'flow'); else if (autoFit) fit(fitReadable); else applyBox(); renderDetails();
 }
 // Choose how many nodes share a line so the layout roughly matches the canvas shape.
 function columnsFor(count) {
@@ -402,13 +402,13 @@ function renderDetails() {
   }
 }
 function applyBox() { if (box) $('graph').setAttribute('viewBox', `${box.x} ${box.y} ${box.w} ${box.h}`); save(); }
-function fit() {
+let fitReadable = false;
+function fit(readable = false) {
   if (!layout) return;
   const rect = $('graph').getBoundingClientRect(); if (!rect.width || !rect.height) return;
-  const ratio = rect.width / rect.height, margin = 24;
-  // Never enlarge beyond 1:1, otherwise a single grouped module fills the whole canvas.
-  const width = Math.max(layout.width + margin * 2, (layout.height + margin * 2) * ratio, rect.width), height = width / ratio;
-  box = { x:(layout.width-width)/2,y:(layout.height-height)/2,w:width,h:height }; autoFit = true; applyBox();
+  // A flow opens at readable scale. Explicit Fit still shows the whole graph.
+  fitReadable = readable === true;
+  box = fitGraphViewport(layout, rect, fitReadable); autoFit = true; applyBox();
 }
 function zoom(factor, anchor) {
   if (!box) return;
