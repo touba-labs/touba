@@ -4,6 +4,8 @@ import { countApplicationOperations } from './interactions.mjs';
 import { servicePrincipal, assertApplicationRoute, assertApplicationTarget, createApplicationAdmission } from './application-access.mjs';
 import { createProjectExplorerSurface } from "./explorer-surface.mjs";
 import { createCloudNotifications } from './cloud-notifications.mjs';
+import { createTriggerScheduler, readSchedulePlans, schedulerStore } from './trigger-scheduler.mjs';
+import { createSqliteTriggerStore } from '../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs';
 import { registerEventClient, writeSse } from "./event-clients.mjs";
 import { readChangeProposals, saveChangeProposals, pageChangeProposals, countChangeProposals, auditChangeProposals } from "./change-store.mjs";
 import { createProjectTraceExplorer } from "./trace-explorer-surface.mjs";
@@ -276,6 +278,7 @@ const LIVE_ENDPOINT_CONTRACTS = Object.freeze({
 
 const checkpointCodec = validatedRecordCodec(validateSandboxCheckpointRecord);
 export const CHECKPOINT_INDEXES = Object.freeze({
+  target_ref: "json_extract(body, '$.target_ref')",
   kind: "json_extract(body, '$.record_kind')",
   request_id: "json_extract(body, '$.request_id')",
   operation_id: "json_extract(body, '$.operation_id')",
@@ -1028,6 +1031,27 @@ function createProjectServerWithLease(options, takeLease) {
     });
   };
 
+  const scheduler = createTriggerScheduler({ enabled: options.scheduleTriggers === true,
+    path: join(projectRoot, '.touba/trigger-scheduler.sqlite'),
+    plans: () => readSchedulePlans(projectRoot),
+    pending: target => indexedCheckpointStore(sandboxCheckpointsPath).count([{ active_human: 1, target_ref: target }]) > 0,
+    emit: (type, payload) => publishEvent(eventClients, type, payload, nextEvent),
+    execute: async ({ trigger_ref, run_id, event_id, authority, cancelled }) => {
+      const request = { schema_version: SANDBOX_RUN_REQUEST_SCHEMA_VERSION, execution_kind: 'trigger',
+        target_ref: trigger_ref, event_id, source_kind: 'schedule', inputs: {},
+        effect_policy: 'allow_declared_external_effects', requested_by: { kind: 'service', id: 'touba-project-scheduler' },
+        reason: 'Scheduled project occurrence' };
+      const execute = () => executeProjectSandboxRun({ ...options, projectRoot, contractsRoot,
+        agentDecisionProvider, request, runId: run_id, executionKind: 'trigger',
+        dispatchAuthorityProvider: authority, cancelRequestedProvider: cancelled,
+        humanRequestsPath, sandboxCheckpointsPath, runSummaryPath, traceTimelinePath,
+        effectJournalPath, secretsPath, secretsRequired, triggerStatePath: triggerStorePaths.triggerStatePath });
+      try {
+        return sandboxRunMaySuspendForHuman({ executionKind: 'trigger', projectRoot, request })
+          ? await withHumanWaitCapacity({ runId: run_id }, execute) : await execute();
+      } finally { requestHumanWaitWorkerDetached(); }
+    },
+  });
   const scheduleInteractionOperation = ({
     capacityReservation = null,
     dispatchAuthorityProvider,
@@ -1111,6 +1135,7 @@ function createProjectServerWithLease(options, takeLease) {
           })
           : await executeProjectSandboxRun({
             ...common,
+            triggerStatePath: triggerStorePaths.triggerStatePath,
             executionKind: session.target_kind === "trigger" ? "trigger" : "entrypoint",
             request,
             runId: operation.run_id,
@@ -1338,6 +1363,8 @@ function createProjectServerWithLease(options, takeLease) {
             sandbox_run: "/runs/sandbox",
             trigger_status: "/triggers",
             trigger_fire: "/triggers/fire",
+            trigger_scheduler: '/triggers/scheduler',
+            trigger_scheduler_acknowledge: '/triggers/scheduler/acknowledge',
             trigger_queue_health: "/triggers/queue-health",
             supply_chain_status: "/supply-chain/status",
             governance_readiness: "/governance/readiness",
@@ -2266,6 +2293,23 @@ function createProjectServerWithLease(options, takeLease) {
         writeJson(response, 200, readProjectTriggerStatus({ contractsRoot, projectRoot, triggerStatusPath, ...triggerStorePaths }));
         return;
       }
+      if (request.method === 'GET' && url.pathname === '/triggers/scheduler') {
+        const status = scheduler.status();
+        validateContractPayload({ contractsRoot, schemaVersion: 'touba-trigger-scheduler-v1', value: status,
+          errorCode: 'ToubaSchedulerStateInvalid', message: 'scheduler observation is invalid' });
+        writeJson(response, 200, status); return;
+      }
+      if (request.method === 'POST' && url.pathname === '/triggers/scheduler/acknowledge') {
+        const body = await readJsonBody(request);
+        if (!isPlainObject(body) || Object.keys(body).some(key => !['trigger_ref','run_id','reason'].includes(key))) {
+          throw serviceError('ToubaSchedulerReviewInvalid', 'review must identify the interrupted occurrence and a reason');
+        }
+        const result = scheduler.acknowledge(body);
+        publishEvent(eventClients, 'trigger.schedule.acknowledged', { ...result,
+          actor: humanIdentity ? bindHumanActor({}, 'requested_by', humanIdentity).requested_by
+            : { kind: 'service', id: 'local-operator' }, reason: body.reason.trim() }, nextEvent);
+        writeJson(response, 200, result); return;
+      }
       if (request.method === "POST" && url.pathname === "/triggers/fire") {
         const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
         const runId = `sandbox_${compactTimestamp(new Date().toISOString())}_${randomBytes(3).toString("hex")}`;
@@ -2284,6 +2328,11 @@ function createProjectServerWithLease(options, takeLease) {
           contractsRoot,
           effectJournalPath,
           executionKind: "trigger",
+          triggerStatePath: triggerStorePaths.triggerStatePath,
+          dispatchAuthorityProvider: executionDispatchAuthorityProvider({
+            accessToken: request.headers['x-touba-identity-token'], controlPlaneUrl: identityControlPlaneUrl,
+            serviceToken: identityServiceToken, expectedProjectRoot: projectRoot,
+          }),
           humanRequestsPath,
           projectRoot,
           request: body,
@@ -2992,6 +3041,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
       const address = server.address();
       notifications.start();
+      scheduler.start();
       if (options.quiet !== true) {
         process.stdout.write(`${JSON.stringify({
           event: "touba_project_server_started",
@@ -3016,6 +3066,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
     },
     async stop() {
+      await scheduler.stop();
       await notifications.stop();
       explorerSurface.close();
       packageSurface.close();
@@ -4032,6 +4083,7 @@ export async function executeProjectSandboxRun({
   secretsRequired = false,
   traceTimelinePath,
   traceEventObserver,
+  triggerStatePath = join(projectRoot, '.touba/triggers.sqlite'),
   generatedAt = new Date().toISOString(),
 }) {
   validateContractPayload({
@@ -4096,6 +4148,12 @@ export async function executeProjectSandboxRun({
       });
     }
     : undefined;
+  const triggerEvent = executionKind === 'trigger' ? {
+    trigger_ref: targetRef, event_id: nonEmptyString(request.event_id) ?? `sandbox-event-${runId}`,
+    source_kind: nonEmptyString(request.source_kind) ?? sandboxTriggerSourceKind(resolved.document, targetRef),
+    arguments: isPlainObject(request.inputs) ? request.inputs : {},
+  } : null;
+  const triggerState = triggerEvent ? createSqliteTriggerStore({ filename: triggerStatePath }) : null;
   let runtimeResult;
   try {
     const runtimeOptions = {
@@ -4125,20 +4183,17 @@ export async function executeProjectSandboxRun({
       secretStore,
       toolBindingManifest,
       traceEventObserver,
+      ...(triggerState ? { triggerAdmission: claim => triggerState.admit(claim) } : {}),
     };
     runtimeResult = await withNativeTrace({ projectRoot, runId, phase: "initial",
       secretValues: secretStore?.resolvedSecretEntries?.().map(entry => entry.value) ?? [] }, async () => executionKind === "trigger"
-      ? await executeTriggerEvent(resolved.document, {
-        trigger_ref: targetRef,
-        event_id: nonEmptyString(request.event_id) ?? `sandbox-event-${runId}`,
-        source_kind: nonEmptyString(request.source_kind) ?? sandboxTriggerSourceKind(resolved.document, targetRef),
-        arguments: isPlainObject(request.inputs) ? request.inputs : {},
-      }, runtimeOptions)
+      ? await executeTriggerEvent(resolved.document, triggerEvent, runtimeOptions)
       : await executeAirDocument(resolved.document, {
         ...runtimeOptions,
         entryRef: targetRef,
         inputs: isPlainObject(request.inputs) ? request.inputs : {},
       }));
+    triggerState?.recordResult(triggerEvent, runtimeResult);
   } catch (cause) {
     finalizeSandboxExecutionRecord({
       operationId,
@@ -4152,6 +4207,8 @@ export async function executeProjectSandboxRun({
       throw error;
     }
     throw cause;
+  } finally {
+    triggerState?.close();
   }
 
   const completedAt = new Date().toISOString();
@@ -11563,6 +11620,7 @@ function bearerTokenFromAuthorization(authorization) {
 }
 
 export function requiredIdentityPermission(method, pathname) {
+  if (method === 'POST' && pathname === '/triggers/scheduler/acknowledge') return 'governance.apply';
   if (pathname === "/traces/explorer") return "executions.read";
   if (method === "GET" && (
     /^\/runs\/[^/]+\/trace(?:\/segments\/\d+)?$/u.test(pathname)
@@ -12337,6 +12395,11 @@ export function checkToubaProjectState(options = {}) {
       ["effectJournalPath", DEFAULT_EFFECT_JOURNAL_PATH, auditSqliteEffectJournal],
       ["interactionSessionsPath", DEFAULT_INTERACTION_SESSIONS_PATH, path => ({ schema_version: INTERACTION_SESSION_STORE_SCHEMA_VERSION, sessions: readInteractionRecoveryProjections(path) })],
       ["interactionAssetsPath", DEFAULT_INTERACTION_ASSETS_PATH, auditInteractionAssets],
+      ['schedulerPath', '.touba/trigger-scheduler.sqlite', path => {
+        const records = schedulerStore(path).read();
+        return { schema_version:'touba-scheduler-store-v1', records,
+          active_operations: records.filter(row => ['running','pending','interrupted'].includes(row.status)).length };
+      }],
     ]) {
       const path = resolve(options[key] ?? join(projectRoot, fallback));
       copies[key] = join(temporary, key + ".sqlite");
@@ -12450,6 +12513,8 @@ function parseArgs(rawArgs) {
       options.identityControlPlaneUrl = requiredValue(arg, rawArgs, ++index);
     } else if (arg === '--cloud-notifications') {
       options.cloudNotifications = true;
+    } else if (arg === '--schedule-triggers') {
+      options.scheduleTriggers = true;
     } else if (arg === "--identity-service-token-env") {
       options.identityServiceTokenEnv = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--deployment-target-url") {
@@ -12581,6 +12646,7 @@ function usage() {
     "--client-origin <https://host[:port]> authorizes one exact browser origin (repeatable, maximum 16); requires authentication.",
     "--max-pending-approvals <n> sets the pending approval capacity (default 100, maximum 10000).",
     "--cloud-notifications forwards minimized operational events to the configured Cloud in the background; no effect on project authority.",
+    "--schedule-triggers runs enabled, prepared schedule entrypoints with this server's explicit hosts and secrets; one worker, no catch-up replay.",
     "--human-approval-host and --agent-decision-provider accept JavaScript (.mjs) and Python (.py) host modules.",
     "--package-hosts activates the reviewed touba.hosts.json package selections at startup; it cannot be combined with explicit host paths.",
     "--package-registry URL --package-registry-trust FILE enables signed Library previews with consumer-selected local trust; no server-side registry requests.",
@@ -12628,6 +12694,8 @@ function usage() {
     "  POST /interaction-assets",
     "  GET  /interaction-assets/<handle>",
     "  GET  /triggers",
+    "  GET  /triggers/scheduler",
+    "  POST /triggers/scheduler/acknowledge",
     "  POST /triggers/fire",
     "  GET  /triggers/queue-health",
     "  GET  /supply-chain/status",

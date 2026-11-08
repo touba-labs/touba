@@ -566,6 +566,7 @@ function serveUsage() {
     "",
     "Starts the Touba project server for authenticated project clients.",
     "--max-pending-approvals <n> sets pending approval capacity (default 100, maximum 10000).",
+    "--schedule-triggers runs enabled schedule entrypoints with the server's reviewed hosts and secrets; inspect and review interruptions in client.",
     "--check-state validates stored state offline, without loading host modules.",
     "--package-registry URL --package-registry-trust FILE enables signed Library previews with local trust.",
     "--trigger-state <path.sqlite> --trigger-queue <path.sqlite> observes existing trigger stores read-only.",

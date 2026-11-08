@@ -57,6 +57,45 @@ every <n>h
 
 Un cron complet reste hors périmètre du runner.
 
+### Planifier dans un projet administré par client
+
+Exposez le trigger dans `entrypoints` de `touba.project.json`, préparez le projet,
+Le serveur peut ensuite gérer ses échéances :
+
+```sh title="Terminal"
+touba serve --schedule-triggers \
+  --agent-decision-provider hosts/decision.mjs \
+  --human-approval-host hosts/approval.mjs \
+  --secrets touba.secrets.dev.json
+```
+
+Conservez vos options de connexion Cloud. Les modules hôtes et secrets sont ceux
+explicitement configurés par l'exploitant. L'interface ne les charge pas à chaud.
+L'option de planification reste désactivée par défaut.
+
+client affiche les prochaines échéances, le dernier résultat, les occurrences
+manquées et les interruptions. Le serveur traite un run à la fois. Une décision
+humaine en attente bloque les nouvelles occurrences du même trigger. Elle peut
+être approuvée et reprise dans client, y compris après redémarrage.
+
+Les intervalles suivent les bornes UTC. Un nouveau plan commence à l'échéance
+suivante. Après une interruption du service, les occurrences intermédiaires sont
+comptées comme manquées ; une seule occurrence courante peut démarrer. Une
+horloge reculée ne rejoue pas les anciennes échéances. Le registre d'admission
+SQLite applique le rejeu et `max_runs_per_day` aussi aux appels manuels depuis
+client.
+
+Si le serveur s'arrête au milieu d'un run, le plan reste interrompu. Après examen
+de ses traces et effets, un responsable autorisé peut **Revoir l'interruption**,
+avec un motif. Cela autorise les prochaines échéances sans rejouer le run ancien.
+Les reprises métier d'un effet externe restent régies par son contrat d'idempotence.
+
+Limites de ce premier ordonnanceur : un serveur par racine de projet, un worker,
+100 plans conservés et 2 Mio d'état de planification. L'état du planificateur est
+dans `.touba/trigger-scheduler.sqlite` ; l'admission des événements demeure dans
+`.touba/triggers.sqlite`. Conservez les deux avec les traces et checkpoints lors
+des sauvegardes. Le service webhook indépendant garde ses propres procédures.
+
 ## 2. Compiler
 
 ```sh title="Terminal"
@@ -341,14 +380,14 @@ donc pas `exactly-once` ni un rapprochement automatique.
 - Le manifest active explicitement chaque trigger.
 - L’état de trigger enregistre les `event_id` consommés et les refus de replay.
 - Les contrats de payload du manifest mappent des champs JSON explicites vers
-  les arguments de la stratégie cible.
+ les arguments de la stratégie cible.
 - Les signatures HMAC, retries bornés, reprises d’entrées `processing` et états
-  dead-letter sont supportés par le service webhook.
+ dead-letter sont supportés par le service webhook.
 - La propriété de queue et du journal est locale à un processus. Le package
-  doit honorer réellement la clé idempotente ou le rapprochement déclaré.
+ doit honorer réellement la clé idempotente ou le rapprochement déclaré.
 - La CLI, le SDK, le service de triggers et le serveur projet raccordent un
-  journal d'effets, avec des identités de portée propres à chaque hôte.
+ journal d'effets, avec des identités de portée propres à chaque hôte.
 - Les schedulers distribués, queues distribuées, adapters cloud, auto-discovery
-  de manifest, déclenchements directs d’agents et certifications réglementaires
-  relèvent des couches plateforme environnantes.
+ de manifest, déclenchements directs d’agents et certifications réglementaires
+ relèvent des couches plateforme environnantes.
 :::

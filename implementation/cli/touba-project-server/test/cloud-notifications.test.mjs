@@ -51,6 +51,7 @@ test('journal gaps are explicit and malformed cursor or receipt never acknowledg
   writeFileSync(path, '{}', { mode: 0o600 }); await notifier.flush();
   assert.equal(notifier.status().error, 'notification_cursor_invalid'); assert.equal(received.length, 1);
   assert.equal(notificationForEvent({ type: 'human_decision.accepted', payload: { password: 'secret' } }), null);
+  assert.equal(notificationForEvent({ type: 'trigger.fire.completed', emitted_at, event_id:'failed-run', payload:{status:'failure'} }).kind, 'execution_failed');
 });
 
 test('observer reads a real dead-letter queue without modifying claims', async t => {

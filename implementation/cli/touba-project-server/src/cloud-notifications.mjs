@@ -12,10 +12,11 @@ const descriptor = (kind, reference, instant) => {
 
 export function notificationForEvent(event) {
   const value = event.payload ?? {};
-  const kind = ['interaction.run.failed','interaction.run.interrupted'].includes(event.type) ? 'execution_failed'
+  const kind = ['interaction.run.failed','interaction.run.interrupted','trigger.schedule.interrupted'].includes(event.type) ? 'execution_failed'
+    : event.type === 'trigger.schedule.skipped' ? 'observation_gap'
     : event.type === 'human_wait.terminalized' && value.resolution_kind === 'expired' ? 'approval_expired'
     : ['sandbox_run.completed','sandbox_run.resumed','trigger.fire.completed'].includes(event.type)
-      ? ['error','failed'].includes(value.status) ? 'execution_failed' : null : null;
+      ? ['error','failed','failure'].includes(value.status) ? 'execution_failed' : null : null;
   return kind ? descriptor(kind, value.request_id ?? value.operation_id ?? value.run_id ?? event.event_id, event.emitted_at) : null;
 }
 

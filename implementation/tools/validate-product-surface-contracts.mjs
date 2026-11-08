@@ -59,6 +59,7 @@ export const PRODUCT_SURFACE_CONTRACTS = Object.freeze([
   "touba-run-trace-export-v1",
   "touba-native-trace-index-v1",
   "touba-trigger-status-v1",
+  "touba-trigger-scheduler-v1",
   "touba-trigger-queue-health-v1",
   "touba-supply-chain-status-v1",
   "touba-governance-readiness-v1",

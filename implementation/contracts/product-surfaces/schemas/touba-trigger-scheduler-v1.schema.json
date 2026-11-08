@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-trigger-scheduler-v1.schema.json",
+  "title": "touba-trigger-scheduler-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "enabled", "status", "error", "last_poll_at", "schedules"],
+  "properties": {
+    "schema_version": {"const": "touba-trigger-scheduler-v1"},
+    "enabled": {"type": "boolean"},
+    "status": {"enum": ["starting", "disabled", "ready", "error"]},
+    "error": {"type": ["string", "null"]},
+    "last_poll_at": {"type": ["string", "null"]},
+    "schedules": {"type": "array", "maxItems": 100, "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["trigger_ref", "signature", "interval_ms", "slot", "status", "run_id", "error", "skipped", "next_run_at", "active"],
+      "properties": {
+        "trigger_ref": {"type": "string", "maxLength": 512},
+        "signature": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "interval_ms": {"type": "integer", "minimum": 1000, "maximum": 2147483647},
+        "slot": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["waiting", "running", "pending", "success", "failed", "interrupted"]},
+        "run_id": {"type": ["string", "null"]},
+        "error": {"type": ["string", "null"]},
+        "skipped": {"type": "integer", "minimum": 0},
+        "next_run_at": {"type": ["string", "null"]},
+        "active": {"type": "boolean"}
+      }
+    }}
+  }
+}

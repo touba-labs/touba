@@ -10,6 +10,7 @@ const STATE_FILES = Object.freeze([
   "project.effect-journal.sqlite", "interaction-sessions.sqlite", "interaction-assets.sqlite",
   "interaction-assets", "project-events.jsonl", "current-run-summary.json",
   "cloud-notifications.cursor.json",
+  "trigger-scheduler.sqlite",
   "current-trace-timeline.json", "native-traces", "trigger-status.json", "cost-observatory.json", "state-origin.json",
 ]);
 const fail = (code, message = code) => { throw Object.assign(new Error(message), { code }); };

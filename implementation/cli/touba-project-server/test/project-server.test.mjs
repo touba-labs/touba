@@ -467,6 +467,11 @@ test("HTTP project server enforces human sessions and permissions", async () => 
         method: "POST", headers: { "content-type": "application/json", "x-touba-identity-token": token }, body: "{}",
       });
       assert.equal(prepare.status, 403, "preparation requires governance.apply, not read, project management or proposal alone");
+      const review = await fetch(`${baseUrl}/triggers/scheduler/acknowledge`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-touba-identity-token': token },
+        body: JSON.stringify({trigger_ref:'trigger:demo/Job',run_id:'schedule_'+'a'.repeat(40),reason:'Review'}),
+      });
+      assert.equal(review.status, 403, 'schedule recovery requires governance.apply');
     }
 
     const operatorWrite = await fetch(`${baseUrl}/project/refresh`, {

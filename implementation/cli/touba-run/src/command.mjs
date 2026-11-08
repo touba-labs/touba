@@ -7,6 +7,7 @@ import { traceOutputChunks, writeChunks, writeTraceFile } from "./trace-output.m
 import { buildRunSummary } from "./trace-summary.mjs";
 import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
 import { createSqliteTriggerStore } from "../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs";
+import { parseTriggerRunnerSchedule } from "../../../runtime/touba-runtime/src/trigger-schedule.mjs";
 import { projectTracePath } from "../../../runtime/touba-runtime/src/project-trace-path.mjs";
 import { createHostModuleLoader } from "./host-modules.mjs";
 import { openLocalHandlerDiagnostics } from "../../../runtime/touba-runtime/src/handler-diagnostics.mjs";
@@ -2459,37 +2460,6 @@ async function executeTriggerEventWithState(document, triggerEvent, executionOpt
   });
   triggerState.recordResult(triggerEvent, result);
   return result;
-}
-
-function parseTriggerRunnerSchedule(value) {
-  if (typeof value !== "string") {
-    return { ok: false, reason: "schedule_not_text" };
-  }
-  const match = /^every ([1-9][0-9]*)(s|m|h)$/u.exec(value.trim());
-  if (!match) {
-    return { ok: false, reason: "unsupported_interval_format" };
-  }
-  const amount = Number(match[1]);
-  if (!Number.isSafeInteger(amount)) {
-    return { ok: false, reason: "interval_not_safe_integer" };
-  }
-  const unitMs = {
-    s: 1000,
-    m: 60 * 1000,
-    h: 60 * 60 * 1000,
-  }[match[2]];
-  const delayMs = amount * unitMs;
-  if (!Number.isSafeInteger(delayMs) || delayMs > 2147483647) {
-    return { ok: false, reason: "interval_exceeds_timer_limit" };
-  }
-  return {
-    ok: true,
-    delayMs,
-    interval: {
-      amount,
-      unit: match[2],
-    },
-  };
 }
 
 function localTriggerEventId(trigger, runIndex) {
