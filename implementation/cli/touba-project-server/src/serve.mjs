@@ -9,6 +9,7 @@ import { createProjectValidation, validationStore } from './project-validation.m
 import { inspectHandlerImplementation } from './handler-implementation.mjs';
 import { createSqliteTriggerStore } from '../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs';
 import { registerEventClient, writeSse } from "./event-clients.mjs";
+import { setProjectMetadataScope, projectMetadataResponse } from './project-metadata.mjs';
 import { readChangeProposals, saveChangeProposals, pageChangeProposals, countChangeProposals, auditChangeProposals } from "./change-store.mjs";
 import { createProjectTraceExplorer } from "./trace-explorer-surface.mjs";
 import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT } from "./package-surface.mjs";
@@ -1326,6 +1327,7 @@ function createProjectServerWithLease(options, takeLease) {
           return;
         }
         humanIdentity = identityResult;
+        setProjectMetadataScope(response, humanIdentity, projectRoot);
         assertApplicationRoute(identityResult, request.method, url.pathname,
           sessionId => getInteractionSession({ sessionId, sessionsPath: interactionSessionsPath }));
         applicationAdmission(identityResult, request.method);
@@ -11787,6 +11789,7 @@ export async function authorizeHumanIdentity({
     allowed: active
       && (permissions.includes("*") || permissions.includes(permission)),
     organization_id: result.organization_id,
+    audience: result.audience,
     permissions: permissions.filter(value => typeof value === "string"),
     session_id: result.session_id,
     user: result.user,
@@ -11917,7 +11920,7 @@ async function readBinaryBody(request, limit) {
 
 function writeJson(response, statusCode, body) {
   response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
-  response.end(`${JSON.stringify(body, null, 2)}\n`);
+  response.end(`${JSON.stringify(projectMetadataResponse(response, body), null, 2)}\n`);
 }
 
 function safeHeaderFileName(value) {

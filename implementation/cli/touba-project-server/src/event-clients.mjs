@@ -1,5 +1,6 @@
 // Live delivery and replay use the same permission boundary. New event kinds
 // remain private until their audience has been declared here.
+import { projectMetadataEvent } from './project-metadata.mjs';
 const clients = new WeakMap();
 export function eventVisibleToIdentity(type, identity) {
   if (identity === null) return true; // Explicit project-bearer mode.
@@ -37,7 +38,7 @@ export function registerEventClient(response, identity, { onClose = () => {}, he
 export function writeSse(response, event, data) {
   if (response.destroyed || response.writableEnded) return;
   if (!eventVisibleToIdentity(event, clients.get(response))) return;
-  const frame = `${typeof data?.event_id === "string" ? `id: ${data.event_id}\n` : ""}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const frame = `${typeof data?.event_id === "string" ? `id: ${data.event_id}\n` : ""}event: ${event}\ndata: ${JSON.stringify(projectMetadataEvent(response, event, data))}\n\n`;
   // Never accumulate an unbounded queue behind a disconnected/slow browser.
   if (response.writableLength + Buffer.byteLength(frame) > 1024 * 1024) { response.destroy(); return; }
   response.write(frame);
