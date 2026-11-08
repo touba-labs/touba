@@ -8,6 +8,8 @@ import {
   buildDeploymentBundle,
   createRevisionStore,
   deploymentReadinessChecks,
+  deploymentProjectScope,
+  deploymentTargetRequest,
   verifyDeploymentBundle,
 } from "../src/index.mjs";
 import { createDeploymentTargetService } from "../src/serve.mjs";
@@ -278,6 +280,40 @@ test("deployment target requires strong authentication and TLS outside loopback"
     await service.stop();
     rmSync(storageRoot, { recursive: true, force: true });
   }
+});
+
+test("shared target keeps project revisions, activation and rollback disjoint", async t => {
+  const a = createProject(), b = createProject();
+  const storageRoot = mkdtempSync(join(tmpdir(), "touba-deployment-scopes-"));
+  t.after(() => { a.dispose(); b.dispose(); rmSync(storageRoot, { recursive: true, force: true }); });
+  const target = createDeploymentTargetService({ port: 0, storageRoot, token: TOKEN });
+  const address = await target.start(); t.after(() => target.stop());
+  const originA = deploymentProjectScope(a.root), originB = deploymentProjectScope(b.root);
+  assert.notEqual(originA, originB, "same project display name is not an origin identity");
+  const call = (projectScope, path, body) => deploymentTargetRequest({
+    targetUrl: `http://127.0.0.1:${address.port}`, token: TOKEN, projectScope, path,
+    ...(body === undefined ? {} : { method: "POST", body }),
+  });
+  const bundle = buildDeploymentBundle({ projectRoot: a.root, profile: "dev" });
+  // Legacy history cannot be adopted automatically by either project.
+  await call(undefined, "/revisions", { bundle, published_by: "legacy" });
+  assert.equal((await call(originA, "/revisions")).revisions.length, 0);
+  const published = await call(originA, "/revisions", { bundle, published_by: "a" });
+  const revision = published.revision.revision_id;
+  const emptyB = await call(originB, "/revisions");
+  assert.equal(emptyB.revisions.length, 0);
+  await assert.rejects(call(originB, `/revisions/${revision}/activate`, {
+    activated_by: "b", expected_state: emptyB.state_digest,
+  }), { code: "ToubaDeploymentRevisionNotFound" });
+  const active = await call(originA, `/revisions/${revision}/activate`, {
+    activated_by: "a", expected_state: published.state_digest,
+  });
+  await assert.rejects(call(originB, "/rollback", { rolled_back_by: "b", expected_state: emptyB.state_digest }),
+    { code: "ToubaDeploymentRollbackUnavailable" });
+  assert.equal((await call(originA, "/revisions")).current_revision_id, active.current_revision_id);
+  assert.equal((await call(originB, "/revisions")).current_revision_id, null);
+  assert.equal((await call(undefined, "/revisions")).revisions.length, 1);
+  await assert.rejects(call("../escape", "/revisions"), { code: "ToubaDeploymentProjectScopeInvalid" });
 });
 
 function createProject() {

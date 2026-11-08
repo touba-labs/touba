@@ -3007,6 +3007,11 @@ function readBindingFragment(fragmentPath, diagnostics) {
     return null;
   }
 
+  return validateBindingFragmentDocument(document, diagnostics, fragmentPath);
+}
+
+export function validateBindingFragmentDocument(document, diagnostics = [], fragmentPath = "<fragment>") {
+
   if (!document || typeof document !== "object" || Array.isArray(document)) {
     diagnostics.push(errorDiagnostic("BindingFragmentSchemaMismatch", "binding fragment must be a JSON object", {
       fragment_path: fragmentPath,

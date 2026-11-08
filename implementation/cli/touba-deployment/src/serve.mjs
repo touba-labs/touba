@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { createServer as createSecureServer } from "node:https";
 import { readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createRevisionStore } from "./index.mjs";
@@ -26,9 +26,7 @@ export function createDeploymentTargetService(options = {}) {
   if (secure && (options.tlsCertPath === undefined || options.tlsKeyPath === undefined)) {
     throw targetError("ToubaDeploymentTlsInvalid", "TLS requires both certificate and key");
   }
-  const store = createRevisionStore({
-    storageRoot: resolve(options.storageRoot ?? ".touba-deployment-target"),
-  });
+  const storageRoot = resolve(options.storageRoot ?? ".touba-deployment-target");
   const listener = async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", `${secure ? "https" : "http"}://${request.headers.host ?? `${host}:${port}`}`);
@@ -44,6 +42,16 @@ export function createDeploymentTargetService(options = {}) {
         writeJson(response, 401, { status: "error", code: "ToubaDeploymentUnauthorized" });
         return;
       }
+      const scopedRoute = /^\/projects\/([a-f0-9]{64})(\/.*)$/u.exec(url.pathname);
+      if (url.pathname.startsWith("/projects/") && scopedRoute === null) {
+        throw targetError("ToubaDeploymentProjectScopeInvalid", "invalid project scope");
+      }
+      const scope = scopedRoute?.[1];
+      if (scopedRoute) url.pathname = scopedRoute[2];
+      // A scoped client cannot list, activate or roll back another project's
+      // history. Legacy unscoped revisions remain isolated and untouched.
+      const store = createRevisionStore({ storageRoot: scope === undefined ? storageRoot : join(storageRoot, "projects", scope) });
+      if (scope !== undefined) response.setHeader("x-touba-project-scope", scope);
       if (request.method === "GET" && url.pathname === "/revisions") {
         writeJson(response, 200, store.list());
         return;

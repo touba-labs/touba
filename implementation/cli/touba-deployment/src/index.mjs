@@ -6,6 +6,7 @@ import {
   lstatSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -13,6 +14,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostname } from "node:os";
 
 import { loadToolBindingManifestFromJson } from "@touba/runtime";
 import { verifyInstalledPackages } from "../../touba-project/src/package-store.mjs";
@@ -20,6 +22,13 @@ import { readPackageHostPlan } from "../../touba-project/src/package-host-plan.m
 
 export const DEPLOYMENT_BUNDLE_SCHEMA_VERSION = "touba-deployment-bundle-v1";
 export const DEPLOYMENT_STATUS_SCHEMA_VERSION = "touba-deployment-status-v1";
+
+// Derived by the project server, never accepted from a client action payload.
+// Different checkouts/hosts are distinct deployment origins. Moving an origin
+// requires a reviewed republication, not an implicit adoption by display name.
+export function deploymentProjectScope(projectRoot) {
+  return sha256(Buffer.from(JSON.stringify(["touba-deployment-origin-v1", hostname(), realpathSync(projectRoot)])));
+}
 
 const COMPILER_PATH = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
 const MAX_ARTIFACTS = 1000;
@@ -370,6 +379,7 @@ export async function deploymentTargetRequest({
   method = "GET",
   path,
   body,
+  projectScope,
   fetchImpl = fetch,
   timeoutMs = 30_000,
   maxResponseBytes = 16 * 1024 * 1024,
@@ -379,7 +389,7 @@ export async function deploymentTargetRequest({
     || !(base.protocol === "https:" || (base.protocol === "http:" && isLoopbackHost(base.hostname)))) {
     throw deploymentError("ToubaDeploymentInsecureTargetRejected", "remote deployment targets require HTTPS");
   }
-  const destination = new URL(path, base);
+  let destination = new URL(path, base);
   if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")
     || destination.origin !== base.origin || destination.username || destination.password || destination.hash) {
     throw deploymentError("ToubaDeploymentTargetPathInvalid", "deployment request must remain on the configured target");
@@ -390,6 +400,16 @@ export async function deploymentTargetRequest({
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
     || !Number.isInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > 16 * 1024 * 1024) {
     throw deploymentError("ToubaDeploymentTargetLimitsInvalid", "deployment response limits are invalid");
+  }
+  if (projectScope !== undefined && !/^[a-f0-9]{64}$/u.test(projectScope)) {
+    throw deploymentError("ToubaDeploymentProjectScopeInvalid", "deployment project scope must be a SHA-256 identifier");
+  }
+  if (projectScope !== undefined) destination = new URL(`/projects/${projectScope}${path}`, base);
+  if (projectScope !== undefined && method !== "GET") {
+    // An older target ignores the scope header. Establish support with a read
+    // before any write; a failed negotiation must not publish globally.
+    await deploymentTargetRequest({ targetUrl, token, path: "/revisions", projectScope,
+      fetchImpl, timeoutMs, maxResponseBytes });
   }
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), timeoutMs);
@@ -405,6 +425,9 @@ export async function deploymentTargetRequest({
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    if (projectScope !== undefined && response.ok && response.headers.get("x-touba-project-scope") !== projectScope) {
+      throw deploymentError("ToubaDeploymentProjectScopeUnsupported", "deployment target does not confirm project isolation; update the target before retrying");
+    }
     if (Number(response.headers.get("content-length")) > maxResponseBytes || !response.body) {
       throw deploymentError("ToubaDeploymentTargetResponseInvalid", "deployment response is empty or exceeds its size limit");
     }

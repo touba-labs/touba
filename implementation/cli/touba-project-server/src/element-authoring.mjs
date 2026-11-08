@@ -8,7 +8,10 @@ import { basename, join, relative } from "node:path";
 import { isAuthoringTypeReference } from "../../../contracts/product-surfaces/input-contracts.mjs";
 import { effectContractToJson, normalizeEffectContract } from "../../touba-manifest/src/effect-contract.mjs";
 import { generateHandlerStubFromAirTool } from "../../touba-manifest/src/stub.mjs";
+import { handlerRelativePathForTool } from "../../touba-manifest/src/requirements.mjs";
 import { projectPythonCommand } from "../../touba-manifest/src/python-sdk-dependency.mjs";
+import { compileProposedSources } from "./source-validation.mjs";
+import { readPreparedProject } from "./prepared-project.mjs";
 
 export const ELEMENT_AUTHORING_SCHEMA_VERSION = "touba-element-authoring-request-v1";
 
@@ -58,32 +61,40 @@ export function buildElementAuthoringChangeSet({ projectRoot, request }) {
   }];
 
   if (normalized.element.kind === "tool") {
+    const compiled = compileProposedSources({ projectRoot, targets: changes });
+    const tool = compiled.air?.definitions?.tools?.find(item => item.id === elementRef);
+    if (!tool) throw Object.assign(authoringError("ToubaServeChangeValidationFailed", "tool declaration failed project compilation"), { diagnostics: compiled.diagnostics });
     const configPath = join(projectRoot, "touba.project.json");
-    const language = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")).language ?? "javascript" : "javascript";
+    const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : null;
+    const language = config?.language ?? "javascript";
     if (!["javascript", "python"].includes(language)) throw authoringError("ToubaServeElementAuthoringInvalid", "project SDK language is unsupported");
-    const handlerPath = handlerRelativePath(normalized.module_ref, normalized.element.name, language);
-    changes.push({
-      path: "touba.manifest.json",
-      content: renderManifest({
+    const handlerPath = handlerRelativePathForTool(tool, { handlerExtension: language === "python" ? "py" : "mjs" });
+    const binding = renderToolBinding({
         projectRoot,
         moduleRef: normalized.module_ref,
         element: normalized.element,
         handlerPath,
         language,
-      }),
-      role: "manifest",
+        cwd: config ? "../../.." : ".",
     });
+    if (config) {
+      changes.push(...persistentToolBinding({ projectRoot, config, toolRef: elementRef, binding }));
+    } else {
+      const manifest = readManifest(projectRoot);
+      if (Object.hasOwn(manifest.bindings, elementRef)) throw authoringError("ToubaServeElementAlreadyExists", `${elementRef} already has a manifest binding`);
+      manifest.bindings[elementRef] = binding;
+      changes.push({ path: "touba.manifest.json", content: stableJson(manifest), role: "manifest" });
+    }
     changes.push({
       path: handlerPath,
-      content: generateHandlerStubFromAirTool({ id: elementRef, name: normalized.element.name,
-        signature: { inputs: normalized.element.takes, output_type: normalized.element.gives },
-        required_capabilities: normalized.element.requirements, required_secrets: normalized.element.secrets,
-      }, { language }),
+      content: generateHandlerStubFromAirTool(tool, { language }),
       role: "handler_stub",
     });
   }
 
-  if (normalized.element.kind === "trigger") {
+  // Modern preparation derives disabled trigger entries from the compiled source.
+  // Do not write a second root manifest that canonical prepare never reads.
+  if (normalized.element.kind === "trigger" && !existsSync(join(projectRoot, "touba.project.json"))) {
     changes.push({
       path: "touba.manifest.json",
       content: renderTriggerManifest({
@@ -206,9 +217,6 @@ export function normalizeElementAuthoringRequest(request) {
   }
   const handler = normalizeHandler(request.element.handler, kind);
   const trigger = normalizeTrigger(request.element.trigger, kind);
-  if (kind === "agent" && uses.length === 0) {
-    throw authoringError("ToubaServeElementAuthoringInvalid", "agents must declare at least one governed capability");
-  }
   if (kind === "agent" && callableBy.length === 0) {
     throw authoringError("ToubaServeElementAuthoringInvalid", "agents must declare at least one callable_by strategy");
   }
@@ -322,18 +330,13 @@ function renderTriggerBody(lines, trigger, moduleRef) {
   lines.push(`        timeout_ms as ${trigger.timeout_ms}`);
 }
 
-function renderManifest({ projectRoot, moduleRef, element, handlerPath, language }) {
-  const manifest = readManifest(projectRoot);
-  const toolRef = `tool:${moduleRef}/${element.name}`;
-  if (Object.hasOwn(manifest.bindings, toolRef)) {
-    throw authoringError("ToubaServeElementAlreadyExists", `${toolRef} already has a manifest binding`);
-  }
+function renderToolBinding({ projectRoot, moduleRef, element, handlerPath, language, cwd }) {
   const binding = {
     handler: {
       kind: "process",
-      command: language === "python" ? projectPythonCommand(projectRoot) : "node",
+      command: language === "python" ? projectPythonCommand(projectRoot) : process.execPath,
       args: [handlerPath],
-      cwd: ".",
+      cwd,
     },
     grants: [...element.requirements],
     effect_contract: element.handler.effect_contract,
@@ -352,8 +355,31 @@ function renderManifest({ projectRoot, moduleRef, element, handlerPath, language
   if (element.handler.sandbox_required) {
     binding.sandbox = { required: true };
   }
-  manifest.bindings[toolRef] = binding;
-  return stableJson(manifest);
+  return binding;
+}
+
+function persistentToolBinding({ projectRoot, config, toolRef, binding }) {
+  const path = "touba.bindings.json";
+  const fragments = config.configuration?.binding_fragments ?? [];
+  // Preserve previously reviewed bindings when adding the first explicit fragment.
+  // Stale preparation must be reconciled first, not copied into new authority.
+  const prepared = readPreparedProject(projectRoot);
+  const manifestInput = prepared?.inputs.find(item => item.kind === "manifest");
+  const previous = fragments.length === 0 && manifestInput
+    ? JSON.parse(readFileSync(join(projectRoot, manifestInput.path), "utf8")).bindings : {};
+  const fragment = existsSync(join(projectRoot, path))
+    ? JSON.parse(readFileSync(join(projectRoot, path), "utf8"))
+    : { fragment_schema_version: "touba-binding-fragment-v1", source: { kind: "project" }, bindings: previous };
+  if (fragment.fragment_schema_version !== "touba-binding-fragment-v1" || fragment.source?.kind !== "project" || !isRecord(fragment.bindings)) {
+    throw authoringError("ToubaServeElementManifestInvalid", `${path} must be a project binding fragment`);
+  }
+  if (Object.hasOwn(fragment.bindings, toolRef)) throw authoringError("ToubaServeElementAlreadyExists", `${toolRef} already has a fragment binding`);
+  fragment.bindings[toolRef] = binding;
+  return [
+    { path, content: stableJson(fragment), role: "manifest" },
+    { path: "touba.project.json", content: stableJson({ ...config, configuration: { ...config.configuration,
+      binding_fragments: [...new Set([...fragments, path])] } }), role: "manifest" },
+  ];
 }
 
 function renderTriggerManifest({ projectRoot, moduleRef, element }) {
@@ -388,7 +414,7 @@ function validateElementReferences(request, declarations) {
   for (const reference of references) {
     const canonical = canonicalElementRef(reference, moduleRef);
     if (!declarations.has(canonical)) {
-      throw authoringError("ToubaServeElementReferenceUnknown", `${canonical} is not declared in ${moduleRef}`);
+      throw authoringError("ToubaServeElementReferenceUnknown", `${canonical} is not declared or imported in ${moduleRef}`);
     }
   }
   if (element.kind === "agent") {
@@ -451,6 +477,9 @@ function declaredElements(content, moduleRef) {
   DECLARATION.lastIndex = 0;
   for (const match of content.matchAll(DECLARATION)) {
     refs.add(`${match[1]}:${moduleRef}/${match[2]}`);
+  }
+  for (const match of content.matchAll(/^import\s+(function|tool|skill|agent|strategy)\s+([A-Za-z][A-Za-z0-9_]*)\s+from\s+([a-z][a-z0-9_.]*)\s*$/gmu)) {
+    refs.add(`${match[1]}:${match[3]}/${match[2]}`);
   }
   return refs;
 }
@@ -611,12 +640,6 @@ function parseElementRef(value, moduleRef) {
   const raw = nonEmptyString(value, "element reference");
   const qualified = raw.match(/^([a-z_]+):([a-z][a-z0-9_.]*)\/([A-Za-z][A-Za-z0-9_]*)$/u);
   if (qualified !== null) {
-    if (qualified[2] !== moduleRef) {
-      throw authoringError(
-        "ToubaServeElementCrossModuleReferenceRejected",
-        "element authoring currently accepts references from the edited module only",
-      );
-    }
     return { kind: qualified[1], module_ref: qualified[2], name: qualified[3] };
   }
   const local = raw.match(/^([a-z_]+):([A-Za-z][A-Za-z0-9_]*)$/u);
@@ -633,10 +656,6 @@ function canonicalElementRef(value, moduleRef) {
 
 function localRefName(value, moduleRef) {
   return parseElementRef(value, moduleRef).name;
-}
-
-function handlerRelativePath(moduleRef, name, language) {
-  return `handlers/${moduleRef.replaceAll(".", "/")}/${snakeCase(name)}.handler.${language === "python" ? "py" : "mjs"}`;
 }
 
 function appendSourceBlock(content, block) {
@@ -659,10 +678,6 @@ function sortObject(value) {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, item]) => [key, sortObject(item)]),
   );
-}
-
-function snakeCase(value) {
-  return value.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").toLowerCase();
 }
 
 function uniqueStrings(value, field) {

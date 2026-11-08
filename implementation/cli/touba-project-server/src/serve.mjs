@@ -6,6 +6,9 @@ import { readChangeProposals, saveChangeProposals, pageChangeProposals, countCha
 import { createProjectTraceExplorer } from "./trace-explorer-surface.mjs";
 import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT } from "./package-surface.mjs";
 import { createProjectPreparation } from "./project-preparation.mjs";
+import { validateBindingFragmentDocument } from "../../touba-project/src/project.mjs";
+import { compileProposedSources } from "./source-validation.mjs";
+import { isDecisionContinuationRoute, decisionContinuationOnly, assertDecisionContinuation } from "./decision-continuation.mjs";
 import { toolApprovalReview, PARALLEL_APPROVAL_METADATA_FIELDS, validateParallelApprovalMetadata } from "./tool-approval-review.mjs";
 import { projectOperationBudgets } from "./operation-budgets.mjs";
 import { projectTraceStorageStatus } from "./trace-storage-status.mjs";
@@ -83,6 +86,7 @@ import {
   buildDeploymentBundle,
   deploymentReadinessChecks,
   deploymentTargetRequest,
+  deploymentProjectScope,
   verifyDeploymentBundle,
 } from "@touba/deployment";
 import {
@@ -216,6 +220,7 @@ const PROJECT_SCAN_EXCLUDED_DIRS = Object.freeze(new Set([
 const NAMED_PROJECT_ARTIFACTS = Object.freeze(new Set([
   "touba.project.json",
   "touba.manifest.json",
+  "touba.bindings.json",
   "touba.package.json",
   "touba.ownership.json",
   "touba.lock.json",
@@ -231,6 +236,7 @@ const AIR_ENTRYPOINT_KINDS = Object.freeze({
 });
 const CHANGE_TARGET_JSON_FILES = Object.freeze(new Set([
   "touba.hosts.json",
+  "touba.bindings.json",
   "touba.project.json",
   "touba.manifest.json",
   "touba.package.json",
@@ -1252,7 +1258,9 @@ function createProjectServerWithLease(options, takeLease) {
           });
           return;
         }
-        if (!identityResult.allowed) {
+        const reviewerContinuation = isDecisionContinuationRoute(request.method, url.pathname)
+          && identityResult.permissions.includes("decisions.act");
+        if (!identityResult.allowed && !reviewerContinuation) {
           writeJson(response, 403, {
             status: "error",
             code: "ToubaServeIdentityPermissionDenied",
@@ -1314,6 +1322,8 @@ function createProjectServerWithLease(options, takeLease) {
             pending_review: "/reviews/pending/current",
             human_decisions: "/decisions",
             sandbox_resume: "/runs/sandbox/resume",
+            decision_continuation: "/runs/sandbox/resume",
+            interaction_decision_continuation: "/interactions/sessions/<session_id>/resume",
             interaction_sessions: "/interactions/sessions",
             interaction_message: "/interactions/sessions/<session_id>/messages",
             interaction_resume: "/interactions/sessions/<session_id>/resume",
@@ -1845,7 +1855,7 @@ function createProjectServerWithLease(options, takeLease) {
           inputs: body.inputs,
           ...(executionKind === "trigger" ? {
             event_id: body.event_id ?? `interaction-${body.message_id}`,
-            source_kind: body.source_kind ?? "request",
+            ...(body.source_kind ? { source_kind: body.source_kind } : {}),
           } : {}),
           requested_by: body.requested_by,
           reason: `Project interaction ${session.session_id}`,
@@ -1893,6 +1903,12 @@ function createProjectServerWithLease(options, takeLease) {
       if (request.method === "POST" && interactionResumeMatch !== null) {
         const sessionId = decodeURIComponent(interactionResumeMatch[1]);
         const body = await readJsonBody(request);
+        if (decisionContinuationOnly(humanIdentity)) {
+          const record = typeof body?.request_id === "string" && !Object.hasOwn(body, "operation_id")
+            ? loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: body.request_id }]).records
+              .find(candidate => candidate.request_id === body.request_id) : null;
+          assertDecisionContinuation(humanIdentity, body, record);
+        }
         const durableResume = isPlainObject(body) && Object.hasOwn(body, "operation_id");
         if (durableResume) {
           const normalized = normalizeDurableResumeRequest(body);
@@ -2040,6 +2056,7 @@ function createProjectServerWithLease(options, takeLease) {
             accessToken: request.headers["x-touba-identity-token"],
             controlPlaneUrl: identityControlPlaneUrl,
             serviceToken: identityServiceToken,
+            permission: decisionContinuationOnly(humanIdentity) ? "decisions.act" : "executions.run",
           }),
           operation: resumeValidation.operation,
           request: body,
@@ -2225,6 +2242,7 @@ function createProjectServerWithLease(options, takeLease) {
         const result = await deploymentTargetRequest({
           targetUrl: deploymentTargetUrl,
           token: deploymentTargetToken,
+          projectScope: deploymentProjectScope(projectRoot),
           path: "/revisions",
         });
         writeJson(response, 200, result);
@@ -2283,6 +2301,7 @@ function createProjectServerWithLease(options, takeLease) {
         const result = await deploymentTargetRequest({
           targetUrl: deploymentTargetUrl,
           token: deploymentTargetToken,
+          projectScope: deploymentProjectScope(projectRoot),
           method: "POST",
           path: "/revisions",
           body: {
@@ -2309,6 +2328,7 @@ function createProjectServerWithLease(options, takeLease) {
         const result = await deploymentTargetRequest({
           targetUrl: deploymentTargetUrl,
           token: deploymentTargetToken,
+          projectScope: deploymentProjectScope(projectRoot),
           method: "POST",
           path: `/revisions/${encodeURIComponent(revisionId)}/activate`,
           body: { activated_by: body.actor, expected_state: body.expected_state },
@@ -2331,6 +2351,7 @@ function createProjectServerWithLease(options, takeLease) {
         const result = await deploymentTargetRequest({
           targetUrl: deploymentTargetUrl,
           token: deploymentTargetToken,
+          projectScope: deploymentProjectScope(projectRoot),
           method: "POST",
           path: "/rollback",
           body: { rolled_back_by: body.actor, expected_state: body.expected_state },
@@ -2481,6 +2502,12 @@ function createProjectServerWithLease(options, takeLease) {
       }
       if (request.method === "POST" && url.pathname === "/runs/sandbox/resume") {
         const body = await readJsonBody(request);
+        if (decisionContinuationOnly(humanIdentity)) {
+          const record = typeof body?.request_id === "string" && !Object.hasOwn(body, "operation_id")
+            ? loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: body.request_id }]).records
+              .find(candidate => candidate.request_id === body.request_id) : null;
+          assertDecisionContinuation(humanIdentity, body, record);
+        }
         if (isPlainObject(body) && Object.hasOwn(body, "operation_id")) {
           validateContractPayload({
             contractsRoot,
@@ -2507,6 +2534,7 @@ function createProjectServerWithLease(options, takeLease) {
             accessToken: request.headers["x-touba-identity-token"],
             controlPlaneUrl: identityControlPlaneUrl,
             serviceToken: identityServiceToken,
+            permission: decisionContinuationOnly(humanIdentity) ? "decisions.act" : "executions.run",
           }),
           durableResumeClaimedObserver: options.durableResumeClaimedObserver,
           effectJournalPath,
@@ -6703,6 +6731,7 @@ function elementAuthoringPreviewFromChangeSet({ projectRoot, changeSet, generate
   const targets = changeSet.changes.map((change, index) => {
     const normalized = validateChangeProposal({
       projectRoot,
+      sourceTargets: changeSet.changes,
       proposal: {
         schema_version: CHANGE_PROPOSAL_SCHEMA_VERSION,
         proposal_id: `${changeSet.proposal_id}:preview:${index}`,
@@ -6804,6 +6833,7 @@ export function proposeProjectChangeSet({
     }
     const normalized = validateChangeProposal({
       projectRoot,
+      sourceTargets: changeSet.changes,
       proposal: {
         schema_version: CHANGE_PROPOSAL_SCHEMA_VERSION,
         proposal_id: `${proposalId}:${index}`,
@@ -7673,6 +7703,8 @@ function parseToubaSourceAuthority({ builder, content, path, compiledOwners }) {
     return;
   }
   const moduleName = content.match(/^\s*module\s+([A-Za-z_][\w.]*)/mu)?.[1];
+  if (moduleName) builder.addNode({ ref: `module:${moduleName}`, kind: "module", label: moduleName,
+    evidence: authorityEvidence("source", path, `${path}:1`) });
   const localRefs = new Map();
   for (const match of content.matchAll(/^([ \t]*)(memory|function|tool|skill|agent|strategy|trigger)\s+([A-Za-z_][\w]*)\b/gmu)) {
     const kind = match[2] === "memory" ? "memory" : match[2];
@@ -8261,7 +8293,7 @@ function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
-function validateChangeProposal({ projectRoot, proposal }) {
+function validateChangeProposal({ projectRoot, proposal, sourceTargets }) {
   if (!isPlainObject(proposal)) {
     throw serviceError("ToubaServeChangeInvalid", "change proposal must be a JSON object");
   }
@@ -8296,7 +8328,7 @@ function validateChangeProposal({ projectRoot, proposal }) {
     content,
     content_sha256: sha256Text(content),
   };
-  const validations = validateChangeContent(normalized, { projectRoot });
+  const validations = validateChangeContent(normalized, { projectRoot, sourceTargets });
   if (validations.some((item) => item.severity === "error")) {
     const error = serviceError("ToubaServeChangeValidationFailed", "change proposal failed validation");
     error.diagnostics = validations;
@@ -8325,12 +8357,13 @@ function validateChangeApplyRequest(request) {
   };
 }
 
-function validateChangeContent(proposal, { projectRoot } = {}) {
+function validateChangeContent(proposal, { projectRoot, sourceTargets } = {}) {
   const diagnostics = [];
   const targetPath = proposal.target.path;
   if (CHANGE_TARGET_JSON_FILES.has(basename(targetPath))) {
     try {
       const document = JSON.parse(proposal.content);
+      if (basename(targetPath) === 'touba.bindings.json' && targetPath !== 'touba.bindings.json') throw new Error('project binding fragment must be at the project root');
       if (basename(targetPath) === 'touba.hosts.json') {
         if (targetPath !== 'touba.hosts.json') throw new Error('host plan must be at the project root');
         validatePackageHostPlan(document, projectRoot);
@@ -8341,7 +8374,7 @@ function validateChangeContent(proposal, { projectRoot } = {}) {
     }
   }
   if (targetPath.endsWith(".tb")) {
-    diagnostics.push(...validateToubaSourcePatch(proposal.content, { projectRoot }));
+    diagnostics.push(...compileProposedSources({ projectRoot, targets: sourceTargets ?? [{ path: targetPath, content: proposal.content }] }).diagnostics);
   }
   if (isAllowedHandlerStubTarget(targetPath)) {
     diagnostics.push(...validateHandlerStubPatch(targetPath, proposal.content));
@@ -8357,7 +8390,7 @@ function validateChangeTargets(targets, { projectRoot } = {}) {
     for (const diagnostic of validateChangeContent({
       target: { path: target.path },
       content: target.content,
-    }, { projectRoot })) {
+    }, { projectRoot, sourceTargets: targets })) {
       diagnostics.push({
         ...diagnostic,
         message: `${target.path}: ${diagnostic.message}`,
@@ -8370,6 +8403,17 @@ function validateChangeTargets(targets, { projectRoot } = {}) {
 function validateProjectMetadataDocument(fileName, document) {
   if (!isPlainObject(document)) {
     return [serviceDiagnostic("ToubaServeChangeJsonShapeInvalid", `${fileName} must be a JSON object`)];
+  }
+  if (fileName === "touba.bindings.json") {
+    const diagnostics = [];
+    if (validateBindingFragmentDocument(document, diagnostics, fileName)) {
+      try {
+        loadToolBindingManifestFromJson(JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: document.bindings }));
+      } catch (cause) {
+        diagnostics.push(serviceDiagnostic("ToubaServeChangeManifestContractInvalid", `${fileName}: ${cause.message}`));
+      }
+    }
+    return diagnostics;
   }
   if (fileName === "touba.project.json") {
     return validateVersionedProjectMetadata({
@@ -8830,39 +8874,6 @@ function replaceFileFromTemp(tempPath, targetPath) {
 
 function writeTransactionJournal(path, journal) {
   writeFileSync(path, `${JSON.stringify(journal, null, 2)}\n`, "utf8");
-}
-
-function validateToubaSourcePatch(content, { projectRoot } = {}) {
-  const validationRoot = mkdtempSync(join(tmpdir(), "touba-project-change-"));
-  const sourcePath = join(validationRoot, "proposal.tb");
-  try {
-    writeFileSync(sourcePath, content, "utf8");
-    const result = spawnSync(process.execPath, [
-      TOUBA_CLI_PATH,
-      "compile",
-      sourcePath,
-      "--stdout",
-    ], {
-      cwd: projectRoot ?? process.cwd(),
-      env: process.env,
-      encoding: "utf8",
-    });
-    if (result.status !== 0) {
-      const details = String(result.stderr || result.stdout || "touba compile failed").trim().split(/\r?\n/u)[0];
-      return [serviceDiagnostic("ToubaServeChangeToubaCompileFailed", details || "touba compile failed")];
-    }
-    try {
-      const air = JSON.parse(result.stdout);
-      if (air?.air_schema_version !== "touba-air-v1") {
-        return [serviceDiagnostic("ToubaServeChangeToubaCompileFailed", "compiler output is not an AIR document")];
-      }
-    } catch {
-      return [serviceDiagnostic("ToubaServeChangeToubaCompileFailed", "compiler output is not valid JSON")];
-    }
-    return [];
-  } finally {
-    rmSync(validationRoot, { recursive: true, force: true });
-  }
 }
 
 function isAllowedChangeTarget(relativePath) {
@@ -11523,14 +11534,14 @@ export function filterLiveStateForIdentity(state, identity) {
   return result;
 }
 
-function executionDispatchAuthorityProvider({ accessToken, controlPlaneUrl, serviceToken }) {
+function executionDispatchAuthorityProvider({ accessToken, controlPlaneUrl, serviceToken, permission = "executions.run" }) {
   if (controlPlaneUrl === undefined) return undefined;
   return async () => {
     try {
       const identity = await authorizeHumanIdentity({
         accessToken,
         controlPlaneUrl,
-        permission: "executions.run",
+        permission,
         serviceToken,
       });
       return identity.active && identity.allowed;
@@ -11972,7 +11983,7 @@ function httpStatusForError(code) {
   if (code === "ToubaServePackagePreviewMissing") return 404;
   if (code === "ToubaServePackageConflict") return 409;
   if (code === 'ToubaServePackageInvalid' || /^(Package|Registry)[A-Za-z]+$/.test(code ?? '')) return 400;
-  if (code === "ToubaServeDecisionIdentityUnauthorized") return 403;
+  if (["ToubaServeDecisionIdentityUnauthorized", "ToubaServeDecisionContinuationDenied"].includes(code)) return 403;
   if (code === "ToubaServeTraceExplorerBusy") return 429;
   if (code === "ToubaServeTraceExplorerPathRejected") return 403;
   if (code === "ToubaServeTraceExplorerInvalid" || /^Trace[A-Za-z]+$/u.test(code ?? "")) return 400;

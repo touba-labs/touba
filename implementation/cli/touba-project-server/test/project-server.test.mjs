@@ -5111,9 +5111,11 @@ test("client authoring and deployment routes complete a governed project lifecyc
     assert.equal(toolPreviewResponse.status, 200, await toolPreviewResponse.clone().text());
     const toolPreview = await toolPreviewResponse.json();
     assertMatchesSchema("touba-element-authoring-preview-v1", toolPreview);
-    assert.equal(toolPreview.impact.file_count, 3);
+    assert.equal(toolPreview.impact.file_count, 4);
     assert.equal(toolPreview.impact.handler_stub_count, 1);
-    assert.equal(toolPreview.changes.some((change) => change.path === "touba.manifest.json"), true);
+    assert.equal(toolPreview.changes.some((change) => change.path === "touba.manifest.json"), false);
+    assert.equal(toolPreview.changes.some((change) => change.path === "touba.bindings.json"), true);
+    assert.equal(toolPreview.changes.some((change) => change.path === "touba.project.json"), true);
 
     const toolProposal = await postJson(`${baseUrl}/elements/propose`, {
       ...toolRequest,
@@ -5121,7 +5123,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
     });
     assert.equal(toolProposal.status, 202);
     const toolDraft = await toolProposal.json();
-    assert.equal(toolDraft.target_count, 3);
+    assert.equal(toolDraft.target_count, 4);
     assert.equal(JSON.stringify(toolDraft).includes("LIFECYCLE_API_TOKEN"), false);
     const toolApply = await postJson(`${baseUrl}/changes/apply`, {
       schema_version: "touba-project-change-apply-v1",
@@ -5131,7 +5133,11 @@ test("client authoring and deployment routes complete a governed project lifecyc
       reason: "Validated.",
     });
     assert.equal(toolApply.status, 202);
-    assert.equal(existsSync(join(root, "handlers", "demo", "lifecycle", "fetch_lifecycle_record.handler.mjs")), true);
+    const fragment = JSON.parse(readFileSync(join(root, "touba.bindings.json"), "utf8"));
+    const handlerPath = fragment.bindings["tool:demo.lifecycle/FetchLifecycleRecord"].handler.args[0];
+    assert.equal(existsSync(join(root, handlerPath)), true);
+    assert.match(readFileSync(join(root, handlerPath), "utf8"), /HandlerNotImplemented/u);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, "touba.project.json"), "utf8")).configuration.binding_fragments, ["touba.bindings.json"]);
     const graph = await getJson(`${baseUrl}/authority/graph`);
     assert.equal(graph.nodes.some((node) => node.ref === "tool:demo.lifecycle/FetchLifecycleRecord"), true);
 

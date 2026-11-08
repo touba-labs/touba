@@ -4,6 +4,8 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { compileProposedSources } from "../src/source-validation.mjs";
+import { buildAuthorityGraph } from "../src/serve.mjs";
 
 import {
   buildElementAuthoringChangeSet,
@@ -125,6 +127,15 @@ test("element authoring produces compilable source drafts for every Touba primit
       memories: [{ ref: `memory:${MODULE_REF}/ProjectNotes`, access: "read" }],
     },
     {
+      kind: "agent",
+      name: "DirectAnswer",
+      description: "Answers directly without external capabilities.",
+      responsibility: "Provide the answer without external effects.",
+      gives: "Text",
+      uses: [],
+      callable_by: [`strategy:${MODULE_REF}/ExistingStrategy`],
+    },
+    {
       kind: "strategy",
       name: "FormatStrategy",
       description: "Runs a bounded governed formatting operation.",
@@ -198,6 +209,8 @@ test("tool authoring creates a disabled-by-code stub and a sandboxed manifest bi
     const stub = result.changes.find((item) => item.role === "handler_stub");
     assert.match(stub.content, /HandlerNotImplemented/u);
     assert.match(stub.content, /from "@touba\/sdk"/u);
+    assert.match(stub.content, /"type_ref": "builtin:Text"/u);
+    assert.match(stub.content, /OUTPUT_TYPE = "builtin:Text"/u);
     assert.doesNotMatch(stub.content, /process\.env|fetch\s*\(/u);
   } finally {
     project.dispose();
@@ -215,6 +228,8 @@ test("tool authoring uses the canonical Python SDK and project interpreter", () 
     const stub = result.changes.find(item => item.role === "handler_stub");
     assert.ok(stub.path.endsWith(".py"));
     assert.match(stub.content, /from touba_sdk import/);
+    const inputLiteral = stub.content.match(/^INPUT_SIGNATURE = json.loads\((.*)\)$/mu)[1];
+    assert.deepEqual(JSON.parse(JSON.parse(inputLiteral)), [{ name: "request", type_ref: "builtin:Text" }]);
     assert.match(stub.content, /HandlerNotImplemented/);
     const manifest = JSON.parse(result.changes.find(item => item.role === "manifest").content);
     const binding = manifest.bindings[`tool:${MODULE_REF}/PythonLookup`];
@@ -262,7 +277,7 @@ test("element authoring rejects duplicates, cross-module references and missing 
           callable_by: [`strategy:${MODULE_REF}/ExistingStrategy`],
         }),
       }),
-      /edited module only/u,
+      /not declared or imported/u,
     );
     assert.throws(
       () => normalizeElementAuthoringRequest(requestFor({
@@ -277,6 +292,25 @@ test("element authoring rejects duplicates, cross-module references and missing 
   } finally {
     project.dispose();
   }
+});
+
+test("an empty module stays discoverable and explicitly imported capabilities can be authored", () => {
+  const project = createProject();
+  try {
+    writeFileSync(join(project.root, "src/empty.tb"), "module empty\n");
+    const graph = buildAuthorityGraph({ projectRoot: project.root });
+    assert.ok(graph.nodes.some(node => node.ref === "module:empty" && node.kind === "module"));
+    writeFileSync(join(project.root, "src/lib.tb"), 'module lib\nskill Echo\n    takes request as Text\n    gives Text\n    do\n        give request\n');
+    writeFileSync(join(project.root, "src/main.tb"), BASE_SOURCE.replace(`module ${MODULE_REF}`, `module ${MODULE_REF}\nimport skill Echo from lib`));
+    const request = requestFor({ kind: "agent", name: "ImportedAgent", description: "Uses the imported echo capability.",
+      responsibility: "Answer using the authorized imported capability.", takes: [{ name: "request", type_ref: "Text" }], gives: "Text",
+      uses: ["skill:lib/Echo"], callable_by: [`strategy:${MODULE_REF}/ExistingStrategy`] });
+    const result = buildElementAuthoringChangeSet({ projectRoot: project.root, request });
+    assert.deepEqual(compileProposedSources({ projectRoot: project.root, targets: result.changes }).diagnostics, []);
+    assert.match(result.changes[0].content, /uses Echo/);
+    assert.throws(() => buildElementAuthoringChangeSet({ projectRoot: project.root,
+      request: { ...request, element: { ...request.element, uses: ["skill:secret/Echo"] } } }), { code: "ToubaServeElementReferenceUnknown" });
+  } finally { project.dispose(); }
 });
 
 function requestFor(element) {

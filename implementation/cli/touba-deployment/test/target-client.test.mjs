@@ -5,6 +5,18 @@ import { deploymentTargetRequest } from "../src/index.mjs";
 
 const token = "isolated-target-test-token-32-characters";
 
+test("a scoped mutation refuses an older target before sending any write", async () => {
+  const requests = [];
+  await assert.rejects(deploymentTargetRequest({ targetUrl: "http://127.0.0.1", token,
+    path: "/revisions", method: "POST", body: { bundle: {} }, projectScope: "a".repeat(64),
+    fetchImpl: async (url, options) => {
+      requests.push(options.method);
+      return new Response('{"status":"ready"}', { status: 200 });
+    },
+  }), { code: "ToubaDeploymentProjectScopeUnsupported" });
+  assert.deepEqual(requests, ["GET"]);
+});
+
 test("target requests keep credentials on their configured HTTP(S) origin", async () => {
   for (const [targetUrl, path, code] of [
     ["http://example.test", "/revisions", "ToubaDeploymentInsecureTargetRejected"],

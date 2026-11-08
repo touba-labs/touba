@@ -97,6 +97,23 @@ trigger Hourly
       assert.equal(response.status, status, JSON.stringify(result));
       if (status === 200) { assert.equal(result.status, "success", JSON.stringify(result)); assert.equal(result.result, value); }
     }
+    const post = async (path, body) => {
+      const res = await fetch(base + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json(); assert.ok(res.ok, JSON.stringify(data)); return data;
+    };
+    const session = await post("/interactions/sessions", { schema_version: "touba-interaction-session-create-v1",
+      target_ref: "trigger:demo.server/Hourly", target_kind: "trigger", presentation: "event", effect_policy: "runtime_only",
+      requested_by: { kind: "studio", id: "schedule-test" } });
+    const operation = await post(`/interactions/sessions/${session.session_id}/messages`, {
+      schema_version: "touba-interaction-message-request-v1", message_id: "scheduled-manual-test", inputs: {},
+      display_text: "Test the scheduled trigger", requested_by: { kind: "studio", id: "schedule-test" } });
+    let observed;
+    for (let i = 0; i < 150; i++) {
+      observed = await (await fetch(`${base}/interactions/sessions/${session.session_id}/operations/${operation.operation_id}`)).json();
+      if (!["running", "queued"].includes(observed.status)) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(observed.status, "succeeded", JSON.stringify(observed));
   } finally {
     if (child && child.exitCode === null) child.kill("SIGTERM");
     if (closed) await closed;
