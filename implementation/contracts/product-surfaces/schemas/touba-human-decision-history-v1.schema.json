@@ -8,6 +8,26 @@
   "properties": {
     "schema_version": { "const": "touba-human-decision-history-v1" },
     "generated_at": { "type": "string" },
+    "terminal_requests": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total", "pagination", "items"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "pagination": { "$ref": "#/properties/pagination" },
+        "items": { "type": "array", "maxItems": 100, "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["request_id", "run_id", "target_ref", "outcome", "completed_at", "request_digest"],
+          "properties": {
+            "request_id": { "type": "string", "minLength": 1 },
+            "run_id": { "type": "string", "minLength": 1 },
+            "target_ref": { "type": "string", "minLength": 1 },
+            "outcome": { "enum": ["expired", "cancelled"] },
+            "completed_at": { "type": "string", "minLength": 1 },
+            "request_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+          }
+        } }
+      }
+    },
     "pagination": {
       "type": "object",
       "additionalProperties": false,

@@ -9,7 +9,7 @@ import { validateTraceMachineContract, validateTraceMachineStream, validateTrace
 import { airDocumentDigest } from '../../../../runtime/touba-runtime/src/air-identity.mjs';
 import { createTraceReference, traceJsonDigest } from '../../../../contracts/trace-reference.mjs';
 import { readProjectSource } from '../explorer/project.mjs';
-import { eventSummary, projectEvent, queryOptions, queryWhere } from './model.mjs';
+import { eventSummary, eventCategory, projectEvent, queryOptions, queryWhere } from './model.mjs';
 
 const MAX_JSON = 16 * 1024 * 1024, MAX_EVENTS = 1000000, MAX_EXPORT = 8 * 1024 * 1024;
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -45,15 +45,38 @@ export class TraceReader {
     this.temporary = null; this.snapshot = null;
   }
   close() { this.closeIndex(); this.store?.close(); }
-  list({ after = '', runId } = {}) {
+  list({ after = '', runId, groupRuns = false, search = '', category = '' } = {}) {
     if (typeof after !== 'string' || after.length > 4096 || (runId !== undefined && (typeof runId !== 'string' || runId.length > 4096))) throw new Error('TraceSelectionInvalid');
-    if (this.document) return { segments: after ? [] : [{ id: 'document', runId: this.document.run.run_id, module: this.document.run.module_ref, entry: this.document.run.entry_ref, eventCount: this.document.events.length, start: this.document.events[0].sequence_index, closed: true }], next: null };
+    if (typeof groupRuns !== 'boolean' || typeof search !== 'string' || search.length > 256 || !['', 'refusal', 'error'].includes(category)) throw new Error('TraceSelectionInvalid');
+    if (groupRuns && this.store) {
+      const page = this.store.runPage({ after, search: runId ?? search, category });
+      return { segments: page.runs.map(group => {
+        if (group.segmentCount > 1000) throw new Error('TraceRunSegmentLimit');
+        const segments = [...this.store.segments({ runId: group.runId, limit: 1000 })].map(item => this.segmentSummary(item));
+        segments.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+        const latest = segments.at(-1);
+        return { ...latest, eventCount: group.eventCount, segments, segmentCount: group.segmentCount };
+      }), next: page.next, grouped: true };
+    }
+    if (this.document) {
+      const matches = (!runId || runId === this.document.run.run_id)
+        && (!search || `${this.document.run.run_id} ${this.document.run.entry_ref ?? ''}`.toLowerCase().includes(search.toLowerCase()))
+        && (!category || this.document.events.some(event => eventCategory(event.kind, event.payload) === category));
+      return { segments: after || !matches ? [] : [{ id: 'document', runId: this.document.run.run_id, module: this.document.run.module_ref, entry: this.document.run.entry_ref, eventCount: this.document.events.length, start: this.document.events[0].sequence_index, closed: true }], next: null };
+    }
     const segments = [...this.store.segments({ after, runId, limit: 100 })].map(item => {
       const snapshot = this.store.snapshot(item.id), header = snapshot.header;
       return { id: item.id, runId: item.runId, module: header.run.module_ref, entry: header.run.entry_ref,
         eventCount: item.eventCount, start: snapshot.startIndex, closed: item.complete };
     });
     return { segments, next: segments.length === 100 ? segments.at(-1).id : null };
+  }
+  segmentSummary(item) {
+    const snapshot = this.store.snapshot(item.id), header = snapshot.header;
+    const last = item.eventCount ? this.store.page(item.id, { after: snapshot.startIndex + item.eventCount - 2, limit: 1 }).events[0] : null;
+    return { id: item.id, runId: item.runId, module: header.run.module_ref, entry: header.run.entry_ref,
+      eventCount: item.eventCount, start: snapshot.startIndex, closed: item.complete,
+      status: header.run.admission === 'refused' ? 'refused' : last?.kind === 'run_completed' ? last.payload?.status ?? 'incomplete' : 'incomplete' };
   }
   select({ id } = {}) {
     if (typeof id !== 'string' || !id || id.length > 4096) throw new Error('TraceSelectionInvalid');

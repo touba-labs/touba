@@ -17,6 +17,18 @@ function workspace(t) { const root = realpathSync(mkdtempSync(join(tmpdir(), "to
 function command(cwd, ...args) { return spawnSync(process.execPath, [cli, "package", ...args], { cwd, encoding: "utf8", timeout: 90000, maxBuffer: 4 * 1024 * 1024 }); }
 function edit(root, fn) { const file = join(root, "touba.package.json"), data = JSON.parse(readFileSync(file)); fn(data); writeFileSync(file, JSON.stringify(data)); }
 
+test('new publications reject Python bytecode without changing legacy installed inventories', async t => {
+  const root = workspace(t), pkg = newPackage('fixture.clean', { root, publisher: 'Fixture', license: 'MIT' });
+  const cache = join(pkg.path, 'src', '__pycache__'); mkdirSync(cache);
+  writeFileSync(join(cache, 'handler.cpython-314.pyc'), 'synthetic-cache');
+  const original = readPackage(pkg.path);
+  assert.ok(original.files.some(file => file.path.endsWith('.pyc')));
+  assert.throws(() => readPackage(pkg.path, { publishing: true }), { code: 'PackageGeneratedFileForbidden' });
+  await assert.rejects(packPackage(pkg.path, { output: join(root, 'forbidden.tar.gz') }), { code: 'PackageGeneratedFileForbidden' });
+  assert.equal(existsSync(join(root, 'forbidden.tar.gz')), false);
+  assert.equal(readPackage(pkg.path).digest, original.digest);
+});
+
 test("Cloud presentation can follow packing, while direct publication requires a README", async t => {
   const root = workspace(t), pkg = newPackage("acme.presentation", { root, publisher: "Acme", license: "MIT" });
   edit(pkg.path, manifest => { delete manifest.readme; });

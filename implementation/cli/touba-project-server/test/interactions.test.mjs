@@ -6,6 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from 'node:url';
+import { readOperationRecovery } from '../src/serve.mjs';
 
 import {
   archiveInteractionSession,
@@ -61,6 +63,33 @@ test("interaction operations persist bounded progress without raw runtime payloa
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('recovery preserves pre-checkpoint errors and interruptions without advertising an invented resume', t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-preflight-recovery-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sessionsPath = join(root, 'sessions.sqlite'), session = createSession(sessionsPath);
+  const operation = enqueueInteractionOperation({ message: interactionMessage(), runId: 'preflight-run', sessionId: session.session_id, sessionsPath });
+  const scope = { sessionsPath, sessionId: session.session_id, operationId: operation.operation_id };
+  startInteractionOperation(scope);
+  recoverInterruptedInteractionOperations({ sessionsPath });
+  const options = { contractsRoot: fileURLToPath(new URL('../../../contracts/product-surfaces/', import.meta.url)),
+    interactionSessionsPath: sessionsPath, effectJournalPath: join(root, 'effects.sqlite'),
+    sandboxCheckpointsPath: join(root, 'checkpoints.sqlite'), operationId: operation.operation_id };
+  let recovery = readOperationRecovery(options);
+  assert.equal(recovery.status, 'interrupted');
+  assert.equal(recovery.evidence_source, 'interaction');
+  assert.equal(recovery.diagnostic.code, 'ToubaServeInteractionInterrupted');
+  assert.equal(recovery.refusal.code, 'DurableResumeNotAvailable');
+  assert.deepEqual(recovery.allowed_actions, []);
+  failInteractionOperation({ ...scope, code: 'InvalidRuntimeInput', message: 'Input does not match the declared type' });
+  recovery = readOperationRecovery(options);
+  assert.equal(recovery.status, 'failed');
+  assert.equal(recovery.diagnostic.code, 'InvalidRuntimeInput');
+  assert.equal(recovery.diagnostic.message, 'Input does not match the declared type');
+  assert.equal(recovery.correlations.checkpoint_digest, null);
+  assert.deepEqual(recovery.allowed_actions, []);
+  assert.throws(() => readOperationRecovery({ ...options, operationId: 'unknown' }), { code: 'ToubaServeOperationNotFound' });
 });
 
 test("progress batches persist before notification, keep counts, and surface changed-store corruption", async () => {
@@ -126,6 +155,24 @@ test("cancel-requested interaction operations recover as cancelled and can be ar
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('archiving an interrupted session retains its evidence and refuses active or waiting operations', t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-incident-archive-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sessionsPath = join(root, 'sessions.sqlite'), session = createSession(sessionsPath);
+  const operation = enqueueInteractionOperation({ message: interactionMessage(), runId: 'interrupted-run', sessionId: session.session_id, sessionsPath });
+  const scope = { sessionsPath, sessionId: session.session_id, operationId: operation.operation_id };
+  startInteractionOperation(scope);
+  assert.throws(() => archiveInteractionSession(scope), { code: 'ToubaServeInteractionSessionBusy' });
+  recoverInterruptedInteractionOperations({ sessionsPath });
+  const before = getInteractionSession(scope).operations;
+  const archived = archiveInteractionSession(scope);
+  assert.equal(archived.status, 'archived');
+  assert.deepEqual(archived.operations, before);
+  assert.throws(() => enqueueInteractionOperation({ ...scope, message: { ...interactionMessage(), message_id: 'message_new' }, runId: 'should-not-run' }), { code: 'ToubaServeInteractionSessionArchived' });
+  assert.equal(enqueueInteractionOperation({ ...scope, message: interactionMessage(), runId: 'should-not-run' }).operation_id, operation.operation_id);
+  assert.deepEqual(getInteractionSession(scope).operations, before);
 });
 
 test("awaiting-human cancellation is idempotent and remains recoverable", () => {

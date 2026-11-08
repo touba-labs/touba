@@ -352,3 +352,7 @@ main,main[data-runs=closed],main[data-detail=closed],main[data-runs=closed][data
 .views button .ui-icon{display:none}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important}}
+.run-segments{padding:0 8px 8px 16px}
+.run-segments summary{cursor:pointer;font-size:12px;color:var(--text-muted);padding:6px}
+.run-segments .run{font-size:12px;margin-top:4px}
+#run-category{width:100%;min-width:0;background:transparent;color:inherit;border:0;font:inherit;padding:6px}

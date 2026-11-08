@@ -101,6 +101,7 @@ import {
   enqueueInteractionOperation,
   failInteractionOperation,
   findInteractionOperationByMessage,
+  findInteractionRecoveryOperation,
   getInteractionOperation,
   getInteractionSession,
   INTERACTION_ASSET_SCHEMA_VERSION,
@@ -277,6 +278,8 @@ export const CHECKPOINT_INDEXES = Object.freeze({
   operation_id: "json_extract(body, '$.operation_id')",
   run_id: "json_extract(body, '$.run_id')",
   status: "json_extract(body, '$.status')",
+  resolution_kind: "json_extract(body, '$.human_wait.resolution.kind')",
+  resolution_status: "json_extract(body, '$.human_wait.resolution.status')",
   active_human: "CASE WHEN json_extract(body, '$.record_kind') = 'human' AND json_extract(body, '$.status') IN ('pending', 'resolution_claimed') THEN 1 ELSE 0 END",
   needs_projection: "CASE WHEN json_extract(body, '$.record_kind') = 'human' AND json_extract(body, '$.status') IN ('completed', 'superseded') AND json_extract(body, '$.human_wait.projections.terminal_event') IS NULL THEN 1 ELSE 0 END",
 });
@@ -1302,6 +1305,7 @@ function createProjectServerWithLease(options, takeLease) {
             ...(options.packageRegistry ? {
               package_registry: "/packages/registry",
               package_registry_resolve: "/packages/registry/resolve",
+              package_registry_catalogue: "/packages/registry/catalogue",
               package_registry_preview: "/packages/registry/<resolution_id>/preview",
             } : {}),
             package_apply: "/packages/apply",
@@ -1435,6 +1439,15 @@ function createProjectServerWithLease(options, takeLease) {
           });
           writeJson(response, 200, resolved); return;
         }
+        if (request.method === 'POST' && url.pathname === '/packages/registry/catalogue') {
+          const result = await packageSurface.receive(async () => {
+            let proof;
+            try { proof = JSON.parse((await readBinaryBody(request, 10 * 1024 * 1024)).toString('utf8')); }
+            catch { throw serviceError('ToubaServePackageInvalid', 'invalid registry catalogue evidence'); }
+            return packageSurface.registryCatalogue(proof);
+          });
+          writeJson(response, 200, result); return;
+        }
         const registryPreview = /^\/packages\/registry\/([a-f0-9-]{36})\/preview$/.exec(url.pathname);
         if (request.method === 'POST' && registryPreview) {
           writeJson(response, 200, await packageSurface.receive(async () => packageSurface.previewRegistry(principal, registryPreview[1], await readBinaryBody(request, PACKAGE_UPLOAD_LIMIT)))); return;
@@ -1525,6 +1538,7 @@ function createProjectServerWithLease(options, takeLease) {
           contractsRoot,
           effectJournalPath,
           operationId: decodeOperationRecoveryPath(url.pathname),
+          interactionSessionsPath,
           projectRoot,
           sandboxCheckpointsPath,
         }));
@@ -2696,7 +2710,9 @@ function createProjectServerWithLease(options, takeLease) {
         }
       }
       if (request.method === "GET" && url.pathname === "/decisions") {
-        writeJson(response, 200, listHumanDecisions({ humanDecisionsPath,
+        await requestHumanWaitWorker();
+        writeJson(response, 200, listHumanDecisions({ humanDecisionsPath, sandboxCheckpointsPath,
+          terminalCursor: url.searchParams.get('terminal_cursor'),
           cursor: url.searchParams.get("cursor"),
           limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 50,
         }));
@@ -3574,6 +3590,8 @@ function assertProjectDecisionAuthorized({
 
 export function listHumanDecisions({
   humanDecisionsPath,
+  sandboxCheckpointsPath,
+  terminalCursor = null,
   generatedAt = new Date().toISOString(),
   cursor = null,
   limit = 50,
@@ -3585,6 +3603,25 @@ export function listHumanDecisions({
     summary: page.summary,
     pagination: page.pagination,
     decisions: page.decisions.map(projectHumanDecision),
+    ...(sandboxCheckpointsPath ? { terminal_requests: pageTerminalHumanRequests(sandboxCheckpointsPath, { cursor: terminalCursor, limit }) } : {}),
+  };
+}
+
+export function pageTerminalHumanRequests(path, { cursor = null, limit = 50 } = {}) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
+    || (cursor !== null && (typeof cursor !== 'string' || !/^[1-9][0-9]{0,15}$/.test(cursor) || !Number.isSafeInteger(Number(cursor))))) {
+    throw serviceError('ToubaServeDecisionPageInvalid', 'invalid terminal request page');
+  }
+  const store = indexedCheckpointStore(path);
+  const filter = [{ kind: 'human', resolution_kind: ['expired', 'cancelled'], resolution_status: 'completed' }];
+  const page = store.page({ filter, order: 'rowid', direction: 'desc', limit, ...(cursor === null ? {} : { after: Number(cursor) }) });
+  return {
+    total: store.count(filter),
+    pagination: { limit, cursor, next_cursor: page.hasMore ? String(page.next) : null, order: 'recorded_desc' },
+    items: page.items.map(record => ({ request_id: record.request_id, run_id: record.run_id,
+      target_ref: record.target_ref, outcome: record.human_wait.resolution.kind,
+      completed_at: record.human_wait.resolution.completed_at,
+      request_digest: record.human_wait.request_digest })),
   };
 }
 
@@ -3626,6 +3663,7 @@ export function readProjectRunSummary({ contractsRoot, runSummaryPath }) {
 export function readOperationRecovery({
   contractsRoot,
   effectJournalPath,
+  interactionSessionsPath,
   operationId,
   projectRoot,
   sandboxCheckpointsPath,
@@ -3639,14 +3677,19 @@ export function readOperationRecovery({
   const human = records
     .filter((candidate) => candidate.record_kind === "human")
     .sort((left, right) => right.created_at.localeCompare(left.created_at))[0];
-  const record = execution ?? human;
-  if (record === undefined) {
+  const interaction = findInteractionRecoveryOperation(interactionSessionsPath, normalizedOperationId);
+  const record = execution ?? human ?? (interaction ? { ...interaction, effect_scope_id: normalizedOperationId } : null);
+  if (!record) {
     throw serviceError("ToubaServeOperationNotFound", "operation recovery state is unavailable");
   }
 
   const entries = createSqliteEffectJournal(effectJournalPath).entriesForScope(normalizedOperationId);
   const effects = operationEffectSummary(entries);
-  const status = operationRecoveryStatus({ execution, human });
+  const status = execution || human ? operationRecoveryStatus({ execution, human })
+    : ({ succeeded: 'completed', queued: 'running', cancel_requested: 'running' }[interaction.status] ?? interaction.status);
+  const result = execution?.result ?? human?.result;
+  const error = interaction?.error ?? result?.diagnostics?.find(item => item.severity === 'error') ?? null;
+  const diagnostic = error ? { code: String(error.code).slice(0, 128), message: String(error.message).slice(0, 512) } : null;
   const correlations = {
     effect_scope_id: record.effect_scope_id,
     checkpoint_revision: execution?.checkpoint?.revision ?? null,
@@ -3681,7 +3724,7 @@ export function readOperationRecovery({
     ?? human?.human_wait?.resolution?.completed_at
     ?? human?.resumed_at
     ?? human?.created_at
-    ?? record.created_at;
+    ?? interaction?.updated_at ?? record.created_at;
   const stateRevision = execution?.checkpoint?.revision ?? 0;
   const budgets = projectOperationBudgets({ execution, human, status });
   const stateDigest = canonicalDigest({
@@ -3691,6 +3734,7 @@ export function readOperationRecovery({
     refusal,
     source_updated_at: sourceUpdatedAt,
     status,
+    diagnostic,
   });
   const projection = {
     schema_version: OPERATION_RECOVERY_SCHEMA_VERSION,
@@ -3699,6 +3743,8 @@ export function readOperationRecovery({
     run_id: record.run_id,
     target_ref: record.target_ref,
     status,
+    diagnostic,
+    evidence_source: execution || human ? 'checkpoint' : 'interaction',
     freshness: {
       observed_at: generatedAt,
       source_updated_at: sourceUpdatedAt,
@@ -3790,7 +3836,7 @@ function operationRecoveryActions({ correlations, effects, execution, generatedA
     }];
   }
   if (
-    status === "interrupted"
+    status === "interrupted" && execution !== undefined
     && !["provider_required", "unavailable"].includes(effects.reconciliation)
   ) {
     return [{
@@ -11528,6 +11574,7 @@ export function requiredIdentityPermission(method, pathname) {
   if (pathname === "/packages/preview" || pathname === "/packages/local/preview" || pathname === "/packages/cancel" || pathname === "/packages/remove/preview"
     || pathname === '/packages/registry/resolve' || /^\/packages\/registry\/[a-f0-9-]{36}\/preview$/.test(pathname)) return "governance.propose";
   if (pathname === "/packages/installed") return "projects.read";
+  if (pathname === '/packages/registry/catalogue') return 'projects.read';
   if (pathname === "/changes/apply" || pathname === "/changes/refuse") return "governance.apply";
   if (pathname.startsWith("/changes")) return "governance.read";
   if (pathname === "/project/refresh") return method === "GET" ? "projects.read" : "projects.manage";

@@ -158,6 +158,19 @@ export function readInteractionRecoveryProjections(sessionsPath) {
   }), { limit: MAX_SESSIONS }));
 }
 
+// Bounded, validated projection for operations that failed before the runtime
+// could create a checkpoint. No message body, input or event payload is returned.
+export function findInteractionRecoveryOperation(sessionsPath, operationId) {
+  if (!sessionsPath) return null;
+  const rows = withSessionStoreErrors(() => indexedSessionStore(sessionsPath).project(session => {
+    const item = session.operations.find(operation => operation.operation_id === operationId);
+    return item ? { operation_id: item.operation_id, run_id: item.run_id, target_ref: item.target_ref,
+      status: item.status, error: item.error, created_at: item.created_at,
+      updated_at: item.completed_at ?? session.updated_at } : null;
+  }, { limit: MAX_SESSIONS }));
+  return rows.find(Boolean) ?? null;
+}
+
 export function getInteractionSession({ sessionId, sessionsPath }) {
   const session = loadInteractionSessionStore(sessionsPath, [{ id: sessionId }]).sessions
     .find((candidate) => candidate.session_id === sessionId);

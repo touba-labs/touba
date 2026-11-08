@@ -186,6 +186,7 @@ export function readPackage(path, options = {}) {
   const folded = new Map();
   let total = 0;
   function include(path, depth = 0) {
+    if (options.publishing) requireValue(!/(^|\/)__pycache__(\/|$)|\.py[co]$/i.test(path), 'PackageGeneratedFileForbidden', `remove generated Python cache from the publication: ${path}`);
     requireValue(depth <= PACKAGE_LIMITS.depth, "PackageTooLarge", "directory nesting exceeds limit");
     const absolute = packageFile(root, path);
     const stat = lstatSync(absolute);

@@ -38,9 +38,12 @@
       </div>
       <form id="run-search" class="search-field">
         <label for="run-filter" class="sr-only" data-text="runId"></label>
-        <svg class="ui-icon" data-icon="search" aria-hidden="true"></svg><input id="run-filter" type="search" autocomplete="off" maxlength="4096" data-placeholder="runId">
+        <svg class="ui-icon" data-icon="search" aria-hidden="true"></svg><input id="run-filter" type="search" autocomplete="off" maxlength="256" data-placeholder="runId">
         <button id="find-run" class="icon-button ghost" type="submit" data-label="findRun"><svg class="ui-icon" data-icon="arrowRight" aria-hidden="true"></svg></button>
       </form>
+      <label class="search-field"><span class="sr-only" data-text="crossRunCategory"></span>
+        <select id="run-category" data-label="crossRunCategory"><option value="" data-text="allRuns"></option><option value="refusal" data-text="refusal"></option><option value="error" data-text="error"></option></select>
+      </label>
       <p id="run-count" class="count"></p>
       <ul id="runs" data-label="runs"></ul>
       <button id="more" class="more" type="button" data-text="more" hidden></button>

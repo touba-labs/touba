@@ -136,10 +136,13 @@ async function list(append = false) {
   const generation = ++revision; setBusy(true);
   try {
     const runId = $('run-filter').value.trim();
-    const result = await rpc('list', { after: append ? cursor : '', ...(runId ? { runId } : {}) });
+    const result = await rpc('list', { groupRuns: true, search: runId, category: $('run-category').value, after: append ? cursor : '' });
     if (generation !== revision) return;
     runs = append ? [...runs, ...result.segments] : result.segments; cursor = result.next; renderRuns();
-    if (!append && runs.length) await select(runs.find(run => run.id === state?.id)?.id ?? runs[0].id);
+    if (!append && runs.length) {
+      const retained = runs.some(run => run.id === state?.id || run.segments?.some(segment => segment.id === state?.id));
+      await select(retained ? state.id : runs[0].id);
+    }
     else { if (!runs.length) clearSelection(); showReady(); }
   } catch (error) { if (generation === revision) fail(error); }
   finally { if (generation === revision) setBusy(false); }
@@ -148,13 +151,26 @@ function renderRuns() {
   $('runs').replaceChildren(...runs.map(run => {
     const li = element('li'), item = element('button', undefined, 'run'); item.type = 'button';
     item.disabled = busy;
-    item.dataset.category = 'flow'; item.setAttribute('aria-current', String(state?.id === run.id));
+    item.dataset.category = 'flow'; item.setAttribute('aria-current', String(state?.id === run.id || run.segments?.some(segment => segment.id === state?.id)));
     const meta = element('small'), count = `${run.eventCount} ${t('count').toLowerCase()}`;
     if (essential()) meta.append(count); else meta.append(element('span', run.runId, 'mono'), ` · ${count}`);
     item.append(icon('strategy', 'icon-small'), element('strong', shortName(run.entry || run.module || run.runId)), meta);
-    if (!run.closed) item.append(element('span', t('openFlag'), 'open-flag'));
+    if (run.status) item.append(element('span', t(`status_${run.status}`), 'open-flag'));
+    else if (!run.closed) item.append(element('span', t('openFlag'), 'open-flag'));
     item.title = `${shortRef(run.entry || run.module || run.runId)}\n${run.runId}\n${run.eventCount} ${t('count').toLowerCase()} · #${run.start} · ${t(run.closed ? 'complete' : 'incomplete')}`;
-    item.addEventListener('click', () => { if (!busy) void select(run.id); }); li.append(item); return li;
+    item.addEventListener('click', () => { if (!busy) void select(run.id); }); li.append(item);
+    if (run.segments?.length > 1) {
+      const details = element('details', undefined, 'run-segments');
+      details.open = run.segments.some(segment => segment.id === state?.id);
+      details.append(element('summary', `${run.segments.length} ${t('segments')}`));
+      for (const segment of run.segments) {
+        const button = element('button', `${t('segment')} #${segment.start} · ${segment.eventCount} ${t('count').toLowerCase()}`, 'run');
+        button.type = 'button'; button.disabled = busy; button.setAttribute('aria-current', String(state?.id === segment.id));
+        button.addEventListener('click', () => { if (!busy) void select(segment.id); }); details.append(button);
+      }
+      li.append(details);
+    }
+    return li;
   }));
   $('more').hidden = !cursor;
   $('run-count').textContent = runs.length ? `${runs.length}${cursor ? '+' : ''} ${t(runs.length === 1 && !cursor ? 'runsCountOne' : 'runsCount')}` : '';
@@ -520,7 +536,10 @@ applyTheme(prefs.theme ?? (vscodeDark || matchMedia('(prefers-color-scheme: dark
 $('previous').addEventListener('click', () => { offset = Math.max(0, offset - 100); void load(); });
 $('next').addEventListener('click', () => { offset += 100; void load(); });
 $('refresh').addEventListener('click', () => void list());
-$('run-search').addEventListener('submit', event => { event.preventDefault(); void list(); });
+$('run-search').addEventListener('submit', event => { event.preventDefault(); clearTimeout(runSearchTimer); void list(); });
+let runSearchTimer;
+$('run-filter').addEventListener('input', () => { clearTimeout(runSearchTimer); runSearchTimer = setTimeout(() => void list(), 300); });
+$('run-category').addEventListener('change', () => { clearTimeout(runSearchTimer); void list(); });
 $('more').addEventListener('click', () => void list(true));
 $('cancel').addEventListener('click', async () => { ++revision; try { await rpc('cancel'); clearSelection(); notify('readingCancelled'); } catch (error) { fail(error); } finally { setBusy(false); } });
 $('close-source').addEventListener('click', () => $('source-dialog').close());

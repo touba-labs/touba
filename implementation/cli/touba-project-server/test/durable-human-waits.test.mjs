@@ -1490,6 +1490,13 @@ test("WAIT automatic expiry never dispatches an effect located after the human b
     const expired = await waitForRecord(root, pending.request_id, (record) => record.status === "completed");
     assert.equal(expired.human_wait.resolution.kind, "expired");
     assert.equal(expired.result.trace.events.some((event) => event.type === "tool_call_started"), false);
+    const history = await getJson(`${baseUrl}/decisions?limit=1`);
+    assert.equal(history.terminal_requests.total, 1);
+    assert.equal(history.terminal_requests.items[0].request_id, pending.request_id);
+    assert.equal(history.terminal_requests.items[0].outcome, 'expired');
+    assert.equal(history.terminal_requests.items[0].request_digest, expired.human_wait.request_digest);
+    assert.equal(history.terminal_requests.pagination.next_cursor, null);
+    assert.equal(history.decisions.some(item => item.request_id === pending.request_id), false, 'automatic expiry is not a fabricated human signature');
     const evidence = await getJson(`${baseUrl}/runs/${paused.run_id}/trace`);
     assert.equal(evidence.complete, true);
     assert.deepEqual(evidence.segments.map(segment => segment.phase), ["initial", "human_terminal"]);

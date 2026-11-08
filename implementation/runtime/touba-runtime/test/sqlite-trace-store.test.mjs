@@ -29,6 +29,33 @@ const air = { air_schema_version: "touba-air-v1", air_capability_profile: "touba
     nodes: [{ id: "n1", kind: "give", arguments: ["literal:string:ok"] }], edges: [], expressions: [], failure_paths: [] }], trace_points: [] };
 function builder(store, start = 0) { return new TraceBuilder(air, "skill:storage/Run", "stored-run", null, start, "full", store); }
 
+test('run discovery groups segments, paginates literal identifiers and filters across all segments', t => {
+  const { store } = fixture(t);
+  const add = (id, start, kind, payload = {}) => {
+    const trace = new TraceBuilder(air, 'skill:storage/Run', id, null, start, 'full', store);
+    trace.push(kind, { payload });
+  };
+  add('run-a', 0, 'tool_dispatch_refused');
+  add('run-a', 1, 'run_completed', { status: 'success' });
+  add('run-b', 0, 'tool_execution_status', { status: 'refused', phase: 'execution' });
+  add('run-c', 0, 'run_completed', { status: 'success', private: 'sensitive-search-text' });
+  add('run-%literal', 0, 'tool_execution_status', { status: 'refused', phase: 'admission' });
+  const all = store.runPage();
+  assert.equal(all.runs.length, 4);
+  assert.equal(all.runs.find(row => row.runId === 'run-a').segmentCount, 2);
+  assert.equal(all.runs.find(row => row.runId === 'run-a').eventCount, 2);
+  let cursor = '', found = [];
+  do { const page = store.runPage({ after: cursor, limit: 1 }); found.push(...page.runs.map(row => row.runId)); cursor = page.next; } while (cursor);
+  assert.deepEqual(found, all.runs.map(row => row.runId));
+  assert.deepEqual(store.runPage({ search: '%' }).runs.map(row => row.runId), ['run-%literal']);
+  assert.equal(store.runPage({ search: 'sensitive-search-text' }).runs.length, 0);
+  assert.equal(store.runPage({ search: "' OR 1=1 --" }).runs.length, 0);
+  assert.deepEqual(store.runPage({ category: 'refusal' }).runs.map(row => row.runId), ['run-%literal', 'run-a']);
+  assert.deepEqual(store.runPage({ category: 'error' }).runs.map(row => row.runId), ['run-b']);
+  assert.equal(store.runPage({ search: 'STORAGE' }).runs.length, 4);
+  for (const options of [{ limit: 0 }, { limit: 101 }, { search: 'x'.repeat(257) }, { category: 'payload' }]) assert.throws(() => store.runPage(options));
+});
+
 test("simultaneous first writers initialize one SQLite journal without schema races", async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-trace-first-writers-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

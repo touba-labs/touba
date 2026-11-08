@@ -260,6 +260,20 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
         : db.prepare("SELECT id FROM touba_trace_segments WHERE run_id=? AND id>? ORDER BY id LIMIT ?").all(runId, after, limit);
       for (const { id } of rows) { const row = segment(id); yield { id, runId: row.run_id, eventCount: row.event_count, bytes: row.bytes, complete: Boolean(row.closed) }; }
     },
+    runPage({ after = '', search = '', category = '', limit = 20 } = {}) {
+      if (typeof after !== 'string' || typeof search !== 'string' || after.length > 4096 || search.length > 256
+        || !['', 'refusal', 'error'].includes(category) || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new TypeError('invalid run page');
+      const refused = "(instr(e.kind,'refused')>0 OR instr(e.kind,'rejected')>0 OR instr(e.kind,'denied')>0 OR (e.kind='tool_execution_status' AND json_extract(e.body,'$.payload.status')='refused' AND json_extract(e.body,'$.payload.phase')='admission'))";
+      const error = "(instr(e.kind,'failure')>0 OR instr(e.kind,'failed')>0 OR instr(e.kind,'timeout_exceeded')>0 OR (e.kind='tool_execution_status' AND json_extract(e.body,'$.payload.status')='refused' AND coalesce(json_extract(e.body,'$.payload.phase'),'')<>'admission'))";
+      const condition = category ? ` AND EXISTS (SELECT 1 FROM touba_trace_segments z JOIN touba_trace_events e ON e.segment_id=z.id WHERE z.run_id=s.run_id AND ${category === 'refusal' ? refused : error})` : '';
+      // Bound the result, retain literal search semantics (% and _ are not wildcards),
+      // and never search inputs, model text or arbitrary payload content.
+      const rows = db.prepare(`SELECT s.run_id AS runId,count(*) AS segmentCount,sum(s.event_count) AS eventCount
+        FROM touba_trace_segments s WHERE s.run_id>? AND (instr(lower(s.run_id),lower(?))>0
+          OR instr(lower(coalesce(json_extract(s.header,'$.run.entry_ref'),'')),lower(?))>0)
+        ${condition} GROUP BY s.run_id ORDER BY s.run_id LIMIT ?`).all(after, search, search, limit + 1);
+      return { runs: rows.slice(0, limit), next: rows.length > limit ? rows[limit - 1].runId : null };
+    },
     archive({ destination, apply = false, protectedRunIds = [] } = {}) {
       if (readOnly) fail("TraceStorageReadOnly", "archival requires a writable journal");
       if (typeof apply !== "boolean" || !Array.isArray(protectedRunIds)

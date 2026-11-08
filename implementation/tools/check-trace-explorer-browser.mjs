@@ -64,11 +64,14 @@ try {
     await page.keyboard.press('[');assert.equal(await page.locator('#layout').getAttribute('data-runs'),'closed');
     await page.locator('#focus-mode').click();assert.equal(await page.locator('#layout').getAttribute('data-runs'),'open');assert.equal(await page.locator('#layout').getAttribute('data-detail'),'open');
     await page.locator('#reset').click();await page.locator('.event').first().waitFor();
-    await page.locator('#run-filter').fill('run:not-present');await page.locator('#find-run').click();
-    await page.waitForFunction(()=>document.getElementById('events').getAttribute('aria-busy')==='false');
+    await page.locator('#run-filter').fill('run:not-present');
+    await page.waitForFunction(()=>document.querySelectorAll('#runs > li').length===0 && document.getElementById('events').getAttribute('aria-busy')==='false');
     assert.equal(await page.locator('.event').count(),0);assert.equal(await page.locator('#stats .stat').count(),0);
     assert.equal(await page.locator('#export').isDisabled(),true);
     await page.locator('#run-filter').fill('');await page.locator('#find-run').click();await page.locator('.event').first().waitFor();
+    await page.locator('#run-category').selectOption('error');
+    await page.waitForFunction(()=>document.querySelectorAll('#runs > li').length===0 && document.getElementById('events').getAttribute('aria-busy')==='false');
+    await page.locator('#run-category').selectOption('');await page.locator('.event').first().waitFor();
     // Essential reading hides sequences, run identifiers and digests, and keeps them in the folded technical details.
     await page.locator('#display-toggle').click();await page.locator('[data-pref="level"] [data-value="essential"]').click();await page.keyboard.press('Escape');
     assert.equal(await page.locator('html').getAttribute('data-level'),'essential');

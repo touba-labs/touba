@@ -6,6 +6,7 @@ import { addPackage, updatePackage, removePackage, isNewerPackageVersion, checkP
 import { readPackageWorkspace, verifyInstalledPackages } from "../../touba-project/src/package-store.mjs";
 import { PACKAGE_LIMITS, PACKAGE_NAME, packageFile } from "../../touba-project/src/package-contract.mjs";
 import { packageHostInventory, readPackageHostPlan } from "../../touba-project/src/package-host-plan.mjs";
+import { listRegistryPackages } from '../../touba-project/src/registry.mjs';
 
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -106,6 +107,15 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
       try { return await operation(); } finally { receiving = false; }
     },
     registry() { return { registry: registryRoot, configured: Boolean(registryRoot) }; },
+    async registryCatalogue(proof) {
+      if (!registryRoot || !proof || Object.keys(proof).some(key => !['index_jwt', 'query', 'offset', 'includeWithdrawn'].includes(key))
+        || typeof proof.index_jwt !== 'string' || Buffer.byteLength(proof.index_jwt) > 8 * 1024 * 1024) fail('ToubaServePackageInvalid', 'invalid registry catalogue evidence');
+      return listRegistryPackages({ registry: registryRoot, trust, query: proof.query, offset: proof.offset, includeWithdrawn: proof.includeWithdrawn,
+        readBytes: async location => {
+          if (location !== new URL('index.jwt', registryRoot + '/').href) fail('ToubaServePackageInvalid', 'unexpected registry catalogue location');
+          return Buffer.from(proof.index_jwt);
+        } });
+    },
     async resolveRegistry(principal, proof) {
       expire();
       if (closed || working) fail('ToubaServePackageBusy', 'a package operation is in progress');

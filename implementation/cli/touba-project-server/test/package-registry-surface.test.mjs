@@ -67,3 +67,20 @@ test('only one archive or registry proof can be received at a time', async t => 
   finish(); await transfer;
   assert.equal(await surface.receive(async () => 'ready'), 'ready');
 });
+
+test('catalogue authenticates versions, hides withdrawn releases and refuses signature or revision tampering', async t => {
+  const { surface, proof } = await fixture(t);
+  const list = values => surface.registryCatalogue(values);
+  const initial = proof();
+  assert.deepEqual((await list({ index_jwt: initial.index_jwt })).items, [{ name: 'fixture.remote', version: '1.0.0', status: 'validated' }]);
+  assert.equal((await list({ index_jwt: initial.index_jwt, query: 'OTHER' })).total, 0);
+  assert.equal((await list({ index_jwt: initial.index_jwt, query: 'FIXTURE' })).total, 1);
+  assert.deepEqual((await list({ index_jwt: initial.index_jwt, offset: 1 })).items, []);
+  await assert.rejects(list({ index_jwt: 'invalid' }), { code: 'RegistrySignatureInvalid' });
+  await assert.rejects(list({ index_jwt: initial.index_jwt, offset: -1 }), { code: 'RegistryIndexSchemaInvalid' });
+  const withdrawn = proof({ status: 'yanked', revision: 2 });
+  assert.deepEqual((await list({ index_jwt: withdrawn.index_jwt })).items, []);
+  assert.equal((await list({ index_jwt: withdrawn.index_jwt, includeWithdrawn: true })).items[0].status, 'yanked');
+  await assert.rejects(list({ index_jwt: initial.index_jwt }), { code: 'RegistryRollbackRefused' });
+  assert.equal(surface.inventory().packages.length, 0);
+});

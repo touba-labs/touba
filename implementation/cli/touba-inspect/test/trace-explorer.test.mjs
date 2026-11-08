@@ -184,6 +184,15 @@ test('refusals and human resume segments retain status and exact selection',asyn
   const reader=new TraceReader({filename,root});t.after(()=>reader.close());
   const states=reader.list().segments.map(segment=>reader.select({id:segment.id}));
   assert.deepEqual(states.map(s=>s.status).sort(),['failure','stopped','success']);
+  const groups = reader.list({ groupRuns: true });
+  assert.equal(groups.segments.length, 2);
+  const resumedGroup = groups.segments.find(item => item.segmentCount === 2);
+  assert.equal(resumedGroup.status, 'success', 'a prior pause must not label the completed execution as pending');
+  assert.equal(resumedGroup.segments.length, 2, 'all original evidence remains individually selectable');
+  assert.equal(reader.list({ groupRuns: true, search: resumedGroup.runId }).segments.length, 1);
+  assert.equal(reader.list({ groupRuns: true, search: 'NO_SUCH_RUN' }).segments.length, 0);
+  assert.equal(reader.list({ groupRuns: true, search: '%' }).segments.length, 0);
+  assert.equal(reader.list({ groupRuns: true, category: 'error' }).segments.length, 1);
   assert.ok(states.find(s=>s.status==='failure').counts.budget>0);
   const completed=states.find(s=>s.status==='success');reader.select({id:completed.id});assert.ok(reader.query({category:'human'}).total>0);
 });
