@@ -3050,6 +3050,61 @@ test("cancels after a global run timeout before the next tool dispatch", () => {
   }
 });
 
+for (const scheduled of [false, true]) test(`trigger checkpoint resumes once without readmission or repeated effects (schedule=${scheduled})`, () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-checkpoint-cli-"));
+  try {
+    const document = toolThenHumanApprovalDocument();
+    const strategy = document.definitions.skills.pop();
+    const oldRef = strategy.id;
+    strategy.id = oldRef.replace("skill:", "strategy:");
+    strategy.flow_graph_ref = strategy.flow_graph_ref.replace("skill:", "strategy:");
+    document.definitions.strategies.push(strategy);
+    document.execution_graphs[0].id = strategy.flow_graph_ref;
+    document.execution_graphs[0].owner_ref = strategy.id;
+    const trigger = triggerDocument({ scheduleValue: "every 1s" }).definitions.triggers[0];
+    trigger.target_ref = strategy.id;
+    trigger.limits.max_runs_per_day = 3;
+    document.definitions.triggers = [trigger];
+    const air = writeAirDocument(workspace, document);
+    const bindings = fixtureBindingArgs(air, { content: "read only once" });
+    const manifest = JSON.parse(readFileSync(bindings[1]));
+    manifest.triggers = { [trigger.id]: { enabled: true, source: { kind: "schedule" },
+      limits: { max_runs_per_day: 3, timeout_ms: 30000 } } };
+    writeFileSync(bindings[1], JSON.stringify(manifest));
+    const marker = join(workspace, "effects.log");
+    const handler = join(workspace, "fixture-handler.mjs");
+    writeFileSync(handler, `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(marker)}, 'effect\\n');\n` + readFileSync(handler, "utf8"));
+    const checkpoint = join(workspace, "checkpoint.json");
+    const ledger = join(workspace, "triggers.sqlite");
+    const common = [runPath, air, ...bindings, "--output", "json"];
+    const run = args => spawnSync(process.execPath, [...common, ...args], { cwd: workspace, encoding: "utf8", timeout: 10000 });
+    const first = run([...(scheduled ? ["--trigger", trigger.id, "--max-runs", "3"]
+      : ["--trigger-event-json", JSON.stringify(triggerEvent())]),
+      "--state", ledger, "--human-checkpoint-out", checkpoint]);
+    assert.equal(first.status, 3, first.stderr + first.stdout);
+    assert.equal(readTriggerState(ledger).triggers[trigger.id].accepted_count, 1);
+    const paused = JSON.parse(first.stdout);
+    validateRunResult(paused);
+    const resume = ["--human-resume-checkpoint", checkpoint,
+      "--human-decisions-json", JSON.stringify({ "approval:examples.cli:after-fetch": "approved" })];
+    // Neither replacement inputs nor entry selection can redirect a continuation.
+    for (const extra of [["--inputs-json", '{"replacement":"bad"}'], ["--entry", strategy.id]]) {
+      assert.notEqual(run([...resume, ...extra]).status, 0);
+      assert.equal(readFileSync(marker, "utf8"), "effect\n");
+    }
+    const resumed = run(resume);
+    assert.equal(resumed.status, 0, resumed.stderr + resumed.stdout);
+    const envelope = JSON.parse(resumed.stdout);
+    validateRunResult(envelope);
+    assert.equal(envelope.trace.run.run_id, paused.trace.run.run_id);
+    assert.ok(eventOf(envelope.trace, "trigger_execution_completed").payload.resumed_from_checkpoint);
+    assert.equal(readTriggerState(ledger).triggers[trigger.id].accepted_count, 1);
+    assert.equal(readFileSync(marker, "utf8"), "effect\n");
+    assert.notEqual(run(resume).status, 0, "a consumed checkpoint cannot be replayed");
+    assert.equal(readFileSync(marker, "utf8"), "effect\n");
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
+});
+
 test("runs a local schedule trigger runner with a real bounded interval", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-run-trigger-runner-"));
   try {

@@ -8,6 +8,7 @@ import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT } from "./package-sur
 import { createProjectPreparation } from "./project-preparation.mjs";
 import { validateBindingFragmentDocument } from "../../touba-project/src/project.mjs";
 import { compileProposedSources } from "./source-validation.mjs";
+import { observeTriggerStores } from "./trigger-observation.mjs";
 import { isDecisionContinuationRoute, decisionContinuationOnly, assertDecisionContinuation } from "./decision-continuation.mjs";
 import { toolApprovalReview, PARALLEL_APPROVAL_METADATA_FIELDS, validateParallelApprovalMetadata } from "./tool-approval-review.mjs";
 import { projectOperationBudgets } from "./operation-budgets.mjs";
@@ -399,6 +400,10 @@ function createProjectServerWithLease(options, takeLease) {
   const triggerStatusPath = resolve(
     options.triggerStatusPath ?? join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
   );
+  const triggerStorePaths = {
+    triggerStatePath: resolve(options.triggerStatePath ?? join(projectRoot, ".touba/triggers.sqlite")),
+    triggerQueuePath: resolve(options.triggerQueuePath ?? join(projectRoot, ".touba/trigger-queue.sqlite")),
+  };
   const humanRequestsPath = resolve(
     options.humanRequestsPath ?? join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   );
@@ -1367,6 +1372,7 @@ function createProjectServerWithLease(options, takeLease) {
           runSummaryPath,
           traceTimelinePath,
           triggerStatusPath,
+          triggerStorePaths,
           humanRequestsPath,
           humanDecisionsPath,
           sandboxCheckpointsPath,
@@ -2168,7 +2174,7 @@ function createProjectServerWithLease(options, takeLease) {
         return;
       }
       if (request.method === "GET" && url.pathname === "/triggers") {
-        writeJson(response, 200, readProjectTriggerStatus({ contractsRoot, triggerStatusPath }));
+        writeJson(response, 200, readProjectTriggerStatus({ contractsRoot, projectRoot, triggerStatusPath, ...triggerStorePaths }));
         return;
       }
       if (request.method === "POST" && url.pathname === "/triggers/fire") {
@@ -2220,6 +2226,7 @@ function createProjectServerWithLease(options, takeLease) {
           contractsRoot,
           projectRoot,
           triggerStatusPath,
+          triggerStorePaths,
           eventJournalPath,
         }));
         return;
@@ -2970,6 +2977,7 @@ export function buildLiveState({
   runSummaryPath = join(projectRoot, DEFAULT_RUN_SUMMARY_PATH),
   traceTimelinePath = join(projectRoot, DEFAULT_TRACE_TIMELINE_PATH),
   triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
+  triggerStorePaths = {},
   humanRequestsPath = join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
   humanDecisionsPath = join(projectRoot, DEFAULT_HUMAN_DECISIONS_PATH),
   sandboxCheckpointsPath = join(projectRoot, DEFAULT_SANDBOX_CHECKPOINTS_PATH),
@@ -2995,11 +3003,12 @@ export function buildLiveState({
     identity: readProductIdentity({ contractsRoot, productIdentityPath, generatedAt }),
     current_run: readProjectRunSummary({ contractsRoot, runSummaryPath }),
     trace_timeline: readProjectTraceTimeline({ contractsRoot, traceTimelinePath }),
-    trigger_status: readProjectTriggerStatus({ contractsRoot, triggerStatusPath }),
+    trigger_status: readProjectTriggerStatus({ contractsRoot, projectRoot, triggerStatusPath, ...triggerStorePaths }),
     trigger_queue_health: buildTriggerQueueHealth({
       contractsRoot,
       projectRoot,
       triggerStatusPath,
+      triggerStorePaths,
       eventJournalPath,
       generatedAt,
     }),
@@ -3823,7 +3832,10 @@ export function readProjectTraceTimeline({ contractsRoot, traceTimelinePath }) {
 
 export function readProjectTriggerStatus({
   contractsRoot,
+  projectRoot,
   triggerStatusPath,
+  triggerStatePath,
+  triggerQueuePath,
   generatedAt = new Date().toISOString(),
 }) {
   const stored = readOptionalContractFile({
@@ -3833,7 +3845,37 @@ export function readProjectTriggerStatus({
     errorCode: "ToubaServeTriggerStatusInvalid",
     message: "project trigger status does not match touba-trigger-status-v1",
   });
-  return stored ?? {
+  if (stored) return stored;
+  if (projectRoot) {
+    const diagnostics = [];
+    // Observation may inspect the last compilation during a reviewed edit.
+    // Stale preparation blocks readiness, not access to the durable counters.
+    const prepared = readPreparedProject(projectRoot, { verify: false });
+    let current = true;
+    if (prepared) {
+      try { readPreparedProject(projectRoot); }
+      catch { current = false; }
+    }
+    const artifacts = prepared
+      ? prepared.inputs.filter(input => input.kind === "air").map(input => ({ relative_path: input.path }))
+      : collectProjectArtifacts(projectRoot, diagnostics).filter(artifact => artifact.kind === "air");
+    const documents = artifacts.flatMap(artifact => {
+      const source = readFileSync(join(projectRoot, artifact.relative_path), "utf8");
+      const content = JSON.parse(source);
+      // Non-trigger artifacts do not contribute to this observation surface.
+      return content.definitions?.triggers?.some(trigger => ["schedule", "request"].includes(trigger.event?.kind))
+        ? [loadAirFromJson(source)] : [];
+    });
+    const manifestInput = prepared?.inputs.find(input => input.kind === "manifest");
+    const manifestPath = join(projectRoot, manifestInput?.path ?? "touba.manifest.json");
+    const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : undefined;
+    const status = observeTriggerStores({ documents, manifest, generatedAt,
+      statePath: triggerStatePath ?? join(projectRoot, ".touba/triggers.sqlite"),
+      queuePath: triggerQueuePath ?? join(projectRoot, ".touba/trigger-queue.sqlite") });
+    if (!current) for (const trigger of status.triggers) trigger.status = "blocked";
+    return status;
+  }
+  return {
     schema_version: "touba-trigger-status-v1",
     generated_at: generatedAt,
     triggers: [],
@@ -5519,10 +5561,11 @@ export function buildTriggerQueueHealth({
   contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url)),
   projectRoot = process.cwd(),
   triggerStatusPath = join(projectRoot, DEFAULT_TRIGGER_STATUS_PATH),
+  triggerStorePaths = {},
   eventJournalPath = join(projectRoot, DEFAULT_EVENT_JOURNAL_PATH),
   generatedAt = new Date().toISOString(),
 }) {
-  const triggerStatus = readProjectTriggerStatus({ contractsRoot, triggerStatusPath, generatedAt });
+  const triggerStatus = readProjectTriggerStatus({ contractsRoot, projectRoot, triggerStatusPath, generatedAt, ...triggerStorePaths });
   const journalEvents = safeReadProjectEventJournal(eventJournalPath);
   const triggers = (Array.isArray(triggerStatus.triggers) ? triggerStatus.triggers : [])
     .map((trigger) => triggerQueueHealthRow(trigger, journalEvents))
@@ -12246,6 +12289,10 @@ function parseArgs(rawArgs) {
       options.traceTimelinePath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--trigger-status") {
       options.triggerStatusPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--trigger-state") {
+      options.triggerStatePath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === "--trigger-queue") {
+      options.triggerQueuePath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--human-requests") {
       options.humanRequestsPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--effect-journal") {
@@ -12395,6 +12442,7 @@ function usage() {
     "--human-approval-host and --agent-decision-provider accept JavaScript (.mjs) and Python (.py) host modules.",
     "--package-hosts activates the reviewed touba.hosts.json package selections at startup; it cannot be combined with explicit host paths.",
     "--package-registry URL --package-registry-trust FILE enables signed Library previews with consumer-selected local trust; no server-side registry requests.",
+    "--trigger-state <path.sqlite> --trigger-queue <path.sqlite> observes the real trigger stores read-only (defaults .touba/triggers.sqlite and .touba/trigger-queue.sqlite).",
     "--trace-pure-functions full|calls selects pure function detail (default full).",
     "--human-approval-authority-timeout-ms <1..60000> bounds each identity attestation call (default 5000 ms).",
     "--check-state returns an offline structural preflight as JSON, without starting the server or loading host modules.",

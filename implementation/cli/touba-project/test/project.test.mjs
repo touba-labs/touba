@@ -2520,6 +2520,12 @@ test("CLI trigger, manifest and handler help match current public options", () =
   assert.match(triggerResult.stdout, /--state <path\.sqlite>/);
   assert.match(triggerResult.stdout, /trigger migrate-state <old\.json> --out <new\.sqlite>/);
   assert.match(triggerResult.stdout, /run-summary/);
+  for (const flag of ["--secrets", "--agent-decision-provider", "--human-approval-host", "--human-checkpoint-out", "--effect-journal"])
+    assert.ok(triggerResult.stdout.includes(flag), flag);
+  const serveResult = spawnSync(process.execPath, [cliPath, "serve", "--help"], { encoding: "utf8" });
+  assert.equal(serveResult.status, 0, serveResult.stderr);
+  for (const flag of ["--package-registry", "--package-registry-trust", "--trigger-state", "--trigger-queue"])
+    assert.ok(serveResult.stdout.includes(flag), flag);
   assert.equal(triggerResult.stdout.includes("daemon"), false);
 
   const manifestResult = spawnSync(process.execPath, [cliPath, "manifest", "--help"], { encoding: "utf8" });

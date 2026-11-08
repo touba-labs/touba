@@ -5269,7 +5269,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
 
 async function getJson(url) {
   const response = await fetch(url);
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, response.ok ? undefined : await response.clone().text());
   return response.json();
 }
 

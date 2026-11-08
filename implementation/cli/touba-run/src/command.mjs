@@ -542,7 +542,18 @@ try {
     supplyChainValidated,
     redactionEnabled: true,
   };
-  result = parsedArgs.triggerRef
+  const resumedTriggerRef = humanApprovalResumeCheckpoint?.entry_ref?.startsWith("trigger:")
+    ? humanApprovalResumeCheckpoint.entry_ref : null;
+  if (resumedTriggerRef && ((parsedArgs.entryRef && parsedArgs.entryRef !== resumedTriggerRef)
+    || Object.keys(inputs).length)) {
+    throw new ToubaRuntimeError("ResumeInputsNotAllowed", "trigger continuation restores its entry and inputs from checkpoint");
+  }
+  // A resumed trigger is a continuation of its accepted event. Do not admit a
+  // second event or consume another daily slot. Custody validates and claims
+  // the checkpoint before execution, including its original manifest digest.
+  result = resumedTriggerRef
+    ? await executeTriggerEvent(document, { trigger_ref: resumedTriggerRef }, executionOptions)
+    : parsedArgs.triggerRef
     ? await runTriggerScheduleRunner(document, parsedArgs, executionOptions, triggerState)
     : triggerEvent
     ? await executeTriggerEventWithState(document, triggerEvent, executionOptions, triggerState)
@@ -1795,10 +1806,6 @@ function parseArgs(rawArgs) {
     return { ...parsed, error: "--entry cannot be combined with trigger runner execution" };
   }
 
-  if (parsed.triggerRef !== undefined && parsed.humanCheckpointOutPath !== undefined) {
-    return { ...parsed, error: "--human-checkpoint-out cannot be combined with trigger runner execution" };
-  }
-
   if (parsed.triggerRef !== undefined && parsed.humanResumeCheckpointPath !== undefined) {
     return { ...parsed, error: "--human-resume-checkpoint cannot be combined with trigger runner execution" };
   }
@@ -1808,13 +1815,6 @@ function parseArgs(rawArgs) {
     && parsed.entryRef !== undefined
   ) {
     return { ...parsed, error: "--entry cannot be combined with trigger execution" };
-  }
-
-  if (
-    (parsed.triggerEventPath !== undefined || parsed.triggerEventJson !== undefined)
-    && parsed.humanCheckpointOutPath !== undefined
-  ) {
-    return { ...parsed, error: "--human-checkpoint-out cannot be combined with trigger execution" };
   }
 
   if (
@@ -2421,6 +2421,7 @@ async function runTriggerScheduleRunner(document, parsedArgs, executionOptions, 
     );
   }
 
+  const runnerId = executionOptions.runId ?? `trigger-runner:${randomUUID()}`;
   const runResults = [];
   for (let runIndex = 1; runIndex <= parsedArgs.triggerRunnerMaxRuns; runIndex += 1) {
     await sleep(schedule.delayMs);
@@ -2431,7 +2432,7 @@ async function runTriggerScheduleRunner(document, parsedArgs, executionOptions, 
     };
     const runResult = await executeTriggerEventWithState(document, event, {
       ...executionOptions,
-      runId: executionOptions.effectJournal ? `${executionOptions.runId}-${runIndex}` : `trigger-runner-${runIndex}`,
+      runId: `${runnerId}-${runIndex}`,
       effectScopeId: executionOptions.effectJournal ? `${executionOptions.runId}-${runIndex}` : undefined,
       triggerRunCounts: {
         [triggerRef]: triggerState
