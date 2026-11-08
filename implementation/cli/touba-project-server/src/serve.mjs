@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { countApplicationOperations } from './interactions.mjs';
 import { servicePrincipal, assertApplicationRoute, assertApplicationTarget, createApplicationAdmission } from './application-access.mjs';
 import { createProjectExplorerSurface } from "./explorer-surface.mjs";
+import { createCloudNotifications } from './cloud-notifications.mjs';
 import { registerEventClient, writeSse } from "./event-clients.mjs";
 import { readChangeProposals, saveChangeProposals, pageChangeProposals, countChangeProposals, auditChangeProposals } from "./change-store.mjs";
 import { createProjectTraceExplorer } from "./trace-explorer-surface.mjs";
@@ -532,6 +533,9 @@ function createProjectServerWithLease(options, takeLease) {
       serviceToken: identityServiceToken,
     });
   }
+  if (options.cloudNotifications === true && identityControlPlaneUrl === undefined) {
+    throw serviceError('ToubaServeIdentityNotConfigured', '--cloud-notifications requires the Cloud identity connection');
+  }
   if (
     options.deploymentTargetTokenEnv !== undefined
     && (deploymentTargetToken === undefined || deploymentTargetToken.length < 32)
@@ -605,6 +609,12 @@ function createProjectServerWithLease(options, takeLease) {
     sandboxCheckpointsPath,
   });
   eventSequence = latestProjectEventSequence(readProjectEventJournal(eventJournalPath));
+  const notifications = createCloudNotifications({ enabled: options.cloudNotifications === true,
+    controlPlaneUrl: identityControlPlaneUrl, serviceToken: identityServiceToken,
+    cursorPath: join(projectRoot, '.touba/cloud-notifications.cursor.json'),
+    readEvents: () => readProjectEventJournal(eventJournalPath),
+    readWaits: after => loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1 }], { after, limit: 25, order: 'rowid' }),
+    queuePath: triggerStorePaths.triggerQueuePath });
   const recoverInterruptedInteractions = () => {
     const recovered = recoverInterruptedInteractionOperations({ sessionsPath: interactionSessionsPath });
     const checkpointStore = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ kind: "human", status: ["pending", "resolution_claimed"] }]);
@@ -1407,6 +1417,9 @@ function createProjectServerWithLease(options, takeLease) {
           projectSnapshot,
         }));
         return;
+      }
+      if (request.method === 'GET' && url.pathname === '/notifications/status') {
+        writeJson(response, 200, notifications.status()); return;
       }
       if (request.method === "GET" && ["/alerts/current", "/resources/featured"].includes(url.pathname)
         && url.searchParams.get("optional") === "true") {
@@ -2978,6 +2991,7 @@ function createProjectServerWithLease(options, takeLease) {
         throw cause;
       }
       const address = server.address();
+      notifications.start();
       if (options.quiet !== true) {
         process.stdout.write(`${JSON.stringify({
           event: "touba_project_server_started",
@@ -3002,6 +3016,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
     },
     async stop() {
+      await notifications.stop();
       explorerSurface.close();
       packageSurface.close();
       await traceExplorerSurface.close();
@@ -12433,6 +12448,8 @@ function parseArgs(rawArgs) {
       (options.clientOrigins ??= []).push(requiredValue(arg, rawArgs, ++index));
     } else if (arg === "--identity-control-plane-url") {
       options.identityControlPlaneUrl = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === '--cloud-notifications') {
+      options.cloudNotifications = true;
     } else if (arg === "--identity-service-token-env") {
       options.identityServiceTokenEnv = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--deployment-target-url") {
@@ -12563,6 +12580,7 @@ function usage() {
     "Starts the live Touba project server for authenticated project clients.",
     "--client-origin <https://host[:port]> authorizes one exact browser origin (repeatable, maximum 16); requires authentication.",
     "--max-pending-approvals <n> sets the pending approval capacity (default 100, maximum 10000).",
+    "--cloud-notifications forwards minimized operational events to the configured Cloud in the background; no effect on project authority.",
     "--human-approval-host and --agent-decision-provider accept JavaScript (.mjs) and Python (.py) host modules.",
     "--package-hosts activates the reviewed touba.hosts.json package selections at startup; it cannot be combined with explicit host paths.",
     "--package-registry URL --package-registry-trust FILE enables signed Library previews with consumer-selected local trust; no server-side registry requests.",
