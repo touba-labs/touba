@@ -993,6 +993,9 @@ test("operational project surfaces report supply chain, governance readiness and
     });
     assertMatchesSchema("touba-handler-sandbox-status-v1", sandbox);
     assert.equal(sandbox.handlers[0].tool_ref, "tool:demo.governance/ReadInvoice");
+    assert.equal(sandbox.handlers[0].implementation_status, 'present');
+    assert.equal(sandbox.handlers[0].candidate_path, 'handlers/read-invoice.handler.mjs');
+    assert.equal(sandbox.handlers[0].tests.status, 'missing');
     assert.equal(sandbox.handlers[0].status, "unknown", "a manifest requirement is not isolation evidence");
     assert.equal(sandbox.handlers[0].mechanism, "sandbox-exec");
     for (const [platform, mechanism] of [["linux", "bubblewrap"], ["win32", "windows-lpac-job"], ["other", null]]) {

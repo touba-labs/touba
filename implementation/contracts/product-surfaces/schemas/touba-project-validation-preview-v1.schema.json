@@ -1,0 +1,18 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://schemas.touba.dev/product-surfaces/touba-project-validation-preview-v1.schema.json",
+  "title":"touba-project-validation-preview-v1",
+  "type":"object","additionalProperties":false,
+  "required":["schema_version","id","suite_id","revision","expires_at","label","kind","engine","tests","env","timeout_ms"],
+  "properties":{
+    "schema_version":{"const":"touba-project-validation-preview-v1"},
+    "id":{"type":"string","pattern":"^[a-f0-9-]{36}$"},
+    "suite_id":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,63}$"},
+    "revision":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},
+    "expires_at":{"type":"string"},"label":{"type":"string","maxLength":120},
+    "kind":{"enum":["contract","business","package"]},"engine":{"enum":["node","python","package"]},
+    "tests":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":2048}},
+    "env":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":101}},
+    "timeout_ms":{"type":"integer","minimum":1000,"maximum":120000}
+  }
+}

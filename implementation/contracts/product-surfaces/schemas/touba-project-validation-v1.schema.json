@@ -1,0 +1,37 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://schemas.touba.dev/product-surfaces/touba-project-validation-v1.schema.json",
+  "title":"touba-project-validation-v1",
+  "type":"object","additionalProperties":false,
+  "required":["schema_version","enabled","active_id","suites","runs"],
+  "properties":{
+    "schema_version":{"const":"touba-project-validation-v1"},
+    "enabled":{"type":"boolean"},
+    "active_id":{"type":["string","null"]},
+    "suites":{"type":"array","maxItems":32,"items":{
+      "type":"object","additionalProperties":false,"required":["id","label","kind","engine","timeout_ms"],
+      "properties":{
+        "id":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,63}$"},
+        "label":{"type":"string","maxLength":120},
+        "kind":{"enum":["contract","business","package"]},
+        "engine":{"enum":["node","python","package"]},
+        "timeout_ms":{"type":"integer","minimum":1000,"maximum":120000}
+      }
+    }},
+    "runs":{"type":"array","maxItems":50,"items":{
+      "type":"object","additionalProperties":false,
+      "required":["id","suite_id","revision","actor","status","started_at","finished_at","tests","passed","reason","output"],
+      "properties":{
+        "id":{"type":"string","pattern":"^[a-f0-9-]{36}$"},
+        "suite_id":{"type":"string","maxLength":64},
+        "revision":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},
+        "actor":{"type":"string","maxLength":256},
+        "status":{"enum":["running","passed","failed","no_tests","interrupted","stale"]},
+        "started_at":{"type":"string"},"finished_at":{"type":["string","null"]},
+        "tests":{"type":"integer","minimum":0},"passed":{"type":"integer","minimum":0},
+        "reason":{"enum":[null,"timeout","output_limit","cancelled","process_failed","state_changed","server_restarted"]},
+        "output":{"type":"string","maxLength":16384}
+      }
+    }}
+  }
+}

@@ -32,6 +32,12 @@
           "tool_ref": { "type": "string" },
           "handler_kind": { "type": "string" },
           "command_ref": { "type": "string" },
+          "implementation_status": {"enum":["stub","present","unknown"]},
+          "candidate_path": {"type":["string","null"]},
+          "tests":{"type":"object","additionalProperties":false,"required":["status","command","evidence_ref"],"properties":{
+            "status":{"enum":["missing","running","passed","failed","no_tests","interrupted","stale"]},
+            "command":{"type":"string"},"evidence_ref":{"type":["string","null"]}
+          }},
           "status": { "enum": ["isolated", "not_isolated", "unsupported", "unknown"] },
           "mechanism": { "type": ["string", "null"] },
           "grants": { "type": "array", "items": { "type": "string" } },

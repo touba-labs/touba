@@ -5,6 +5,8 @@ import { servicePrincipal, assertApplicationRoute, assertApplicationTarget, crea
 import { createProjectExplorerSurface } from "./explorer-surface.mjs";
 import { createCloudNotifications } from './cloud-notifications.mjs';
 import { createTriggerScheduler, readSchedulePlans, schedulerStore } from './trigger-scheduler.mjs';
+import { createProjectValidation, validationStore } from './project-validation.mjs';
+import { inspectHandlerImplementation } from './handler-implementation.mjs';
 import { createSqliteTriggerStore } from '../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs';
 import { registerEventClient, writeSse } from "./event-clients.mjs";
 import { readChangeProposals, saveChangeProposals, pageChangeProposals, countChangeProposals, auditChangeProposals } from "./change-store.mjs";
@@ -1031,6 +1033,9 @@ function createProjectServerWithLease(options, takeLease) {
     });
   };
 
+  const validation = createProjectValidation({ root: projectRoot,
+    planPath: options.validationPlanPath ? resolve(projectRoot, options.validationPlanPath) : undefined,
+    emit: (type, payload) => publishEvent(eventClients, type, payload, nextEvent) });
   const scheduler = createTriggerScheduler({ enabled: options.scheduleTriggers === true,
     path: join(projectRoot, '.touba/trigger-scheduler.sqlite'),
     plans: () => readSchedulePlans(projectRoot),
@@ -1282,7 +1287,9 @@ function createProjectServerWithLease(options, takeLease) {
       if (
         authToken !== undefined
         && !isPairingAccept
-        && !authorized(request, authToken, mobilePairingsPath, identityPermission)
+        && (!authorized(request, authToken, mobilePairingsPath, identityPermission)
+          || (url.pathname.startsWith('/validation') && request.method !== 'GET'
+            && !constantTimeTextEqual(request.headers.authorization, `Bearer ${authToken}`)))
       ) {
         writeJson(response, 401, { status: "error", code: "ToubaServeUnauthorized" });
         return;
@@ -1365,6 +1372,9 @@ function createProjectServerWithLease(options, takeLease) {
             trigger_fire: "/triggers/fire",
             trigger_scheduler: '/triggers/scheduler',
             trigger_scheduler_acknowledge: '/triggers/scheduler/acknowledge',
+            project_validation: '/validation',
+            project_validation_preview: '/validation/preview',
+            project_validation_start: '/validation/runs',
             trigger_queue_health: "/triggers/queue-health",
             supply_chain_status: "/supply-chain/status",
             governance_readiness: "/governance/readiness",
@@ -1419,6 +1429,7 @@ function createProjectServerWithLease(options, takeLease) {
       if (request.method === "GET" && url.pathname === "/state") {
         await requestHumanWaitWorker();
         writeJson(response, 200, filterLiveStateForIdentity(buildLiveState({
+          validationEvidence: validation.handlerEvidence(),
           contractsRoot,
           projectRoot,
           projectSnapshot,
@@ -1471,6 +1482,26 @@ function createProjectServerWithLease(options, takeLease) {
           } });
         writeJson(response, 200, result);
         return;
+      }
+      if (url.pathname === '/validation' && request.method === 'GET') {
+        const value = validation.inspect();
+        validateContractPayload({contractsRoot,schemaVersion:'touba-project-validation-v1',value,label:'project validation'});
+        writeJson(response,200,value); return;
+      }
+      if (['/validation/preview','/validation/runs'].includes(url.pathname) && request.method === 'POST') {
+        const body = await readJsonBody(request);
+        const principal = humanIdentity ? `${humanIdentity.user.id}:${humanIdentity.session_id}` : 'project-bearer';
+        let value, schemaVersion;
+        if (url.pathname.endsWith('/preview')) {
+          if (!body || Object.keys(body).join(',') !== 'suite_id') throw serviceError('ToubaValidationRequestInvalid','select a configured suite');
+          value = validation.preview(principal,body.suite_id); schemaVersion = 'touba-project-validation-preview-v1';
+        } else {
+          validation.start(principal,body,executionDispatchAuthorityProvider({accessToken:request.headers['x-touba-identity-token'],
+            controlPlaneUrl:identityControlPlaneUrl,serviceToken:identityServiceToken,permission:'governance.apply',expectedProjectRoot:projectRoot}));
+          value = validation.inspect(); schemaVersion = 'touba-project-validation-v1';
+        }
+        validateContractPayload({contractsRoot,schemaVersion,value,label:'project validation'});
+        writeJson(response,200,value); return;
       }
       if (url.pathname.startsWith("/packages/")) {
         const principal = humanIdentity ? `${humanIdentity.user.id}:${humanIdentity.session_id}` : "project-bearer";
@@ -2539,6 +2570,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
       if (request.method === "GET" && url.pathname === "/runtime/sandbox") {
         writeJson(response, 200, buildHandlerSandboxStatus({
+          validationEvidence: validation.handlerEvidence(),
           contractsRoot,
           projectRoot,
           handlerSandboxStatusPath,
@@ -3066,6 +3098,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
     },
     async stop() {
+      await validation.stop();
       await scheduler.stop();
       await notifications.stop();
       explorerSurface.close();
@@ -3113,6 +3146,7 @@ export function buildContractIndex({ contractsRoot, generatedAt = new Date().toI
 }
 
 export function buildLiveState({
+  validationEvidence,
   contractsRoot,
   projectRoot = process.cwd(),
   projectSnapshot = buildProjectSnapshot({ projectRoot }),
@@ -3169,6 +3203,7 @@ export function buildLiveState({
       projectRoot,
     }),
     handler_sandbox_status: buildHandlerSandboxStatus({
+      validationEvidence,
       contractsRoot,
       projectRoot,
       handlerSandboxStatusPath,
@@ -6618,6 +6653,7 @@ function emptyMobileEscalation(generatedAt = new Date().toISOString()) {
 }
 
 export function buildHandlerSandboxStatus({
+  validationEvidence = new Map(),
   contractsRoot,
   projectRoot = process.cwd(),
   handlerSandboxStatusPath = join(projectRoot, DEFAULT_HANDLER_SANDBOX_STATUS_PATH),
@@ -6631,10 +6667,6 @@ export function buildHandlerSandboxStatus({
     errorCode: "ToubaServeHandlerSandboxStatusInvalid",
     message: "handler sandbox status does not match touba-handler-sandbox-status-v1",
   });
-  if (stored !== undefined) {
-    return stored;
-  }
-
   const diagnostics = [];
   const artifacts = collectProjectArtifacts(projectRoot, diagnostics);
   const manifestArtifact = artifacts.find((item) => item.kind === "manifest");
@@ -6645,12 +6677,22 @@ export function buildHandlerSandboxStatus({
   const handlers = Object.entries(bindings)
     .filter(([, binding]) => isPlainObject(binding) && isPlainObject(binding.handler))
     .map(([toolRef, binding]) => handlerSandboxRow({
+      tests: validationEvidence.get(toolRef),
+      projectRoot,
       toolRef,
       binding,
       platform,
       sourceRef: manifestArtifact?.relative_path ?? null,
     }))
     .sort((left, right) => left.tool_ref.localeCompare(right.tool_ref));
+
+  if (stored !== undefined) {
+    const implementations = new Map(handlers.map(row=>[row.tool_ref,row]));
+    return {...stored,handlers:stored.handlers.map(row=>({...row,
+      implementation_status:implementations.get(row.tool_ref)?.implementation_status ?? 'unknown',
+      candidate_path:implementations.get(row.tool_ref)?.candidate_path ?? null,
+      tests:validationEvidence.get(row.tool_ref) ?? {status:'missing',command:'',evidence_ref:null}}))};
+  }
 
   return {
     schema_version: HANDLER_SANDBOX_STATUS_SCHEMA_VERSION,
@@ -6673,7 +6715,7 @@ export function buildHandlerSandboxStatus({
   };
 }
 
-function handlerSandboxRow({ toolRef, binding, platform, sourceRef }) {
+function handlerSandboxRow({ projectRoot, toolRef, binding, platform, sourceRef, tests }) {
   const required = binding.sandbox?.required === true || binding.sandbox?.mode === "required";
   const mechanism = sandboxMechanismForPlatform(platform);
   let status = "not_isolated";
@@ -6690,6 +6732,8 @@ function handlerSandboxRow({ toolRef, binding, platform, sourceRef }) {
     tool_ref: toolRef,
     handler_kind: nonEmptyString(handler.kind) ?? "unknown",
     command_ref: nonEmptyString(handler.command) ?? "unknown",
+    ...inspectHandlerImplementation(projectRoot, handler),
+    tests: tests ?? {status:'missing',command:'',evidence_ref:null},
     status,
     mechanism: required ? mechanism : null,
     grants: normalizeStringList(binding.grants),
@@ -11620,6 +11664,7 @@ function bearerTokenFromAuthorization(authorization) {
 }
 
 export function requiredIdentityPermission(method, pathname) {
+  if (pathname.startsWith('/validation')) return method === 'GET' ? 'executions.read' : 'governance.apply';
   if (method === 'POST' && pathname === '/triggers/scheduler/acknowledge') return 'governance.apply';
   if (pathname === "/traces/explorer") return "executions.read";
   if (method === "GET" && (
@@ -12212,6 +12257,12 @@ function publishRefreshEvents(eventClients, report, nextEvent) {
 }
 
 function httpStatusForError(code) {
+  if (/^ToubaValidation/.test(code ?? '')) {
+    if (['ToubaValidationBusy','ToubaValidationCapacity','ToubaValidationHistoryFull'].includes(code)) return 429;
+    if (['ToubaValidationSuiteMissing','ToubaValidationRunMissing'].includes(code)) return 404;
+    if (['ToubaValidationReviewMissing','ToubaValidationReviewStale','ToubaValidationInputChanged','ToubaValidationPreparationRequired'].includes(code)) return 409;
+    return 400;
+  }
   if (code === "ProjectPreparationReviewStale") return 409;
   if (code === "ToubaServePreparationReviewMissing") return 409;
   if (code === "ToubaServePreparationLimit") return 429;
@@ -12400,6 +12451,10 @@ export function checkToubaProjectState(options = {}) {
         return { schema_version:'touba-scheduler-store-v1', records,
           active_operations: records.filter(row => ['running','pending','interrupted'].includes(row.status)).length };
       }],
+      ['validationPath', '.touba/project-validation.sqlite', path => {
+        const records = validationStore(path).read();
+        return {schema_version:'touba-validation-store-v1',records,active_operations:records.filter(row=>row.status==='running').length};
+      }],
     ]) {
       const path = resolve(options[key] ?? join(projectRoot, fallback));
       copies[key] = join(temporary, key + ".sqlite");
@@ -12515,6 +12570,8 @@ function parseArgs(rawArgs) {
       options.cloudNotifications = true;
     } else if (arg === '--schedule-triggers') {
       options.scheduleTriggers = true;
+    } else if (arg === '--validation-plan') {
+      options.validationPlanPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--identity-service-token-env") {
       options.identityServiceTokenEnv = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--deployment-target-url") {
@@ -12647,6 +12704,7 @@ function usage() {
     "--max-pending-approvals <n> sets the pending approval capacity (default 100, maximum 10000).",
     "--cloud-notifications forwards minimized operational events to the configured Cloud in the background; no effect on project authority.",
     "--schedule-triggers runs enabled, prepared schedule entrypoints with this server's explicit hosts and secrets; one worker, no catch-up replay.",
+    "--validation-plan <path> authorizes fixed, reviewed host test suites for client; no third-party test discovery or shell commands.",
     "--human-approval-host and --agent-decision-provider accept JavaScript (.mjs) and Python (.py) host modules.",
     "--package-hosts activates the reviewed touba.hosts.json package selections at startup; it cannot be combined with explicit host paths.",
     "--package-registry URL --package-registry-trust FILE enables signed Library previews with consumer-selected local trust; no server-side registry requests.",
