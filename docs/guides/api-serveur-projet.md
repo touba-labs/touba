@@ -4,6 +4,32 @@
 L'application authentifie ses utilisateurs, présente les dossiers et transmet
 leurs décisions ; le runtime conserve le contrôle des capacités et des effets.
 
+## Identité applicative Cloud
+
+Dans client, le propriétaire ouvre **Projets → Gérer → Applications** et crée
+une clé avec des entrées exactes et une durée de validité. La clé est affichée
+une fois. Conservez-la dans le gestionnaire de secrets du backend client.
+Envoyez-la dans `X-Touba-Identity-Token` au serveur de projet raccordé au Cloud.
+Si un jeton de transport est configuré, il reste également nécessaire.
+
+| Permission | Appels accessibles |
+| --- | --- |
+| `executions.invoke` | Créer une session sur une entrée autorisée et lui envoyer un message |
+| `executions.read-own` | Lire ses propres sessions et opérations |
+| `executions.cancel-own` | Demander l'annulation de ses propres opérations |
+
+Le principal de service est inscrit dans le journal. La clé ne permet pas de
+signer une décision humaine, de reprendre une approbation ou de changer la
+gouvernance. Une opération soumise à approbation reste en attente de son réviseur.
+La rotation invalide immédiatement l'ancienne clé ; la révocation et les droits
+sont vérifiés à chaque requête, puis à nouveau avant le démarrage d'une opération.
+Les effets déjà exécutés ne sont pas annulés par la révocation.
+
+Le serveur borne une application à 60 écritures par minute et huit opérations
+non terminées, attentes humaines comprises. Utilisez une clé d'idempotence stable
+lors de la soumission d'un message. Une limite atteinte renvoie HTTP 429 ; relisez
+l'opération existante avant toute nouvelle soumission.
+
 ## Terminer une session et archiver l'état
 
 | Action | Route |

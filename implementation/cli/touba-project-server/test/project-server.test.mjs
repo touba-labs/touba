@@ -2940,7 +2940,7 @@ test("HTTP project server executes sandbox entrypoints and triggers through the 
   }
 });
 
-for (const surface of ["sandbox", "interaction"]) {
+for (const surface of ["sandbox", "interaction", "application"]) {
   test(`initial durable ${surface} execution revalidates control-plane authority before handler spawn`, async () => {
     const root = mkdtempSync(join(tmpdir(), `touba-project-server-initial-authority-${surface}-`));
     writeFileSync(join(root, "touba.project.json"), JSON.stringify({ entrypoints: ["strategy:demo.sandbox/RunTool"] }));
@@ -2975,7 +2975,9 @@ for (const surface of ["sandbox", "interaction"]) {
       response.end(JSON.stringify({
         active: identityActive,
         permissions: identityActive ? ["executions.run"] : [],
-        user: { id: "user:initial-authority" },
+        ...(surface === 'application' ? { project_root: root, principal: { kind: 'service', id: 'application-initial' },
+          scopes: ['executions.invoke'], targets: ['strategy:demo.sandbox/RunTool'] }
+          : { user: { id: "user:initial-authority" } }),
       }));
     });
     let service;
@@ -3023,14 +3025,14 @@ for (const surface of ["sandbox", "interaction"]) {
         },
       }, null, 2), "utf8");
       let session;
-      if (surface === "interaction") {
+      if (surface !== "sandbox") {
         session = createInteractionSession({
           request: {
             target_ref: "strategy:demo.sandbox/RunTool",
             target_kind: "strategy",
             presentation: "workflow",
             effect_policy: "allow_declared_external_effects",
-            requested_by: { kind: "user", id: "user:initial-authority" },
+            requested_by: surface === 'application' ? { kind: 'service', id: 'application-initial' } : { kind: "user", id: "user:initial-authority" },
           },
           sessionsPath,
         });

@@ -109,6 +109,13 @@ function sessionHasActiveOperation(session) {
   return session.operations.some((operation) => !TERMINAL_OPERATION_STATUSES.has(operation.status));
 }
 
+export function countApplicationOperations(sessionsPath, applicationId) {
+  return withSessionStoreErrors(() => indexedSessionStore(sessionsPath).project(session =>
+    session.created_by?.kind === 'service' && session.created_by.id === applicationId
+      ? session.operations.filter(operation => !TERMINAL_OPERATION_STATUSES.has(operation.status)).length : 0,
+  { limit: MAX_SESSIONS })).reduce((sum, count) => sum + count, 0);
+}
+
 function compareInteractionSessionAge(left, right) {
   return left.updated_at.localeCompare(right.updated_at)
     || left.created_at.localeCompare(right.created_at)

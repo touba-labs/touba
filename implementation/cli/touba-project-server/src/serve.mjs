@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
+import { countApplicationOperations } from './interactions.mjs';
+import { servicePrincipal, assertApplicationRoute, assertApplicationTarget, createApplicationAdmission } from './application-access.mjs';
 import { createProjectExplorerSurface } from "./explorer-surface.mjs";
 import { registerEventClient, writeSse } from "./event-clients.mjs";
 import { readChangeProposals, saveChangeProposals, pageChangeProposals, countChangeProposals, auditChangeProposals } from "./change-store.mjs";
@@ -1221,6 +1223,7 @@ function createProjectServerWithLease(options, takeLease) {
     return task;
   };
 
+  const applicationAdmission = createApplicationAdmission();
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${host}:${port}`}`);
@@ -1260,12 +1263,13 @@ function createProjectServerWithLease(options, takeLease) {
           permission: identityPermission,
           serviceToken: identityServiceToken,
           expectedProjectRoot: projectRoot,
+          allowService: true,
         });
         if (!identityResult.active) {
           writeJson(response, 401, {
             status: "error",
             code: "ToubaServeIdentityUnauthorized",
-            message: "an active human identity session is required",
+            message: "an active project identity is required",
           });
           return;
         }
@@ -1280,6 +1284,9 @@ function createProjectServerWithLease(options, takeLease) {
           return;
         }
         humanIdentity = identityResult;
+        assertApplicationRoute(identityResult, request.method, url.pathname,
+          sessionId => getInteractionSession({ sessionId, sessionsPath: interactionSessionsPath }));
+        applicationAdmission(identityResult, request.method);
       }
       if (request.method === "GET" && url.pathname === "/health") {
         writeJson(response, 200, {
@@ -1564,6 +1571,7 @@ function createProjectServerWithLease(options, takeLease) {
             accessToken: request.headers["x-touba-identity-token"],
             controlPlaneUrl: identityControlPlaneUrl,
             serviceToken: identityServiceToken,
+            expectedProjectRoot: projectRoot,
           }),
           effectJournalPath,
           executionKind: "entrypoint",
@@ -1607,6 +1615,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
       if (request.method === "POST" && url.pathname === "/interactions/sessions") {
         const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
+        if (humanIdentity?.principal?.kind === 'service') assertApplicationTarget(humanIdentity, body.target_ref);
         validateContractPayload({
           contractsRoot,
           schemaVersion: INTERACTION_SESSION_CREATE_SCHEMA_VERSION,
@@ -1901,6 +1910,10 @@ function createProjectServerWithLease(options, takeLease) {
         }
         const session = getInteractionSession({ sessionId, sessionsPath: interactionSessionsPath });
         const executionKind = session.target_kind === "trigger" ? "trigger" : "entrypoint";
+        if (humanIdentity?.principal?.kind === 'service'
+          && countApplicationOperations(interactionSessionsPath, humanIdentity.principal.id) >= 8) {
+          throw serviceError('ToubaServeApplicationRateLimited', 'application already has eight unfinished operations');
+        }
         const runId = `sandbox_${compactTimestamp(new Date().toISOString())}_${randomBytes(3).toString("hex")}`;
         const capacityReservation = sandboxRunMaySuspendForHuman({
           executionKind,
@@ -1949,6 +1962,9 @@ function createProjectServerWithLease(options, takeLease) {
             accessToken: request.headers["x-touba-identity-token"],
             controlPlaneUrl: identityControlPlaneUrl,
             serviceToken: identityServiceToken,
+            expectedProjectRoot: projectRoot,
+            principal: humanIdentity?.principal,
+            targetRef: session.target_ref,
           }),
           operation,
           request: runRequest,
@@ -2044,6 +2060,7 @@ function createProjectServerWithLease(options, takeLease) {
               accessToken: request.headers["x-touba-identity-token"],
               controlPlaneUrl: identityControlPlaneUrl,
               serviceToken: identityServiceToken,
+              expectedProjectRoot: projectRoot,
             }),
             operation,
             request: body,
@@ -2121,6 +2138,7 @@ function createProjectServerWithLease(options, takeLease) {
             controlPlaneUrl: identityControlPlaneUrl,
             serviceToken: identityServiceToken,
             permission: decisionContinuationOnly(humanIdentity) ? "decisions.act" : "executions.run",
+            expectedProjectRoot: projectRoot,
           }),
           operation: resumeValidation.operation,
           request: body,
@@ -2600,6 +2618,7 @@ function createProjectServerWithLease(options, takeLease) {
             controlPlaneUrl: identityControlPlaneUrl,
             serviceToken: identityServiceToken,
             permission: decisionContinuationOnly(humanIdentity) ? "decisions.act" : "executions.run",
+            expectedProjectRoot: projectRoot,
           }),
           durableResumeClaimedObserver: options.durableResumeClaimedObserver,
           effectJournalPath,
@@ -11589,6 +11608,7 @@ export async function authorizeHumanIdentity({
   permission,
   serviceToken,
   expectedProjectRoot,
+  allowService = false,
 }) {
   if (typeof accessToken !== "string" || accessToken.trim() === "") {
     return { active: false, allowed: false };
@@ -11636,6 +11656,11 @@ export async function authorizeHumanIdentity({
     );
   }
   const permissions = Array.isArray(result.permissions) ? result.permissions : [];
+  const application = allowService ? servicePrincipal(result, expectedProjectRoot) : null;
+  if (application !== null) return { ...application, active: result.active === true,
+    allowed: result.active === true && ['executions.run', 'executions.read'].includes(permission),
+    permissions: [], organization_id: result.organization_id, audience: result.audience };
+  if (result.principal !== undefined) return { active: false, allowed: false, permissions: [] };
   const active = result.active === true && nonEmptyString(result.user?.id) !== undefined
     && (result.project_root === undefined || (expectedProjectRoot === undefined
       || result.project_root === expectedProjectRoot));
@@ -11666,7 +11691,7 @@ export function filterLiveStateForIdentity(state, identity) {
   return result;
 }
 
-function executionDispatchAuthorityProvider({ accessToken, controlPlaneUrl, serviceToken, permission = "executions.run" }) {
+function executionDispatchAuthorityProvider({ accessToken, controlPlaneUrl, serviceToken, permission = "executions.run", expectedProjectRoot, principal, targetRef }) {
   if (controlPlaneUrl === undefined) return undefined;
   return async () => {
     try {
@@ -11675,7 +11700,11 @@ function executionDispatchAuthorityProvider({ accessToken, controlPlaneUrl, serv
         controlPlaneUrl,
         permission,
         serviceToken,
+        expectedProjectRoot,
+        allowService: principal?.kind === 'service',
       });
+      if (principal?.kind === 'service') return identity.active && identity.allowed
+        && identity.principal?.id === principal.id && identity.scopes.includes('executions.invoke') && identity.targets.includes(targetRef);
       return identity.active && identity.allowed;
     } catch {
       return false;
@@ -11696,6 +11725,10 @@ export function bindDecisionSigner(body, identity) {
 
 function bindHumanActor(body, field, identity) {
   if (identity === null) return body;
+  if (identity.principal?.kind === 'service') {
+    if (field !== 'requested_by') throw serviceError('ToubaServeApplicationPermissionDenied', 'an application cannot act as a human signer');
+    return { ...(body ?? {}), [field]: { kind: 'service', id: identity.principal.id } };
+  }
   const userId = nonEmptyString(identity.user?.id);
   if (userId === undefined) {
     throw serviceError(
@@ -12135,6 +12168,8 @@ function httpStatusForError(code) {
     || code === "ToubaServeIdentityUnauthorized"
   ) return 401;
   if (code === "ToubaServeIdentityPermissionDenied") return 403;
+  if (code === 'ToubaServeApplicationPermissionDenied') return 403;
+  if (code === 'ToubaServeApplicationRateLimited') return 429;
   if (code === "ToubaServeIdentityUnavailable") return 503;
   if (
     code === "ToubaServeDecisionReplayRejected"

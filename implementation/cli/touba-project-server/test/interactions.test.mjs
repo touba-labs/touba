@@ -11,6 +11,7 @@ import { readOperationRecovery } from '../src/serve.mjs';
 
 import {
   archiveInteractionSession,
+  countApplicationOperations,
   bufferedInteractionProgress,
   completeInteractionOperation,
   createInteractionSession,
@@ -24,6 +25,19 @@ import {
   resumeInterruptedInteractionOperation,
   startInteractionOperation,
 } from "../src/interactions.mjs";
+
+test('application concurrency counts only its unfinished operations', t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-app-count-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sessionsPath = join(root, 'sessions.json');
+  const session = createInteractionSession({ sessionsPath, request: {
+    target_ref: 'function:demo.app/Echo', target_kind: 'function', presentation: 'invocation', effect_policy: 'runtime_only', requested_by: { kind: 'service', id: 'client' },
+  } });
+  const operation = enqueueInteractionOperation({ sessionsPath, sessionId: session.session_id, runId: 'count-run', message: interactionMessage() });
+  assert.equal(countApplicationOperations(sessionsPath, 'client'), 1);
+  assert.equal(countApplicationOperations(sessionsPath, 'other'), 0);
+  failInteractionOperation({ sessionsPath, sessionId: session.session_id, operationId: operation.operation_id, error: { code: 'FixtureFailure', message: 'bounded fixture' } });
+  assert.equal(countApplicationOperations(sessionsPath, 'client'), 0);
+});
 
 test("interaction operations persist bounded progress without raw runtime payloads", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-interaction-progress-"));
