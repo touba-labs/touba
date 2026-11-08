@@ -186,12 +186,16 @@
             "minLength": 1
           },
           "status": {
-            "const": "installed"
+            "enum": ["installed", "unregistered", "invalid"]
           },
           "digest": {
             "type": "string",
             "pattern": "^sha256:[0-9a-f]{64}$"
           },
+          "digest_kind": { "enum": ["package", "manifest"] },
+          "manifest_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+          "lock_digest": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" },
+          "expected_digest": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" },
           "path": {
             "type": "string",
             "minLength": 1

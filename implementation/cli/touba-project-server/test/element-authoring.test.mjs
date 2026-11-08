@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { compileProposedSources } from "../src/source-validation.mjs";
 import { buildAuthorityGraph } from "../src/serve.mjs";
+import { initProject, prepareProject } from "../../touba-project/src/project.mjs";
 
 import {
   buildElementAuthoringChangeSet,
@@ -323,6 +324,67 @@ function requestFor(element) {
     reason: `Add ${element.name}.`,
   };
 }
+
+test("low-code construction compiles a new module, records, enums and explicit bodies without applying them", async () => {
+  const root = mkdtempSync(join(tmpdir(), "touba-authoring-empty-"));
+  try {
+    initProject({ root, language: "javascript" });
+    const author = element => buildElementAuthoringChangeSet({ projectRoot: root, request: { ...requestFor(element), module_ref: "fresh.main" } });
+    const apply = result => { for (const item of result.changes) { mkdirSync(dirname(join(root, item.path)), { recursive: true }); writeFileSync(join(root, item.path), item.content); } };
+    const module = author({ kind: "module", name: "main", description: "" });
+    assert.equal(module.element_ref, "module:fresh.main");
+    assert.deepEqual(compileProposedSources({ projectRoot: root, targets: module.changes }).diagnostics, []);
+    apply(module);
+    assert.throws(() => author({ kind: "module", name: "main" }), { code: "ToubaServeElementAlreadyExists" });
+    for (const element of [
+      { kind: "enum", name: "Status", variants: ["pending", "done"] },
+      { kind: "type", name: "Invoice", fields: [{ name: "amount", type_ref: "Int" }, { name: "status", type_ref: "Status" }] },
+      { kind: "function", name: "Seven", description: "Produce a constant numeric result.", takes: [], gives: "Int", body: ["give 7"], entrypoint: true },
+      { kind: "strategy", name: "Daily", description: "Return the supplied daily request.", takes: [{ name: "request", type_ref: "Text" }], gives: "Text", body: ["give request"], entrypoint: true },
+      { kind: "trigger", name: "Schedule", trigger: { event_kind: "schedule", schedule: "every 1h", target_ref: "strategy:fresh.main/Daily", arguments: { request: "daily" }, max_runs_per_day: 24, timeout_ms: 30000 }, entrypoint: true },
+    ]) {
+      const change = author(element);
+      assert.deepEqual(compileProposedSources({ projectRoot: root, targets: change.changes }).diagnostics, [], element.name);
+      apply(change);
+    }
+    const prepared = await prepareProject({ root, mode: "write" });
+    assert.equal(prepared.status, "success", JSON.stringify(prepared.diagnostics));
+    const checked = await prepareProject({ root, mode: "check" });
+    assert.equal(checked.status, "success", JSON.stringify(checked.diagnostics));
+    const config = JSON.parse(readFileSync(join(root, "touba.project.json")));
+    assert.ok(config.entrypoints.includes("trigger:fresh.main/Schedule"));
+    const invalid = author({ kind: "function", name: "Invalid", description: "Reject mismatched result types.", gives: "Int", body: ['give "not an integer"'] });
+    assert.ok(compileProposedSources({ projectRoot: root, targets: invalid.changes }).diagnostics.some(row => row.severity === "error"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("authoring compiles tool memory scopes and operation-bound approval", () => {
+  const project = createProject();
+  try {
+    const change = buildElementAuthoringChangeSet({ projectRoot: project.root, request: requestFor({
+      kind: "tool", name: "ApprovedRead", description: "Read the authorized memory after approval.",
+      takes: [{ name: "request", type_ref: "Text" }], gives: "Text", requirements: ["memory_read"],
+      memories: [{ ref: `memory:${MODULE_REF}/ProjectNotes`, access: "read" }],
+      handler: { effect_contract: { kind: "none" } },
+      approval_policy: { role: "controller", timeout_ms: 3600000, distinct_from: "initiator" },
+    }) });
+    const compiled = compileProposedSources({ projectRoot: project.root, targets: change.changes });
+    assert.deepEqual(compiled.diagnostics, []);
+    const tool = compiled.air.definitions.tools.find(item => item.id.endsWith("/ApprovedRead"));
+    assert.equal(tool.approval_policy.role, "controller");
+    assert.match(change.changes[0].content, /uses memory ProjectNotes read/);
+  } finally { project.dispose(); }
+});
+
+test("authoring rejects escaped bodies, malformed data declarations and misplaced approval", () => {
+  for (const element of [
+    { kind: "function", body: ["give 1\nstrategy Inject"] }, { kind: "function", body: ["\tgive 1"] },
+    { kind: "tool", body: ["give 1"], handler: { effect_contract: { kind: "none" } } },
+    { kind: "type", fields: [] }, { kind: "enum", variants: ["same", "same"] },
+    { kind: "memory", approval_policy: { role: "controller", timeout_ms: 1000 } },
+    { kind: "agent", entrypoint: true, callable_by: [`strategy:${MODULE_REF}/ExistingStrategy`], responsibility: "Answer the explicit user request." },
+  ]) assert.throws(() => normalizeElementAuthoringRequest(requestFor({ name: "Rejected", description: "Invalid declaration must be rejected.", ...element })));
+});
 
 function createProject() {
   const root = mkdtempSync(join(tmpdir(), "touba-element-authoring-"));

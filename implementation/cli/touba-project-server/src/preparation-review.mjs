@@ -20,6 +20,9 @@ export function preparationChanges(actions) {
     } else if (action.kind === "review_fragment_binding") {
       changes.push({ kind: action.kind, subject: action.tool_ref, field: "fragment",
         before: value(action.before), after: value(action.after) });
+    } else if (["would_apply_host_decision", "apply_host_decision"].includes(action.kind)
+      && action.target_ref?.startsWith("trigger:") && action.field === "enabled") {
+      changes.push({ kind: "update_trigger", subject: action.target_ref, field: "enabled", before: value(action.before), after: value(action.after) });
     }
   }
   if (changes.length > 512 || changes.some(item => JSON.stringify(item).length > 16384)) {

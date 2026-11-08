@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, realpathS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { addPackage, checkPackageArchive, snapshotPackage, resolveRegistryArchive } from "../../touba-project/src/packages.mjs";
+import { addPackage, updatePackage, removePackage, isNewerPackageVersion, checkPackageArchive, snapshotPackage, resolveRegistryArchive } from "../../touba-project/src/packages.mjs";
 import { readPackageWorkspace, verifyInstalledPackages } from "../../touba-project/src/package-store.mjs";
 import { PACKAGE_LIMITS, PACKAGE_NAME, packageFile } from "../../touba-project/src/package-contract.mjs";
 import { packageHostInventory, readPackageHostPlan } from "../../touba-project/src/package-host-plan.mjs";
@@ -32,7 +32,7 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
   };
   function discard(id) {
     const item = pending.get(id);
-    if (item) { pending.delete(id); rmSync(item.directory, { recursive: true, force: true }); }
+    if (item) { pending.delete(id); if (item.directory) rmSync(item.directory, { recursive: true, force: true }); }
   }
   function expire() {
     for (const [id, item] of pending) if (item.expires <= now()) discard(id);
@@ -81,14 +81,20 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
         if (!Buffer.isBuffer(bytes) || bytes.length > PACKAGE_UPLOAD_LIMIT) fail("ToubaServePackageInvalid", "Invalid package archive");
         writeFileSync(archive, bytes, { flag: "wx", mode: 0o600 });
       }
-      const checked = await checkPackageArchive(archive, { projectRoot: root });
+      const checked = await checkPackageArchive(archive, { projectRoot: root, inspectContracts: true });
+      const existing = verifyInstalledPackages(root, readPackageWorkspace(root).records).packages.find(item => item.name === checked.package);
+      if (existing?.version === checked.version && existing.digest !== checked.packages.find(item => item.name === checked.package)?.digest) fail("PackageVersionConflict", "an existing version cannot be replaced with different content");
+      const updating = existing && existing.version !== checked.version;
+      if (updating && !isNewerPackageVersion(checked.version, existing.version)) fail("PackageVersionConflict", "an update requires a newer version");
       if (source.name !== undefined && checked.package !== source.name) fail("ToubaServePackageInvalid", "Folder and package identities differ");
       if (source.proof && (checked.package !== source.proof.name || checked.version !== source.proof.version)) fail('PackageDependencyConflict', 'archive identity differs from the signed registry selection');
       if (closed || before !== revision()) fail("ToubaServePackageConflict", "Project changed during preview");
       const id = randomUUID(), expires = now() + 300000;
-      pending.set(id, { principal, directory, archive, digest: hash(bytes), revision: before, expires, proof: source.proof });
+      pending.set(id, { principal, directory, archive, digest: hash(bytes), revision: before, expires, proof: source.proof, updating: updating ? checked.package : null });
       return { schema_version: "touba-project-package-preview-v1", id, revision: before, archive_digest: hash(bytes),
         expires_at: new Date(expires).toISOString(), name: checked.package, version: checked.version,
+        operation: updating ? "update" : "install", previous_version: existing?.version ?? null,
+        contracts: checked.contracts,
         packages: checked.packages.map(summary), validation: "source_contracts" };
     } catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
     finally { working = false; }
@@ -132,6 +138,29 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
     },
     preview: (principal, bytes) => preview(principal, { bytes }),
     previewLocal: (principal, name) => preview(principal, { name }),
+    previewRemoval(principal, name) {
+      expire();
+      if (closed || working) fail("ToubaServePackageBusy", "A package operation is in progress");
+      if (pending.size + resolutions.size >= 2) fail("ToubaServePackageCapacity", "Cancel or finish a pending package preview");
+      if (!PACKAGE_NAME.test(name ?? "")) fail("ToubaServePackageInvalid", "Select an installed package name");
+      const lock = verifyInstalledPackages(root, readPackageWorkspace(root).records);
+      const entry = lock.packages.find(item => item.name === name);
+      if (!entry) fail("PackageNotInstalled", "Select an installed package");
+      const id = randomUUID(), expires = now() + 300000, before = revision();
+      pending.set(id, { principal, removal: name, digest: entry.digest, revision: before, expires });
+      return { schema_version: "touba-project-package-removal-v1", id, revision: before, package_digest: entry.digest,
+        name, version: entry.version, expires_at: new Date(expires).toISOString() };
+    },
+    applyRemoval(principal, request) {
+      expire();
+      if (closed || working) fail("ToubaServePackageBusy", "A package operation is in progress");
+      const item = pending.get(request?.id);
+      if (!item?.removal || item.principal !== principal) fail("ToubaServePackagePreviewMissing", "Removal preview is unavailable");
+      if (request.revision !== item.revision || revision() !== item.revision || request.package_digest !== item.digest) fail("ToubaServePackageConflict", "Project changed; preview again");
+      pending.delete(request.id); working = true;
+      try { return { ...removePackage(item.removal, { root }), package_digest: item.digest }; }
+      finally { working = false; }
+    },
     cancel(principal, id) {
       const resolution = resolutions.get(id);
       if (resolution) {
@@ -146,7 +175,7 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
       expire();
       if (closed || working) fail("ToubaServePackageBusy", "A package operation is in progress");
       const item = pending.get(request?.id);
-      if (!item || item.principal !== principal) fail("ToubaServePackagePreviewMissing", "Package preview is unavailable");
+      if (!item || item.removal || item.principal !== principal) fail("ToubaServePackagePreviewMissing", "Package preview is unavailable");
       if (request.revision !== item.revision || revision() !== item.revision || request.archive_digest !== item.digest
         || hash(readFileSync(item.archive)) !== item.digest) fail("ToubaServePackageConflict", "Package or project changed; preview again");
       working = true;
@@ -154,7 +183,7 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
       pending.delete(request.id);
       try {
         if (item.proof) await verifyResolution(item.proof);
-        return await addPackage(item.archive, { root });
+        return await (item.updating ? updatePackage(item.archive, { root, name: item.updating }) : addPackage(item.archive, { root }));
       }
       finally { rmSync(item.directory, { recursive: true, force: true }); working = false; }
     },

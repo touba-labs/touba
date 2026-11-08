@@ -15,13 +15,26 @@
       "required": ["kind", "name", "description"],
       "properties": {
         "kind": {
-          "enum": ["memory", "function", "tool", "skill", "agent", "strategy", "trigger"]
+          "enum": ["module", "type", "enum", "memory", "function", "tool", "skill", "agent", "strategy", "trigger"]
         },
         "name": { "type": "string" },
         "description": { "type": "string" },
         "responsibility": { "type": "string", "minLength": 12 },
+        "entrypoint": { "type": "boolean" },
+        "fields": { "$ref": "#/properties/element/properties/takes" },
+        "variants": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "type": "string" } },
+        "body": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "type": "string", "maxLength": 65536 } },
+        "approval_policy": {
+          "type": "object", "additionalProperties": false, "required": ["role", "timeout_ms"],
+          "properties": {
+            "role": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 2592000000 },
+            "distinct_from": { "enum": ["initiator", "previous", "initiator_and_previous"] }
+          }
+        },
         "takes": {
           "type": "array",
+          "maxItems": 64,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -102,6 +115,7 @@
               "type": "object",
               "additionalProperties": { "type": "string" }
             },
+            "arguments": { "type": "object", "maxProperties": 64, "additionalProperties": { "type": ["string", "number", "boolean"] } },
             "max_runs_per_day": { "type": "integer" },
             "timeout_ms": { "type": "integer" }
           }

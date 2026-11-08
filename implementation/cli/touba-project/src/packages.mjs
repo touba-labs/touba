@@ -4,11 +4,13 @@ import { dirname, join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import * as tar from "tar";
 import semver from "semver";
+export const isNewerPackageVersion = (next, current) => Boolean(semver.valid(next) && semver.valid(current) && semver.gt(next, current));
 import { PACKAGE_LIMITS, PACKAGE_MANIFEST, PACKAGE_NAME, PACKAGE_RUNTIME_VERSION as runtimeVersion, assertPackageUnchanged, packageDigest, packageError, packageFile, packagePath, readPackage } from "./package-contract.mjs";
 import { PACKAGE_LOCK, PACKAGE_TRANSACTION, assertAuthorWritable, assertOnlyInventory, assertPlainDirectory, assertPackageDirectory, findPackageWorkspace, readPackageWorkspace, setWorkspacePackages, verifyInstalledPackages } from "./package-store.mjs";
 export { newPackage } from "./package-author.mjs";
 import { resolveRegistryPackage } from "./registry.mjs";
 import { createRegistryReader } from "./package-fetch.mjs";
+import { toolContract } from "./package-governance.mjs";
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
@@ -115,11 +117,20 @@ export async function checkPackage(path, options = {}) {
   }
   const closure = packageClosure(path, options);
   const { validatePackageSources } = await import("./project.mjs");
-  const diagnostics = await validatePackageSources(closure.packages, options);
+  let contracts;
+  const diagnostics = await validatePackageSources(closure.packages, { ...options,
+    onPackageContracts: options.inspectContracts ? entries => {
+      contracts = closure.packages.map(pkg => ({ name: pkg.document.name,
+        tools: Object.fromEntries(entries.filter(entry => entry.packageName === pkg.document.name)
+          .flatMap(entry => (entry.document.definitions?.tools ?? []).filter(tool => tool.id.startsWith(`tool:${entry.document.module.name}/`)))
+          .map(tool => [tool.id, toolContract(tool)])),
+        handlers: (pkg.document.handlers ?? []).map(handler => ({ tool: handler.tool, entrypoint: handler.path })),
+      }));
+    } : undefined });
   if (diagnostics.length) throw Object.assign(packageError("PackageSourceInvalid",
     diagnostics.map(d => `${d.source_path ?? ""}${d.source_ref ? `:${d.source_ref.start_line + 1}:${d.source_ref.start_column + 1}` : ""} ${d.code}: ${d.message}`.trim()).join("\n")), { diagnostics });
   const missing = ["description", "publisher", "license"].filter(field => !closure.first.document[field]);
-  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: missing.length ? [`Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : [], packages: closure.packages.map(pkg => ({ name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, files: pkg.files.length, requirements: pkg.requirements })), tests: "Source contracts checked. Author tests are not executed automatically.", closure };
+  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: missing.length ? [`Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : [], packages: closure.packages.map(pkg => ({ name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, files: pkg.files.length, requirements: pkg.requirements })), tests: "Source contracts checked. Author tests are not executed automatically.", closure, ...(contracts ? { contracts } : {}) };
 }
 
 function copyPackage(pkg, destination) {
@@ -193,15 +204,26 @@ export function unpackPackage(archive, destination) {
 }
 
 export async function addPackage(path, { root = process.cwd(), ...options } = {}) {
+  return installPackage(path, { root, ...options });
+}
+
+export async function updatePackage(path, { root = process.cwd(), name, ...options } = {}) {
+  if (!PACKAGE_NAME.test(name ?? "")) throw packageError("PackageNameInvalid", "select the installed package to update");
+  return installPackage(path, { root, ...options }, name);
+}
+
+async function installPackage(path, { root, ...options }, replacing) {
   root = findPackageWorkspace(root);
   const workspace = readPackageWorkspace(root);
   const { path: configPath, bytes: configBytes, document: config } = workspace;
   const records = [...workspace.records];
   const lock = verifyInstalledPackages(root, records);
+  if (replacing && !lock.packages.some(entry => entry.name === replacing)) throw packageError("PackageNotInstalled", "only an installed package can be updated");
   const oldLock = existsSync(join(root, PACKAGE_LOCK)) ? readFileSync(join(root, PACKAGE_LOCK)) : undefined;
   assertPlainDirectory(join(root, "packages"));
   const staging = mkdtempSync(join(root, ".touba-package-stage-"));
   const installed = [];
+  const replaced = [];
   let transaction = false;
   let metadataChanged = false;
   let settled = false;
@@ -212,6 +234,16 @@ export async function addPackage(path, { root = process.cwd(), ...options } = {}
     if (!lstatSync(path).isDirectory() && !path.endsWith(PACKAGE_MANIFEST)) path = unpackPackage(path, join(staging, "extracted"));
     const checked = await checkPackage(path, { ...options, projectRoot: root });
     const packages = checked.closure.packages;
+    if (replacing && checked.package !== replacing) throw packageError("PackageNameConflict", "replacement identity differs from the selected package");
+    if (replacing) {
+      const previous = lock.packages.find(entry => entry.name === replacing);
+      if (!semver.gt(checked.version, previous.version)) throw packageError("PackageVersionConflict", "an update requires a newer version; an existing version is immutable");
+      for (const record of records) {
+        const dependent = readPackage(resolve(root, record.manifest)).document;
+        if (dependent.name !== replacing && Object.hasOwn(dependent.dependencies ?? {}, replacing)
+          && dependent.dependencies[replacing] !== checked.version) throw packageError("PackageInUse", `${dependent.name} requires ${replacing}@${dependent.dependencies[replacing]}`);
+      }
+    }
     if (requestedName && checked.package !== requestedName) throw packageError("PackageNameConflict", "folder identity differs from the requested package");
     if (workspace.author && packages.some(pkg => pkg.document.name === config.name)) throw packageError("PackageDependencyCycle", "a package cannot depend on itself");
     const updates = [];
@@ -220,7 +252,8 @@ export async function addPackage(path, { root = process.cwd(), ...options } = {}
       const destination = join(root, "packages", pkg.document.name);
       const manifest = `packages/${pkg.document.name}/${PACKAGE_MANIFEST}`;
       const existing = lock.packages.find(entry => entry.name === pkg.document.name);
-      if (existing && (existing.version !== pkg.document.version || existing.digest !== pkg.digest)) throw packageError("PackageDependencyConflict", `different package already installed: ${pkg.document.name}`);
+      const replacement = existing && pkg.document.name === replacing;
+      if (existing && !replacement && (existing.version !== pkg.document.version || existing.digest !== pkg.digest)) throw packageError("PackageDependencyConflict", `different package already installed: ${pkg.document.name}`);
       const aliases = records.filter(record => resolve(root, record.manifest) === resolve(root, manifest));
       if (aliases.length > 1) throw packageError("PackageNameConflict", `duplicate project entry ${manifest}`);
       for (const record of previousRecords) {
@@ -229,26 +262,32 @@ export async function addPackage(path, { root = process.cwd(), ...options } = {}
       if (existsSync(destination)) {
         const current = readPackage(destination, { runtimeVersion });
         assertOnlyInventory(current);
-        if (current.digest !== pkg.digest) throw packageError("PackageAlreadyExists", `refusing to replace ${destination}`);
+        if (current.digest !== pkg.digest && !replacement) throw packageError("PackageAlreadyExists", `refusing to replace ${destination}`);
+        if (replacement) {
+          copyPackage(pkg, join(staging, pkg.document.name));
+          updates.push({ source: join(staging, pkg.document.name), destination, backup: join(staging, "previous-package") });
+        }
       } else {
         copyPackage(pkg, join(staging, pkg.document.name));
         updates.push({ source: join(staging, pkg.document.name), destination });
       }
       if (!existing) lock.packages.push({ name: pkg.document.name, version: pkg.document.version, manifest, digest: pkg.digest, files: pkg.files });
+      else if (replacement) Object.assign(existing, { version: pkg.document.version, digest: pkg.digest, files: pkg.files });
       if (!aliases.length) records.push({ manifest, version: pkg.document.version });
       else { aliases[0].version = pkg.document.version; delete aliases[0].editable; }
     }
     if (!readFileSync(configPath).equals(configBytes)) throw packageError("PackageProjectChanged", "project changed during validation; retry");
     const nowLock = existsSync(join(root, PACKAGE_LOCK)) ? readFileSync(join(root, PACKAGE_LOCK)) : undefined;
     if (oldLock?.toString() !== nowLock?.toString()) throw packageError("PackageProjectChanged", "lock changed during validation; retry");
-    writeFileSync(join(root, PACKAGE_TRANSACTION), json({ pid: process.pid, staging, packages: packages.map(p => p.document.name) }), { flag: "wx", mode: 0o600 });
+    writeFileSync(join(root, PACKAGE_TRANSACTION), json({ pid: process.pid, staging, replacing, packages: packages.map(p => p.document.name) }), { flag: "wx", mode: 0o600 });
     transaction = true;
     // Recheck after acquiring the exclusive marker: another installation may
     // have completed between the earlier snapshot check and this acquisition.
     if (!readFileSync(configPath).equals(configBytes) || oldLock?.toString() !== (existsSync(join(root, PACKAGE_LOCK)) ? readFileSync(join(root, PACKAGE_LOCK), "utf8") : undefined)) throw packageError("PackageProjectChanged", "project changed before commit; retry");
     mkdirSync(join(root, "packages"), { recursive: true });
     for (const update of updates) {
-      if (existsSync(update.destination)) throw packageError("PackageAlreadyExists", "destination changed during validation");
+      if (update.backup) { renameSync(update.destination, update.backup); replaced.push(update); }
+      else if (existsSync(update.destination)) throw packageError("PackageAlreadyExists", "destination changed during validation");
       renameSync(update.source, update.destination); installed.push(update.destination);
     }
     lock.packages.sort((a, b) => a.name.localeCompare(b.name));
@@ -259,7 +298,7 @@ export async function addPackage(path, { root = process.cwd(), ...options } = {}
     metadataChanged = true;
     renameSync(join(staging, "project.json"), configPath);
     settled = true;
-    return { status: "success", command: "package add", packages: checked.packages, notes: ["Installed and registered. Execution permissions remain in the consuming project."] };
+    return { status: "success", command: replacing ? "package update" : "package add", packages: checked.packages, notes: ["Installed and registered. Execution permissions remain in the consuming project."] };
   } catch (error) {
     if (transaction) {
       if (metadataChanged) {
@@ -268,6 +307,7 @@ export async function addPackage(path, { root = process.cwd(), ...options } = {}
         else rmSync(join(root, PACKAGE_LOCK), { force: true });
       }
       for (const path of installed.reverse()) rmSync(path, { recursive: true, force: true });
+      for (const update of replaced.reverse()) renameSync(update.backup, update.destination);
       settled = true;
     }
     throw error;

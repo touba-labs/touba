@@ -5,10 +5,13 @@ import { registerEventClient, writeSse } from "./event-clients.mjs";
 import { readChangeProposals, saveChangeProposals, pageChangeProposals, countChangeProposals, auditChangeProposals } from "./change-store.mjs";
 import { createProjectTraceExplorer } from "./trace-explorer-surface.mjs";
 import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT } from "./package-surface.mjs";
+import { inspectPackageInstallation } from "./package-inspection.mjs";
 import { createProjectPreparation } from "./project-preparation.mjs";
 import { validateBindingFragmentDocument } from "../../touba-project/src/project.mjs";
 import { compileProposedSources } from "./source-validation.mjs";
 import { observeTriggerStores } from "./trigger-observation.mjs";
+import { buildWorkspaceSummary, workspaceActivity } from "./workspace-summary.mjs";
+import serverPackage from "../package.json" with { type: "json" };
 import { isDecisionContinuationRoute, decisionContinuationOnly, assertDecisionContinuation } from "./decision-continuation.mjs";
 import { toolApprovalReview, PARALLEL_APPROVAL_METADATA_FIELDS, validateParallelApprovalMetadata } from "./tool-approval-review.mjs";
 import { projectOperationBudgets } from "./operation-budgets.mjs";
@@ -1302,6 +1305,8 @@ function createProjectServerWithLease(options, takeLease) {
               package_registry_preview: "/packages/registry/<resolution_id>/preview",
             } : {}),
             package_apply: "/packages/apply",
+            package_remove_preview: "/packages/remove/preview",
+            package_remove_apply: "/packages/remove/apply",
             package_cancel: "/packages/cancel",
             authority_graph: "/authority/graph",
             identity: "/identity",
@@ -1392,6 +1397,30 @@ function createProjectServerWithLease(options, takeLease) {
         }));
         return;
       }
+      if (request.method === "GET" && ["/alerts/current", "/resources/featured"].includes(url.pathname)
+        && url.searchParams.get("optional") === "true") {
+        // These optional surfaces have no live producer on this server.
+        writeJson(response, 200, null);
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/workspace/summary") {
+        const inspection = buildProjectInspection({ projectRoot, projectSnapshot });
+        const result = buildWorkspaceSummary({ identity: humanIdentity,
+          project: { name: inspection.project.name, root: projectRoot,
+            touba_version: serverPackage.version, build_id: currentStateBuild() },
+          reads: {
+            run: () => readProjectRunSummary({ contractsRoot, runSummaryPath }),
+            triggers: () => buildTriggerQueueHealth({ contractsRoot, projectRoot, triggerStatusPath, triggerStorePaths, eventJournalPath }),
+            supply: () => buildSupplyChainStatus({ projectRoot }),
+            decisions: () => existsSync(sandboxCheckpointsPath)
+              ? loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1 }]).records
+                .filter(record => record.record_kind === "human" && record.status === "pending" && record.human_wait.resolution === null).length
+              : readProjectRunSummary({ contractsRoot, runSummaryPath }).approvals_pending.length,
+            activity: () => workspaceActivity(readProjectEventJournal(eventJournalPath), humanIdentity),
+          } });
+        writeJson(response, 200, result);
+        return;
+      }
       if (url.pathname.startsWith("/packages/")) {
         const principal = humanIdentity ? `${humanIdentity.user.id}:${humanIdentity.session_id}` : "project-bearer";
         if (request.method === 'GET' && url.pathname === '/packages/registry') {
@@ -1428,10 +1457,25 @@ function createProjectServerWithLease(options, takeLease) {
           const body = await readJsonBody(request);
           writeJson(response, 200, packageSurface.cancel(principal, body?.id)); return;
         }
+        if (request.method === "POST" && url.pathname === "/packages/remove/preview") {
+          const body = await readJsonBody(request);
+          if (!isPlainObject(body) || Object.keys(body).length !== 1 || typeof body.name !== "string") throw serviceError("ToubaServePackageInvalid", "Expected only a package name");
+          writeJson(response, 200, packageSurface.previewRemoval(principal, body.name)); return;
+        }
+        if (request.method === "POST" && url.pathname === "/packages/remove/apply") {
+          const result = packageSurface.applyRemoval(principal, await readJsonBody(request));
+          publishEvent(eventClients, "package.removed", { actor_id: humanIdentity?.user?.id ?? null,
+            authentication: humanIdentity ? "human_session" : "project_bearer", package: result.package, package_digest: result.package_digest }, nextEvent);
+          const refreshed = refreshProject({ projectRoot, previousSnapshot: projectSnapshot,
+            request: { schema_version: PROJECT_REFRESH_REQUEST_SCHEMA_VERSION, reason: "package:removed" } });
+          projectSnapshot = refreshed.snapshot;
+          publishRefreshEvents(eventClients, refreshed.report, nextEvent);
+          writeJson(response, 200, result); return;
+        }
         if (request.method === "POST" && url.pathname === "/packages/apply") {
           const intent = await readJsonBody(request);
           const result = await packageSurface.apply(principal, intent);
-          publishEvent(eventClients, "package.installed", {
+          publishEvent(eventClients, result.command === "package update" ? "package.updated" : "package.installed", {
             actor_id: humanIdentity?.user?.id ?? null,
             authentication: humanIdentity ? "human_session" : "project_bearer",
             archive_digest: intent.archive_digest,
@@ -2369,7 +2413,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
       if (request.method === "GET" && url.pathname === "/approvals/pending/current") {
         await requestHumanWaitWorker();
-        writeJson(response, 200, readPendingHumanRequest({
+        writeJson(response, 200, (url.searchParams.get("optional") === "true" ? optionalPendingHumanRequest : readPendingHumanRequest)({
           contractsRoot,
           humanRequestsPath,
           humanDecisionsPath,
@@ -2381,7 +2425,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
       if (request.method === "GET" && url.pathname === "/reviews/pending/current") {
         await requestHumanWaitWorker();
-        writeJson(response, 200, readPendingHumanRequest({
+        writeJson(response, 200, (url.searchParams.get("optional") === "true" ? optionalPendingHumanRequest : readPendingHumanRequest)({
           contractsRoot,
           humanRequestsPath,
           humanDecisionsPath,
@@ -2677,11 +2721,8 @@ function createProjectServerWithLease(options, takeLease) {
       }
       if (request.method === "POST" && url.pathname === "/project/prepare/preview") {
         const body = await readJsonBody(request);
-        if (!isPlainObject(body) || Object.keys(body).length !== 0) {
-          throw serviceError("ToubaServePreparationInvalid", "Expected an empty object");
-        }
         const principal = humanIdentity === null ? "project-bearer" : `${humanIdentity.user.id}:${humanIdentity.session_id ?? ""}`;
-        writeJson(response, 200, await projectPreparation.preview(JSON.stringify([principal, humanIdentity?.organization_id ?? null]))); return;
+        writeJson(response, 200, await projectPreparation.preview(JSON.stringify([principal, humanIdentity?.organization_id ?? null]), body)); return;
       }
       if (request.method === "POST" && ["/project/prepare", "/project/prepare/apply"].includes(url.pathname)) {
         const body = await readJsonBody(request);
@@ -7209,12 +7250,13 @@ function buildProjectPackages({ projectRoot, artifacts, diagnostics }) {
       .filter(Array.isArray)
       .flat()
       .filter((ref) => typeof ref === "string" && ref.trim() !== "");
+    const { issue, ...installation } = inspectPackageInstallation(projectRoot, artifact.relative_path, `sha256:${artifact.sha256}`);
+    if (issue) diagnostics.push(serviceDiagnostic(issue, `Package installation requires review: ${name}`, "warning", artifact.relative_path));
     packages.push({
       package_ref: `package:${name}`,
       name,
       version,
-      status: "installed",
-      digest: `sha256:${artifact.sha256}`,
+      ...installation,
       path: artifact.relative_path,
       description: nonEmptyString(document.description) ?? "",
       documentation_url: nonEmptyString(document.documentation_url)
@@ -11479,11 +11521,11 @@ export function requiredIdentityPermission(method, pathname) {
   ) {
     return "governance.propose";
   }
-  if (pathname === "/packages/apply") return "governance.apply";
+  if (pathname === "/packages/apply" || pathname === "/packages/remove/apply") return "governance.apply";
   if (pathname === "/project/prepare") return "governance.apply";
   if (pathname === "/project/prepare/preview") return "governance.propose";
   if (pathname === "/project/prepare/apply") return "governance.apply";
-  if (pathname === "/packages/preview" || pathname === "/packages/local/preview" || pathname === "/packages/cancel"
+  if (pathname === "/packages/preview" || pathname === "/packages/local/preview" || pathname === "/packages/cancel" || pathname === "/packages/remove/preview"
     || pathname === '/packages/registry/resolve' || /^\/packages\/registry\/[a-f0-9-]{36}\/preview$/.test(pathname)) return "governance.propose";
   if (pathname === "/packages/installed") return "projects.read";
   if (pathname === "/changes/apply" || pathname === "/changes/refuse") return "governance.apply";

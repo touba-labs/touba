@@ -1499,6 +1499,7 @@ export async function validatePackageSources(packages, options = {}) {
       catch (error) { loaded.diagnostics.push(...(error.diagnostics ?? [errorDiagnostic("PackageSourceInvalid", error.message, { source_path: path })])); }
     }
   }
+  if (!hasErrorDiagnostics(loaded.diagnostics)) options.onPackageContracts?.(loaded.entries);
   return loaded.diagnostics;
 }
 

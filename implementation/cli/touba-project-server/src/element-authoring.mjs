@@ -16,6 +16,9 @@ import { readPreparedProject } from "./prepared-project.mjs";
 export const ELEMENT_AUTHORING_SCHEMA_VERSION = "touba-element-authoring-request-v1";
 
 const ELEMENT_KINDS = new Set([
+  "module",
+  "type",
+  "enum",
   "memory",
   "function",
   "tool",
@@ -37,11 +40,18 @@ const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const MODULE_REF = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/u;
 // The same lexical input contract is consumed by client; compilation resolves types.
 const SECRET_REF = /^[A-Z][A-Z0-9_]*$/u;
-const DECLARATION = /^(memory|function|tool|skill|agent|strategy|trigger)\s+([A-Za-z][A-Za-z0-9_]*)\b/gmu;
+const DECLARATION = /^(type|enum|memory|function|tool|skill|agent|strategy|trigger)\s+([A-Za-z][A-Za-z0-9_]*)\b/gmu;
 const MODULE_LINE = /^module\s+([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)\s*$/mu;
 
 export function buildElementAuthoringChangeSet({ projectRoot, request }) {
   const normalized = normalizeElementAuthoringRequest(request);
+  if (normalized.element.kind === "module") {
+    const path = `src/${normalized.module_ref.replaceAll(".", "/")}.tb`;
+    const existing = walkToubaSources(projectRoot).some(name => readFileSync(join(projectRoot, name), "utf8").match(MODULE_LINE)?.[1] === normalized.module_ref);
+    if (existing || existsSync(join(projectRoot, path))) throw authoringError("ToubaServeElementAlreadyExists", `module ${normalized.module_ref} already exists`);
+    return { ...normalized, element_ref: `module:${normalized.module_ref}`,
+      changes: [{ path, content: `module ${normalized.module_ref}\n`, role: "source" }] };
+  }
   const source = findModuleSource(projectRoot, normalized.module_ref);
   const declarations = declaredElements(source.content, normalized.module_ref);
   const elementRef = `${normalized.element.kind}:${normalized.module_ref}/${normalized.element.name}`;
@@ -106,6 +116,16 @@ export function buildElementAuthoringChangeSet({ projectRoot, request }) {
     });
   }
 
+  if (normalized.element.entrypoint) {
+    const path = "touba.project.json";
+    const configChange = changes.find(item => item.path === path);
+    const config = configChange ? JSON.parse(configChange.content) : JSON.parse(readFileSync(join(projectRoot, path), "utf8"));
+    config.entrypoints = [...new Set([...(config.entrypoints ?? []), ...(config.entry ? [config.entry] : []), elementRef])];
+    if (!config.entry) config.entry = elementRef;
+    if (configChange) configChange.content = stableJson(config);
+    else changes.push({ path, content: stableJson(config), role: "manifest" });
+  }
+
   return {
     proposal_id: normalized.proposal_id,
     requested_by: normalized.requested_by,
@@ -152,6 +172,7 @@ export function normalizeElementAuthoringRequest(request) {
       "secrets",
       "handler",
       "trigger",
+      "fields", "variants", "body", "approval_policy", "entrypoint",
     ],
     "element",
   );
@@ -217,6 +238,16 @@ export function normalizeElementAuthoringRequest(request) {
   }
   const handler = normalizeHandler(request.element.handler, kind);
   const trigger = normalizeTrigger(request.element.trigger, kind);
+  const fields = normalizeTakes(request.element.fields);
+  const variants = uniqueStrings(request.element.variants, "element.variants").map(value => identifier(value, "enum variant"));
+  if (variants.length > 256 || fields.length > 64) throw authoringError("ToubaServeElementAuthoringInvalid", "declaration exceeds the field or variant limit");
+  if (kind === "type" ? !fields.length : fields.length) throw authoringError("ToubaServeElementAuthoringInvalid", "fields are required for types only");
+  if (kind === "enum" ? !variants.length : variants.length) throw authoringError("ToubaServeElementAuthoringInvalid", "variants are required for enums only");
+  if (["module", "type", "enum"].includes(kind) && (takes.length || gives !== null || uses.length)) throw authoringError("ToubaServeElementAuthoringInvalid", "data declarations cannot define signatures or uses");
+  const body = normalizeBody(request.element.body, kind);
+  const approvalPolicy = normalizeApprovalPolicy(request.element.approval_policy, kind);
+  if (request.element.entrypoint !== undefined && (typeof request.element.entrypoint !== "boolean"
+    || !["tool", "skill", "strategy", "function", "trigger"].includes(kind))) throw authoringError("ToubaServeElementAuthoringInvalid", "entrypoint is valid only for executable declarations");
   if (kind === "agent" && callableBy.length === 0) {
     throw authoringError("ToubaServeElementAuthoringInvalid", "agents must declare at least one callable_by strategy");
   }
@@ -251,6 +282,7 @@ export function normalizeElementAuthoringRequest(request) {
       secrets,
       handler,
       trigger,
+      fields, variants, body, approval_policy: approvalPolicy, entrypoint: request.element.entrypoint === true,
     },
     requested_by: normalizeActor(request.requested_by),
     reason: typeof request.reason === "string" ? request.reason.trim() : "",
@@ -262,6 +294,8 @@ export function normalizeElementAuthoringRequest(request) {
 
 function renderElementSource(element, moduleRef) {
   const lines = [`${element.kind} ${element.name}`];
+  if (element.kind === "type") return [...lines, ...element.fields.map(field => `    ${field.name} is ${field.type_ref}`)].join("\n");
+  if (element.kind === "enum") return [...lines, ...element.variants.map(name => `    ${name}`)].join("\n");
   if (element.description !== "" && element.kind !== "memory" && element.kind !== "trigger") {
     lines.push(`    description "${element.description}"`);
   }
@@ -278,7 +312,7 @@ function renderElementSource(element, moduleRef) {
     lines.push(`    uses ${localRefName(use, moduleRef)}`);
   }
   for (const memory of element.memories) {
-    lines.push(`    memory ${localRefName(memory.ref, moduleRef)} ${memory.access}`);
+    lines.push(`    ${element.kind === "tool" ? "uses " : ""}memory ${localRefName(memory.ref, moduleRef)} ${memory.access}`);
   }
   for (const caller of element.callable_by) {
     const parsed = parseElementRef(caller, moduleRef);
@@ -290,9 +324,14 @@ function renderElementSource(element, moduleRef) {
   for (const secret of element.secrets) {
     lines.push(`    secrets ${secret}`);
   }
+  if (element.approval_policy) {
+    lines.push("    human.approve");
+    for (const [key, value] of Object.entries(element.approval_policy)) lines.push(`        with ${key} as ${JSON.stringify(value)}`);
+  }
 
   if (element.kind === "function" || element.kind === "skill" || element.kind === "strategy") {
-    renderIdentityBody(lines, element);
+    if (element.body) lines.push("    do", ...element.body.map(line => `        ${line}`));
+    else renderIdentityBody(lines, element);
   }
   if (element.kind === "trigger") {
     renderTriggerBody(lines, element.trigger, moduleRef);
@@ -325,6 +364,7 @@ function renderTriggerBody(lines, trigger, moduleRef) {
   for (const [inputName, jsonPath] of Object.entries(trigger.payload_map)) {
     lines.push(`    with ${inputName} as payload.${jsonPath.slice(2)}`);
   }
+  for (const [inputName, value] of Object.entries(trigger.arguments)) lines.push(`    with ${inputName} as ${JSON.stringify(value)}`);
   lines.push("    limits");
   lines.push(`        max_runs_per_day as ${trigger.max_runs_per_day}`);
   lines.push(`        timeout_ms as ${trigger.timeout_ms}`);
@@ -518,6 +558,7 @@ function normalizeTrigger(value, kind) {
   if (!isRecord(value)) {
     throw authoringError("ToubaServeElementAuthoringInvalid", "trigger settings are required");
   }
+  assertKnownKeys(value, ["event_kind", "method", "path", "schedule", "target_ref", "payload_map", "arguments", "max_runs_per_day", "timeout_ms"], "element.trigger");
   const eventKind = value.event_kind;
   if (!["request", "schedule"].includes(eventKind)) {
     throw authoringError("ToubaServeElementAuthoringInvalid", "trigger event_kind must be request or schedule");
@@ -554,6 +595,14 @@ function normalizeTrigger(value, kind) {
       throw authoringError("ToubaServeElementAuthoringInvalid", "schedule triggers cannot map request payloads");
     }
   }
+  const args = value.arguments ?? {};
+  if (!isRecord(args) || Object.keys(args).length > 64) throw authoringError("ToubaServeElementAuthoringInvalid", "trigger arguments must be a bounded object");
+  for (const [name, literal] of Object.entries(args)) {
+    identifier(name, "trigger argument");
+    if (Object.hasOwn(payloadMap, name) || !["string", "number", "boolean"].includes(typeof literal)
+      || (typeof literal === "number" && !Number.isFinite(literal))
+      || (typeof literal === "string" && (literal.length > 4096 || /[\r\n\u0000]/u.test(literal)))) throw authoringError("ToubaServeElementAuthoringInvalid", "trigger argument must be one distinct finite scalar literal");
+  }
   return {
     event_kind: eventKind,
     method,
@@ -561,9 +610,33 @@ function normalizeTrigger(value, kind) {
     schedule,
     target_ref: nonEmptyString(value.target_ref, "element.trigger.target_ref"),
     payload_map: payloadMap,
+    arguments: args,
     max_runs_per_day: boundedInteger(value.max_runs_per_day, "element.trigger.max_runs_per_day", 1, 100000),
     timeout_ms: boundedInteger(value.timeout_ms, "element.trigger.timeout_ms", 1, 3600000),
   };
+}
+
+function normalizeBody(value, kind) {
+  if (value === undefined) return null;
+  if (!["function", "skill", "strategy"].includes(kind) || !Array.isArray(value)
+    || value.length < 1 || value.length > 256 || value.some(line => typeof line !== "string" || /[\r\n\t\u0000]/u.test(line))
+    || Buffer.byteLength(value.join("\n")) > 65536 || !value.some(line => line.trim())) {
+    throw authoringError("ToubaServeElementAuthoringInvalid", "body must contain 1 to 256 Touba lines without control characters");
+  }
+  // Every line remains inside do. The canonical compiler checks references,
+  // types and authority in the full project before a proposal can be applied.
+  return value;
+}
+
+function normalizeApprovalPolicy(value, kind) {
+  if (value === undefined) return null;
+  if (kind !== "tool" || !isRecord(value)) throw authoringError("ToubaServeElementAuthoringInvalid", "approval_policy is valid only for tools");
+  assertKnownKeys(value, ["role", "timeout_ms", "distinct_from"], "approval_policy");
+  const role = nonEmptyString(value.role, "approval_policy.role");
+  if (!/^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/u.test(role)) throw authoringError("ToubaServeElementAuthoringInvalid", "invalid approval role");
+  const timeout = boundedInteger(value.timeout_ms, "approval_policy.timeout_ms", 1, 2592000000);
+  if (value.distinct_from !== undefined && !["initiator", "previous", "initiator_and_previous"].includes(value.distinct_from)) throw authoringError("ToubaServeElementAuthoringInvalid", "invalid approval separation");
+  return { role, timeout_ms: timeout, ...(value.distinct_from ? { distinct_from: value.distinct_from } : {}) };
 }
 
 function normalizeHandler(value, kind) {

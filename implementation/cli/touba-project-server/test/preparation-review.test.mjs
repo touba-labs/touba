@@ -110,3 +110,32 @@ test("review projection does not expose raw host actions or handler arguments", 
   assert.deepEqual(preparationChanges([{ kind: "apply_host_decision", handler: { args: ["secret-value"] } }]), []);
   assert.throws(() => preparationChanges(Array.from({ length: 513 }, () => ({ kind: "review_fragment_binding", tool_ref: ref }))), { code: "ToubaServePreparationLimit" });
 });
+
+test("trigger activation is explicit, reviewed, single-use and cannot grant tool authority", async t => {
+  const f = await fixture(t), service = createProjectPreparation(f.root);
+  await service.apply("owner", intent(await service.preview("owner")));
+  const source = join(f.root, "src/client/main.tb");
+  writeFileSync(source, readFileSync(source, "utf8") + '\nstrategy Scheduled\n    gives Text\n    do\n        give "daily"\n\ntrigger Daily\n    on schedule "every 1h"\n    runs strategy Scheduled\n    limits\n        max_runs_per_day as 24\n        timeout_ms as 30000\n');
+  await service.apply("owner", intent(await service.preview("owner")));
+  const path = join(f.root, ".touba/build/dev/touba.manifest.json");
+  const before = readFileSync(path), manifest = JSON.parse(before);
+  const trigger = Object.keys(manifest.triggers).find(ref => ref.endsWith("/Daily"));
+  assert.equal(manifest.triggers[trigger].enabled, false);
+  const preview = await service.preview("owner", { triggers: { [trigger]: { enabled: true } } });
+  assert.deepEqual(validateObject(schema, preview), []);
+  assert.ok(preview.changes.some(change => change.kind === "update_trigger" && change.subject === trigger && change.before === "false" && change.after === "true"));
+  assert.deepEqual(readFileSync(path), before);
+  await assert.rejects(service.apply("reader", intent(preview)), { code: "ToubaServePreparationReviewMissing" });
+  assert.equal((await service.apply("owner", intent(preview))).status, "success");
+  const after = json(path);
+  assert.equal(after.triggers[trigger].enabled, true);
+  assert.deepEqual(after.bindings, manifest.bindings);
+  assert.equal((await prepareProject({ root: f.root, mode: "check" })).status, "success");
+  await assert.rejects(service.apply("owner", intent(preview)), { code: "ToubaServePreparationReviewMissing" });
+  for (const triggers of [{ [trigger]: { enabled: true, grants: ["network"] } }, { [trigger]: { enabled: "true" } }, []]) {
+    await assert.rejects(service.preview("owner", { triggers }), { code: "ToubaServePreparationInvalid" });
+  }
+  const unknown = await service.preview("owner", { triggers: { "trigger:foreign/Unknown": { enabled: true } } });
+  assert.equal(unknown.can_apply, false);
+  assert.deepEqual(json(path), after);
+});

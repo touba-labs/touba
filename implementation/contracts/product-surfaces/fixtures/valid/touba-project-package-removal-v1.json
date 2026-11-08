@@ -1,0 +1,7 @@
+{
+  "schema_version": "touba-project-package-removal-v1",
+  "id": "00000000-0000-4000-8000-000000000001",
+  "revision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "package_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "name": "example.records", "version": "1.0.0", "expires_at": "2026-11-07T12:05:00Z"
+}

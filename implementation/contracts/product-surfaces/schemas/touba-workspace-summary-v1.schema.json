@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-workspace-summary-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "project", "run_status", "attention", "activity", "activity_limit", "failures"],
+  "properties": {
+    "schema_version": {"const": "touba-workspace-summary-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "project": {"type": "object", "additionalProperties": false, "required": ["name", "root", "touba_version", "build_id"], "properties": {
+      "name": {"type": "string"}, "root": {"type": "string"}, "touba_version": {"type": "string"}, "build_id": {"type": "string"}
+    }},
+    "run_status": {"type": ["string", "null"]},
+    "attention": {"type": "object", "additionalProperties": false, "required": ["decisions", "drift", "triggers"], "properties": {
+      "decisions": {"type": ["integer", "null"], "minimum": 0},
+      "drift": {"type": ["integer", "null"], "minimum": 0},
+      "triggers": {"type": ["integer", "null"], "minimum": 0}
+    }},
+    "activity_limit": {"const": 100},
+    "activity": {"type": "array", "maxItems": 100, "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "category", "type", "occurred_at", "source_ref"],
+      "properties": {
+        "id": {"type": "string"}, "category": {"enum": ["change", "decision", "deployment", "trigger", "event"]},
+        "type": {"type": "string"}, "occurred_at": {"type": "string", "format": "date-time"}, "source_ref": {"type": "string", "maxLength": 256}
+      }
+    }},
+    "failures": {"type": "array", "uniqueItems": true, "items": {"enum": ["run", "triggers", "supply", "decisions", "activity"]}}
+  }
+}

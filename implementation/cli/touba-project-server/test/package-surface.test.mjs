@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectPackageSurface } from "../src/package-surface.mjs";
 import { newPackage, packPackage, unpackPackage } from "../../touba-project/src/packages.mjs";
-import { initProject } from "../../touba-project/src/project.mjs";
+import { initProject, prepareProject } from "../../touba-project/src/project.mjs";
 import { validateObject } from "../../../contracts/product-surfaces/validate.mjs";
 import previewSchema from "../../../contracts/product-surfaces/schemas/touba-project-package-preview-v1.schema.json" with { type: "json" };
 import inventorySchema from "../../../contracts/product-surfaces/schemas/touba-project-packages-v1.schema.json" with { type: "json" };
+import removalSchema from "../../../contracts/product-surfaces/schemas/touba-project-package-removal-v1.schema.json" with { type: "json" };
 
 async function fixture(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-studio-package-test-")));
@@ -58,6 +59,36 @@ test("client package previews refuse malformed archive, stale project, expiry an
   assert.equal(surface.inventory().packages.length, 0);
 });
 
+test("removal is reviewed, principal bound, single use and preserves project source", async t => {
+  const { surface, root, bytes } = await fixture(t);
+  await surface.apply("owner", await surface.preview("owner", bytes));
+  const preview = surface.previewRemoval("owner", "fixture.echo");
+  assert.deepEqual(validateObject(removalSchema, preview), []);
+  assert.equal(surface.inventory().packages.length, 1);
+  assert.throws(() => surface.applyRemoval("other", preview), { code: "ToubaServePackagePreviewMissing" });
+  await assert.rejects(surface.apply("owner", preview), { code: "ToubaServePackagePreviewMissing" });
+  assert.throws(() => surface.applyRemoval("owner", { ...preview, package_digest: "sha256:changed" }), { code: "ToubaServePackageConflict" });
+  const project = JSON.parse(readFileSync(join(root, "touba.project.json")));
+  assert.equal(surface.applyRemoval("owner", preview).package, "fixture.echo");
+  assert.deepEqual(JSON.parse(readFileSync(join(root, "touba.project.json"))).source_roots, project.source_roots);
+  assert.equal(surface.inventory().packages.length, 0);
+  assert.throws(() => surface.applyRemoval("owner", preview), { code: "ToubaServePackagePreviewMissing" });
+});
+
+test("removal refuses stale, expired and tampered installations", async t => {
+  const { surface, root, bytes, advance } = await fixture(t);
+  await surface.apply("owner", await surface.preview("owner", bytes));
+  const stale = surface.previewRemoval("owner", "fixture.echo");
+  const config = join(root, "touba.project.json"); writeFileSync(config, readFileSync(config, "utf8") + "\n");
+  assert.throws(() => surface.applyRemoval("owner", stale), { code: "ToubaServePackageConflict" });
+  surface.cancel("owner", stale.id);
+  const expired = surface.previewRemoval("owner", "fixture.echo"); advance();
+  assert.throws(() => surface.applyRemoval("owner", expired), { code: "ToubaServePackagePreviewMissing" });
+  const tampered = surface.previewRemoval("owner", "fixture.echo");
+  writeFileSync(join(root, "packages/fixture.echo/extra.txt"), "unexpected");
+  assert.throws(() => surface.applyRemoval("owner", tampered), { code: "PackageUnexpectedFile" });
+});
+
 test("local folder installation snapshots only a managed package, checks contracts and locks without publication metadata", async t => {
   const { surface, root, archive } = await fixture(t);
   const folder = unpackPackage(archive, join(root, "unpacked"));
@@ -97,4 +128,52 @@ test("local content changed after preview cannot be installed under the old dige
   await assert.rejects(surface.apply("alice", preview), { code: "PackageAlreadyExists" });
   assert.equal(surface.inventory().packages.length, 0);
   await assert.rejects(surface.apply("alice", preview), { code: "ToubaServePackagePreviewMissing" });
+});
+
+test("package update preview exposes compiled rights, approval and handlers and retains the consumer floor", async t => {
+  const { surface, root } = await fixture(t);
+  const authorRoot = join(root, "authors"); mkdirSync(authorRoot);
+  const source = newPackage("fixture.approved", { root: authorRoot, publisher: "Fixture", license: "Apache-2.0", description: "Synthetic approved operation", version: "1.0.0" }).path;
+  const ref = "tool:fixture.approved/Pay";
+  const sourcePath = join(source, "src/fixture/approved.tb");
+  const manifestPath = join(source, "touba.package.json");
+  const pkg = JSON.parse(readFileSync(manifestPath));
+  pkg.exports = { tools: [ref] };
+  pkg.handlers = [{ tool: ref, path: "handlers/pay.mjs", protocol: "touba-tool-handler-v1" }];
+  writeFileSync(manifestPath, JSON.stringify(pkg)); mkdirSync(join(source, "handlers"));
+  writeFileSync(join(source, "handlers/pay.mjs"), "throw new Error('preview must never execute this handler');\n");
+  const declaration = 'module fixture.approved\ntool Pay\n    takes amount as Int\n    gives Int\n';
+  writeFileSync(sourcePath, declaration + '    human.approve\n        with role as "controller"\n        with timeout_ms as 60000\n');
+  const archive = join(root, "approved.tar.gz");
+  await packPackage(source, { output: archive });
+  const first = await surface.preview("owner", readFileSync(archive));
+  assert.deepEqual(validateObject(previewSchema, first), []);
+  assert.equal(first.contracts[0].tools[ref].approval_policy.role, "controller");
+  assert.deepEqual(first.contracts[0].handlers, [{ tool: ref, entrypoint: "handlers/pay.mjs" }]);
+  await surface.apply("owner", first);
+  const configPath = join(root, "touba.project.json");
+  mkdirSync(join(root, "src/client"), { recursive: true });
+  writeFileSync(join(root, "src/client/main.tb"), 'module client.main\nimport tool Pay from fixture.approved\nstrategy Run\n    takes amount as Int\n    gives Int\n    uses Pay\n    do\n        Pay\n            with amount as amount\n            into result\n        give result\n');
+  const config = JSON.parse(readFileSync(configPath));
+  config.configuration = { ...config.configuration, binding_fragments: ["bindings.json"] };
+  writeFileSync(configPath, JSON.stringify(config));
+  writeFileSync(join(root, "bindings.json"), JSON.stringify({ fragment_schema_version: "touba-binding-fragment-v1", source: { kind: "module", module: "fixture.approved" },
+    bindings: { [ref]: { handler: { kind: "process", command: process.execPath, args: ["packages/fixture.approved/handlers/pay.mjs"], cwd: "." },
+      grants: [], secrets: [], effect_contract: { kind: "none" }, timeout_ms: 5000, max_payload_bytes: 65536 } } }));
+  const prepared = await prepareProject({ root, mode: "write", entryRef: "strategy:client.main/Run" });
+  assert.equal(prepared.status, "success", JSON.stringify(prepared.diagnostics));
+  assert.equal(JSON.parse(readFileSync(configPath)).configuration.tool_policies[ref].role, "controller");
+  pkg.version = "1.1.0"; writeFileSync(manifestPath, JSON.stringify(pkg));
+  writeFileSync(sourcePath, declaration);
+  await packPackage(source, { output: join(root, "updated.tar.gz") });
+  const next = await surface.preview("owner", readFileSync(join(root, "updated.tar.gz")));
+  assert.equal(next.operation, "update"); assert.equal(next.previous_version, "1.0.0");
+  assert.equal(next.contracts[0].tools[ref].approval_policy, undefined);
+  assert.equal(surface.inventory().packages[0].version, "1.0.0", "preview leaves the old version intact");
+  await assert.rejects(surface.apply("other", next), { code: "ToubaServePackagePreviewMissing" });
+  await surface.apply("owner", next);
+  assert.equal(JSON.parse(readFileSync(configPath)).configuration.tool_policies[ref].role, "controller");
+  const plan = await prepareProject({ root, mode: "plan", entryRef: "strategy:client.main/Run" });
+  assert.ok(plan.diagnostics.some(item => item.code === "PackageGovernanceReviewRequired"));
+  await assert.rejects(surface.apply("owner", next), { code: "ToubaServePackagePreviewMissing" });
 });
