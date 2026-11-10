@@ -192,7 +192,14 @@ let json;
 try {
   json = readFileSync(filePath, "utf8");
 } catch (e) {
-  stderr.write(`error: cannot read ${filePath}: ${e.message}\n`);
+  const detail = e.code === "ENOENT" || e.code === "ENOTDIR"
+    ? "AIR file not found. Check the path and current directory. Compile the saved .tb file with touba compile <source.tb> --out <program.air.json>, or prepare the project with touba prepare --mode write."
+    : e.code === "EACCES" || e.code === "EPERM"
+      ? "AIR file access denied. Check the file and parent-directory read permissions for the current user."
+      : e.code === "EISDIR"
+        ? "The AIR path is a directory. Select the compiled .air.json file."
+        : "AIR file could not be read. Check the path, current directory and read permissions.";
+  stderr.write(`error [AirUnreadable]: ${detail}\n`);
   return await refuseAdmission("AirUnreadable", "air", 2);
 }
 
@@ -200,7 +207,7 @@ let document;
 try {
   document = loadAirFromJson(json);
 } catch (e) {
-  stderr.write(`error: invalid AIR JSON: ${e.message}\n`);
+  stderr.write("error [AirInvalid]: The file was read, but is not valid Touba AIR. Recompile the saved .tb source with a compatible Touba version, or prepare the project with touba prepare --mode write.\n");
   return await refuseAdmission("AirInvalid", "air", 1);
 }
 

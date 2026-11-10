@@ -49,6 +49,32 @@ strategy Fail
 
 
 class EngineTests(unittest.TestCase):
+    def test_air_diagnostics_and_recovery(self):
+        (self.root / "broken.air.json").write_text('{"PRIVATE_CONTENT":"secret"')
+        (self.root / "invalid.air.json").write_text('{"schema_version":"PRIVATE_SCHEMA"}')
+
+        async def exercise():
+            for engine in [self.engine, AsyncToubaEngine(**self.options)]:
+                async def invoke(**kwargs):
+                    if isinstance(engine, AsyncToubaEngine):
+                        return await engine.run(**kwargs)
+                    return await asyncio.to_thread(engine.run, **kwargs)
+                for air, reason, exit_code, guidance in [
+                    ("missing.air.json", "AirUnreadable", 2, "project_root"),
+                    ("broken.air.json", "AirInvalid", 1, "Recompile"),
+                    ("invalid.air.json", "AirInvalid", 1, "Recompile"),
+                ]:
+                    with self.assertRaises(ToubaEngineError) as raised:
+                        await invoke(air=air)
+                    self.assertEqual(raised.exception.code, reason)
+                    self.assertEqual(raised.exception.phase, "run")
+                    self.assertEqual(raised.exception.details["exit_code"], exit_code)
+                    self.assertIn(guidance, str(raised.exception))
+                    self.assertNotIn("PRIVATE_", str(raised.exception))
+                result = await invoke(source="source.tb", entry_ref="strategy:python.test/Echo", inputs={"value": "ready"})
+                self.assertEqual(result.result, "ready")
+        asyncio.run(exercise())
+
     def test_published_python_approval_tutorial(self):
         page = (IMPLEMENTATION.parent / "docs/tutoriels/approbations-roles-delais.md").read_text()
         for language, filename in [("touba", "approval.tb"), ("python", "host.py"), ("python", "exercise.py")]:

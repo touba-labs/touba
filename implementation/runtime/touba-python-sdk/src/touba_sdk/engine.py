@@ -21,7 +21,11 @@ MAX_OUTPUT = 32 * 1024 * 1024
 
 class ToubaEngineError(Exception):
     def __init__(self, phase: str, code: str, details: Mapping[str, Any] | None = None):
-        super().__init__(f"Touba {phase}: {code}")
+        guidance = {
+            "AirUnreadable": "Check the AIR path relative to project_root, its read permissions, and that compilation or project preparation has completed successfully.",
+            "AirInvalid": "The file was read, but is not valid Touba AIR. Recompile the saved .tb source with a compatible Touba version, or prepare the project again.",
+        }.get(code)
+        super().__init__(f"Touba {phase}: {code}" + (f". {guidance}" if guidance else ""))
         self.phase = phase
         self.code = code
         self.details = dict(details or {})

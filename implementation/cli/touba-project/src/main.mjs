@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { runPassthrough } from "./passthrough.mjs";
 import { projectAdmissionFailure, requestsJsonRunOutput } from "./run-admission.mjs";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { satisfies } from "semver";
@@ -341,7 +341,16 @@ function compileCommand(rawArgs) {
   assertAirJsonOutput(result.stdout ?? "");
   const outputPath = resolve(options.out);
   mkdirSync(dirname(outputPath), { recursive: true });
-  writeFileSync(outputPath, ensureTrailingNewline(result.stdout ?? ""), "utf8");
+  // Stage beside the destination so concurrent readers never see truncated AIR.
+  const staged = mkdtempSync(join(dirname(outputPath), ".touba-compile-"));
+  try {
+    const candidate = join(staged, "output.air.json");
+    writeFileSync(candidate, ensureTrailingNewline(result.stdout ?? ""), {
+      encoding: "utf8", mode: existsSync(outputPath) ? statSync(outputPath).mode & 0o777 : 0o666,
+    });
+    assertCompileOutputPath(outputPath);
+    renameSync(candidate, outputPath);
+  } finally { rmSync(staged, { recursive: true, force: true }); }
   return {
     text: `wrote AIR JSON ${outputPath}`,
     exitCode: 0,
@@ -421,6 +430,10 @@ function assertCompileOutputPath(path) {
   if (existsSync(path) && statSync(path).isDirectory()) {
     throw new Error("touba compile --out must target a file, not a directory");
   }
+  try {
+    if (!lstatSync(path).isFile()) throw new Error("touba compile --out must target a regular file, not a symbolic link or special file");
+    accessSync(path, constants.W_OK);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
 }
 
 function assertAirJsonOutput(text) {
