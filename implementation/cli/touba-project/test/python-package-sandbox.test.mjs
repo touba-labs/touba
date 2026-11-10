@@ -65,7 +65,7 @@ async def run(request,context):
     try:
         subprocess.run([sys.executable,'-c','pass'],check=True,capture_output=True); child=True
     except (OSError,subprocess.CalledProcessError): child=False
-    return json.dumps({'content':content,'network':network,'child':child,'env':os.getenv('TOUBA_SYNTHETIC_SECRET'),'cwd':os.getcwd()})
+    return json.dumps({'content':content,'network':network,'child':child,'env':os.getenv('TOUBA_SYNTHETIC_SECRET'),'cwd':os.getcwd(),'prefix':sys.prefix})
 asyncio.run(define_tool(tool_ref=${JSON.stringify(ref)},input_signature=[{'name':'path','type_ref':'builtin:Text'}],output_type='builtin:Text',required_grants=['filesystem_read'],run=run))
 `);
   await addPackage(source, { root: project });
@@ -109,7 +109,7 @@ strategy Run
     const resumed = await engine.run({ ...common, humanResumeCheckpoint: common.humanCheckpointOut,
       humanDecisions: { [checkpoint.approval_ref]: { decision: "approved", evidence_ref: "test" } } });
     assert.equal(resumed.status, "success", JSON.stringify(resumed));
-    assert.deepEqual(JSON.parse(resumed.result), { content, network: false, child: false, env: null, cwd: project });
+    assert.deepEqual(JSON.parse(resumed.result), { content, network: false, child: false, env: null, cwd: project, prefix: join(project, ".venv") });
     assert.equal(resumed.trace.events.filter(e => e.kind === "tool_approval_authorized").length, 1);
   }
   const binding = { ...fragment.bindings[ref], limits: { timeout_ms: 10000, max_payload_bytes: 65536 } };
@@ -122,5 +122,5 @@ strategy Run
   const direct = await runProcessToolHandler({ toolRef: ref, binding, secretHandles: [], secretStore: undefined,
     env: { ...process.env, TOUBA_SYNTHETIC_SECRET: "synthetic-parent-secret" },
     request: { protocol: "touba-tool-handler-v1", operation: "invoke", tool_ref: ref, arguments: { path: privatePath }, grants: ["filesystem_read"], secret_handles: [] } });
-  assert.deepEqual(JSON.parse(direct.value), { content: null, network: false, child: false, env: null, cwd: project });
+  assert.deepEqual(JSON.parse(direct.value), { content: null, network: false, child: false, env: null, cwd: project, prefix: join(project, ".venv") });
 });

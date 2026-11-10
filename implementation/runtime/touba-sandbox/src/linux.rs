@@ -34,6 +34,8 @@ const FILE_RIGHTS: u64 = 1 | (1 << 1) | (1 << 2) | (1 << 14) | (1 << 15) | (1 <<
 struct Policy {
     protocol: String,
     read: Vec<String>,
+    #[serde(default)]
+    read_directories: Vec<String>,
     write: Vec<String>,
     execute: Vec<String>,
     sockets: Vec<String>,
@@ -123,7 +125,11 @@ pub fn run() -> Result<(), &'static str> {
     let policy: Policy =
         serde_json::from_slice(&bytes).map_err(|_| "HandlerSandboxPolicyInvalid")?;
     if policy.protocol != "touba-linux-sandbox-policy-v1"
-        || policy.read.len() + policy.write.len() + policy.execute.len() + policy.sockets.len()
+        || policy.read.len()
+            + policy.read_directories.len()
+            + policy.write.len()
+            + policy.execute.len()
+            + policy.sockets.len()
             > 8192
     {
         return Err("HandlerSandboxPolicyInvalid");
@@ -146,6 +152,9 @@ pub fn run() -> Result<(), &'static str> {
     let rules = unsafe { File::from_raw_fd(fd as i32) };
     for path in &policy.read {
         add_rule(&rules, path, READ)?;
+    }
+    for path in &policy.read_directories {
+        add_rule(&rules, path, 1 << 3)?;
     }
     for path in &policy.write {
         add_rule(&rules, path, WRITE)?;

@@ -9,6 +9,35 @@ import { sdkSourceFiles } from "../../touba-manifest/src/sdk-build-identity.mjs"
 const fail = message => { throw Object.assign(new Error(message), { code: "SdkSandboxConfigurationInvalid" }); };
 const implementation = fileURLToPath(new URL("../../../", import.meta.url));
 
+// Inspect metadata from the explicitly selected host interpreter, never from
+// package code. Only exact library files inside that installation are selected.
+export function pythonSharedLibraryFiles(metadata) {
+  if (![0, 1, null, undefined].includes(metadata.shared)) fail("Invalid Python shared library metadata.");
+  if (metadata.shared !== 1) return [];
+  if (typeof metadata.base_prefix !== "string" || !isAbsolute(metadata.base_prefix)
+      || !Number.isSafeInteger(metadata.version?.[1])) fail("Invalid Python interpreter metadata.");
+  const base = realpathSync(metadata.base_prefix);
+  const inside = path => {
+    const suffix = relative(base, path);
+    return suffix !== "" && suffix !== ".." && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
+  };
+  if (typeof metadata.libdir !== "string" || !isAbsolute(metadata.libdir) || metadata.libdir.includes("\0")
+      || !existsSync(metadata.libdir) || !statSync(metadata.libdir).isDirectory()) fail("Invalid Python library directory.");
+  const directory = realpathSync(metadata.libdir);
+  if (!inside(directory)) fail("Python library directory must belong to its interpreter installation.");
+  const expected = new RegExp(`^libpython3\\.${metadata.version[1]}[a-z]*\\.so(?:\\.[0-9]+)*$`);
+  const files = [];
+  for (const name of new Set([metadata.ldlibrary, metadata.instsoname].filter(value => value != null && value !== ""))) {
+    if (typeof name !== "string" || !expected.test(name)) fail("Invalid Python shared library name.");
+    if (!existsSync(join(directory, name))) fail("Python shared library file is missing.");
+    const file = realpathSync(join(directory, name));
+    if (!inside(file) || !statSync(file).isFile()) fail("Python shared library must be an individual file inside its installation.");
+    files.push(file);
+  }
+  if (!files.length) fail("Python shared library metadata is missing.");
+  return [...new Set(files)];
+}
+
 // An explicit host command: inspect the trusted project interpreter with site
 // hooks and environment injection disabled. Never called by prepare or run.
 // No package/handler is imported, installed or executed to discover dependencies.
@@ -39,7 +68,7 @@ export function sandboxSdkConfig(language, { root = process.cwd(), handler } = {
     const installed = inspectPythonSdkDependency(root);
     if (installed.status !== "ready") fail(installed.message);
     command = resolve(root, installed.command);
-    const probe = spawnSync(command, ["-I", "-S", "-B", "-c", "import json,sys; print(json.dumps({'base_prefix':sys.base_prefix,'version':list(sys.version_info[:2])}))"], {
+    const probe = spawnSync(command, ["-I", "-S", "-B", "-c", "import json,sys,sysconfig; print(json.dumps({'base_prefix':sys.base_prefix,'version':list(sys.version_info[:2]),'shared':sysconfig.get_config_var('Py_ENABLE_SHARED'),'libdir':sysconfig.get_config_var('LIBDIR'),'ldlibrary':sysconfig.get_config_var('LDLIBRARY'),'instsoname':sysconfig.get_config_var('INSTSONAME')}))"], {
       cwd: root, env: { PATH: process.env.PATH ?? "", ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}) },
       encoding: "utf8", timeout: 10000, maxBuffer: 65536, windowsHide: true,
     });
@@ -67,6 +96,7 @@ export function sandboxSdkConfig(language, { root = process.cwd(), handler } = {
     };
     const base = realpathSync(metadata.base_prefix);
     if (base === "/" || base === root) fail("Python base prefix is not an isolated interpreter installation.");
+    if (process.platform === "linux") for (const file of pythonSharedLibraryFiles(metadata)) add(file);
     // Distribution installs may use /usr: enumerate only the standard library,
     // not that entire system prefix. Framework installs also need their dylib.
     const stdlib = join(base, "lib", `python3.${metadata.version[1]}`);

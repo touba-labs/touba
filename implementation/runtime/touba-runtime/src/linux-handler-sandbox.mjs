@@ -1,5 +1,5 @@
 import { existsSync, realpathSync, statSync, mkdtempSync, writeFileSync, openSync, closeSync, rmSync } from "node:fs";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname, basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -125,6 +125,10 @@ export function linuxHandlerSandboxPlan(binding, command, { bwrap = "/usr/bin/bw
     if (existsSync(path)) mount(path);
   }
   for (const path of paths.code) mount(path);
+  // Preserve the configured launch path, notably .venv/bin/python. Bind the
+  // already selected executable at this alias without exposing its directory.
+  const launchPath = join(realpathSync(dirname(command)), basename(command));
+  mount(launchPath);
   mount(launcher);
   for (const path of paths.read) mount(path);
   for (const path of paths.write) mount(path, true);
@@ -143,15 +147,21 @@ export function linuxHandlerSandboxPlan(binding, command, { bwrap = "/usr/bin/bw
   const cwd = realpathSync(binding.handler.cwd ?? process.cwd());
   args.push("--dir", cwd, "--chdir", cwd, "--seccomp", "4");
   // FD 3 is the optional diagnostic channel. FD 4 is consumed as a filter.
-  args.push("--", launcher, "--", paths.command, ...binding.handler.args.map((arg, index) => {
+  args.push("--", launcher, "--", launchPath, ...binding.handler.args.map((arg, index) => {
     const file = resolve(cwd, arg);
     return index === 0 && !arg.startsWith("-") && /\.(mjs|cjs|js|py)$/.test(arg) && existsSync(file) ? file : arg;
   }));
   const read = [...mounts].filter(([, spec]) => !spec.writable).map(([target]) => target);
+  // Python import discovery lists directories. Give READ_DIR separately from
+  // READ_FILE so a selected code sibling never makes write-only data readable.
+  // These directories contain only explicit mounts in the private filesystem.
+  const readDirectories = new Set([cwd, ...paths.code.map(dirname)]);
+  for (const path of paths.code) if (basename(path) === "__init__.py") readDirectories.add(dirname(dirname(path)));
   // A writable mount is not automatically readable: only explicit read scopes
   // (plus executable code) receive Landlock read rights.
   const policy = { protocol: "touba-linux-sandbox-policy-v1", read: [...new Set([...read, ...paths.read, ...paths.code, "/proc", "/dev/null", "/dev/urandom", "/dev/random"])],
-    write: [...paths.write, "/dev/null"], execute: [...paths.code, ...systemLibraries], sockets: paths.sockets, network: paths.grants.has("network") };
+    read_directories: [...readDirectories], write: [...paths.write, "/dev/null"],
+    execute: [...paths.code, launchPath, ...systemLibraries], sockets: paths.sockets, network: paths.grants.has("network") };
   return { enabled: true, mechanism: "bubblewrap-seccomp-landlock", command: bwrap, args, policy: Buffer.from(JSON.stringify(policy)),
     seccomp: linuxHandlerSeccomp({ arch, processAllowed: paths.grants.has("process"), networkAllowed: paths.grants.has("network"), localSockets: paths.sockets.length > 0 }) };
 }

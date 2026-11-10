@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { linuxHandlerSeccomp, linuxHandlerSandboxPlan } from "../src/linux-handler-sandbox.mjs";
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -53,7 +53,31 @@ test("Linux plan has no blanket project/home mount and refuses nonexistent write
   assert.ok(plan.args.includes("--unshare-net"));
   assert.ok(plan.args.includes("--unshare-user"));
   assert.ok(plan.args.includes("--seccomp"));
+  const policy = JSON.parse(plan.policy);
+  assert.ok(policy.read_directories.includes(root));
+  assert.ok(!policy.read.includes(root));
   for (let i = 0; i < plan.args.length; i++) if (["--bind", "--ro-bind"].includes(plan.args[i])) assert.notEqual(plan.args[i + 1], root);
   assert.throws(() => linuxHandlerSandboxPlan({ ...binding, grants: ["filesystem_write"], sandbox: { write_paths: [join(root, "missing")] } },
     process.execPath, { bwrap: process.execPath, launcher: process.execPath, arch: "x64", landlockAbi: 3 }), error => error.code === "HandlerSandboxPathInvalid");
+});
+
+test("Linux plan retains the venv launch alias and separate directory-listing rights", { skip: process.platform === "win32" }, t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-linux-venv-plan-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const bin = join(root, ".venv/bin"), module = join(root, ".venv/lib/python3.14/site-packages/touba_sdk");
+  mkdirSync(bin, { recursive: true }); mkdirSync(module, { recursive: true });
+  const command = join(bin, "python"), init = join(module, "__init__.py");
+  symlinkSync(process.execPath, command); writeFileSync(init, "# synthetic module");
+  const binding = { handler: { command, args: ["-c", "pass"], cwd: root }, grants: [], sandbox: { code_paths: [init] } };
+  const plan = linuxHandlerSandboxPlan(binding, command, { bwrap: process.execPath, launcher: process.execPath, arch: "x64", landlockAbi: 3 });
+  assert.deepEqual(plan.args.slice(-3), [command, "-c", "pass"]);
+  assert.ok(plan.args.includes(command));
+  const policy = JSON.parse(plan.policy);
+  assert.ok(policy.execute.includes(command));
+  assert.ok(policy.read.includes(command));
+  assert.ok(policy.read_directories.includes(module));
+  assert.ok(policy.read_directories.includes(join(module, "..")));
+  assert.ok(!policy.read.includes(root));
+  assert.ok(!policy.read.includes(module));
+  assert.deepEqual(policy.write, ["/dev/null"]);
 });
