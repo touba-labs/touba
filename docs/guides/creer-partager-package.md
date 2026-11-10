@@ -34,6 +34,7 @@ contrat. Une proposition de décision utilise `kind: "decision_provider"`
 et `--agent-decision-provider`. Les fichiers sont contrôlés avant chargement ;
 les accès et identités restent configurés par l'application.
 
+
 Un package Touba est l'unité de réutilisation : types, fonctions, tools, skills
 exécutables, agents, stratégies, mémoires ou procédures contextuelles peuvent
 cohabiter. Une intégration est un usage d'un package, pas un format supplémentaire.
@@ -146,19 +147,19 @@ recopier ; il montre les champs à maintenir quand le contenu évolue.
 ```
 
 - `exports` définit l'API publique. Renommer une déclaration exige de mettre
- à jour son export et les consommateurs concernés. Les autres déclarations
- restent internes au package.
+  à jour son export et les consommateurs concernés. Les autres déclarations
+  restent internes au package.
 - `files` inventorie le contenu distribuable. Le manifeste, le README, les
- tests déclarés, les handlers et ressources de contexte sont également pris
- en compte par leur déclaration. Ajoutez explicitement vos autres ressources.
- Vérifiez l'inventaire rendu par `touba package check --json` avant diffusion.
+  tests déclarés, les handlers et ressources de contexte sont également pris
+  en compte par leur déclaration. Ajoutez explicitement vos autres ressources.
+  Vérifiez l'inventaire rendu par `touba package check --json` avant diffusion.
 - `touba.runtime_compatibility` exprime la plage réellement testée, pas une
- promesse de compatibilité avec des versions futures.
+  promesse de compatibilité avec des versions futures.
 - `dependencies` contient des versions exactes ; utilisez `touba package add`
- depuis le projet auteur pour faire enregistrer dépendance et lock ensemble.
+  depuis le projet auteur pour faire enregistrer dépendance et lock ensemble.
 - `engines` vérifie actuellement la plage Node et les plateformes. Documentez
- dans le README les autres prérequis, notamment Python, ses dépendances,
- services et variables ; ne leur inventez pas de champ non reconnu.
+  dans le README les autres prérequis, notamment Python, ses dépendances,
+  services et variables ; ne leur inventez pas de champ non reconnu.
 
 Le README doit permettre à un autre développeur d'installer, importer et
 exécuter un exemple sans vous contacter : entrées et sorties, exports,
@@ -459,36 +460,6 @@ Si le code distant a changé, relisez le nouveau brouillon avant de poursuivre.
 Après une interruption, consultez le service pour savoir si la soumission a
 abouti. Un verrou local résiduel doit être examiné avant récupération.
 Les mêmes commandes s’appliquent aux handlers JavaScript et Python.
-
-## Automatiser la préparation dans Cloud
-
-Ce parcours appartient au candidat Cloud et CLI en préparation. Il ne suppose
-pas que le serveur public soit déjà ouvert. Les packages locaux restent utilisables.
-
-Dans les paramètres de l'espace Cloud, créez un accès API limité aux packages
-et opérations souhaités. Injectez sa clé via `TOUBA_CLOUD_API_KEY`, depuis votre
-gestionnaire de secrets. `TOUBA_CLOUD_ORIGIN` fixe l'origine autorisée.
-
-```sh
-export TOUBA_CLOUD_ORIGIN=https://cloud.touba-labs.com
-touba package submit ./review --automation \
-  --registry https://cloud.touba-labs.com/registry \
-  --request-id review-soumission-0001
-touba package request-publication <draft-id> --automation \
-  --registry https://cloud.touba-labs.com/registry \
-  --revision <revision> --request-id review-publication-0001
-```
-
-La première commande soumet l'archive aux contrôles du service ; la seconde
-demande une revue humaine de la révision indiquée. La publication finale se
-fait dans Cloud. `checkout` accepte également `--automation` avec un registre
-explicite. La clé n'est jamais écrite dans le lien du brouillon ni passée en
-argument. Les mêmes commandes servent aux packages JavaScript et Python.
-
-Un identifiant de requête contient 16 à 100 lettres, chiffres, tirets ou
-underscores. Réutilisez-le seulement pour une reprise identique après une
-réponse perdue. Une modification d'archive ou de révision demande un nouvel
-identifiant. Les modes `--ci`, connexion humaine et `--automation` sont distincts.
 
 ## Sélectionner un handler proposé
 
