@@ -87,10 +87,10 @@ try {
     files.push(file);
   }
   const output = run(["--test", "--test-concurrency=1", "--test-reporter=tap", ...files]);
-  assert.match(output, /# tests 57\b/);
+  assert.match(output, /# tests 59\b/);
   assert.match(output, /# fail 0\b/);
   assert.match(output, /# skipped 0\b/);
-  console.log("APPROVED_OPERATION_DISTRIBUTION_OK: 57 canonical tests against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.");
+  console.log("APPROVED_OPERATION_DISTRIBUTION_OK: 59 canonical tests against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.");
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
