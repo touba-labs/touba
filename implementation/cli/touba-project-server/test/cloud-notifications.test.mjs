@@ -6,6 +6,14 @@ import { tmpdir } from 'node:os';
 import { createCloudNotifications, notificationForEvent } from '../src/cloud-notifications.mjs';
 import { createSqliteTriggerQueue } from '../../touba-trigger-service/src/sqlite-queue.mjs';
 
+test('quota is not an execution failure; webhook incidents are minimal and human expiry is not duplicated',()=>{
+  const emitted_at=new Date().toISOString();
+  for(const type of ['trigger.fire.completed','sandbox_run.completed']) assert.equal(notificationForEvent({type,emitted_at,payload:{status:'failure',code:'TriggerRateLimited'}}),null);
+  for(const code of ['HumanApprovalExpired','HumanApprovalRejected','HumanApprovalCancelled']) assert.equal(notificationForEvent({type:'trigger.webhook.updated',emitted_at,payload:{status:'failed',code}}),null);
+  const notice=notificationForEvent({type:'trigger.webhook.updated',emitted_at,payload:{status:'interrupted',run_id:'webhook_qa',arguments:{secret:'private'}}});
+  assert.equal(notice.kind,'execution_failed');assert.equal(notice.reference,'webhook_qa');assert.doesNotMatch(JSON.stringify(notice),/private|arguments/);
+});
+
 test('human expiry, rejection and cancellation do not also emit execution incidents', () => {
   for (const code of ['ToubaSandboxHumanDecisionExpired', 'ToubaSandboxHumanDecisionRejected', 'ToubaSandboxHumanDecisionCancelled']) {
     assert.equal(notificationForEvent({ type: 'interaction.run.failed', payload: { error: { code } } }), null);

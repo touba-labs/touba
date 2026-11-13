@@ -1,6 +1,12 @@
 import { spawn } from 'node:child_process';
 import { assertFleetReview, readProjectFleet } from './project-fleet.mjs';
 
+// Only known startup codes leave the child. Raw stderr can contain host paths
+// or configuration values and is never forwarded to subscribers or receipts.
+const startupCodes = ['ToubaServePortInUse','ToubaServePortUnavailable','ToubaServeVaultUnavailable',
+  'ToubaServeIdentityNotConfigured','ToubaServeUsage','ToubaFleetConfigInvalid',
+  'ProjectPreparationRequired','PackageVersionIncompatible','PackageIntegrityMismatch'];
+
 /** Foreground ownership: each child is this supervisor's process, never an adopted PID. */
 export function createFleetSupervisor({ cli, spawnImpl = spawn, notify = () => {}, stopTimeout = 10000 } = {}) {
   if (!cli?.command || !Array.isArray(cli.args)) throw new Error('ToubaFleetCliInvalid');
@@ -22,11 +28,16 @@ export function createFleetSupervisor({ cli, spawnImpl = spawn, notify = () => {
               ? ['deploy', 'target', 'serve', '--storage', project.storage, '--host', project.host, '--port', String(project.port), '--auth-token-env', project.auth_token_env]
               : ['serve', '--project-root', project.root, '--config', project.config];
             const child = spawnImpl(cli.command, [...cli.args, ...arguments_], {
-              cwd: project.root ?? project.storage, shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] });
+              cwd: project.root ?? project.storage, shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+            let diagnostic = null, tail = '';
+            child.stderr?.on('data', chunk => {
+              tail=(tail+chunk.toString('utf8')).slice(-8192);
+              for (const code of startupCodes) if (tail.includes(`[${code}]`)) diagnostic=code;
+            });
             children.set(project.id, child); report(project.id, 'starting');
             child.once('spawn', () => { if (children.get(project.id) === child) report(project.id, 'running'); });
             child.once('error', () => { children.delete(project.id); report(project.id, 'failed', 'ToubaFleetChildStartFailed'); });
-            child.once('exit', code => { children.delete(project.id); report(project.id, stopping ? 'stopped' : 'exited', code); });
+            child.once('exit', code => { children.delete(project.id); report(project.id, stopping ? 'stopped' : 'exited', code ? diagnostic ?? code : code); tail=''; });
           } catch { report(project.id, 'failed', 'ToubaFleetChildStartFailed'); }
         }
         return plan;

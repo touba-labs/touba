@@ -6,6 +6,7 @@ import { servicePrincipal, assertApplicationRoute, assertApplicationTarget, crea
 import { createProjectExplorerSurface } from "./explorer-surface.mjs";
 import { createCloudNotifications } from './cloud-notifications.mjs';
 import { createTriggerScheduler, readSchedulePlans, schedulerStore } from './trigger-scheduler.mjs';
+import { createProjectWebhooks, WEBHOOK_PREFIX } from './project-webhooks.mjs';
 import { createProjectValidation, validationStore } from './project-validation.mjs';
 import { inspectHandlerImplementation } from './handler-implementation.mjs';
 import { createSqliteTriggerStore } from '../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs';
@@ -430,7 +431,7 @@ function createProjectServerWithLease(options, takeLease) {
   );
   const triggerStorePaths = {
     triggerStatePath: resolve(options.triggerStatePath ?? join(projectRoot, ".touba/triggers.sqlite")),
-    triggerQueuePath: resolve(options.triggerQueuePath ?? join(projectRoot, ".touba/trigger-queue.sqlite")),
+    triggerQueuePath: resolve(options.triggerQueuePath ?? join(projectRoot, options.requestTriggers ? '.touba/project-webhooks.sqlite' : '.touba/trigger-queue.sqlite')),
   };
   const humanRequestsPath = resolve(
     options.humanRequestsPath ?? join(projectRoot, DEFAULT_HUMAN_REQUESTS_PATH),
@@ -506,6 +507,7 @@ function createProjectServerWithLease(options, takeLease) {
   const interactionOperationTasks = new Set();
   const sandboxResumeTasks = new Map();
   const humanResumeTasks = new Map();
+  let webhooks;
   const activityGate = createProjectActivityGate(() => {
     const references = loadSandboxCheckpointStore(sandboxCheckpointsPath, [
       { active_human: 1 }, { kind: 'execution', status: ['running', 'interrupted', 'resume_claimed'] },
@@ -515,6 +517,7 @@ function createProjectServerWithLease(options, takeLease) {
     }
     if (interactionOperationTasks.size || sandboxResumeTasks.size || humanResumeTasks.size) references.push('active execution');
     if (validationStore(join(projectRoot, '.touba/project-validation.sqlite')).read().some(row => row.status === 'running')) references.push('active validation');
+    references.push(...(webhooks?.blockers() ?? []));
     return [...new Set(references)];
   });
   const humanWaitRuntime = normalizeHumanWaitRuntime(options.humanWaitRuntime);
@@ -1112,6 +1115,36 @@ function createProjectServerWithLease(options, takeLease) {
       } finally { release(); requestHumanWaitWorkerDetached(); }
     },
   });
+  webhooks = createProjectWebhooks({enabled:options.requestTriggers === true,root:projectRoot,
+    queuePath:options.requestTriggers ? triggerStorePaths.triggerQueuePath : join(projectRoot,'.touba/project-webhooks.sqlite'),
+    statePath:triggerStorePaths.triggerStatePath,
+    signatureSecret:options.webhookSignatureSecretEnv ? process.env[options.webhookSignatureSecretEnv] : undefined,
+    gate:activityGate, emit:(type,payload)=>publishEvent(eventClients,type,payload,nextEvent),
+    outcome:runId=>{
+      if (!runId) return null;
+      const records=loadSandboxCheckpointStore(sandboxCheckpointsPath,[{run_id:runId}]).records;
+      const pending=records.find(record=>record.record_kind==='human'&&['pending','resolution_claimed'].includes(record.status));
+      if(pending) return {status:'pending',request_id:pending.request_id};
+      const completed=records.findLast(record=>record.record_kind==='human'&&record.status==='completed'&&record.result);
+      const code={expired:'HumanApprovalExpired',rejected:'HumanApprovalRejected',cancelled:'HumanApprovalCancelled'}[completed?.human_wait?.resolution?.kind];
+      return completed ? {status:completed.result.status==='success'?'success':'failed',code:code??completed.result.reason??null} : null;
+    },
+    execute:async entry=>{
+      const request={schema_version:SANDBOX_RUN_REQUEST_SCHEMA_VERSION,execution_kind:'trigger',
+        target_ref:entry.trigger_ref,event_id:entry.event_id,source_kind:'request',inputs:entry.arguments,
+        effect_policy:'allow_declared_external_effects',requested_by:{kind:'service',id:'touba-project-webhook'},
+        reason:'Authenticated project webhook'};
+      const execute=()=>executeProjectSandboxRun({...options,projectRoot,contractsRoot,agentDecisionProvider,request,
+        runId:entry.run_id,executionKind:'trigger',dispatchAuthorityProvider:entry.authority,cancelRequestedProvider:entry.cancelled,
+        humanRequestsPath,sandboxCheckpointsPath,runSummaryPath,traceTimelinePath,effectJournalPath,secretsPath,secretsRequired,
+        triggerStatePath:triggerStorePaths.triggerStatePath});
+      try {
+        const result=sandboxRunMaySuspendForHuman({executionKind:'trigger',projectRoot,request})
+          ? await withHumanWaitCapacity({runId:entry.run_id},execute) : await execute();
+        return result;
+      } finally {requestHumanWaitWorkerDetached();}
+    },
+  });
   const scheduleInteractionOperation = ({
     capacityReservation = null,
     dispatchAuthorityProvider,
@@ -1323,6 +1356,21 @@ function createProjectServerWithLease(options, takeLease) {
     let releaseActivity = () => {};
     try {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${host}:${port}`}`);
+      if (url.pathname.startsWith(WEBHOOK_PREFIX+'/')) {
+        try {
+          const result=await webhooks.receive(request);writeJson(response,result.http,result.body);
+        } catch(error) {
+          const code=error.code??'TriggerIngressUnavailable';
+          const status=code==='TriggerRateLimited'?429:['TriggerIngressDisabled','TriggerRouteNotFound'].includes(code)?404:
+            code==='TriggerSignatureInvalid'?401:code==='TriggerIngressOriginRejected'?403:
+              ['TriggerReplayRejected','TriggerEventPayloadConflict','TriggerPlanChanged'].includes(code)?409:
+                code==='TriggerPayloadTooLarge'?413:code==='TriggerPayloadContentTypeUnsupported'?415:
+                ['TriggerPayloadInvalid','TriggerEventIdInvalid'].includes(code)?400:503;
+          if(status===429)response.setHeader('Retry-After',Math.max(1,Math.ceil(((Math.floor(Date.now()/86400000)+1)*86400000-Date.now())/1000)));
+          writeJson(response,status,{status:'error',code});
+        }
+        return;
+      }
       const corsAllowed = applyProjectCorsHeaders(request, response, clientOrigins);
       if (request.headers.origin !== undefined && !corsAllowed) {
         writeJson(response, 403, { status: "error", code: "ToubaServeCorsOriginRejected" });
@@ -1437,6 +1485,9 @@ function createProjectServerWithLease(options, takeLease) {
             trigger_fire: "/triggers/fire",
             trigger_scheduler: '/triggers/scheduler',
             trigger_scheduler_acknowledge: '/triggers/scheduler/acknowledge',
+            trigger_scheduler_control: '/triggers/scheduler/control',
+            project_webhooks: '/triggers/webhooks',
+            trigger_webhook_review: '/triggers/webhooks/review',
             project_validation: '/validation',
             project_validation_preview: '/validation/preview',
             project_validation_start: '/validation/runs',
@@ -2449,6 +2500,26 @@ function createProjectServerWithLease(options, takeLease) {
             : { kind: 'service', id: 'local-operator' }, reason: body.reason.trim() }, nextEvent);
         writeJson(response, 200, result); return;
       }
+      if (request.method === 'POST' && url.pathname === '/triggers/scheduler/control') {
+        const body = await readJsonBody(request);
+        if (!isPlainObject(body) || Object.keys(body).some(key => !['trigger_ref','signature','control_revision','paused','reason'].includes(key))) {
+          throw serviceError('ToubaSchedulerReviewInvalid', 'control must identify the reviewed schedule, revision and reason');
+        }
+        const result = scheduler.control(body);
+        publishEvent(eventClients, 'trigger.schedule.controlled', {...result,
+          actor: humanIdentity ? bindHumanActor({}, 'requested_by', humanIdentity).requested_by
+            : {kind:'service',id:'local-operator'}, reason:body.reason.trim()}, nextEvent);
+        writeJson(response, 200, result); return;
+      }
+      if (request.method === 'GET' && url.pathname === '/triggers/webhooks') {
+        writeJson(response,200,webhooks.status({after:url.searchParams.get('after')??'',limit:Number(url.searchParams.get('limit')??25)}));return;
+      }
+      if (request.method === 'POST' && url.pathname === '/triggers/webhooks/review') {
+        const body=await readJsonBody(request);
+        if(!isPlainObject(body)||Object.keys(body).some(key=>!['queue_id','review_digest','action','reason','reconciled'].includes(key))) throw serviceError('TriggerQueueReviewInvalid','Review must identify the exact queue entry and reason');
+        const actor=humanIdentity?bindHumanActor({},'requested_by',humanIdentity).requested_by:{kind:'service',id:'local-operator'};
+        webhooks.review(body,actor);writeJson(response,200,webhooks.status());return;
+      }
       if (request.method === "POST" && url.pathname === "/triggers/fire") {
         const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
         const runId = `sandbox_${compactTimestamp(new Date().toISOString())}_${randomBytes(3).toString("hex")}`;
@@ -3225,6 +3296,15 @@ function createProjectServerWithLease(options, takeLease) {
         throw cause;
       }
       const address = server.address();
+      try { webhooks.start(); } catch(cause) {
+        await webhooks.stop();
+        humanWaitState.stopping = true;
+        if (humanWaitState.timer !== null) humanWaitRuntime.clearTimer(humanWaitState.timer);
+        humanWaitState.timer = null;
+        humanWaitState.timerDueAt = null;
+        await new Promise(resolve=>server.close(resolve));
+        throw cause;
+      }
       notifications.start();
       scheduler.start();
       if (options.quiet !== true) {
@@ -3251,6 +3331,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
     },
     async stop() {
+      await webhooks.stop();
       await validation.stop();
       await scheduler.stop();
       await notifications.stop();
@@ -5982,6 +6063,7 @@ function sandboxRunEventPayload(result) {
     execution_kind: result.execution_kind,
     target_ref: result.target_ref,
     status: result.status,
+    ...(/^[A-Za-z][A-Za-z0-9]{0,100}$/.test(result.reason ?? '') ? {code:result.reason} : {}),
     effect_policy: result.effect_policy,
     completed_at: result.completed_at,
     trace_event_count: result.trace.event_count,
@@ -6184,7 +6266,7 @@ function triggerQueueHealthRow(trigger, journalEvents) {
   const relatedEvents = journalEvents.filter((event) => eventReferencesTrigger(event, trigger.trigger_ref));
   const replayRejected = relatedEvents.filter((event) => eventMatchesAny(event, ["replay"])).length;
   const rateLimited = relatedEvents.filter((event) => eventMatchesAny(event, ["rate", "quota", "limit"])).length;
-  const retry = relatedEvents.filter((event) => eventMatchesAny(event, ["retry"])).length;
+  const retry = nonNegativeInteger(trigger.queue?.retry);
   let status = "healthy";
   if (trigger.status === "blocked" || deadLetter > 0 || interrupted > 0) {
     status = "blocked";
@@ -11941,6 +12023,9 @@ export function requiredIdentityPermission(method, pathname) {
   if (method === 'GET' && pathname === '/elements/source') return 'governance.propose';
   if (pathname.startsWith('/validation')) return method === 'GET' ? 'executions.read' : 'governance.apply';
   if (method === 'POST' && pathname === '/triggers/scheduler/acknowledge') return 'governance.apply';
+  if (method === 'POST' && pathname === '/triggers/scheduler/control') return 'governance.apply';
+  if (method === 'POST' && pathname === '/triggers/webhooks/review') return 'governance.apply';
+  if (method === 'GET' && pathname === '/triggers/webhooks') return 'events.read';
   if (pathname === "/traces/explorer") return "executions.read";
   if (method === "GET" && (
     /^\/runs\/[^/]+\/trace(?:\/segments\/\d+)?$/u.test(pathname)
@@ -12017,12 +12102,20 @@ export async function authorizeHumanIdentity({
     );
   }
   let response;
+  let currentServiceToken;
+  try {
+    currentServiceToken = typeof serviceToken === 'function' ? await serviceToken() : serviceToken;
+  } catch (cause) {
+    if (cause.code === 'ToubaServeVaultUnavailable') throw serviceError('ToubaServeVaultUnavailable',
+      'project service key is absent or inaccessible; use touba serve login --config touba.server.json --token-stdin');
+    throw serviceError('ToubaServeIdentityUnavailable', 'project service credential is unavailable');
+  }
   try {
     response = await fetchImpl(endpoint, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-touba-service-token": typeof serviceToken === 'function' ? await serviceToken() : serviceToken,
+        "x-touba-service-token": currentServiceToken,
       },
       body: JSON.stringify({ access_token: accessToken.trim() }),
       signal: AbortSignal.timeout(3000),
@@ -12534,6 +12627,9 @@ function publishRefreshEvents(eventClients, report, nextEvent) {
 }
 
 function httpStatusForError(code) {
+  if (['TriggerQueueReviewConflict','TriggerQueueWriteConflict','TriggerPlanChanged'].includes(code)) return 409;
+  if (['TriggerQueueQueryInvalid','TriggerQueueReviewInvalid','TriggerQueueReconciliationRequired'].includes(code)) return 400;
+  if (['TriggerIngressDisabled','TriggerRouteNotFound'].includes(code)) return 404;
   if (code === 'ToubaServeOperationClosureConflict') return 409;
   if (code === 'ToubaServeOperationClosureInvalid') return 400;
   if (['ToubaServeProjectOperationsActive', 'ToubaServeProjectMutationBusy'].includes(code)) return 409;
@@ -12576,7 +12672,7 @@ function httpStatusForError(code) {
   if (code === "ToubaServeIdentityPermissionDenied") return 403;
   if (code === 'ToubaServeApplicationPermissionDenied') return 403;
   if (code === 'ToubaServeApplicationRateLimited') return 429;
-  if (code === "ToubaServeIdentityUnavailable") return 503;
+  if (code === "ToubaServeIdentityUnavailable" || code === 'ToubaServeVaultUnavailable') return 503;
   if (
     code === "ToubaServeDecisionReplayRejected"
     || code === "ToubaServeDecisionRequestMismatch"
@@ -12739,6 +12835,7 @@ export function checkToubaProjectState(options = {}) {
         const records = validationStore(path).read();
         return {schema_version:'touba-validation-store-v1',records,active_operations:records.filter(row=>row.status==='running').length};
       }],
+      ['projectWebhooksPath', '.touba/project-webhooks.sqlite', auditRecoveryTriggerQueue],
       ...(options.abandonWaits ? [
         ['triggerQueuePath', '.touba/trigger-queue.sqlite', auditRecoveryTriggerQueue],
         ['triggerStatePath', '.touba/triggers.sqlite', auditRecoveryTriggerState],
@@ -12889,6 +12986,10 @@ function parseArgs(rawArgs) {
       options.cloudNotifications = true;
     } else if (arg === '--schedule-triggers') {
       options.scheduleTriggers = true;
+    } else if (arg === '--request-triggers') {
+      options.requestTriggers = true;
+    } else if (arg === '--webhook-signature-secret-env') {
+      options.webhookSignatureSecretEnv = requiredValue(arg, rawArgs, ++index);
     } else if (arg === '--validation-plan') {
       options.validationPlanPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--identity-service-token-env") {
@@ -13032,6 +13133,8 @@ function usage() {
     "--max-pending-approvals <n> sets the pending approval capacity (default 100, maximum 10000).",
     "--cloud-notifications forwards minimized operational events to the configured Cloud in the background; no effect on project authority.",
     "--schedule-triggers runs enabled, prepared schedule entrypoints with this server's explicit hosts and secrets; one worker, no catch-up replay.",
+    "--request-triggers serves prepared request entrypoints under /_touba/events with a private queue and the same approval host.",
+    "--webhook-signature-secret-env <NAME> selects the HMAC v1 secret (at least 32 bytes); required for --request-triggers.",
     "--validation-plan <path> authorizes fixed, reviewed host test suites for client; no third-party test discovery or shell commands.",
     "--human-approval-host and --agent-decision-provider accept JavaScript (.mjs) and Python (.py) host modules.",
     "--package-hosts activates the reviewed touba.hosts.json package selections at startup; it cannot be combined with explicit host paths.",
@@ -13084,6 +13187,7 @@ function usage() {
     "  GET  /triggers",
     "  GET  /triggers/scheduler",
     "  POST /triggers/scheduler/acknowledge",
+    "  POST /triggers/scheduler/control",
     "  POST /triggers/fire",
     "  GET  /triggers/queue-health",
     "  GET  /supply-chain/status",

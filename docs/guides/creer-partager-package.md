@@ -155,6 +155,12 @@ recopier ; il montre les champs à maintenir quand le contenu évolue.
   Vérifiez l'inventaire rendu par `touba package check --json` avant diffusion.
 - `touba.runtime_compatibility` exprime la plage réellement testée, pas une
   promesse de compatibilité avec des versions futures.
+  Une plage stable comme `>=1.0.0 <2.0.0` n'inclut pas une préversion telle que
+  `1.5.0-rc.1`. Pour qualifier cette candidate, l'auteur peut préparer une copie
+  de travail du package déclarant exactement `1.5.0-rc.1`, puis la vérifier et
+  l'archiver avec ses tests. Ne modifiez pas un package déjà installé pour
+  contourner ce refus : son empreinte et ses contrats restent contrôlés.
+  Sinon, utilisez une distribution stable satisfaisant la plage annoncée.
 - `dependencies` contient des versions exactes ; utilisez `touba package add`
   depuis le projet auteur pour faire enregistrer dépendance et lock ensemble.
 - `engines` vérifie actuellement la plage Node et les plateformes. Documentez

@@ -95,11 +95,13 @@ export function createSqliteTriggerQueue({ filename, maxEntries = 10000, maxByte
     db.prepare("INSERT INTO queue_entries VALUES(?,?,?,?,?,?,NULL,1,?)")
       .run(entry.queue_id, entry.trigger_ref, entry.event_id, entry.status, due, Date.parse(entry.received_at), body);
   }
-  function page({ after = "", limit = 100 } = {}) {
+  function page({ after = "", limit = 100, states = [] } = {}) {
     if (typeof after !== "string" || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw error("TriggerQueueQueryInvalid", "invalid page cursor or limit");
+    if (!Array.isArray(states) || states.length > statuses.size || states.some(value => !statuses.has(value))) throw error('TriggerQueueQueryInvalid', 'invalid status filter');
     const entries = [];
     let bytes = 0;
-    for (const row of db.prepare("SELECT * FROM queue_entries WHERE id>? ORDER BY id LIMIT ?").iterate(after, limit)) {
+    const filter = states.length ? ` AND status IN (${states.map(() => '?').join(',')})` : '';
+    for (const row of db.prepare(`SELECT * FROM queue_entries WHERE id>?${filter} ORDER BY id LIMIT ?`).iterate(after, ...states, limit)) {
       const size = Buffer.byteLength(row.body);
       if (size > 1024 * 1024) throw error("TriggerQueueEntryInvalid", "stored queue entry exceeds its byte limit");
       if (bytes + size > 16 * 1024 * 1024) break;
@@ -111,8 +113,11 @@ export function createSqliteTriggerQueue({ filename, maxEntries = 10000, maxByte
     path,
     find(triggerRef, eventId) { return decode(db.prepare("SELECT * FROM queue_entries WHERE trigger_ref=? AND event_id=?").get(triggerRef, eventId)); },
     get(id) { return decode(db.prepare("SELECT * FROM queue_entries WHERE id=?").get(id)); },
-    enqueue(entry) {
-      transaction(() => insert(entry));
+    enqueue(entry, { beforeInsert } = {}) {
+      transaction(() => {
+        if (beforeInsert) beforeInsert(db.prepare("SELECT trigger_ref,event_id FROM queue_entries WHERE status IN ('queued','processing','continuing','awaiting_human')").all());
+        insert(entry);
+      });
     },
     claim(processingTimeoutMs, now = Date.now(), { guardUnknown = false } = {}) {
       return transaction(() => {
@@ -135,6 +140,13 @@ export function createSqliteTriggerQueue({ filename, maxEntries = 10000, maxByte
       });
     },
     finish(entry) { transaction(() => update(entry)); },
+    progress(entry) {
+      if (!['processing','continuing'].includes(entry.status)) throw error('TriggerQueueWriteConflict', 'only an active worker may persist progress');
+      transaction(() => {
+        if (db.prepare('SELECT worker_pid FROM queue_entries WHERE id=?').get(entry.queue_id)?.worker_pid !== process.pid) throw error('TriggerQueueWriteConflict', 'worker ownership changed');
+        update(entry, process.pid);
+      });
+    },
     continue(id, requestId) {
       return transaction(() => {
         const entry = decode(db.prepare("SELECT * FROM queue_entries WHERE id=?").get(id));
@@ -162,6 +174,16 @@ export function createSqliteTriggerQueue({ filename, maxEntries = 10000, maxByte
       return result;
     },
     page,
+    retries(triggerRef) {
+      return db.prepare("SELECT count(*) AS n FROM queue_entries WHERE trigger_ref=? AND status='queued' AND json_extract(body,'$.attempt_count')>0").get(triggerRef).n;
+    },
+    metadata() {
+      // Deliberately exclude private payloads, checkpoints and tool arguments.
+      return db.prepare(`SELECT id AS queue_id,trigger_ref,status,
+        json_extract(body,'$.execution_owner') AS execution_owner,
+        json_extract(body,'$.review.action') AS review_action
+        FROM queue_entries ORDER BY id`).all();
+    },
     importEntries(entries) {
       transaction(() => {
         if (db.prepare("SELECT count(*) AS n FROM queue_entries").get().n) throw error("TriggerQueueMigrationConflict", "migration requires an empty queue");

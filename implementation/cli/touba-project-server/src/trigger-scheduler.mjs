@@ -46,6 +46,8 @@ export function schedulerStore(path) {
         || row.run_id !== null && !/^schedule_[a-f0-9]{40}$/.test(row.run_id ?? '')
         || row.error !== null && !/^[A-Za-z0-9_]{1,100}$/.test(row.error ?? '')) fail('ToubaSchedulerStateInvalid');
       if (row.retry_at !== undefined && (!Number.isSafeInteger(row.retry_at) || row.retry_at < 0)) fail('ToubaSchedulerStateInvalid');
+      if (row.paused !== undefined && typeof row.paused !== 'boolean'
+        || row.control_revision !== undefined && (!Number.isSafeInteger(row.control_revision) || row.control_revision < 0)) fail('ToubaSchedulerStateInvalid');
     },
     checkTransaction(db) { if (db.prepare('SELECT count(*) AS n FROM records').get().n > 100) fail('ToubaSchedulerCapacityExceeded'); },
   });
@@ -100,16 +102,18 @@ export function createTriggerScheduler({ enabled, path, plans, execute, pending,
       if (stopping) break;
       const slot = Math.floor(now()/plan.interval_ms), rows = store.read([{ id: plan.trigger_ref }]);
       let row = rows[0];
+      if (row?.paused) continue;
       if (row?.status === 'interrupted') continue;
       // Atomic runtime admission remains authoritative. A proven daily-quota
       // refusal schedules the next observation at the next UTC day, durably.
-      if (row?.retry_at > now()) continue;
       if (pending(plan.trigger_ref)) continue;
       if (!row || row.signature !== plan.signature) {
         // A new/revised schedule starts at its next UTC-aligned interval.
-        row = { ...plan, slot, status: 'waiting', run_id: null, error: null, skipped: row?.skipped ?? 0 };
+        row = { ...plan, slot, status: 'waiting', run_id: null, error: null, skipped: row?.skipped ?? 0,
+          paused: row?.paused ?? false, control_revision: row?.control_revision ?? 0 };
         rows.splice(0, rows.length, row); store.write(rows); continue;
       }
+      if (row.retry_at > now()) continue;
       if (slot <= row.slot) continue; // Includes backwards wall-clock changes.
       if (quotaReached(plan.trigger_ref)) {
         row.slot = slot; row.status = 'waiting'; row.error = 'TriggerRateLimited';
@@ -142,7 +146,14 @@ export function createTriggerScheduler({ enabled, path, plans, execute, pending,
         row.status = 'interrupted'; row.error = /^[A-Za-z0-9_]{1,100}$/.test(error.code ?? '') ? error.code : 'ToubaSchedulerExecutionInterrupted';
         emit('trigger.schedule.interrupted', { trigger_ref: plan.trigger_ref, run_id: row.run_id, code: row.error });
       }
-      store.write(rows);
+      // A pause during execute only controls future occurrences. Preserve it
+      // when the in-flight occurrence settles; never cancel or replay its work.
+      const latest = store.read([{id:row.trigger_ref}]), controls = latest[0];
+      if (controls?.run_id !== row.run_id) fail('ToubaSchedulerReviewConflict');
+      row.paused = controls?.paused ?? false;
+      row.control_revision = controls?.control_revision ?? 0;
+      row.slot = Math.max(row.slot, controls?.slot ?? 0);
+      latest.splice(0, latest.length, row); store.write(latest);
     }
     health = { ...health, status: issues.length ? 'degraded' : 'ready', error: null, last_poll_at: new Date(now()).toISOString() };
   }
@@ -163,7 +174,8 @@ export function createTriggerScheduler({ enabled, path, plans, execute, pending,
         const current = active.some(plan => plan.trigger_ref === row.trigger_ref && plan.signature === row.signature);
         const waiting = pending(row.trigger_ref);
         return { ...row, status: waiting ? 'pending' : row.status === 'pending' ? 'waiting' : row.status, active: current,
-          next_run_at: !current || waiting || row.status === 'interrupted' ? null : new Date(Math.max((row.slot+1)*row.interval_ms, row.retry_at ?? 0)).toISOString() };
+          paused: row.paused ?? false, control_revision: row.control_revision ?? 0,
+          next_run_at: row.paused || !current || waiting || row.status === 'interrupted' ? null : new Date(Math.max((row.slot+1)*row.interval_ms, row.retry_at ?? 0)).toISOString() };
       }) };
     },
     acknowledge({ trigger_ref, run_id, reason }) {
@@ -172,6 +184,19 @@ export function createTriggerScheduler({ enabled, path, plans, execute, pending,
       if (!row || row.status !== 'interrupted' || row.run_id !== run_id) fail('ToubaSchedulerReviewConflict');
       row.status = 'waiting'; row.error = null; row.slot = Math.max(row.slot, Math.floor(now()/row.interval_ms));
       store.write(rows); return { trigger_ref, run_id, status: 'acknowledged' };
+    },
+    control({trigger_ref, signature, control_revision, paused, reason}) {
+      if (!enabled || typeof trigger_ref !== 'string' || !trigger_ref.startsWith('trigger:') || typeof signature !== 'string'
+        || typeof paused !== 'boolean' || typeof reason !== 'string' || !reason.trim() || reason.length > 500
+        || !Number.isSafeInteger(control_revision) || control_revision < 0) fail('ToubaSchedulerReviewInvalid');
+      const rows = store.read([{id:trigger_ref}]), row=rows[0];
+      if (!row || row.signature !== signature || (row.control_revision ?? 0) !== control_revision
+        || (row.paused ?? false) === paused) fail('ToubaSchedulerReviewConflict');
+      row.paused=paused; row.control_revision=control_revision+1;
+      // Resuming never catches up missed slots or clears an interrupted run.
+      if (!paused) row.slot=Math.max(row.slot,Math.floor(now()/row.interval_ms));
+      store.write(rows);
+      return {trigger_ref,paused,control_revision:row.control_revision};
     },
     start() { if (timer) return; stopping = false; void tick(); if (enabled) { timer = setInterval(() => void tick(), 1000); timer.unref?.(); } },
     async stop() { stopping = true; clearInterval(timer); timer = null; await task; },

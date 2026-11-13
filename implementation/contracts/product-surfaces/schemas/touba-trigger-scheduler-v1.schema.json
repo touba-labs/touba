@@ -30,6 +30,8 @@
         "error": {"type": ["string", "null"]},
         "skipped": {"type": "integer", "minimum": 0},
         "retry_at": {"type": "integer", "minimum": 0},
+        "paused": {"type": "boolean"},
+        "control_revision": {"type": "integer", "minimum": 0},
         "next_run_at": {"type": ["string", "null"]},
         "active": {"type": "boolean"}
       }

@@ -2,11 +2,11 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, realpathS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { addPackage, updatePackage, removePackage, isNewerPackageVersion, checkPackageArchive, snapshotPackage, resolveRegistryArchive } from "../../touba-project/src/packages.mjs";
+import { addPackage, updatePackage, removePackage, isNewerPackageVersion, packageRuntimeCompatibility, checkPackageArchive, snapshotPackage, resolveRegistryArchive } from "../../touba-project/src/packages.mjs";
 import { readPackageWorkspace, verifyInstalledPackages } from "../../touba-project/src/package-store.mjs";
 import { PACKAGE_LIMITS, PACKAGE_NAME, packageFile } from "../../touba-project/src/package-contract.mjs";
 import { packageHostInventory, readPackageHostPlan } from "../../touba-project/src/package-host-plan.mjs";
-import { listRegistryPackages } from '../../touba-project/src/registry.mjs';
+import { listRegistryPackages, resolveRegistryPackage } from '../../touba-project/src/registry.mjs';
 
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -116,13 +116,30 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
     },
     registry() { return { registry: registryRoot, configured: Boolean(registryRoot) }; },
     async registryCatalogue(proof) {
-      if (!registryRoot || !proof || Object.keys(proof).some(key => !['index_jwt', 'query', 'offset', 'includeWithdrawn'].includes(key))
+      if (!registryRoot || !proof || Object.keys(proof).some(key => !['index_jwt', 'query', 'offset', 'includeWithdrawn', 'metadata'].includes(key))
         || typeof proof.index_jwt !== 'string' || Buffer.byteLength(proof.index_jwt) > 8 * 1024 * 1024) fail('ToubaServePackageInvalid', 'invalid registry catalogue evidence');
-      return listRegistryPackages({ registry: registryRoot, trust, query: proof.query, offset: proof.offset, includeWithdrawn: proof.includeWithdrawn,
+      const result = await listRegistryPackages({ registry: registryRoot, trust, query: proof.query, offset: proof.offset, includeWithdrawn: proof.includeWithdrawn, limit: 10, includeMetadataPath: true,
         readBytes: async location => {
           if (location !== new URL('index.jwt', registryRoot + '/').href) fail('ToubaServePackageInvalid', 'unexpected registry catalogue location');
           return Buffer.from(proof.index_jwt);
         } });
+      if (proof.metadata === undefined) return result;
+      if (!Array.isArray(proof.metadata) || proof.metadata.length !== result.items.length
+        || proof.metadata.some(value => typeof value !== 'string')
+        || Buffer.byteLength(JSON.stringify(proof.metadata)) > 1024 * 1024) fail('ToubaServePackageInvalid', 'invalid catalogue metadata page');
+      // A page is bounded to ten records. The browser carries bytes, never a
+      // network instruction; Core checks signatures and metadata digests again.
+      const items = [];
+      for (const [index, item] of result.items.entries()) {
+        const resolution = await resolveRegistryPackage({ registry: registryRoot, trust, packageRef: `pkg:${item.name}`,
+          version: item.version, validationOnly: true, readBytes: async location => {
+            if (location === new URL('index.jwt', registryRoot + '/').href) return Buffer.from(proof.index_jwt);
+            if (location === new URL(item.metadata_path, registryRoot + '/').href) return Buffer.from(proof.metadata[index]);
+            fail('ToubaServePackageInvalid', 'unexpected catalogue metadata location');
+          } });
+        items.push({ ...item, compatibility: packageRuntimeCompatibility(resolution.compatibility.touba) });
+      }
+      return { ...result, items };
     },
     async resolveRegistry(principal, proof) {
       expire();

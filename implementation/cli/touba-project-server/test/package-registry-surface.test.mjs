@@ -72,7 +72,12 @@ test('catalogue authenticates versions, hides withdrawn releases and refuses sig
   const { surface, proof } = await fixture(t);
   const list = values => surface.registryCatalogue(values);
   const initial = proof();
-  assert.deepEqual((await list({ index_jwt: initial.index_jwt })).items, [{ name: 'fixture.remote', version: '1.0.0', status: 'validated' }]);
+  const initialPage = await list({ index_jwt: initial.index_jwt });
+  assert.equal(initialPage.items.length, 1);
+  assert.equal(initialPage.items[0].name, 'fixture.remote');
+  assert.equal(initialPage.items[0].version, '1.0.0');
+  assert.equal(initialPage.items[0].status, 'validated');
+  assert.equal(typeof initialPage.items[0].metadata_path, 'string');
   assert.equal((await list({ index_jwt: initial.index_jwt, query: 'OTHER' })).total, 0);
   assert.equal((await list({ index_jwt: initial.index_jwt, query: 'FIXTURE' })).total, 1);
   assert.deepEqual((await list({ index_jwt: initial.index_jwt, offset: 1 })).items, []);
@@ -82,5 +87,22 @@ test('catalogue authenticates versions, hides withdrawn releases and refuses sig
   assert.deepEqual((await list({ index_jwt: withdrawn.index_jwt })).items, []);
   assert.equal((await list({ index_jwt: withdrawn.index_jwt, includeWithdrawn: true })).items[0].status, 'yanked');
   await assert.rejects(list({ index_jwt: initial.index_jwt }), { code: 'RegistryRollbackRefused' });
+  assert.equal(surface.inventory().packages.length, 0);
+});
+
+test('catalogue compatibility verifies signed metadata without downloading or installing archives', async t => {
+  const { surface, proof } = await fixture(t);
+  const initial = proof();
+  const list = value => surface.registryCatalogue({ index_jwt: value.index_jwt, metadata: [value.metadata] });
+  const compatible = await list(initial);
+  assert.equal(compatible.items[0].compatibility.compatible, true);
+  assert.equal(typeof compatible.items[0].compatibility.runtime, 'string');
+  const incompatible = proof({ compatibility: '>=99.0.0', revision: 2 });
+  const checked = await list(incompatible);
+  assert.equal(checked.items[0].compatibility.compatible, false);
+  assert.equal(checked.items[0].compatibility.required, '>=99.0.0');
+  await assert.rejects(list({ ...incompatible, metadata: incompatible.metadata + ' ' }), { code: 'RegistryMetadataDigestMismatch' });
+  await assert.rejects(surface.registryCatalogue({ index_jwt: incompatible.index_jwt, metadata: [] }), { code: 'ToubaServePackageInvalid' });
+  await assert.rejects(surface.registryCatalogue({ index_jwt: incompatible.index_jwt, metadata: ['x'.repeat(1024 * 1024)] }), { code: 'ToubaServePackageInvalid' });
   assert.equal(surface.inventory().packages.length, 0);
 });

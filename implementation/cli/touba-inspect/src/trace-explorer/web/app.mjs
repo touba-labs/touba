@@ -155,7 +155,7 @@ function renderRuns() {
     const meta = element('small'), count = `${run.eventCount} ${t('count').toLowerCase()}`;
     if (essential()) meta.append(count); else meta.append(element('span', run.runId, 'mono'), ` · ${count}`);
     item.append(icon('strategy', 'icon-small'), element('strong', shortName(run.entry || run.module || run.runId)), meta);
-    if (run.origin) item.append(element('small', originLabel(run.origin, language)));
+    if (run.origin) item.append(element('small', originLabel(run.origin, language), 'run-origin'));
     if (run.status) item.append(element('span', t(`status_${run.status}`), 'open-flag'));
     else if (!run.closed) item.append(element('span', t('openFlag'), 'open-flag'));
     item.title = `${shortRef(run.entry || run.module || run.runId)}\n${run.runId}\n${run.eventCount} ${t('count').toLowerCase()} · #${run.start} · ${t(run.closed ? 'complete' : 'incomplete')}`;

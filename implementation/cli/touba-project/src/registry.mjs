@@ -27,7 +27,7 @@ const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const readIndex = (ref, trust, readBytes) => /^https?:\/\//.test(ref)
   ? readSignedRegistry(ref, trust, undefined, readBytes) : readJsonRef(ref, "RegistryIndexSchemaInvalid");
 
-export async function listRegistryPackages({ registry, trust, readBytes, query = '', offset = 0, limit = 50, includeWithdrawn = false } = {}) {
+export async function listRegistryPackages({ registry, trust, readBytes, query = '', offset = 0, limit = 50, includeWithdrawn = false, includeMetadataPath = false } = {}) {
   if (typeof query !== 'string' || query.length > 160 || !Number.isSafeInteger(offset) || offset < 0 || offset > 100000
     || !Number.isInteger(limit) || limit < 1 || limit > 100 || typeof includeWithdrawn !== 'boolean') fail('RegistryIndexSchemaInvalid', 'invalid catalogue query');
   const location = registryLocation(requiredOption(registry, 'registry'));
@@ -36,7 +36,8 @@ export async function listRegistryPackages({ registry, trust, readBytes, query =
   const entries = document.value.packages.filter(item => (includeWithdrawn || ['validated', 'deprecated'].includes(item.status))
     && item.package_ref.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => a.package_ref.localeCompare(b.package_ref) || semver.rcompare(a.version, b.version));
-  return { items: entries.slice(offset, offset + limit).map(item => ({ name: item.package_ref.slice(4), version: item.version, status: item.status })),
+  return { items: entries.slice(offset, offset + limit).map(item => ({ name: item.package_ref.slice(4), version: item.version, status: item.status,
+    ...(includeMetadataPath ? { metadata_path: item.metadata_path } : {}) })),
     total: entries.length, next_offset: offset + limit < entries.length ? offset + limit : null,
     revision: document.revision ?? null, index_digest: document.digest ?? digestBuffer(document.bytes) };
 }

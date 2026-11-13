@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.0
+
+Local candidate with authenticated project request ingress, reviewed queue
+recovery, scheduler controls and precise package compatibility diagnostics.
+Includes the reviewed lifecycle and private approval dossiers of the earlier RC.
+See [release and migration notes](implementation/release/notes/v1.5.0.md).
+
 ## 1.5.0-rc.1
 
 Local test candidate: reviewed multi-project lifecycle, server profiles,

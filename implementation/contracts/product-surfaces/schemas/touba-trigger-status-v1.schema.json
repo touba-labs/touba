@@ -46,6 +46,7 @@
             "required": ["pending", "processing", "dead_letter"],
             "properties": {
               "pending": { "type": "integer" },
+              "retry": { "type": "integer", "minimum": 0 },
               "processing": { "type": "integer" },
               "dead_letter": { "type": "integer" },
               "awaiting_human": { "type": "integer", "minimum": 0 },

@@ -88,6 +88,7 @@ main[data-runs=closed] .runs,main[data-detail=closed] .detail-panel{display:none
 .run strong{grid-column:2;grid-row:1;max-width:100%;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .run small{grid-column:2/-1;grid-row:2;max-width:100%;font-size:11.5px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .run small .mono{font-size:11.5px;line-height:1.45}
+.run small.run-origin{grid-row:3}
 .run .open-flag{grid-column:3;grid-row:1;justify-self:end;font-size:10.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--touba-warning)}
 .run[aria-current=true]{background:color-mix(in srgb,var(--touba-primary) 10%,transparent);color:var(--touba-primary)}
 .run[aria-current=true] strong{font-weight:650}

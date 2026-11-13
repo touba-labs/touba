@@ -822,7 +822,7 @@ Options principales :
 | `--processing-timeout-ms <n>` | signale une interruption après disparition du worker ; ne relance pas sa stratégie |
 | `--effect-journal <path>` | persiste `touba-effect-journal-v1` pour les bindings `external_write` |
 | `--auth-token-env <NAME>` | exige un bearer token ou `x-touba-trigger-token` |
-| `--signature-secret-env <NAME>` | exige `x-touba-signature: sha256=<hex>` |
+| `--signature-secret-env <NAME>` | exige `x-touba-signature: v1=<hex>`, timestamp et identifiant signés ; voir le guide des triggers |
 | `--secrets <path>` | résout les handles de secrets déclarés par les runs déclenchés |
 | `--agent-decision-provider <path>` | charge explicitement un fournisseur JavaScript ou Python |
 | `--human-approval-host <path>` | charge l'hôte d'attestation des décisions humaines |
@@ -1188,6 +1188,15 @@ support explicite.
 ## `touba serve`
 
 Le [guide API du serveur projet](../guides/api-serveur-projet.md) décrit les routes d'interaction, l'identité de décision, le contexte d'approbation, la reprise et les providers.
+
+`--schedule-triggers` active les occurrences planifiées du projet.
+`--request-triggers --webhook-signature-secret-env NOM_VARIABLE` active ses
+webhooks signés sous `/_touba/events`, avec les mêmes dossiers d'approbation et
+le même journal d'effets que les autres exécutions. La variable contient une
+clé dédiée d'au moins 32 octets. Ce choix et son nom peuvent être conservés dans
+`touba.server.json` ; la valeur secrète reste dans l'environnement de l'exploitant.
+Voir [les triggers gouvernés](../guides/triggers-gouvernes.md) pour la signature,
+la consultation de la file et la transition depuis un service autonome.
 
 ```sh title="Terminal"
 export TOUBA_PROJECT_TOKEN='replace-with-a-strong-token'

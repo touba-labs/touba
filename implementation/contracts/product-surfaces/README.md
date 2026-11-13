@@ -25,6 +25,7 @@ Lists and optionals recursively retain reachable record/enum definitions.
 | --- | --- | --- |
 | `touba-project-explorer-v1` | CLI browser, VS Code webview | Read-only project graph compiled from a bounded source snapshot: inventory, source-defined flow, declared authority and relative source coordinates. |
 | `touba-project-server-config-v1` | CLI, local operators | Explicit persistent server options, project-relative paths and credential environment names. Read on deliberate startup, with no implicit host activation from a cloned project. |
+| `touba-project-webhooks-v1` | project clients | Bounded project ingress routes, queue counters and event metadata with revision-bound review actions. Private arguments are excluded; uncertain effects require reconciliation, never automatic replay. |
 | `touba-validation-plan-review-v1` | CLI, authorized project clients | Before/after snapshots of selected host test suites, file fingerprints and a review digest. Generation and refresh never execute tests. |
 | `touba-auth-session-v1` | host applications, project server | Authenticated human identity, organization membership, permissions and bounded session metadata. |
 | `touba-identity-directory-v1` | project clients | Organization members and role definitions without devices, sessions or credentials. |

@@ -12,11 +12,15 @@ const descriptor = (kind, reference, instant) => {
 
 export function notificationForEvent(event) {
   const value = event.payload ?? {};
+  if (value.code === 'TriggerRateLimited' && ['trigger.fire.completed','sandbox_run.completed'].includes(event.type)) return null;
+  if (['HumanApprovalExpired','HumanApprovalRejected','HumanApprovalCancelled'].includes(value.code)
+    && ['trigger.webhook.updated','sandbox_run.resumed'].includes(event.type)) return null;
   // The durable human-wait event carries this terminal outcome. Forwarding
   // the accompanying failed interaction would create a second incident.
   if (event.type === 'interaction.run.failed'
     && ['ToubaSandboxHumanDecisionExpired', 'ToubaSandboxHumanDecisionRejected', 'ToubaSandboxHumanDecisionCancelled'].includes(value.error?.code)) return null;
-  const kind = ['interaction.run.failed','interaction.run.interrupted','trigger.schedule.interrupted'].includes(event.type) ? 'execution_failed'
+  const kind = event.type === 'trigger.webhook.updated' && ['failed','interrupted'].includes(value.status) ? 'execution_failed'
+    : ['interaction.run.failed','interaction.run.interrupted','trigger.schedule.interrupted'].includes(event.type) ? 'execution_failed'
     : event.type === 'trigger.schedule.skipped' ? 'observation_gap'
     : event.type === 'human_wait.terminalized' && value.resolution_kind === 'expired' ? 'approval_expired'
     : ['sandbox_run.completed','sandbox_run.resumed','trigger.fire.completed'].includes(event.type)

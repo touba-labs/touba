@@ -13,6 +13,7 @@ export function validateProjectServerConfig(document) {
   if (document.package_hosts && (document.human_approval_host || document.agent_decision_provider)) fail('package_hosts');
   if (Boolean(document.package_registry) !== Boolean(document.package_registry_trust)) fail('package_registry_trust');
   if (document.identity_service_token_env && document.identity_service_token_vault) fail('identity_service_token_vault');
+  if (document.request_triggers === true && !document.webhook_signature_secret_env) fail('webhook_signature_secret_env');
   if (Boolean(document.identity_control_plane_url) !== Boolean(document.identity_service_token_env || document.identity_service_token_vault)) fail('identity_service_token_env');
   for (const field of serverConfigPaths) {
     const value = document[field];

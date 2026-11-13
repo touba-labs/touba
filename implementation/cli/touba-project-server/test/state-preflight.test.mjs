@@ -31,7 +31,7 @@ test("offline preflight covers interactions without changing bytes or importing 
   }
   assert.deepEqual(checked.stores.map(store => store.store).sort(), [
     'sandboxCheckpointsPath', 'checkpointCustodyPath', 'humanRequestsPath', 'humanDecisionsPath', 'changeProposalsPath',
-    'effectJournalPath', 'interactionSessionsPath', 'interactionAssetsPath', 'schedulerPath', 'validationPath',
+    'effectJournalPath', 'interactionSessionsPath', 'interactionAssetsPath', 'schedulerPath', 'validationPath', 'projectWebhooksPath',
   ].sort());
   assert.equal(checked.stores.find(store => store.store === 'schedulerPath').exists, false);
   assert.equal(existsSync(join(root, ".touba/state-origin.json")), false);

@@ -138,6 +138,113 @@ test("assigns a fresh event and queue identity to each delivery without an event
   }
 });
 
+test('concurrent HTTP deliveries reserve the remaining quota before acceptance', async t => {
+  const workspace=mkdtempSync(join(tmpdir(),'touba-trigger-quota-'));
+  let service;
+  t.after(async () => {
+    if (service?.server.listening) await closeServer(service.server);
+    rmSync(workspace,{recursive:true,force:true});
+  });
+  const fixture=writeFixture(workspace,{effectHandler:'delayed-success'});
+  const manifest=JSON.parse(readFileSync(fixture.manifestPath,'utf8'));
+  manifest.triggers['trigger:examples.webhook/WebhookRun'].limits.max_runs_per_day=1;
+  writeFileSync(fixture.manifestPath,JSON.stringify(manifest));
+  service=await createTriggerService({...fixture,secretsPath:undefined,port:0,quiet:true});
+  await service.start();
+  const url=`http://127.0.0.1:${service.server.address().port}/webhook/run`;
+  const responses=await Promise.all(Array.from({length:6},(_,i)=>fetch(url,{
+    method:'POST',headers:{'x-touba-event-id':`quota-${i}`},body:'event',
+  })));
+  assert.equal(responses.filter(r=>r.status===202).length,1);
+  assert.equal(responses.filter(r=>r.status===429).length,5);
+  for (const response of responses.filter(r=>r.status===429)) {
+    assert.ok(Number(response.headers.get('retry-after'))>0);
+    assert.equal((await response.json()).code,'TriggerRateLimited');
+  }
+  const accepted=await responses.find(r=>r.status===202).json();
+  await waitForQueueEntryStatus(fixture.queuePath,accepted.event_id,'succeeded',5000);
+  assert.equal(readQueue(fixture.queuePath).entries.length,1);
+  assert.equal(effectInvocationCount(fixture.effectLogPath),1);
+});
+
+test('a previously accepted event survives a competing runtime quota claim and restart', async t => {
+  const workspace=mkdtempSync(join(tmpdir(),'touba-trigger-quota-race-'));
+  let service;
+  t.after(async()=>{if(service?.server.listening)await closeServer(service.server);rmSync(workspace,{recursive:true,force:true});});
+  const fixture=writeFixture(workspace,{effectHandler:'delayed-success'});
+  const manifest=JSON.parse(readFileSync(fixture.manifestPath,'utf8'));
+  manifest.triggers['trigger:examples.webhook/WebhookRun'].limits.max_runs_per_day=1;
+  writeFileSync(fixture.manifestPath,JSON.stringify(manifest));
+  const entry=queuedEntry('queue:quota-race:1','quota-race-1');
+  const queue=createSqliteTriggerQueue({filename:fixture.queuePath});queue.enqueue(entry);queue.close();
+  const state=createSqliteTriggerStore({filename:fixture.statePath});
+  assert.equal(state.admit({triggerRef:entry.trigger_ref,eventId:'other-consumer',sourceKind:'request',runId:'other-run',maxRunsPerDay:1}).accepted,true);state.close();
+  service=await createTriggerService({...fixture,secretsPath:undefined,port:0,quiet:true});await service.start();
+  let waiting;
+  for(let i=0;i<100;i++){
+    waiting=readQueue(fixture.queuePath).entries[0];
+    if(waiting.status==='queued'&&waiting.next_attempt_at)break;
+    await new Promise(resolve=>setTimeout(resolve,30));
+  }
+  assert.equal(waiting.status,'queued');assert.equal(waiting.runtime_error_code,'TriggerRateLimited');
+  assert.ok(Date.parse(waiting.next_attempt_at)>Date.now());
+  assert.equal(effectInvocationCount(fixture.effectLogPath),0);
+  await closeServer(service.server);
+  service=await createTriggerService({...fixture,secretsPath:undefined,port:0,quiet:true});await service.start();
+  const restored=readQueue(fixture.queuePath).entries[0];
+  assert.equal(restored.next_attempt_at,waiting.next_attempt_at);assert.equal(restored.attempt_count,waiting.attempt_count);
+  assert.equal(effectInvocationCount(fixture.effectLogPath),0);
+});
+
+test('an unmapped dynamic input refuses webhook startup before accepting events', async t => {
+  const workspace=mkdtempSync(join(tmpdir(),'touba-trigger-incomplete-mapping-'));
+  t.after(()=>rmSync(workspace,{recursive:true,force:true}));
+  const fixture=writeFixture(workspace,{payloadMapped:true});
+  const manifest=JSON.parse(readFileSync(fixture.manifestPath,'utf8'));
+  delete manifest.triggers['trigger:examples.webhook/WebhookRun'].payload;
+  writeFileSync(fixture.manifestPath,JSON.stringify(manifest));
+  await assert.rejects(createTriggerService({...fixture,secretsPath:undefined,port:0,quiet:true}),{code:'TriggerPayloadContractInvalid'});
+  assert.equal(existsSync(fixture.queuePath),false);
+});
+
+test('duplicate enabled request routes are rejected at startup even with an explicit trigger filter', async t => {
+  const workspace=mkdtempSync(join(tmpdir(),'touba-trigger-route-conflict-'));
+  t.after(()=>rmSync(workspace,{recursive:true,force:true}));
+  const fixture=writeFixture(workspace);
+  const document=JSON.parse(readFileSync(fixture.airPath,'utf8'));
+  const duplicate={...document.definitions.triggers[0],id:'trigger:examples.webhook/Duplicate',name:'Duplicate'};
+  document.definitions.triggers.push(duplicate);
+  writeFileSync(fixture.airPath,JSON.stringify(document));
+  const manifest=JSON.parse(readFileSync(fixture.manifestPath,'utf8'));
+  manifest.triggers[duplicate.id]=structuredClone(manifest.triggers['trigger:examples.webhook/WebhookRun']);
+  writeFileSync(fixture.manifestPath,JSON.stringify(manifest));
+  for (const triggerRef of [undefined,'trigger:examples.webhook/WebhookRun']) {
+    await assert.rejects(createTriggerService({...fixture,secretsPath:undefined,port:0,quiet:true,triggerRef}),{code:'TriggerRouteConflict'});
+  }
+});
+
+test('a failed unconsumed event is never reported queued by a duplicate delivery', async t => {
+  const workspace=mkdtempSync(join(tmpdir(),'touba-trigger-terminal-'));
+  let service;
+  t.after(async()=>{
+    if (service?.server.listening) await closeServer(service.server);
+    rmSync(workspace,{recursive:true,force:true});
+  });
+  const fixture=writeFixture(workspace);
+  const entry=queuedEntry('queue:terminal:1','terminal-1');
+  entry.status='failed';
+  const queue=createSqliteTriggerQueue({filename:fixture.queuePath});
+  queue.enqueue(entry); queue.close();
+  service=await createTriggerService({...fixture,secretsPath:undefined,port:0,quiet:true});
+  await service.start();
+  const response=await fetch(`http://127.0.0.1:${service.server.address().port}/webhook/run`,{
+    method:'POST',headers:{'x-touba-event-id':'terminal-1'},body:'',
+  });
+  assert.equal(response.status,409);
+  assert.equal((await response.json()).code,'TriggerEventTerminal');
+  assert.equal(readQueue(fixture.queuePath).entries[0].status,'failed');
+});
+
 test("refuses an invalid event id header before creating a queue entry", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-invalid-event-id-"));
   let service;
@@ -419,12 +526,14 @@ test("requires a valid webhook HMAC signature when configured", async () => {
     });
     assert.equal(rejected.status, 401);
 
-    const signature = createHmac("sha256", secret).update(body).digest("hex");
+    const timestamp = String(Math.floor(Date.now()/1000));
+    const signature = createHmac("sha256", secret).update(`touba-webhook-v1\n${timestamp}\nevt-webhook-good-signature\nPOST\n/webhook/run\n`).update(body).digest("hex");
     const accepted = await fetch(`http://${started.host}:${started.port}/webhook/run`, {
       method: "POST",
       headers: {
         "x-touba-event-id": "evt-webhook-good-signature",
-        "x-touba-signature": `sha256=${signature}`,
+        "x-touba-signature": `v1=${signature}`,
+        "x-touba-timestamp": timestamp,
       },
       body,
     });
@@ -438,9 +547,10 @@ test("requires a valid webhook HMAC signature when configured", async () => {
 
 test("rejects mapped webhook payload arguments that do not match the target signature", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-trigger-service-payload-type-"));
+  let child;
   try {
     const fixture = writeFixture(workspace, { payloadMapped: true });
-    const child = spawnService(fixture, ["--max-events", "1"]);
+    child = spawnService(fixture, ["--max-events", "1"]);
     const started = await waitForStart(child);
 
     const response = await fetch(`http://${started.host}:${started.port}/webhook/run`, {
@@ -453,19 +563,11 @@ test("rejects mapped webhook payload arguments that do not match the target sign
         message: 42,
       }),
     });
-    assert.equal(response.status, 202);
-    const exit = await once(child, "exit");
-    assert.equal(exit[0], 0);
-
-    const queue = readQueue(fixture.queuePath);
-    assert.equal(queue.entries[0].status, "failed");
-    assert.equal(queue.entries[0].runtime_error_code, "TriggerPayloadInvalid");
-    assert.equal(queue.entries[0].arguments.message, 42);
-
-    const trace = JSON.parse(readFileSync(queue.entries[0].trace_path, "utf8"));
-    const refusal = eventOf(trace, "trigger_event_refused");
-    assert.equal(refusal.payload.runtime_error_code, "TriggerPayloadInvalid");
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, 'TriggerPayloadInvalid');
+    assert.equal(readQueue(fixture.queuePath).entries.length, 0);
   } finally {
+    await terminateChild(child);
     rmSync(workspace, { recursive: true, force: true });
   }
 });
@@ -595,6 +697,7 @@ test("wakes a delayed retry without requiring another HTTP event", async () => {
     });
     await service.start();
     const address = service.server.address();
+    const submittedAt = Date.now();
     const response = await fetch(`http://127.0.0.1:${address.port}/webhook/run`, {
       method: "POST",
       headers: { "x-touba-event-id": "evt-delayed-retry" },
@@ -609,6 +712,7 @@ test("wakes a delayed retry without requiring another HTTP event", async () => {
       3000,
     );
     assert.equal(entry.attempt_count, 2);
+    assert.ok(Date.now() - submittedAt >= 1000, 'the retry must wait for its backoff');
     assert.equal(entry.next_attempt_at, undefined);
     assert.equal(effectInvocationCount(fixture.effectLogPath), 2);
     const state = readTriggerState(fixture.statePath);

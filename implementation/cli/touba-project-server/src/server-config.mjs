@@ -7,6 +7,7 @@ const fields = {
   identity_service_token_vault: '--identity-service-token-vault',
   auth_token_env: '--auth-token-env', identity_file: '--identity', secrets_file: '--secrets',
   schedule_triggers: '--schedule-triggers', cloud_notifications: '--cloud-notifications', validation_plan: '--validation-plan',
+  request_triggers: '--request-triggers', webhook_signature_secret_env: '--webhook-signature-secret-env',
   package_hosts: '--package-hosts', human_approval_host: '--human-approval-host', agent_decision_provider: '--agent-decision-provider',
   package_registry: '--package-registry', package_registry_trust: '--package-registry-trust',
   deployment_target_url: '--deployment-target-url', deployment_target_token_env: '--deployment-target-token-env',

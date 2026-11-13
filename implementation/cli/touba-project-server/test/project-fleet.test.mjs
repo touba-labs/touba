@@ -10,7 +10,7 @@ import { acquireStateLease, archiveProjectState } from '../src/state-maintenance
 import { checkToubaProjectState } from '../src/serve.mjs';
 import { initProject } from '../../touba-project/src/project.mjs';
 import { createInteractionSession, enqueueInteractionOperation } from '../src/interactions.mjs';
-import { fleetCommand } from '../src/fleet-command.mjs';
+import { fleetCommand, renderFleetReport } from '../src/fleet-command.mjs';
 import { EventEmitter } from 'node:events';
 import { validateObject } from '../../../contracts/product-surfaces/validate.mjs';
 
@@ -62,7 +62,8 @@ test('fleet allowlist rejects duplicate roots, ports, changed profiles and unkno
   f.write({ schema_version: 'touba-project-fleet-v1', projects: [f.projects[0], { ...f.projects[0], id: 'other' }] });
   assert.throws(() => readProjectFleet(f.file), { code: 'ToubaFleetConfigInvalid' });
   assert.equal((await fleetCommand(['--help'])).exitCode, 0);
-  await assert.rejects(fleetCommand(['start', '--config', f.file]), /OptionsInvalid/);
+  await assert.rejects(fleetCommand(['start', '--config', f.file]), {code:'ToubaFleetReviewRequired'});
+  assert.match((await fleetCommand(['--help'])).text,/--json/);
 });
 
 test('supervisor owns two real synthetic processes and stops only these children', async t => {
@@ -79,12 +80,28 @@ test('supervisor owns two real synthetic processes and stops only these children
   assert.equal(events.filter(item => item.status === 'starting').length, 2);
 });
 
+test('supervisor retains a bounded known startup diagnosis without copying stderr secrets', async t => {
+  const f=setup(t),events=[];
+  const supervisor=createFleetSupervisor({cli:{command:process.execPath,args:['-e',
+    'process.stderr.write("secret-never-record-this\\nproject server error [ToubaServePortInUse]: private path");process.exit(2);','--']},notify:event=>events.push(event)});
+  t.after(()=>supervisor.stop());
+  await supervisor.start(f.file,readProjectFleet(f.file).review_digest);
+  for(let i=0;i<100&&supervisor.status().some(row=>row.status!=='exited');i++) await new Promise(resolve=>setTimeout(resolve,20));
+  assert.ok(supervisor.status().every(row=>row.code==='ToubaServePortInUse'));
+  assert.equal(JSON.stringify(events).includes('secret-never-record-this'),false);
+  assert.equal(JSON.stringify(events).includes('private path'),false);
+});
+
 test('deployment targets are explicitly reviewed, bounded and share the port namespace', async t => {
   const f = setup(t), storage = join(f.directory, 'deployment'); mkdirSync(storage);
   const target = { id: 'target', storage, port: 28802, auth_token_env: 'QA_DEPLOY_TOKEN' };
   f.write({ schema_version: 'touba-project-fleet-v1', projects: f.projects, deployment_targets: [target] });
   const plan = readProjectFleet(f.file);
   assert.equal(plan.deployment_targets[0].storage, storage);
+  const human=renderFleetReport(plan);
+  assert.ok(human.includes('target: deployment target'));
+  assert.ok(human.includes(storage));
+  assert.ok(human.includes('Target build:'));
   const calls = [], supervisor = createFleetSupervisor({ cli: { command: 'fixture', args: [] }, stopTimeout: 5,
     spawnImpl: (command, args) => { calls.push(args); const child = new EventEmitter(); child.kill = () => { child.emit('exit', 0); return true; }; return child; } });
   await supervisor.start(f.file, plan.review_digest); await supervisor.stop();
@@ -106,6 +123,9 @@ test('upgrade blocks only the project with an active operation and prepares the 
     install: (language, options) => { installs.push([language, options.root]); } });
   const plan = upgrade.plan(f.file);
   contract(plan);
+  const human=renderFleetReport(plan);
+  assert.match(human,/SDK: @touba\/sdk@fixture/);
+  assert.match(human,/State: \d+ files to archive/);
   assert.equal(plan.projects[0].code, 'ToubaStateNotQuiescent'); assert.equal(plan.projects[1].status, 'ready');
   const result = await upgrade.apply(f.file, plan.review_digest);
   contract(result);

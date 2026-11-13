@@ -103,7 +103,8 @@ export function fleetUpgrade({ checkState = checkToubaProjectState, sdk = bundle
           if (fleetSourceDigest(project.root) !== project.source_digest) fail('ToubaFleetReviewRequired');
           record.step = 'prepare'; save(project.root, record);
           const preparation = await prepare({ root: project.root, mode: 'plan', runProfile: 'dev' });
-          if (preparation.diagnostics.some(item => item.severity === 'error')) fail('ToubaFleetPreparationReviewRequired');
+          const issue = preparation.diagnostics.find(item => item.severity === 'error');
+          if (issue) fail(/^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(issue.code ?? '') ? issue.code : 'ToubaFleetPreparationReviewRequired');
           const result = await prepare({ root: project.root, mode: 'write', runProfile: 'dev', expectedReviewDigest: preparation.review_digest });
           if (result.status !== 'success') fail('ToubaFleetPreparationReviewRequired');
           record.status = 'complete'; record.step = 'complete'; save(project.root, record);

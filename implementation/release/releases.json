@@ -1,7 +1,7 @@
 {
   "schema_version": "touba-release-index-v1",
   "product": "touba",
-  "current_version": "1.5.0-rc.1",
+  "current_version": "1.5.0",
   "policy": {
     "versioning": "semver",
     "canonical_public_channel": "github_release",
@@ -16,6 +16,43 @@
     "win32-x64"
   ],
   "versions": [
+    {
+      "version": "1.5.0",
+      "update_build_sequence": 5,
+      "tag": "v1.5.0",
+      "status": "candidate",
+      "summary": "Local candidate: reviewed project lifecycle, authenticated project request ingress, durable queue review and strict package compatibility.",
+      "release_notes": "release/notes/v1.5.0.md",
+      "breaking_changes": [
+        "Preserve pending executions with their original toolchain. Upgrade only idle projects after reviewing the state archive.",
+        "Webhook signature v1 binds timestamp, event identity, method, target and exact body. Existing emitters require an explicit migration."
+      ],
+      "migration_guide": "release/notes/v1.5.0.md#migration",
+      "evidence": [
+        "implementation/cli/touba-project-server/test/project-fleet.test.mjs",
+        "implementation/cli/touba-project-server/test/approval-dossier.test.mjs",
+        "implementation/cli/touba-project-server/test/project-webhooks.test.mjs"
+      ],
+      "compare_url": null,
+      "channels": [
+        "touba_hub"
+      ],
+      "artifacts": [
+        "touba-v1.5.0-darwin-arm64.tar.gz",
+        "touba-v1.5.0-darwin-x64.tar.gz",
+        "touba-v1.5.0-linux-x64.tar.gz",
+        "touba-v1.5.0-win32-x64.tar.gz",
+        "touba-v1.5.0-darwin-arm64-setup.dmg",
+        "touba-v1.5.0-darwin-x64-setup.dmg",
+        "touba-v1.5.0-linux-x64-setup.deb",
+        "touba-v1.5.0-win32-x64-setup.exe",
+        "SHA256SUMS",
+        "CHECKSUMS.json"
+      ],
+      "retirement": {
+        "status": "active"
+      }
+    },
     {
       "version": "1.5.0-rc.1",
       "update_build_sequence": 4,

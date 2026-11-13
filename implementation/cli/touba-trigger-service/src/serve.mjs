@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { assertWebhookSignature, validateWebhookArguments } from './request-admission.mjs';
+import { mapTriggerPayload } from '../../../contracts/machine/trigger-payload.mjs';
 import { createServer } from "node:http";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -229,9 +231,10 @@ export async function createTriggerService(options) {
 
       const body = await readBoundedBody(request, route.payload?.maxBytes ?? MAX_BODY_BYTES);
       if (signatureSecret !== undefined) {
-        assertValidSignature(request, body.buffer, signatureSecret);
+        assertWebhookSignature(request, body.buffer, signatureSecret);
       }
       const argumentsFromPayload = materializePayloadArguments(route, request, body);
+      validateWebhookArguments(document, route.target, argumentsFromPayload);
       const eventId = triggerEventId(request, route.trigger, body.digest);
       const existingEntry = queue.find(route.trigger.id, eventId);
       if (existingEntry !== undefined) {
@@ -259,8 +262,10 @@ export async function createTriggerService(options) {
           });
           return;
         }
-        writeJson(response, 202, {
-          status: "queued",
+        const queued = ['queued', 'processing', 'continuing', 'awaiting_human'].includes(existingEntry.status);
+        writeJson(response, queued ? 202 : 409, {
+          status: queued ? 'queued' : 'error',
+          ...(!queued ? {code:'TriggerEventTerminal', message:'the recorded event requires review; it was not queued again'} : {}),
           queue_id: existingEntry.queue_id,
           trigger_ref: existingEntry.trigger_ref,
           event_id: existingEntry.event_id,
@@ -294,7 +299,21 @@ export async function createTriggerService(options) {
           mapped_inputs: Object.keys(route.payload.map).sort(),
         },
       };
-      queue.enqueue(entry);
+      queue.enqueue(entry, { beforeInsert(pending) {
+        // Hold the queue writer lock while checking reservations. Read unconsumed
+        // entries BEFORE the monotonic runtime counter: a concurrent admission
+        // can only make this conservative, never oversubscribe the daily quota.
+        const reserved = pending.filter(item => item.trigger_ref === route.trigger.id
+          && !triggerState.consumed(item.trigger_ref, item.event_id)).length;
+        const declared = route.trigger.limits.max_runs_per_day;
+        const configured = manifest.triggers.get(route.trigger.id).limits?.max_runs_per_day ?? declared;
+        const limit = Math.min(declared, configured);
+        if (reserved + triggerState.count(route.trigger.id) >= limit) {
+          const error = serviceError('TriggerRateLimited', 'daily trigger quota reached; retry after the next UTC day');
+          error.retryAt = new Date((Math.floor(Date.now()/86400000)+1)*86400000).toISOString();
+          throw error;
+        }
+      }});
 
       writeJson(response, 202, {
         status: "queued",
@@ -309,10 +328,12 @@ export async function createTriggerService(options) {
       }));
     } catch (error) {
       const code = error.code ?? "TriggerServiceRequestFailed";
+      if (error.retryAt) response.setHeader('Retry-After', Math.max(1, Math.ceil((Date.parse(error.retryAt)-Date.now())/1000)));
       writeJson(response, httpStatusForServiceError(code), {
         status: "error",
         code,
         message: error.message,
+        ...(error.retryAt ? {retry_at:error.retryAt} : {}),
       });
     }
   });
@@ -560,6 +581,12 @@ async function executeQueueEntry({ document, manifest, secretStore, statePath, t
         // the exact original continuation available. No effect can be rearmed here.
         stored.status = "awaiting_human";
         delete stored.completed_at;
+      } else if (runtimeErrorCode === 'TriggerRateLimited' && !checkpoint) {
+        // An independent runtime consumer may use the last slot after HTTP
+        // acceptance. Keep this durable event pending until the next UTC day.
+        stored.status = 'queued';
+        stored.next_attempt_at = new Date((Math.floor(Date.now()/86400000)+1)*86400000).toISOString();
+        delete stored.completed_at;
       } else if (result.status === "success") {
         stored.status = "succeeded";
         delete stored.checkpoint;
@@ -620,10 +647,10 @@ function manifestRequiresEffectJournal(manifest) {
   );
 }
 
-function buildRequestRoutes(document, manifest, triggerRef) {
-  return (document.definitions?.triggers ?? [])
+export function buildRequestRoutes(document, manifest, triggerRef) {
+  const seen = new Set();
+  const routes = (document.definitions?.triggers ?? [])
     .filter((trigger) => trigger.event?.kind === "request")
-    .filter((trigger) => triggerRef === undefined || trigger.id === triggerRef)
     .map((trigger) => {
       const parsed = parseRequestEventValue(trigger.event.value);
       if (parsed?.path.startsWith("/_touba/")) throw serviceError("TriggerServiceReservedRoute", "the /_touba/ path prefix is reserved for service management");
@@ -631,12 +658,18 @@ function buildRequestRoutes(document, manifest, triggerRef) {
       if (!manifestTrigger || manifestTrigger.enabled !== true || manifestTrigger.source?.kind !== "request") {
         return null;
       }
+      if (parsed) {
+        const key = `${parsed.method} ${parsed.path}`;
+        if (seen.has(key)) throw serviceError('TriggerRouteConflict', `multiple enabled triggers declare ${key}`);
+        seen.add(key);
+      }
       const target = (document.definitions?.strategies ?? [])
         .find((candidate) => candidate.id === trigger.target_ref);
-      validatePayloadMappingAgainstTarget(manifestTrigger.payload, target, trigger.id);
+      validatePayloadMappingAgainstTarget(manifestTrigger.payload, target, trigger);
       return parsed === null ? null : { ...parsed, trigger, target, payload: manifestTrigger.payload };
     })
     .filter(Boolean);
+  return routes.filter(route => triggerRef === undefined || route.trigger.id === triggerRef);
 }
 
 function parseRequestEventValue(value) {
@@ -658,24 +691,25 @@ function matchRoute(routes, method, url) {
   return routes.find((route) => route.method === method && route.path === parsed.pathname);
 }
 
-function validatePayloadMappingAgainstTarget(payload, target, triggerRef) {
-  if (payload === undefined) {
-    return;
-  }
+function validatePayloadMappingAgainstTarget(payload, target, trigger) {
   if (!target) {
     throw serviceError("TriggerPayloadContractInvalid", "payload mapping requires an existing target strategy");
   }
   const inputNames = (target.signature?.inputs ?? []).map((input) => input.name);
-  const unknownInputs = Object.keys(payload.map).filter((inputName) => !inputNames.includes(inputName));
+  const unknownInputs = Object.keys(payload?.map ?? {}).filter((inputName) => !inputNames.includes(inputName));
   if (unknownInputs.length > 0) {
     throw serviceError(
       "TriggerPayloadContractInvalid",
-      `payload mapping references unknown strategy inputs for ${triggerRef}: ${unknownInputs.join(", ")}`,
+      `payload mapping references unknown strategy inputs for ${trigger.id}: ${unknownInputs.join(", ")}`,
     );
+  }
+  const constants = new Set((trigger.arguments ?? []).map(argument => argument.input));
+  if (inputNames.some(name => !constants.has(name) && !Object.hasOwn(payload?.map ?? {}, name))) {
+    throw serviceError('TriggerPayloadContractInvalid', `each dynamic input of ${trigger.id} requires a payload mapping before HTTP admission`);
   }
 }
 
-function materializePayloadArguments(route, request, body) {
+export function materializePayloadArguments(route, request, body) {
   if (route.payload === undefined) {
     return undefined;
   }
@@ -687,18 +721,10 @@ function materializePayloadArguments(route, request, body) {
   } catch (error) {
     throw serviceError(
       "TriggerPayloadInvalid",
-      `request body must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      'request body must be valid JSON',
     );
   }
-  const args = {};
-  for (const [inputName, jsonPath] of Object.entries(route.payload.map)) {
-    const value = readJsonPath(parsed, jsonPath);
-    if (value === undefined) {
-      throw serviceError("TriggerPayloadInvalid", `request body is missing mapped field ${jsonPath}`);
-    }
-    args[inputName] = value;
-  }
-  return args;
+  return mapTriggerPayload(parsed, route.payload.map);
 }
 
 function assertAcceptedContentType(request, acceptedContentTypes) {
@@ -713,21 +739,6 @@ function assertAcceptedContentType(request, acceptedContentTypes) {
       `content-type must be one of ${acceptedContentTypes.join(", ")}`,
     );
   }
-}
-
-function readJsonPath(root, jsonPath) {
-  if (jsonPath === "$") {
-    return root;
-  }
-  const parts = jsonPath.slice(2).split(".");
-  let current = root;
-  for (const part of parts) {
-    if (!current || typeof current !== "object" || Array.isArray(current) || !Object.hasOwn(current, part)) {
-      return undefined;
-    }
-    current = current[part];
-  }
-  return current;
 }
 
 
@@ -770,7 +781,7 @@ function triggerStatusEntry(trigger, manifest, state, queue, generatedAt) {
         day_utc: generatedAt.slice(0, 10),
       } : {}),
     },
-    queue: queue?.counts?.(trigger.id) ?? {
+    queue: queue?.counts ? {...queue.counts(trigger.id), retry:queue.retries?.(trigger.id)??0} : {
       pending: queueEntries.filter((entry) => entry.status === "queued").length,
       processing: queueEntries.filter((entry) => entry.status === "processing").length,
       dead_letter: queueEntries.filter((entry) => entry.status === "dead_lettered").length,
@@ -877,7 +888,7 @@ function traceEvent(runId, sequenceIndex, kind, payload) {
 }
 
 
-async function readBoundedBody(request, maxBytes = MAX_BODY_BYTES) {
+export async function readBoundedBody(request, maxBytes = MAX_BODY_BYTES) {
   let bytes = 0;
   const chunks = [];
   for await (const chunk of request) {
@@ -893,24 +904,6 @@ async function readBoundedBody(request, maxBytes = MAX_BODY_BYTES) {
     digest: createHash("sha256").update(body).digest("hex"),
     buffer: body,
   };
-}
-
-function assertValidSignature(request, body, secret) {
-  const header = request.headers["x-touba-signature"];
-  const signature = Array.isArray(header) ? header[0] : header;
-  if (typeof signature !== "string" || !signature.startsWith("sha256=")) {
-    throw serviceError("TriggerSignatureInvalid", "x-touba-signature must use sha256=<hex>");
-  }
-  const expected = createHmac("sha256", secret).update(body).digest("hex");
-  const actual = signature.slice("sha256=".length);
-  if (!/^[a-f0-9]{64}$/iu.test(actual)) {
-    throw serviceError("TriggerSignatureInvalid", "x-touba-signature sha256 digest is invalid");
-  }
-  const expectedBuffer = Buffer.from(expected, "hex");
-  const actualBuffer = Buffer.from(actual, "hex");
-  if (expectedBuffer.length !== actualBuffer.length || !timingSafeEqual(expectedBuffer, actualBuffer)) {
-    throw serviceError("TriggerSignatureInvalid", "request signature mismatch");
-  }
 }
 
 function shouldRetryQueueEntry(entry, runtimeErrorCode, maxAttempts, effectJournal) {
@@ -1128,7 +1121,7 @@ function usage() {
     "  --max-attempts <n>              Retry target failures up to n attempts, default 3",
     "  --processing-timeout-ms <n>     Mark exited workers interrupted after n ms, default 300000",
     "  --auth-token-env <NAME>         Require bearer token or x-touba-trigger-token from the named env var",
-    "  --signature-secret-env <NAME>   Require x-touba-signature: sha256=<hex> HMAC using the named env var",
+    "  --signature-secret-env <NAME>   Require v1 HMAC over timestamp, event id, method, request target and body",
     "  --secrets <touba.secrets.json>  Resolve declared secret handles for triggered runs",
     "  --agent-decision-provider <path>  Explicit trusted JavaScript or Python decision host",
     "  --agent-decision-provider-timeout-ms <n>  Bound each provider call (1..60000 ms)",
@@ -1216,6 +1209,7 @@ function serviceError(code, message) {
 }
 
 function httpStatusForServiceError(code) {
+  if (code === 'TriggerRateLimited') return 429;
   if (code === "TriggerQueueCapacityExceeded" || code === "TriggerStateUnavailable") return 503;
   if (["TriggerEventPayloadConflict", "TriggerReplayRejected", "TriggerApprovalConflict", "TriggerWorkerBusy"].includes(code)) {
     return 409;

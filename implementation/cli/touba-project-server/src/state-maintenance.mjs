@@ -17,7 +17,7 @@ const STATE_FILES = Object.freeze([
 const fail = (code, message = code) => { throw Object.assign(new Error(message), { code }); };
 const heldLeases = new WeakMap();
 // Admission history stays active so archival cannot reset trigger replay protection or quotas.
-const RETAINED_STATE_FILES = Object.freeze(['triggers.sqlite', 'trigger-queue.sqlite']);
+const RETAINED_STATE_FILES = Object.freeze(['triggers.sqlite', 'trigger-queue.sqlite', 'project-webhooks.sqlite']);
 function syncPath(path) {
   const fd = openSync(path, 'r');
   try { fsyncSync(fd); } finally { closeSync(fd); }

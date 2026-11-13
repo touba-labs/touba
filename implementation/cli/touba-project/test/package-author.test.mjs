@@ -25,7 +25,12 @@ test('new packages opt into the candidate without weakening existing compatibili
     semver.prerelease(PACKAGE_RUNTIME_VERSION) ? PACKAGE_RUNTIME_VERSION : '>=1.0.0 <2.0.0');
   validatePackageDocument(document, { runtimeVersion: PACKAGE_RUNTIME_VERSION });
   const stable = structuredClone(document); stable.touba.runtime_compatibility = '>=1.0.0 <2.0.0';
-  assert.throws(() => validatePackageDocument(stable, { runtimeVersion: '1.5.0-rc.1' }), { code:'PackageVersionIncompatible' });
+  assert.throws(() => validatePackageDocument(stable, { runtimeVersion: '1.5.0-rc.1' }), error => {
+    assert.equal(error.code,'PackageVersionIncompatible');
+    assert.ok(error.message.includes(`${stable.name}@${stable.version}`));
+    assert.match(error.message,/requires Touba >=1.0.0 <2.0.0; installed 1.5.0-rc.1; prereleases require explicit compatibility/);
+    return true;
+  });
   validatePackageDocument(stable, { runtimeVersion: '1.4.0' });
 });
 

@@ -40,7 +40,7 @@ test('project keys bind canonical root and control plane, reload rotations and f
     await credentials.write(first); assert.equal((await authorize()).allowed, true);
     await credentials.write(second); assert.equal((await authorize()).allowed, true);
     assert.deepEqual(received, [first, second]);
-    await credentials.remove(); await assert.rejects(authorize(), { code: 'ToubaServeIdentityUnavailable' });
+    await credentials.remove(); await assert.rejects(authorize(), { code: 'ToubaServeVaultUnavailable' });
     assert.equal(received.length, 2, 'no request with a missing or stale key');
     await writeFile(join(root, 'touba.server.json'), JSON.stringify({ schema_version: 'touba-project-server-config-v1', identity_control_plane_url: url, identity_service_token_vault: true }));
     const result = await serviceCredentialCommand(['login', '--config', 'touba.server.json', '--token-stdin'], { cwd: root, input: Readable.from([second + '\n']), vault });

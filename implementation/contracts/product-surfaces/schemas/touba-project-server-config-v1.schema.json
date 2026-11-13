@@ -17,6 +17,8 @@
     "identity_file": {"$ref": "#/$defs/path"},
     "secrets_file": {"$ref": "#/$defs/path"},
     "schedule_triggers": {"type": "boolean"},
+    "request_triggers": {"type": "boolean"},
+    "webhook_signature_secret_env": {"$ref": "#/$defs/environment"},
     "cloud_notifications": {"type": "boolean"},
     "validation_plan": {"$ref": "#/$defs/path"},
     "package_hosts": {"type": "boolean"},

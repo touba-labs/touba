@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-webhooks-v1.schema.json",
+  "title": "touba-project-webhooks-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "enabled", "code", "routes", "counts", "entries", "next"],
+  "properties": {
+    "schema_version": {"const": "touba-project-webhooks-v1"},
+    "enabled": {"type": "boolean"},
+    "code": {"type": ["string", "null"], "maxLength": 100},
+    "next": {"type": ["string", "null"], "maxLength": 128},
+    "routes": {"type": "array", "maxItems": 100, "items": {
+      "type": "object", "additionalProperties": false, "required": ["trigger_ref", "method", "path"],
+      "properties": {"trigger_ref": {"type": "string", "maxLength": 512}, "method": {"type": "string", "maxLength": 16}, "path": {"type": "string", "maxLength": 4096}}
+    }},
+    "counts": {"type": "object", "additionalProperties": false,
+      "required": ["queued", "processing", "awaiting_human", "interrupted", "succeeded", "failed", "dead_lettered", "closed"],
+      "properties": {
+        "queued": {"type": "integer", "minimum": 0}, "processing": {"type": "integer", "minimum": 0},
+        "awaiting_human": {"type": "integer", "minimum": 0}, "interrupted": {"type": "integer", "minimum": 0},
+        "succeeded": {"type": "integer", "minimum": 0}, "failed": {"type": "integer", "minimum": 0},
+        "dead_lettered": {"type": "integer", "minimum": 0}, "closed": {"type": "integer", "minimum": 0}
+      }
+    },
+    "entries": {"type": "array", "maxItems": 100, "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["queue_id", "trigger_ref", "event_id", "status", "run_id", "request_id", "received_at", "attempt_count", "code", "effect_outcome", "review_digest", "actions"],
+      "properties": {
+        "queue_id": {"type": "string", "maxLength": 128}, "trigger_ref": {"type": "string", "maxLength": 512},
+        "event_id": {"type": "string", "maxLength": 128},
+        "status": {"enum": ["queued", "processing", "continuing", "awaiting_human", "interrupted", "succeeded", "failed", "dead_lettered", "closed"]},
+        "run_id": {"type": ["string", "null"], "maxLength": 128}, "received_at": {"type": "string"},
+        "request_id": {"type": ["string", "null"], "maxLength": 512},
+        "attempt_count": {"type": "integer", "minimum": 0}, "code": {"type": ["string", "null"], "maxLength": 100},
+        "effect_outcome": {"enum": ["none", "completed", "review_required"]},
+        "review_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "actions": {"type": "array", "uniqueItems": true, "maxItems": 2, "items": {"enum": ["retry", "discard", "close"]}}
+      }
+    }}
+  }
+}

@@ -75,7 +75,7 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
   keys(document.touba, ["air_profile", "runtime_compatibility"], "touba");
   requireValue(document.touba.air_profile === "touba-air-json-canonical-v1", "PackageAirProfileIncompatible", "unsupported AIR profile");
   requireValue(text(document.touba.runtime_compatibility) && semver.validRange(document.touba.runtime_compatibility) !== null, "PackageVersionIncompatible", "invalid runtime compatibility range");
-  if (runtimeVersion) requireValue(semver.satisfies(runtimeVersion, document.touba.runtime_compatibility), "PackageVersionIncompatible", `requires Touba ${document.touba.runtime_compatibility}; installed ${runtimeVersion}`);
+  if (runtimeVersion) requireValue(semver.satisfies(runtimeVersion, document.touba.runtime_compatibility), "PackageVersionIncompatible", `${document.name}@${document.version} requires Touba ${document.touba.runtime_compatibility}; installed ${runtimeVersion}${semver.prerelease(runtimeVersion) ? '; prereleases require explicit compatibility in the package' : ''}`);
   keys(document.exports, Object.keys(EXPORT_KINDS), "exports");
   let exportCount = 0;
   for (const [kind, refs] of Object.entries(document.exports)) {

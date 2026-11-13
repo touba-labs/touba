@@ -30,6 +30,13 @@ test('explicit profile resolves project paths, carries environment names and pre
   assert.deepEqual(serverConfigArguments(root, { schema_version: profile.schema_version, package_hosts: true }), ['--package-hosts']);
 });
 
+test('project webhook profile carries only its secret reference and requires it when enabled',t=>{
+  const {root,profile}=fixture(t);
+  assert.deepEqual(serverConfigArguments(root,{schema_version:profile.schema_version,request_triggers:true,webhook_signature_secret_env:'WEBHOOK_SIGNING_KEY'}),['--request-triggers','--webhook-signature-secret-env','WEBHOOK_SIGNING_KEY']);
+  assert.throws(()=>serverConfigArguments(root,{...profile,request_triggers:true}),{code:'ToubaServeConfigInvalid',field:'webhook_signature_secret_env'});
+  assert.throws(()=>serverConfigArguments(root,{...profile,webhook_signature_secret_env:'actual secret value'}),{code:'ToubaServeConfigInvalid'});
+});
+
 test('profiles reject credential values, commands, paths, endpoint injection and conflicting options', t => {
   const { root, profile, write } = fixture(t);
   for (const extra of [{ token: 'must-not-be-stored' }, { command: 'shell' }, { validation_plan: '../outside.json' },

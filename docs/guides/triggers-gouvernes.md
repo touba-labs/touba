@@ -78,12 +78,28 @@ manquées et les interruptions. Le serveur traite un run à la fois. Une décisi
 humaine en attente bloque les nouvelles occurrences du même trigger. Elle peut
 être approuvée et reprise dans client, y compris après redémarrage.
 
+Une suspension opérationnelle arrête les prochaines occurrences, sans modifier
+le programme ni supprimer les approbations en attente. Le contrôle **Suspendre**
+demande un motif ; **Reprendre** autorise les échéances suivantes, sans rattraper
+les occurrences manquées. Un run déjà commencé continue selon ses propres
+contrôles. Cette suspension ne désactive pas les déclenchements manuels.
+
+Le contrat générique du serveur expose `POST /triggers/scheduler/control` avec
+`trigger_ref`, la `signature` du plan, sa `control_revision`, `paused` et `reason`.
+Lire ces valeurs dans `GET /triggers/scheduler` avant la décision. Un changement
+concurrent rend la demande périmée ; relire l'état avant de confirmer de nouveau.
+L'action exige `governance.apply` et inscrit l'acteur et le motif dans le journal.
+
 Les intervalles suivent les bornes UTC. Un nouveau plan commence à l'échéance
 suivante. Après une interruption du service, les occurrences intermédiaires sont
 comptées comme manquées ; une seule occurrence courante peut démarrer. Une
 horloge reculée ne rejoue pas les anciennes échéances. Le registre d'admission
 SQLite applique le rejeu et `max_runs_per_day` aussi aux appels manuels depuis
 client.
+
+Après une révision validée des limites, le planificateur réévalue le quota au
+lieu de conserver aveuglément l'attente jusqu'à minuit. L'admission du runtime
+continue de vérifier la limite effective avant chaque nouvelle exécution.
 
 Si le serveur s'arrête au milieu d'un run, le plan reste interrompu. Après examen
 de ses traces et effets, un responsable autorisé peut **Revoir l'interruption**,
@@ -187,6 +203,80 @@ précédent ne bloque pas le premier événement du jour courant. Le chemin pass
 
 ## 5. Lancer le service webhook
 
+### Serveur de projet : toutes les routes et les mêmes approbations
+
+Le serveur de projet peut recevoir les événements externes sur son propre port.
+Exposez les triggers dans les points d'entrée, activez leurs bindings et préparez
+le projet. Ajoutez ensuite ces options à votre profil `touba.server.json` :
+
+```json
+{
+  "schema_version": "touba-project-server-config-v1",
+  "request_triggers": true,
+  "webhook_signature_secret_env": "TOUBA_WEBHOOK_SECRET"
+}
+```
+
+Conservez les autres réglages du profil existant. Chargez une clé aléatoire d'au
+moins 32 octets dans cette variable depuis votre gestionnaire de secrets, puis
+lancez `touba serve --config touba.server.json`. Le profil contient seulement le
+nom de variable. Les webhooks sont désactivés par défaut ; une clé absente ou
+trop courte interdit leur démarrage.
+
+Une source `POST "/orders"` devient `POST /_touba/events/orders`. Toutes les
+routes exposées et activées des modules du projet sont regroupées. Le serveur
+relit la préparation vérifiée ; un ajout de route prend effet sans redémarrage
+après préparation. Deux triggers sur la même méthode et le même chemin sont
+refusés. La liste est consultable dans `GET /triggers/webhooks`.
+
+Chaque requête utilise la signature HMAC v1 décrite ci-dessous. Elle couvre le
+chemin **complet**, préfixe `/_touba/events` compris, les paramètres, la méthode,
+l'identifiant d'événement, l'horodatage et le corps exact. Cette clé est distincte
+des jetons utilisateur et n'autorise aucune approbation. Les requêtes avec un
+en-tête navigateur `Origin` sont refusées. Pour un accès externe, conservez HTTPS,
+les limites du proxy et la protection des autres routes d'administration.
+
+La file privée `.touba/project-webhooks.sqlite` conserve les arguments mappés,
+le digest de la réception et la préparation admise. Un `202` signifie admission
+durable, pas réussite métier. Les types sont contrôlés avant admission ; un quota
+épuisé répond `429` avec `Retry-After`. Le quota et la protection contre le rejeu
+sont partagés avec les autres exécutions du projet dans `.touba/triggers.sqlite`.
+Une course de quota après admission conserve l'événement pour le prochain jour UTC.
+
+Les appels utilisent les mêmes hôtes de décision et d'approbation, secrets,
+journal d'effets et checkpoints que le serveur projet. Les demandes apparaissent
+sur ses routes habituelles de décisions. Le dossier privé reste réservé aux
+signataires habilités. Une reprise garde le run et ses arguments ; demander à
+nouveau une reprise déjà terminée renvoie son résultat conservé sans réexécuter.
+Les mutations du projet sont bloquées tant qu'une réception attend, s'exécute,
+attend une décision ou présente des effets incertains.
+
+`GET /triggers/webhooks?limit=25&after=<curseur>` retourne des métadonnées et des
+compteurs, jamais les arguments. `POST /triggers/webhooks/review` exige
+`governance.apply`, `queue_id`, `review_digest`, `action` et `reason` :
+
+* `retry` est proposé seulement si aucune exécution n'a commencé et si
+ l'événement n'a pas été consommé. La préparation doit être identique.
+* `discard` ferme une entrée non exécutée. Un événement accepté sous un ancien
+ plan doit être écarté puis soumis de nouveau après revue, pas exécuté sous un
+ programme différent.
+* `close` exige aussi `reconciled: true`, après vérification réelle des effets.
+ Il ferme la file sans rejouer l'opération, sans effacer les traces ni modifier
+ le journal d'effets. Les incidents de ce journal restent à traiter séparément.
+
+Une revue périmée est refusée en `409`. La relance explicite attend au moins une
+seconde ; les effets incertains ne sont jamais automatiquement rejoués. Le worker
+est unique, les routes sont limitées à 100, la file à 10 000 entrées et 512 Mio.
+Archiver les réussites avec la commande de file existante avant saturation.
+Sauvegarder ensemble la file, l'admission, les checkpoints et les journaux.
+
+Le service autonome décrit ensuite reste disponible. Ses anciennes files,
+approbations et journaux ne sont pas importés automatiquement dans le serveur
+projet. Terminer ou réconcilier ces opérations avec leur hôte d'origine avant
+de basculer l'émetteur. Ne pas réutiliser leur file pour les nouvelles réceptions.
+
+### Service autonome avec AIR explicite
+
 ```sh title="Terminal"
 touba trigger serve daily_research.air.json \
   --manifest touba.manifest.json \
@@ -227,6 +317,12 @@ la trace ; la queue conserve la taille, le digest SHA-256 du payload et les
 arguments explicitement mappés par le manifest. Les champs non listés dans
 `payload.map` sont ignorés.
 
+Au démarrage, le service vérifie que chaque argument dynamique de la cible a
+son mapping et que chaque nom mappé désigne un argument déclaré. Une
+configuration incomplète produit `TriggerPayloadContractInvalid` avant l'écoute
+HTTP et avant la création des magasins. Deux triggers activés sur la même
+méthode et le même chemin sont refusés, même si `--trigger` en sélectionne un.
+
 `(trigger_ref, event_id)` identifie une réception logique. Avec un
 `x-touba-event-id` explicite, le même digest de payload réutilise l'entrée et
 son `queue_id` sans nouvel enqueue ; un digest différent sous la même identité
@@ -241,7 +337,37 @@ deux-points ou tirets.
 
 Pour exposer ce webhook à un fournisseur externe, ajouter
 `--signature-secret-env TOUBA_TRIGGER_SIGNATURE_SECRET` et envoyer
-`x-touba-signature: sha256=<hmac>` calculé sur le corps HTTP exact.
+`x-touba-signature: v1=<hmac>` avec un identifiant `x-touba-event-id` et
+`x-touba-timestamp` (secondes Unix). Le timestamp doit se situer à moins de
+cinq minutes de l'horloge du serveur. Synchronisez les horloges.
+
+Le HMAC-SHA256 porte, dans cet ordre, sur les octets UTF-8 du préfixe suivant
+(chaque ligne finit par `\n`), puis sur les octets exacts du corps HTTP :
+
+```text
+touba-webhook-v1
+<timestamp>
+<event-id>
+<méthode HTTP, par exemple POST>
+<chemin et paramètres de requête, par exemple /orders?source=erp>
+```
+
+La valeur hexadécimale est précédée de `v1=` dans l'en-tête. Le proxy doit
+préserver le chemin et les paramètres signés. Chaque livraison logique conserve
+le même identifiant lors des tentatives. Réutiliser une signature en changeant
+cet identifiant, le chemin, la méthode ou le corps est refusé. Le journal durable
+empêche aussi le rejeu du même événement dans la fenêtre autorisée.
+
+Migration du candidat : les anciennes signatures `sha256=` portant seulement
+sur le corps sont refusées. Mettez à jour l'émetteur avant d'activer ce candidat ;
+aucun repli vers l'ancienne signature n'est réalisé.
+
+Le service contrôle les types des champs mappés avant la réponse `202`.
+Un quota quotidien déjà épuisé produit `429`, `Retry-After` et `retry_at` ;
+l'événement n'est pas mis en file. Les événements acceptés restent durables :
+si un autre consommateur prend la dernière place entre admission et exécution,
+l'événement attend le prochain jour UTC. Un doublon terminal ne redevient pas
+une nouvelle livraison : la réponse `409` désigne son état réel.
 
 Sur une interface non loopback, ajouter `--auth-token-env TOUBA_TRIGGER_TOKEN` et
 envoyer `Authorization: Bearer <token>` ou `x-touba-trigger-token: <token>`.
@@ -281,7 +407,20 @@ L'interface d'administration autonome est distincte de l'arrivée des webhooks :
 | Route privée | Contenu |
 | --- | --- |
 | `GET /_touba/approvals?after=…` | Références des attentes, rôle demandé et curseur ; aucun argument ou checkpoint brut |
-| `POST /_touba/approvals` | `queue_id`, `request_id` et `decision` avec `decision: "approved"` ou `"rejected"`, puis `evidence_ref` |
+| `POST /_touba/approvals` | Objet `queue_id`, `request_id`, `decision` ; cet objet `decision` contient `decision` et `evidence_ref` |
+
+Exemple de corps de décision, avec des références fournies par votre hôte :
+
+```json
+{
+  "queue_id": "queue:sha256:...",
+  "request_id": "request-id-observed",
+  "decision": {
+    "decision": "approved",
+    "evidence_ref": "attestation-verified-by-your-host"
+  }
+}
+```
 
 Ces routes exigent le jeton de gestion, différent du jeton d'entrée. Elles sont
 absentes sans `--management-token-env`. Gardez-les derrière votre accès privé

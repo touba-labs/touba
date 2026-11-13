@@ -1,5 +1,28 @@
 # Unreleased
 
+## Project trigger reliability, source work after 1.5.0-rc.1
+
+Assigned to the [local 1.5.0 candidate](v1.5.0.md). Installation and public
+distribution require qualification of the exact archive.
+
+- Webhook admission validates mapped input types before queueing. An exhausted
+  daily quota returns 429; terminal duplicates return 409. A quota race after
+  durable acceptance defers the event instead of losing it.
+- Webhook signature v1 binds the timestamp, event identity, HTTP method,
+  request target and exact body. Emitters must migrate from the old body-only
+  signature. Missing mappings and duplicate enabled routes prevent startup.
+- A revised schedule rechecks its quota. Authorized operators can pause future
+  occurrences independently of pending approvals, with a reason and a reviewed
+  state revision. Resuming does not replay missed occurrences.
+- Fleet output includes project preparation causes and bounded, redacted child
+  failure diagnostics. A missing service credential is distinguished from an
+  identity-provider outage. Package errors identify required and installed
+  versions while retaining strict prerelease compatibility.
+- Trace run origins use a separate layout row to avoid overlapping identifiers.
+
+Project-wide ingress now shares the configured approval hosts and queue review
+described below. Existing autonomous queues remain separate and are not replayed.
+
 ## Package governance and audit evidence — 1.4.0 candidate
 
 Assigned to the [1.4.0 candidate](v1.4.0.md). Version and private native
@@ -75,3 +98,18 @@ Synthetic SQLite service tests compare proposed vendor/amount with a trusted
 order and atomically prevent duplicate invoices across overlapping runs. These
 are application checks; a well-typed model proposal alone does not establish
 business correctness. No banking rule has been inserted into the language.
+
+## Project request ingress and queue review
+
+- `touba serve --request-triggers --webhook-signature-secret-env NAME` receives
+  authenticated events for all exposed, enabled request triggers in a verified
+  project. Routes use `/_touba/events` and reload after reviewed preparation.
+- Requests share the project's hosts, approvals, private dossiers, quotas and
+  effects journal. Signed event identities cannot be changed without invalidating
+  their HMAC. Duplicate terminal events return their durable state, not a new run.
+- The paginated queue API exposes metadata only. Review actions require an exact
+  digest and reason; uncertain effects cannot be retried automatically.
+- Standalone queues are retained separately. Migrating an emitter does not import
+  or replay existing pending work. Use the original host to resolve that work.
+- Registry catalogue pages can verify signed compatibility metadata before any
+  archive download, using the same strict runtime version ranges as installation.

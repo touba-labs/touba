@@ -41,6 +41,21 @@ test("queue limits and pages; completion requires a fresh owned snapshot", t => 
   assert.equal(store.find(claimed.trigger_ref, claimed.event_id).status, "succeeded");
 });
 
+test('metadata omits private bodies; filtered pages and durable retry counts agree',t=>{
+  const {store}=fixture(t);store.enqueue({...entry(),arguments:{secret:'private'}});store.enqueue(entry('2'));
+  const claimed=store.claim(1000),stale=store.get(claimed.queue_id);
+  claimed.run_id='run:test';store.progress(claimed);
+  assert.throws(()=>store.progress(stale),{code:'TriggerQueueWriteConflict'});
+  assert.equal(store.page({states:['processing']}).entries.length,1);
+  assert.equal(store.page({states:['queued']}).entries.length,1);
+  assert.throws(()=>store.page({states:["queued') OR 1=1"]}),{code:'TriggerQueueQueryInvalid'});
+  assert.doesNotMatch(JSON.stringify(store.metadata()),/private|arguments/);
+  claimed.status='queued';claimed.next_attempt_at=new Date(Date.now()+10000).toISOString();store.finish(claimed);
+  assert.equal(store.retries(claimed.trigger_ref),1);
+  assert.throws(()=>store.progress(claimed),{code:'TriggerQueueWriteConflict'});
+  claimed.status='succeeded';store.finish(claimed);assert.equal(store.retries(claimed.trigger_ref),0);
+});
+
 test("a timed-out live worker is not reclaimed by another queue connection", t => {
   const { store, filename } = fixture(t);
   store.enqueue(entry()); const now = Date.now();

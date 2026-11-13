@@ -5,6 +5,7 @@ import { gunzipSync } from "node:zlib";
 import * as tar from "tar";
 import semver from "semver";
 export const isNewerPackageVersion = (next, current) => Boolean(semver.valid(next) && semver.valid(current) && semver.gt(next, current));
+export const packageRuntimeCompatibility = required => ({ runtime: runtimeVersion, required, compatible: semver.satisfies(runtimeVersion, required) });
 import { PACKAGE_LIMITS, PACKAGE_MANIFEST, PACKAGE_NAME, PACKAGE_RUNTIME_VERSION as runtimeVersion, assertPackageUnchanged, packageDigest, packageError, packageFile, packagePath, readPackage } from "./package-contract.mjs";
 import { PACKAGE_LOCK, PACKAGE_TRANSACTION, assertAuthorWritable, assertOnlyInventory, assertPlainDirectory, assertPackageDirectory, findPackageWorkspace, readPackageWorkspace, setWorkspacePackages, verifyInstalledPackages } from "./package-store.mjs";
 export { newPackage } from "./package-author.mjs";
@@ -96,7 +97,7 @@ async function installRegistryPackage(name, options, readBytes) {
 export async function resolveRegistryArchive(name, options, readBytes) {
   if (!PACKAGE_NAME.test(name) || !options.registry || !options.version) throw packageError("PackageRegistryOptionMissing", "select a qualified package and exact version");
   const resolution = await resolveRegistryPackage({ registry: options.registry, trust: options.trust, version: options.version, packageRef: `pkg:${name}`, allowDraft: options["allow-draft"] === true, readBytes });
-  if (!semver.satisfies(runtimeVersion, resolution.compatibility.touba)) throw packageError("PackageVersionIncompatible", `registry requires Touba ${resolution.compatibility.touba}; installed ${runtimeVersion}`);
+  if (!semver.satisfies(runtimeVersion, resolution.compatibility.touba)) throw packageError("PackageVersionIncompatible", `${name}@${options.version} requires Touba ${resolution.compatibility.touba}; installed ${runtimeVersion}${semver.prerelease(runtimeVersion) ? '; prereleases require explicit compatibility in the package' : ''}`);
   if (resolution.package.kind !== "touba_package") throw packageError("PackageSchemaMismatch", "registry entry must describe a Touba package");
   const archives = resolution.artifacts.filter(artifact => artifact.kind === "package_archive");
   if (archives.length !== 1) throw packageError("PackageArchiveInvalid", "registry must supply exactly one package_archive artifact");

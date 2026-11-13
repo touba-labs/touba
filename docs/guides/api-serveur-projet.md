@@ -4,6 +4,33 @@
 L'application authentifie ses utilisateurs, présente les dossiers et transmet
 leurs décisions ; le runtime conserve le contrôle des capacités et des effets.
 
+## Webhooks du projet
+
+L'activation explicite `--request-triggers --webhook-signature-secret-env NOM`
+expose les routes préparées et activées sous `/_touba/events`. Ces livraisons
+utilisent une signature HMAC dédiée, distincte de l'identité des utilisateurs.
+Le [guide des triggers](triggers-gouvernes.md) décrit son format, les quotas et
+les réponses HTTP. Les approbations suivent les routes habituelles des décisions.
+
+`GET /triggers/webhooks?limit=25&after=<curseur>` exige `events.read` et retourne
+`touba-project-webhooks-v1` : routes, compteurs, page d'événements et curseur
+suivant. Les arguments privés ne figurent pas dans cette liste.
+
+`POST /triggers/webhooks/review` exige `governance.apply`. Le corps contient
+`queue_id`, le `review_digest` lu, `action` et un `reason` non vide limité à
+500 caractères. `retry` remet en file uniquement un événement non exécuté,
+non consommé et lié au même plan. `discard` écarte un tel événement.
+`close` exige en plus `reconciled: true` : l'exploitant atteste avoir vérifié
+les effets incertains. Une clôture n'exécute rien et conserve les preuves.
+Un état périmé produit un conflit 409. Une modification du plan impose
+d'écarter l'ancienne livraison puis d'en soumettre une nouvelle.
+
+La file privée `.touba/project-webhooks.sqlite` reste locale à ce serveur.
+Une opération active, une attente ou une interruption empêche les mutations
+concurrentes du projet. Le contrôle hors ligne et l'archivage conservent ce
+registre et sa protection contre le rejeu. Les états d'un ancien service
+autonome ne sont ni importés ni rejoués automatiquement.
+
 ## Identité applicative Cloud
 
 Dans client, le propriétaire ouvre **Projets → Gérer → Applications** et crée

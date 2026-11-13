@@ -94,6 +94,63 @@ trigger Job
 });
 
 const plan = { trigger_ref:'trigger:qa/Job', interval_ms:1000, signature:'a'.repeat(64) };
+test('pause is durable through a pending approval and resume only schedules future occurrences', async t => {
+  let pending=false;
+  const f=fixture(t,{pending:()=>pending});
+  let scheduler=createTriggerScheduler(f.options);
+  await scheduler.tick(); pending=true;
+  const request={trigger_ref:plan.trigger_ref,signature:plan.signature,control_revision:0,paused:true,reason:'Maintenance'};
+  scheduler.control(request);
+  assert.throws(()=>scheduler.control(request),{code:'ToubaSchedulerReviewConflict'});
+  assert.equal(scheduler.status().schedules[0].status,'pending');
+  assert.equal(scheduler.status().schedules[0].next_run_at,null);
+  await scheduler.stop(); scheduler=createTriggerScheduler(f.options);
+  f.setTime(105000); await scheduler.tick();
+  assert.equal(scheduler.status().schedules[0].paused,true);
+  pending=false; await scheduler.tick(); assert.equal(f.calls.length,0);
+  scheduler.control({...request,paused:false,control_revision:1});
+  await scheduler.tick(); assert.equal(f.calls.length,0);
+  f.setTime(106000); await scheduler.tick(); assert.equal(f.calls.length,1);
+  assert.equal(scheduler.status().schedules[0].control_revision,2);
+  await scheduler.stop();
+  assert.equal(requiredIdentityPermission('POST','/triggers/scheduler/control'),'governance.apply');
+});
+test('pausing while an occurrence runs preserves its result and stops the next occurrence', async t => {
+  let complete, entered;
+  const started=new Promise(resolve=>{entered=resolve;});
+  const f=fixture(t,{execute:async()=>{entered(); return new Promise(resolve=>{complete=resolve;});}});
+  const scheduler=createTriggerScheduler(f.options);
+  await scheduler.tick(); f.setTime(101000); const tick=scheduler.tick(); await started;
+  scheduler.control({trigger_ref:plan.trigger_ref,signature:plan.signature,control_revision:0,paused:true,reason:'Pause future runs'});
+  complete({status:'success'}); await tick;
+  assert.equal(scheduler.status().schedules[0].status,'success');
+  assert.equal(scheduler.status().schedules[0].paused,true);
+  f.setTime(105000); await scheduler.tick();
+  assert.equal(scheduler.status().schedules[0].slot,101);
+  await scheduler.stop();
+});
+test('a reviewed plan revision clears a durable quota cooldown at the next UTC slot', async t => {
+  let current = plan, exhausted = true;
+  const f = fixture(t, { plans: () => [current], quotaReached: () => exhausted });
+  let scheduler = createTriggerScheduler(f.options);
+  await scheduler.tick(); f.setTime(101000); await scheduler.tick();
+  assert.equal(scheduler.status().schedules[0].error, 'TriggerRateLimited');
+  await scheduler.stop();
+  current = { ...plan, signature: 'b'.repeat(64) }; exhausted = false;
+  scheduler = createTriggerScheduler(f.options);
+  f.setTime(102000); await scheduler.tick();
+  assert.equal(scheduler.status().schedules[0].active, true);
+  assert.equal(scheduler.status().schedules[0].error, null);
+  assert.equal(scheduler.status().schedules[0].next_run_at, '1970-01-01T00:01:43.000Z');
+  assert.equal(f.calls.length, 0, 'revision does not catch up old slots');
+  f.setTime(103000); await scheduler.tick(); assert.equal(f.calls.length, 1);
+  current = { ...plan, signature: 'c'.repeat(64) }; exhausted = true;
+  f.setTime(104000); await scheduler.tick();
+  f.setTime(105000); await scheduler.tick();
+  assert.equal(f.calls.length, 1, 'lowering a limit still enforces the quota');
+  assert.equal(scheduler.status().schedules[0].error, 'TriggerRateLimited');
+  await scheduler.stop();
+});
 test('direct failures retain bounded terminal reasons across restart', async t => {
   for (const reason of ['HumanApprovalExpired', 'HumanApprovalRejected', 'HumanApprovalCancelled', 'ToolHandlerNonZeroExit']) {
     const f = fixture(t, { execute: async () => ({ status: 'failure', reason }) });
@@ -280,9 +337,18 @@ trigger Job
     agentDecisionProvider:()=>({action:'answer_directly',source:'qa',reason:'Local qualification',result:'scheduled'})};
   service=createToubaProjectServer(options); await service.start();
   let base=`http://127.0.0.1:${service.server.address().port}`, status;
-  for(let i=0;i<120;i++) { status=await(await fetch(base+'/triggers/scheduler')).json(); if(status.schedules?.[0]?.status===(human?'pending':'success')) break; await delay(50); }
-  assert.equal(status.schedules?.[0]?.status,human?'pending':'success',JSON.stringify(status));
-  const runId=status.schedules[0].run_id;
+  let completed;
+  for(let i=0;i<120;i++) {
+    status=await(await fetch(base+'/triggers/scheduler')).json();
+    completed=readProjectEventJournal(join(f.root,'.touba/project-events.jsonl')).find(event=>event.type==='trigger.fire.completed' && event.payload?.status==='success');
+    if(human ? status.schedules?.[0]?.status==='pending' : completed) break;
+    await delay(50);
+  }
+  // The success is durable even if a busy test host observes the next quota
+  // cooldown instead of the short-lived success display between UTC slots.
+  if(human) assert.equal(status.schedules?.[0]?.status,'pending',JSON.stringify(status));
+  else assert.ok(completed,JSON.stringify(status));
+  const runId=human ? status.schedules[0].run_id : completed.payload.run_id;
   if(human) {
     await delay(2100);
     assert.equal((await(await fetch(base+'/triggers')).json()).triggers[0].state.accepted_count,1,'one pending decision prevents scheduled accumulation');

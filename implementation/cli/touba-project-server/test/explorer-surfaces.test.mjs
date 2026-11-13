@@ -29,6 +29,30 @@ test("Explorer serves canonical compiled resources and revision-bound captured s
   } finally { surface.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
+test('four importing modules share one compiled memory resource in the project graph', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-shared-memory-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  initProject({ root });
+  const shared = newModule('qa.shared', { root });
+  writeFileSync(shared.source_path, 'module qa.shared\nmemory Records\n');
+  for (const name of ['sales', 'billing', 'support', 'audit']) {
+    const module = newModule(`qa.${name}`, { root });
+    writeFileSync(module.source_path, `module qa.${name}\nimport memory Records from qa.shared\ntool Read\n    uses memory Records read\n    gives Text\n    requires memory_read\n`);
+  }
+  const surface = createProjectExplorerSurface(root); t.after(() => surface.close());
+  let state;
+  for (let i = 0; i < 100; i++) {
+    state = surface.state(); if (state.status !== 'loading') break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.equal(state.status, 'ready', JSON.stringify(state.diagnostics));
+  const memories = state.graph.nodes.filter(node => node.kind === 'memory');
+  assert.equal(memories.length, 1, JSON.stringify(memories));
+  assert.equal(memories[0].id, 'memory:qa.shared/Records');
+  assert.equal(state.graph.nodes.filter(node => node.kind === 'tool').length, 4);
+  assert.equal(state.graph.edges.filter(edge => edge.to === memories[0].id && edge.kind === 'memory_access' && edge.role === 'read').length, 4);
+});
+
 test("trace readers isolate identity and tab selection, bound capacity, expire and cancel only their own reader", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-server-traces-")); mkdirSync(join(root, ".touba"));
   writeFileSync(join(root, ".touba", "traces.sqlite"), "test port");
