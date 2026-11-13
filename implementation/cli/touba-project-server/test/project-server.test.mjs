@@ -205,6 +205,27 @@ test("authority graph preserves two approval sites without duplicating source an
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('authority graph merges imported memories and marks calls required by source', () => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-authority-imported-memory-'));
+  try {
+    writeFileSync(join(root, 'library.tb'), 'module library\nmemory Notes\ntool Read\n    gives Text\n    uses memory Notes read\n    requires memory_read\n');
+    for (const name of ['first','second','third','fourth']) {
+      const source = join(root, `${name}.tb`);
+      writeFileSync(source, `module ${name}\nimport tool Read from library\nimport memory Notes from library\nstrategy Run\n    gives Text\n    uses Read\n    memory Notes read\n    do\n        Read\n            into note\n        give note\n`);
+      const air = execFileSync(process.execPath, [new URL('../../touba-project/src/main.mjs', import.meta.url).pathname,
+        'compile',source,'--stdout','--source-root',root], {encoding:'utf8'});
+      writeFileSync(join(root, `${name}.air.json`), air);
+    }
+    const graph = buildAuthorityGraph({projectRoot:root});
+    assertMatchesSchema('touba-authority-graph-v1', graph);
+    assert.deepEqual(graph.nodes.filter(node => node.kind === 'memory').map(node => node.ref), ['memory:library/Notes']);
+    for (const name of ['first','second','third','fourth']) {
+      const edge = graph.edges.find(edge => edge.from === `strategy:${name}/Run` && edge.to === 'tool:library/Read' && edge.kind === 'uses');
+      assert.equal(edge?.required_by_source, true);
+    }
+  } finally { rmSync(root, {recursive:true, force:true}); }
+});
+
 test("project server ignores obsolete client change stores without modifying them", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-change-migration-"));
   const dataRoot = join(root, ".touba");
@@ -594,6 +615,21 @@ test("event journal keeps a bounded replay window", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('repeated browser handshakes retain operational history and restart cursor continuity', t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-handshake-retention-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const eventJournalPath = join(root, 'events.jsonl');
+  appendProjectEventJournal({ eventJournalPath, limit: 3, event: buildProjectEvent({ type: 'human_decision.accepted', sequence: 1, payload: {} }) });
+  for (let sequence = 2; sequence <= 205; sequence++) {
+    appendProjectEventJournal({ eventJournalPath, limit: 3, event: buildProjectEvent({ type: 'touba.server.ready', sequence, payload: {} }) });
+  }
+  const events = readProjectEventJournal(eventJournalPath);
+  assert.deepEqual(events.map(item => item.sequence), [1, 2, 205]);
+  assert.deepEqual(replayProjectEvents({ eventJournalPath, lastEventId: 'evt_000100' }).events.map(item => item.sequence), [205]);
+  appendProjectEventJournal({ eventJournalPath, limit: 3, event: buildProjectEvent({ type: 'project.changed', sequence: events.at(-1).sequence + 1, payload: {} }) });
+  assert.deepEqual(replayProjectEvents({ eventJournalPath, lastEventId: 'evt_000205' }).events.map(item => item.sequence), [206]);
 });
 
 test("project data surfaces read run, trace and trigger artifacts", () => {
@@ -1989,7 +2025,9 @@ test("change history reports pending, applied and refused proposals without raw 
     assert.equal(detail.change.status, "applied");
     assert.equal(detail.change.evidence.write_mode, "atomic_rename");
     assert.equal(detail.change.decision_reason, "approved");
-    assert.equal(JSON.stringify(detail).includes("module demo"), false);
+    const { diffs, ...detailMetadata } = detail.change;
+    assert.equal(JSON.stringify(detailMetadata).includes("module demo"), false);
+    assert.match(diffs[0].diff, /module demo.applied/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -2728,7 +2766,9 @@ test("HTTP project server exposes live state, events and decisions", async () =>
     const pendingDetail = await getJson(`${baseUrl}/changes/http_change_001`);
     assertMatchesSchema("touba-project-change-detail-v1", pendingDetail);
     assert.equal(pendingDetail.change.status, "pending");
-    assert.equal(JSON.stringify(pendingDetail).includes("project_version"), false);
+    const { diffs, ...pendingMetadata } = pendingDetail.change;
+    assert.equal(JSON.stringify(pendingMetadata).includes("project_version"), false);
+    assert.match(diffs[0].diff, /project_version/);
 
     const applyResponse = await fetch(`${baseUrl}/changes/apply`, {
       method: "POST",

@@ -67,6 +67,48 @@ Si l'archivage est interrompu, le serveur attend cette restauration. Utilisez
 la build correspondant à l'état restauré. Les chemins d'état personnalisés
 restent à sauvegarder avec leur procédure d'exploitation.
 
+### Récupérer un état bloqué sur des attentes humaines
+
+Si une ancienne build ne peut plus clôturer ses attentes, l'exploitant peut
+préparer leur abandon hors ligne. Arrêtez tous les processus qui utilisent
+l'état du projet, puis demandez l'aperçu :
+
+```sh
+touba serve --project-root /chemin/projet --archive-state --abandon-waits \
+  --reason "Repartir après rapprochement des opérations bloquées"
+```
+
+L'aperçu indique les demandes, les fichiers, leurs empreintes et un
+`review_digest`. Après vérification, confirmez cet aperçu exact :
+
+```sh
+touba serve --project-root /chemin/projet --archive-state --abandon-waits \
+  --reason "Repartir après rapprochement des opérations bloquées" \
+  --review-digest <empreinte-de-l-apercu> --apply
+```
+
+Les octets originaux sont conservés dans `.touba/state-archives/`. Le reçu
+inscrit les demandes comme abandonnées avec le motif, la date et la provenance.
+Les checkpoints d'origine restent intacts dans cette archive de preuves.
+Le registre de garde des approbations est archivé avec eux ; les compteurs et
+identifiants de déclenchement restent actifs et une copie est conservée.
+Le code, les configurations et les données métier restent en place.
+
+La commande n'exécute aucun outil ni décision. Elle refuse une opération en
+cours, une décision déjà acceptée pour l'attente, un effet incertain, un état
+incompatible ou un fichier modifié depuis l'aperçu. Les chemins d'état
+personnalisés exigent leur procédure d'exploitation.
+
+L'abandon terminé ne permet plus de réactiver ces attentes par `--restore-state`.
+Si l'archivage est interrompu, cette commande peut restaurer l'état original
+avant tout nouveau départ. Le marqueur de maintenance bloque le serveur tant
+que cette restauration n'est pas terminée.
+
+Avant de soumettre une nouvelle opération, vérifiez ses effets dans le service
+métier : une facture déjà payée doit y rester reconnue comme telle. Le nouveau
+journal d'exécution ne remplace pas cette vérification. Conservez l'archive
+dans un stockage privé, car elle contient l'état complet des attentes.
+
 ### Identifiants et commentaire d'une décision
 
 `client_ref` identifie l'application qui soumet la décision.
@@ -160,6 +202,44 @@ Les secrets de tools viennent de `touba.secrets.dev.json` ou de
 Si vous maintenez un manifest explicite (notamment pour activer des triggers sans tools), préparez avec `--manifest touba.manifest.json` lors des modes `write` et `check`. Sans cette option, la préparation utilise son manifest dérivé, pas un fichier homonyme choisi implicitement à la racine.
 
 Le fichier `--identity` doit rester à l'intérieur de `--project-root`. Son chemin relatif est résolu depuis cette racine. Un chemin extérieur est refusé avec `ToubaServeProductIdentityPathInvalid`, détaillé sous `ToubaServePreflightFailed`. Placez la configuration hôte dans le projet, sans y versionner de secret ni d'identifiants personnels.
+
+### Profil serveur persistant
+
+Un fichier `touba.server.json` regroupe les options de démarrage :
+
+```json
+{
+  "schema_version": "touba-project-server-config-v1",
+  "host": "127.0.0.1",
+  "port": 8791,
+  "auth_token_env": "TOUBA_SERVER_TOKEN",
+  "schedule_triggers": false,
+  "cloud_notifications": false
+}
+```
+
+Depuis le projet préparé, lancer `touba serve --config touba.server.json`.
+Les options habituelles restent disponibles. Une option définie dans le profil
+et répétée dans la commande est refusée pour éviter une configuration ambiguë.
+Le profil est chargé explicitement ; cloner un projet ne lance aucun service.
+
+Les champs `identity_file`, `secrets_file`, `human_approval_host`,
+`agent_decision_provider`, `validation_plan` et `package_registry_trust` sont des
+chemins relatifs au projet. Les liens symboliques et sorties de cette racine sont
+refusés. Les références de module hôte `pkg:organisation.package/module` restent
+acceptées après leur activation habituelle. `package_hosts` active les modules
+revus du projet et exclut les deux modules hôtes choisis individuellement.
+
+`identity_control_plane_url` s'accompagne de `identity_service_token_env` ;
+`package_registry` s'accompagne de `package_registry_trust`. Les noms de variables
+référencent les secrets privés chargés par l'exploitant. Leurs valeurs restent
+hors du profil. Les fichiers privés référencés restent hors Git.
+
+La planification, les notifications, les modules hôtes et le plan de validation
+s'activent au démarrage suivant. Relire ces choix avant de relancer un serveur.
+Le schéma canonique `touba-project-server-config-v1` définit tous les champs,
+dont les limites, les origines clientes et la cible de
+déploiement. Une origine cliente distante doit être une origine HTTPS exacte.
 
 ## Entrées et hôtes du projet
 

@@ -7,6 +7,7 @@ export const authorizePublication = (registry, options) => authorizeRegistry(reg
 import { findPackageWorkspace } from './package-store.mjs';
 import { packageError, readPackage } from './package-contract.mjs';
 import { packPackage } from './packages.mjs';
+import { publicationRefusal } from './package-diagnostics.mjs';
 
 export async function publishRemotePackage(path, options = {}) {
   const registry = publicationUrl(options.registry);
@@ -19,13 +20,12 @@ export async function publishRemotePackage(path, options = {}) {
   let identity;
   try {
     const packed = await packPackage(path, { output: join(temporary, 'package.tar.gz') });
-    identity = await authorizePublication(registry, { noBrowser: options['no-browser'] === true });
+    identity = await authorizePublication(registry, { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true });
     const result = await publicationDocument(registry + '/publish', { method: 'POST', signal: AbortSignal.timeout(210000),
       headers: { Authorization: `Bearer ${identity.token}`, 'Content-Type': 'application/gzip',
         'X-Touba-Namespace': author.document.name.split('.').slice(0, -1).join('.') }, body: readFileSync(packed.output) });
     if (!result.ok) {
-      const code = typeof result.data.error === 'string' && /^[a-z_]{1,80}$/.test(result.data.error) ? result.data.error : 'publication_refused';
-      throw packageError('PackagePublicationRefused', code);
+      throw publicationRefusal('PackagePublicationRefused', result, 'publication_refused');
     }
     if (result.data.status !== 'published' || result.data.name !== author.document.name || result.data.version !== author.document.version || result.data.archive_digest !== packed.digest) {
       throw packageError('PackagePublicationResponseInvalid', 'the service did not confirm the selected archive; check its catalog before retrying');

@@ -1,0 +1,1 @@
+{"schema_version":"touba-operation-incidents-v1","items":[{"operation_id":"schedule_example","run_id":"schedule_example","target_ref":"trigger:example/Daily","status":"awaiting_human","updated_at":"2026-11-12T12:00:00.000Z"}],"next_cursor":null}

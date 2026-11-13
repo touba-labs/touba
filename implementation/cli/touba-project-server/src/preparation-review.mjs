@@ -21,8 +21,8 @@ export function preparationChanges(actions) {
       changes.push({ kind: action.kind, subject: action.tool_ref, field: "fragment",
         before: value(action.before), after: value(action.after) });
     } else if (["would_apply_host_decision", "apply_host_decision"].includes(action.kind)
-      && action.target_ref?.startsWith("trigger:") && action.field === "enabled") {
-      changes.push({ kind: "update_trigger", subject: action.target_ref, field: "enabled", before: value(action.before), after: value(action.after) });
+      && action.target_ref?.startsWith("trigger:") && ["enabled", "limits"].includes(action.field)) {
+      changes.push({ kind: "update_trigger", subject: action.target_ref, field: action.field, before: value(action.before), after: value(action.after) });
     }
   }
   if (changes.length > 512 || changes.some(item => JSON.stringify(item).length > 16384)) {
@@ -32,10 +32,11 @@ export function preparationChanges(actions) {
 }
 
 export function preparationDecisions(actions) {
-  const decisions = { review_packages: {}, review_fragments: {} };
+  const decisions = { review_packages: {}, review_fragments: {}, triggers: {} };
   for (const action of actions) {
     if (["review_package_contract", "adopt_package_contract"].includes(action.kind)) decisions.review_packages[action.package] = action.digest;
     if (action.kind === "review_fragment_binding") decisions.review_fragments[action.tool_ref] = action.digest;
+    if (action.kind === "review_trigger_limits") decisions.triggers[action.target_ref] = { limits: structuredClone(action.after) };
   }
   return decisions;
 }

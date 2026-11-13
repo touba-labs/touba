@@ -3,8 +3,8 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { loadHumanDecisionStore, saveHumanDecisionStore, pageHumanDecisions } from "../src/human-stores.mjs";
-import { createToubaProjectServer, listHumanDecisions } from "../src/serve.mjs";
+import { loadHumanDecisionStore, saveHumanDecisionStore, pageHumanDecisions, readHumanRequestStore, saveHumanRequestStore } from "../src/human-stores.mjs";
+import { createToubaProjectServer, listHumanDecisions, pagePendingHumanRequests } from "../src/serve.mjs";
 import { validateObject } from "../../../contracts/product-surfaces/validate.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
@@ -24,6 +24,33 @@ function fixture(t, count) {
   saveHumanDecisionStore(path, state);
   return { root, path };
 }
+
+test('pending queue retains parallel runs, sorts deadlines and survives removal between pages', t => {
+  const {root,path} = fixture(t,0);
+  const humanRequestsPath = join(root,'.touba/human-requests.sqlite');
+  const request = JSON.parse(readFileSync(join(contractsRoot,'fixtures/valid/touba-approval-request-v1.json')));
+  const state = readHumanRequestStore(humanRequestsPath);
+  for (let i=0;i<105;i++) state.approvals.push({...request,request_id:`pending-${String(i).padStart(3,'0')}`,run_id:`run-${i}`,
+    expires_at: new Date(Date.UTC(2030,0,1,0,0,i)).toISOString()});
+  state.approvals.push({...request,request_id:'expired',expires_at:'2020-01-01T00:00:00.000Z'});
+  saveHumanRequestStore(humanRequestsPath,state);
+  const options={humanRequestsPath,humanDecisionsPath:path,contractsRoot,generatedAt:'2029-12-31T00:00:00.000Z',limit:50};
+  const first = pagePendingHumanRequests(options);
+  assert.equal(first.total,105); assert.equal(first.items.length,50);
+  assert.equal(first.items[0].request_id,'pending-000');
+  const decisions=loadHumanDecisionStore(path);
+  decisions.decisions.push({...approval,request_id:'pending-000',accepted_at:'2029-12-31T00:00:00.000Z'});
+  saveHumanDecisionStore(path,decisions);
+  const second = pagePendingHumanRequests({...options,cursor:first.pagination.next_cursor});
+  assert.equal(second.total,104); assert.equal(second.items[0].request_id,'pending-050');
+  const last = pagePendingHumanRequests({...options,cursor:second.pagination.next_cursor});
+  assert.equal(last.items.length,5); assert.equal(last.pagination.next_cursor,null);
+  const history=listHumanDecisions({...options});
+  assert.deepEqual(validateObject(schema,history),[]);
+  assert.equal(history.pending_requests.total,104);
+  for(const cursor of ['bad','%',Buffer.from('[false,1]').toString('base64url')])
+    assert.throws(()=>pagePendingHumanRequests({...options,cursor}),{code:'ToubaServeDecisionPageInvalid'});
+});
 
 test("10,000 decisions stay paged, with global counts and a stable cursor", t => {
   const { path } = fixture(t, 10_000);

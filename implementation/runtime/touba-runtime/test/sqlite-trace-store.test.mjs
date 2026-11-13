@@ -80,6 +80,27 @@ test("simultaneous first writers initialize one SQLite journal without schema ra
   }
 });
 
+test('host execution origin is immutable, searchable and retained with its trace', async t => {
+  const {store, root} = fixture(t);
+  const result = await executeAirDocument(air, {traceStorage:store});
+  const runId = result.traceReader.header.run.run_id;
+  const before = store.statistics().bytes;
+  const origin = {kind:'service', id:'application:qa', name:'Portail achats'};
+  store.recordOrigin(runId, origin);
+  const bytes = store.statistics().bytes;
+  assert.ok(bytes > before);
+  store.recordOrigin(runId, origin);
+  assert.equal(store.statistics().bytes, bytes);
+  assert.throws(() => store.recordOrigin(runId, {...origin,name:'Other'}), {code:'TraceOriginConflict'});
+  assert.deepEqual(store.origin(runId), origin);
+  assert.deepEqual(store.runPage({search:'Portail achats'}).runs.map(row => row.runId), [runId]);
+  const destination = join(root, 'with-origin.sqlite');
+  store.archive({destination,apply:true});
+  assert.equal(store.origin(runId), null);
+  const archived = createSqliteTraceStore({filename:destination,readOnly:true});
+  try { assert.deepEqual(archived.origin(runId),origin); } finally { archived.close(); }
+});
+
 test("retention previews, durably archives and preserves references without retaining completed payloads", async t => {
   const { store, root } = fixture(t);
   const result = await executeAirDocument(air, { traceStorage: store });

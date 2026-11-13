@@ -1,0 +1,10 @@
+{
+  "schema_version": "touba-project-server-config-v1",
+  "host": "127.0.0.1",
+  "port": 8791,
+  "auth_token_env": "TOUBA_PROJECT_TOKEN",
+  "schedule_triggers": false,
+  "cloud_notifications": false,
+  "validation_plan": "tests/validation.json",
+  "trace_pure_functions": "full"
+}

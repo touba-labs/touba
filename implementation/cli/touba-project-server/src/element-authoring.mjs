@@ -3,8 +3,10 @@ import {
   readFileSync,
   readdirSync,
   statSync,
+  realpathSync,
 } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { createHash } from 'node:crypto';
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { isAuthoringTypeReference } from "../../../contracts/product-surfaces/input-contracts.mjs";
 import { effectContractToJson, normalizeEffectContract } from "../../touba-manifest/src/effect-contract.mjs";
 import { generateHandlerStubFromAirTool } from "../../touba-manifest/src/stub.mjs";
@@ -12,6 +14,7 @@ import { handlerRelativePathForTool } from "../../touba-manifest/src/requirement
 import { projectPythonCommand } from "../../touba-manifest/src/python-sdk-dependency.mjs";
 import { compileProposedSources } from "./source-validation.mjs";
 import { readPreparedProject } from "./prepared-project.mjs";
+import { parseTriggerRunnerSchedule } from '../../../contracts/trigger-schedule.mjs';
 
 export const ELEMENT_AUTHORING_SCHEMA_VERSION = "touba-element-authoring-request-v1";
 
@@ -44,6 +47,7 @@ const DECLARATION = /^(type|enum|memory|function|tool|skill|agent|strategy|trigg
 const MODULE_LINE = /^module\s+([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)\s*$/mu;
 
 export function buildElementAuthoringChangeSet({ projectRoot, request }) {
+  if (request?.source_update !== undefined) return buildSourceUpdate({ projectRoot, request });
   const normalized = normalizeElementAuthoringRequest(request);
   if (normalized.element.kind === "module") {
     const path = `src/${normalized.module_ref.replaceAll(".", "/")}.tb`;
@@ -134,6 +138,39 @@ export function buildElementAuthoringChangeSet({ projectRoot, request }) {
     preview_digest: normalized.preview_digest,
     changes,
   };
+}
+
+const sourceDigest = content => `sha256:${createHash('sha256').update(content).digest('hex')}`;
+
+export function readElementSource({ projectRoot, elementRef }) {
+  const match = /^(module|type|enum|memory|function|tool|skill|agent|strategy|trigger):([a-z][a-z0-9_.]*)(?:\/([A-Za-z][A-Za-z0-9_]*))?$/.exec(elementRef ?? '');
+  if (!match || (match[1] === 'module') !== !match[3]) throw authoringError('ToubaServeElementReferenceInvalid', 'an existing local declaration is required');
+  const [, kind, moduleRef, name] = match;
+  const source = findModuleSource(projectRoot, moduleRef);
+  if (kind !== 'module' && !new RegExp(`^${kind}\\s+${name}\\b`, 'm').test(source.content)) {
+    throw authoringError('ToubaServeElementReferenceInvalid', 'the declaration is not defined in this local module');
+  }
+  if (Buffer.byteLength(source.content) > 65536) throw authoringError('ToubaServeChangeTooLarge', 'source editing is limited to 64 KiB');
+  return { schema_version: 'touba-element-source-v1', element_ref: elementRef, module_ref: moduleRef,
+    kind, name: name ?? moduleRef, path: source.path, content: source.content, base_digest: sourceDigest(source.content) };
+}
+
+function buildSourceUpdate({ projectRoot, request }) {
+  if (request.schema_version !== ELEMENT_AUTHORING_SCHEMA_VERSION) throw authoringError('ToubaServeElementAuthoringInvalid', 'invalid source edit schema');
+  assertKnownKeys(request, ['schema_version', 'proposal_id', 'module_ref', 'element', 'requested_by', 'reason', 'preview_digest', 'source_update'], 'request');
+  assertKnownKeys(request.element, ['kind', 'name', 'description'], 'element');
+  assertKnownKeys(request.source_update, ['content', 'base_digest'], 'source_update');
+  const { kind, name } = request.element;
+  const ref = kind === 'module' ? `module:${request.module_ref}` : `${kind}:${request.module_ref}/${name}`;
+  const current = readElementSource({ projectRoot, elementRef: ref });
+  if (current.base_digest !== request.source_update.base_digest) throw authoringError('ToubaServeElementPreviewStale', 'source changed since the editor was opened');
+  const content = request.source_update.content;
+  if (typeof content !== 'string' || content.includes('\0') || Buffer.byteLength(content) > 65536) throw authoringError('ToubaServeChangeTooLarge', 'source editing requires bounded UTF-8 text');
+  if (content.match(MODULE_LINE)?.[1] !== current.module_ref) throw authoringError('ToubaServeElementReferenceInvalid', 'the edited module identity must remain unchanged');
+  return { proposal_id: nonEmptyString(request.proposal_id, 'proposal_id'), element_ref: ref,
+    requested_by: normalizeActor(request.requested_by), reason: nonEmptyString(request.reason, 'reason'),
+    preview_digest: request.preview_digest ?? null,
+    changes: [{ path: current.path, content, role: 'source' }] };
 }
 
 export function normalizeElementAuthoringRequest(request) {
@@ -371,6 +408,12 @@ function renderTriggerBody(lines, trigger, moduleRef) {
 }
 
 function renderToolBinding({ projectRoot, moduleRef, element, handlerPath, language, cwd }) {
+  if (language === 'python' && element.handler.sandbox_required) {
+    // Inventorying an interpreter executes a host binary. Source preview must
+    // not run project code or silently grant access to Python installation files.
+    throw authoringError('ToubaServeElementSandboxInventoryRequired',
+      'A confined Python handler requires a reviewed interpreter and code inventory. Prepare its binding with touba sdk sandbox python --handler <file>, then add it through a binding fragment. No project file was changed.');
+  }
   const binding = {
     handler: {
       kind: "process",
@@ -491,6 +534,8 @@ function walkToubaSources(projectRoot) {
   if (!existsSync(sourceRoot) || !statSync(sourceRoot).isDirectory()) {
     return [];
   }
+  const sourceRelative = relative(realpathSync(projectRoot), realpathSync(sourceRoot));
+  if (isAbsolute(sourceRelative) || sourceRelative === '..' || sourceRelative.replaceAll('\\', '/').startsWith('../')) throw authoringError('ToubaServeElementReferenceInvalid', 'source root must belong to the project');
   const paths = [];
   const visit = (directory, depth) => {
     if (depth > 8) {
@@ -590,6 +635,9 @@ function normalizeTrigger(value, kind) {
     schedule = nonEmptyString(value.schedule, "element.trigger.schedule");
     if (/[\r\n"]/u.test(schedule)) {
       throw authoringError("ToubaServeElementAuthoringInvalid", "trigger schedule must be a single line without quotes");
+    }
+    if (!parseTriggerRunnerSchedule(schedule).ok) {
+      throw authoringError('TriggerScheduleUnsupported', 'element.trigger.schedule: use every Ns, every Nm, every Nh or every Nd, up to 2147483647 ms');
     }
     if (value.payload_map !== undefined && Object.keys(value.payload_map).length > 0) {
       throw authoringError("ToubaServeElementAuthoringInvalid", "schedule triggers cannot map request payloads");
@@ -736,21 +784,8 @@ function appendSourceBlock(content, block) {
 }
 
 function stableJson(value) {
-  return `${JSON.stringify(sortObject(value), null, 2)}\n`;
-}
-
-function sortObject(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortObject);
-  }
-  if (!isRecord(value)) {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, sortObject(item)]),
-  );
+  // Preserve reviewed key order. Digests bind the exact proposed bytes.
+  return `${JSON.stringify(value, null, 2)}\n`;
 }
 
 function uniqueStrings(value, field) {
@@ -811,6 +846,7 @@ function boundedInteger(value, field, minimum, maximum) {
 }
 
 function assertKnownKeys(value, allowed, field) {
+  if (!isRecord(value)) throw authoringError('ToubaServeElementAuthoringInvalid', `${field} must be an object`);
   const allowedSet = new Set(allowed);
   const unknown = Object.keys(value).filter((key) => !allowedSet.has(key));
   if (unknown.length > 0) {

@@ -1,4 +1,4 @@
-import { label, categories, shortRef, observedInterval, graphLayout, translations } from './view.mjs';
+import { label, originLabel, categories, shortRef, observedInterval, graphLayout, translations } from './view.mjs';
 const $ = id => document.getElementById(id), ns = 'http://www.w3.org/2000/svg';
 const element = (tag, text, cls) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (cls) node.className = cls; return node; };
 function svgNode(tag, attributes = {}, text) { const node = document.createElementNS(ns, tag); for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value)); if (text !== undefined) node.textContent = text; return node; }
@@ -155,6 +155,7 @@ function renderRuns() {
     const meta = element('small'), count = `${run.eventCount} ${t('count').toLowerCase()}`;
     if (essential()) meta.append(count); else meta.append(element('span', run.runId, 'mono'), ` · ${count}`);
     item.append(icon('strategy', 'icon-small'), element('strong', shortName(run.entry || run.module || run.runId)), meta);
+    if (run.origin) item.append(element('small', originLabel(run.origin, language)));
     if (run.status) item.append(element('span', t(`status_${run.status}`), 'open-flag'));
     else if (!run.closed) item.append(element('span', t('openFlag'), 'open-flag'));
     item.title = `${shortRef(run.entry || run.module || run.runId)}\n${run.runId}\n${run.eventCount} ${t('count').toLowerCase()} · #${run.start} · ${t(run.closed ? 'complete' : 'incomplete')}`;
@@ -191,6 +192,7 @@ function renderState() {
   Object.assign($('run-status'), { hidden:false, textContent:t(`status_${outcome}`) }); $('run-status').dataset.state = outcome;
   $('coverage').textContent = `${run.run_id} · ${t('segment')} ${state.start}–${state.end} · ${t(state.closed ? 'complete' : 'incomplete')}`;
   $('coverage').title = `${state.id}\n${state.digest}\n${state.frozenAt}`;
+  if (state.origin) $('coverage').textContent += ` · ${originLabel(state.origin, language)}`;
   const items = [['count', state.total], ['refusal', state.counts.refusal ?? 0, true], ['error', state.counts.error ?? 0, true], ['duration', observedInterval(state) ?? '—']];
   $('stats').replaceChildren(...items.map(([name, value, alert]) => {
     const stat = element('div', undefined, 'stat'); stat.append(element('small', t(name)), element('strong', String(value)));

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-registry-trust-review-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "registry", "keys", "previous_digest", "review_digest", "expires_at"],
+  "properties": {
+    "schema_version": { "const": "touba-registry-trust-review-v1" },
+    "id": { "type": "string", "pattern": "^[a-f0-9-]{36}$" },
+    "registry": { "type": "string", "maxLength": 2048 },
+    "previous_digest": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" },
+    "review_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "keys": { "type": "array", "minItems": 1, "maxItems": 64, "items": {
+      "type": "object", "additionalProperties": false, "required": ["id", "status", "fingerprint"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$" },
+        "status": { "enum": ["active", "revoked"] },
+        "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    } }
+  }
+}

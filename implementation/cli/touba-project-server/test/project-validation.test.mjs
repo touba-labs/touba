@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createProjectValidation, readValidationPlan, validationStore } from '../src/project-validation.mjs';
+import { createProjectValidation, readValidationPlan, validationStore, validationProcess } from '../src/project-validation.mjs';
 import { initProject, newModule, prepareProject } from '../../touba-project/src/project.mjs';
 import { newPackage } from '../../touba-project/src/package-author.mjs';
 import { createToubaProjectServer, requiredIdentityPermission } from '../src/serve.mjs';
@@ -67,6 +67,50 @@ test('configuration, unknown commands, changed reviewed inputs and lost authorit
   assert.throws(()=>f.service.preview('owner','unknown'),{code:'ToubaValidationSuiteMissing'});
 });
 
+test('invalid plans identify the suite and field without echoing configuration values', async t => {
+  const f = await fixture(t);
+  for (const [override, field, code] of [
+    [{ timeout_ms: 1 }, 'timeout_ms', 'ToubaValidationPlanInvalid'],
+    [{ label: '' }, 'label', 'ToubaValidationPlanInvalid'],
+    [{ tests: ['private-secret-path'] }, 'tests[0]', 'ToubaValidationPlanInvalid'],
+    [{ inputs: { 'private-secret-path': 'invalid' } }, 'inputs[0].digest', 'ToubaValidationPlanInvalid'],
+    [{ env: ['PYTHONPATH'] }, 'env[0]', 'ToubaValidationEnvironmentInvalid'],
+    [{ engine: 'python', tests: ['tests/missing.py'], inputs: {} }, 'tests[0]', 'ToubaValidationPlanInvalid'],
+  ]) {
+    writeFileSync(f.planPath, JSON.stringify({ schema_version: 'touba-validation-plan-v1', suites: [{ ...f.suite, ...override }] }));
+    assert.throws(() => readValidationPlan(f.root, f.planPath), error => {
+      assert.equal(error.code, code);
+      assert.equal(error.field, `suites[0].${field}`);
+      assert.equal(error.suite_id, 'contracts');
+      assert.ok(error.message.includes(error.field));
+      assert.doesNotMatch(error.message, /private-secret-path/);
+      return true;
+    });
+  }
+});
+
+test('an invalid or stale host test plan leaves the server available and all tests disabled', async t => {
+  const f = await fixture(t); await f.service.stop();
+  for (const stale of [false, true]) {
+    writeFileSync(f.planPath, stale ? JSON.stringify({ schema_version: 'touba-validation-plan-v1', suites: [f.suite] }) : '{private malformed plan');
+    if (stale) writeFileSync(join(f.root, f.file), success + '\n// updated test');
+    const server = createToubaProjectServer({ projectRoot: f.root, port: 0, quiet: true, validationPlanPath: f.planPath });
+    try {
+      await server.start();
+      const base = `http://127.0.0.1:${server.server.address().port}`;
+      assert.equal((await fetch(base + '/health')).status, 200);
+      const response = await fetch(base + '/validation');
+      assert.equal(response.status, 200);
+      const state = await response.json();
+      assert.equal(state.enabled, false); assert.deepEqual(state.suites, []);
+      assert.equal(state.diagnostic.code, stale ? 'ToubaValidationInputChanged' : 'ToubaValidationPlanInvalid');
+      assert.doesNotMatch(JSON.stringify(state.diagnostic), /private malformed/);
+      const start = await fetch(base + '/validation/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ suite_id: 'contracts' }) });
+      assert.notEqual(start.status, 200);
+    } finally { await server.stop(); }
+  }
+});
+
 test('package suite uses canonical package test and a real compiled contract',async t=>{
   const f=await fixture(t);await f.service.stop();
   newPackage('qa.echo',{root:f.root});
@@ -116,6 +160,15 @@ test('handler evidence needs explicit coverage, pinned source and a current succ
   assert.equal(service.handlerEvidence().get('tool:qa.validation/Read')?.status,'missing');
   const p=service.preview('owner','contracts');await finish(service,service.start('owner',{id:p.id,revision:p.revision}).id);
   assert.equal(service.handlerEvidence().get('tool:qa.validation/Read')?.status,'passed');
+  const server = createToubaProjectServer({projectRoot:f.root,validationPlanPath:f.planPath,port:0,quiet:true});
+  await server.start();
+  try {
+    const status = await (await fetch(`http://127.0.0.1:${server.server.address().port}/runtime/sandbox`)).json();
+    const row = status.handlers.find(item => item.tool_ref === 'tool:qa.validation/Read');
+    assert.equal(row.implementation_status, 'present', JSON.stringify(row));
+    assert.equal(row.tests.status, 'passed');
+    assert.equal(row.candidate_path, 'handlers/read.mjs');
+  } finally { await server.stop(); }
   writeFileSync(join(f.root,'handlers/read.mjs'),handler+'\n// changed');
   assert.equal(service.handlerEvidence().get('tool:qa.validation/Read')?.status,'missing');
 });
@@ -174,4 +227,19 @@ test('abandoned running receipts become interrupted without replay',async t=>{
   t.after(()=>restarted.stop());
   assert.equal(restarted.receipt(row.id).status,'interrupted');
   assert.equal(restarted.receipt(row.id).reason,'server_restarted');
+});
+
+test('reviewed Python paths with dots execute exactly once and preserve failures',async t=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'touba-python-paths-')));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const command=execFileSync('python3',['-I','-c','import sys;print(sys.executable)'],{encoding:'utf8'}).trim();
+  const path='escalader_alerte.handler.contract.test.py';
+  writeFileSync(join(root,path),'import unittest\nclass Contract(unittest.TestCase):\n    def test_ok(self): self.assertEqual(4, 4)\n');
+  writeFileSync(join(root,'test_not_reviewed.py'),'raise Exception("must not be discovered")');
+  const suite={engine:'python',python:{command},tests:[path],timeout_ms:5000,env:[]};
+  const passed=await validationProcess(root,suite).result;
+  assert.equal(passed.status,'passed',JSON.stringify(passed)); assert.equal(passed.tests,1);
+  writeFileSync(join(root,path),'import unittest\nclass Contract(unittest.TestCase):\n    def test_bad(self): self.assertEqual(4, 5)\n');
+  const failed=await validationProcess(root,suite).result;
+  assert.equal(failed.status,'failed'); assert.equal(failed.tests,1); assert.equal(failed.passed,0);
 });

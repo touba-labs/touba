@@ -428,6 +428,11 @@ def decide_agent_capability(request):
 def attest_human_approval(payload):
     request = payload["request"]
     return {"request_id":request["request_id"], "run_id":request["run_id"], "decision":payload["decision"], "subject_ref":"reviewer", "roles":["finance"]}
+def attest_human_approval_review(payload):
+    assert payload["purpose"] == "review"
+    request = payload["request"]
+    assert "review_context" not in request
+    return {"purpose":"review", "request_id":request["request_id"], "run_id":request["run_id"], "subject_ref":payload["viewer"]["subject_ref"], "roles":["finance"]}
 ''')
 
     def test_shared_python_host_closes_gracefully(self):
@@ -444,6 +449,9 @@ try {{
   assert.equal((await approval.humanApprovalAuthority({{
     request: {{ request_id: "approval-test", run_id: "run-test" }}, decision: "approved"
   }})).subject_ref, "reviewer");
+  assert.deepEqual(await approval.humanApprovalReviewAuthority({{
+    purpose: "review", request: {{ request_id: "approval-test", run_id: "run-test" }}, viewer: {{ subject_ref: "user:reviewer" }}
+  }}), {{purpose:"review", request_id:"approval-test", run_id:"run-test", subject_ref:"user:reviewer", roles:["finance"]}});
 }} finally {{ loader.close(); }}
 '''
         result = subprocess.run([NODE, "--input-type=module", "-e", script], cwd=self.root,

@@ -8,7 +8,7 @@ import { servicePrincipal, assertApplicationRoute, createApplicationAdmission } 
 import { createToubaProjectServer, authorizeHumanIdentity } from '../src/serve.mjs';
 import { initProject, newModule, prepareProject } from '../../touba-project/src/project.mjs';
 
-const identity = { active: true, project_root: '/fixture', principal: { kind: 'service', id: 'application-1' }, scopes: ['executions.invoke', 'executions.read-own', 'executions.cancel-own'], targets: ['function:app/Echo'] };
+const identity = { active: true, project_root: '/fixture', principal: { kind: 'service', id: 'application-1', name: 'Portail achats' }, scopes: ['executions.invoke', 'executions.read-own', 'executions.cancel-own'], targets: ['function:app/Echo'] };
 test('application writes are independently rate bounded without spending human or read quotas', () => {
   let now = 0; const admit = createApplicationAdmission({ now: () => now, maxWritesPerMinute: 2 });
   admit(identity, 'POST'); admit(identity, 'POST');
@@ -47,7 +47,7 @@ test('an application uses the same runtime while sessions, targets and revocatio
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const token = JSON.parse(Buffer.concat(chunks)).access_token;
     const value = token === 'human' ? { active: true, project_root: root, user: { id: 'owner' }, permissions: ['*'] }
-      : { ...identity, targets: ['function:demo.app/Echo'], project_root: root, principal: { kind: 'service', id: token === 'other' ? 'other-app' : 'application-1' }, active: !revoked };
+      : { ...identity, targets: ['function:demo.app/Echo'], project_root: root, principal: { ...identity.principal, id: token === 'other' ? 'other-app' : 'application-1' }, active: !revoked };
     res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(value));
   });
   await new Promise(resolve => authority.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise(resolve => authority.close(resolve)));
@@ -74,6 +74,16 @@ test('an application uses the same runtime while sessions, targets and revocatio
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.equal(result.status, 'succeeded', JSON.stringify(result));
+  const completedSession = await (await call(path)).json();
+  assert.deepEqual(completedSession.messages.find(item => item.role === 'user').requested_by, completedSession.created_by);
+  assert.equal(completedSession.created_by.kind, 'service');
+  assert.notEqual(completedSession.created_by.id, 'spoofed');
+  assert.equal(completedSession.created_by.name, 'Portail achats');
+  const traces = await call('/traces/explorer', 'POST', {client_id: 'origin-test-reader-123', method: 'list', args: {groupRuns: true, search: 'Portail achats'}}, 'human');
+  assert.equal(traces.status, 200, await traces.clone().text());
+  const traceRows = await traces.json();
+  assert.equal(traceRows.segments.length, 1);
+  assert.deepEqual(traceRows.segments[0].origin, identity.principal);
   assert.equal((await (await call(path + '/messages', 'POST', message)).json()).operation_id, operation.operation_id);
   revoked = true;
   assert.equal((await call(path)).status, 401);

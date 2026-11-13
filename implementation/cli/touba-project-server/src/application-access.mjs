@@ -9,7 +9,9 @@ export function servicePrincipal(result, expectedProjectRoot) {
     || scopes.some(scope => !['executions.invoke', 'executions.read-own', 'executions.cancel-own'].includes(scope))
     || !Array.isArray(targets) || !targets.length || targets.length > 100
     || targets.some(target => typeof target !== 'string' || !/^(agent|function|skill|strategy|tool|trigger):[A-Za-z_][A-Za-z0-9_.]*\/[A-Za-z_][A-Za-z0-9_]*$/.test(target))) return null;
-  return { principal: { kind: 'service', id: result.principal.id }, scopes, targets };
+  const name = result.principal.name;
+  if (name !== undefined && (typeof name !== 'string' || !name.trim() || name.length > 120 || /[\u0000-\u001f\u007f]/u.test(name))) return null;
+  return { principal: { kind: 'service', id: result.principal.id, ...(name ? { name } : {}) }, scopes, targets };
 }
 
 function refuse() { throw Object.assign(new Error('application access is limited to its own sessions and allowed targets'), { code: 'ToubaServeApplicationPermissionDenied', statusCode: 403 }); }

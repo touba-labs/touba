@@ -12,6 +12,10 @@ const descriptor = (kind, reference, instant) => {
 
 export function notificationForEvent(event) {
   const value = event.payload ?? {};
+  // The durable human-wait event carries this terminal outcome. Forwarding
+  // the accompanying failed interaction would create a second incident.
+  if (event.type === 'interaction.run.failed'
+    && ['ToubaSandboxHumanDecisionExpired', 'ToubaSandboxHumanDecisionRejected', 'ToubaSandboxHumanDecisionCancelled'].includes(value.error?.code)) return null;
   const kind = ['interaction.run.failed','interaction.run.interrupted','trigger.schedule.interrupted'].includes(event.type) ? 'execution_failed'
     : event.type === 'trigger.schedule.skipped' ? 'observation_gap'
     : event.type === 'human_wait.terminalized' && value.resolution_kind === 'expired' ? 'approval_expired'
@@ -104,7 +108,7 @@ export function createCloudNotifications({ enabled, controlPlaneUrl, serviceToke
     if (outgoing.length) {
       const response = await fetchImpl(controlPlaneUrl.replace(/\/$/, '') + '/notifications/events', {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
-        headers: { 'content-type': 'application/json', 'x-touba-service-token': serviceToken },
+        headers: { 'content-type': 'application/json', 'x-touba-service-token': typeof serviceToken === 'function' ? await serviceToken() : serviceToken },
         body: JSON.stringify({ events: outgoing }),
       });
       if (!response.ok) { await response.body?.cancel(); throw new Error('notification_cloud_unavailable'); }

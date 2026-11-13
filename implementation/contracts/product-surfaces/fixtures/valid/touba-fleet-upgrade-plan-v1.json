@@ -1,0 +1,29 @@
+{
+  "schema_version": "touba-fleet-upgrade-plan-v1",
+  "projects": [
+    {
+      "id": "example",
+      "root": "/projects/example",
+      "config": "touba.server.json",
+      "language": "javascript",
+      "port": 8791,
+      "host": "127.0.0.1",
+      "profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "project_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "source_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidate_build": "source-local",
+      "schedule_triggers": false,
+      "cloud_notifications": false,
+      "status": "ready",
+      "archive_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "archive_files": 0,
+      "sdk": {
+        "name": "@touba/sdk",
+        "version": "1.4.0",
+        "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "previous_receipt": null
+    }
+  ],
+  "review_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}

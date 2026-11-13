@@ -14,7 +14,8 @@ export function authorIdentity(name, organization) {
   throw packageError("PackageOrganizationRequired", "provide --org <organization> and a short name, or a qualified organization.package name");
 }
 
-export function newPackage(name, { root = process.cwd(), org, context = false, description, publisher, license, version = "0.1.0" } = {}) {
+export function newPackage(name, { root = process.cwd(), org, context = false, description, publisher, license, version = "0.1.0", lang = "en" } = {}) {
+  if (!["fr", "en"].includes(lang)) throw packageError("PackageLanguageInvalid", "choose fr or en");
   name = authorIdentity(name, org);
   if (!exactPackageVersion(version)) throw packageError("PackageVersionInvalid", "use an exact SemVer version");
   const shortName = name.split(".").at(-1);
@@ -45,13 +46,13 @@ export function newPackage(name, { root = process.cwd(), org, context = false, d
       const source = `src/${module.replaceAll(".", "/")}.tb`;
       mkdirSync(dirname(join(staging, source)), { recursive: true });
       document.exports.skills = [`skill:${module}/Echo`];
-      writeFileSync(join(staging, source), `module ${module}\n\nskill Echo\n    description "Return the supplied text unchanged."\n    takes value as Text\n    gives Text\n    do\n        give value\n`);
+      writeFileSync(join(staging, source), `module ${module}\n\nskill Echo\n    description "${lang === 'fr' ? 'Renvoyer le texte fourni sans modification.' : 'Return the supplied text unchanged.'}"\n    takes value as Text\n    gives Text\n    do\n        give value\n`);
       mkdirSync(join(staging, "tests"));
       document.contract_tests = ["tests/echo.test.mjs"];
       writeFileSync(join(staging, "tests/echo.test.mjs"), echoTest(source, module));
     }
     writeFileSync(join(staging, PACKAGE_MANIFEST), json(document));
-    writeFileSync(join(staging, "README.md"), `# ${name}\n\n${document.description}\n\nRun \`touba package check\`, then \`touba package test\` for explicitly declared Node tests.\n${context ? "No behavioral test is generated for a textual procedure. Add tests for your real acceptance criteria.\n" : "The generated Echo test executes the sample skill. Replace it with tests of your business contract.\n"}\nBefore sharing, declare publisher and license in touba.package.json, then run \`touba package pack\`.\nInstalling a package grants no runtime authority. Test code runs with the host account's filesystem permissions; review it before running.\n`);
+    writeFileSync(join(staging, "README.md"), packageReadme(name, document.description, context, lang));
     readPackage(staging);
     // mkdir is exclusive even when another creator wins after the first check.
     mkdirSync(path); ownedDestination = true;
@@ -61,6 +62,13 @@ export function newPackage(name, { root = process.cwd(), org, context = false, d
     if (ownedDestination) rmSync(path, { recursive: true, force: true });
     throw error;
   } finally { rmSync(staging, { recursive: true, force: true }); }
+}
+
+function packageReadme(name, description, context, lang) {
+  const content = lang === 'fr'
+    ? `Exécutez \`touba package check\`, puis \`touba package test\` pour les tests Node déclarés.\n${context ? 'Ajoutez des tests pour les critères de votre procédure.' : 'Le skill Echo et son test forment un exemple de départ. Adaptez-les au comportement décrit ci-dessus.'}\n\nAvant de partager, renseignez publisher et license dans touba.package.json, puis exécutez \`touba package pack\`.\nLes droits d’exécution sont accordés par l’application. Les tests utilisent les permissions du compte hôte : relisez leur code avant de les lancer.\n`
+    : `Run \`touba package check\`, then \`touba package test\` for explicitly declared Node tests.\n${context ? 'Add tests for your procedure’s acceptance criteria.' : 'The Echo skill and its test are a starting example. Adapt them to the behavior described above.'}\n\nBefore sharing, declare publisher and license in touba.package.json, then run \`touba package pack\`.\nThe application grants execution authority. Test code runs with the host account’s filesystem permissions; review it before running.\n`;
+  return `# ${name}\n\n${description}\n\n${content}`;
 }
 
 function echoTest(source, module) {

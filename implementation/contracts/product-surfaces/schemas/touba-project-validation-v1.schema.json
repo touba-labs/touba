@@ -8,6 +8,10 @@
     "schema_version":{"const":"touba-project-validation-v1"},
     "enabled":{"type":"boolean"},
     "active_id":{"type":["string","null"]},
+    "diagnostic":{"type":"object","additionalProperties":false,"required":["code"],"properties":{
+      "code":{"enum":["ToubaValidationPlanInvalid","ToubaValidationPathInvalid","ToubaValidationInputChanged","ToubaValidationPythonInvalid","ToubaValidationEnvironmentInvalid"]},
+      "field":{"type":"string","maxLength":256},"suite_id":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,63}$"}
+    }},
     "suites":{"type":"array","maxItems":32,"items":{
       "type":"object","additionalProperties":false,"required":["id","label","kind","engine","timeout_ms"],
       "properties":{

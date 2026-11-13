@@ -36,13 +36,15 @@ export function createSqliteEffectJournal(path, options = {}) {
 
 export function auditSqliteEffectJournal(path, options = {}) {
   const store = journalStore(path, options);
-  let after, count = 0;
+  let after, count = 0, active_operations = 0;
   for (;;) {
     const page = store.page({ after });
     if (!page.items.length) break;
-    count += page.items.length; after = page.next;
+    count += page.items.length;
+    active_operations += page.items.filter(entry => !['applied', 'not_applied'].includes(entry.state)).length;
+    after = page.next;
   }
-  return { schema_version: EFFECT_JOURNAL_SCHEMA_VERSION, entry_count: count };
+  return { schema_version: EFFECT_JOURNAL_SCHEMA_VERSION, entry_count: count, active_operations };
 }
 
 export function migrateEffectJournal(options) {

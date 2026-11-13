@@ -1,1 +1,1 @@
-{"schema_version":"touba-project-validation-v1","enabled":false,"active_id":null,"suites":[],"runs":[]}
+{"schema_version":"touba-project-validation-v1","enabled":false,"active_id":null,"suites":[],"runs":[],"diagnostic":{"code":"ToubaValidationInputChanged","field":"suites[0].inputs[0]","suite_id":"contracts"}}

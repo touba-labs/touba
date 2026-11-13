@@ -13,7 +13,15 @@ import { TraceReader } from '../src/trace-explorer/reader.mjs';
 import { TraceClient } from '../src/trace-explorer/client.mjs';
 import { startTraceExplorer, traceHtml } from '../src/trace-explorer/server.mjs';
 import { queryOptions, projectEvent, eventCategory } from '../src/trace-explorer/model.mjs';
-import { graphLayout, label } from '../src/trace-explorer/web/view.mjs';
+import { graphLayout, label, originLabel } from '../src/trace-explorer/web/view.mjs';
+
+test('trace origins distinguish the scheduler from applications without trusting a display name', () => {
+  const scheduler = { kind: 'service', id: 'touba-project-scheduler', name: 'Scheduler' };
+  assert.equal(originLabel(scheduler, 'fr'), 'Planificateur');
+  assert.equal(originLabel(scheduler, 'en'), 'Scheduler');
+  assert.equal(originLabel({ ...scheduler, id: 'other-service' }, 'fr'), 'Application · Scheduler');
+  assert.equal(originLabel({ kind: 'user', id: 'user:42' }, 'en'), 'User · user:42');
+});
 
 test('tool execution phases remain readable and classify refusals separately from output errors', () => {
   const event = (phase, status) => ({ event_id:'event:test:1', run_id:'test', sequence_index:0,

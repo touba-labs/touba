@@ -9,6 +9,13 @@
     "schema_version": { "const": "touba-element-authoring-request-v1" },
     "proposal_id": { "type": "string" },
     "module_ref": { "type": "string" },
+    "source_update": {
+      "type": "object", "additionalProperties": false, "required": ["content", "base_digest"],
+      "properties": {
+        "content": { "type": "string", "maxLength": 65536 },
+        "base_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
     "element": {
       "type": "object",
       "additionalProperties": false,

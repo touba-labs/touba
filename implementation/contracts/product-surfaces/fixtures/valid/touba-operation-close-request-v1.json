@@ -1,0 +1,5 @@
+{
+  "schema_version": "touba-operation-close-request-v1",
+  "state_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "reason": "Reviewed interrupted synthetic invocation."
+}

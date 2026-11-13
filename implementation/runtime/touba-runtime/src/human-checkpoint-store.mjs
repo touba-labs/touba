@@ -55,6 +55,19 @@ export function createSqliteHumanCheckpointStore(filename = resolve(".touba/appr
     return rows;
   }
   return Object.freeze({
+    /** Offline audit on a private snapshot; no custody transition.
+     * @returns {{schema_version: string, entry_count: number, active_operations: number}} */
+    audit() {
+      let after, count = 0, active = 0;
+      for (;;) {
+        const page = db.page({ after, limit: 100 });
+        count += page.items.length;
+        active += page.items.filter(row => row.state === 'running').length;
+        if (page.next === null) break;
+        after = page.next;
+      }
+      return { schema_version: SCHEMA, entry_count: count, active_operations: active };
+    },
     /** Read-only eligibility check. It neither claims nor rearms a checkpoint.
      * @param {any} checkpoint */
     ready(checkpoint) {

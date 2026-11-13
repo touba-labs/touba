@@ -30,7 +30,7 @@ test("offline preflight covers interactions without changing bytes or importing 
     assert.ok(checked.stores.find(store => store.store === key).schema_version);
   }
   assert.deepEqual(checked.stores.map(store => store.store).sort(), [
-    'sandboxCheckpointsPath', 'humanRequestsPath', 'humanDecisionsPath', 'changeProposalsPath',
+    'sandboxCheckpointsPath', 'checkpointCustodyPath', 'humanRequestsPath', 'humanDecisionsPath', 'changeProposalsPath',
     'effectJournalPath', 'interactionSessionsPath', 'interactionAssetsPath', 'schedulerPath', 'validationPath',
   ].sort());
   assert.equal(checked.stores.find(store => store.store === 'schedulerPath').exists, false);

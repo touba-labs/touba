@@ -1,6 +1,11 @@
 {
   "schema_version": "touba-human-decision-history-v1",
   "generated_at": "2026-06-23T00:00:00.000Z",
+  "pending_requests": {
+    "total": 0,
+    "items": [],
+    "pagination": { "limit": 50, "cursor": null, "next_cursor": null, "order": "expires_asc" }
+  },
   "pagination": { "limit": 50, "cursor": null, "next_cursor": null, "order": "recorded_desc" },
   "summary": {
     "total": 2,

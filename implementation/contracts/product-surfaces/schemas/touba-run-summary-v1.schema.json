@@ -8,6 +8,7 @@
   "properties": {
     "schema_version": { "const": "touba-run-summary-v1" },
     "run_id": { "type": "string" },
+    "completion_reason": { "type": "string", "maxLength": 512 },
     "status": { "enum": ["unavailable", "queued", "running", "paused", "approval_pending", "review_pending", "succeeded", "failed", "cancelled", "refused", "stopped"] },
     "entrypoint_ref": { "type": "string" },
     "started_at": { "type": "string" },

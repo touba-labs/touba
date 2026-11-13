@@ -5,6 +5,9 @@
   "expires_at": "2026-11-06T12:05:00.000Z",
   "can_apply": true,
   "status": "needs_changes", "profile": "dev", "diagnostics": [],
-  "actions": ["would_update_fragment_binding"],
-  "changes": [{ "kind": "update_fragment_binding", "subject": "tool:demo.main/Read", "field": "timeout_ms", "before": "5000", "after": "7000" }]
+  "actions": ["would_update_fragment_binding", "would_apply_host_decision"],
+  "changes": [
+    { "kind": "update_fragment_binding", "subject": "tool:demo.main/Read", "field": "timeout_ms", "before": "5000", "after": "7000" },
+    { "kind": "update_trigger", "subject": "trigger:demo.main/Daily", "field": "limits", "before": "{\"max_runs_per_day\":20,\"timeout_ms\":30000}", "after": "{\"max_runs_per_day\":1,\"timeout_ms\":30000}" }
+  ]
 }

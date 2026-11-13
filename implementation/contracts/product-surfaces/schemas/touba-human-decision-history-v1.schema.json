@@ -8,6 +8,28 @@
   "properties": {
     "schema_version": { "const": "touba-human-decision-history-v1" },
     "generated_at": { "type": "string" },
+    "pending_requests": {
+      "description": "Each item is additionally validated against its canonical approval or human-review request schema.",
+      "type": "object", "additionalProperties": false,
+      "required": ["total", "pagination", "items"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "pagination": {
+          "type": "object", "additionalProperties": false,
+          "required": ["limit", "cursor", "next_cursor", "order"],
+          "properties": {
+            "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "cursor": { "type": ["string", "null"], "maxLength": 2048 },
+            "next_cursor": { "type": ["string", "null"], "maxLength": 2048 },
+            "order": { "const": "expires_asc" }
+          }
+        },
+        "items": { "type": "array", "maxItems": 100, "items": {
+          "type": "object", "required": ["schema_version"],
+          "properties": { "schema_version": { "enum": ["touba-approval-request-v1", "touba-human-review-request-v1"] } }
+        } }
+      }
+    },
     "terminal_requests": {
       "type": "object", "additionalProperties": false,
       "required": ["total", "pagination", "items"],

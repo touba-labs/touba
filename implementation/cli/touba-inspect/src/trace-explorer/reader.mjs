@@ -9,7 +9,7 @@ import { validateTraceMachineContract, validateTraceMachineStream, validateTrace
 import { airDocumentDigest } from '../../../../runtime/touba-runtime/src/air-identity.mjs';
 import { createTraceReference, traceJsonDigest } from '../../../../contracts/trace-reference.mjs';
 import { readProjectSource } from '../explorer/project.mjs';
-import { eventSummary, eventCategory, projectEvent, queryOptions, queryWhere } from './model.mjs';
+import { eventSummary, eventCategory, projectEvent, queryOptions, queryWhere, terminalTraceStatus } from './model.mjs';
 
 const MAX_JSON = 16 * 1024 * 1024, MAX_EVENTS = 1000000, MAX_EXPORT = 8 * 1024 * 1024;
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -75,8 +75,9 @@ export class TraceReader {
     const snapshot = this.store.snapshot(item.id), header = snapshot.header;
     const last = item.eventCount ? this.store.page(item.id, { after: snapshot.startIndex + item.eventCount - 2, limit: 1 }).events[0] : null;
     return { id: item.id, runId: item.runId, module: header.run.module_ref, entry: header.run.entry_ref,
+      origin: this.store.origin(item.runId),
       eventCount: item.eventCount, start: snapshot.startIndex, closed: item.complete,
-      status: header.run.admission === 'refused' ? 'refused' : last?.kind === 'run_completed' ? last.payload?.status ?? 'incomplete' : 'incomplete' };
+      status: header.run.admission === 'refused' ? 'refused' : terminalTraceStatus(last) };
   }
   select({ id } = {}) {
     if (typeof id !== 'string' || !id || id.length > 4096) throw new Error('TraceSelectionInvalid');
@@ -119,7 +120,7 @@ export class TraceReader {
       this.index.exec('COMMIT');
       const reference = source.complete && !this.document ? createTraceReference(source) : null;
       const originalDigest = createHash('sha256'); for (const part of source.json()) originalDigest.update(part);
-      this.state = { id, header: source.header, total, start: source.startIndex, end: source.startIndex + total - 1,
+      this.state = { id, header: source.header, origin: this.store?.origin(source.header.run.run_id) ?? null, total, start: source.startIndex, end: source.startIndex + total - 1,
         closed: source.complete, coverage: 'selected_segment', counts, first, last: terminal?.observed_at ?? null,
         status: source.header.run.admission === 'refused' ? 'refused' : terminal?.kind === 'run_completed' ? terminal.payload?.status ?? 'refused' : 'incomplete',
         reason: terminal?.kind === 'run_completed' && /^[A-Za-z0-9_:.-]{1,120}$/u.test(terminal.payload?.reason ?? '') ? terminal.payload.reason : null,

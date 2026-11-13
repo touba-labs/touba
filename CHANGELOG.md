@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0-rc.1
+
+Local test candidate: reviewed multi-project lifecycle, server profiles,
+private approval dossiers, persistent diagnostics and verified registry trust.
+See [release notes](implementation/release/notes/v1.5.0-rc.1.md).
+
 All notable public changes to Touba are summarized here. Structured release
 notes remain the source of truth for version deltas, validation evidence,
 downloadable artifacts, checksums and platform-specific installation

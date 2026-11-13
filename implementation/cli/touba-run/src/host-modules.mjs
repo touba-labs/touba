@@ -26,6 +26,7 @@ export function createHostModuleLoader() {
       return {
         decideAgentCapability: host.metadata.decide ? host.decide : undefined,
         attestHumanApproval: host.metadata.attest ? host.attest : undefined,
+        attestHumanApprovalReview: host.metadata.review ? host.review : undefined,
         checkCompensationAuthority: host.metadata.compensation ? host.compensation : undefined,
         initiatorRef: host.metadata.initiator_ref ?? undefined,
         resolveInitiator: host.metadata.resolve_initiator ? host.resolveInitiator : undefined,
@@ -50,7 +51,8 @@ export function createHostModuleLoader() {
       const module = await load(filename, { ...options, kind: "human_approval" });
       if (typeof module.attestHumanApproval !== "function") throw Object.assign(new Error(
         "host must export attestHumanApproval (JavaScript) or attest_human_approval (Python)"), { code: "HumanApprovalAuthorityUnavailable" });
-      return { humanApprovalAuthority: module.attestHumanApproval, humanApprovalInitiator: module.resolveInitiator ?? module.initiatorRef };
+      return { humanApprovalAuthority: module.attestHumanApproval, humanApprovalReviewAuthority: module.attestHumanApprovalReview,
+        humanApprovalInitiator: module.resolveInitiator ?? module.initiatorRef };
     },
     async compensationHost(filename) {
       // Package activation has its own closed kinds; this surface selects a local trusted host explicitly.

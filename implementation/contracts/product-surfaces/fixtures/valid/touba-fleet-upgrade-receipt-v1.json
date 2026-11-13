@@ -1,0 +1,9 @@
+{
+  "schema_version": "touba-fleet-upgrade-receipt-v1",
+  "id": "45b77454-48db-4bbf-9918-a73b02a132a3",
+  "review_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "candidate_build": "source-local",
+  "status": "complete",
+  "step": "complete",
+  "archive_id": "example-archive"
+}

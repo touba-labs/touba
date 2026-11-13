@@ -14,8 +14,8 @@ export function nativeVsixTarget(platform = process.platform, arch = process.arc
 
 export function vsixFilename(manifest, target = nativeVsixTarget()) {
   if (typeof manifest?.version !== "string" || manifest.version.trim() !== manifest.version ||
-      !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(manifest.version)) {
-    throw new Error("VSIX version must be MAJOR.MINOR.PATCH without a label or leading zeros");
+      !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-rc\.[1-9]\d*)?$/.test(manifest.version)) {
+    throw new Error("VSIX version must be MAJOR.MINOR.PATCH, optionally followed by -rc.N for local candidates, without leading zeros");
   }
   if (!VSIX_TARGETS.includes(target)) {
     throw new Error(`Unsupported native VSIX target: ${target}`);

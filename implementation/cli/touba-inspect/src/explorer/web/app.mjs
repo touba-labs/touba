@@ -287,7 +287,7 @@ function detailValue(key, value) {
   if (value === null || ['string','number','boolean'].includes(typeof value)) {
     const target = /_ref$/u.test(key) ? nodeById(value) : null;
     if (target) { const link = button(nodeLabel(target), () => revealNode(target.id)); link.className = 'link-button'; return link; }
-    const shown = key === 'type_ref' ? typeName(value) : key === 'entrypoint' ? (lang === 'fr' ? 'Oui' : 'Yes') : /_ms$/u.test(key) ? duration(value) : /_ref$|_binding$/u.test(key) ? refName(value) : String(value);
+    const shown = typeof value === 'boolean' ? (lang === 'fr' ? (value ? 'Oui' : 'Non') : (value ? 'Yes' : 'No')) : key === 'type_ref' ? typeName(value) : /_ms$/u.test(key) ? duration(value) : /_ref$|_binding$/u.test(key) ? refName(value) : String(value);
     return el(typeof value === 'string' && value.length > 60 ? 'p' : 'span', shown, typeof value === 'string' && value.length > 60 ? 'prose' : 'value');
   }
   if (Array.isArray(value)) {

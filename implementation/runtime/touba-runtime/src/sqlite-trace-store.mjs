@@ -85,10 +85,20 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
         CREATE TABLE IF NOT EXISTS touba_trace_events (
         segment_id TEXT NOT NULL, sequence_index INTEGER NOT NULL, event_id TEXT NOT NULL,
         kind TEXT NOT NULL, body TEXT NOT NULL, digest TEXT NOT NULL,
-        PRIMARY KEY(segment_id, sequence_index), UNIQUE(segment_id, event_id));`);
+        PRIMARY KEY(segment_id, sequence_index), UNIQUE(segment_id, event_id));
+        CREATE TABLE IF NOT EXISTS touba_trace_origins (
+        run_id TEXT PRIMARY KEY, body TEXT NOT NULL, digest TEXT NOT NULL, bytes INTEGER NOT NULL);`);
       });
     }
   } catch (error) { db.close(); throw error; }
+  const hasOrigins = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='touba_trace_origins'").get());
+  function origin(runId) {
+    if (!hasOrigins) return null;
+    const row = db.prepare('SELECT body,digest FROM touba_trace_origins WHERE run_id=?').get(runId);
+    if (!row) return null;
+    if (hash(row.body) !== row.digest) fail('TraceStorageCorrupt', 'trace origin digest mismatch');
+    return JSON.parse(row.body);
+  }
   function segment(id) {
     if (closed) fail("TraceStorageClosed", "trace database is closed");
     const row = db.prepare("SELECT * FROM touba_trace_segments WHERE id=?").get(id);
@@ -260,6 +270,25 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
         : db.prepare("SELECT id FROM touba_trace_segments WHERE run_id=? AND id>? ORDER BY id LIMIT ?").all(runId, after, limit);
       for (const { id } of rows) { const row = segment(id); yield { id, runId: row.run_id, eventCount: row.event_count, bytes: row.bytes, complete: Boolean(row.closed) }; }
     },
+    origin,
+    recordOrigin(runId, value) {
+      if (typeof runId !== 'string' || !runId || runId.length > 256 || !value
+        || !['studio','ide','cli','user','service'].includes(value.kind)
+        || typeof value.id !== 'string' || !value.id || value.id.length > 256
+        || (value.name !== undefined && (typeof value.name !== 'string' || !value.name.trim() || value.name.length > 120 || /[\u0000-\u001f\u007f]/u.test(value.name))))
+        fail('TraceOriginInvalid', 'invalid host-observed execution origin');
+      const body = JSON.stringify({ kind: value.kind, id: value.id, ...(value.name ? { name: value.name } : {}) });
+      return transaction(() => {
+        const previous = origin(runId);
+        if (previous) {
+          if (JSON.stringify(previous) !== body) fail('TraceOriginConflict', 'execution origin is immutable');
+          return;
+        }
+        const bytes = Buffer.byteLength(body) + Buffer.byteLength(runId) + 64;
+        reserve(bytes);
+        db.prepare('INSERT INTO touba_trace_origins VALUES (?,?,?,?)').run(runId, body, hash(body), bytes);
+      });
+    },
     runPage({ after = '', search = '', category = '', limit = 20 } = {}) {
       if (typeof after !== 'string' || typeof search !== 'string' || after.length > 4096 || search.length > 256
         || !['', 'refusal', 'error'].includes(category) || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new TypeError('invalid run page');
@@ -270,8 +299,9 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
       // and never search inputs, model text or arbitrary payload content.
       const rows = db.prepare(`SELECT s.run_id AS runId,count(*) AS segmentCount,sum(s.event_count) AS eventCount
         FROM touba_trace_segments s WHERE s.run_id>? AND (instr(lower(s.run_id),lower(?))>0
-          OR instr(lower(coalesce(json_extract(s.header,'$.run.entry_ref'),'')),lower(?))>0)
-        ${condition} GROUP BY s.run_id ORDER BY s.run_id LIMIT ?`).all(after, search, search, limit + 1);
+          OR instr(lower(coalesce(json_extract(s.header,'$.run.entry_ref'),'')),lower(?))>0
+          ${hasOrigins ? "OR EXISTS (SELECT 1 FROM touba_trace_origins o WHERE o.run_id=s.run_id AND (instr(lower(json_extract(o.body,'$.kind')),lower(?))>0 OR instr(lower(json_extract(o.body,'$.id')),lower(?))>0 OR instr(lower(coalesce(json_extract(o.body,'$.name'),'')),lower(?))>0))" : ''})
+        ${condition} GROUP BY s.run_id ORDER BY s.run_id LIMIT ?`).all(after, search, search, ...(hasOrigins ? [search,search,search] : []), limit + 1);
       return { runs: rows.slice(0, limit), next: rows.length > limit ? rows[limit - 1].runId : null };
     },
     archive({ destination, apply = false, protectedRunIds = [] } = {}) {
@@ -343,6 +373,9 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
             exportState.removeExportCursors(candidate.run_id);
             db.prepare("DELETE FROM touba_trace_events WHERE segment_id IN (SELECT id FROM touba_trace_segments WHERE run_id=?)").run(candidate.run_id);
             db.prepare("DELETE FROM touba_trace_segments WHERE run_id=?").run(candidate.run_id);
+            const originBytes = db.prepare('SELECT bytes FROM touba_trace_origins WHERE run_id=?').get(candidate.run_id)?.bytes ?? 0;
+            db.prepare('DELETE FROM touba_trace_origins WHERE run_id=?').run(candidate.run_id);
+            reclaimed += originBytes;
             removed += counts.n; reclaimed += counts.bytes;
           }
           db.exec("DROP TABLE touba_retention_runs");

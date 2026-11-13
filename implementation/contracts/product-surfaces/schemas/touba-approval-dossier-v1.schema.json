@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-approval-dossier-v1.schema.json",
+  "title": "touba-approval-dossier-v1", "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "request_id", "run_id", "operation_digest", "viewed_at", "arguments"],
+  "properties": {
+    "schema_version": { "const": "touba-approval-dossier-v1" },
+    "request_id": { "type": "string" }, "run_id": { "type": "string" },
+    "operation_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "viewed_at": { "type": "string" },
+    "arguments": { "type": "object", "additionalProperties": true }
+  }
+}

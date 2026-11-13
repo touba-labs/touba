@@ -61,7 +61,7 @@ test('HTTP summary exposes real server identity and scoped persisted history aft
   const get = token => fetch(`http://127.0.0.1:${core.server.address().port}/workspace/summary`, { headers: { 'x-touba-identity-token': token } });
   const owner = await (await get('owner')).json();
   assert.deepEqual(validateObject(schema, owner), []);
-  assert.equal(owner.project.touba_version, '1.4.0');
+  assert.equal(owner.project.touba_version, JSON.parse(readFileSync(new URL('../package.json', import.meta.url))).version);
   assert.match(owner.project.build_id, /^(?:source:)?[a-f0-9]{64}$/);
   assert.ok(owner.activity.some(item => item.type === 'change.applied'));
   const reader = await (await get('reader')).json();

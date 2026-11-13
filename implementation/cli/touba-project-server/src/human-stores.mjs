@@ -96,7 +96,7 @@ export function loadHumanDecisionStore(path, filter) {
   return { schema_version: DECISION_SCHEMA, decisions: read(decisions(path), filter) };
 }
 
-export function pageHumanDecisions(path, { cursor = null, limit = 50 } = {}) {
+export function pageHumanDecisions(path, { cursor = null, limit = 50, requestId = null } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
     || (cursor !== null && (typeof cursor !== "string" || !/^[1-9][0-9]{0,15}$/.test(cursor)
       || !Number.isSafeInteger(Number(cursor))))) {
@@ -104,9 +104,11 @@ export function pageHumanDecisions(path, { cursor = null, limit = 50 } = {}) {
       { code: "ToubaServeDecisionPageInvalid" });
   }
   const store = decisions(path);
-  const page = store.page({ order: "rowid", direction: "desc", limit,
+  const filter = requestId === null ? undefined : [{request_id: requestId}];
+  const page = store.page({ filter, order: "rowid", direction: "desc", limit,
     ...(cursor === null ? {} : { after: Number(cursor) }) });
-  const counts = store.countBy("schema_version");
+  const counts = requestId === null ? store.countBy("schema_version")
+    : ['touba-approval-decision-v1','touba-human-review-decision-v1'].map(value => ({value, count: store.count([{request_id: requestId, schema_version: value}])}));
   return {
     decisions: page.items,
     summary: {

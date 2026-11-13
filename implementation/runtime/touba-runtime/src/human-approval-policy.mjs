@@ -205,20 +205,7 @@ export async function authorizeApprovalDecision(runtime, request, suppliedDecisi
       || !identity(attestation.subject_ref) || !Array.isArray(attestation.roles) || attestation.roles.length > 128 || !attestation.roles.every(identity)) {
       fail("HumanApprovalAttestationInvalid", "host attestation must bind the exact request, run and decision");
     }
-    subject = attestation.subject_ref;
-    roles = [...new Set(attestation.roles)].sort();
-    if (policy?.exclude_signers) {
-      if (!validExclusions(attestation.excluded_signers) || attestation.excluded_signers.rule !== policy.exclude_signers) {
-        fail("HumanApprovalExclusionEvidenceRequired", "host must attest the source-declared signer exclusion rule for this request");
-      }
-      exclusions = structuredClone(attestation.excluded_signers);
-      if (exclusions.subject_refs.includes(subject)) fail("HumanApprovalSignerConflict", "signer is excluded by the source-declared cross-run rule");
-    } else if (attestation.excluded_signers !== undefined) {
-      fail("HumanApprovalAttestationInvalid", "signer exclusions require a source-declared rule");
-    }
-    if (policy?.role && !attestation.roles.includes(policy.role)) fail("HumanApprovalRoleRequired", "signer does not currently hold the source-required role");
-    if (policy?.distinct_from?.includes("initiator") && subject === runtime.state.initiator) fail("HumanApprovalSignerConflict", "initiator cannot sign this approval");
-    if (policy?.distinct_from?.includes("previous") && runtime.state.receipts.some(/** @param {any} item */ item => item.decision === "approved" && item.subject_ref === subject)) fail("HumanApprovalSignerConflict", "a previous signer cannot sign this approval");
+    ({ subject, roles, exclusions } = assertApprovalSigner(runtime.state, request, attestation));
     // An adapter response cannot extend the deadline while it is being verified.
     if (approvalDeadlineDue(request)) { decision = "expired"; subject = null; roles = []; exclusions = undefined; }
   }
@@ -226,6 +213,26 @@ export async function authorizeApprovalDecision(runtime, request, suppliedDecisi
   runtime.state.receipts.push({ request_id: request.request_id, run_id: request.run_id, approval_ref: request.approval_ref,
     decision, comment, subject_ref: subject, attested_roles: roles, ...(exclusions ? { excluded_signers: exclusions } : {}), accepted_at: new Date().toISOString() });
   return decision;
+}
+
+/** Shared policy check for signing and private review, with no receipt or effect.
+ * @param {any} state @param {any} request @param {any} attestation */
+export function assertApprovalSigner(state, request, attestation) {
+  if (!identity(attestation?.subject_ref) || !Array.isArray(attestation.roles)
+    || attestation.roles.length > 128 || !attestation.roles.every(identity)) fail('HumanApprovalAttestationInvalid', 'invalid signer attestation');
+  const policy = validateApprovalPolicy(request.policy), subject = attestation.subject_ref;
+  let exclusions;
+  if (policy?.exclude_signers) {
+    if (!validExclusions(attestation.excluded_signers) || attestation.excluded_signers.rule !== policy.exclude_signers) {
+      fail('HumanApprovalExclusionEvidenceRequired', 'host must attest the source-declared signer exclusion rule for this request');
+    }
+    exclusions = structuredClone(attestation.excluded_signers);
+    if (exclusions.subject_refs.includes(subject)) fail('HumanApprovalSignerConflict', 'signer is excluded by the source-declared cross-run rule');
+  } else if (attestation.excluded_signers !== undefined) fail('HumanApprovalAttestationInvalid', 'signer exclusions require a source-declared rule');
+  if (policy?.role && !attestation.roles.includes(policy.role)) fail('HumanApprovalRoleRequired', 'signer does not currently hold the source-required role');
+  if (policy?.distinct_from?.includes('initiator') && (!state.initiator || subject === state.initiator)) fail('HumanApprovalSignerConflict', 'initiator cannot sign this approval');
+  if (policy?.distinct_from?.includes('previous') && state.receipts.some(/** @param {any} item */ item => item.decision === 'approved' && item.subject_ref === subject)) fail('HumanApprovalSignerConflict', 'a previous signer cannot sign this approval');
+  return { subject, roles: [...new Set(attestation.roles)].sort(), exclusions };
 }
 
 /** Informative source value; it is never accepted as an authority proof.

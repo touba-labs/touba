@@ -1,7 +1,7 @@
 {
   "schema_version": "touba-release-index-v1",
   "product": "touba",
-  "current_version": "1.4.0",
+  "current_version": "1.5.0-rc.1",
   "policy": {
     "versioning": "semver",
     "canonical_public_channel": "github_release",
@@ -16,6 +16,41 @@
     "win32-x64"
   ],
   "versions": [
+    {
+      "version": "1.5.0-rc.1",
+      "update_build_sequence": 4,
+      "tag": "v1.5.0-rc.1",
+      "status": "candidate",
+      "summary": "Reviewed local project lifecycle, bounded host configuration, private approval dossiers and durable execution diagnostics.",
+      "release_notes": "release/notes/v1.5.0-rc.1.md",
+      "breaking_changes": [
+        "Preserve pending executions with their original toolchain. Upgrade only idle projects after reviewing the state archive."
+      ],
+      "migration_guide": "release/notes/v1.5.0-rc.1.md#migration",
+      "evidence": [
+        "implementation/cli/touba-project-server/test/project-fleet.test.mjs",
+        "implementation/cli/touba-project-server/test/approval-dossier.test.mjs"
+      ],
+      "compare_url": null,
+      "channels": [
+        "touba_hub"
+      ],
+      "artifacts": [
+        "touba-v1.5.0-rc.1-darwin-arm64.tar.gz",
+        "touba-v1.5.0-rc.1-darwin-x64.tar.gz",
+        "touba-v1.5.0-rc.1-linux-x64.tar.gz",
+        "touba-v1.5.0-rc.1-win32-x64.tar.gz",
+        "touba-v1.5.0-rc.1-darwin-arm64-setup.dmg",
+        "touba-v1.5.0-rc.1-darwin-x64-setup.dmg",
+        "touba-v1.5.0-rc.1-linux-x64-setup.deb",
+        "touba-v1.5.0-rc.1-win32-x64-setup.exe",
+        "SHA256SUMS",
+        "CHECKSUMS.json"
+      ],
+      "retirement": {
+        "status": "active"
+      }
+    },
     {
       "version": "1.4.0",
       "update_build_sequence": 3,

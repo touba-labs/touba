@@ -1,0 +1,17 @@
+{
+  "schema_version": "touba-validation-plan-review-v1",
+  "status": "preview",
+  "path": "tests/validation.json",
+  "review_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "execution": "none",
+  "before": {"schema_version": "touba-validation-plan-v1", "suites": []},
+  "after": {
+    "schema_version": "touba-validation-plan-v1",
+    "suites": [{
+      "id": "contracts", "label": "Contract tests", "kind": "contract", "engine": "node",
+      "tests": ["tests/payment.test.mjs"],
+      "inputs": {"tests/payment.test.mjs": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+      "timeout_ms": 30000, "env": [], "tool_refs": ["tool:payment.handlers/Pay"]
+    }]
+  }
+}

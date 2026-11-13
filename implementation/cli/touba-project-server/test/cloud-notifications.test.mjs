@@ -6,6 +6,13 @@ import { tmpdir } from 'node:os';
 import { createCloudNotifications, notificationForEvent } from '../src/cloud-notifications.mjs';
 import { createSqliteTriggerQueue } from '../../touba-trigger-service/src/sqlite-queue.mjs';
 
+test('human expiry, rejection and cancellation do not also emit execution incidents', () => {
+  for (const code of ['ToubaSandboxHumanDecisionExpired', 'ToubaSandboxHumanDecisionRejected', 'ToubaSandboxHumanDecisionCancelled']) {
+    assert.equal(notificationForEvent({ type: 'interaction.run.failed', payload: { error: { code } } }), null);
+  }
+  assert.equal(notificationForEvent({ type: 'interaction.run.failed', emitted_at: new Date().toISOString(), payload: { error: { code: 'HandlerFailed' } } }).kind, 'execution_failed');
+});
+
 test('forwarding minimizes data and keeps its cursor until Cloud acknowledgement', async t => {
   const root = mkdtempSync(join(tmpdir(), 'touba-notifications-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   const now = Date.now(), occurred = new Date(now).toISOString(), received = [];

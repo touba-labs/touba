@@ -1,0 +1,5 @@
+{
+  "schema_version": "touba-element-source-v1", "element_ref": "module:example",
+  "module_ref": "example", "kind": "module", "name": "example", "path": "src/example.tb",
+  "content": "module example\n", "base_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

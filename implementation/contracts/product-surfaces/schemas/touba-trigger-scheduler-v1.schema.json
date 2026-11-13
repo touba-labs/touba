@@ -7,9 +7,16 @@
   "properties": {
     "schema_version": {"const": "touba-trigger-scheduler-v1"},
     "enabled": {"type": "boolean"},
-    "status": {"enum": ["starting", "disabled", "ready", "error"]},
+    "status": {"enum": ["starting", "disabled", "ready", "degraded", "error"]},
     "error": {"type": ["string", "null"]},
     "last_poll_at": {"type": ["string", "null"]},
+    "issues": {"type": "array", "maxItems": 100, "items": {
+      "type": "object", "additionalProperties": false, "required": ["trigger_ref", "code"],
+      "properties": {
+        "trigger_ref": {"type": "string", "maxLength": 512},
+        "code": {"enum": ["TriggerScheduleUnsupported"]}
+      }
+    }},
     "schedules": {"type": "array", "maxItems": 100, "items": {
       "type": "object", "additionalProperties": false,
       "required": ["trigger_ref", "signature", "interval_ms", "slot", "status", "run_id", "error", "skipped", "next_run_at", "active"],
@@ -22,6 +29,7 @@
         "run_id": {"type": ["string", "null"]},
         "error": {"type": ["string", "null"]},
         "skipped": {"type": "integer", "minimum": 0},
+        "retry_at": {"type": "integer", "minimum": 0},
         "next_run_at": {"type": ["string", "null"]},
         "active": {"type": "boolean"}
       }

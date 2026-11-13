@@ -5,6 +5,28 @@ export const translations = {
 Object.assign(translations.fr, { crossRunCategory: 'Rechercher parmi les exécutions', allRuns: 'Toutes les exécutions', segments: 'segments', TraceRunSegmentLimit: 'Cette exécution dépasse 1 000 segments. Consultez un segment depuis son export.' });
 Object.assign(translations.en, { crossRunCategory: 'Search across executions', allRuns: 'All executions', segments: 'segments', TraceRunSegmentLimit: 'This run exceeds 1,000 segments. Open a segment from its export.' });
 export const categories = ['agent','call','flow','memory','human','budget','effect','refusal','error'];
+Object.assign(translations.fr, { origin_service: 'Application', origin_user: 'Utilisateur', origin_studio: 'client', origin_ide: 'Éditeur', origin_cli: 'CLI' });
+Object.assign(translations.en, { origin_service: 'Application', origin_user: 'User', origin_studio: 'client', origin_ide: 'Editor', origin_cli: 'CLI' });
+Object.assign(translations.fr, { origin_scheduler: 'Planificateur' });
+Object.assign(translations.en, { origin_scheduler: 'Scheduler' });
+
+export function originLabel(origin, language = 'fr') {
+  if (!origin) return '';
+  if (origin.kind === 'service' && origin.id === 'touba-project-scheduler') return label('origin_scheduler', language);
+  const category = label('origin_' + origin.kind, language);
+  return `${category} · ${origin.name || origin.id}`;
+}
+Object.assign(translations.fr, {
+  package_admission_verified: 'Admission du package vérifiée', human_approval_paused: 'En attente d’approbation',
+  human_approval_checkpoint_created: 'Point d’approbation conservé', human_approval_checkpoint_loaded: 'Point d’approbation chargé',
+  human_approval_decided: 'Décision d’approbation reçue', human_approval_expired: 'Approbation expirée', human_approval_cancelled: 'Approbation annulée',
+  trigger_event_accepted: 'Événement de déclenchement accepté', trigger_event_refused: 'Événement de déclenchement refusé',
+  trigger_execution_started: 'Exécution du déclencheur démarrée', trigger_execution_completed: 'Exécution du déclencheur terminée',
+  trigger_execution_failed: 'Exécution du déclencheur échouée', trigger_rate_limited: 'Quota du déclencheur atteint',
+  agent_decision_provider_call_attempted: 'Fournisseur de décisions consulté',
+  trigger_event_received: 'Événement de déclenchement reçu', agent_decision_provider_returned: 'Réponse du fournisseur de décisions',
+  memory_provenance_observed: 'Provenance de la mémoire observée',
+});
 Object.assign(translations.fr, {
   status_success:'Terminé', status_failure:'Échec', status_paused:'En attente', status_stopped:'Arrêté', status_cancelled:'Annulé', status_incomplete:'En cours ou interrompu', status_refused:'Refusé', admission_refused:'Admission refusée',
   findRun:'Rechercher', stopped:'Arrêté', cancelled:'Annulé', noCorrelation:'Exécution',
@@ -36,7 +58,8 @@ Object.assign(translations.fr, {
   copy:'Copier', copyJson:'Copier le JSON', copyFailed:'Copie impossible', previousEvent:'Événement précédent  ↑', nextEvent:'Événement suivant  ↓', yes:'Oui', no:'Non', eventId:'Identifiant', digest:'Empreinte SHA-256',
   ready:'Prêt · structure vérifiée', frozen:'Segment ouvert · vue figée', readingCancelled:'Lecture annulée', legendCall:'Appel enregistré', legendOutside:'Parent hors de la page',
 });
-Object.assign(translations.en, { findRun:'Search', stopped:'Stopped', cancelled:'Cancelled', noCorrelation:'Execution' });
+Object.assign(translations.en, { findRun:'Search', stopped:'Stopped', cancelled:'Cancelled', noCorrelation:'Execution', status_expired:'Approval expired', expired:'Approval expired' });
+Object.assign(translations.fr, { status_expired:'Approbation expirée', expired:'Approbation expirée' });
 Object.assign(translations.en, {
   shortcutsHint:'Shortcuts: [ executions · ] details · \\ events only · ↑ and ↓ move · 0 fit · + and − zoom · Esc clears the selection',
   display:'Display', detailLevel:'Detail level', essential:'Essential', complete:'Complete', panels:'Panels', runsShort:'Executions', detailsShort:'Details', technicalShort:'Technical',

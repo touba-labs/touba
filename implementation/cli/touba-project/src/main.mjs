@@ -96,6 +96,7 @@ const PUBLIC_COMMANDS = Object.freeze({
   mcp_import: true,
   rest_scaffold: true,
   serve: true,
+  fleet: true,
   deploy: true,
   refresh: true,
   manifest_generate: true,
@@ -130,12 +131,21 @@ try {
 } catch (error) {
   if (args[0] === "package" && args.includes("--json")) {
     process.stdout.write(`${JSON.stringify({ status: "error", command: `package ${args[1] ?? ""}`.trim(), code: error.code ?? "PackageCommandFailed", diagnostics: error.diagnostics ?? [{ code: error.code ?? "PackageCommandFailed", message: error instanceof Error ? error.message : String(error) }] })}\n`);
-  } else process.stderr.write(`touba: ${error instanceof Error ? error.message : String(error)}\n`);
+  } else {
+    const message = args[0] === 'package'
+      ? (await import('./package-diagnostics.mjs')).packageDiagnostic(error)
+      : error instanceof Error ? error.message : String(error);
+    process.stderr.write(`touba: ${message}\n`);
+  }
   process.exitCode = 2;
 }
 
 async function dispatch(rawArgs) {
   const [command, ...rest] = rawArgs;
+  if (command === 'validation') {
+    const { validationPlanCommand } = await import('./validation-plan-command.mjs');
+    return validationPlanCommand(rest);
+  }
   if (command === "compensation") {
     const { compensationCommand } = await import("./compensation-command.mjs");
     return compensationCommand(rest);
@@ -225,6 +235,10 @@ async function dispatch(rawArgs) {
     process.exit(0);
   }
   if (command === "sdk") return sdkCommand(rest);
+  if (command === 'fleet') {
+    const { fleetCommand } = await import('../../touba-project-server/src/fleet-command.mjs');
+    return fleetCommand(rest);
+  }
   if (command === "skill") throw Object.assign(new Error("SkillCommandRemoved: use touba package new <name> --org <organization> --context; migrate skill.json to touba.package.json. No legacy pack is loaded."), { code: "SkillCommandRemoved" });
   if (command === "compile") {
     return compileCommand(rest);
@@ -578,13 +592,24 @@ function serveUsage() {
     "Usage: touba serve [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-decisions <human-decisions.sqlite>] [--human-requests <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--deployment-target-url <url>] [--deployment-target-token-env NAME] [--identity-control-plane-url URL] [--identity-service-token-env NAME] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--strict] [--quiet]",
     "",
     "Starts the Touba project server for authenticated project clients.",
+    "--config touba.server.json loads an explicit, validated server profile from the project; secret values stay in the system vault or host environment.",
+    "--identity-service-token-vault reads the project key from the system vault for each authorization, including after rotation.",
+    "touba serve login --config touba.server.json --token-stdin stores the service key from standard input; logout removes this project's stored key.",
     "--max-pending-approvals <n> sets pending approval capacity (default 100, maximum 10000).",
     "--schedule-triggers runs enabled schedule entrypoints with the server's reviewed hosts and secrets; inspect and review interruptions in client.",
+    "--cloud-notifications forwards minimized operational events to the configured Cloud identity service in the background.",
     "--validation-plan <path> authorizes reviewed host test suites for client, with bounded execution and durable results.",
+    "touba validation plan --id <suite> --test <file> [--input <file>] [--engine node|python|package] [--python <absolute-path>] [--out <plan.json>]",
+    "  [--kind contract|business|package] [--label <text>] [--tool <tool-ref>] [--env <name>] [--timeout-ms <ms>] [--root <path>]",
+    "touba validation plan --refresh [--out <plan.json>] recalculates a reviewed plan's fingerprints without running tests.",
+    "  Preview first, then repeat with --apply --review-digest <sha256:...> to write the reviewed plan.",
     "--check-state validates stored state offline, without loading host modules.",
     "--package-registry URL --package-registry-trust FILE enables signed Library previews with local trust.",
     "--trigger-state <path.sqlite> --trigger-queue <path.sqlite> observes existing trigger stores read-only.",
     "--archive-state previews reversible archival of completed state; --apply performs it.",
+    "--archive-state --abandon-waits --reason <text> reviews offline abandonment of human waits; --apply requires --review-digest <sha256> from that preview. No effect or decision is executed.",
+    "--archive-state --abandon-operations --reason <text> also reviews interrupted operations and incompatible decision claims, after stopped-state, custody and effect checks.",
+    "--client-origin <https://host[:port]> authorizes one exact HTTPS browser origin; loopback browser origins need no flag. Authentication remains required.",
     "--restore-state <archive-id> previews restoration; --apply restores without overwriting current state.",
     "",
     "Defaults:",
@@ -1639,6 +1664,7 @@ function printUsage() {
   touba init [--root <path>] [--language javascript|python]
   touba sdk install javascript|python [--root <path>] [--python <executable>]
   touba sdk path javascript|python
+  touba fleet plan|start|upgrade --config <fleet.json> (touba fleet --help)
   touba sdk sandbox javascript|python --handler <path> [--root <path>]
   touba new module <domain.module> [--root <path>] [--force]
   touba package new|check|test|version|pack|checkout|submit|publish|add|list|remove ... (touba package --help)

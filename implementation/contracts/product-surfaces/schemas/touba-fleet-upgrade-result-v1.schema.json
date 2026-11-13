@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-fleet-upgrade-result-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "touba-fleet-upgrade-result-v1"
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+              },
+              "root": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "config": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "language": {
+                "enum": [
+                  "javascript",
+                  "python"
+                ]
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "host": {
+                "enum": [
+                  "127.0.0.1",
+                  "::1",
+                  "localhost"
+                ]
+              },
+              "profile_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "project_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "source_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "candidate_build": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "schedule_triggers": {
+                "type": "boolean"
+              },
+              "cloud_notifications": {
+                "type": "boolean"
+              },
+              "status": {
+                "const": "blocked"
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "id",
+              "root",
+              "config",
+              "language",
+              "port",
+              "host",
+              "profile_digest",
+              "project_digest",
+              "source_digest",
+              "candidate_build",
+              "schedule_triggers",
+              "cloud_notifications",
+              "status",
+              "code"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+              },
+              "status": {
+                "const": "complete"
+              },
+              "archive_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "archive_id"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+              },
+              "status": {
+                "const": "blocked"
+              },
+              "step": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "archive_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "step",
+              "code",
+              "archive_id"
+            ]
+          }
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 32
+    }
+  },
+  "required": [
+    "schema_version",
+    "projects"
+  ]
+}

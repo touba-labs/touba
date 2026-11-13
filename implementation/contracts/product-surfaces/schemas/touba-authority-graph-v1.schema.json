@@ -46,6 +46,7 @@
           "from": { "type": "string" },
           "to": { "type": "string" },
           "access": { "enum": ["read", "write"] },
+          "required_by_source": { "type": "boolean" },
           "evidence": { "$ref": "#/$defs/evidence" }
         }
       }

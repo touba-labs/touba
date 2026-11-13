@@ -129,7 +129,7 @@
         "additionalProperties": false,
         "required": ["action", "method", "href", "request_schema_version", "required_permission", "preconditions"],
         "properties": {
-          "action": { "enum": ["resume", "submit_decision"] },
+          "action": { "enum": ["resume", "submit_decision", "close"] },
           "method": { "const": "POST" },
           "href": { "type": "string", "minLength": 1 },
           "request_schema_version": { "type": "string", "minLength": 1 },

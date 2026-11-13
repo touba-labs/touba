@@ -21,12 +21,17 @@ export function createProjectPreparation(root, { now = Date.now } = {}) {
     get busy() { return busy; },
     async preview(principal, request = {}) {
       if (!request || typeof request !== "object" || Array.isArray(request)
-        || Object.keys(request).some(key => key !== "triggers")) fail("ToubaServePreparationInvalid", "Only explicit trigger switches are accepted");
+        || Object.keys(request).some(key => key !== "triggers")) fail("ToubaServePreparationInvalid", "Only explicit trigger configuration is accepted");
       const triggers = request.triggers ?? {};
       if (!triggers || typeof triggers !== "object" || Array.isArray(triggers) || Object.keys(triggers).length > 64
         || Object.entries(triggers).some(([ref, value]) => !/^trigger:[a-z][a-z0-9_.]*\/[A-Za-z][A-Za-z0-9_]*$/.test(ref)
-          || !value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1 || typeof value.enabled !== "boolean")) {
-        fail("ToubaServePreparationInvalid", "Trigger switches require an exact reference and a boolean enabled field");
+          || !value || typeof value !== "object" || Array.isArray(value) || !Object.keys(value).length
+          || Object.keys(value).some(key => !['enabled', 'limits'].includes(key))
+          || Object.hasOwn(value, 'enabled') && typeof value.enabled !== 'boolean'
+          || Object.hasOwn(value, 'limits') && (!value.limits || typeof value.limits !== 'object' || Array.isArray(value.limits)
+            || !Object.keys(value.limits).length || Object.entries(value.limits).some(([key, limit]) =>
+              !['max_runs_per_day', 'timeout_ms'].includes(key) || !Number.isSafeInteger(limit) || limit <= 0)))) {
+        fail("ToubaServePreparationInvalid", "Trigger configuration requires a boolean enabled field or positive integer limits");
       }
       claim();
       try {
@@ -34,7 +39,9 @@ export function createProjectPreparation(root, { now = Date.now } = {}) {
         if (pending.size >= 8) fail("ToubaServePreparationLimit", "Too many pending preparation reviews");
         const first = await prepareProject({ root, runProfile: "dev", mode: "plan" });
         const decisions = preparationDecisions(first.actions);
-        if (Object.keys(triggers).length) decisions.triggers = structuredClone(triggers);
+        for (const [ref, change] of Object.entries(triggers)) {
+          decisions.triggers[ref] = { ...decisions.triggers[ref], ...structuredClone(change) };
+        }
         const report = Object.values(decisions).some(value => Object.keys(value).length)
           ? await prepareProject({ root, runProfile: "dev", mode: "plan", hostDecisions: decisions }) : first;
         const id = randomUUID(), expires = now() + 300000;

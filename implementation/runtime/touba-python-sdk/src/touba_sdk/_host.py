@@ -40,6 +40,7 @@ def main():
         import_failed, module = True, None
     decide = getattr(module, "decide_agent_capability", getattr(module, "decide", None))
     attest = getattr(module, "attest_human_approval", None)
+    review = getattr(module, "attest_human_approval_review", None)
     compensation = getattr(module, "check_compensation_authority", None)
     resolve_initiator = getattr(module, "resolve_initiator", None)
 
@@ -66,14 +67,14 @@ def main():
             if import_failed:
                 raise ToubaAgentDecisionProviderError("PythonHostImportFailed", "Python host import failed")
             if message["method"] == "describe":
-                result = {"decide": callable(decide), "attest": callable(attest),
+                result = {"decide": callable(decide), "attest": callable(attest), "review": callable(review),
                           "compensation": callable(compensation),
                           "resolve_initiator": callable(resolve_initiator),
                           "initiator_ref": getattr(module, "initiator_ref", None),
                           "initial_modes": getattr(module, "initial_modes", None),
                           "provider_metadata": getattr(module, "provider_metadata", None)}
             else:
-                function = {"decide": decide, "attest": attest, "compensation": compensation, "resolve_initiator": resolve_initiator}.get(message["method"])
+                function = {"decide": decide, "attest": attest, "review": review, "compensation": compensation, "resolve_initiator": resolve_initiator}.get(message["method"])
                 if not callable(function):
                     raise ToubaAgentDecisionProviderError("PythonHostConfigurationInvalid", "Requested Python host callback is unavailable")
                 result = function(message["request"])

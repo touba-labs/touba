@@ -195,6 +195,18 @@ export function createSqliteTriggerStore({ filename, maxBytes = 512 * 1024 * 102
   }
   return {
     path, admit, recordResult, count, archive,
+    // Offline audit; an exact human wait can be abandoned without a new admission.
+    audit({ pendingWaits = [] } = {}) {
+      let entry_count = 0, active_operations = 0;
+      for (const row of db.prepare('SELECT trigger_ref,event_id,run_id,status FROM trigger_claims').iterate()) {
+        identity(row.trigger_ref, row.event_id); text(row.run_id, 'runId');
+        entry_count++;
+        if (['success', 'failure', 'stopped', 'cancelled'].includes(row.status)) continue;
+        if (row.status === 'pending' && pendingWaits.some(wait => wait.target_ref === row.trigger_ref && wait.run_id === row.run_id)) continue;
+        active_operations++;
+      }
+      return { entry_count, active_operations };
+    },
     consumed: (triggerRef, eventId) => Boolean(db.prepare("SELECT 1 FROM trigger_claims WHERE trigger_ref=? AND event_id=?").get(triggerRef, eventId)),
     summary: triggerRef => ({ ...db.prepare("SELECT * FROM trigger_summary WHERE trigger_ref=?").get(triggerRef) }),
     page({ triggerRef, after = 0, limit = 100 } = {}) {

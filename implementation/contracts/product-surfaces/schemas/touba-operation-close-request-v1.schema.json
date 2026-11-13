@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-operation-close-request-v1.schema.json",
+  "title": "touba-operation-close-request-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "state_digest", "reason"],
+  "properties": {
+    "schema_version": {"const": "touba-operation-close-request-v1"},
+    "state_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+  }
+}

@@ -17,6 +17,17 @@ function workspace(t) { const root = realpathSync(mkdtempSync(join(tmpdir(), "to
 function command(cwd, ...args) { return spawnSync(process.execPath, [cli, "package", ...args], { cwd, encoding: "utf8", timeout: 90000, maxBuffer: 4 * 1024 * 1024 }); }
 function edit(root, fn) { const file = join(root, "touba.package.json"), data = JSON.parse(readFileSync(file)); fn(data); writeFileSync(file, JSON.stringify(data)); }
 
+test('French starter preserves the supplied purpose and a runnable translated example', async t => {
+  const root = workspace(t);
+  const created = newPackage('fixture.fr', { root, lang: 'fr', description: 'Vérifier des échéances.', publisher: 'Fixture', license: 'MIT' });
+  const readme = readFileSync(join(created.path, 'README.md'), 'utf8');
+  assert.match(readme, /Vérifier des échéances/); assert.match(readme, /exemple de départ/);
+  assert.match(readFileSync(join(created.path, 'src/fixture/fr.tb'), 'utf8'), /Renvoyer le texte fourni/);
+  assert.equal((await checkPackage(created.path)).status, 'success');
+  assert.throws(() => newPackage('fixture.bad', { root, lang: 'bad' }), { code: 'PackageLanguageInvalid' });
+  assert.equal(existsSync(join(root, 'bad')), false);
+});
+
 test('new publications reject Python bytecode without changing legacy installed inventories', async t => {
   const root = workspace(t), pkg = newPackage('fixture.clean', { root, publisher: 'Fixture', license: 'MIT' });
   const cache = join(pkg.path, 'src', '__pycache__'); mkdirSync(cache);

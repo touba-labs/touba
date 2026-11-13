@@ -73,6 +73,29 @@ strategy RunApproval
     assert.equal(paused.reason, "human_approval_pending", JSON.stringify(paused));
     assert.equal(existsSync(marker), false);
     const pending = await getJson(`${serverBaseUrl(service)}/approvals/pending/current`);
+    const incidents = await getJson(`${serverBaseUrl(service)}/operations/incidents`);
+    assert.equal(incidents.items.length, 1);
+    assert.equal(incidents.items[0].run_id, pending.run_id);
+    assert.equal(incidents.items[0].status, 'awaiting_human');
+    assert.ok(incidents.items[0].operation_id);
+    assert.ok(Number.isFinite(Date.parse(incidents.items[0].updated_at)));
+    assert.equal((await fetch(`${serverBaseUrl(service)}/operations/incidents?cursor=invalid`)).status, 400);
+    for (const route of ['/changes/apply', '/project/prepare/apply', '/packages/apply']) {
+      const blocked = await postJson(`${serverBaseUrl(service)}${route}`, {});
+      assert.equal(blocked.status, 409, await blocked.clone().text());
+      assert.equal((await blocked.json()).code, 'ToubaServeProjectOperationsActive');
+    }
+    const manifestFile = join(root, 'touba.manifest.json'), manifestBytes = readFileSync(manifestFile);
+    const altered = JSON.parse(manifestBytes); altered.bindings['tool:demo.approval/Sentinel'].timeout_ms += 1;
+    writeJson(manifestFile, altered);
+    const incompatible = await postJson(`${serverBaseUrl(service)}/decisions`, decisionFor(pending));
+    assert.equal(incompatible.status, 409, await incompatible.clone().text());
+    assert.equal((await incompatible.json()).code, 'HumanApprovalCheckpointIncompatible');
+    const unchanged = await getJson(`${serverBaseUrl(service)}/decisions?request_id=${encodeURIComponent(pending.request_id)}`);
+    assert.equal(unchanged.pending_requests.total, 1);
+    assert.equal(unchanged.summary.total, 0, 'incompatible decisions are not recorded');
+    assert.equal(existsSync(marker), false);
+    writeFileSync(manifestFile, manifestBytes);
     await service.stop();
     service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
     await service.start();
@@ -83,6 +106,13 @@ strategy RunApproval
     const done = await response.json();
     assert.equal(done.status, "success", JSON.stringify(done));
     assert.equal(readFileSync(marker, "utf8"), "dispatched\n");
+    assert.equal((await getJson(`${base}/operations/incidents`)).items.length, 0);
+    const selected = await getJson(`${base}/decisions?request_id=${encodeURIComponent(pending.request_id)}`);
+    assert.equal(selected.decisions.length, 1);
+    assert.equal(selected.decisions[0].request_id, pending.request_id);
+    const missing = await getJson(`${base}/decisions?request_id=unknown-request`);
+    assert.equal(missing.decisions.length, 0);
+    assert.equal(missing.pending_requests.total, 0);
   } finally { await service.stop(); }
 });
 
@@ -2518,6 +2548,27 @@ test("WAIT request and decision projections reject wrong collections and duplica
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+test('host edits during attestation cannot record an incompatible decision', async t => {
+  const root = createTestProject(); t.after(() => rmSync(root, {recursive:true,force:true}));
+  configureSentinelHandler(root,join(root,'payment.log'));
+  const manifestPath = join(root,'touba.manifest.json'), before = readFileSync(manifestPath);
+  const service = createToubaProjectServer({contractsRoot,projectRoot:root,port:0,quiet:true,
+    humanApprovalAuthority: async ({request,decision,hostDecision}) => {
+      const manifest = JSON.parse(before);
+      manifest.bindings['tool:demo.approval/Sentinel'].timeout_ms += 1;
+      writeJson(manifestPath,manifest);
+      return {request_id:request.request_id,run_id:request.run_id,decision,subject_ref:hostDecision.user_ref,roles:[]};
+    }});
+  try {
+    await service.start(); await runSandbox(serverBaseUrl(service), WAIT_TARGET);
+    const pending = await getJson(`${serverBaseUrl(service)}/approvals/pending/current`);
+    const response = await postJson(`${serverBaseUrl(service)}/decisions`,decisionFor(pending));
+    assert.equal(response.status,409,await response.clone().text());
+    assert.equal((await response.json()).code,'HumanApprovalCheckpointIncompatible');
+    assert.equal(humanRecord(root,pending.request_id).human_wait.resolution,null);
+  } finally { await service.stop(); }
 });
 
 test("configured attestation timeout refuses without claiming and permits a later verified decision", async t => {

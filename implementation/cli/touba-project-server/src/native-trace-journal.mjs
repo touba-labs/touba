@@ -122,7 +122,7 @@ function validateReader(reader, runId, secrets) {
     if (secrets.some(s => typeof s === "string" && s && raw.includes(JSON.stringify(s).slice(1, -1)))) fail("ToubaServeNativeTraceRejected");
   }
 }
-export async function withNativeTrace({ projectRoot, runId, phase, secretValues = [] }, execute) {
+export async function withNativeTrace({ projectRoot, runId, phase, origin, secretValues = [] }, execute) {
   if (!PHASES.includes(phase)) fail("ToubaServeNativeTracePhaseInvalid");
   if (typeof runId !== "string" || !runId || runId.length > 256) fail("ToubaServeNativeTraceRunInvalid");
   const key = JSON.stringify([projectRoot, runId]);
@@ -151,6 +151,7 @@ export async function withNativeTrace({ projectRoot, runId, phase, secretValues 
       if (!reader) { const { events, ...header } = result.trace; reader = { header, events: () => events }; }
       validateReader(reader, runId, secretValues);
       store = journal(projectRoot, false);
+      if (phase === 'initial' && origin) store.recordOrigin(runId, origin);
       const previous = value.segments.find(s => s.reference)?.reference;
       if (previous && logicalRunDigest(store.header(previous.segment_id).run) !== logicalRunDigest(reader.header.run)) fail("ToubaServeNativeTraceRejected");
       let stored;

@@ -4479,6 +4479,26 @@ function inspectManifest({ currentManifest, reviewedManifest = currentManifest, 
   manifestPath, diagnostics, actions, mode }) {
   for (const [ref, expected] of Object.entries(expectedManifest.triggers ?? {})) {
     const actual = reviewedManifest?.triggers?.[ref];
+    const limitKeys = ["max_runs_per_day", "timeout_ms"];
+    if (actual && limitKeys.every(key => Number.isSafeInteger(actual.limits?.[key]) && actual.limits[key] > 0
+      && Number.isSafeInteger(expected.limits?.[key]) && actual.limits[key] <= expected.limits[key])
+      && limitKeys.some(key => actual.limits[key] < expected.limits[key])) {
+      diagnostics.push({ code: 'ManifestTriggerLimitsRetained', severity: 'info',
+        message: `Trigger ${ref} keeps its configured limits. Review an explicit host decision to raise them within the source limits.`,
+        trigger_ref: ref, configured_limits: structuredClone(actual.limits), declared_limits: structuredClone(expected.limits) });
+    }
+    // A narrower source can be reconciled by an explicit host decision. Expose
+    // that proposal while keeping an unreviewed preparation refused. Never
+    // increase a host limit, repair malformed values or enable a trigger here.
+    if (actual && typeof actual.enabled === "boolean" && actual.source?.kind === expected.source.kind
+      && limitKeys.every(key => Number.isSafeInteger(actual.limits?.[key]) && actual.limits[key] > 0
+        && Number.isSafeInteger(expected.limits?.[key]) && expected.limits[key] > 0)
+      && limitKeys.some(key => actual.limits[key] > expected.limits[key])) {
+      actions.push(action("review_trigger_limits", manifestPath, {
+        target_ref: ref, field: "limits", before: structuredClone(actual.limits),
+        after: Object.fromEntries(limitKeys.map(key => [key, Math.min(actual.limits[key], expected.limits[key])])),
+      }));
+    }
     if (!actual || typeof actual.enabled !== "boolean" || actual.source?.kind !== expected.source.kind
       || ["max_runs_per_day", "timeout_ms"].some(key => !Number.isSafeInteger(actual.limits?.[key])
         || actual.limits[key] <= 0 || actual.limits[key] > expected.limits[key])) {

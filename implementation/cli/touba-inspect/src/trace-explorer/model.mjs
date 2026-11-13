@@ -43,6 +43,14 @@ export function projectEvent(event) {
       .filter(([key, value]) => ['flow_graph_ref', 'node_id', 'owner_ref', 'module_ref'].includes(key) && typeof value === 'string')
       .map(([key, value]) => [key, value.slice(0, 4096)])) } : {}), payload };
 }
+export function terminalTraceStatus(event) {
+  if (event?.kind !== 'run_completed') return 'incomplete';
+  const { status, reason } = event.payload ?? {};
+  if (status === 'stopped' && ['human_approval_pending', 'agent_human_review_pending', 'user_input_pending'].includes(reason)) return 'paused';
+  if (reason === 'human_approval_expired') return 'expired';
+  return status ?? 'incomplete';
+}
+
 export function eventCategory(kind, payload = {}) {
   if (kind === 'tool_execution_status' && payload.status === 'refused') return payload.phase === 'admission' ? 'refusal' : 'error';
   if (/refused|rejected|denied/u.test(kind)) return 'refusal';

@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "touba-cli"
-version = "1.4.0"
+version = "1.5.0-rc.1"
 dependencies = [
  "serde_json",
  "touba-compiler",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "touba-compiler"
-version = "1.4.0"
+version = "1.5.0-rc.1"
 dependencies = [
  "cc",
  "serde",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "touba-sandbox"
-version = "1.4.0"
+version = "1.5.0-rc.1"
 dependencies = [
  "serde",
  "serde_json",

@@ -51,6 +51,9 @@ test("state maintenance refuses a live owner, pending operations, custom paths a
   symlinkSync(join(options.projectRoot, "touba.secrets.dev.json"), join(root, "cost-observatory.json"));
   assert.throws(() => archiveProjectState(options, checkToubaProjectState), { code: "ToubaStatePathInvalid" });
   rmSync(join(root, "cost-observatory.json"));
+  symlinkSync(join(options.projectRoot, 'missing.json'), join(root, 'cost-observatory.json'));
+  assert.throws(() => archiveProjectState(options, checkToubaProjectState), { code: 'ToubaStatePathInvalid' });
+  rmSync(join(root, 'cost-observatory.json'));
   enqueueInteractionOperation({ sessionsPath: join(root, "interaction-sessions.sqlite"), sessionId: options.session.session_id,
     runId: "run-active", message: { message_id: "active", display_text: "hello", attachments: [], requested_by: { kind: "studio", id: "isolated-test" } } });
   assert.throws(() => archiveProjectState({ ...options, applyState: true }, checkToubaProjectState), { code: "ToubaStateNotQuiescent" });

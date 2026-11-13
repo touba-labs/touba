@@ -50,7 +50,8 @@
       "required": ["kind", "id"],
       "properties": {
         "kind": { "enum": ["studio", "ide", "cli", "user", "service"] },
-        "id": { "type": "string", "minLength": 1 }
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 }
       }
     },
     "messages": {
@@ -70,6 +71,14 @@
         "properties": {
           "message_id": { "type": "string", "minLength": 1 },
           "role": { "enum": ["user", "touba"] },
+          "requested_by": {
+            "type": "object", "additionalProperties": false, "required": ["kind", "id"],
+            "properties": {
+              "kind": { "enum": ["studio", "ide", "cli", "user", "service"] },
+              "id": { "type": "string", "minLength": 1 },
+              "name": { "type": "string", "minLength": 1, "maxLength": 120 }
+            }
+          },
           "created_at": { "type": "string", "minLength": 1 },
           "display_text": { "type": "string" },
           "operation_id": { "type": "string", "minLength": 1 },

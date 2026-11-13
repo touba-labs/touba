@@ -7,7 +7,8 @@ import { indexedStore } from '../../../runtime/touba-runtime/src/sqlite-record-s
 import { readPreparedProject } from './prepared-project.mjs';
 import { inspectHandlerImplementation } from './handler-implementation.mjs';
 
-const fail = code => { throw Object.assign(new Error(code), {code}); };
+const fail = (code, field, suiteId) => { throw Object.assign(new Error(field ? `${code}: ${field}${suiteId ? ` (suite ${suiteId})` : ''}` : code),
+  { code, ...(field ? { field } : {}), ...(suiteId ? { suite_id: suiteId } : {}) }); };
 const digest = value => 'sha256:' + createHash('sha256').update(value).digest('hex');
 const ownObject = value => value && typeof value === 'object' && !Array.isArray(value);
 const uuid = value => /^[a-f0-9-]{36}$/.test(value ?? '');
@@ -28,46 +29,65 @@ function projectFile(root, path) {
 export function readValidationPlan(root, path) {
   if (!path) return [];
   if (statSync(path).size > 512 * 1024) fail('ToubaValidationPlanInvalid');
-  const plan = JSON.parse(readFileSync(path, 'utf8'));
+  let plan;
+  try { plan = JSON.parse(readFileSync(path, 'utf8')); }
+  catch { fail('ToubaValidationPlanInvalid', 'document'); }
+  return validateValidationPlan(root, plan);
+}
+
+export function validateValidationPlan(root, plan) {
+  root = realpathSync(root);
   if (!ownObject(plan) || plan.schema_version !== 'touba-validation-plan-v1'
     || Object.keys(plan).some(key => !['schema_version', 'suites'].includes(key))
     || !Array.isArray(plan.suites) || plan.suites.length > 32) fail('ToubaValidationPlanInvalid');
   const seen = new Set();
-  return plan.suites.map(suite => {
-    if (!ownObject(suite) || Object.keys(suite).some(key => !['id','label','kind','engine','tests','inputs','timeout_ms','python','env','tool_refs'].includes(key))
-      || !/^[a-z][a-z0-9_-]{0,63}$/.test(suite.id ?? '') || seen.has(suite.id)
-      || typeof suite.label !== 'string' || !suite.label.trim() || suite.label.length > 120
-      || !['contract','business','package'].includes(suite.kind) || !['node','python','package'].includes(suite.engine)
-      || (suite.kind === 'package') !== (suite.engine === 'package')
-      || !Array.isArray(suite.tests) || suite.tests.length < 1 || suite.tests.length > 32
-      || new Set(suite.tests).size !== suite.tests.length
-      || !ownObject(suite.inputs) || Object.keys(suite.inputs).length > 2048
-      || !Number.isSafeInteger(suite.timeout_ms) || suite.timeout_ms < 1000 || suite.timeout_ms > 120000
-      || !Array.isArray(suite.env ?? []) || (suite.env ?? []).length > 16
-      || !Array.isArray(suite.tool_refs ?? []) || (suite.tool_refs ?? []).length > 128
-      || (suite.tool_refs ?? []).some(ref=>typeof ref!=='string'||ref.length>512||!ref.startsWith('tool:'))
-      || ((suite.tool_refs ?? []).length>0 && suite.kind!=='contract')) fail('ToubaValidationPlanInvalid');
+  return plan.suites.map((suite, index) => {
+    const at = `suites[${index}]`;
+    if (!ownObject(suite)) fail('ToubaValidationPlanInvalid', at);
+    if (!/^[a-z][a-z0-9_-]{0,63}$/.test(suite.id ?? '') || seen.has(suite.id)) fail('ToubaValidationPlanInvalid', `${at}.id`);
+    const requireField = (condition, field, code = 'ToubaValidationPlanInvalid') => {
+      if (!condition) fail(code, `${at}.${field}`, suite.id);
+    };
+    requireField(Object.keys(suite).every(key => ['id','label','kind','engine','tests','inputs','timeout_ms','python','env','tool_refs'].includes(key)), 'fields');
+    requireField(typeof suite.label === 'string' && Boolean(suite.label.trim()) && suite.label.length <= 120, 'label');
+    requireField(['contract','business','package'].includes(suite.kind), 'kind');
+    requireField(['node','python','package'].includes(suite.engine) && (suite.kind === 'package') === (suite.engine === 'package'), 'engine');
+    requireField(Array.isArray(suite.tests) && suite.tests.length >= 1 && suite.tests.length <= 32
+      && new Set(suite.tests).size === suite.tests.length, 'tests');
+    requireField(ownObject(suite.inputs) && Object.keys(suite.inputs).length <= 2048, 'inputs');
+    requireField(Number.isSafeInteger(suite.timeout_ms) && suite.timeout_ms >= 1000 && suite.timeout_ms <= 120000, 'timeout_ms');
+    requireField(Array.isArray(suite.env ?? []) && (suite.env ?? []).length <= 16, 'env');
+    requireField(Array.isArray(suite.tool_refs ?? []) && (suite.tool_refs ?? []).length <= 128
+      && (suite.tool_refs ?? []).every(ref => typeof ref === 'string' && ref.length <= 512 && ref.startsWith('tool:'))
+      && (!(suite.tool_refs ?? []).length || suite.kind === 'contract'), 'tool_refs');
     seen.add(suite.id);
     let bytes = 0;
-    for (const [path, hash] of Object.entries(suite.inputs)) {
-      if (!/^sha256:[a-f0-9]{64}$/.test(hash)) fail('ToubaValidationPlanInvalid');
-      const file = projectFile(root,path); bytes += statSync(file).size;
-      if (bytes > 64*1024*1024 || digest(readFileSync(file)) !== hash) fail('ToubaValidationInputChanged');
+    for (const [position, [path, hash]] of Object.entries(suite.inputs).entries()) {
+      requireField(/^sha256:[a-f0-9]{64}$/.test(hash), `inputs[${position}].digest`);
+      let file;
+      try { file = projectFile(root,path); } catch { fail('ToubaValidationPathInvalid', `${at}.inputs[${position}]`, suite.id); }
+      bytes += statSync(file).size;
+      requireField(bytes <= 64*1024*1024 && digest(readFileSync(file)) === hash, `inputs[${position}]`, 'ToubaValidationInputChanged');
     }
-    for (const path of suite.tests) {
-      if (!Object.hasOwn(suite.inputs,path)) fail('ToubaValidationPlanInvalid');
-      if (suite.engine === 'node' && !/\.test\.(?:mjs|cjs|js)$/.test(path)) fail('ToubaValidationPlanInvalid');
-      if (suite.engine === 'python' && !/\.py$/.test(path)) fail('ToubaValidationPlanInvalid');
-      if (suite.engine === 'package' && (suite.tests.length !== 1 || basename(path) !== 'touba.package.json')) fail('ToubaValidationPlanInvalid');
+    for (const [position, path] of suite.tests.entries()) {
+      const field = `tests[${position}]`;
+      requireField(typeof path === 'string' && Object.hasOwn(suite.inputs,path), field);
+      requireField(suite.engine !== 'node' || /\.test\.(?:mjs|cjs|js)$/.test(path), field);
+      requireField(suite.engine !== 'python' || /\.py$/.test(path), field);
+      requireField(suite.engine !== 'package' || (suite.tests.length === 1 && basename(path) === 'touba.package.json'), field);
     }
     if (suite.engine === 'python') {
-      if (!ownObject(suite.python) || Object.keys(suite.python).sort().join(',') !== 'command,digest'
-        || !isAbsolute(suite.python.command ?? '') || !/^sha256:[a-f0-9]{64}$/.test(suite.python.digest ?? '')
-        || !statSync(suite.python.command).isFile() || statSync(suite.python.command).size > 128*1024*1024
-        || digest(readFileSync(suite.python.command)) !== suite.python.digest) fail('ToubaValidationPythonInvalid');
-    } else if (suite.python !== undefined) fail('ToubaValidationPlanInvalid');
-    for (const key of suite.env ?? []) if (!/^[A-Z][A-Z0-9_]{0,100}$/.test(key)
-      || /^(NODE_|PYTHON|LD_|DYLD_|BASH_ENV$|ENV$|PATH$|SYSTEMROOT$|WINDIR$)/.test(key)) fail('ToubaValidationEnvironmentInvalid');
+      let valid = false;
+      try {
+        valid = ownObject(suite.python) && Object.keys(suite.python).sort().join(',') === 'command,digest'
+          && typeof suite.python.command === 'string' && isAbsolute(suite.python.command) && /^sha256:[a-f0-9]{64}$/.test(suite.python.digest ?? '')
+          && statSync(suite.python.command).isFile() && statSync(suite.python.command).size <= 128*1024*1024
+          && digest(readFileSync(suite.python.command)) === suite.python.digest;
+      } catch { /* Report the field, never an interpreter path or host error. */ }
+      requireField(valid, 'python', 'ToubaValidationPythonInvalid');
+    } else requireField(suite.python === undefined, 'python');
+    for (const [position, key] of (suite.env ?? []).entries()) requireField(typeof key === 'string' && /^[A-Z][A-Z0-9_]{0,100}$/.test(key)
+      && !/^(NODE_|PYTHON|LD_|DYLD_|BASH_ENV$|ENV$|PATH$|SYSTEMROOT$|WINDIR$)/.test(key), `env[${position}]`, 'ToubaValidationEnvironmentInvalid');
     return structuredClone(suite);
   });
 }
@@ -154,7 +174,17 @@ export function validationProcess(root, suite) {
 /** Fixed, reviewed suite IDs only. No HTTP-controlled command, argument or environment. */
 export function createProjectValidation({root, planPath, emit = () => {}, now = Date.now}) {
   root = realpathSync(root);
-  const suites = readValidationPlan(root, planPath), previews = new Map();
+  let suites = [], diagnostic = null;
+  try { suites = readValidationPlan(root, planPath); }
+  catch (error) {
+    // A rejected test plan disables host testing, not project inspection.
+    // Neither raw filesystem errors nor configuration values leave this boundary.
+    diagnostic = { code: ['ToubaValidationPlanInvalid', 'ToubaValidationPathInvalid', 'ToubaValidationInputChanged',
+      'ToubaValidationPythonInvalid', 'ToubaValidationEnvironmentInvalid'].includes(error.code)
+      ? error.code : 'ToubaValidationPlanInvalid',
+      ...(error.field ? { field: error.field } : {}), ...(error.suite_id ? { suite_id: error.suite_id } : {}) };
+  }
+  const previews = new Map();
   const store = validationStore(join(root,'.touba/project-validation.sqlite'));
   let active = null, task = null, closed = false;
   // Recovery never reruns a test whose host effects are uncertain.
@@ -168,15 +198,18 @@ export function createProjectValidation({root, planPath, emit = () => {}, now = 
     handlerEvidence() {
       const coverage=new Map();
       for(const suite of suites.filter(item=>item.tool_refs?.length)) {
-        let revision, manifest, latest;
+        let revision, manifest, manifestPath, latest;
         try {
           revision=readRevision(root,suite);const prepared=readPreparedProject(root);
           const manifestInput=prepared.inputs.find(input=>input.kind==='manifest');
-          if(manifestInput)manifest=JSON.parse(readFileSync(projectFile(root,manifestInput.path),'utf8'));
+          if(manifestInput) {
+            manifestPath=projectFile(root,manifestInput.path);
+            manifest=JSON.parse(readFileSync(manifestPath,'utf8'));
+          }
           latest=store.read([{suite_id:suite.id,revision}],{order:'rowid',direction:'desc',limit:1})[0];
         }catch{/* No current evidence when preparation, test inputs or interpreter drift. */}
         for(const ref of suite.tool_refs) {
-          const handler=inspectHandlerImplementation(root,manifest?.bindings?.[ref]?.handler);
+          const handler=inspectHandlerImplementation(root,manifest?.bindings?.[ref]?.handler,{manifestPath});
           const proved=latest&&handler.implementation_status==='present'&&Object.hasOwn(suite.inputs,handler.candidate_path);
           const entries=coverage.get(ref)??[];
           entries.push({status:proved?latest.status:'missing',label:suite.label,id:proved?latest.id:null});coverage.set(ref,entries);
@@ -191,11 +224,13 @@ export function createProjectValidation({root, planPath, emit = () => {}, now = 
     },
     inspect() {
       return {schema_version:'touba-project-validation-v1', enabled:suites.length > 0, active_id:active?.id ?? null,
+        ...(diagnostic ? { diagnostic } : {}),
         suites:suites.map(({id,label,kind,engine,timeout_ms}) => ({id,label,kind,engine,timeout_ms})),
         runs:store.read(undefined,{order:'rowid',direction:'desc',limit:50})};
     },
     preview(actor, id) {
       scope(actor); if (closed || active) fail('ToubaValidationBusy');
+      if (diagnostic) fail(diagnostic.code, diagnostic.field, diagnostic.suite_id);
       for (const [key, item] of previews) if (item.expires <= now() || item.actor === actor) previews.delete(key);
       if (previews.size >= 8) fail('ToubaValidationCapacity');
       const suite=find(id), revision=readRevision(root,suite), token=randomUUID(), expires=now()+300000;

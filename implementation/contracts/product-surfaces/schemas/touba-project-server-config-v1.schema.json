@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-project-server-config-v1.schema.json",
+  "title": "touba-project-server-config-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {"const": "touba-project-server-config-v1"},
+    "host": {"enum": ["127.0.0.1", "::1", "localhost", "0.0.0.0", "::"]},
+    "port": {"type": "integer", "minimum": 0, "maximum": 65535},
+    "client_origins": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "maxLength": 2048}},
+    "identity_control_plane_url": {"type": "string", "maxLength": 2048},
+    "identity_service_token_env": {"$ref": "#/$defs/environment"},
+    "identity_service_token_vault": {"const": true},
+    "auth_token_env": {"$ref": "#/$defs/environment"},
+    "identity_file": {"$ref": "#/$defs/path"},
+    "secrets_file": {"$ref": "#/$defs/path"},
+    "schedule_triggers": {"type": "boolean"},
+    "cloud_notifications": {"type": "boolean"},
+    "validation_plan": {"$ref": "#/$defs/path"},
+    "package_hosts": {"type": "boolean"},
+    "human_approval_host": {"$ref": "#/$defs/hostModule"},
+    "agent_decision_provider": {"$ref": "#/$defs/hostModule"},
+    "package_registry": {"type": "string", "maxLength": 2048},
+    "package_registry_trust": {"$ref": "#/$defs/path"},
+    "deployment_target_url": {"type": "string", "maxLength": 2048},
+    "deployment_target_token_env": {"$ref": "#/$defs/environment"},
+    "trace_pure_functions": {"enum": ["full", "calls"]},
+    "max_pending_approvals": {"type": "integer", "minimum": 1, "maximum": 10000}
+  },
+  "$defs": {
+    "environment": {"type": "string", "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"},
+    "path": {"type": "string", "minLength": 1, "maxLength": 2048},
+    "hostModule": {"type": "string", "minLength": 1, "maxLength": 2048}
+  }
+}

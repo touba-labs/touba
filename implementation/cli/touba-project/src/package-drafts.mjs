@@ -6,6 +6,7 @@ import { PACKAGE_LIMITS, PACKAGE_NAME, exactPackageVersion, packageDigest, packa
 import { assertAuthorWritable, assertPlainDirectory, findPackageWorkspace } from './package-store.mjs';
 import { checkPackageArchive, packPackage, unpackPackage } from './packages.mjs';
 import { automationIdentity, automationDescriptor, automationRequestId } from './package-automation.mjs';
+import { publicationRefusal } from './package-diagnostics.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
@@ -26,8 +27,7 @@ function descriptor(value, expected) {
 }
 function accepted(result) {
   if (!result.ok) {
-    const code = /^[a-z_]{1,80}$/.test(result.data.error ?? '') ? result.data.error : 'draft_request_refused';
-    throw packageError('PackageDraftRefused', code);
+    throw publicationRefusal('PackageDraftRefused', result, 'draft_request_refused');
   }
   return result.data;
 }
@@ -81,7 +81,7 @@ export async function checkoutPackageDraft(id, options = {}) {
   return cancellable(options, async signal => {
     let identity, temporary, destination, owned = false;
     try {
-      identity = options.automation ? automationIdentity(registry, options) : await authorizePublication(registry, { noBrowser: options['no-browser'] === true, signal, notify: options.notify });
+      identity = options.automation ? automationIdentity(registry, options) : await authorizePublication(registry, { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true, signal, notify: options.notify });
       const api = identity.api ?? registry;
       const response = accepted(await publicationDocument(`${api}/drafts/${id}`, requestOptions(identity.token, signal)));
       const row = descriptor(options.automation ? automationDescriptor(response) : response, id);
@@ -142,7 +142,7 @@ export async function submitPackageDraft(path, options = {}) {
         const packed = await packPackage(root, { output: join(temporary, 'package.tar.gz') });
         const checked = await checkPackageArchive(packed.output, { publishing: true });
         if (checked.manifest.name !== author.document.name || checked.manifest.version !== author.document.version) throw packageError('PackageProjectChanged', 'package identity changed while preparing the submission');
-        identity = options.automation ? automationIdentity(registry, options) : await authorizePublication(registry, { noBrowser: options['no-browser'] === true, signal, notify: options.notify });
+        identity = options.automation ? automationIdentity(registry, options) : await authorizePublication(registry, { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true, signal, notify: options.notify });
         const api = identity.api ?? registry;
         let previous;
         if (selected) {

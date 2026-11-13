@@ -63,6 +63,14 @@
         },
         "proposed_at": { "type": "string" },
         "proposal_reason": { "type": "string" },
+        "diffs": {
+          "type": "array", "maxItems": 32,
+          "items": { "type": "object", "additionalProperties": false,
+            "required": ["path", "diff"], "properties": {
+              "path": { "type": "string" }, "diff": { "type": "string", "maxLength": 270000 }
+            }
+          }
+        },
         "content_sha256": { "type": "string" },
         "decided_at": { "type": ["string", "null"] },
         "decided_by": {

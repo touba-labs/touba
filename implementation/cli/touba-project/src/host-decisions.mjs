@@ -168,14 +168,14 @@ export function applyHostDecisions(manifest, decisions, requirements, fragmentTo
       }
       if (patch.limits !== undefined) {
         knownKeys(patch.limits, new Set(["max_runs_per_day", "timeout_ms"]), `triggers.${diagnosticKey(ref)}.limits`);
-        const normalize = value => {
-          requireObject(value);
+        const normalize = (value, enforceSource = true) => {
+          knownKeys(value, new Set(["max_runs_per_day", "timeout_ms"]), `triggers.${diagnosticKey(ref)}.limits`);
           for (const [key, limit] of Object.entries(value)) {
-            if (!Number.isSafeInteger(limit) || limit <= 0 || limit > requirements.triggers[ref].limits[key]) fail("HostDecisionLimitInvalid", { target_ref: ref, field: key });
+            if (!Number.isSafeInteger(limit) || limit <= 0 || (enforceSource && limit > requirements.triggers[ref].limits[key])) fail("HostDecisionLimitInvalid", { target_ref: ref, field: key });
           }
           return structuredClone(value);
         };
-        change(ref, "limits", target, normalize({ ...target.limits, ...patch.limits }), requirements.triggers[ref].limits, normalize);
+        change(ref, "limits", target, normalize({ ...target.limits, ...patch.limits }), requirements.triggers[ref].limits, value => normalize(value, false));
       }
     }
   }

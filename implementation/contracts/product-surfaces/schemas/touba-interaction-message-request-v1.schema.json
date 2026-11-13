@@ -18,7 +18,8 @@
       "required": ["kind", "id"],
       "properties": {
         "kind": { "enum": ["studio", "ide", "cli", "user", "service"] },
-        "id": { "type": "string", "minLength": 1 }
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 }
       }
     }
   }

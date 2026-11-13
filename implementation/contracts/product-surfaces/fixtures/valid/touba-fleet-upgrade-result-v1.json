@@ -1,0 +1,10 @@
+{
+  "schema_version": "touba-fleet-upgrade-result-v1",
+  "projects": [
+    {
+      "id": "example",
+      "status": "complete",
+      "archive_id": "example-archive"
+    }
+  ]
+}

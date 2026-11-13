@@ -6,6 +6,7 @@ export function eventVisibleToIdentity(type, identity) {
   if (identity === null) return true; // Explicit project-bearer mode.
   if (identity?.active !== true) return false;
   const permits = permission => identity.permissions?.includes("*") || identity.permissions?.includes(permission);
+  if (type === 'approval.dossier.viewed') return permits('audit.read');
   if (type.startsWith("touba.server.")) return true;
   if (/^(project|artifact|validation)\./u.test(type)) return permits("projects.read");
   if (/^(change|element|package)\./u.test(type)) return permits("governance.read");

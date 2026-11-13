@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { publishPackage } from "./package-publish.mjs";
 import { publishRemotePackage } from "./package-publish-remote.mjs";
@@ -7,11 +7,16 @@ import { checkoutPackageDraft, submitPackageDraft } from "./package-drafts.mjs";
 import { submitCiPackage } from "./package-ci.mjs";
 import { requestPackagePublication } from "./package-automation.mjs";
 import { authorIdentity, newPackage, testPackage, versionPackage } from "./package-author.mjs";
+import { configureRegistry, registryOptions } from './package-registry-config.mjs';
+import { authorizeRegistry, publicationUrl } from './package-identity.mjs';
 import { addPackage, addRegistryPackage, checkPackage, checkPackageArchive, packPackage, removePackage } from "./packages.mjs";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, packageError } from "./package-contract.mjs";
 import { findPackageWorkspace, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
 
-export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organization>] [--description <text>] [--publisher <text>] [--license <license>] [--version <version>] [--context] [--yes] [--root <parent>]
+export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organization>] [--description <text>] [--publisher <text>] [--license <license>] [--version <version>] [--lang fr|en] [--context] [--yes] [--root <parent>]
+       touba package registry <URL> --trust <verified-keys.json> [--root <workspace>]
+       touba package login [--registry <URL>] [--read] [--no-browser] [--root <workspace>]
+       touba package logout [--registry <URL>] [--read] [--root <workspace>]
        touba package check [directory|archive.tar.gz] [--publishing] [--root <workspace>]
        touba package test [directory] [--env <NAME> ...] [--root <author>]
        touba package version [patch|minor|major|version] [--root <author>]
@@ -28,12 +33,19 @@ export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organizati
        touba package list [--root <workspace>]
        touba package remove <name> [--root <workspace>]
 All commands support --json. new and version ask questions only in an interactive terminal.
+Author and private-read operations support --session-only to avoid saving a credential.
+Installation registry and trust options may be omitted after package registry configuration.
 Creation is offline. Package tests execute reviewed host code, never during check/add/pack.`;
 
 function parse(args) {
   const [action, ...rest] = args;
   const allowed = { new: ["context", "yes", "root", "org", "description", "publisher", "license", "version"], check: ["root", "publishing"], test: ["root", "env"], version: ["root"], pack: ["root", "output"], publish: ["root", "registry", "no-browser"], checkout: ["root", "registry", "no-browser"], submit: ["root", "registry", "draft", "no-browser", "ci"], add: ["root", "registry", "trust", "version", "allow-draft", "no-browser"], list: ["root"], remove: ["root"] };
   allowed.checkout.push("automation");
+  allowed.new.push("lang");
+  allowed.registry = ["root", "trust"];
+  allowed.login = ['registry', 'root', 'no-browser', 'read', 'session-only'];
+  allowed.logout = ['registry', 'root', 'read'];
+  for (const key of ['checkout', 'submit', 'publish', 'add']) allowed[key].push('session-only');
   allowed.submit.push("automation", "request-id");
   allowed["request-publication"] = ["automation", "registry", "revision", "request-id"];
   if (!Object.hasOwn(allowed, action)) throw packageError("PackageCommandInvalid", PACKAGE_USAGE);
@@ -48,7 +60,7 @@ function parse(args) {
     const key = arg.slice(2);
     if (key !== "json" && !allowed[action].includes(key)) throw packageError("PackageOptionInvalid", `option not valid for package ${action}: ${arg}`);
     if (Object.hasOwn(options, key) && key !== "env") throw packageError("PackageOptionInvalid", `duplicate option ${arg}`);
-    if (["json", "context", "yes", "publishing", "allow-draft", "no-browser", "automation"].includes(key)) options[key] = true;
+    if (["json", "context", "yes", "publishing", "allow-draft", "no-browser", "automation", "read", "session-only"].includes(key)) options[key] = true;
     else {
       if (!rest[i + 1] || rest[i + 1].startsWith("--")) throw packageError("PackageOptionInvalid", `missing value for ${arg}`);
       const value = rest[++i];
@@ -62,9 +74,7 @@ function parse(args) {
     if (options.version || target.split("@").length !== 2 || target.endsWith("@")) throw packageError("PackageOptionInvalid", "specify exactly one nonempty version");
     [target, options.version] = target.split("@");
   }
-  if (action === "add" && options.version && !options.registry) throw packageError("PackageOptionInvalid", "a version selection requires --registry; local content has its own exact version");
-  if (options["allow-draft"] && !options.registry) throw packageError("PackageOptionInvalid", "--allow-draft requires --registry");
-  if (options.automation && (options.ci || options['no-browser'])) throw packageError("PackageOptionInvalid", "choose automation, CI, or interactive identity explicitly");
+  if ((options.automation && (options.ci || options['no-browser'] || options['session-only'])) || (options.ci && options['session-only'])) throw packageError("PackageOptionInvalid", "choose automation, CI, or interactive identity explicitly");
   if (options['request-id'] && !options.automation) throw packageError("PackageOptionInvalid", "--request-id requires --automation");
   return { action, target, options };
 }
@@ -110,8 +120,22 @@ async function create(target, options) {
 export async function packageCommand(args) {
   if (!args.length || args.includes("--help") || args[0] === "-h") return { text: PACKAGE_USAGE, exitCode: 0 };
   const { action, target, options } = parse(args);
+  if (action === 'add' && (options.version || options.registry || (PACKAGE_NAME.test(target ?? '') && !existsSync(resolve(target))))) {
+    Object.assign(options, registryOptions(options));
+    if (options.version && !options.registry) throw packageError('RegistryConfigurationRequired', 'configure this project with touba package registry <url> --trust <verified-file>, or pass --registry and --trust');
+  }
+  if (options['allow-draft'] && !options.registry) throw packageError('PackageOptionInvalid', '--allow-draft requires a registry');
   let report;
-  if (action === "new") report = await create(target, options);
+  if (action === 'login' || action === 'logout') {
+    if (target) throw packageError('PackageOptionInvalid', 'use --registry to select the registry');
+    const registry = publicationUrl(options.registry ?? registryOptions(options).registry);
+    const identity = await authorizeRegistry(registry, { access: options.read ? 'read' : 'publication', forceLogin: action === 'login', logout: action === 'logout', noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true });
+    await identity.revoke();
+    report = { command: `package ${action}`, status: 'success', registry,
+      notes: [action === 'logout' ? 'Registry session cleared.' : identity.persistent ? 'Connected using the system credential vault. Sensitive author operations require confirmation again after 10 minutes. Use package logout to disconnect.' : 'Temporary identity verified and revoked. Use login with an available system vault to reuse a session.'] };
+  }
+  else if (action === 'registry') report = configureRegistry(target, options);
+  else if (action === "new") report = await create(target, options);
   else if (action === "request-publication") report = await requestPackagePublication(target, options);
   else if (action === "checkout") report = await checkoutPackageDraft(target, options);
   else if (action === "submit") report = await (options.ci ? submitCiPackage : submitPackageDraft)(target, options);

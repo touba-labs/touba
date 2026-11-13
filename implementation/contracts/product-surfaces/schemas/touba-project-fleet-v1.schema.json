@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-project-fleet-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "touba-project-fleet-v1"
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+          },
+          "root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "config": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "id",
+          "root",
+          "config"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 32
+    },
+    "deployment_targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+          },
+          "storage": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "host": {
+            "enum": [
+              "127.0.0.1",
+              "::1",
+              "localhost"
+            ]
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "auth_token_env": {
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
+          }
+        },
+        "required": [
+          "id",
+          "storage",
+          "port",
+          "auth_token_env"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 4
+    }
+  },
+  "required": [
+    "schema_version",
+    "projects"
+  ]
+}

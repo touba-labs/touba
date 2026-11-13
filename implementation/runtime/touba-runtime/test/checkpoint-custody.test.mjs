@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { executeAirDocument, loadToolBindingManifestFromJson, loadSecretsFromJson } from "../src/index.mjs";
+import { executeAirDocument, assertHumanApprovalHostCompatibility, loadToolBindingManifestFromJson, loadSecretsFromJson } from "../src/index.mjs";
 import { createSqliteHumanCheckpointStore } from "../src/human-checkpoint-store.mjs";
 import { createSqliteTraceStore } from "../src/sqlite-trace-store.mjs";
 import { validateTraceMachineContract, validateTraceMachineStream } from "../../../contracts/machine/contracts.mjs";
@@ -65,6 +65,10 @@ test("a changed host binding is refused before attestation or effect and preserv
   h.options.toolBindingManifest = manifest(["original.mjs"]);
   const cp = await h.pause();
   assert.match(cp.host_contract_digest, /^sha256:[a-f0-9]{64}$/);
+  assert.doesNotThrow(() => assertHumanApprovalHostCompatibility(air, cp, h.options));
+  assert.throws(() => assertHumanApprovalHostCompatibility(air, cp, { ...h.options, toolBindingManifest: manifest(["changed.mjs"]) }),
+    { code: "HumanApprovalCheckpointIncompatible" });
+  assert.equal(h.payments.length, 0); assert.equal(h.attestations(), 0);
   assert.deepEqual(cp.approval_state.requests[cp.approval_ref].review_context.values, [h.options.inputs.invoice]);
   const refused = await h.resume(cp, { toolBindingManifest: manifest(["changed.mjs"]) });
   assert.equal(refused.reason, "HumanApprovalCheckpointIncompatible");

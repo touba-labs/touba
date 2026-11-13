@@ -18,6 +18,8 @@ test("live and replay delivery cannot cross decision, deployment or authoring pe
   assert.equal(eventVisibleToIdentity("deployment.published", { active: true, permissions: ["deployments.read"] }), true);
   assert.equal(eventVisibleToIdentity("project.changed", { active: false, permissions: ["*"] }), false);
   assert.equal(eventVisibleToIdentity("project.changed", undefined), false);
+  assert.equal(eventVisibleToIdentity('approval.dossier.viewed', { active: true, permissions: ['decisions.read', 'decisions.act'] }), false);
+  assert.equal(eventVisibleToIdentity('approval.dossier.viewed', { active: true, permissions: ['audit.read'] }), true);
 });
 
 function response() {

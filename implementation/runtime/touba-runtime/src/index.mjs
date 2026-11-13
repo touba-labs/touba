@@ -1574,15 +1574,36 @@ function durableManifestProjection(manifest) {
 function humanHostContractDigest(context) {
   // Only contract metadata and secret handles participate; resolved credential
   // values are deliberately excluded, so normal credential rotation is allowed.
-  const projection = {
+  const projection = humanHostContractProjection(context);
+  assertCheckpointHasNoResolvedSecret(projection, context, "host-contract");
+  return canonicalDigest(jsonPortableProjection(projection));
+}
+
+function humanHostContractProjection(context) {
+  return {
     manifest: durableManifestProjection(context.toolBindingManifest),
     resources: durableResourceBindingsProjection(context.resourceBindings),
     evidence: context.executionDurability.compatibilityEvidence,
     ...(context.packageAdmission ? { package_admission: context.packageAdmission.admission_id } : {}),
     in_process_tools: Object.keys(context.toolHandlers).sort(),
   };
-  assertCheckpointHasNoResolvedSecret(projection, context, "host-contract");
-  return canonicalDigest(jsonPortableProjection(projection));
+}
+
+// Read-only preflight for a host deciding whether to accept a human decision.
+// It uses the dispatch projection but never opens custody, attests or runs code.
+// Custody and compatibility are still checked again by the actual resume.
+export function assertHumanApprovalHostCompatibility(document, checkpoint, options = {}) {
+  const context = {
+    toolBindingManifest: normalizeOptionalToolBindingManifest(options.toolBindingManifest),
+    resourceBindings: normalizeOptionalResourceBindings(options.resourceBindings),
+    packageAdmission: packageAdmissionEvidence(options.packageAdmission),
+    executionDurability: { compatibilityEvidence: executionCompatibilityEvidence(options) },
+    toolHandlers: options.toolHandlers ?? {},
+  };
+  if (airDocumentDigest(document) !== checkpoint.air_digest
+    || canonicalDigest(jsonPortableProjection(humanHostContractProjection(context))) !== checkpoint.host_contract_digest) {
+    throw new ToubaRuntimeError("HumanApprovalCheckpointIncompatible", "Program or host contracts changed since this approval was requested");
+  }
 }
 
 function durableResourceBindingsProjection(resourceBindings) {

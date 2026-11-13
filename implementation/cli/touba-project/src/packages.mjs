@@ -73,7 +73,7 @@ export function packageClosure(path, { projectRoot, publishing = false } = {}) {
 
 export async function addRegistryPackage(name, options) {
   if (!PACKAGE_NAME.test(name) || !options.registry || !options.version) throw packageError("PackageRegistryOptionMissing", "use a qualified package name, --version and --registry");
-  const reader = createRegistryReader(options.registry, { noBrowser: options['no-browser'] === true });
+  const reader = createRegistryReader(options.registry, { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true });
   try { return await installRegistryPackage(name, options, reader.readBytes); }
   finally { await reader.close(); }
 }

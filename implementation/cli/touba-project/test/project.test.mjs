@@ -2524,7 +2524,8 @@ test("CLI trigger, manifest and handler help match current public options", () =
     assert.ok(triggerResult.stdout.includes(flag), flag);
   const serveResult = spawnSync(process.execPath, [cliPath, "serve", "--help"], { encoding: "utf8" });
   assert.equal(serveResult.status, 0, serveResult.stderr);
-  for (const flag of ["--package-registry", "--package-registry-trust", "--trigger-state", "--trigger-queue"])
+  for (const flag of ["--package-registry", "--package-registry-trust", "--trigger-state", "--trigger-queue",
+    "--abandon-waits", "--abandon-operations", "--reason", "--review-digest", "--client-origin", "--cloud-notifications"])
     assert.ok(serveResult.stdout.includes(flag), flag);
   assert.equal(triggerResult.stdout.includes("daemon"), false);
 

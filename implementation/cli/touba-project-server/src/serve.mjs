@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
 import { countApplicationOperations } from './interactions.mjs';
+import { closeInterruptedInteractionOperation } from './interactions.mjs';
 import { servicePrincipal, assertApplicationRoute, assertApplicationTarget, createApplicationAdmission } from './application-access.mjs';
 import { createProjectExplorerSurface } from "./explorer-surface.mjs";
 import { createCloudNotifications } from './cloud-notifications.mjs';
@@ -13,14 +14,19 @@ import { setProjectMetadataScope, projectMetadataResponse } from './project-meta
 import { readChangeProposals, saveChangeProposals, pageChangeProposals, countChangeProposals, auditChangeProposals } from "./change-store.mjs";
 import { createProjectTraceExplorer } from "./trace-explorer-surface.mjs";
 import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT } from "./package-surface.mjs";
+import { createRegistryTrustReview } from './registry-trust-review.mjs';
 import { inspectPackageInstallation } from "./package-inspection.mjs";
 import { createProjectPreparation } from "./project-preparation.mjs";
+import { authoringReadiness, createProjectActivityGate, projectActivityKind } from './project-activity.mjs';
+import { expandServerConfig } from './server-config.mjs';
+import { projectServiceCredentials, serviceCredentialCommand } from './service-credentials.mjs';
 import { validateBindingFragmentDocument } from "../../touba-project/src/project.mjs";
 import { compileProposedSources } from "./source-validation.mjs";
 import { observeTriggerStores } from "./trigger-observation.mjs";
 import { buildWorkspaceSummary, workspaceActivity } from "./workspace-summary.mjs";
 import serverPackage from "../package.json" with { type: "json" };
 import { isDecisionContinuationRoute, decisionContinuationOnly, assertDecisionContinuation } from "./decision-continuation.mjs";
+import { readApprovalDossier } from './approval-dossier.mjs';
 import { toolApprovalReview, PARALLEL_APPROVAL_METADATA_FIELDS, validateParallelApprovalMetadata } from "./tool-approval-review.mjs";
 import { projectOperationBudgets } from "./operation-budgets.mjs";
 import { projectTraceStorageStatus } from "./trace-storage-status.mjs";
@@ -55,11 +61,12 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateHumanCheckpointBudgetState, validateHumanCheckpointContinuation } from "../../../runtime/touba-runtime/src/human-approval-checkpoints.mjs";
 import { createApprovalRuntime, approvalRequest, authorizeApprovalDecision } from "../../../runtime/touba-runtime/src/human-approval-policy.mjs";
-import { bindAcceptedHumanApproval } from "../../../runtime/touba-runtime/src/human-checkpoint-store.mjs";
+import { bindAcceptedHumanApproval, createSqliteHumanCheckpointStore } from "../../../runtime/touba-runtime/src/human-checkpoint-store.mjs";
 import { airDocumentDigest } from "../../../runtime/touba-runtime/src/air-identity.mjs";
 import { admitStateOrigin, inspectStateOrigin, currentStateBuild } from "./state-origin.mjs";
 import { projectClientOrigins, applyProjectCorsHeaders } from "./client-origins.mjs";
 import { acquireStateLease, archiveProjectState, restoreProjectState } from "./state-maintenance.mjs";
+import { reviewWaitAbandonment, auditRecoveryTriggerQueue, auditRecoveryTriggerState } from './state-recovery.mjs';
 
 import {
   PRODUCT_SURFACE_CONTRACTS,
@@ -81,11 +88,13 @@ import { writeChunks } from "../../touba-run/src/trace-output.mjs";
 import { tracePrefixDigestFromEvents } from "../../../runtime/touba-runtime/src/execution-checkpoints.mjs";
 import {
   buildElementAuthoringChangeSet,
+  readElementSource,
   ELEMENT_AUTHORING_SCHEMA_VERSION,
 } from "./element-authoring.mjs";
 import {
   canonicalDigest,
   executeAirDocument,
+  assertHumanApprovalHostCompatibility,
   executeTriggerEvent,
   loadAirFromJson,
   loadSecretsFromJson,
@@ -296,6 +305,10 @@ export const CHECKPOINT_INDEXES = Object.freeze({
 if (isMainModule()) {
   const hostModules = createHostModuleLoader();
   try {
+    if (['login', 'logout'].includes(process.argv[2])) {
+      process.stdout.write(await serviceCredentialCommand(process.argv.slice(2)));
+      process.exit(0);
+    }
     const options = parseArgs(process.argv.slice(2));
     if (options.help === true) {
       process.stdout.write(`${usage()}\n`);
@@ -464,7 +477,11 @@ function createProjectServerWithLease(options, takeLease) {
   const authToken = options.authTokenEnv === undefined ? undefined : process.env[options.authTokenEnv];
   const identityControlPlaneUrl = options.identityControlPlaneUrl;
   const clientOrigins = projectClientOrigins(options.clientOrigins);
-  const identityServiceToken = options.identityServiceToken
+  if (options.identityServiceTokenVault && (options.identityServiceToken !== undefined || options.identityServiceTokenEnv !== undefined)) {
+    throw serviceError('ToubaServeIdentityNotConfigured', 'choose either the system vault or the environment variable for the project service key');
+  }
+  const identityServiceToken = options.identityServiceTokenVault
+    ? projectServiceCredentials(projectRoot, identityControlPlaneUrl).read : options.identityServiceToken
     ?? (options.identityServiceTokenEnv === undefined
       ? undefined
       : process.env[options.identityServiceTokenEnv]);
@@ -477,6 +494,10 @@ function createProjectServerWithLease(options, takeLease) {
   const explorerSurface = createProjectExplorerSurface(projectRoot);
   const packageSurface = createProjectPackageSurface(projectRoot, { registry: options.packageRegistry,
     trust: options.packageRegistryTrust ? resolve(projectRoot, options.packageRegistryTrust) : undefined });
+  const registryTrust = createRegistryTrustReview(projectRoot, { controlPlaneUrl: identityControlPlaneUrl,
+    serviceToken: identityServiceToken, configuredRegistry: options.packageRegistry,
+    configuredTrust: options.packageRegistryTrust ? resolve(projectRoot, options.packageRegistryTrust) : undefined,
+    onChange: value => packageSurface.configureRegistry(value) });
   const projectPreparation = createProjectPreparation(projectRoot);
   const traceExplorerSurface = createProjectTraceExplorer(projectRoot, {
     resolveAir: targetRef => join(projectRoot, resolveSandboxAirDocument({ projectRoot, targetRef }).relativePath),
@@ -485,6 +506,17 @@ function createProjectServerWithLease(options, takeLease) {
   const interactionOperationTasks = new Set();
   const sandboxResumeTasks = new Map();
   const humanResumeTasks = new Map();
+  const activityGate = createProjectActivityGate(() => {
+    const references = loadSandboxCheckpointStore(sandboxCheckpointsPath, [
+      { active_human: 1 }, { kind: 'execution', status: ['running', 'interrupted', 'resume_claimed'] },
+    ]).records.map(record => record.target_ref);
+    for (const session of readInteractionRecoveryProjections(interactionSessionsPath)) {
+      for (const operation of session.operations) if (['queued', 'running', 'awaiting_human', 'cancel_requested', 'interrupted'].includes(operation.status)) references.push(operation.target_ref);
+    }
+    if (interactionOperationTasks.size || sandboxResumeTasks.size || humanResumeTasks.size) references.push('active execution');
+    if (validationStore(join(projectRoot, '.touba/project-validation.sqlite')).read().some(row => row.status === 'running')) references.push('active validation');
+    return [...new Set(references)];
+  });
   const humanWaitRuntime = normalizeHumanWaitRuntime(options.humanWaitRuntime);
   const humanWaitClaimedObserver = options.humanWaitClaimedObserver;
   const humanWaitCompletedObserver = options.humanWaitCompletedObserver;
@@ -527,7 +559,7 @@ function createProjectServerWithLease(options, takeLease) {
       "--identity-control-plane-url and --identity-service-token-env must be configured together",
     );
   }
-  if (identityServiceToken !== undefined && identityServiceToken.length < 32) {
+  if (typeof identityServiceToken === 'string' && identityServiceToken.length < 32) {
     throw serviceError(
       "ToubaServeIdentityNotConfigured",
       `environment variable ${options.identityServiceTokenEnv} must contain at least 32 characters`,
@@ -721,6 +753,7 @@ function createProjectServerWithLease(options, takeLease) {
 
   const projectCompletedHumanWait = (record) => {
     if (!isCompletedAutomaticHumanWait(record)) return;
+    scheduler.reconcile();
     const current = readProjectRunSummary({ contractsRoot, runSummaryPath });
     if (current.run_id === record.run_id || current.status === "unavailable") {
       const runtimeResult = { status: record.result.status, reason: record.result.reason, trace: record.result.trace };
@@ -752,6 +785,7 @@ function createProjectServerWithLease(options, takeLease) {
     ) {
       return;
     }
+    scheduler.reconcile();
     const current = readProjectRunSummary({ contractsRoot, runSummaryPath });
     if (current.run_id === record.run_id || current.status === "unavailable") {
       persistSandboxCurrentSurfaces({
@@ -1039,10 +1073,30 @@ function createProjectServerWithLease(options, takeLease) {
     emit: (type, payload) => publishEvent(eventClients, type, payload, nextEvent) });
   const scheduler = createTriggerScheduler({ enabled: options.scheduleTriggers === true,
     path: join(projectRoot, '.touba/trigger-scheduler.sqlite'),
-    plans: () => readSchedulePlans(projectRoot),
+    plans: () => activityGate.mutating ? [] : readSchedulePlans(projectRoot),
+    quotaReached: triggerRef => {
+      if (!existsSync(triggerStorePaths.triggerStatePath)) return false;
+      const resolved = resolveSandboxAirDocument({ projectRoot, targetRef: triggerRef });
+      const declared = resolved.document.definitions?.triggers?.find(item => item.id === triggerRef)?.limits?.max_runs_per_day;
+      const configured = loadOptionalProjectManifest({projectRoot})?.triggers?.[triggerRef]?.limits?.max_runs_per_day;
+      const values = [declared?.value ?? declared, configured?.value ?? configured].filter(Number.isSafeInteger);
+      if (!values.length) return false;
+      const state = createSqliteTriggerStore({filename: triggerStorePaths.triggerStatePath, readOnly: true});
+      try { return state.count(triggerRef) >= Math.min(...values); } finally { state.close(); }
+    },
     pending: target => indexedCheckpointStore(sandboxCheckpointsPath).count([{ active_human: 1, target_ref: target }]) > 0,
+    outcome: ({ run_id, trigger_ref }) => {
+      // Reconcile only a proven terminal result for this exact occurrence.
+      // An absent wait alone does not prove that its effects completed.
+      const record = loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ run_id, target_ref: trigger_ref, status: 'completed' }]).records
+        .find(item => item.record_kind === 'human' && ['success', 'failure', 'stopped', 'cancelled'].includes(item.result?.status));
+      if (!record) return null;
+      const error = { expired: 'HumanApprovalExpired', rejected: 'HumanApprovalRejected', cancelled: 'HumanApprovalCancelled' }[record.human_wait?.resolution?.kind];
+      return { status: record.result.status === 'success' ? 'success' : 'failed', error: error ?? null };
+    },
     emit: (type, payload) => publishEvent(eventClients, type, payload, nextEvent),
     execute: async ({ trigger_ref, run_id, event_id, authority, cancelled }) => {
+      const release = activityGate.enter('execution');
       const request = { schema_version: SANDBOX_RUN_REQUEST_SCHEMA_VERSION, execution_kind: 'trigger',
         target_ref: trigger_ref, event_id, source_kind: 'schedule', inputs: {},
         effect_policy: 'allow_declared_external_effects', requested_by: { kind: 'service', id: 'touba-project-scheduler' },
@@ -1055,7 +1109,7 @@ function createProjectServerWithLease(options, takeLease) {
       try {
         return sandboxRunMaySuspendForHuman({ executionKind: 'trigger', projectRoot, request })
           ? await withHumanWaitCapacity({ runId: run_id }, execute) : await execute();
-      } finally { requestHumanWaitWorkerDetached(); }
+      } finally { release(); requestHumanWaitWorkerDetached(); }
     },
   });
   const scheduleInteractionOperation = ({
@@ -1266,6 +1320,7 @@ function createProjectServerWithLease(options, takeLease) {
 
   const applicationAdmission = createApplicationAdmission();
   const server = createServer(async (request, response) => {
+    let releaseActivity = () => {};
     try {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${host}:${port}`}`);
       const corsAllowed = applyProjectCorsHeaders(request, response, clientOrigins);
@@ -1332,6 +1387,7 @@ function createProjectServerWithLease(options, takeLease) {
           sessionId => getInteractionSession({ sessionId, sessionsPath: interactionSessionsPath }));
         applicationAdmission(identityResult, request.method);
       }
+      releaseActivity = activityGate.enter(projectActivityKind(request.method, url.pathname));
       if (request.method === "GET" && url.pathname === "/health") {
         writeJson(response, 200, {
           status: "ok",
@@ -1341,6 +1397,11 @@ function createProjectServerWithLease(options, takeLease) {
           live_state_schema_version: LIVE_STATE_SCHEMA_VERSION,
           event_stream_schema_version: EVENT_STREAM_SCHEMA_VERSION,
           human_identity_enforced: identityControlPlaneUrl !== undefined,
+          approval_readiness: {
+            identity_configured: existsSync(productIdentityPath),
+            decision_host_configured: typeof options.humanApprovalAuthority === 'function',
+            review_host_configured: typeof options.humanApprovalReviewAuthority === 'function',
+          },
           endpoints: {
             state: "/state",
             events: "/events",
@@ -1353,8 +1414,10 @@ function createProjectServerWithLease(options, takeLease) {
             packages: "/packages/installed",
             package_preview: "/packages/preview",
             package_local_preview: "/packages/local/preview",
-            ...(options.packageRegistry ? {
+            ...(options.packageRegistry || registryTrust.available ? {
               package_registry: "/packages/registry",
+              ...(registryTrust.available ? { package_registry_trust_preview: '/packages/registry/trust/preview',
+                package_registry_trust_apply: '/packages/registry/trust/apply' } : {}),
               package_registry_resolve: "/packages/registry/resolve",
               package_registry_catalogue: "/packages/registry/catalogue",
               package_registry_preview: "/packages/registry/<resolution_id>/preview",
@@ -1389,6 +1452,7 @@ function createProjectServerWithLease(options, takeLease) {
             mobile_quick_approval_policy: "/mobile/quick-approval-policy",
             mobile_escalations: "/mobile/escalations",
             pending_approval: "/approvals/pending/current",
+            approval_dossier: "/approvals/dossier/<request_id>",
             pending_review: "/reviews/pending/current",
             human_decisions: "/decisions",
             sandbox_resume: "/runs/sandbox/resume",
@@ -1407,6 +1471,7 @@ function createProjectServerWithLease(options, takeLease) {
             change_apply: "/changes/apply",
             governance_relation_propose: "/governance/relations/propose",
             element_authoring_preview: "/elements/preview",
+            element_source: "/elements/source",
             element_authoring_propose: "/elements/propose",
             deployments: "/deployments",
             deployment_plan: "/deployments/plan",
@@ -1510,6 +1575,21 @@ function createProjectServerWithLease(options, takeLease) {
         if (request.method === 'GET' && url.pathname === '/packages/registry') {
           writeJson(response, 200, packageSurface.registry()); return;
         }
+        if (request.method === 'POST' && url.pathname === '/packages/registry/trust/preview') {
+          const body = await readJsonBody(request);
+          if (!body || Object.keys(body).length) throw serviceError('RegistryTrustInvalid', 'no key or URL is accepted from the browser');
+          const value = await registryTrust.preview(principal, request.headers['x-touba-identity-token']);
+          validateContractPayload({ contractsRoot, schemaVersion: 'touba-registry-trust-review-v1', value, label: 'registry trust review' });
+          writeJson(response, 200, value); return;
+        }
+        if (request.method === 'POST' && url.pathname === '/packages/registry/trust/apply') {
+          const body = await readJsonBody(request);
+          packageSurface.assertIdle();
+          const result = registryTrust.apply(principal, body);
+          publishEvent(eventClients, 'registry.trust.configured', { registry: result.registry,
+            review_digest: result.review_digest, actor_ref: `user:${humanIdentity.user.id}` }, nextEvent);
+          writeJson(response, 200, result); return;
+        }
         if (request.method === 'POST' && url.pathname === '/packages/registry/resolve') {
           const resolved = await packageSurface.receive(async () => {
             let proof;
@@ -1607,6 +1687,32 @@ function createProjectServerWithLease(options, takeLease) {
       if (request.method === "GET" && url.pathname === "/runs/current") {
         writeJson(response, 200, readProjectRunSummary({ contractsRoot, runSummaryPath }));
         return;
+      }
+      if (request.method === 'GET' && url.pathname === '/operations/incidents') {
+        const cursor = url.searchParams.get('cursor');
+        if (cursor !== null && (!/^[1-9][0-9]{0,15}$/.test(cursor) || !Number.isSafeInteger(Number(cursor)))) throw serviceError('ToubaServeDecisionPageInvalid', 'Invalid incident cursor');
+        const page = indexedCheckpointStore(sandboxCheckpointsPath).page({filter: [{active_human: 1}, {kind:'execution', status:['interrupted','resume_claimed']}],
+          order: 'rowid', direction: 'desc', limit: 100, ...(cursor === null ? {} : {after:Number(cursor)})});
+        writeJson(response, 200, {schema_version:'touba-operation-incidents-v1', next_cursor:page.hasMore ? String(page.next) : null,
+          items:page.items.map(record => ({operation_id:record.operation_id, run_id:record.run_id, target_ref:record.target_ref,
+            status:record.record_kind === 'human' ? 'awaiting_human' : record.status, updated_at:record.updated_at ?? record.created_at}))}); return;
+      }
+      const closeMatch = /^\/operations\/([A-Za-z0-9_-]+)\/close$/.exec(url.pathname);
+      if (request.method === 'POST' && closeMatch) {
+        const body = await readJsonBody(request);
+        validateContractPayload({ contractsRoot, schemaVersion: 'touba-operation-close-request-v1', value: body,
+          errorCode: 'ToubaServeOperationClosureInvalid', message: 'Closure requires the reviewed state and a reason' });
+        if (!body.reason.trim() || /[\u0000-\u001f\u007f]/u.test(body.reason)) throw serviceError('ToubaServeOperationClosureInvalid', 'Provide a short reason without secrets');
+        const current = readOperationRecovery({ contractsRoot, effectJournalPath, interactionSessionsPath,
+          operationId: closeMatch[1], projectRoot, sandboxCheckpointsPath });
+        if (current.freshness.state_digest !== body.state_digest || !current.allowed_actions.some(action => action.action === 'close')
+          || interactionOperationControllers.has(closeMatch[1])) throw serviceError('ToubaServeOperationClosureConflict', 'Refresh the operation before closing it');
+        const operation = closeInterruptedInteractionOperation({ sessionsPath: interactionSessionsPath, operationId: closeMatch[1],
+          closedBy: humanIdentity?.user?.id ?? 'project-bearer', reason: body.reason.trim() });
+        publishEvent(eventClients, 'interaction.run.closed', { session_id: operation.session_id, operation_id: operation.operation_id,
+          run_id: operation.run_id, closed_by: operation.error.closed_by, reason: body.reason.trim() }, nextEvent);
+        writeJson(response, 200, readOperationRecovery({ contractsRoot, effectJournalPath, interactionSessionsPath,
+          operationId: closeMatch[1], projectRoot, sandboxCheckpointsPath })); return;
       }
       if (
         request.method === "GET"
@@ -2538,6 +2644,36 @@ function createProjectServerWithLease(options, takeLease) {
         writeJson(response, 202, result);
         return;
       }
+      if (request.method === 'GET' && /^\/approvals\/dossier\/[^/]+$/.test(url.pathname)) {
+        response.setHeader('cache-control', 'no-store, private');
+        const requestId = decodeURIComponent(url.pathname.slice('/approvals/dossier/'.length));
+        const readRecord = () => loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ request_id: requestId }]).records.find(item => item.request_id === requestId);
+        const record = readRecord();
+        if (record) {
+          const resolved = resolveSandboxAirDocument({ projectRoot, targetRef: record.target_ref });
+          assertHumanApprovalHostCompatibility(resolved.document, record.checkpoint, {
+            toolBindingManifest: loadOptionalProjectManifest({ projectRoot }),
+            resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
+            packageAdmission: resolved.packageAdmission,
+          });
+        }
+        const result = await readApprovalDossier({ record, identity: humanIdentity, authority: options.humanApprovalReviewAuthority,
+          timeoutMs: options.humanApprovalAuthorityTimeoutMs, now: humanWaitRuntime.nowMs,
+          revalidate: async () => {
+            const current = await authorizeHumanIdentity({ accessToken: request.headers['x-touba-identity-token'],
+              controlPlaneUrl: identityControlPlaneUrl, permission: 'decisions.act', serviceToken: identityServiceToken, expectedProjectRoot: projectRoot });
+            if (!current.active || !current.allowed || !current.permissions.includes('decisions.act')
+              || current.user?.id !== humanIdentity?.user?.id || current.session_id !== humanIdentity?.session_id) {
+              throw serviceError('ToubaServeDecisionIdentityUnauthorized', 'review session changed');
+            }
+            return readRecord();
+          } });
+        // Private source values never pass through the general event journal.
+        publishEvent(eventClients, 'approval.dossier.viewed', { request_id: result.request_id, run_id: result.run_id,
+          viewer_ref: canonicalDigest({ run_id: result.run_id, subject: humanIdentity.user.id }) }, nextEvent);
+        writeJson(response, 200, result);
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/approvals/pending/current") {
         await requestHumanWaitWorker();
         writeJson(response, 200, (url.searchParams.get("optional") === "true" ? optionalPendingHumanRequest : readPendingHumanRequest)({
@@ -2826,7 +2962,9 @@ function createProjectServerWithLease(options, takeLease) {
       }
       if (request.method === "GET" && url.pathname === "/decisions") {
         await requestHumanWaitWorker();
-        writeJson(response, 200, listHumanDecisions({ humanDecisionsPath, sandboxCheckpointsPath,
+        writeJson(response, 200, listHumanDecisions({ humanDecisionsPath, sandboxCheckpointsPath, humanRequestsPath, contractsRoot,
+          requestId: url.searchParams.get('request_id'),
+          pendingCursor: url.searchParams.get('pending_cursor'),
           terminalCursor: url.searchParams.get('terminal_cursor'),
           cursor: url.searchParams.get("cursor"),
           limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 50,
@@ -2853,7 +2991,14 @@ function createProjectServerWithLease(options, takeLease) {
       if (request.method === "POST" && url.pathname === "/project/prepare/preview") {
         const body = await readJsonBody(request);
         const principal = humanIdentity === null ? "project-bearer" : `${humanIdentity.user.id}:${humanIdentity.session_id ?? ""}`;
-        writeJson(response, 200, await projectPreparation.preview(JSON.stringify([principal, humanIdentity?.organization_id ?? null]), body)); return;
+        const preview = await projectPreparation.preview(JSON.stringify([principal, humanIdentity?.organization_id ?? null]), body);
+        try { activityGate.assertMutationAllowed(); }
+        catch (error) {
+          if (!['ToubaServeProjectOperationsActive','ToubaServeProjectMutationBusy'].includes(error.code)) throw error;
+          preview.can_apply = false;
+          preview.diagnostics.push({severity:'error',code:error.code,message:error.message});
+        }
+        writeJson(response, 200, preview); return;
       }
       if (request.method === "POST" && ["/project/prepare", "/project/prepare/apply"].includes(url.pathname)) {
         const body = await readJsonBody(request);
@@ -2981,6 +3126,10 @@ function createProjectServerWithLease(options, takeLease) {
         writeJson(response, 202, proposed);
         return;
       }
+      if (request.method === 'GET' && url.pathname === '/elements/source') {
+        writeJson(response, 200, readElementSource({ projectRoot, elementRef: url.searchParams.get('ref') }));
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/elements/preview") {
         const body = bindHumanActor(await readJsonBody(request), "requested_by", humanIdentity);
         validateContractPayload({
@@ -2990,7 +3139,9 @@ function createProjectServerWithLease(options, takeLease) {
           errorCode: "ToubaServeElementAuthoringInvalid",
           message: "element authoring request does not match its contract",
         });
-        writeJson(response, 200, buildElementAuthoringPreview({ projectRoot, request: body }));
+        const preview = buildElementAuthoringPreview({ projectRoot, request: body,
+          runtimeReadiness: { gate: activityGate, host: options } });
+        writeJson(response, 200, preview);
         return;
       }
       if (request.method === "POST" && url.pathname === "/changes/apply") {
@@ -3031,7 +3182,7 @@ function createProjectServerWithLease(options, takeLease) {
         message: error.message,
         diagnostics: Array.isArray(error.diagnostics) ? error.diagnostics : undefined,
       });
-    }
+    } finally { releaseActivity(); }
   });
 
   return {
@@ -3105,6 +3256,7 @@ function createProjectServerWithLease(options, takeLease) {
       await notifications.stop();
       explorerSurface.close();
       packageSurface.close();
+      registryTrust.close();
       await traceExplorerSurface.close();
       humanWaitState.stopping = true;
       humanWaitState.workerRequested = false;
@@ -3532,9 +3684,11 @@ async function acceptDecisionWithHumanWait({
   let approvalState;
   if (record.checkpoint.approval_state && record.human_wait.resolution === null) {
     const resolved = resolveSandboxAirDocument({ projectRoot, targetRef: record.target_ref });
-    if (airDocumentDigest(resolved.document) !== record.checkpoint.air_digest) {
-      throw serviceError("HumanApprovalCheckpointIncompatible", "AIR changed since this approval was requested");
-    }
+    assertHumanApprovalHostCompatibility(resolved.document, record.checkpoint, {
+      toolBindingManifest: loadOptionalProjectManifest({ projectRoot }),
+      resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document),
+      packageAdmission: resolved.packageAdmission,
+    });
     const ref = record.approval_ref;
     const runtime = createApprovalRuntime(resolved.document, {
       humanApprovalAuthorityTimeoutMs,
@@ -3552,6 +3706,14 @@ async function acceptDecisionWithHumanWait({
     if (!saved) throw serviceError("HumanApprovalCheckpointIncompatible", "approval occurrence is missing its source authority state");
     const request = approvalRequest(runtime, record.run_id, ref, saved.policy);
     await authorizeApprovalDecision(runtime, request, runtimeDecisionFromStoredDecision(decision));
+    // External source edits can occur during an asynchronous attestation. Read
+    // the admitted project again before recording a durable human decision.
+    const current = resolveSandboxAirDocument({ projectRoot, targetRef: record.target_ref });
+    assertHumanApprovalHostCompatibility(current.document, record.checkpoint, {
+      toolBindingManifest: loadOptionalProjectManifest({ projectRoot }),
+      resourceBindings: loadPreparedResourceBindings(projectRoot, current.document),
+      packageAdmission: current.packageAdmission,
+    });
     approvalState = runtime.state;
   }
   const acceptedAt = new Date(nowMs()).toISOString();
@@ -3713,29 +3875,65 @@ function assertProjectDecisionAuthorized({
 export function listHumanDecisions({
   humanDecisionsPath,
   sandboxCheckpointsPath,
+  humanRequestsPath,
+  contractsRoot,
+  pendingCursor = null,
   terminalCursor = null,
+  requestId = null,
   generatedAt = new Date().toISOString(),
   cursor = null,
   limit = 50,
 }) {
-  const page = pageHumanDecisions(humanDecisionsPath, { cursor, limit });
+  if (requestId !== null && (typeof requestId !== 'string' || !requestId || requestId.length > 512 || /[\u0000-\u001f\u007f]/u.test(requestId)))
+    throw serviceError('ToubaServeDecisionPageInvalid', 'invalid decision request reference');
+  const page = pageHumanDecisions(humanDecisionsPath, { cursor, limit, requestId });
   return {
     schema_version: HUMAN_DECISION_HISTORY_SCHEMA_VERSION,
     generated_at: generatedAt,
     summary: page.summary,
     pagination: page.pagination,
     decisions: page.decisions.map(projectHumanDecision),
-    ...(sandboxCheckpointsPath ? { terminal_requests: pageTerminalHumanRequests(sandboxCheckpointsPath, { cursor: terminalCursor, limit }) } : {}),
+    ...(humanRequestsPath ? { pending_requests: pagePendingHumanRequests({
+      humanRequestsPath, humanDecisionsPath, sandboxCheckpointsPath, contractsRoot,
+      cursor: pendingCursor, limit, generatedAt, requestId,
+    }) } : {}),
+    ...(sandboxCheckpointsPath ? { terminal_requests: pageTerminalHumanRequests(sandboxCheckpointsPath, { cursor: terminalCursor, limit, requestId }) } : {}),
   };
 }
 
-export function pageTerminalHumanRequests(path, { cursor = null, limit = 50 } = {}) {
+export function pagePendingHumanRequests({cursor = null, limit = 50, generatedAt = new Date().toISOString(), ...options}) {
+  let after = null;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    throw serviceError('ToubaServeDecisionPageInvalid', 'pending requests require a limit from 1 to 100');
+  }
+  if (cursor !== null) {
+    try {
+      if (typeof cursor !== 'string' || cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/u.test(cursor)) throw new Error();
+      after = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+      if (!Array.isArray(after) || after.length !== 2 || !Number.isFinite(Date.parse(after[0]))
+        || typeof after[1] !== 'string' || !after[1] || after[1].length > 512) throw new Error();
+    } catch { throw serviceError('ToubaServeDecisionPageInvalid', 'pending request cursor is invalid'); }
+  }
+  const requests = ['approval','human_review'].flatMap(kind => {
+    try { return readPendingHumanRequest({...options, kind, all: true}); }
+    catch (error) { if (error.code === 'ToubaServePendingHumanRequestNotFound') return []; throw error; }
+  }).filter(request => Date.parse(request.expires_at) > Date.parse(generatedAt));
+  const compare = (a,b) => Date.parse(a[0]) - Date.parse(b[0]) || a[1].localeCompare(b[1]);
+  const key = request => [request.expires_at,request.request_id];
+  requests.sort((a,b) => compare(key(a),key(b)));
+  const remaining = after === null ? requests : requests.filter(request => compare(key(request),after) > 0);
+  const items = remaining.slice(0,limit);
+  return {total: requests.length, items, pagination: {limit, cursor, order:'expires_asc',
+    next_cursor: remaining.length > limit ? Buffer.from(JSON.stringify(key(items.at(-1)))).toString('base64url') : null}};
+}
+
+export function pageTerminalHumanRequests(path, { cursor = null, limit = 50, requestId = null } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
     || (cursor !== null && (typeof cursor !== 'string' || !/^[1-9][0-9]{0,15}$/.test(cursor) || !Number.isSafeInteger(Number(cursor))))) {
     throw serviceError('ToubaServeDecisionPageInvalid', 'invalid terminal request page');
   }
   const store = indexedCheckpointStore(path);
-  const filter = [{ kind: 'human', resolution_kind: ['expired', 'cancelled'], resolution_status: 'completed' }];
+  const filter = [{ kind: 'human', resolution_kind: ['expired', 'cancelled'], resolution_status: 'completed', ...(requestId ? {request_id: requestId} : {}) }];
   const page = store.page({ filter, order: 'rowid', direction: 'desc', limit, ...(cursor === null ? {} : { after: Number(cursor) }) });
   return {
     total: store.count(filter),
@@ -3828,6 +4026,18 @@ export function readOperationRecovery({
     status,
   });
   let { allowedActions, refusal } = decision;
+  if (human && ['pending', 'resolution_claimed'].includes(human.status) && projectRoot) {
+    try {
+      const resolved = resolveSandboxAirDocument({ projectRoot, targetRef: human.target_ref });
+      assertHumanApprovalHostCompatibility(resolved.document, human.checkpoint, {
+        toolBindingManifest: loadOptionalProjectManifest({ projectRoot }),
+        resourceBindings: loadPreparedResourceBindings(projectRoot, resolved.document), packageAdmission: resolved.packageAdmission,
+      });
+    } catch {
+      allowedActions = [];
+      refusal = { code: 'HumanApprovalCheckpointIncompatible', reason: 'The retained approval requires stopped-state reconciliation and explicit closure.' };
+    }
+  }
   if (status === "interrupted" && execution && projectRoot) {
     // A read-only preflight prevents offering a resume against a different
     // program. Execution still rechecks every compatibility/authority guard
@@ -3884,6 +4094,11 @@ export function readOperationRecovery({
     allowed_actions: allowedActions,
     refusal,
   };
+  if (!execution && !human && status === 'interrupted' && effects.total === 0) {
+    projection.allowed_actions = [{ action: 'close', method: 'POST', href: `/operations/${encodeURIComponent(normalizedOperationId)}/close`,
+      request_schema_version: 'touba-operation-close-request-v1', required_permission: 'executions.run',
+      preconditions: { state_digest: stateDigest } }];
+  }
   validateContractPayload({
     contractsRoot,
     schemaVersion: OPERATION_RECOVERY_SCHEMA_VERSION,
@@ -4222,7 +4437,7 @@ export async function executeProjectSandboxRun({
       traceEventObserver,
       ...(triggerState ? { triggerAdmission: claim => triggerState.admit(claim) } : {}),
     };
-    runtimeResult = await withNativeTrace({ projectRoot, runId, phase: "initial",
+    runtimeResult = await withNativeTrace({ projectRoot, runId, phase: "initial", origin: request.requested_by,
       secretValues: secretStore?.resolvedSecretEntries?.().map(entry => entry.value) ?? [] }, async () => executionKind === "trigger"
       ? await executeTriggerEvent(resolved.document, triggerEvent, runtimeOptions)
       : await executeAirDocument(resolved.document, {
@@ -5378,6 +5593,7 @@ function persistSandboxCurrentSurfaces({ contractsRoot, result, runSummaryPath, 
     schema_version: "touba-run-summary-v1",
     run_id: result.run_id,
     status,
+    ...(typeof runtimeResult.reason === 'string' ? { completion_reason: runtimeResult.reason } : {}),
     entrypoint_ref: result.target_ref,
     started_at: result.started_at,
     completed_at: ["paused", "approval_pending", "review_pending"].includes(status) ? null : result.completed_at,
@@ -6741,7 +6957,9 @@ function handlerSandboxRow({ projectRoot, toolRef, binding, platform, sourceRef,
     tool_ref: toolRef,
     handler_kind: nonEmptyString(handler.kind) ?? "unknown",
     command_ref: nonEmptyString(handler.command) ?? "unknown",
-    ...inspectHandlerImplementation(projectRoot, handler),
+    ...inspectHandlerImplementation(projectRoot, handler, {
+      manifestPath: resolve(projectRoot, sourceRef ?? 'touba.manifest.json'),
+    }),
     tests: tests ?? {status:'missing',command:'',evidence_ref:null},
     status,
     mechanism: required ? mechanism : null,
@@ -6844,7 +7062,9 @@ export function readPendingHumanRequest({
   sandboxCheckpointsPath,
   kind,
   runId = null,
+  requestId = null,
   allowFixtureWhenStoreMissing = false,
+  all = false,
 }) {
   if (!existsSync(humanRequestsPath)) {
     if (allowFixtureWhenStoreMissing && runId === null) {
@@ -6861,7 +7081,7 @@ export function readPendingHumanRequest({
     ? "touba-approval-request-v1"
     : "touba-human-review-request-v1";
   const waitRecords = sandboxCheckpointsPath !== undefined && existsSync(sandboxCheckpointsPath)
-    ? new Map(loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1 }]).records
+    ? new Map(loadSandboxCheckpointStore(sandboxCheckpointsPath, [{ active_human: 1, ...(requestId ? {request_id: requestId} : {}) }]).records
       .filter((record) => record.record_kind === "human")
       .map((record) => [record.request_id, record]))
     : null;
@@ -6873,8 +7093,9 @@ export function readPendingHumanRequest({
   const decided = new Set(decisions.decisions.map((decision) =>
     `${decision.schema_version}:${decision.request_id}`
   ));
-  const pending = requests.find((request) =>
+  const pending = requests.filter((request) =>
     (runId === null || request.run_id === runId)
+    && (requestId === null || request.request_id === requestId)
     && (
       waitRecords === null
         ? !decided.has(`${schemaVersionToDecisionSchema(schemaVersion)}:${request.request_id}`)
@@ -6884,17 +7105,17 @@ export function readPendingHumanRequest({
       )
     )
   );
-  if (pending === undefined) {
+  if (pending.length === 0 && !all) {
     throw serviceError("ToubaServePendingHumanRequestNotFound", "no pending human request is available");
   }
-  validateContractPayload({
+  for (const value of pending) validateContractPayload({
     contractsRoot,
     schemaVersion,
-    value: pending,
+    value,
     errorCode: "ToubaServePendingHumanRequestInvalid",
     message: "pending human request does not match its contract",
   });
-  return pending;
+  return all ? pending : pending[0];
 }
 
 function optionalPendingHumanRequest(options) {
@@ -6970,6 +7191,7 @@ export function proposeProjectChange({
   const stored = {
     ...normalized,
     ...changeTargetBaseEvidence(projectRoot, normalized.target.path),
+    review_diffs: [changeReviewDiff(projectRoot, normalized.target.path, normalized.content)],
     status: "proposed",
     proposed_at: proposedAt,
     validations: validateChangeContent(normalized, { projectRoot }),
@@ -6993,15 +7215,17 @@ export function buildElementAuthoringPreview({
   projectRoot,
   request,
   generatedAt = new Date().toISOString(),
+  runtimeReadiness,
 }) {
   return elementAuthoringPreviewFromChangeSet({
     projectRoot,
     changeSet: buildElementAuthoringChangeSet({ projectRoot, request }),
     generatedAt,
+    runtimeReadiness,
   });
 }
 
-function elementAuthoringPreviewFromChangeSet({ projectRoot, changeSet, generatedAt = new Date().toISOString() }) {
+function elementAuthoringPreviewFromChangeSet({ projectRoot, changeSet, generatedAt = new Date().toISOString(), runtimeReadiness }) {
   const targets = changeSet.changes.map((change, index) => {
     const normalized = validateChangeProposal({
       projectRoot,
@@ -7029,12 +7253,16 @@ function elementAuthoringPreviewFromChangeSet({ projectRoot, changeSet, generate
       content: normalized.content,
     };
   });
-  const validations = validateChangeTargets(targets, { projectRoot });
+  const policies = [];
+  const validations = validateChangeTargets(targets, { projectRoot, onCompiled: air => {
+    for (const tool of air?.definitions?.tools ?? []) if (tool.approval_policy) policies.push(tool.approval_policy);
+  } });
   if (validations.some((item) => item.severity === "error")) {
     const error = serviceError("ToubaServeChangeValidationFailed", "element authoring preview failed validation");
     error.diagnostics = validations;
     throw error;
   }
+  if (runtimeReadiness) validations.push(...authoringReadiness({ ...runtimeReadiness, policies }));
   const previewDigest = `sha256:${sha256Text(targets.map((target) => (
     `${target.path}\0${target.role}\0${target.current_sha256 ?? "missing"}\0${target.proposed_sha256}`
   )).join("\n"))}`;
@@ -7154,6 +7382,7 @@ export function proposeProjectChangeSet({
     target: { path: targets[0].path },
     targets,
     requested_by: requestedBy,
+    review_diffs: targets.map(target => changeReviewDiff(projectRoot, target.path, target.content)),
     reason: typeof changeSet.reason === "string" ? changeSet.reason : "",
     content: targets[0].content,
     content_sha256: sha256Text(
@@ -7738,7 +7967,7 @@ function createAuthorityGraphBuilder(diagnostics) {
     }
   };
 
-  const addEdge = ({ kind, from, to, evidence, access }) => {
+  const addEdge = ({ kind, from, to, evidence, access, required_by_source = false }) => {
     const fromRef = normalizeAuthorityRef(from);
     const toRef = normalizeAuthorityRef(to);
     if (fromRef === undefined || toRef === undefined) {
@@ -7753,9 +7982,11 @@ function createAuthorityGraphBuilder(diagnostics) {
         from: fromRef,
         to: toRef,
         ...(normalizedAccess === undefined ? {} : { access: normalizedAccess }),
+        ...(required_by_source ? { required_by_source: true } : {}),
         evidence,
       });
     }
+    if (required_by_source) pendingEdges.get(id).required_by_source = true;
   };
 
   const removeEdge = ({ kind, from, to, evidence }) => {
@@ -7885,6 +8116,17 @@ function parseAirAuthority({ builder, value, path }) {
     if (!isPlainObject(graph)) {
       continue;
     }
+    // Static call sites make these authority declarations necessary for the
+    // current source. Dynamic agents may still have removable unused grants.
+    const visitCalls = item => {
+      if (!item || typeof item !== 'object') return;
+      if (typeof item.target_ref === 'string' && /^(tool|function|skill|agent):/.test(item.target_ref)) {
+        builder.addEdge({ kind: 'uses', from: graph.owner_ref, to: item.target_ref,
+          required_by_source: true, evidence: evidence(item.source_ref ?? graph.source_ref) });
+      }
+      for (const nested of Object.values(item)) if (nested && typeof nested === 'object') visitCalls(nested);
+    };
+    visitCalls(graph.nodes);
     for (const node of Array.isArray(graph.nodes) ? graph.nodes : []) {
       if (!isPlainObject(node) || !String(node.kind ?? "").startsWith("human")) {
         continue;
@@ -7981,9 +8223,9 @@ function parseToubaSourceAuthority({ builder, content, path, compiledOwners }) {
   if (moduleName) builder.addNode({ ref: `module:${moduleName}`, kind: "module", label: moduleName,
     evidence: authorityEvidence("source", path, `${path}:1`) });
   const localRefs = new Map();
-  for (const match of content.matchAll(/^([ \t]*)(memory|function|tool|skill|agent|strategy|trigger)\s+([A-Za-z_][\w]*)\b/gmu)) {
-    const kind = match[2] === "memory" ? "memory" : match[2];
-    const name = match[3];
+  for (const match of content.matchAll(/^(memory|function|tool|skill|agent|strategy|trigger)\s+([A-Za-z_][\w]*)\b/gmu)) {
+    const kind = match[1];
+    const name = match[2];
     const ref = kind === "memory"
       ? `memory:${moduleName ?? "source"}/${name}`
       : `${kind}:${moduleName ?? "source"}/${name}`;
@@ -7995,7 +8237,7 @@ function parseToubaSourceAuthority({ builder, content, path, compiledOwners }) {
       evidence: authorityEvidence("source", path, `${path}:${lineNumberAt(content, match.index)}`),
     });
   }
-  for (const match of content.matchAll(/^\s*import\s+(type|define|function|tool|skill|agent|strategy)?\s*([A-Za-z_][\w]*)\s+from\s+([A-Za-z_][\w.]*)/gmu)) {
+  for (const match of content.matchAll(/^\s*import\s+(type|define|function|tool|skill|agent|strategy|memory)?\s*([A-Za-z_][\w]*)\s+from\s+([A-Za-z_][\w.]*)/gmu)) {
     const importedName = match[2];
     const importedModule = match[3];
     const importedKind = match[1];
@@ -8003,6 +8245,7 @@ function parseToubaSourceAuthority({ builder, content, path, compiledOwners }) {
       continue;
     }
     const importRef = `${importedKind ?? "module"}:${importedModule}/${importedName}`;
+    localRefs.set(importedName, importRef);
     builder.addNode({
       ref: importRef,
       kind: authorityKind(importedKind, importRef) ?? "module",
@@ -8037,6 +8280,7 @@ function parseToubaSourceAuthority({ builder, content, path, compiledOwners }) {
           kind: "uses",
           from: ownerRef,
           to: targetRef,
+          required_by_source: new RegExp(`^[ \\t]{8,}${targetName}(?:\\s|$)`, 'mu').test(block.body),
           evidence: authorityEvidence("source", path, `${path}:${block.startLine + lineNumberAt(block.body, useMatch.index) - 1}`),
         });
       }
@@ -8632,7 +8876,7 @@ function validateChangeApplyRequest(request) {
   };
 }
 
-function validateChangeContent(proposal, { projectRoot, sourceTargets } = {}) {
+function validateChangeContent(proposal, { projectRoot, sourceTargets, onCompiled } = {}) {
   const diagnostics = [];
   const targetPath = proposal.target.path;
   if (CHANGE_TARGET_JSON_FILES.has(basename(targetPath))) {
@@ -8649,7 +8893,9 @@ function validateChangeContent(proposal, { projectRoot, sourceTargets } = {}) {
     }
   }
   if (targetPath.endsWith(".tb")) {
-    diagnostics.push(...compileProposedSources({ projectRoot, targets: sourceTargets ?? [{ path: targetPath, content: proposal.content }] }).diagnostics);
+    const compiled = compileProposedSources({ projectRoot, targets: sourceTargets ?? [{ path: targetPath, content: proposal.content }] });
+    diagnostics.push(...compiled.diagnostics);
+    if (compiled.air) onCompiled?.(compiled.air);
   }
   if (isAllowedHandlerStubTarget(targetPath)) {
     diagnostics.push(...validateHandlerStubPatch(targetPath, proposal.content));
@@ -8659,13 +8905,13 @@ function validateChangeContent(proposal, { projectRoot, sourceTargets } = {}) {
     : diagnostics;
 }
 
-function validateChangeTargets(targets, { projectRoot } = {}) {
+function validateChangeTargets(targets, { projectRoot, onCompiled } = {}) {
   const diagnostics = [];
   for (const target of targets) {
     for (const diagnostic of validateChangeContent({
       target: { path: target.path },
       content: target.content,
-    }, { projectRoot, sourceTargets: targets })) {
+    }, { projectRoot, sourceTargets: targets, onCompiled })) {
       diagnostics.push({
         ...diagnostic,
         message: `${target.path}: ${diagnostic.message}`,
@@ -8840,7 +9086,19 @@ function projectChangeDetail(proposal, { projectRoot }) {
     ...projectChangeSummary(proposal),
     validations: proposal.validations ?? [],
     evidence: projectChangeEvidence(proposal, { projectRoot }),
+    ...(Array.isArray(proposal.review_diffs) ? { diffs: proposal.review_diffs } : {}),
   };
+}
+
+function changeReviewDiff(projectRoot, path, content) {
+  const absolute = safeProjectPath(projectRoot, path);
+  const exists = existsSync(absolute);
+  const current = exists ? readFileSync(absolute, 'utf8') : '';
+  // An oversized original needs a smaller proposal, not a truncated review.
+  if (Buffer.byteLength(current, 'utf8') > MAX_CHANGE_CONTENT_BYTES) {
+    throw serviceError('ToubaServeChangeTooLarge', 'original file exceeds the review size limit');
+  }
+  return { path, diff: compactUnifiedDiff(path, current, content, exists) };
 }
 
 function publicChangeStatus(status) {
@@ -11517,7 +11775,11 @@ export function appendProjectEventJournal({ eventJournalPath, limit = DEFAULT_EV
   if (!Number.isInteger(limit) || limit < 1 || limit > 10000) {
     throw serviceError("ToubaServeEventJournalLimitInvalid", "event journal limit must be an integer between 1 and 10000");
   }
-  const events = [...readProjectEventJournal(eventJournalPath), event]
+  // Retain the first and latest handshakes in the window. The first preserves
+  // the observation-gap boundary; the latest preserves the restart cursor.
+  const previous = readProjectEventJournal(eventJournalPath);
+  const firstHandshake = previous.find(item => item.type === 'touba.server.ready');
+  const events = [...(event.type === 'touba.server.ready' ? previous.filter(item => item.type !== 'touba.server.ready' || item === firstHandshake) : previous), event]
     .sort((left, right) => left.sequence - right.sequence)
     .slice(-limit);
   mkdirSync(dirname(eventJournalPath), { recursive: true });
@@ -11673,6 +11935,10 @@ function bearerTokenFromAuthorization(authorization) {
 }
 
 export function requiredIdentityPermission(method, pathname) {
+  if (method === 'GET' && pathname === '/operations/incidents') return 'executions.read';
+  if (method === 'POST' && /^\/operations\/[^/]+\/close$/.test(pathname)) return 'executions.run';
+  if (method === 'GET' && pathname.startsWith('/approvals/dossier/')) return 'decisions.act';
+  if (method === 'GET' && pathname === '/elements/source') return 'governance.propose';
   if (pathname.startsWith('/validation')) return method === 'GET' ? 'executions.read' : 'governance.apply';
   if (method === 'POST' && pathname === '/triggers/scheduler/acknowledge') return 'governance.apply';
   if (pathname === "/traces/explorer") return "executions.read";
@@ -11714,6 +11980,7 @@ export function requiredIdentityPermission(method, pathname) {
     return "governance.propose";
   }
   if (pathname === "/packages/apply" || pathname === "/packages/remove/apply") return "governance.apply";
+  if (pathname === '/packages/registry/trust/preview' || pathname === '/packages/registry/trust/apply') return 'registry.manage';
   if (pathname === "/project/prepare") return "governance.apply";
   if (pathname === "/project/prepare/preview") return "governance.propose";
   if (pathname === "/project/prepare/apply") return "governance.apply";
@@ -11755,7 +12022,7 @@ export async function authorizeHumanIdentity({
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-touba-service-token": serviceToken,
+        "x-touba-service-token": typeof serviceToken === 'function' ? await serviceToken() : serviceToken,
       },
       body: JSON.stringify({ access_token: accessToken.trim() }),
       signal: AbortSignal.timeout(3000),
@@ -11764,7 +12031,7 @@ export async function authorizeHumanIdentity({
   } catch (cause) {
     throw serviceError(
       "ToubaServeIdentityUnavailable",
-      `identity control plane is unavailable: ${cause.message}`,
+      'identity control plane or project service credential is unavailable',
     );
   }
   if (!response.ok) {
@@ -11855,7 +12122,7 @@ function bindHumanActor(body, field, identity) {
   if (identity === null) return body;
   if (identity.principal?.kind === 'service') {
     if (field !== 'requested_by') throw serviceError('ToubaServeApplicationPermissionDenied', 'an application cannot act as a human signer');
-    return { ...(body ?? {}), [field]: { kind: 'service', id: identity.principal.id } };
+    return { ...(body ?? {}), [field]: { ...identity.principal } };
   }
   const userId = nonEmptyString(identity.user?.id);
   if (userId === undefined) {
@@ -12267,6 +12534,9 @@ function publishRefreshEvents(eventClients, report, nextEvent) {
 }
 
 function httpStatusForError(code) {
+  if (code === 'ToubaServeOperationClosureConflict') return 409;
+  if (code === 'ToubaServeOperationClosureInvalid') return 400;
+  if (['ToubaServeProjectOperationsActive', 'ToubaServeProjectMutationBusy'].includes(code)) return 409;
   if (/^ToubaValidation/.test(code ?? '')) {
     if (['ToubaValidationBusy','ToubaValidationCapacity','ToubaValidationHistoryFull'].includes(code)) return 429;
     if (['ToubaValidationSuiteMissing','ToubaValidationRunMissing'].includes(code)) return 404;
@@ -12289,9 +12559,11 @@ function httpStatusForError(code) {
   if (code === "ToubaServeExplorerRevisionConflict") return 409;
   if (code === "ProjectEntrypointNotAllowed") return 403;
   if (code === "ProjectEntrypointsInvalid") return 400;
-  if (["HumanApprovalRoleRequired", "HumanApprovalSignerConflict", "HumanApprovalIdentityMismatch",
+  if (["HumanApprovalRoleRequired", "HumanApprovalSignerConflict", "HumanApprovalIdentityMismatch", 'HumanApprovalExclusionEvidenceRequired',
     "HumanApprovalAttestationInvalid"].includes(code)) return 403;
   if (["HumanApprovalAuthorityUnavailable", "HumanApprovalAuthorityRequired"].includes(code)) return 503;
+  if (code === 'ToubaServeApprovalDossierUnavailable') return 503;
+  if (code === 'ToubaServeApprovalDossierTooLarge') return 413;
   if (["HumanApprovalDecisionAlreadyConsumed", "HumanApprovalCheckpointIncompatible"].includes(code)) return 409;
   if (["HumanApprovalEvidenceRequired", "HumanApprovalNotExpired", "InvalidHumanApprovalPolicy"].includes(code)) return 400;
   if (code === "ToubaServeNativeTraceRunInvalid") return 400;
@@ -12436,6 +12708,7 @@ function httpStatusForError(code) {
 export function checkToubaProjectState(options = {}) {
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const diagnostics = [], stores = [];
+  let recovery;
   let origin = { status: "unrecorded", build_id: null };
   let buildId = "unknown";
   try {
@@ -12450,6 +12723,7 @@ export function checkToubaProjectState(options = {}) {
   try {
     for (const [key, fallback, load] of [
       ["sandboxCheckpointsPath", DEFAULT_SANDBOX_CHECKPOINTS_PATH, auditSandboxCheckpoints],
+      ['checkpointCustodyPath', '.touba/approval-checkpoints.sqlite', path => createSqliteHumanCheckpointStore(path).audit()],
       ["humanRequestsPath", DEFAULT_HUMAN_REQUESTS_PATH, path => auditHumanStore(path, "requests")],
       ["humanDecisionsPath", DEFAULT_HUMAN_DECISIONS_PATH, path => auditHumanStore(path, "decisions")],
       ["changeProposalsPath", DEFAULT_CHANGE_PROPOSALS_PATH, auditChangeProposals],
@@ -12465,6 +12739,10 @@ export function checkToubaProjectState(options = {}) {
         const records = validationStore(path).read();
         return {schema_version:'touba-validation-store-v1',records,active_operations:records.filter(row=>row.status==='running').length};
       }],
+      ...(options.abandonWaits ? [
+        ['triggerQueuePath', '.touba/trigger-queue.sqlite', auditRecoveryTriggerQueue],
+        ['triggerStatePath', '.touba/triggers.sqlite', auditRecoveryTriggerState],
+      ] : []),
     ]) {
       const path = resolve(options[key] ?? join(projectRoot, fallback));
       copies[key] = join(temporary, key + ".sqlite");
@@ -12494,25 +12772,48 @@ export function checkToubaProjectState(options = {}) {
             : 0) });
       } catch (error) { diagnostics.push({ code: error.code ?? "ToubaServeStoredStateInvalid", store: key }); }
     }
-    if (diagnostics.length === 0) {
+    if (diagnostics.every(item => item.code === 'ToubaServeStateBuildMismatch')) {
       try {
         // Same cross-store invariants as startup, but only on the private copies.
         validateHumanWaitInteractionProjectionMarkers({
           interactionSessionsPath: copies.interactionSessionsPath,
           sandboxCheckpointsPath: copies.sandboxCheckpointsPath,
         });
+        if (options.abandonWaits) recovery = reviewWaitAbandonment({
+          checkpointPages: sandboxCheckpointPages(copies.sandboxCheckpointsPath),
+          sessions: readInteractionRecoveryProjections(copies.interactionSessionsPath),
+          schedules: schedulerStore(copies.schedulerPath).read(),
+          decisionFor: request_id => loadHumanDecisionStore(copies.humanDecisionsPath, [{ request_id }]).decisions,
+          abandonOperations: options.abandonOperations === true,
+          quiescentEvidence: ['effectJournalPath', 'checkpointCustodyPath'].every(key => {
+            const audit = stores.find(store => store.store === key);
+            return audit && (!audit.exists || audit.active_operations === 0);
+          }),
+        });
+        if (recovery && existsSync(copies.triggerStatePath)) {
+          stores.find(store => store.store === 'triggerStatePath').active_operations =
+            auditRecoveryTriggerState(copies.triggerStatePath, recovery.waits).active_operations;
+        }
+        if (recovery && options.abandonOperations && existsSync(copies.triggerQueuePath)) {
+          // Failed deliveries are retained byte-for-byte, never retried or
+          // removed by state archival. Full closure already audited effects.
+          const audit = auditRecoveryTriggerQueue(copies.triggerQueuePath, { retainDeadLetters: true });
+          stores.find(store => store.store === 'triggerQueuePath').active_operations = audit.active_operations;
+          recovery.retained_dead_letters = audit.dead_letters;
+        }
       } catch (error) {
-        diagnostics.push({ code: error.code ?? "ToubaServeStoredStateInvalid",
+        diagnostics.push({ code: error.code ?? "ToubaServeStoredStateInvalid", message: error.message,
           store: "sandboxCheckpointsPath", related_store: "interactionSessionsPath" });
       }
     }
   } finally { rmSync(temporary, { recursive: true, force: true }); }
   return { schema_version: "touba-state-preflight-v1", status: diagnostics.length ? "refused" : "structurally_valid",
-    candidate_build_id: buildId, origin, stores, diagnostics,
+    candidate_build_id: buildId, origin, stores, diagnostics, ...(recovery ? { recovery } : {}),
     scope: "offline structural check; no recovery, decision, expiration or handler; not a business compatibility guarantee" };
 }
 
 function parseArgs(rawArgs) {
+  rawArgs = expandServerConfig(rawArgs);
   const options = {
     host: DEFAULT_HOST,
     port: DEFAULT_PORT,
@@ -12528,6 +12829,14 @@ function parseArgs(rawArgs) {
       options.checkState = true;
     } else if (arg === "--archive-state") {
       options.archiveState = true;
+    } else if (arg === '--abandon-waits') {
+      options.abandonWaits = true;
+    } else if (arg === '--abandon-operations') {
+      options.abandonWaits = true; options.abandonOperations = true;
+    } else if (arg === '--reason') {
+      options.stateReason = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === '--review-digest') {
+      options.stateReviewDigest = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--restore-state") {
       options.restoreState = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--apply") {
@@ -12584,6 +12893,8 @@ function parseArgs(rawArgs) {
       options.validationPlanPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--identity-service-token-env") {
       options.identityServiceTokenEnv = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === '--identity-service-token-vault') {
+      options.identityServiceTokenVault = true;
     } else if (arg === "--deployment-target-url") {
       options.deploymentTargetUrl = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--deployment-target-token-env") {
@@ -12679,6 +12990,10 @@ function parseArgs(rawArgs) {
     || (options.applyState && !options.archiveState && !options.restoreState)) {
     throw serviceError("ToubaStateOptionsInvalid", "choose one state operation; --apply requires --archive-state or --restore-state");
   }
+  if (options.abandonWaits && !options.archiveState
+    || (options.stateReason !== undefined || options.stateReviewDigest !== undefined) && !options.abandonWaits) {
+    throw serviceError('ToubaStateOptionsInvalid', '--abandon-waits requires --archive-state; --reason and --review-digest require --abandon-waits');
+  }
   return options;
 }
 
@@ -12710,6 +13025,9 @@ function usage() {
     "Usage: touba serve [--check-state] [--project-root <path>] [--secrets <touba.secrets.json>] [--contracts-root <path>] [--human-approval-host <host.mjs>] [--human-decisions <human-decisions.sqlite>] [--human-requests <path>] [--effect-journal <path>] [--mobile-pairings <path>] [--change-proposals <path>] [--event-journal <path>] [--event-journal-limit <n>] [--run-summary <path>] [--trace-timeline <path>] [--trigger-status <path>] [--host 127.0.0.1] [--port 8791] [--auth-token-env NAME] [--identity-control-plane-url URL --identity-service-token-env NAME] [--deployment-target-url URL --deployment-target-token-env NAME] [--agent-decision-provider <provider.mjs>] [--agent-decision-provider-initial-mode summary|capabilities] [--strict] [--quiet]",
     "",
     "Starts the live Touba project server for authenticated project clients.",
+    "--config touba.server.json loads an explicit project-relative server profile. Conflicting CLI flags are refused. Secrets stay outside this file.",
+    "touba serve login --config touba.server.json --token-stdin stores a project service key in the OS vault; logout removes that entry.",
+    "--identity-service-token-vault reads the current project credential on each authorization; choose it instead of --identity-service-token-env.",
     "--client-origin <https://host[:port]> authorizes one exact browser origin (repeatable, maximum 16); requires authentication.",
     "--max-pending-approvals <n> sets the pending approval capacity (default 100, maximum 10000).",
     "--cloud-notifications forwards minimized operational events to the configured Cloud in the background; no effect on project authority.",
@@ -12723,6 +13041,8 @@ function usage() {
     "--human-approval-authority-timeout-ms <1..60000> bounds each identity attestation call (default 5000 ms).",
     "--check-state returns an offline structural preflight as JSON, without starting the server or loading host modules.",
     "--archive-state previews archival of stopped, completed project state; add --apply to archive it reversibly.",
+    "--archive-state --abandon-waits --reason <text> reviews offline abandonment of human waits; --apply requires --review-digest <sha256> from that preview. No effect or decision is executed.",
+    "--archive-state --abandon-operations --reason <text> also reviews interrupted operations and incompatible decision claims, after stopped-state, custody and effect checks.",
     "--restore-state <archive-id> previews restoration; add --apply to restore without overwriting current state.",
     "Use --identity <project-identity.json> to load an explicit, schema-validated identity configuration inside the project root.",
     "",
@@ -12870,8 +13190,7 @@ function assertIdentityControlPlaneConfigured({ controlPlaneUrl, serviceToken })
   if (
     typeof controlPlaneUrl !== "string"
     || controlPlaneUrl.trim() === ""
-    || typeof serviceToken !== "string"
-    || serviceToken.length < 32
+    || !(typeof serviceToken === 'function' || typeof serviceToken === 'string' && serviceToken.length >= 32)
   ) {
     throw serviceError(
       "ToubaServeIdentityNotConfigured",

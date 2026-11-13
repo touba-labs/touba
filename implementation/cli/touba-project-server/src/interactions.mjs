@@ -171,7 +171,7 @@ export function findInteractionRecoveryOperation(sessionsPath, operationId) {
   if (!sessionsPath) return null;
   const rows = withSessionStoreErrors(() => indexedSessionStore(sessionsPath).project(session => {
     const item = session.operations.find(operation => operation.operation_id === operationId);
-    return item ? { operation_id: item.operation_id, run_id: item.run_id, target_ref: item.target_ref,
+    return item ? { session_id: session.session_id, operation_id: item.operation_id, run_id: item.run_id, target_ref: item.target_ref,
       status: item.status, error: item.error, created_at: item.created_at,
       updated_at: item.completed_at ?? session.updated_at } : null;
   }, { limit: MAX_SESSIONS }));
@@ -241,6 +241,7 @@ export function enqueueInteractionOperation({
   session.messages.push({
     message_id: message.message_id,
     role: "user",
+    ...(message.requested_by ? { requested_by: structuredClone(message.requested_by) } : {}),
     created_at: generatedAt,
     display_text: displayText,
     operation_id: operation.operation_id,
@@ -455,6 +456,22 @@ export function failInteractionOperation({
   session.status = "failed";
   session.last_run_status = "failed";
   session.updated_at = generatedAt;
+  saveInteractionSessionStore(sessionsPath, store);
+  return operation;
+}
+
+// The caller has checked custody/effects and the exact observation digest.
+// This records an operator closure, never a fabricated runtime result.
+export function closeInterruptedInteractionOperation({ sessionsPath, operationId, closedBy, reason, generatedAt = new Date().toISOString() }) {
+  const reference = findInteractionRecoveryOperation(sessionsPath, operationId);
+  if (!reference) throw interactionError('ToubaServeOperationNotFound', 'Operation is unavailable');
+  const store = loadInteractionSessionStore(sessionsPath, [{ id: reference.session_id }]);
+  const { session, operation } = requireOperation(store, reference.session_id, operationId);
+  if (operation.status !== 'interrupted') throw interactionError('ToubaServeOperationClosureConflict', 'Operation is no longer interrupted');
+  operation.status = 'cancelled'; operation.completed_at = generatedAt;
+  operation.error = { code: 'ToubaOperationClosed', message: reason, closed_by: closedBy };
+  updateUserMessageStatus(session, operation.message_id, 'cancelled');
+  session.status = 'open'; session.last_run_status = 'cancelled'; session.updated_at = generatedAt;
   saveInteractionSessionStore(sessionsPath, store);
   return operation;
 }

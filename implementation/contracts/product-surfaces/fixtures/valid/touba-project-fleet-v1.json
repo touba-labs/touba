@@ -1,0 +1,10 @@
+{
+  "schema_version": "touba-project-fleet-v1",
+  "projects": [
+    {
+      "id": "example",
+      "root": "./example",
+      "config": "touba.server.json"
+    }
+  ]
+}

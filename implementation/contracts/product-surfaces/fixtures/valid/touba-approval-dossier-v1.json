@@ -1,0 +1,5 @@
+{
+  "schema_version": "touba-approval-dossier-v1", "request_id": "approval:example", "run_id": "run:example",
+  "operation_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "viewed_at": "2026-11-11T12:00:00.000Z", "arguments": { "amount": 25, "reason": "Synthetic example" }
+}

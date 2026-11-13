@@ -15,7 +15,11 @@ export function packagePythonSdk(implementationRoot, toolchainRoot) {
   });
   if (result.error || result.status !== 0) throw new Error("Python SDK build failed: provision runtime/touba-python-sdk/build-requirements.txt in an isolated builder and set TOUBA_PYTHON_BUILD_BIN to its Python executable");
   const version = JSON.parse(readFileSync(join(implementationRoot, "runtime/touba-handler-sdk/package.json"))).version;
-  const filename = `touba_sdk-${version}-py3-none-any.whl`;
+  const normalized = spawnSync(python, ["-c", "from packaging.version import Version; import sys; print(Version(sys.argv[1]))", version], {
+    encoding: "utf8", maxBuffer: 4096, timeout: 10000,
+  });
+  if (normalized.error || normalized.status !== 0 || !/^[0-9][0-9A-Za-z.+!]*$/.test(normalized.stdout.trim())) throw new Error("Invalid Python SDK distribution version");
+  const filename = `touba_sdk-${normalized.stdout.trim()}-py3-none-any.whl`;
   const sha256 = createHash("sha256").update(readFileSync(join(output, filename))).digest("hex");
   return { name: "touba-sdk", version, archive: `sdk/${filename}`, sha256, build_sha256: pythonSdkSourceIdentity(join(source, "src/touba_sdk")), requires_python: ">=3.11" };
 }

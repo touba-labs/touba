@@ -6,7 +6,7 @@ sidebar_position: 4
 
 ## Provenance des packages et des approbations
 
-**Prochain build — en qualification locale.**
+**Disponible à partir de Touba 1.4.0.**
 
 Une exécution issue d'un projet préparé enregistre `package_admission_verified`
 après `run_started`. Cet inventaire contient les noms, versions et empreintes

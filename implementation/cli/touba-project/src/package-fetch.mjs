@@ -33,7 +33,7 @@ export async function readPackageBytes(location, maxBytes, authorization) {
 }
 
 // One reader per installation, no process-global credentials or token files.
-export function createRegistryReader(location, { noBrowser = false, notify, signal } = {}) {
+export function createRegistryReader(location, { noBrowser = false, notify, signal, sessionOnly = false } = {}) {
   if (!/^https?:\/\//.test(location)) return { readBytes: readPackageBytes, close: async () => {} };
   const registry = publicationUrl(location.replace(/\/index\.json$/, ''));
   const root = new URL(registry + '/');
@@ -50,7 +50,7 @@ export function createRegistryReader(location, { noBrowser = false, notify, sign
       catch (error) {
         if (error.code !== 'RegistryAuthenticationRequired' || attempted) throw error;
         attempted = true;
-        identity = await authorizeRegistry(registry, { access: 'read', noBrowser, notify, signal });
+        identity = await authorizeRegistry(registry, { access: 'read', noBrowser, notify, signal, sessionOnly });
         return readPackageBytes(target.href, maximum, identity.token);
       }
     },

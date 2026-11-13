@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-operation-incidents-v1", "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "items", "next_cursor"],
+  "properties": {
+    "schema_version": {"const": "touba-operation-incidents-v1"},
+    "next_cursor": {"type": ["string", "null"]},
+    "items": {"type": "array", "maxItems": 100, "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operation_id", "run_id", "target_ref", "status", "updated_at"],
+      "properties": {
+        "operation_id": {"type": "string", "minLength": 1},
+        "run_id": {"type": "string", "minLength": 1},
+        "target_ref": {"type": "string", "minLength": 1},
+        "status": {"enum": ["awaiting_human", "interrupted", "resume_claimed"]},
+        "updated_at": {"type": "string", "minLength": 1}
+      }
+    }}
+  }
+}

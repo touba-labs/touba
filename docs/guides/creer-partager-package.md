@@ -273,7 +273,7 @@ description, licence, README ou exports dans une nouvelle version.
 
 ## Revoir la gouvernance d'une mise à jour
 
-**Prochain build — en qualification locale.** La version publique 1.3.1 ne contient pas encore ce contrat.
+**Disponible à partir de Touba 1.4.0.**
 
 L'application conserve ses exigences dans `touba.project.json` :
 `configuration.package_contracts` décrit les contrats revus et

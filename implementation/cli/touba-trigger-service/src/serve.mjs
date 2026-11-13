@@ -742,7 +742,7 @@ export function buildTriggerStatusContract({
   const triggers = (document.definitions?.triggers ?? [])
     .filter((trigger) => triggerRef === undefined || trigger.id === triggerRef)
     .filter((trigger) => ["request", "schedule"].includes(trigger.event?.kind))
-    .map((trigger) => triggerStatusEntry(trigger, manifest, state, queue));
+    .map((trigger) => triggerStatusEntry(trigger, manifest, state, queue, generatedAt));
   return {
     schema_version: "touba-trigger-status-v1",
     generated_at: generatedAt,
@@ -750,7 +750,7 @@ export function buildTriggerStatusContract({
   };
 }
 
-function triggerStatusEntry(trigger, manifest, state, queue) {
+function triggerStatusEntry(trigger, manifest, state, queue, generatedAt) {
   const manifestTrigger = manifestTriggerForStatus(manifest, trigger.id);
   const triggerState = state?.summary?.(trigger.id) ?? state?.triggers?.[trigger.id] ?? {};
   const queueEntries = queueEntriesForTrigger(queue, trigger.id);
@@ -765,6 +765,10 @@ function triggerStatusEntry(trigger, manifest, state, queue) {
       accepted_count: safeNonNegativeInteger(triggerState.accepted_count),
       refused_count: safeNonNegativeInteger(triggerState.refused_count),
       last_event_id: typeof triggerState.last_event_id === "string" ? triggerState.last_event_id : null,
+      ...(typeof state?.count === 'function' ? {
+        daily_count: state.count(trigger.id, generatedAt.slice(0, 10)),
+        day_utc: generatedAt.slice(0, 10),
+      } : {}),
     },
     queue: queue?.counts?.(trigger.id) ?? {
       pending: queueEntries.filter((entry) => entry.status === "queued").length,

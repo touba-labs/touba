@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-fleet-upgrade-plan-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "touba-fleet-upgrade-plan-v1"
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+              },
+              "root": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "config": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "language": {
+                "enum": [
+                  "javascript",
+                  "python"
+                ]
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "host": {
+                "enum": [
+                  "127.0.0.1",
+                  "::1",
+                  "localhost"
+                ]
+              },
+              "profile_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "project_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "source_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "candidate_build": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "schedule_triggers": {
+                "type": "boolean"
+              },
+              "cloud_notifications": {
+                "type": "boolean"
+              },
+              "status": {
+                "const": "ready"
+              },
+              "archive_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "archive_files": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sdk": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "name",
+                  "version",
+                  "sha256"
+                ]
+              },
+              "previous_receipt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "root",
+              "config",
+              "language",
+              "port",
+              "host",
+              "profile_digest",
+              "project_digest",
+              "source_digest",
+              "candidate_build",
+              "schedule_triggers",
+              "cloud_notifications",
+              "status",
+              "archive_digest",
+              "archive_files",
+              "sdk",
+              "previous_receipt"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+              },
+              "root": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "config": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "language": {
+                "enum": [
+                  "javascript",
+                  "python"
+                ]
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "host": {
+                "enum": [
+                  "127.0.0.1",
+                  "::1",
+                  "localhost"
+                ]
+              },
+              "profile_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "project_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "source_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "candidate_build": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "schedule_triggers": {
+                "type": "boolean"
+              },
+              "cloud_notifications": {
+                "type": "boolean"
+              },
+              "status": {
+                "const": "blocked"
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "id",
+              "root",
+              "config",
+              "language",
+              "port",
+              "host",
+              "profile_digest",
+              "project_digest",
+              "source_digest",
+              "candidate_build",
+              "schedule_triggers",
+              "cloud_notifications",
+              "status",
+              "code"
+            ]
+          }
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 32
+    },
+    "review_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "projects",
+    "review_digest"
+  ]
+}

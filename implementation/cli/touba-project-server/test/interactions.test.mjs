@@ -1,19 +1,21 @@
 import assert from "node:assert/strict";
 import { readStoreFixture } from "./store-fixtures.mjs";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from 'node:url';
-import { readOperationRecovery } from '../src/serve.mjs';
+import { readOperationRecovery, createToubaProjectServer } from '../src/serve.mjs';
+import { initProject } from '../../touba-project/src/project.mjs';
 
 import {
   archiveInteractionSession,
   countApplicationOperations,
   bufferedInteractionProgress,
   completeInteractionOperation,
+  closeInterruptedInteractionOperation,
   createInteractionSession,
   enqueueInteractionOperation,
   failInteractionOperation,
@@ -95,7 +97,7 @@ test('recovery preserves pre-checkpoint errors and interruptions without adverti
   assert.equal(recovery.evidence_source, 'interaction');
   assert.equal(recovery.diagnostic.code, 'ToubaServeInteractionInterrupted');
   assert.equal(recovery.refusal.code, 'DurableResumeNotAvailable');
-  assert.deepEqual(recovery.allowed_actions, []);
+  assert.deepEqual(recovery.allowed_actions.map(action => action.action), ['close']);
   failInteractionOperation({ ...scope, code: 'InvalidRuntimeInput', message: 'Input does not match the declared type' });
   recovery = readOperationRecovery(options);
   assert.equal(recovery.status, 'failed');
@@ -104,6 +106,58 @@ test('recovery preserves pre-checkpoint errors and interruptions without adverti
   assert.equal(recovery.correlations.checkpoint_digest, null);
   assert.deepEqual(recovery.allowed_actions, []);
   assert.throws(() => readOperationRecovery({ ...options, operationId: 'unknown' }), { code: 'ToubaServeOperationNotFound' });
+});
+
+test('explicit HTTP closure of a pre-checkpoint interruption is reviewed, write-once and preserves the message', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-close-interrupted-'));
+  initProject({root});
+  const sessionsPath = join(root, '.touba/interaction-sessions.sqlite'), session = createSession(sessionsPath);
+  const operation = enqueueInteractionOperation({message: interactionMessage(), runId: 'close-run', sessionId: session.session_id, sessionsPath});
+  startInteractionOperation({sessionsPath, sessionId: session.session_id, operationId: operation.operation_id});
+  const server = createToubaProjectServer({projectRoot: root, port: 0, quiet: true});
+  t.after(async () => { await server.stop(); rmSync(root, {recursive: true, force: true}); });
+  await server.start();
+  const base = `http://127.0.0.1:${server.server.address().port}/operations/${operation.operation_id}`;
+  const before = await (await fetch(base + '/recovery')).json();
+  assert.deepEqual(before.allowed_actions.map(action => action.action), ['close']);
+  const body = {schema_version: 'touba-operation-close-request-v1', state_digest: before.freshness.state_digest, reason: 'Stopped synthetic run, no effect to reconcile.'};
+  const close = value => fetch(base + '/close', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(value)});
+  assert.equal((await close({...body, state_digest: 'sha256:' + '0'.repeat(64)})).status, 409);
+  assert.equal((await close({...body, reason: ' '})).status, 400);
+  const response = await close(body); assert.equal(response.status, 200, await response.clone().text());
+  assert.equal((await response.json()).status, 'cancelled');
+  assert.equal((await close(body)).status, 409);
+  const saved = getInteractionSession({sessionsPath, sessionId: session.session_id});
+  assert.equal(saved.status, 'open'); assert.equal(saved.messages[0].run_status, 'cancelled');
+  assert.equal(saved.operations[0].error.message, body.reason);
+  assert.equal(saved.operations[0].error.closed_by, 'project-bearer');
+  assert.equal(saved.messages.length, 1, 'closure never executes or invents a response');
+});
+
+test('offline CLI archives an interrupted pre-checkpoint operation from an older build', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-close-offline-'));
+  initProject({root});
+  const sessionsPath = join(root,'.touba/interaction-sessions.sqlite'), session = createSession(sessionsPath);
+  const operation = enqueueInteractionOperation({message:interactionMessage(),runId:'offline-cut',sessionId:session.session_id,sessionsPath});
+  startInteractionOperation({sessionsPath,sessionId:session.session_id,operationId:operation.operation_id});
+  const server = createToubaProjectServer({projectRoot:root,port:0,quiet:true});
+  t.after(async () => { await server.stop(); rmSync(root,{recursive:true,force:true}); });
+  await server.start(); await server.stop();
+  const originPath = join(root,'.touba/state-origin.json');
+  writeFileSync(originPath,JSON.stringify({schema_version:'touba-serve-state-origin-v1',project_root:realpathSync(root),build_id:'f'.repeat(64)}));
+  const original = readFileSync(sessionsPath);
+  const args = [new URL('../src/serve.mjs',import.meta.url).pathname,'--project-root',root,'--archive-state','--abandon-operations','--reason','Synthetic interrupted operation reviewed.'];
+  const preview = JSON.parse(execFileSync(process.execPath,args,{encoding:'utf8'}));
+  assert.equal(preview.recovery.waits[0].operation_id, operation.operation_id);
+  assert.equal(preview.recovery.waits[0].previous_status, 'interrupted');
+  assert.equal(preview.recovery.business_reconciliation_required, true);
+  assert.deepEqual(readFileSync(sessionsPath),original);
+  const archived = JSON.parse(execFileSync(process.execPath,[...args,'--apply','--review-digest',preview.review_digest],{encoding:'utf8'}));
+  assert.equal(archived.recovery.waits[0].status,'abandoned');
+  assert.deepEqual(readFileSync(join(root,'.touba/state-archives',archived.archive_id,'interaction-sessions.sqlite')),original);
+  const renewed = createToubaProjectServer({projectRoot:root,port:0,quiet:true});
+  try { await renewed.start(); assert.equal(listInteractionSessions(sessionsPath).sessions.length,0); }
+  finally { await renewed.stop(); }
 });
 
 test("progress batches persist before notification, keep counts, and surface changed-store corruption", async () => {

@@ -6,7 +6,7 @@ sidebar_position: 8
 
 ## Gouvernance et intégrité des packages
 
-**Prochain build — en qualification locale.**
+**Disponible à partir de Touba 1.4.0.**
 
 | Code | Action |
 | --- | --- |

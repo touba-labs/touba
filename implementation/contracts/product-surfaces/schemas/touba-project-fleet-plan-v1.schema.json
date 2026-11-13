@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-project-fleet-plan-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "touba-project-fleet-plan-v1"
+    },
+    "file": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+          },
+          "root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "config": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "language": {
+            "enum": [
+              "javascript",
+              "python"
+            ]
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "host": {
+            "enum": [
+              "127.0.0.1",
+              "::1",
+              "localhost"
+            ]
+          },
+          "profile_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "project_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "source_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "candidate_build": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "schedule_triggers": {
+            "type": "boolean"
+          },
+          "cloud_notifications": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "root",
+          "config",
+          "language",
+          "port",
+          "host",
+          "profile_digest",
+          "project_digest",
+          "source_digest",
+          "candidate_build",
+          "schedule_triggers",
+          "cloud_notifications"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 32
+    },
+    "deployment_targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+          },
+          "storage": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "host": {
+            "enum": [
+              "127.0.0.1",
+              "::1",
+              "localhost"
+            ]
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "auth_token_env": {
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
+          },
+          "candidate_build": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "id",
+          "storage",
+          "host",
+          "port",
+          "auth_token_env",
+          "candidate_build"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 4
+    },
+    "review_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "file",
+    "projects",
+    "deployment_targets",
+    "review_digest"
+  ]
+}

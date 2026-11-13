@@ -1,5 +1,11 @@
 # Product Surface JSON Contracts
 
+Local project lifecycle uses the canonical `touba-project-fleet-v1` input,
+`touba-project-fleet-plan-v1` review and the `touba-fleet-upgrade-plan-v1`,
+`touba-fleet-upgrade-result-v1` and `touba-fleet-upgrade-receipt-v1` documents.
+Plans bind sources, profiles and toolchain identity. Receipts preserve each
+upgrade's archive and step outcome without carrying host secrets.
+
 These contracts define the versioned JSON boundary between Touba Core and host applications, including project clients and package
 catalogs.
 
@@ -18,6 +24,8 @@ Lists and optionals recursively retain reachable record/enum definitions.
 | Contract | Primary consumers | Purpose |
 | --- | --- | --- |
 | `touba-project-explorer-v1` | CLI browser, VS Code webview | Read-only project graph compiled from a bounded source snapshot: inventory, source-defined flow, declared authority and relative source coordinates. |
+| `touba-project-server-config-v1` | CLI, local operators | Explicit persistent server options, project-relative paths and credential environment names. Read on deliberate startup, with no implicit host activation from a cloned project. |
+| `touba-validation-plan-review-v1` | CLI, authorized project clients | Before/after snapshots of selected host test suites, file fingerprints and a review digest. Generation and refresh never execute tests. |
 | `touba-auth-session-v1` | host applications, project server | Authenticated human identity, organization membership, permissions and bounded session metadata. |
 | `touba-identity-directory-v1` | project clients | Organization members and role definitions without devices, sessions or credentials. |
 | `touba-device-pairing-v1` | host applications | One-time, expiring identity pairing issued for a specific user. |
@@ -62,6 +70,14 @@ Lists and optionals recursively retain reachable record/enum definitions.
 | `touba-alert-v1` | host applications | Notification-only alert, separate from runtime decisions. |
 
 ## Validation
+
+An operator can start a reviewed server profile with
+`touba serve --config touba.server.json --project-root /path/to/project`.
+The profile is limited to 32 KiB. Unknown fields, symbolic links, hard-linked
+profiles, paths escaping the project and duplicate CLI/profile options are
+refused. Credentials remain in the host secret manager; the profile names their
+environment variables. A profile change takes effect at the next explicit
+startup. Offline state checks read the profile without loading its host modules.
 
 Clients check the exact advertised endpoint and its request/response contracts
 before enabling an action. A supported run route does not imply support for
@@ -179,7 +195,9 @@ GET  /authority/graph
 GET  /identity
 GET  /runs/current
 GET  /runs/<run_id>/trace
+GET  /operations/incidents
 GET  /operations/<operation_id>/recovery
+POST /operations/<operation_id>/close
 POST /runs/sandbox
 POST /runs/sandbox/resume
 GET  /interactions/sessions
@@ -228,6 +246,14 @@ redacted values. Oversized interactive reviews return 429 and require CLI review
 The legacy empty-object `/project/prepare` remains available, without an implicit
 acceptance of package contract changes. client uses only the reviewed routes.
 
+Project mutation routes refuse active human waits, interrupted operations and
+concurrent executions with `ToubaServeProjectOperationsActive`. An execution
+cannot start during a governed mutation (`ToubaServeProjectMutationBusy`).
+This gate belongs to the project server; external editors remain outside it.
+Decision acceptance checks the current AIR and host contracts before and after
+asynchronous attestation, before claiming the human decision. Runtime resume
+retains its own compatibility and custody checks.
+
 The two `pending/current` routes accept an optional `run_id` query parameter.
 With it, the server returns only an undecided request for that exact run, or
 `ToubaServePendingHumanRequestNotFound` (404). Without it, the first pending
@@ -263,6 +289,20 @@ checkpoint is resumable only while an ambiguous effect is retry-safe; a
 waits expose `submit_decision` only before expiration. The route requires
 `executions.read`; advertised actions still require their own
 `executions.run` or `decisions.act` permission.
+
+`GET /operations/incidents` requires `executions.read` and returns the bounded
+`touba-operation-incidents-v1` projection of durable human waits and interrupted
+executions, including direct and scheduled runs. Follow `next_cursor` until null;
+each page contains at most 100 entries. No arguments, secrets or receipts are
+included. Archiving a conversation does not remove a runtime incident.
+
+`POST /operations/<operation_id>/close` requires `executions.run`, a current
+`state_digest`, and a nonempty reason in `touba-operation-close-request-v1`.
+Only interrupted interaction operations without a runtime checkpoint or any
+recorded effect can be closed online. Stale, concurrent or repeated closure is
+refused. The original message and operation remain recorded as cancelled;
+no handler runs and no approval receipt is invented. Application credentials
+cannot invoke this route.
 
 New RESUME-1 clients send `touba-operation-resume-request-v1` to
 `POST /runs/sandbox/resume`. The server continues to accept the same five
@@ -313,6 +353,10 @@ spanning all pages. SQLite reads only the selected bodies, bounded to 16 MiB.
 `touba-human-decision-detail-v1`. These routes expose a normalized, read-only
 view of accepted human decisions for host applications.
 
+The optional `request_id` query filters pending, recorded and terminal decisions
+to that exact request. Unknown IDs return an empty selection. Pagination keeps
+the same filter; there is no fallback to another request.
+
 `/project/refresh` accepts `touba-project-refresh-request-v1` and returns
 `touba-project-refresh-v1`. The refresh result includes a bounded artifact
 snapshot, changed artifacts and diagnostics such as stale AIR.
@@ -323,6 +367,12 @@ the exact source, manifest and guarded handler-stub targets without writing a
 file or a pending proposal. It returns `touba-element-authoring-preview-v1`.
 The client sends its `preview_digest` with the subsequent proposal; the server
 recomputes current target digests and rejects stale previews before persistence.
+
+Python tools requesting confinement require a reviewed interpreter and file
+inventory. Authoring preview refuses them with
+`ToubaServeElementSandboxInventoryRequired`; use `touba sdk sandbox python
+--handler <file>` to prepare the explicit binding fragment. The preview does
+not execute an interpreter or change files to manufacture this inventory.
 
 `/project` includes an interaction profile for each executable target. The
 profile derives a presentation mode, primary text path, structured context and

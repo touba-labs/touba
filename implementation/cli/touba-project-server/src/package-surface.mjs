@@ -101,6 +101,14 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
     finally { working = false; }
   }
   return {
+    configureRegistry({ registry: nextRegistry, trust: nextTrust }) {
+      if (closed || working || receiving) fail('ToubaServePackageBusy', 'finish the current package operation before changing trust');
+      if (registryRoot && registryRoot !== nextRegistry) fail('RegistryTrustInvalid', 'configured registry origin must be preserved');
+      resolutions.clear();
+      for (const id of pending.keys()) discard(id);
+      registryRoot = nextRegistry; trust = nextTrust;
+    },
+    assertIdle() { if (closed || working || receiving) fail('ToubaServePackageBusy', 'finish the current package operation'); },
     async receive(operation) {
       if (closed || receiving || working) fail('ToubaServePackageBusy', 'a package transfer is in progress');
       receiving = true;

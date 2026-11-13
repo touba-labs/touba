@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-fleet-upgrade-receipt-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "touba-fleet-upgrade-receipt-v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f-]{36}$"
+    },
+    "review_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "candidate_build": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "status": {
+      "enum": [
+        "running",
+        "complete",
+        "failed"
+      ]
+    },
+    "step": {
+      "enum": [
+        "archive",
+        "sdk",
+        "prepare",
+        "complete"
+      ]
+    },
+    "archive_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "review_digest",
+    "candidate_build",
+    "status",
+    "step",
+    "archive_id"
+  ]
+}

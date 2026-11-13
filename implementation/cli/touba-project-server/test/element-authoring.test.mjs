@@ -5,15 +5,71 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { compileProposedSources } from "../src/source-validation.mjs";
-import { buildAuthorityGraph } from "../src/serve.mjs";
+import { buildAuthorityGraph, buildElementAuthoringPreview, proposeProjectChange, applyProjectChange, getProjectChangeDetail } from "../src/serve.mjs";
 import { initProject, prepareProject } from "../../touba-project/src/project.mjs";
+import { createProjectActivityGate } from '../src/project-activity.mjs';
 
 import {
   buildElementAuthoringChangeSet,
   normalizeElementAuthoringRequest,
+  readElementSource,
 } from "../src/element-authoring.mjs";
 
 const MODULE_REF = "demo.authoring";
+
+test('source editor preview derives approval prerequisites from compiled tools', () => {
+  const project = createProject();
+  try {
+    const source = readElementSource({ projectRoot: project.root, elementRef: `tool:${MODULE_REF}/ExistingTool` });
+    const content = source.content.replace('    requires filesystem_read',
+      '    requires filesystem_read\n    human.approve\n        with role as "controller"\n        with timeout_ms as 60000\n        with distinct_from as "initiator"');
+    const request = { ...requestFor({ kind: 'tool', name: 'ExistingTool', description: '' }),
+      source_update: { content, base_digest: source.base_digest } };
+    const gate = createProjectActivityGate(() => []);
+    const preview = buildElementAuthoringPreview({ projectRoot: project.root, request, runtimeReadiness: { gate } });
+    assert.deepEqual(preview.validations.filter(item => item.severity === 'warning').map(item => item.code),
+      ['ToubaServeApprovalHostRequired', 'HumanApprovalInitiatorRequired']);
+    const host = { humanApprovalAuthority: () => { throw new Error('must not be invoked'); }, humanApprovalInitiator: 'trusted-initiator' };
+    const ready = buildElementAuthoringPreview({ projectRoot: project.root, request, runtimeReadiness: { gate, host } });
+    assert.equal(ready.validations.filter(item => item.severity === 'warning').length, 0);
+    assert.equal(ready.preview_digest, preview.preview_digest, 'host readiness does not rewrite the reviewed file diff');
+    assert.equal(readFileSync(join(project.root, source.path), 'utf8'), source.content);
+  } finally { project.dispose(); }
+});
+
+test('existing source edits compile the whole project, retain reviewed diffs and refuse stale source', () => {
+  const { root, dispose } = createProject();
+  try {
+    const source = readElementSource({ projectRoot: root, elementRef: `strategy:${MODULE_REF}/ExistingStrategy` });
+    const manifest = readFileSync(join(root, 'touba.manifest.json'));
+    const content = source.content.replace('give request', 'give "edited"');
+    const request = { ...requestFor({ kind: 'strategy', name: 'ExistingStrategy', description: '' }),
+      source_update: { content, base_digest: source.base_digest } };
+    const draft = buildElementAuthoringChangeSet({ projectRoot: root, request });
+    assert.equal(draft.changes.length, 1, 'editing never regenerates a handler or changes host grants');
+    const preview = buildElementAuthoringPreview({ projectRoot: root, request });
+    assert.equal(preview.status, 'ready'); assert.match(preview.changes[0].diff, /\+.*give "edited"/);
+    assert.equal(readFileSync(join(root, source.path), 'utf8'), source.content, 'preview is read only');
+    assert.throws(() => buildElementAuthoringPreview({ projectRoot: root, request: { ...request,
+      source_update: { ...request.source_update, content: content.replace('give "edited"', 'give UnknownName') } } }), { code: 'ToubaServeChangeValidationFailed' });
+    const path = join(root, '.touba/project-change-proposals.sqlite');
+    proposeProjectChange({ projectRoot: root, changeProposalsPath: path, proposal: {
+      schema_version: 'touba-project-change-proposal-v1', proposal_id: 'source-edit', action: 'write_text_file',
+      target: { path: source.path }, content, requested_by: request.requested_by, reason: 'Edit reviewed source',
+    } });
+    const before = getProjectChangeDetail({ projectRoot: root, changeProposalsPath: path, proposalId: 'source-edit' });
+    applyProjectChange({ projectRoot: root, changeProposalsPath: path, applyRequest: {
+      schema_version: 'touba-project-change-apply-v1', proposal_id: 'source-edit', decision: 'apply', decided_by: 'user:reviewer', reason: 'Reviewed',
+    } });
+    const after = getProjectChangeDetail({ projectRoot: root, changeProposalsPath: path, proposalId: 'source-edit' });
+    assert.deepEqual(after.change.diffs, before.change.diffs);
+    assert.equal(after.change.diffs[0].diff, preview.changes[0].diff);
+    assert.deepEqual(readFileSync(join(root, 'touba.manifest.json')), manifest);
+    assert.throws(() => buildElementAuthoringChangeSet({ projectRoot: root, request }), { code: 'ToubaServeElementPreviewStale' });
+    assert.throws(() => readElementSource({ projectRoot: root, elementRef: '../private.txt' }), { code: 'ToubaServeElementReferenceInvalid' });
+    assert.throws(() => readElementSource({ projectRoot: root, elementRef: `tool:${MODULE_REF}/Missing` }), { code: 'ToubaServeElementReferenceInvalid' });
+  } finally { dispose(); }
+});
 const BASE_SOURCE = [
   `module ${MODULE_REF}`,
   "",
@@ -224,7 +280,7 @@ test("tool authoring uses the canonical Python SDK and project interpreter", () 
     writeFileSync(join(project.root, "touba.project.json"), JSON.stringify({ project_version: "touba-project-v1", language: "python", sdk: "touba-sdk", artifact_layout: "touba-artifacts-v1" }));
     const result = buildElementAuthoringChangeSet({ projectRoot: project.root, request: requestFor({
       kind: "tool", name: "PythonLookup", description: "Reads the selected record.", takes: [{ name: "request", type_ref: "Text" }], gives: "Text",
-      requirements: ["network"], handler: { effect_contract: { kind: "none" } },
+      requirements: ["network"], handler: { effect_contract: { kind: "none" }, sandbox_required: false },
     }) });
     const stub = result.changes.find(item => item.role === "handler_stub");
     assert.ok(stub.path.endsWith(".py"));
@@ -235,8 +291,15 @@ test("tool authoring uses the canonical Python SDK and project interpreter", () 
     const manifest = JSON.parse(result.changes.find(item => item.role === "manifest").content);
     const binding = manifest.bindings[`tool:${MODULE_REF}/PythonLookup`];
     assert.match(binding.handler.command, /python/);
+    assert.equal(binding.handler.command, process.platform === 'win32' ? './.venv/Scripts/python.exe' : './.venv/bin/python');
     assert.deepEqual(binding.handler.args, [stub.path]);
     assertCompiles(project.root, result.changes[0].content);
+    const before = readFileSync(join(project.root, 'touba.project.json'), 'utf8');
+    assert.throws(() => buildElementAuthoringChangeSet({ projectRoot: project.root, request: requestFor({
+      kind: 'tool', name: 'ConfinedPython', description: 'Read a local synthetic record.', takes: [], gives: 'Text', requirements: [],
+      handler: { effect_contract: { kind: 'none' }, sandbox_required: true },
+    }) }), { code: 'ToubaServeElementSandboxInventoryRequired' });
+    assert.equal(readFileSync(join(project.root, 'touba.project.json'), 'utf8'), before);
   } finally { project.dispose(); }
 });
 

@@ -91,6 +91,8 @@ trigger Scheduled
     await delay(20);
   }
   assert.equal(observed.triggers.find(item => item.trigger_ref.endsWith("/Good")).state.accepted_count, 1);
+  assert.equal(observed.triggers.find(item => item.trigger_ref.endsWith("/Good")).state.daily_count, 1);
+  assert.equal(observed.triggers.find(item => item.trigger_ref.endsWith("/Good")).state.day_utc, new Date().toISOString().slice(0, 10));
   assert.equal(observed.triggers.find(item => item.trigger_ref.endsWith("/Bad")).queue.dead_letter, 1);
   assert.equal(existsSync(triggerStatusPath), false, "no synthetic status file is needed");
   const before = readFileSync(join(root, ".touba/trigger-queue.sqlite"));
