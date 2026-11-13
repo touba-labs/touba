@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { newPackage, testPackage, versionPackage } from "../src/package-author.mjs";
-import { packageSlug, readPackage } from "../src/package-contract.mjs";
+import { PACKAGE_RUNTIME_VERSION, packageSlug, readPackage, validatePackageDocument } from "../src/package-contract.mjs";
+import semver from "semver";
 import { addPackage, checkPackage, packPackage, removePackage } from "../src/packages.mjs";
 import { initProject, prepareProject } from "../src/project.mjs";
 import { publishPackage } from "../src/package-publish.mjs";
@@ -16,6 +17,17 @@ const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 function workspace(t) { const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-author-"))); t.after(() => rmSync(root, { recursive: true, force: true })); return root; }
 function command(cwd, ...args) { return spawnSync(process.execPath, [cli, "package", ...args], { cwd, encoding: "utf8", timeout: 90000, maxBuffer: 4 * 1024 * 1024 }); }
 function edit(root, fn) { const file = join(root, "touba.package.json"), data = JSON.parse(readFileSync(file)); fn(data); writeFileSync(file, JSON.stringify(data)); }
+
+test('new packages opt into the candidate without weakening existing compatibility ranges', t => {
+  const pkg = newPackage('fixture.candidate', { root: workspace(t) });
+  const document = readPackage(pkg.path).document;
+  assert.equal(document.touba.runtime_compatibility,
+    semver.prerelease(PACKAGE_RUNTIME_VERSION) ? PACKAGE_RUNTIME_VERSION : '>=1.0.0 <2.0.0');
+  validatePackageDocument(document, { runtimeVersion: PACKAGE_RUNTIME_VERSION });
+  const stable = structuredClone(document); stable.touba.runtime_compatibility = '>=1.0.0 <2.0.0';
+  assert.throws(() => validatePackageDocument(stable, { runtimeVersion: '1.5.0-rc.1' }), { code:'PackageVersionIncompatible' });
+  validatePackageDocument(stable, { runtimeVersion: '1.4.0' });
+});
 
 test('French starter preserves the supplied purpose and a runnable translated example', async t => {
   const root = workspace(t);
