@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { runProcessToolHandler, buildHandlerSandboxPlan } from "../src/handler-protocol.mjs";
 import { spawnSync } from "node:child_process";
+import { validHandlerIsolationObservation, sameHandlerIsolationIdentity, handlerIsolationIdentity } from '../src/handler-isolation-evidence.mjs';
 
 test("macOS enforces file scopes, inherited child restrictions and separate Unix sockets", { skip: process.platform !== "darwin" }, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "tb-sb-")));
@@ -101,7 +102,12 @@ print(json.dumps({'ok':True,'value':{'started':True,'cwd':str(Path.cwd()),'conte
     const startup = spawnSync(plan.command, plan.args, { cwd: root, env: { PYTHONDONTWRITEBYTECODE: "1" },
       input: '{"arguments":{}}\n', encoding: "utf8", timeout: 10000 });
     assert.equal(startup.status, 0, startup.stderr);
-    return runProcessToolHandler(input);
+    let observation;
+    const result = await runProcessToolHandler({ ...input, onIsolationObservation: value => { observation = value; } });
+    assert.ok(validHandlerIsolationObservation(observation));
+    assert.ok(sameHandlerIsolationIdentity(observation, handlerIsolationIdentity(input.binding, plan)));
+    assert.equal(observation.protocol_observed, true);
+    return result;
   };
   assert.deepEqual((await run([])).value, { started: true, cwd: root, content: null, network: false, secret_env: null });
   assert.deepEqual((await run(["filesystem_read"], [secret])).value,

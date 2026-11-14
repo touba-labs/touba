@@ -328,6 +328,19 @@ la preuve applicative avant de renvoyer l'identifiant opaque de l'initiateur.
 Cet identifiant est conservé à la reprise. `requested_by` reste une indication
 du client, pas une preuve d'identité.
 
+Lorsqu'un service d'identité est configuré sur le serveur, un lancement humain
+utilise le sujet actif attesté par ce service. Les champs métier et
+`requested_by` ne peuvent pas le remplacer. L'identité du signataire qui reprend
+le travail ne remplace pas celle du demandeur initial, y compris après un
+redémarrage. Les rôles d'accès au projet ne remplacent pas les rôles métier
+vérifiés par l'hôte d'attestation.
+
+Une clé applicative, un webhook et une échéance du planificateur sont des
+initiatives de service. Ils ne prennent pas l'identité d'une personne configurée
+globalement. Un parcours exigeant un initiateur humain s'arrête avec
+`HumanApprovalInitiatorRequired` si cette preuve manque. Sans service d'identité,
+la CLI et les SDK conservent les résolveurs d'hôte explicites décrits ci-dessus.
+
 Pour une approbation avec un hôte d'attestation, l'application conserve son
 annuaire et authentifie ses utilisateurs. Le serveur transmet
 `{ request, decision, evidenceRef, hostDecision }` à l'adaptateur. Le POST
@@ -712,3 +725,29 @@ Choisissez cette capacité selon les volumes et ressources mesurés de l’hôte
 Les événements de trace portent `observed_at`, instant UTC d’observation par
 le runtime. `sequence_index` reste l’ordre de référence, notamment si
 l’horloge système est corrigée.
+
+## Responsabilités et confinement observés
+
+`GET /governance/readiness` projette le contrat sélectionné dans
+`configuration.ownership`. `ownership` distingue absence, indisponibilité et
+déclarations présentes ; `ownership_details` contient les équipes, affectations
+et revues déclarées, sans contacts ni notes arbitraires. Une revue inscrite dans
+le fichier n'est pas une attestation d'identité. Les droits de lecture de cette
+route restent ceux du serveur.
+
+`GET /runtime/sandbox` sépare configuration requise, préflight et observation
+d'un lancement. `observation.state` vaut `observed` seulement si un échange de
+protocole confiné a été enregistré et correspond encore aux fichiers de code
+sélectionnés, au binding, à la politique et au contexte d'hôte. La date, le run
+et le résultat du handler sont distincts. Un refus métier peut suivre un
+lancement confiné ; un préflight réussi ne prouve pas un lancement.
+
+L'observation est conservée dans le journal de traces existant, avec l'événement
+`tool_execution_status`, sans nouveau fichier par appel. Le serveur la relit après
+redémarrage ; une modification la rend `stale`, un lancement sans protocole
+confirmé reste `incomplete`. Si les traces sont archivées, l'observation absente
+n'est pas recréée. Les rapports JSON rédigés par le projet ne donnent pas ce statut.
+Il s'agit d'une observation du runtime de confiance, pas d'une attestation
+matérielle de l'hôte ni d'une garantie sur la validité métier. L'exploitant protège
+le journal, les exécutables et le système ; les données autorisées et tous les
+fichiers du système d'exploitation ne font pas partie de l'inventaire de code.

@@ -1034,6 +1034,13 @@ test("operational project surfaces report supply chain, governance readiness and
     assert.equal(sandbox.handlers[0].tests.status, 'missing');
     assert.equal(sandbox.handlers[0].status, "unknown", "a manifest requirement is not isolation evidence");
     assert.equal(sandbox.handlers[0].mechanism, "sandbox-exec");
+    const claimed = structuredClone(sandbox);
+    claimed.handlers[0].status = 'isolated'; claimed.summary.isolated = 1; claimed.summary.unknown = 0;
+    writeFileSync(join(root, '.touba/handler-sandbox-status.json'), JSON.stringify(claimed));
+    const untrusted = buildHandlerSandboxStatus({ contractsRoot, projectRoot: root, platform: 'darwin' });
+    assert.equal(untrusted.handlers[0].status, 'unknown', 'a self-authored report cannot claim current runtime confinement');
+    assert.equal(untrusted.summary.isolated, 0);
+    assert.ok(untrusted.diagnostics.some(item => item.code === 'HandlerSandboxLegacyEvidenceIgnored'));
     for (const [platform, mechanism] of [["linux", "bubblewrap"], ["win32", "windows-lpac-job"], ["other", null]]) {
       const report = buildHandlerSandboxStatus({ contractsRoot, projectRoot: root, platform });
       assertMatchesSchema("touba-handler-sandbox-status-v1", report);

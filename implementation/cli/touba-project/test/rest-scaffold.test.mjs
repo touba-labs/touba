@@ -41,7 +41,7 @@ test("rest scaffold plans and writes governed Touba artifacts from explicit oper
     assert.match(source, /module integrations\.rest\.search/);
     assert.match(source, /type SearchWebRequest/);
     assert.match(source, /query is Text/);
-    assert.match(source, /max_results is Int/);
+    assert.match(source, /max_results is Optional of Int default none\(Int\)/);
     assert.match(source, /tool SearchWeb/);
     assert.match(source, /requires network, secret_read/);
     assert.match(source, /secrets SEARCH_API_KEY/);

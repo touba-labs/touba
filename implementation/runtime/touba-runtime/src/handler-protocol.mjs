@@ -1,10 +1,11 @@
 // @ts-check
 
 import { spawn as spawnProcess } from "node:child_process";
-import { resolve as resolvePath } from "node:path";
-import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, resolve as resolvePath } from "node:path";
+import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { startupHandlerDiagnostic, validatedHandlerDiagnostic } from "./handler-diagnostics.mjs";
-import { macosHandlerPolicy, macosHandlerLaunch } from "./handler-sandbox-policy.mjs";
+import { handlerIsolationIdentity } from './handler-isolation-evidence.mjs';
+import { macosHandlerPolicy, macosHandlerLaunch, macosHandlerEvidenceFiles } from "./handler-sandbox-policy.mjs";
 import { linuxHandlerSandboxPlan, linuxSandboxOptions } from "./linux-handler-sandbox.mjs";
 import { windowsHandlerSandboxPlan, windowsSandboxOptions } from "./windows-handler-sandbox.mjs";
 import {
@@ -50,6 +51,7 @@ const EFFECT_ID_PATTERN = /^effect:sha256:[0-9a-f]{64}$/u;
  * @property {Buffer=} seccomp
  * @property {Buffer=} policy
  * @property {Record<string, string | undefined>=} environment
+ * @property {string[]=} evidenceFiles
  *
  * @typedef {object} RunProcessToolHandlerInput
  * @property {string} toolRef
@@ -63,6 +65,7 @@ const EFFECT_ID_PATTERN = /^effect:sha256:[0-9a-f]{64}$/u;
  * @property {(() => void | Promise<void>)=} beforeSpawn
  * @property {ReturnType<import('./handler-diagnostics.mjs').openLocalHandlerDiagnostics>=} localHandlerDiagnostics
  * @property {string=} runId
+ * @property {((observation: Record<string, unknown>) => void)=} onIsolationObservation
  */
 
 /**
@@ -84,7 +87,7 @@ export async function runProcessToolHandler(input) {
     secretValues,
   );
 
-  const sandboxPlan = buildHandlerSandboxPlan({
+  let sandboxPlan = preflightProcessToolHandler({
     binding,
     platform: input.platform ?? process.platform,
     env: input.env ?? process.env,
@@ -100,7 +103,15 @@ export async function runProcessToolHandler(input) {
   if (!isCompensation && input.beforeSpawn) {
     await input.beforeSpawn();
   }
+  // A human wait or a durable reservation is not a promise that the selected
+  // files still exist. Recheck immediately before launching, without running
+  // the business handler during either preflight.
+  if (binding.sandbox?.required === true) sandboxPlan = preflightProcessToolHandler({
+    binding, platform: input.platform ?? process.platform, env: input.env ?? process.env,
+    diagnostic: Boolean(input.localHandlerDiagnostics),
+  });
   const childEnv = preparedChildEnv ?? buildHandlerEnv(secretHandles, secretStore);
+  const isolationIdentity = input.onIsolationObservation ? handlerIsolationIdentity(binding, sandboxPlan) : null;
   if (sandboxPlan.environment) {
     if (Object.keys(childEnv).some(key => ["TEMP", "TMP"].includes(key.toUpperCase()))) {
       throw new RuntimeFailure("a secret handle conflicts with a reserved sandbox temporary location", {}, "HandlerSandboxEnvironmentInvalid");
@@ -153,6 +164,13 @@ export async function runProcessToolHandler(input) {
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let protocolObserved = false;
+    /** @param {'completed'|'failed'} outcome */
+    const recordIsolation = outcome => {
+      if (!isolationIdentity || !input.onIsolationObservation) return;
+      try { input.onIsolationObservation({ ...isolationIdentity, protocol_observed: protocolObserved, outcome }); }
+      catch { /* Observability does not alter an effect's result. */ }
+    };
     /** @type {RuntimeFailure | null} */
     let terminationError = null;
     let stdoutSize = 0;
@@ -206,6 +224,7 @@ export async function runProcessToolHandler(input) {
       }
       settled = true;
       clearTimeout(timer);
+      recordIsolation('completed');
       recordDiagnostic("completed");
       resolve(value);
     };
@@ -219,6 +238,7 @@ export async function runProcessToolHandler(input) {
       }
       settled = true;
       clearTimeout(timer);
+      recordIsolation('failed');
       recordDiagnostic(error instanceof RuntimeFailure ? error.code : "ToolHandlerFailure");
       reject(error);
     };
@@ -353,6 +373,8 @@ export async function runProcessToolHandler(input) {
       }
 
       try {
+        protocolObserved = response !== null && typeof response === 'object' && !Array.isArray(response)
+          && typeof response.ok === 'boolean';
         finishResolve(decodeToolHandlerResponse(response, toolRef, secretValues, {
           effect: request.effect,
           compensation: request.operation === "compensate"
@@ -413,7 +435,7 @@ export function buildHandlerSandboxPlan({
     throw new RuntimeFailure("required handler sandbox policy is not qualified on this host", { platform }, "HandlerSandboxUnsupportedPolicy");
   }
   if (platform === "darwin") {
-    const command = env.TOUBA_SANDBOX_EXEC_COMMAND || "sandbox-exec";
+    const command = env.TOUBA_SANDBOX_EXEC_COMMAND || "/usr/bin/sandbox-exec";
     const launch = macosHandlerLaunch(binding, handlerCommand);
     const policy = macosHandlerPolicy(binding, launch.command);
     return {
@@ -421,6 +443,7 @@ export function buildHandlerSandboxPlan({
       mechanism: "sandbox-exec",
       command,
       environment: launch.environment,
+      evidenceFiles: macosHandlerEvidenceFiles(launch.command),
       args: ["-p", policy, launch.command, ...binding.handler.args.map((arg, index) => {
         // Resolve selected script paths before Node attempts process.cwd in confinement.
         const file = resolvePath(binding.handler.cwd ?? process.cwd(), arg);
@@ -435,6 +458,33 @@ export function buildHandlerSandboxPlan({
     { platform, handlerCommand: binding.handler.command },
     "HandlerSandboxUnsupportedPlatform",
   );
+}
+
+/** Read-only admission of a required process sandbox, not execution evidence.
+ * @param {Parameters<typeof buildHandlerSandboxPlan>[0]} input
+ * @returns {HandlerSandboxPlan}
+ */
+export function preflightProcessToolHandler(input) {
+  const { binding } = input;
+  if (binding.sandbox?.required === true) {
+    const command = resolveHandlerCommand(binding.handler.command);
+    const cwd = binding.handler.cwd ?? process.cwd();
+    try {
+      if (!isAbsolute(command) || !statSync(command).isFile() || !statSync(cwd).isDirectory()) throw new Error();
+      accessSync(command, process.platform === 'win32' ? constants.R_OK : constants.X_OK);
+      // An explicitly selected script must be present. Other arguments are
+      // business values and must never be interpreted as host file paths.
+      const entry = binding.handler.args[0];
+      if (entry && !entry.startsWith('-') && /\.(?:mjs|cjs|js|py)$/u.test(entry)) {
+        const path = resolvePath(cwd, entry);
+        if (!statSync(path).isFile()) throw new Error();
+        accessSync(path, constants.R_OK);
+      }
+    } catch {
+      throw new RuntimeFailure('required sandbox needs a readable entrypoint, an executable interpreter and an existing working directory; check the binding before requesting approval', {}, 'HandlerSandboxPathInvalid');
+    }
+  }
+  return buildHandlerSandboxPlan(input);
 }
 
 /**

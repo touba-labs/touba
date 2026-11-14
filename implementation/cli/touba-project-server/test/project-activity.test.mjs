@@ -34,6 +34,9 @@ test('source preview identifies pending operations and missing host prerequisite
   const host = { humanApprovalAuthority: () => { invoked++; }, humanApprovalInitiator: () => { invoked++; } };
   assert.deepEqual(authoringReadiness({ gate, policy, host }).map(item => item.code), ['ToubaServeProjectOperationsActive']);
   assert.equal(invoked, 0, 'preview never invokes a host module');
+  assert.deepEqual(authoringReadiness({ gate: createProjectActivityGate(() => []), policy,
+    host: { humanApprovalAuthority: host.humanApprovalAuthority, identityControlPlaneUrl: 'https://identity.example' } }), [],
+  'authenticated server runs bind their initiator without a global identity');
   assert.equal(gate.mutating, false);
   assert.deepEqual(authoringReadiness({ gate: createProjectActivityGate(() => []), policy: null }), []);
 });

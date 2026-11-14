@@ -28,6 +28,8 @@ import { buildWorkspaceSummary, workspaceActivity } from "./workspace-summary.mj
 import serverPackage from "../package.json" with { type: "json" };
 import { isDecisionContinuationRoute, decisionContinuationOnly, assertDecisionContinuation } from "./decision-continuation.mjs";
 import { readApprovalDossier } from './approval-dossier.mjs';
+import { readOwnershipReadiness } from './ownership-readiness.mjs';
+import { projectHandlerIsolation } from './handler-isolation-status.mjs';
 import { toolApprovalReview, PARALLEL_APPROVAL_METADATA_FIELDS, validateParallelApprovalMetadata } from "./tool-approval-review.mjs";
 import { projectOperationBudgets } from "./operation-budgets.mjs";
 import { projectTraceStorageStatus } from "./trace-storage-status.mjs";
@@ -819,7 +821,7 @@ function createProjectServerWithLease(options, takeLease) {
       agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
-          humanApprovalInitiator: options.humanApprovalInitiator,
+          humanApprovalInitiator: identityControlPlaneUrl === undefined ? options.humanApprovalInitiator : undefined,
           tracePureFunctions: options.tracePureFunctions,
           traceStorage: options.traceStorage,
       contractsRoot,
@@ -1105,6 +1107,7 @@ function createProjectServerWithLease(options, takeLease) {
         effect_policy: 'allow_declared_external_effects', requested_by: { kind: 'service', id: 'touba-project-scheduler' },
         reason: 'Scheduled project occurrence' };
       const execute = () => executeProjectSandboxRun({ ...options, projectRoot, contractsRoot,
+        humanApprovalInitiator: undefined,
         agentDecisionProvider, request, runId: run_id, executionKind: 'trigger',
         dispatchAuthorityProvider: authority, cancelRequestedProvider: cancelled,
         humanRequestsPath, sandboxCheckpointsPath, runSummaryPath, traceTimelinePath,
@@ -1135,6 +1138,7 @@ function createProjectServerWithLease(options, takeLease) {
         effect_policy:'allow_declared_external_effects',requested_by:{kind:'service',id:'touba-project-webhook'},
         reason:'Authenticated project webhook'};
       const execute=()=>executeProjectSandboxRun({...options,projectRoot,contractsRoot,agentDecisionProvider,request,
+        humanApprovalInitiator:undefined,
         runId:entry.run_id,executionKind:'trigger',dispatchAuthorityProvider:entry.authority,cancelRequestedProvider:entry.cancelled,
         humanRequestsPath,sandboxCheckpointsPath,runSummaryPath,traceTimelinePath,effectJournalPath,secretsPath,secretsRequired,
         triggerStatePath:triggerStorePaths.triggerStatePath});
@@ -1148,6 +1152,7 @@ function createProjectServerWithLease(options, takeLease) {
   const scheduleInteractionOperation = ({
     capacityReservation = null,
     dispatchAuthorityProvider,
+    approvalInitiator = options.humanApprovalInitiator,
     operation,
     request,
     resume = false,
@@ -1202,7 +1207,7 @@ function createProjectServerWithLease(options, takeLease) {
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
-          humanApprovalInitiator: options.humanApprovalInitiator,
+          humanApprovalInitiator: resume && identityControlPlaneUrl !== undefined ? undefined : approvalInitiator,
           tracePureFunctions: options.tracePureFunctions,
           traceStorage: options.traceStorage,
           cancelRequestedProvider: () => controller.cancelRequested,
@@ -1547,6 +1552,7 @@ function createProjectServerWithLease(options, takeLease) {
       if (request.method === "GET" && url.pathname === "/state") {
         await requestHumanWaitWorker();
         writeJson(response, 200, filterLiveStateForIdentity(buildLiveState({
+          traceStorage: options.traceStorage,
           validationEvidence: validation.handlerEvidence(),
           contractsRoot,
           projectRoot,
@@ -1793,7 +1799,7 @@ function createProjectServerWithLease(options, takeLease) {
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
-          humanApprovalInitiator: options.humanApprovalInitiator,
+          humanApprovalInitiator: bindRunInitiator(humanIdentity, options.humanApprovalInitiator),
           tracePureFunctions: options.tracePureFunctions,
           traceStorage: options.traceStorage,
           contractsRoot,
@@ -2188,6 +2194,7 @@ function createProjectServerWithLease(options, takeLease) {
         );
         scheduleInteractionOperation({
           capacityReservation,
+          approvalInitiator: bindRunInitiator(humanIdentity, options.humanApprovalInitiator),
           dispatchAuthorityProvider: executionDispatchAuthorityProvider({
             accessToken: request.headers["x-touba-identity-token"],
             controlPlaneUrl: identityControlPlaneUrl,
@@ -2532,7 +2539,7 @@ function createProjectServerWithLease(options, takeLease) {
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
-          humanApprovalInitiator: options.humanApprovalInitiator,
+          humanApprovalInitiator: bindRunInitiator(humanIdentity, options.humanApprovalInitiator),
           tracePureFunctions: options.tracePureFunctions,
           traceStorage: options.traceStorage,
           contractsRoot,
@@ -2779,6 +2786,7 @@ function createProjectServerWithLease(options, takeLease) {
       }
       if (request.method === "GET" && url.pathname === "/runtime/sandbox") {
         writeJson(response, 200, buildHandlerSandboxStatus({
+          traceStorage: options.traceStorage,
           validationEvidence: validation.handlerEvidence(),
           contractsRoot,
           projectRoot,
@@ -2912,7 +2920,7 @@ function createProjectServerWithLease(options, takeLease) {
           agentDecisionProviderTimeoutMs: options.agentDecisionProviderTimeoutMs,
           humanApprovalAuthority: options.humanApprovalAuthority,
           humanApprovalAuthorityTimeoutMs: options.humanApprovalAuthorityTimeoutMs,
-          humanApprovalInitiator: options.humanApprovalInitiator,
+          humanApprovalInitiator: identityControlPlaneUrl === undefined ? options.humanApprovalInitiator : undefined,
           tracePureFunctions: options.tracePureFunctions,
           traceStorage: options.traceStorage,
           contractsRoot,
@@ -3381,6 +3389,7 @@ export function buildContractIndex({ contractsRoot, generatedAt = new Date().toI
 }
 
 export function buildLiveState({
+  traceStorage,
   validationEvidence,
   contractsRoot,
   projectRoot = process.cwd(),
@@ -3438,6 +3447,7 @@ export function buildLiveState({
       projectRoot,
     }),
     handler_sandbox_status: buildHandlerSandboxStatus({
+      traceStorage,
       validationEvidence,
       contractsRoot,
       projectRoot,
@@ -5253,12 +5263,16 @@ function resolveSandboxAirDocument({ projectRoot, targetRef }) {
   throw error;
 }
 
-function loadOptionalProjectManifest({ projectRoot }) {
+function selectedProjectManifestPath(projectRoot) {
   const prepared = readPreparedProject(projectRoot);
   const manifestInput = prepared?.inputs.find(input => input.kind === "manifest");
   if (prepared && !manifestInput) return undefined;
-  const manifestPath = join(projectRoot, manifestInput?.path ?? "touba.manifest.json");
-  if (!existsSync(manifestPath)) {
+  return join(projectRoot, manifestInput?.path ?? "touba.manifest.json");
+}
+
+function loadOptionalProjectManifest({ projectRoot }) {
+  const manifestPath = selectedProjectManifestPath(projectRoot);
+  if (!manifestPath || !existsSync(manifestPath)) {
     return undefined;
   }
   try {
@@ -6193,9 +6207,7 @@ export function buildGovernanceReadiness({
   const pendingChangeCount = countChangeProposals(changeProposalsPath).pending;
   const activeAssignments = (Array.isArray(identity.assignments) ? identity.assignments : [])
     .filter((assignment) => assignment.status === "assigned");
-  const owners = uniqueSorted([
-    ...(Array.isArray(identity.teams) ? identity.teams : []).flatMap((team) => team.owner_refs ?? []),
-  ]);
+  const ownership = readOwnershipReadiness(projectRoot);
   const reviewers = uniqueSorted(activeAssignments.map((assignment) => assignment.user_ref));
   const graphErrors = (Array.isArray(graph.diagnostics) ? graph.diagnostics : [])
     .filter((diagnostic) => diagnostic.severity === "error");
@@ -6206,7 +6218,7 @@ export function buildGovernanceReadiness({
     .map((node) => governanceReadinessArtifact({
       node,
       graph,
-      owners,
+      owners: ownership.owners[node.ref] ?? [],
       reviewers,
       pendingChangeCount,
       activeAssignments,
@@ -6219,7 +6231,7 @@ export function buildGovernanceReadiness({
     artifacts.push(governanceReadinessArtifact({
       node: trigger,
       graph,
-      owners,
+      owners: ownership.owners[trigger.ref] ?? [],
       reviewers,
       pendingChangeCount,
       activeAssignments,
@@ -6228,7 +6240,7 @@ export function buildGovernanceReadiness({
     }));
   }
   for (const artifact of scannedArtifacts.filter((item) => item.kind === "air")) {
-    artifacts.push(governanceRunPlanArtifact({ artifact, owners, pendingChangeCount, graphWarnings }));
+    artifacts.push(governanceRunPlanArtifact({ artifact, owners: ownership.owners[`run_plan:${artifact.relative_path}`] ?? [], pendingChangeCount, graphWarnings }));
   }
   const diagnostics = [
     ...graphErrors,
@@ -6242,6 +6254,8 @@ export function buildGovernanceReadiness({
 
   return {
     schema_version: GOVERNANCE_READINESS_SCHEMA_VERSION,
+    ownership: ownership.summary,
+    ownership_details: ownership.details,
     generated_at: generatedAt,
     project_root: projectRoot,
     summary: {
@@ -6960,6 +6974,7 @@ function emptyMobileEscalation(generatedAt = new Date().toISOString()) {
 }
 
 export function buildHandlerSandboxStatus({
+  traceStorage,
   validationEvidence = new Map(),
   contractsRoot,
   projectRoot = process.cwd(),
@@ -6967,20 +6982,27 @@ export function buildHandlerSandboxStatus({
   platform = process.platform,
   generatedAt = new Date().toISOString(),
 }) {
-  const stored = readOptionalContractFile({
-    contractsRoot,
-    filePath: handlerSandboxStatusPath,
-    schemaVersion: HANDLER_SANDBOX_STATUS_SCHEMA_VERSION,
-    errorCode: "ToubaServeHandlerSandboxStatusInvalid",
-    message: "handler sandbox status does not match touba-handler-sandbox-status-v1",
-  });
   const diagnostics = [];
+  // A project-authored JSON document is not evidence that this host launched
+  // the current handler under confinement. Keep the option for compatibility,
+  // but never promote its claimed status to a runtime observation.
+  if (existsSync(handlerSandboxStatusPath)) diagnostics.push({ severity: 'warning',
+    code: 'HandlerSandboxLegacyEvidenceIgnored',
+    message: 'A historical sandbox report is present; it does not attest the current handler execution.' });
   const artifacts = collectProjectArtifacts(projectRoot, diagnostics);
-  const manifestArtifact = artifacts.find((item) => item.kind === "manifest");
+  let selectedManifestPath;
+  try { selectedManifestPath = selectedProjectManifestPath(projectRoot); } catch { /* unavailable below */ }
+  const manifestArtifact = selectedManifestPath
+    ? artifacts.find(item => item.kind === 'manifest' && resolve(projectRoot, item.relative_path) === resolve(selectedManifestPath))
+    : artifacts.find(item => item.kind === 'manifest');
   const manifest = manifestArtifact === undefined
     ? undefined
     : readJsonArtifact(join(projectRoot, manifestArtifact.relative_path), manifestArtifact.relative_path, diagnostics);
   const bindings = isPlainObject(manifest?.bindings) ? manifest.bindings : {};
+  let normalized;
+  try { normalized = loadOptionalProjectManifest({ projectRoot }); }
+  catch { diagnostics.push({ severity: 'warning', code: 'HandlerSandboxPreparedStateUnavailable',
+    message: 'The prepared handler configuration cannot be verified; isolation observations are unavailable.' }); }
   const handlers = Object.entries(bindings)
     .filter(([, binding]) => isPlainObject(binding) && isPlainObject(binding.handler))
     .map(([toolRef, binding]) => handlerSandboxRow({
@@ -6988,18 +7010,11 @@ export function buildHandlerSandboxStatus({
       projectRoot,
       toolRef,
       binding,
+      observation: projectHandlerIsolation(platform === process.platform ? normalized?.bindings.get(toolRef) : undefined, toolRef, traceStorage),
       platform,
       sourceRef: manifestArtifact?.relative_path ?? null,
     }))
     .sort((left, right) => left.tool_ref.localeCompare(right.tool_ref));
-
-  if (stored !== undefined) {
-    const implementations = new Map(handlers.map(row=>[row.tool_ref,row]));
-    return {...stored,handlers:stored.handlers.map(row=>({...row,
-      implementation_status:implementations.get(row.tool_ref)?.implementation_status ?? 'unknown',
-      candidate_path:implementations.get(row.tool_ref)?.candidate_path ?? null,
-      tests:validationEvidence.get(row.tool_ref) ?? {status:'missing',command:'',evidence_ref:null}}))};
-  }
 
   return {
     schema_version: HANDLER_SANDBOX_STATUS_SCHEMA_VERSION,
@@ -7022,7 +7037,7 @@ export function buildHandlerSandboxStatus({
   };
 }
 
-function handlerSandboxRow({ projectRoot, toolRef, binding, platform, sourceRef, tests }) {
+function handlerSandboxRow({ projectRoot, toolRef, binding, platform, sourceRef, tests, observation }) {
   const required = binding.sandbox?.required === true || binding.sandbox?.mode === "required";
   const mechanism = sandboxMechanismForPlatform(platform);
   let status = "not_isolated";
@@ -7033,6 +7048,12 @@ function handlerSandboxRow({ projectRoot, toolRef, binding, platform, sourceRef,
   } else if (required && mechanism === null) {
     status = "unsupported";
     message = "handler binding requires sandbox isolation on an unsupported platform";
+  }
+  if (required && observation?.state === 'observed') {
+    status = 'isolated';
+    message = 'A confined handler protocol exchange was observed for the current selected files and host context.';
+  } else if (required && observation?.state === 'stale') {
+    message = 'A previous confinement observation no longer matches the selected files, policy or host context.';
   }
   const handler = isPlainObject(binding.handler) ? binding.handler : {};
   return {
@@ -7047,9 +7068,10 @@ function handlerSandboxRow({ projectRoot, toolRef, binding, platform, sourceRef,
     mechanism: required ? mechanism : null,
     grants: normalizeStringList(binding.grants),
     required,
+    observation,
     evidence: {
-      source: "touba.manifest.json",
-      source_ref: sourceRef === null ? toolRef : `${sourceRef}#${toolRef}`,
+      source: observation?.state === 'observed' ? 'runtime_trace' : 'touba.manifest.json',
+      source_ref: observation?.state === 'observed' ? observation.evidence_ref : sourceRef === null ? toolRef : `${sourceRef}#${toolRef}`,
       message,
     },
   };
@@ -12209,6 +12231,18 @@ export function bindDecisionSigner(body, identity) {
     throw serviceError("ToubaServeDecisionIdentityUnauthorized", "decision signer must match the authenticated subject");
   }
   return body;
+}
+
+// Only the successful control-plane introspection supplies this identity.
+// Returning a resolver leaves checkpoint identity authoritative on resume.
+// A service principal cannot stand in for the person required by a policy.
+export function bindRunInitiator(identity, localInitiator) {
+  if (identity === null) return localInitiator;
+  if (identity?.principal?.kind === 'service') return undefined;
+  const id = nonEmptyString(identity?.user?.id);
+  if (!identity?.active || !id) throw serviceError('ToubaServeIdentityUnauthorized', 'run initiator requires an authenticated subject');
+  const subject = id.startsWith('user:') ? id : `user:${id}`;
+  return () => subject;
 }
 
 function bindHumanActor(body, field, identity) {

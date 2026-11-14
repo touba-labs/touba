@@ -6,6 +6,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { renderImportedField, renderJsonFieldAdapters } from "./import-field-adapters.mjs";
+import { validateImportFiles, importedObjectSchemaError } from './import-files.mjs';
 
 export const TOUBA_MCP_IMPORT_CONFIG_VERSION = "touba-mcp-import-config-v1";
 export const TOUBA_MCP_IMPORT_REPORT_VERSION = "touba-mcp-import-report-v1";
@@ -43,6 +45,7 @@ export function importMcpTools(options = {}) {
   });
 
   const diagnostics = [...generation.diagnostics];
+  validateImportFiles(root, generation.files, { mode, force: options.force });
   const actions = generation.files.map((file) => fileAction(file, mode));
 
   if (mode === "write") {
@@ -150,6 +153,7 @@ function generateMcpImport({ root, outputRoot, moduleName, config, selectedTools
       }));
     }
   }
+  if (!tools.length) diagnostics.push(errorDiagnostic('McpNoMappableTools', 'No selected tool has a supported contract; no artifacts were generated'));
 
   const generatedFiles = buildFiles({
     root,
@@ -171,7 +175,7 @@ function generateMcpImport({ root, outputRoot, moduleName, config, selectedTools
       secret_handles: tool.secretHandles,
     })),
     refusedTools,
-    files: generatedFiles,
+    files: diagnostics.some(item => item.severity === 'error') ? [] : generatedFiles,
   };
 }
 
@@ -179,6 +183,7 @@ function readConfig(configPath) {
   if (!existsSync(configPath) || !statSync(configPath).isFile()) {
     throw new Error(`MCP import config does not exist: ${configPath}`);
   }
+  if (statSync(configPath).size > 4 * 1024 * 1024) throw new Error('MCP import config exceeds 4 MiB');
   try {
     return JSON.parse(readFileSync(configPath, "utf8"));
   } catch (error) {
@@ -243,7 +248,7 @@ function mapTool(tool, moduleName, serverSecretHandles, usedTypeNames, usedToolN
     return { refusal: `${tool.name}: ${inputFields.refusal}` };
   }
   const outputFields = tool.outputSchema === undefined
-    ? { fields: [{ name: "content", type: "Text" }], fallback: true }
+    ? { fields: [{ name: "content", originalName: "content", type: "Text", required: true }], fallback: true }
     : schemaObjectFields(tool.outputSchema, "outputSchema");
   if (outputFields.refusal) {
     return { refusal: `${tool.name}: ${outputFields.refusal}` };
@@ -283,12 +288,17 @@ function schemaObjectFields(schema, label) {
   if (!isPlainObject(schema.properties)) {
     return { refusal: `${label}.properties must be an object` };
   }
+  const objectError = importedObjectSchemaError(schema, label);
+  if (objectError) return { refusal: objectError };
   const required = new Set(Array.isArray(schema.required) ? schema.required : []);
   const fields = [];
   for (const [rawName, property] of Object.entries(schema.properties)) {
     const name = snakeCase(rawName);
     if (!/^[a-z_][a-z0-9_]*$/u.test(name)) {
       return { refusal: `${label}.${rawName} cannot produce a Touba field name` };
+    }
+    if (fields.some(field => field.name === name)) {
+      return { refusal: `${label}.${rawName} collides with another field after name conversion` };
     }
     const type = mapJsonSchemaType(property);
     if (type === null) {
@@ -315,6 +325,7 @@ function mapJsonSchemaType(property) {
   if (Array.isArray(property.type)) {
     return null;
   }
+  if (Object.keys(property).some(key => !["type", "items", "description", "title", "$comment", "examples"].includes(key))) return null;
   if (property.type === "string") {
     return "Text";
   }
@@ -368,7 +379,7 @@ function buildFiles({ root, outputRoot, moduleName, server, tools }) {
   };
   return [
     { kind: "source", path: sourcePath, content: renderToubaSource(moduleName, tools) },
-    { kind: "binding_fragment", path: manifestPath, content: renderManifestFragment(server, tools, handlerFiles, outputRoot) },
+    { kind: "binding_fragment", path: manifestPath, content: renderManifestFragment(server, tools, handlerFiles, root, moduleName) },
     { kind: "mcp_bridge_config", path: bridgeConfigPath, content: renderMcpBridgeConfig(server, tools) },
     ...handlerFiles,
     { kind: "secrets_template", path: secretsPath, content: renderSecretsTemplate(server, tools) },
@@ -385,12 +396,12 @@ function renderToubaSource(moduleName, tools) {
   for (const tool of tools) {
     lines.push(`type ${tool.inputTypeName}`);
     for (const field of tool.inputFields) {
-      lines.push(`    ${field.name} is ${field.type}`);
+      lines.push(renderImportedField(field));
     }
     lines.push("");
     lines.push(`type ${tool.outputTypeName}`);
     for (const field of tool.outputFields) {
-      lines.push(`    ${field.name} is ${field.type}`);
+      lines.push(renderImportedField(field));
     }
     lines.push("");
     lines.push(`tool ${tool.toolName}`);
@@ -406,39 +417,42 @@ function renderToubaSource(moduleName, tools) {
   return lines.join("\n").replace(/\n+$/u, "\n");
 }
 
-function renderManifestFragment(server, tools, handlerFiles, outputRoot) {
+function renderManifestFragment(server, tools, handlerFiles, root, moduleName) {
   const bindings = {};
   for (const [index, tool] of tools.entries()) {
     bindings[tool.toolRef] = {
       handler: {
+        kind: "process",
         command: "node",
-        args: [relative(outputRoot, handlerFiles[index].path)],
-      },
-      handler_package: {
-        name: `touba-mcp-bridge-${server.name}`,
-        version: "0.1.0",
-        protocol: "touba-tool-handler-v1",
+        args: [relative(root, handlerFiles[index].path)],
+        cwd: ".",
       },
       grants: tool.secretHandles.length > 0 ? ["network", "secret_read"] : ["network"],
       secrets: tool.secretHandles,
+      effect_contract: { kind: "external_write", retry_mode: "none" },
       timeout_ms: server.timeoutMs,
       max_payload_bytes: server.maxPayloadBytes,
     };
   }
   return `${JSON.stringify({
-    binding_fragment_schema_version: TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION,
+    fragment_schema_version: TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION,
+    source: { kind: "module", module: moduleName },
     bindings,
   }, null, 2)}\n`;
 }
 
 function renderHandlerBridge(server, tool) {
   return `import {
+  ToubaHandlerError,
   createMcpStdioToolBridge,
   defineTool,
 } from "@touba/sdk";
 
 const MCP_TOOL_NAME = ${JSON.stringify(tool.mcpName)};
 const MCP_BRIDGE_CONFIG = new URL("../mcp.bridge.config.json", import.meta.url);
+const callMcp = createMcpStdioToolBridge({ mcpToolName: MCP_TOOL_NAME, configPath: MCP_BRIDGE_CONFIG });
+
+${renderJsonFieldAdapters(tool)}
 
 await defineTool({
   toolRef: ${JSON.stringify(tool.toolRef)},
@@ -446,10 +460,7 @@ await defineTool({
   outputType: ${JSON.stringify(`type:${tool.toolRef.slice("tool:".length).split("/")[0]}/${tool.outputTypeName}`)},
   requiredGrants: ${JSON.stringify(tool.secretHandles.length > 0 ? ["network", "secret_read"] : ["network"])},
   requiredSecretHandles: ${JSON.stringify(tool.secretHandles)},
-  run: createMcpStdioToolBridge({
-    mcpToolName: MCP_TOOL_NAME,
-    configPath: MCP_BRIDGE_CONFIG,
-  }),
+  run: async ({ request, context }) => fromJsonResult(await callMcp({ request: toJsonRequest(request), context })),
 });
 `;
 }
@@ -500,6 +511,12 @@ function renderReadme(server, moduleName, tools) {
 Generated Touba contracts for an MCP tools snapshot.
 
 Module: \`${moduleName}\`
+
+## Handler runtime
+
+These handlers use JavaScript, including in a Python project. Install a Node.js
+version supported by Touba and the matching \`@touba/sdk\` before execution.
+Reading this snapshot, generation and preparation never start the MCP server.
 
 ## Imported Tools
 

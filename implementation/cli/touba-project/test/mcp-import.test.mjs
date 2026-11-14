@@ -68,12 +68,13 @@ test("mcp import plans and writes governed Touba artifacts from a tools snapshot
     assert.match(source, /module integrations\.mcp\.demo/);
     assert.match(source, /tool GetWeather/);
     assert.match(source, /query is Text/);
-    assert.match(source, /temperature is Float/);
+    assert.match(source, /temperature is Optional of Float default none\(Float\)/);
     assert.match(source, /tool PostComment/);
     assert.match(source, /secrets DEMO_MCP_TOKEN, GITHUB_TOKEN/);
 
     const manifest = JSON.parse(readFileSync(join(root, "integrations/demo/touba.manifest.fragment.json"), "utf8"));
-    assert.equal(manifest.binding_fragment_schema_version, "touba-binding-fragment-v1");
+    assert.equal(manifest.fragment_schema_version, "touba-binding-fragment-v1");
+    assert.deepEqual(manifest.source, { kind: "module", module: "integrations.mcp.demo" });
     assert.deepEqual(
       manifest.bindings["tool:integrations.mcp.demo/PostComment"].grants,
       ["network", "secret_read"],

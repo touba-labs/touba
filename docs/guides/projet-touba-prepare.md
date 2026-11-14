@@ -93,8 +93,12 @@ touba prepare --mode write
 touba prepare --mode check
 ```
 
-Le plan montre les champs modifiés. Les nombres sont affichés directement ; les
-objets et arguments sont comparés par empreinte pour garder le rapport compact.
+Le plan montre les champs modifiés. Il affiche les limites, les droits connus,
+la catégorie d'interpréteur, les accès relatifs au projet et le nombre de fichiers
+de l'inventaire. Les arguments, chemins externes et noms de fichiers de code
+restent masqués. Les empreintes lient aussi ces détails masqués à la revue.
+Si l'ancienne projection n'est plus disponible, seule son empreinte est affichée :
+le plan ne reconstruit pas ses valeurs.
 `write` applique la configuration ; `check` signale une modification à appliquer.
 Les exigences d'approbation du consommateur restent actives.
 

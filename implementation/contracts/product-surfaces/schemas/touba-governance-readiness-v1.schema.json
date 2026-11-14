@@ -9,6 +9,41 @@
     "schema_version": { "const": "touba-governance-readiness-v1" },
     "generated_at": { "type": "string" },
     "project_root": { "type": "string" },
+    "ownership": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "path", "team_count", "target_count", "review_count"],
+      "properties": {
+        "status": { "enum": ["not_configured", "unavailable", "declared"] },
+        "path": { "type": ["string", "null"] },
+        "team_count": { "type": ["integer", "null"], "minimum": 0 },
+        "target_count": { "type": ["integer", "null"], "minimum": 0 },
+        "review_count": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "ownership_details": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "required": ["teams", "assignments", "reviews"],
+      "properties": {
+        "teams": { "type": "array", "maxItems": 512, "uniqueItems": true, "items": { "type": "string", "maxLength": 1024 } },
+        "assignments": { "type": "array", "maxItems": 4096, "items": {
+          "type": "object", "additionalProperties": false, "required": ["target_ref", "teams"],
+          "properties": {
+            "target_ref": { "type": "string", "maxLength": 1024 },
+            "teams": { "type": "array", "maxItems": 512, "uniqueItems": true, "items": { "type": "string", "maxLength": 1024 } }
+          }
+        } },
+        "reviews": { "type": "array", "maxItems": 4096, "items": {
+          "type": "object", "additionalProperties": false, "required": ["review_id", "target_ref", "reviewer", "profile", "decision"],
+          "properties": {
+            "review_id": { "type": "string", "maxLength": 1024 },
+            "target_ref": { "type": "string", "maxLength": 1024 },
+            "reviewer": { "type": "string", "maxLength": 1024 },
+            "profile": { "type": "string", "maxLength": 1024 },
+            "decision": { "enum": ["approved", "rejected"] }
+          }
+        } }
+      }
+    },
     "summary": {
       "type": "object",
       "additionalProperties": false,

@@ -5,8 +5,13 @@ import { executeAirDocument as execute, loadToolBindingManifestFromJson } from "
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { executeReferenceAir } from "../../../contracts/reference-runtime/runtime.mjs";
 import { createSqliteEffectJournal } from "../src/sqlite-effect-journal.mjs";
+import { createSqliteTraceStore } from '../src/sqlite-trace-store.mjs';
+import { projectHandlerIsolation } from '../../../cli/touba-project-server/src/handler-isolation-status.mjs';
+import { buildHandlerSandboxStatus } from '../../../cli/touba-project-server/src/serve.mjs';
+import { validateObject } from '../../../tools/validate-product-surface-contracts.mjs';
+import { readFileSync } from 'node:fs';
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +34,72 @@ const authority = (subject = "employee:reviewer", roles = ["finance"]) => ({ req
   request_id: request.request_id, run_id: request.run_id, decision, subject_ref: subject, roles,
 });
 const approve = checkpoint => ({ [checkpoint.approval_ref]: { decision: "approved", evidence_ref: "host-proof" } });
+
+test('a runtime-approved process records confinement only after actual dispatch', { skip: process.platform !== 'darwin' }, async t => {
+  const script = join(stateRoot, 'observed-handler.mjs');
+  writeFileSync(script, 'process.stdin.once("data", () => { process.stdout.write(JSON.stringify({ok:true,value:7})); });');
+  const raw = { manifest_version: 'touba-manifest-v1', bindings: { [toolRef]: {
+    handler: { kind: 'process', command: process.execPath, args: [script], cwd: stateRoot }, grants: [], secrets: [],
+    sandbox: { required: true }, effect_contract: { kind: 'none' }, timeout_ms: 5000, max_payload_bytes: 4096,
+  } } };
+  const store = createSqliteTraceStore({ filename: join(stateRoot, 'observed-trace.sqlite') });
+  t.after(() => store.close());
+  const options = { entryRef: toolRef, durableHumanApprovals: true, traceStorage: store,
+    humanApprovalInitiator: 'employee:initiator', humanApprovalAuthority: authority(), toolBindingManifest: raw };
+  const pending = await executeAirDocument(air, { ...options, inputs: { amount: 7 } });
+  assert.equal(pending.reason, 'human_approval_pending');
+  assert.equal(store.handlerIsolation(toolRef), null);
+  const result = await executeAirDocument(air, { ...options, humanApprovalResumeCheckpoint: pending.checkpoint,
+    humanApprovalDecisions: approve(pending.checkpoint) });
+  assert.equal(result.status, 'success', result.reason);
+  const binding = loadToolBindingManifestFromJson(JSON.stringify(raw)).bindings.get(toolRef);
+  assert.equal(projectHandlerIsolation(binding, toolRef, store).state, 'observed');
+  assert.equal(store.handlerIsolation(toolRef).observation.protocol_observed, true);
+  writeFileSync(join(stateRoot, 'touba.manifest.json'), JSON.stringify(raw));
+  const surface = buildHandlerSandboxStatus({ projectRoot: stateRoot, traceStorage: store });
+  assert.equal(surface.handlers[0].status, 'isolated');
+  assert.equal(surface.handlers[0].observation.state, 'observed');
+  assert.equal(surface.handlers[0].evidence.source, 'runtime_trace');
+  const schema = JSON.parse(readFileSync(new URL('../../../contracts/product-surfaces/schemas/touba-handler-sandbox-status-v1.schema.json', import.meta.url)));
+  assert.deepEqual(validateObject(schema, surface), []);
+  assert.equal(buildHandlerSandboxStatus({ projectRoot: stateRoot, traceStorage: store, platform: 'other' }).handlers[0].status, 'unsupported');
+  writeFileSync(script, readFileSync(script, 'utf8') + '\n// synthetic new revision\n');
+  const stale = buildHandlerSandboxStatus({ projectRoot: stateRoot, traceStorage: store });
+  assert.equal(stale.handlers[0].observation.state, 'stale');
+  assert.equal(stale.summary.isolated, 0);
+});
+
+test('required sandbox configuration is refused before asking a human and rechecked after approval', { skip: process.platform !== 'darwin' }, async () => {
+  const script = join(stateRoot, 'approved-handler.mjs');
+  const executable = join(stateRoot, 'not-executable');
+  const source = 'process.stdin.once("data", data => { const request = JSON.parse(data); process.stdout.write(JSON.stringify({protocol:request.protocol,call_id:request.call_id,ok:true,result:7})); });';
+  writeFileSync(script, source);
+  writeFileSync(executable, 'not an executable'); chmodSync(executable, 0o600);
+  const binding = { handler: { kind: 'process', command: process.execPath, args: [script], cwd: stateRoot },
+    grants: [], secrets: [], sandbox: { required: true }, effect_contract: { kind: 'none' }, timeout_ms: 1000, max_payload_bytes: 4096 };
+  const options = { entryRef: toolRef, inputs: { amount: 7 }, durableHumanApprovals: true,
+    humanApprovalInitiator: 'employee:initiator', humanApprovalAuthority: authority(),
+    toolBindingManifest: { manifest_version: 'touba-manifest-v1', bindings: { [toolRef]: binding } } };
+  for (const patch of [
+    { handler: { ...binding.handler, command: join(stateRoot, 'missing') } },
+    { handler: { ...binding.handler, command: executable } },
+    { handler: { ...binding.handler, args: [join(stateRoot, 'missing.py')] } },
+    { sandbox: { required: true, code_paths: [join(stateRoot, 'missing-library.py')] } },
+  ]) {
+    const result = await executeAirDocument(air, { ...options, toolBindingManifest: { manifest_version: 'touba-manifest-v1', bindings: { [toolRef]: { ...binding, ...patch } } } });
+    assert.equal(result.status, 'failure');
+    assert.equal(result.reason, 'HandlerSandboxPathInvalid', JSON.stringify(result));
+    assert.equal(result.trace.events.some(event => event.kind === 'human_approval_requested'), false);
+  }
+  const pending = await executeAirDocument(air, options);
+  assert.equal(pending.reason, 'human_approval_pending', JSON.stringify(pending));
+  rmSync(script);
+  const { inputs, ...resume } = options;
+  const result = await executeAirDocument(air, { ...resume, humanApprovalResumeCheckpoint: pending.checkpoint,
+    humanApprovalDecisions: approve(pending.checkpoint) });
+  assert.equal(result.reason, 'HandlerSandboxPathInvalid', JSON.stringify(result));
+  assert.equal(result.trace.events.some(event => event.kind === 'tool_execution_status' && event.payload?.status === 'accepted'), false);
+});
 
 test("consumer binding keeps a removed source approval and composes compatible constraints once", async () => {
   for (const keepSource of [false, true]) {

@@ -6,6 +6,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { renderImportedField, renderJsonFieldAdapters } from "./import-field-adapters.mjs";
+import { validateImportFiles, importedObjectSchemaError } from './import-files.mjs';
 
 export const TOUBA_REST_SCAFFOLD_CONFIG_VERSION = "touba-rest-scaffold-config-v1";
 export const TOUBA_REST_SCAFFOLD_REPORT_VERSION = "touba-rest-scaffold-report-v1";
@@ -34,14 +36,24 @@ export function scaffoldRestTool(options = {}) {
   assertInside(root, outputRoot, "out");
 
   const config = readConfig(configPath);
-  const generation = generateRestScaffold({
-    root,
-    outputRoot,
-    moduleName,
-    config,
-  });
+  const selectedIds = config.operation_ids;
+  if (selectedIds !== undefined && (!Array.isArray(selectedIds) || !selectedIds.length || selectedIds.length > 64
+    || selectedIds.some(id => typeof id !== 'string' || !id.trim()) || new Set(selectedIds).size !== selectedIds.length
+    || config.operation_id !== undefined || config.operation !== undefined || !isPlainObject(config.openapi))) {
+    throw new Error('operation_ids must select 1 to 64 distinct OpenAPI operations, without operation or operation_id');
+  }
+  const generations = (selectedIds ?? [null]).map(id => generateRestScaffold({ root, outputRoot, moduleName,
+    config: id === null ? config : { ...config, operation_id: id } }));
+  const generation = generations[0];
+  const tools = generations.flatMap(item => item.tool ? [item.tool] : []);
+  const names = tools.flatMap(tool => [tool.toolName, tool.inputTypeName, tool.outputTypeName]);
+  if (new Set(names).size !== names.length) throw new Error('selected operations produce colliding Touba names; rename the operations explicitly');
+  const generationErrors = generations.flatMap(item => item.diagnostics);
+  generation.files = generationErrors.some(item => item.severity === 'error') ? []
+    : buildFiles({ root, outputRoot, moduleName, service: generation.service, tools });
 
-  const diagnostics = [...generation.diagnostics];
+  const diagnostics = [...generationErrors];
+  validateImportFiles(root, generation.files, { mode, force: options.force });
   const actions = generation.files.map((file) => fileAction(file, mode));
 
   if (mode === "write") {
@@ -66,6 +78,9 @@ export function scaffoldRestTool(options = {}) {
     module_name: moduleName,
     output_root: outputRoot,
     operation: generation.operationSummary,
+    operations: generations.map(item => item.operationSummary),
+    generated_tools: tools.map(tool => ({ operation_name: tool.operationName, tool_ref: tool.toolRef,
+      input_type: tool.inputTypeName, output_type: tool.outputTypeName, secret_handles: tool.secretHandles })),
     generated_tool: generation.tool === null ? null : {
       operation_name: generation.tool.operationName,
       tool_name: generation.tool.toolName,
@@ -98,9 +113,9 @@ export function renderRestScaffoldReport(report) {
     `Module: ${report.module_name}`,
     `Output: ${report.output_root}`,
   ];
-  if (report.generated_tool !== null) {
-    lines.push("Generated tool:");
-    lines.push(`- ${report.generated_tool.operation_name} -> ${report.generated_tool.tool_ref}`);
+  if (report.generated_tools?.length) {
+    lines.push("Generated tools:");
+    for (const tool of report.generated_tools) lines.push(`- ${tool.operation_name} -> ${tool.tool_ref}`);
   }
   if (report.refused_operation !== null) {
     lines.push("Refused operation:");
@@ -145,7 +160,7 @@ function generateRestScaffold({ root, outputRoot, moduleName, config }) {
       outputRoot,
       moduleName,
       service,
-      tool: mapped.tool,
+      tools: [mapped.tool],
     });
 
   return {
@@ -162,6 +177,7 @@ function readConfig(configPath) {
   if (!existsSync(configPath) || !statSync(configPath).isFile()) {
     throw new Error(`REST scaffold config does not exist: ${configPath}`);
   }
+  if (statSync(configPath).size > 4 * 1024 * 1024) throw new Error('REST scaffold config exceeds 4 MiB');
   try {
     return JSON.parse(readFileSync(configPath, "utf8"));
   } catch (error) {
@@ -185,9 +201,10 @@ function validateConfig(config, diagnostics) {
   }
   const baseUrl = requiredString(config.service.base_url, "service.base_url");
   try {
-    new URL(baseUrl);
+    const url = new URL(baseUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error();
   } catch {
-    throw new Error("service.base_url must be an absolute URL");
+    throw new Error("service.base_url must be an HTTP(S) URL without credentials, query or fragment");
   }
   const secrets = Array.isArray(config.service.secret_handles) ? config.service.secret_handles : [];
   for (const handle of secrets) {
@@ -239,6 +256,7 @@ function operationFromOpenApi(openapi, operationId) {
   if (!isPlainObject(openapi.paths)) {
     throw new Error("openapi.paths must be an object");
   }
+  const matches = [];
   for (const [path, pathItem] of Object.entries(openapi.paths)) {
     if (!isPlainObject(pathItem)) {
       continue;
@@ -251,7 +269,16 @@ function operationFromOpenApi(openapi, operationId) {
       if (operation.operationId !== operationId) {
         continue;
       }
-      return {
+      if (pathItem.$ref || pathItem.parameters?.length || operation.$ref) throw new Error('OpenAPI references and path-level parameters require explicit resolution before import');
+      const parameters = operation.parameters ?? [];
+      if (!Array.isArray(parameters) || parameters.some(p => !isPlainObject(p) || p.$ref || p.in !== 'query' || p.style || p.explode !== undefined
+        || !isPlainObject(p.schema) || ['array', 'object'].includes(p.schema.type))
+        || new Set(parameters.map(p => p.name)).size !== parameters.length
+        || (parameters.length && (operation.requestBody || !['GET', 'DELETE'].includes(method)))) {
+        throw new Error('OpenAPI parameters require explicit scalar query mappings on GET/DELETE; mixed body, path, header and serialization mappings are not supported');
+      }
+      if (operation.requestBody?.$ref || Object.values(operation.responses ?? {}).some(response => response?.$ref)) throw new Error('OpenAPI references require explicit resolution before import');
+      matches.push({
         name: operation.operationId,
         operationId: operation.operationId,
         description: operation.summary ?? operation.description ?? "",
@@ -260,10 +287,11 @@ function operationFromOpenApi(openapi, operationId) {
         secret_handles: operation["x-touba-secret-handles"],
         inputSchema: inputSchemaFromOpenApiOperation(operation),
         outputSchema: outputSchemaFromOpenApiOperation(operation),
-      };
+      });
     }
   }
-  return null;
+  if (matches.length > 1) throw new Error(`operation_id ${operationId} is ambiguous in OpenAPI document`);
+  return matches[0] ?? null;
 }
 
 function inputSchemaFromOpenApiOperation(operation) {
@@ -321,6 +349,10 @@ function mapOperation(operation, moduleName, service) {
   if (typeof operation.path !== "string" || !operation.path.startsWith("/")) {
     return { tool: null, refusal: `${operationName}: path must start with /` };
   }
+  const target = new URL(operation.path, service.baseUrl);
+  if (target.origin !== new URL(service.baseUrl).origin || target.search || target.hash || /[{}\\\\\s]/u.test(operation.path)) {
+    return { tool: null, refusal: `${operationName}: path must stay on the configured service without unresolved parameters` };
+  }
   const toolName = pascalCase(operationName);
   if (!IDENTIFIER_PATTERN.test(toolName)) {
     return { tool: null, refusal: `${operationName}: cannot produce a Touba tool identifier` };
@@ -335,6 +367,10 @@ function mapOperation(operation, moduleName, service) {
   if (outputFields.refusal) {
     return { tool: null, refusal: `${operationName}: ${outputFields.refusal}` };
   }
+  if (operation.body_mode !== undefined && !['json', 'query'].includes(operation.body_mode)) return { tool: null, refusal: `${operationName}: unsupported body_mode` };
+  const bodyMode = operation.body_mode ?? (['POST', 'PUT', 'PATCH'].includes(method) ? 'json' : 'query');
+  if (bodyMode === 'query' && inputFields.fields.some(field => field.type.startsWith('List of '))) return { tool: null, refusal: `${operationName}: list query serialization requires an explicit adapter` };
+  if (bodyMode === 'json' && method === 'GET') return { tool: null, refusal: `${operationName}: GET does not support a JSON body` };
   const operationSecretHandles = Array.isArray(operation.secret_handles)
     ? [...new Set(operation.secret_handles)].sort()
     : [];
@@ -356,9 +392,7 @@ function mapOperation(operation, moduleName, service) {
       description: typeof operation.description === "string" ? operation.description : "",
       method,
       path: operation.path,
-      bodyMode: operation.body_mode === "json" || operation.body_mode === "query"
-        ? operation.body_mode
-        : ["POST", "PUT", "PATCH"].includes(method) ? "json" : "query",
+      bodyMode,
       toolName,
       toolRef: `tool:${moduleName}/${toolName}`,
       inputTypeName: `${toolName}Request`,
@@ -420,12 +454,17 @@ function schemaObjectFields(schema, label) {
   if (!isPlainObject(schema.properties)) {
     return { refusal: `${label}.properties must be an object` };
   }
+  const objectError = importedObjectSchemaError(schema, label);
+  if (objectError) return { refusal: objectError };
   const required = new Set(Array.isArray(schema.required) ? schema.required : []);
   const fields = [];
   for (const [rawName, property] of Object.entries(schema.properties)) {
     const name = snakeCase(rawName);
     if (!/^[a-z_][a-z0-9_]*$/u.test(name)) {
       return { refusal: `${label}.${rawName} cannot produce a Touba field name` };
+    }
+    if (fields.some(field => field.name === name)) {
+      return { refusal: `${label}.${rawName} collides with another field after name conversion` };
     }
     const type = mapJsonSchemaType(property);
     if (type === null) {
@@ -449,6 +488,7 @@ function mapJsonSchemaType(property) {
   if (!isPlainObject(property) || Array.isArray(property.type)) {
     return null;
   }
+  if (Object.keys(property).some(key => !["type", "items", "description", "title", "$comment", "examples"].includes(key))) return null;
   if (property.type === "string") {
     return "Text";
   }
@@ -468,7 +508,31 @@ function mapJsonSchemaType(property) {
   return null;
 }
 
-function buildFiles({ root, outputRoot, moduleName, service, tool }) {
+function buildFiles({ root, outputRoot, moduleName, service, tools }) {
+  if (!tools.length) return [];
+  if (tools.length > 1) {
+    const batches = tools.map(tool => buildFiles({ root, outputRoot, moduleName, service, tools: [tool] }));
+    const file = kind => batches[0].find(item => item.kind === kind);
+    const fragment = JSON.parse(file('binding_fragment').content);
+    fragment.bindings = Object.assign({}, ...batches.map(batch => JSON.parse(batch.find(item => item.kind === 'binding_fragment').content).bindings));
+    const secrets = JSON.parse(file('secrets_template').content);
+    secrets.secrets = Object.assign({}, ...batches.map(batch => JSON.parse(batch.find(item => item.kind === 'secrets_template').content).secrets));
+    const perTool = batches.flatMap((batch, i) => {
+      const configName = `${snakeCase(tools[i].toolName)}.rest.handler.config.json`;
+      return [{ ...batch.find(item => item.kind === 'rest_handler_config'), path: join(outputRoot, configName) },
+        { ...batch.find(item => item.kind === 'handler'), content: renderHandler(tools[i], configName) }];
+    });
+    return [
+      { ...file('source'), content: `module ${moduleName}\n\n` + tools.map(tool => renderToubaSource(moduleName, tool).split('\n').slice(2).join('\n')).join('\n') },
+      { ...file('binding_fragment'), content: JSON.stringify(fragment, null, 2) + '\n' },
+      ...perTool,
+      { ...file('secrets_template'), content: JSON.stringify(secrets, null, 2) + '\n' },
+      { ...file('scaffold_report'), content: JSON.stringify({ report_schema_version: TOUBA_REST_SCAFFOLD_REPORT_VERSION, service, module_name: moduleName,
+        generated_tools: tools.map(tool => ({ operation_name: tool.operationName, tool_ref: tool.toolRef })) }, null, 2) + '\n' },
+      { ...file('readme'), content: renderReadme(service, moduleName, tools) },
+    ];
+  }
+  const [tool] = tools;
   const sourcePath = join(outputRoot, "src", `${moduleName.split(".").at(-1)}.tb`);
   const manifestPath = join(outputRoot, "touba.manifest.fragment.json");
   const handlerConfigPath = join(outputRoot, "rest.handler.config.json");
@@ -498,12 +562,12 @@ function buildFiles({ root, outputRoot, moduleName, service, tool }) {
   };
   return [
     { kind: "source", path: sourcePath, content: renderToubaSource(moduleName, tool) },
-    { kind: "binding_fragment", path: manifestPath, content: renderManifestFragment(service, tool, handlerPath, outputRoot) },
+    { kind: "binding_fragment", path: manifestPath, content: renderManifestFragment(service, tool, handlerPath, root, moduleName) },
     { kind: "rest_handler_config", path: handlerConfigPath, content: renderHandlerConfig(service, tool) },
     { kind: "handler", path: handlerPath, content: renderHandler(tool) },
     { kind: "secrets_template", path: secretsPath, content: renderSecretsTemplate(service, tool) },
     { kind: "scaffold_report", path: reportPath, content: `${JSON.stringify(report, null, 2)}\n` },
-    { kind: "readme", path: readmePath, content: renderReadme(service, moduleName, tool) },
+    { kind: "readme", path: readmePath, content: renderReadme(service, moduleName, tools) },
   ];
 }
 
@@ -514,12 +578,12 @@ function renderToubaSource(moduleName, tool) {
     `type ${tool.inputTypeName}`,
   ];
   for (const field of tool.inputFields) {
-    lines.push(`    ${field.name} is ${field.type}`);
+    lines.push(renderImportedField(field));
   }
   lines.push("");
   lines.push(`type ${tool.outputTypeName}`);
   for (const field of tool.outputFields) {
-    lines.push(`    ${field.name} is ${field.type}`);
+    lines.push(renderImportedField(field));
   }
   lines.push("");
   lines.push(`tool ${tool.toolName}`);
@@ -533,22 +597,21 @@ function renderToubaSource(moduleName, tool) {
   return lines.join("\n").replace(/\n+$/u, "\n");
 }
 
-function renderManifestFragment(service, tool, handlerPath, outputRoot) {
+function renderManifestFragment(service, tool, handlerPath, root, moduleName) {
   return `${JSON.stringify({
-    binding_fragment_schema_version: TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION,
+    fragment_schema_version: TOUBA_BINDING_FRAGMENT_SCHEMA_VERSION,
+    source: { kind: "module", module: moduleName },
     bindings: {
       [tool.toolRef]: {
         handler: {
+          kind: "process",
           command: "node",
-          args: [relative(outputRoot, handlerPath)],
-        },
-        handler_package: {
-          name: `touba-rest-handler-${service.name}`,
-          version: "0.1.0",
-          protocol: "touba-tool-handler-v1",
+          args: [relative(root, handlerPath)],
+          cwd: ".",
         },
         grants: tool.secretHandles.length > 0 ? ["network", "secret_read"] : ["network"],
         secrets: tool.secretHandles,
+        effect_contract: { kind: "external_write", retry_mode: "none" },
         timeout_ms: service.timeoutMs,
         max_payload_bytes: service.maxPayloadBytes,
       },
@@ -580,13 +643,15 @@ function renderHandlerConfig(service, tool) {
   }, null, 2)}\n`;
 }
 
-function renderHandler(tool) {
+function renderHandler(tool, configName = 'rest.handler.config.json') {
   return `import {
   ToubaHandlerError,
   defineTool,
 } from "@touba/sdk";
 
-import config from "../rest.handler.config.json" with { type: "json" };
+import config from ${JSON.stringify('../' + configName)} with { type: "json" };
+
+${renderJsonFieldAdapters(tool)}
 
 await defineTool({
   toolRef: ${JSON.stringify(tool.toolRef)},
@@ -600,13 +665,14 @@ await defineTool({
     }
 
     const operation = config.operation;
+    const wireRequest = toJsonRequest(request);
     const service = config.service;
     const url = new URL(operation.path, service.base_url);
     const headers = { Accept: "application/json" };
     let body;
 
     for (const field of operation.request_fields) {
-      const value = request[field.field];
+      const value = wireRequest[field.source_name];
       if ((value === undefined || value === null) && field.required === true) {
         throw new ToubaHandlerError("InvalidArguments", \`request.\${field.field} is required\`);
       }
@@ -619,7 +685,7 @@ await defineTool({
     }
 
     if (operation.body_mode === "json") {
-      body = JSON.stringify(request);
+      body = JSON.stringify(wireRequest);
       headers["Content-Type"] = "application/json";
     }
 
@@ -633,27 +699,44 @@ await defineTool({
         headers,
         body,
         signal: controller.signal,
+        redirect: "error",
       });
-      const text = await response.text();
-      if (text.length > service.max_payload_bytes) {
-        throw new ToubaHandlerError("RestPayloadTooLarge", "REST response exceeded max_payload_bytes");
-      }
+      const text = await readBoundedBody(response, service.max_payload_bytes);
       if (!response.ok) {
         throw new ToubaHandlerError("RestHttpError", \`REST endpoint returned HTTP \${response.status}\`);
       }
       if (text.trim() === "") {
-        return { content: "" };
+        return fromJsonResult({ content: "" });
       }
-      try {
-        return JSON.parse(text);
-      } catch (error) {
-        return { content: text };
-      }
+      let result;
+      try { result = JSON.parse(text); }
+      catch { result = { content: text }; }
+      return fromJsonResult(result);
     } finally {
       clearTimeout(timeout);
     }
   },
 });
+
+async function readBoundedBody(response, limit) {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > limit) {
+        await reader.cancel();
+        throw new ToubaHandlerError("RestPayloadTooLarge", "REST response exceeded max_payload_bytes");
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  } finally { reader.releaseLock(); }
+}
 
 function applyAuth(headers, auth, env) {
   if (!auth || auth.type === "none") {
@@ -692,20 +775,26 @@ function renderSecretsTemplate(service, tool) {
   }, null, 2)}\n`;
 }
 
-function renderReadme(service, moduleName, tool) {
+function renderReadme(service, moduleName, tools) {
   return `# ${service.name} REST Scaffold
 
-Generated Touba contract for one REST or OpenAPI operation.
+Generated Touba contracts for selected REST or OpenAPI operations.
 
 Module: \`${moduleName}\`
 
-Generated tool: \`${tool.toolRef}\`
+${tools.map(tool => `Generated tool: \`${tool.toolRef}\``).join('\n')}
+
+## Handler runtime
+
+These handlers use JavaScript, including in a Python project. Install a Node.js
+version supported by Touba and the matching \`@touba/sdk\` before execution.
+Generation, preview and preparation never contact the service.
 
 ## Review Required
 
 - Review the generated Touba source before importing it into an agent.
 - Review grants and secret handles in \`touba.manifest.fragment.json\`.
-- Review \`rest.handler.config.json\` before live network use.
+- Review the generated \`*.handler.config.json\` before live network use.
 - Keep secrets as handles only; never commit secret values.
 - Run with \`--trace-out\` when validating the integration.
 `;

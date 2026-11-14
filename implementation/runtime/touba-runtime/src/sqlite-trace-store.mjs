@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createTraceReference, traceJsonDigest, validateTraceReference } from "../../../contracts/trace-reference.mjs";
 import { traceExportState } from "./sqlite-trace-export-state.mjs";
+import { validHandlerIsolationObservation } from './handler-isolation-evidence.mjs';
 
 const FORMAT = "touba-trace-storage-v1";
 const hash = text => createHash("sha256").update(text).digest("hex");
@@ -86,6 +87,9 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
         segment_id TEXT NOT NULL, sequence_index INTEGER NOT NULL, event_id TEXT NOT NULL,
         kind TEXT NOT NULL, body TEXT NOT NULL, digest TEXT NOT NULL,
         PRIMARY KEY(segment_id, sequence_index), UNIQUE(segment_id, event_id));
+        CREATE INDEX IF NOT EXISTS touba_trace_handler_isolation
+          ON touba_trace_events(json_extract(body,'$.payload.tool_ref'))
+          WHERE kind='tool_execution_status' AND json_extract(body,'$.payload.handler_isolation') IS NOT NULL;
         CREATE TABLE IF NOT EXISTS touba_trace_origins (
         run_id TEXT PRIMARY KEY, body TEXT NOT NULL, digest TEXT NOT NULL, bytes INTEGER NOT NULL);`);
       });
@@ -271,6 +275,19 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
       for (const { id } of rows) { const row = segment(id); yield { id, runId: row.run_id, eventCount: row.event_count, bytes: row.bytes, complete: Boolean(row.closed) }; }
     },
     origin,
+    handlerIsolation(toolRef) {
+      if (typeof toolRef !== 'string' || toolRef.length > 1024 || !toolRef.startsWith('tool:')) throw new TypeError('invalid tool reference');
+      const row = db.prepare(`SELECT * FROM touba_trace_events
+        WHERE kind='tool_execution_status' AND json_extract(body,'$.payload.handler_isolation') IS NOT NULL
+        AND json_extract(body,'$.payload.tool_ref')=? ORDER BY rowid DESC LIMIT 1`).get(toolRef);
+      if (!row) return null;
+      if (Buffer.byteLength(row.body) > maxEventBytes) fail('TraceStorageLimitExceeded', 'stored observation exceeds configured limit');
+      const event = decode(row), header = segment(row.segment_id);
+      if (event.run_id !== header.run_id || !validHandlerIsolationObservation(event.payload?.handler_isolation))
+        fail('TraceStorageCorrupt', 'handler isolation observation is invalid');
+      return { run_id: event.run_id, event_id: event.event_id, observed_at: event.observed_at,
+        observation: event.payload.handler_isolation };
+    },
     recordOrigin(runId, value) {
       if (typeof runId !== 'string' || !runId || runId.length > 256 || !value
         || !['studio','ide','cli','user','service'].includes(value.kind)

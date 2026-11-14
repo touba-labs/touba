@@ -782,7 +782,7 @@ export async function prepareProject(options = {}) {
       applyConsumerPolicies(expectedFragmentManifest, expectedManifest, configured?.tool_policies ?? {});
       const fragments = reconcileFragmentBindings({ baselines: configured?.fragment_baselines, profile: runProfile,
         refs: bindingFragmentComposition.toolRefs, current: currentManifest, expected: expectedFragmentManifest,
-        proposed: proposedManifest, reviews: options.hostDecisions?.review_fragments, mode });
+        proposed: proposedManifest, reviews: options.hostDecisions?.review_fragments, mode, root, manifestPath });
       diagnostics.push(...fragments.diagnostics);
       actions.push(...fragments.actions.map(change => action(change.kind, manifestPath, change)));
       const proposal = applyHostDecisions(proposedManifest, options.hostDecisions, manifestRequirements,

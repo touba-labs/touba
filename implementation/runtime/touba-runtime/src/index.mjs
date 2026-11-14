@@ -66,6 +66,7 @@ import {
 } from "./hardened-execution-profile.mjs";
 import {
   runProcessToolHandler,
+  preflightProcessToolHandler,
   TOOL_HANDLER_PROTOCOL_VERSION,
 } from "./handler-protocol.mjs";
 import {
@@ -5248,6 +5249,7 @@ async function executeApprovedTool(tool, context) {
   validateToolInputPayload(tool, args, context);
   validateToolPayloadConstraints("input", tool, args, binding?.payloadConstraints?.input ?? []);
   assertNoSecretValueInToolArguments(tool, binding, args, context);
+  if (binding && !context.toolHandlers[tool.id]) preflightProcessToolHandler({ binding });
   return executeTypedGraph(tool, graph.id, context);
 }
 
@@ -5291,12 +5293,14 @@ async function executeToolBody(tool, context) {
   try {
     const value = await executeToolBodyUnchecked(tool, context);
     context.trace.push("tool_execution_status", { payload: { tool_ref: tool.id,
-      phase: "post_validation", status: "accepted", result_origin: attempt.restored ? "journal" : "handler" } });
+      phase: "post_validation", status: "accepted", result_origin: attempt.restored ? "journal" : "handler",
+      ...(attempt.isolation ? { handler_isolation: attempt.isolation } : {}) } });
     return value;
   } catch (error) {
     if (error instanceof RuntimeFailure && attempt.effectState) error.details = { ...error.details, state: attempt.effectState };
     context.trace.push("tool_execution_status", { payload: { tool_ref: tool.id,
       phase: attempt.phase, status: "refused", runtime_error_code: error instanceof RuntimeFailure ? error.code : "ToolHandlerFailed",
+      ...(attempt.isolation ? { handler_isolation: attempt.isolation } : {}),
       effect_status: attempt.effectState ?? (attempt.phase === "admission" ? "not_dispatched" : attempt.restored ? "previously_applied" : "requires_effect_evidence") } });
     throw error;
   } finally { context.toolAttempt = previous; }
@@ -5360,6 +5364,7 @@ async function executeToolBodyUnchecked(tool, context) {
       if (!durableReservation) context.nextCallIndex += 1;
       const handlerResponse = await runProcessToolHandler({
         localHandlerDiagnostics: context.localHandlerDiagnostics,
+        onIsolationObservation: observation => { context.toolAttempt.isolation = observation; },
         runId: context.trace.runId,
         toolRef: tool.id,
         binding,
@@ -5629,6 +5634,7 @@ async function executeEffectfulProcessTool(
   try {
     handlerResponse = await runProcessToolHandler({
       localHandlerDiagnostics: context.localHandlerDiagnostics,
+      onIsolationObservation: observation => { context.toolAttempt.isolation = observation; },
       runId: context.trace.runId,
       toolRef,
       binding,

@@ -163,5 +163,6 @@ export function linuxHandlerSandboxPlan(binding, command, { bwrap = "/usr/bin/bw
     read_directories: [...readDirectories], write: [...paths.write, "/dev/null"],
     execute: [...paths.code, launchPath, ...systemLibraries], sockets: paths.sockets, network: paths.grants.has("network") };
   return { enabled: true, mechanism: "bubblewrap-seccomp-landlock", command: bwrap, args, policy: Buffer.from(JSON.stringify(policy)),
+    evidenceFiles: [launcher],
     seccomp: linuxHandlerSeccomp({ arch, processAllowed: paths.grants.has("process"), networkAllowed: paths.grants.has("network"), localSockets: paths.sockets.length > 0 }) };
 }

@@ -6,6 +6,9 @@ import { validateAirMachineContract } from "../../../contracts/machine/contracts
 import { agentResultSchema, argumentsSchemaForCapability } from "../../touba-handler-sdk/src/decision-contract.mjs";
 import { createAiSdkDecisionProvider } from "../../touba-handler-sdk/src/index.mjs";
 import { nativeCapabilityName } from "../../touba-handler-sdk/src/native-decision.mjs";
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let air;
 before(() => {
@@ -49,10 +52,13 @@ test("invalid external enum values fail before reaching a human boundary", async
   assert.equal(output.status, "failure");
 });
 
-test("enum input survives an actual human checkpoint without conversion", async () => {
-  const paused = await executeAirDocument(air, { entryRef: "strategy:orders/Review", inputs: { priority: "high" }, durableHumanApprovals: true });
+test("enum input survives an actual human checkpoint without conversion", async t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-enum-checkpoint-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const humanCheckpointStorePath = join(root, 'approvals.sqlite');
+  const paused = await executeAirDocument(air, { entryRef: "strategy:orders/Review", inputs: { priority: "high" }, durableHumanApprovals: true, humanCheckpointStorePath });
   assert.equal(paused.status, "stopped");
-  const resumed = await executeAirDocument(air, { entryRef: "strategy:orders/Review", durableHumanApprovals: true,
+  const resumed = await executeAirDocument(air, { entryRef: "strategy:orders/Review", durableHumanApprovals: true, humanCheckpointStorePath,
     humanApprovalResumeCheckpoint: JSON.parse(JSON.stringify(paused.checkpoint)),
     humanApprovalDecisions: { [paused.checkpoint.approval_ref]: "approved" } });
   assert.equal(resumed.status, "success", JSON.stringify(resumed.trace));

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { dirname, resolve } from 'node:path';
+import { bindingReviewValue } from './binding-review.mjs';
 
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
@@ -35,11 +37,9 @@ export function normalizeFragmentBaselines(value = {}) {
   return structuredClone(value);
 }
 
-const display = (value, fingerprint) => typeof value === "number" || typeof value === "boolean" ? value : fingerprint ?? null;
-
 // A source edit and a generated-manifest edit are different operations. Compare
 // the latter against its last written projection before applying the former.
-export function reconcileFragmentBindings({ baselines, profile, refs, current, expected, proposed, reviews = {}, mode }) {
+export function reconcileFragmentBindings({ baselines, profile, refs, current, expected, proposed, reviews = {}, mode, root, manifestPath }) {
   const profiles = normalizeFragmentBaselines(baselines);
   const records = Object.hasOwn(profiles, profile) ? profiles[profile] : {};
   map(reviews, 4096, "BindingFragmentReviewInvalid");
@@ -76,8 +76,10 @@ export function reconcileFragmentBindings({ baselines, profile, refs, current, e
     if (previous && previous.digest !== next.digest) {
       for (const field of [...new Set([...Object.keys(previous.fields), ...Object.keys(next.fields)])].sort()) {
         if (previous.fields[field] === next.fields[field]) continue;
+        const display = (binding, fingerprint) => bindingReviewValue(field, binding?.[field], fingerprint,
+          { root, grants: binding?.grants ?? [], manifestPath: field === 'sandbox' && manifestPath ? resolve(dirname(manifestPath), binding?.handler?.cwd ?? '.') : manifestPath });
         actions.push({ kind: mode === "write" ? "update_fragment_binding" : "would_update_fragment_binding", tool_ref: ref, field,
-          before: display(actual?.[field], previous.fields[field]), after: display(expected.bindings[ref][field], next.fields[field]) });
+          before: display(actual, previous.fields[field]), after: display(expected.bindings[ref], next.fields[field]) });
       }
     }
     if (mode === "check" && (!before || before.digest !== next.digest)) {

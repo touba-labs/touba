@@ -42,6 +42,18 @@
           "mechanism": { "type": ["string", "null"] },
           "grants": { "type": "array", "items": { "type": "string" } },
           "required": { "type": "boolean" },
+          "observation": {
+            "type": "object", "additionalProperties": false,
+            "required": ["state", "preflight", "run_id", "observed_at", "outcome", "evidence_ref"],
+            "properties": {
+              "state": { "enum": ["not_observed", "not_required", "observed", "stale", "incomplete", "unavailable"] },
+              "preflight": { "enum": ["available", "unavailable", "not_required"] },
+              "run_id": { "type": ["string", "null"], "maxLength": 1024 },
+              "observed_at": { "type": ["string", "null"] },
+              "outcome": { "enum": ["completed", "failed", null] },
+              "evidence_ref": { "type": ["string", "null"], "maxLength": 2048 }
+            }
+          },
           "evidence": {
             "type": "object",
             "additionalProperties": false,

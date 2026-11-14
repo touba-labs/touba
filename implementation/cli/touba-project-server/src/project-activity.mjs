@@ -48,7 +48,7 @@ export function authoringReadiness({ gate, policy, policies = policy ? [policy] 
       severity: 'warning', code: 'ToubaServeApprovalHostRequired',
       message: 'Configure the host attestation provider before using this approval policy.',
     });
-    if (policies.some(item => item.distinct_from?.includes('initiator')) && typeof host.humanApprovalInitiator !== 'function'
+    if (host.identityControlPlaneUrl === undefined && policies.some(item => item.distinct_from?.includes('initiator')) && typeof host.humanApprovalInitiator !== 'function'
       && !(typeof host.humanApprovalInitiator === 'string' && host.humanApprovalInitiator.trim())) warnings.push({
       severity: 'warning', code: 'HumanApprovalInitiatorRequired',
       message: 'This separation requires a trusted initiator supplied by the host.',

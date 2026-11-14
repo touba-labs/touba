@@ -60,6 +60,19 @@ export function handlerSandboxPaths(binding, command) {
     sockets: paths("local_sockets", "network_local"), command: canonicalPath(command), grants };
 }
 
+/** Files implicitly selected by this backend, shared by policy and evidence.
+ * @param {string} command
+ */
+export function macosHandlerEvidenceFiles(command) {
+  // Homebrew Node may link OpenSSL 3 or 4. Grant only the configuration file,
+  // never its parent directory, keys or arbitrary user-provided OPENSSL_CONF.
+  const cryptoConfig = ["/etc/ssl/openssl.cnf", "/private/etc/ssl/openssl.cnf",
+    "/opt/homebrew/etc/openssl@3/openssl.cnf", "/usr/local/etc/openssl@3/openssl.cnf",
+    "/opt/homebrew/etc/openssl@4/openssl.cnf", "/usr/local/etc/openssl@4/openssl.cnf"]
+    .filter(existsSync).map(canonicalPath);
+  return [...runtimeLibraries(realpathSync(command)), ...cryptoConfig];
+}
+
 /** @param {any} binding @param {string} command */
 export function macosHandlerPolicy(binding, command) {
   const paths = handlerSandboxPaths(binding, command);
@@ -68,13 +81,7 @@ export function macosHandlerPolicy(binding, command) {
     '(allow file-read* (subpath "/System/Library") (subpath "/usr/lib") (subpath "/Library/Apple/System/Library"))',
     '(allow file-read* (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
     '(allow file-write* (literal "/dev/null"))'];
-  // Homebrew Node may link OpenSSL 3 or 4. Grant only the configuration file,
-  // never its parent directory, keys or arbitrary user-provided OPENSSL_CONF.
-  const cryptoConfig = ["/etc/ssl/openssl.cnf", "/private/etc/ssl/openssl.cnf",
-    "/opt/homebrew/etc/openssl@3/openssl.cnf", "/usr/local/etc/openssl@3/openssl.cnf",
-    "/opt/homebrew/etc/openssl@4/openssl.cnf", "/usr/local/etc/openssl@4/openssl.cnf"]
-    .filter(existsSync).map(canonicalPath);
-  for (const path of [...paths.code, ...runtimeLibraries(paths.command), ...cryptoConfig]) rules.push(`(allow file-read* (literal ${JSON.stringify(path)}))`);
+  for (const path of [...paths.code, ...macosHandlerEvidenceFiles(paths.command)]) rules.push(`(allow file-read* (literal ${JSON.stringify(path)}))`);
   // Python's import finder enumerates the directory containing each selected
   // module. Literal directory reads allow that inventory, never file contents
   // below the directory (unlike a subpath read grant).
