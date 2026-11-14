@@ -28,7 +28,7 @@ tool Pay
     gives Text
     requires filesystem_write
     human.approve
-        with timeout_ms as 1500
+        with timeout_ms as 8000
 strategy Work
     gives Text
     uses Pay
@@ -74,7 +74,10 @@ ${scheduled ? `trigger Job
     assert.equal(response.status, 200, await response.clone().text());
     assert.equal((await response.json()).reason, 'human_approval_pending');
   }
-  const request = await (await fetch(base() + '/approvals/pending/current')).json();
+  const pendingResponse = await fetch(base() + '/approvals/pending/current');
+  assert.equal(pendingResponse.status, 200, 'capture the pending wait before its deadline');
+  const request = await pendingResponse.json();
+  assert.ok(Number.isFinite(Date.parse(request.expires_at)), 'the recovery fixture requires an actual pending request, not an already expired HTTP error');
   const options = { projectRoot: root, abandonWaits: true, abandonOperations: deadLetter, stateReason: 'Replace an incompatible stopped test state.' };
   assert.throws(() => archiveProjectState(options, checkToubaProjectState), { code: 'ToubaStateInUse' });
   await service.stop(); service = null;

@@ -1,0 +1,10 @@
+{
+  "schema_version": "touba-integration-import-result-v1",
+  "status": "imported",
+  "module": "integrations.demo",
+  "review_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "files": [
+    "src/integrations/demo/src/demo.tb"
+  ],
+  "transaction_id": "import-123"
+}

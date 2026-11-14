@@ -1,0 +1,21 @@
+{
+  "schema_version": "touba-integration-import-preview-v1",
+  "id": "00000000-0000-4000-8000-000000000001",
+  "review_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expires_at": "2026-11-14T03:00:00.000Z",
+  "can_apply": false,
+  "module": "integrations.demo",
+  "kind": "mcp",
+  "runtime": {
+    "language": "javascript",
+    "node_version": "24.22.1",
+    "sdk": "unavailable",
+    "sdk_version": "1.5.0",
+    "timeout_ms": 5000,
+    "max_payload_bytes": 1048576
+  },
+  "files": [],
+  "grants": [],
+  "diagnostics": [],
+  "authorize_grants": false
+}

@@ -2,7 +2,7 @@ const fail = (code, message) => { throw Object.assign(new Error(message), { code
 
 export function projectActivityKind(method, path) {
   if (method !== 'POST') return null;
-  if (['/changes/apply', '/project/prepare', '/project/prepare/apply', '/packages/apply', '/packages/remove/apply'].includes(path)) return 'mutation';
+  if (['/changes/apply', '/project/prepare', '/project/prepare/apply', '/packages/apply', '/packages/remove/apply', '/integrations/import/apply'].includes(path)) return 'mutation';
   if (['/runs/sandbox', '/runs/sandbox/resume', '/triggers/fire', '/triggers/webhooks/review', '/decisions', '/validation/runs'].includes(path)
     || /^\/interactions\/sessions\/[^/]+\/(messages|resume)$/.test(path)) return 'execution';
   return null;

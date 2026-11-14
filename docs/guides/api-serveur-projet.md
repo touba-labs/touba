@@ -4,6 +4,33 @@
 L'application authentifie ses utilisateurs, présente les dossiers et transmet
 leurs décisions ; le runtime conserve le contrôle des capacités et des effets.
 
+## Imports revus
+
+`POST /integrations/import/preview` exige `governance.propose`. Le client fournit
+`kind` (`openapi` ou `mcp`), `name`, `document` JSON, `selected`, `secret_handles`
+et `authorize_grants`. OpenAPI exige aussi `base_url` HTTPS sans identifiants,
+query ni fragment. Aucun téléchargement ni processus tiers n'est lancé.
+Le document est borné à 1 Mio et la sélection à 24 opérations distinctes.
+
+`timeout_ms` (100 à 120 000, défaut 5 000) et `max_payload_bytes` (1 024 à
+1 048 576, défaut 1 048 576) règlent les handlers générés. L'aperçu renvoie les
+types, fichiers relatifs, droits demandés, état Node/SDK, empreinte et expiration.
+`authorize_grants: false` permet la revue mais pas l'application. Le client doit
+recréer l'aperçu après consentement aux droits affichés.
+
+`POST /integrations/import/apply` exige `governance.apply` avec `id`,
+`review_digest` et un `reason` non vide. La session, l'expiration, la configuration
+et la compilation sont revérifiées. Le plan est à usage unique et les écritures
+utilisent le journal de transaction récupérable du serveur. Aucun fichier existant
+n'est remplacé. Les opérations actives et les liens symboliques font refuser
+l'application. Les jetons applicatifs d'exécution ne donnent pas cet accès.
+
+Le module rejoint `src/integrations/`, les adaptateurs `integrations/`, et le
+fragment est enregistré dans `touba.project.json`. Préparer ensuite le projet ;
+l'import conserve son point d'entrée. Les handlers sont JavaScript même dans un
+projet Python. L'installation du SDK, le transport MCP et le confinement restent
+des configurations explicites. La découverte MCP en direct est hors de ce contrat.
+
 ## Webhooks du projet
 
 L'activation explicite `--request-triggers --webhook-signature-secret-env NOM`

@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
+import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
+import { runProcessToolHandler } from '../../../runtime/touba-runtime/src/handler-protocol.mjs';
 import { initProject, prepareProject } from "../src/project.mjs";
 import { importMcpTools } from "../src/mcp-import.mjs";
 import { scaffoldRestTool } from "../src/rest-scaffold.mjs";
@@ -17,6 +20,49 @@ const configs = {
   mcp: { mcp_import_config_version: "touba-mcp-import-config-v1", server: { name: "demo", transport: "snapshot" }, tools: [{ name: "lookup", inputSchema: schema, outputSchema: schema }] },
   rest: { rest_scaffold_config_version: "touba-rest-scaffold-config-v1", service: { name: "demo", base_url: "https://example.invalid" }, operation: { name: "lookup", method: "POST", path: "/lookup", inputSchema: schema, outputSchema: schema } },
 };
+
+for (const [kind, generator] of [['mcp', importMcpTools], ['rest', scaffoldRestTool]]) test(`${kind} generated handler exchanges its real process protocol and refuses a missing grant`, async t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-generated-protocol-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  let http, requests = 0;
+  const config = structuredClone(configs[kind]);
+  if (kind === 'rest') {
+    http = createServer(async (req, res) => { requests++; let body = ''; for await (const chunk of req) body += chunk;
+      const input = JSON.parse(body); assert.deepEqual(input, { accountName: 'A', tags: ['x'] });
+      res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(input)); });
+    await new Promise(resolve => http.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => http.close(resolve)));
+    config.service.base_url = `http://127.0.0.1:${http.address().port}`;
+  }
+  mkdirSync(join(root, 'node_modules/@touba'), { recursive: true });
+  symlinkSync(fileURLToPath(new URL('../../../runtime/touba-handler-sdk', import.meta.url)), join(root, 'node_modules/@touba/sdk'), 'dir');
+  const configPath = join(root, 'import.json'); writeFileSync(configPath, JSON.stringify(config));
+  const report = generator({ root, configPath, moduleName: 'integrations.demo', out: 'out', mode: 'write' });
+  assert.equal(report.status, 'success');
+  if (kind === 'mcp') {
+    const fake = join(root, 'synthetic-server.mjs');
+    writeFileSync(fake, `import { createInterface } from 'node:readline';
+      for await (const line of createInterface({ input: process.stdin })) {
+        const request = JSON.parse(line); if (!request.id) continue;
+        const result = request.method === 'initialize'
+          ? { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'synthetic', version: '1.0.0' } }
+          : { content: [], structuredContent: request.params.arguments, isError: false };
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
+      }`);
+    const path = join(root, 'out/mcp.bridge.config.json'), bridge = JSON.parse(readFileSync(path));
+    bridge.server.command = process.execPath; bridge.server.args = [fake]; writeFileSync(path, JSON.stringify(bridge));
+  }
+  const handler = report.files.find(file => ['handler', 'handler_bridge'].includes(file.kind));
+  const toolRef = 'tool:integrations.demo/Lookup', limits = { timeout_ms: 5000, max_payload_bytes: 1048576 };
+  const invoke = grants => runProcessToolHandler({ toolRef, binding: { handler: { command: process.execPath, args: [handler.path], cwd: root }, grants, limits },
+    request: { protocol: 'touba-tool-handler-v1', operation: 'invoke', tool_ref: toolRef, grants, secret_handles: [], limits,
+      arguments: { request: { account_name: 'A', max_items: { present: false }, tags: { present: true, value: ['x'] } } } }, secretHandles: [] });
+  await assert.rejects(invoke([]), error => error.code === 'ToolHandlerReportedError' && error.details?.handlerErrorCode === 'MissingGrant');
+  assert.equal(requests, 0);
+  const result = await invoke(['network']);
+  assert.deepEqual(result.value, { account_name: 'A', max_items: { present: false }, tags: { present: true, value: ['x'] } });
+  if (kind === 'rest') assert.equal(requests, 1);
+});
 
 for (const [kind, generator] of [["mcp", importMcpTools], ["rest", scaffoldRestTool]]) {
   for (const language of ["javascript", "python"]) test(`${kind} generated fragment compiles and prepares once in a ${language} project`, async () => {

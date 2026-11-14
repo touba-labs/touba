@@ -18,6 +18,7 @@ import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT } from "./package-sur
 import { createRegistryTrustReview } from './registry-trust-review.mjs';
 import { inspectPackageInstallation } from "./package-inspection.mjs";
 import { createProjectPreparation } from "./project-preparation.mjs";
+import { createIntegrationImport } from './integration-import.mjs';
 import { authoringReadiness, createProjectActivityGate, projectActivityKind } from './project-activity.mjs';
 import { expandServerConfig } from './server-config.mjs';
 import { projectServiceCredentials, serviceCredentialCommand } from './service-credentials.mjs';
@@ -502,6 +503,10 @@ function createProjectServerWithLease(options, takeLease) {
     configuredTrust: options.packageRegistryTrust ? resolve(projectRoot, options.packageRegistryTrust) : undefined,
     onChange: value => packageSurface.configureRegistry(value) });
   const projectPreparation = createProjectPreparation(projectRoot);
+  const integrationImport = createIntegrationImport(projectRoot, {
+    validate: targets => compileProposedSources({ projectRoot, targets }).diagnostics,
+    apply: args => applyChangeTargetsTransaction({ projectRoot, ...args }),
+  });
   const traceExplorerSurface = createProjectTraceExplorer(projectRoot, {
     resolveAir: targetRef => join(projectRoot, resolveSandboxAirDocument({ projectRoot, targetRef }).relativePath),
   });
@@ -1529,6 +1534,8 @@ function createProjectServerWithLease(options, takeLease) {
             element_authoring_preview: "/elements/preview",
             element_source: "/elements/source",
             element_authoring_propose: "/elements/propose",
+            integration_import_preview: '/integrations/import/preview',
+            integration_import_apply: '/integrations/import/apply',
             deployments: "/deployments",
             deployment_plan: "/deployments/plan",
             deployment_publish: "/deployments/publish",
@@ -3065,6 +3072,22 @@ function createProjectServerWithLease(options, takeLease) {
       if (request.method === "GET" && url.pathname.startsWith("/changes/")) {
         const proposalId = decodeURIComponent(url.pathname.slice("/changes/".length));
         writeJson(response, 200, getProjectChangeDetail({ projectRoot, changeProposalsPath, proposalId }));
+        return;
+      }
+      if (request.method === 'POST' && ['/integrations/import/preview', '/integrations/import/apply'].includes(url.pathname)) {
+        const body = await readJsonBody(request, url.pathname.endsWith('/preview') ? 2 * 1024 * 1024 : MAX_BODY_BYTES);
+        const principal = JSON.stringify([humanIdentity?.user?.id ?? 'project-bearer', humanIdentity?.session_id ?? null, humanIdentity?.organization_id ?? null]);
+        if (url.pathname.endsWith('/preview')) {
+          const preview = integrationImport.preview(principal, body);
+          preview.diagnostics.push(...authoringReadiness({ gate: activityGate, host: options }));
+          if (preview.diagnostics.some(item => ['ToubaServeProjectOperationsActive', 'ToubaServeProjectMutationBusy'].includes(item.code))) preview.can_apply = false;
+          writeJson(response, 200, preview);
+        } else {
+          const result = integrationImport.apply(principal, body);
+          publishEvent(eventClients, 'integration.imported', { module: result.module, review_digest: result.review_digest,
+            transaction_id: result.transaction_id, actor_id: humanIdentity?.user?.id ?? null }, nextEvent);
+          writeJson(response, 200, result);
+        }
         return;
       }
       if (request.method === "POST" && url.pathname === "/project/prepare/preview") {
@@ -9268,7 +9291,7 @@ function applySingleChangeTarget({ projectRoot, target }) {
   };
 }
 
-function applyChangeTargetsTransaction({ projectRoot, proposalId, targets, decidedAt }) {
+function applyChangeTargetsTransaction({ projectRoot, proposalId, targets, decidedAt, review_actor, reason }) {
   const toubaRoot = join(projectRoot, ".touba");
   const lockPath = join(toubaRoot, "project-change.lock");
   mkdirSync(toubaRoot, { recursive: true });
@@ -9292,6 +9315,7 @@ function applyChangeTargetsTransaction({ projectRoot, proposalId, targets, decid
     proposal_id: proposalId,
     status: "preparing",
     prepared_at: decidedAt,
+    ...(review_actor ? { review_actor, reason } : {}),
     targets: targets.map((target) => ({
       path: target.path,
       content_sha256: target.content_sha256,
@@ -12091,6 +12115,8 @@ export function requiredIdentityPermission(method, pathname) {
   if (pathname === "/project/prepare") return "governance.apply";
   if (pathname === "/project/prepare/preview") return "governance.propose";
   if (pathname === "/project/prepare/apply") return "governance.apply";
+  if (pathname === '/integrations/import/preview') return 'governance.propose';
+  if (pathname === '/integrations/import/apply') return 'governance.apply';
   if (pathname === "/packages/preview" || pathname === "/packages/local/preview" || pathname === "/packages/cancel" || pathname === "/packages/remove/preview"
     || pathname === '/packages/registry/resolve' || /^\/packages\/registry\/[a-f0-9-]{36}\/preview$/.test(pathname)) return "governance.propose";
   if (pathname === "/packages/installed") return "projects.read";
@@ -12269,13 +12295,13 @@ function bindHumanActor(body, field, identity) {
   };
 }
 
-async function readJsonBody(request) {
+async function readJsonBody(request, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) {
-      throw serviceError("ToubaServeBodyTooLarge", `request body exceeds ${MAX_BODY_BYTES} bytes`);
+    if (size > maxBytes) {
+      throw serviceError("ToubaServeBodyTooLarge", `request body exceeds ${maxBytes} bytes`);
     }
     chunks.push(chunk);
   }

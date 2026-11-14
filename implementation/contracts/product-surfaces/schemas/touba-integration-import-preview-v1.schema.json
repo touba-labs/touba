@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-integration-import-preview-v1",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-integration-import-preview-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "review_digest",
+    "expires_at",
+    "can_apply",
+    "module",
+    "kind",
+    "runtime",
+    "files",
+    "grants",
+    "diagnostics",
+    "authorize_grants"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "touba-integration-import-preview-v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-f0-9-]{36}$"
+    },
+    "review_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "expires_at": {
+      "type": "string"
+    },
+    "can_apply": {
+      "type": "boolean"
+    },
+    "module": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "kind": {
+      "enum": [
+        "mcp",
+        "openapi"
+      ]
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "language",
+        "node_version",
+        "sdk",
+        "sdk_version",
+        "timeout_ms",
+        "max_payload_bytes"
+      ],
+      "properties": {
+        "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "max_payload_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576 },
+        "language": {
+          "const": "javascript"
+        },
+        "node_version": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "sdk": {
+          "enum": [
+            "ready",
+            "unavailable"
+          ]
+        },
+        "sdk_version": {
+          "type": "string",
+          "maxLength": 512
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 61,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "role",
+          "digest"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "role": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 1048576
+          }
+        }
+      }
+    },
+    "grants": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tool_ref",
+          "grants",
+          "secret_handles"
+        ],
+        "properties": {
+          "tool_ref": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "grants": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          "secret_handles": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message",
+          "severity"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "error",
+              "warning",
+              "info"
+            ]
+          }
+        }
+      }
+    },
+    "authorize_grants": {
+      "type": "boolean"
+    }
+  }
+}

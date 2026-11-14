@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-integration-import-result-v1",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-integration-import-result-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "module",
+    "review_digest",
+    "files",
+    "transaction_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "touba-integration-import-result-v1"
+    },
+    "status": {
+      "const": "imported"
+    },
+    "module": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "review_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 61,
+      "items": {
+        "type": "string",
+        "maxLength": 512
+      }
+    },
+    "transaction_id": {
+      "type": "string",
+      "maxLength": 512
+    }
+  }
+}

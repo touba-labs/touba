@@ -29,13 +29,14 @@ export function scaffoldRestTool(options = {}) {
   if (!["plan", "write", "check"].includes(mode)) {
     throw new Error("--mode must be plan, write or check");
   }
-  const configPath = resolve(root, requiredString(options.configPath, "config path"));
+  const configPath = options.configDocument === undefined ? resolve(root, requiredString(options.configPath, "config path")) : null;
   const outputRoot = resolve(root, requiredString(options.out, "out"));
   const moduleName = requiredString(options.moduleName, "module");
   assertModuleName(moduleName);
   assertInside(root, outputRoot, "out");
 
-  const config = readConfig(configPath);
+  if (options.configDocument !== undefined && mode !== 'plan') throw new Error('In-memory import is preview-only');
+  const config = options.configDocument ?? readConfig(configPath);
   const selectedIds = config.operation_ids;
   if (selectedIds !== undefined && (!Array.isArray(selectedIds) || !selectedIds.length || selectedIds.length > 64
     || selectedIds.some(id => typeof id !== 'string' || !id.trim()) || new Set(selectedIds).size !== selectedIds.length
@@ -94,6 +95,7 @@ export function scaffoldRestTool(options = {}) {
       kind: file.kind,
       path: file.path,
       relative_path: relative(root, file.path),
+      ...(options.includeContents === true ? { content: file.content } : {}),
     })),
     actions,
     diagnostics,

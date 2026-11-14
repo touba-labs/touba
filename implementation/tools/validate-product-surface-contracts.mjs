@@ -9,6 +9,8 @@ export const PRODUCT_SURFACE_CONTRACTS_SCHEMA_VERSION =
   "touba-product-surface-contracts-report-v1";
 
 export const PRODUCT_SURFACE_CONTRACTS = Object.freeze([
+  'touba-integration-import-preview-v1',
+  'touba-integration-import-result-v1',
   "touba-project-webhooks-v1",
   "touba-project-fleet-v1",
   "touba-project-fleet-plan-v1",
