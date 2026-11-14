@@ -24,6 +24,21 @@ test("consumer approval survives a reviewed removal, empty packages and reinstal
   assert.deepEqual(reinstalled.policies[ref], policy);
 });
 
+test('effect recommendations require review when removed and never become consumer grants or policies', () => {
+  const source = make();
+  source.packages[0].handlers = [{ tool: ref, effect_contract: { kind: 'external_write', retry_mode: 'idempotency_key' } }];
+  const initial = proposePackageGovernance(source);
+  assert.equal(initial.configuration.package_contracts['example.export'].tools[ref].recommended_effect.kind, 'external_write');
+  assert.deepEqual(initial.policies[ref], policy);
+  const removed = proposePackageGovernance({ ...make(null, 'b'), configuration: initial.configuration });
+  assert.equal(removed.diagnostics[0].code, 'PackageGovernanceReviewRequired');
+  assert.deepEqual(removed.policies[ref], policy);
+  assert.equal(Object.hasOwn(removed.configuration, 'bindings'), false);
+  const invalid = structuredClone(initial.configuration.package_contracts);
+  invalid['example.export'].tools[ref].recommended_effect = { kind: 'none', retry_mode: 'none' };
+  assert.throws(() => normalizePackageContracts(invalid), { code: 'EffectRetryModeForbidden' });
+});
+
 test("a first migration preserves the existing AIR policy and exposes an intervening downgrade", () => {
   const proposal = proposePackageGovernance({ ...make(null), previous: make().entries.map(e => e.document) });
   assert.equal(proposal.diagnostics[0].code, "PackageGovernanceReviewRequired");

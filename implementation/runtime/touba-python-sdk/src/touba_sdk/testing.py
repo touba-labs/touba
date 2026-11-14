@@ -2,6 +2,20 @@
 from copy import deepcopy
 import inspect
 from .engine import ToubaEngineError
+from .handlers import create_effect_receipt
+
+
+def assert_effect_receipt(response, effect, outcome):
+    """Check a test receipt; this does not prove a provider performed the effect."""
+    if type(response) is not dict or type(response.get("ok")) is not bool:
+        raise AssertionError("Expected a handler response")
+    receipt = response.get("effect_receipt")
+    if type(receipt) is not dict or receipt.get("outcome") != outcome:
+        raise AssertionError("Expected an effect receipt with the selected outcome")
+    options = {key: value for key, value in receipt.items() if key not in ("effect_id", "request_digest")}
+    if receipt != create_effect_receipt(effect, options):
+        raise AssertionError("Receipt must match the exact effect request")
+    return receipt
 
 
 class ScriptedDecisionProvider:

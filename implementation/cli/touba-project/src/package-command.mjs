@@ -9,7 +9,9 @@ import { requestPackagePublication } from "./package-automation.mjs";
 import { authorIdentity, newPackage, testPackage, versionPackage } from "./package-author.mjs";
 import { configureRegistry, registryOptions } from './package-registry-config.mjs';
 import { authorizeRegistry, publicationUrl } from './package-identity.mjs';
-import { addPackage, addRegistryPackage, checkPackage, checkPackageArchive, packPackage, removePackage } from "./packages.mjs";
+import { packageSessionNotice } from './package-diagnostics.mjs';
+import { auditPackageStatus } from './package-status.mjs';
+import { addPackage, addRegistryPackage, reviewPackageUpdate, updateRegistryPackage, checkPackage, checkPackageArchive, packPackage, removePackage } from "./packages.mjs";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, packageError } from "./package-contract.mjs";
 import { findPackageWorkspace, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
 
@@ -23,14 +25,16 @@ export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organizati
        touba package pack [directory] [--output <archive.tar.gz>] [--root <author>]
        touba package publish [directory] --registry <directory|URL> [--no-browser] [--root <author>]
        touba package checkout <draft-id> --registry <URL> [--no-browser] [--root <parent>]
-       touba package submit [directory] [--registry <URL>] [--draft <draft-id>] [--no-browser] [--root <author>]
+       touba package submit [directory] [--registry <URL>] [--draft <draft-id> | --presentation-from <publication-id>] [--no-browser] [--root <author>]
        touba package submit [directory] --ci <authorization-id> --registry <URL> [--root <author>]
        touba package submit [directory] --automation --registry <URL> --request-id <unique-id> [--draft <id>]
        touba package checkout <draft-id> --automation --registry <URL> [--root <parent>]
        touba package request-publication <draft-id> --automation --registry <URL> --revision <number> --request-id <unique-id>
        touba package add <name|directory|archive.tar.gz> [--root <workspace>]
        touba package add <name>@<version> --registry <directory|URL> [--trust <keys.json>] [--allow-draft] [--no-browser] [--root <workspace>]
-       touba package list [--root <workspace>]
+       touba package list [--status] [--root <workspace>]
+       touba package audit [--offline] [--registry <URL>] [--trust <keys.json>] [--no-browser] [--root <workspace>]
+       touba package update <directory|archive.tar.gz|name@version> [--registry <URL>] [--allow-downgrade] [--accept <review_digest>] [--root <workspace>]
        touba package remove <name> [--root <workspace>]
 All commands support --json. new and version ask questions only in an interactive terminal.
 Author and private-read operations support --session-only to avoid saving a credential.
@@ -46,7 +50,10 @@ function parse(args) {
   allowed.login = ['registry', 'root', 'no-browser', 'read', 'session-only'];
   allowed.logout = ['registry', 'root', 'read'];
   for (const key of ['checkout', 'submit', 'publish', 'add']) allowed[key].push('session-only');
-  allowed.submit.push("automation", "request-id");
+  allowed.update = [...allowed.add, 'accept', 'allow-downgrade'];
+  allowed.audit = ['root', 'registry', 'trust', 'no-browser', 'session-only', 'offline'];
+  allowed.list.push('status');
+  allowed.submit.push("automation", "request-id", "presentation-from");
   allowed["request-publication"] = ["automation", "registry", "revision", "request-id"];
   if (!Object.hasOwn(allowed, action)) throw packageError("PackageCommandInvalid", PACKAGE_USAGE);
   let target;
@@ -60,7 +67,7 @@ function parse(args) {
     const key = arg.slice(2);
     if (key !== "json" && !allowed[action].includes(key)) throw packageError("PackageOptionInvalid", `option not valid for package ${action}: ${arg}`);
     if (Object.hasOwn(options, key) && key !== "env") throw packageError("PackageOptionInvalid", `duplicate option ${arg}`);
-    if (["json", "context", "yes", "publishing", "allow-draft", "no-browser", "automation", "read", "session-only"].includes(key)) options[key] = true;
+    if (["json", "context", "yes", "publishing", "allow-draft", "no-browser", "automation", "read", "session-only", "offline", "status", "allow-downgrade"].includes(key)) options[key] = true;
     else {
       if (!rest[i + 1] || rest[i + 1].startsWith("--")) throw packageError("PackageOptionInvalid", `missing value for ${arg}`);
       const value = rest[++i];
@@ -68,14 +75,15 @@ function parse(args) {
       else options[key] = value;
     }
   }
-  if (action === "list" && target !== undefined) throw packageError("PackageOptionInvalid", "package list does not take a target");
-  if (["add", "remove", "checkout"].includes(action) && !target) throw packageError("PackageTargetRequired", `package ${action} needs a target`);
-  if (action === "add" && target.includes("@") && !target.includes("/") && !target.includes("\\")) {
+  if (['list', 'audit'].includes(action) && target !== undefined) throw packageError("PackageOptionInvalid", `package ${action} does not take a target`);
+  if (["add", "update", "remove", "checkout"].includes(action) && !target) throw packageError("PackageTargetRequired", `package ${action} needs a target`);
+  if (["add", "update"].includes(action) && target.includes("@") && !target.includes("/") && !target.includes("\\")) {
     if (options.version || target.split("@").length !== 2 || target.endsWith("@")) throw packageError("PackageOptionInvalid", "specify exactly one nonempty version");
     [target, options.version] = target.split("@");
   }
   if ((options.automation && (options.ci || options['no-browser'] || options['session-only'])) || (options.ci && options['session-only'])) throw packageError("PackageOptionInvalid", "choose automation, CI, or interactive identity explicitly");
   if (options['request-id'] && !options.automation) throw packageError("PackageOptionInvalid", "--request-id requires --automation");
+  if (options['presentation-from'] && (options.ci || options.automation || options.draft)) throw packageError("PackageOptionInvalid", "presentation reuse requires an interactive new-version submission");
   return { action, target, options };
 }
 
@@ -120,7 +128,11 @@ async function create(target, options) {
 export async function packageCommand(args) {
   if (!args.length || args.includes("--help") || args[0] === "-h") return { text: PACKAGE_USAGE, exitCode: 0 };
   const { action, target, options } = parse(args);
-  if (action === 'add' && (options.version || options.registry || (PACKAGE_NAME.test(target ?? '') && !existsSync(resolve(target))))) {
+  if (action === 'audit' || action === 'list' && options.status) {
+    Object.assign(options, registryOptions(options));
+    if (!options.registry) throw packageError('RegistryConfigurationRequired', 'select a registry explicitly or configure this workspace');
+  }
+  if (['add', 'update'].includes(action) && (options.version || options.registry || (PACKAGE_NAME.test(target ?? '') && !existsSync(resolve(target))))) {
     Object.assign(options, registryOptions(options));
     if (options.version && !options.registry) throw packageError('RegistryConfigurationRequired', 'configure this project with touba package registry <url> --trust <verified-file>, or pass --registry and --trust');
   }
@@ -132,9 +144,12 @@ export async function packageCommand(args) {
     const identity = await authorizeRegistry(registry, { access: options.read ? 'read' : 'publication', forceLogin: action === 'login', logout: action === 'logout', noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true });
     await identity.revoke();
     report = { command: `package ${action}`, status: 'success', registry,
-      notes: [action === 'logout' ? 'Registry session cleared.' : identity.persistent ? 'Connected using the system credential vault. Sensitive author operations require confirmation again after 10 minutes. Use package logout to disconnect.' : 'Temporary identity verified and revoked. Use login with an available system vault to reuse a session.'] };
+      notes: [packageSessionNotice({ logout: action === 'logout', persistent: identity.persistent, read: options.read,
+        minutes: Math.floor((identity.session_max_age_seconds ?? 600) / 60) })] };
   }
   else if (action === 'registry') report = configureRegistry(target, options);
+  else if (action === 'audit') report = await auditPackageStatus(options);
+  else if (action === 'list' && options.status) report = { ...await auditPackageStatus({ ...options, offline: true }), command: 'package list' };
   else if (action === "new") report = await create(target, options);
   else if (action === "request-publication") report = await requestPackagePublication(target, options);
   else if (action === "checkout") report = await checkoutPackageDraft(target, options);
@@ -148,7 +163,8 @@ export async function packageCommand(args) {
       next = await questionnaire(ask => ask(`Current ${current}. Choose patch, minor, major or an exact version`));
     }
     report = versionPackage(next, { root });
-  } else if (action === "list" || (action === "check" && !target && !existsSync(join(findPackageWorkspace(options.root), PACKAGE_MANIFEST)))) {
+  } else if (action === 'update') report = await (options.registry ? updateRegistryPackage : reviewPackageUpdate)(target, options);
+  else if (action === "list" || (action === "check" && !target && !existsSync(join(findPackageWorkspace(options.root), PACKAGE_MANIFEST)))) {
     const root = findPackageWorkspace(options.root), workspace = readPackageWorkspace(root);
     const lock = verifyInstalledPackages(root, workspace.records);
     const packages = [];

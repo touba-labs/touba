@@ -49,6 +49,53 @@ test("package compiler failures preserve source diagnostics without cascading mi
   });
 });
 
+test('explicit installed exports run without an application wrapper and refuse private entries', async t => {
+  const root = workspace(t), source = author(root), project = consumer(root);
+  const module = join(source, 'src/example/echo.tb');
+  writeFileSync(module, readFileSync(module, 'utf8') + `
+skill Private
+    takes value as Text
+    gives Text
+    do
+        give value
+strategy Run
+    takes value as Text
+    gives Text
+    uses Echo
+    do
+        Echo
+            with value as value
+            into answer
+        give answer
+`);
+  manifest(source, value => { value.exports.strategies = ['strategy:example.echo/Run']; });
+  await addPackage(source, { root: project });
+  rmSync(join(project, 'src'), { recursive: true }); mkdirSync(join(project, 'src'));
+  const configPath = join(project, 'touba.project.json');
+  const config = JSON.parse(readFileSync(configPath));
+  delete config.entry;
+  config.entrypoints = ['skill:example.echo/Echo'];
+  writeFileSync(configPath, JSON.stringify(config));
+  const prepared = await prepareProject({ root: project, mode: 'write' });
+  assert.equal(prepared.status, 'success', JSON.stringify(prepared.diagnostics));
+  const checked = await prepareProject({ root: project, mode: 'check' });
+  assert.equal(checked.status, 'success', JSON.stringify(checked.diagnostics));
+  const result = spawnSync(process.execPath, [cli, 'run', '--project', project, '--inputs-json', '{"value":"direct export"}', '--output', 'json'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(JSON.parse(result.stdout).result, 'direct export');
+  config.entrypoints.push('strategy:example.echo/Run');
+  writeFileSync(configPath, JSON.stringify(config));
+  const strategy = await prepareProject({ root: project, mode: 'write', entryRef: 'strategy:example.echo/Run' });
+  assert.equal(strategy.status, 'success', JSON.stringify(strategy.diagnostics));
+  const run = spawnSync(process.execPath, [cli, 'run', '--project', project, '--entry', 'strategy:example.echo/Run', '--inputs-json', '{"value":"strategy export"}', '--output', 'json'], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.equal(JSON.parse(run.stdout).result, 'strategy export');
+  config.entrypoints = ['skill:example.echo/Private'];
+  writeFileSync(configPath, JSON.stringify(config));
+  const refused = await prepareProject({ root: project, mode: 'plan' });
+  assert.ok(refused.diagnostics.some(d => d.code === 'PackageEntrypointNotExported'));
+});
+
 test("real compiler, archive, isolated install, typed import and runtime execution", async t => {
   const root = workspace(t), source = author(root), project = consumer(root);
   const archive = join(root, "echo.tar.gz");
@@ -84,7 +131,12 @@ strategy Run
   writeFileSync(directManifest, JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {} }));
   writeFileSync(join(project, "packages/example.echo/src/example/echo.tb"), "module example.echo\n");
   const refused = await prepareProject({ root: project, mode: "plan" });
-  assert.ok(refused.diagnostics.some(d => d.code === "PackageIntegrityMismatch"));
+  assert.deepEqual(refused.diagnostics.map(d => d.code), ["PackageIntegrityMismatch"]);
+  assert.deepEqual(refused.actions, []);
+  const airBefore = readFileSync(join(project, '.touba/build/dev/air/client/main.air.json'));
+  const blockedWrite = await prepareProject({ root: project, mode: 'write' });
+  assert.deepEqual(blockedWrite.diagnostics.map(d => d.code), ['PackageIntegrityMismatch']);
+  assert.deepEqual(readFileSync(join(project, '.touba/build/dev/air/client/main.air.json')), airBefore);
   assert.ok(compilerInputsForFile(program).diagnostics.some(d => d.code === "PackageIntegrityMismatch"));
   const direct = spawnSync(process.execPath, [cli, "run", join(project, ".touba/build/dev/air/client/main.air.json"),
     "--manifest", directManifest, "--inputs-json", JSON.stringify({ request: "denied" }), "--output", "json"], { encoding: "utf8" });
@@ -159,7 +211,7 @@ tool Fetch
 const request = JSON.parse(raw); process.stdout.write(JSON.stringify({ ok: true, value: request.arguments.value }));
 `);
   manifest(source, m => { m.exports = { tools: ["tool:example.connector/Fetch"] };
-    m.handlers = [{ tool: "tool:example.connector/Fetch", path: "handlers/fetch.mjs", protocol: "touba-tool-handler-v1" }]; });
+    m.handlers = [{ tool: "tool:example.connector/Fetch", path: "handlers/fetch.mjs", protocol: "touba-tool-handler-v1", effect_contract: { kind: 'external_write', retry_mode: 'idempotency_key' } }]; });
   await addPackage(source, { root: project });
   mkdirSync(join(project, "src/client"), { recursive: true });
   writeFileSync(join(project, "src/client/main.tb"), `module client.main
@@ -186,6 +238,7 @@ strategy Run
   const saved = JSON.parse(readFileSync(file));
   const binding = saved.bindings["tool:example.connector/Fetch"];
   assert.deepEqual(binding.grants, []);
+  assert.equal(binding.effect_contract, null, 'the author recommendation is not an application decision');
   assert.deepEqual(binding.handler.args, ["packages/example.connector/handlers/fetch.mjs"]);
   assert.equal(prepared.actions.some(action => action.artifact_kind === "handler_stub" || action.kind === "create_handler_stub"), false);
   assert.equal(existsSync(join(project, "handlers/example/connector/fetch.handler.mjs")), false);

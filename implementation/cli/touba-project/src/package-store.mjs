@@ -62,12 +62,25 @@ export function readPackageWorkspace(root) {
     assertAuthorWritable(root);
     readPackage(path);
   } else if (document.project_version !== "touba-project-v1" || !Array.isArray(document.packages ?? [])) throw packageError("PackageProjectRequired", "invalid Touba project");
-  const records = author ? Object.entries(document.dependencies ?? {}).map(([name, version]) => ({ manifest: `packages/${name}/${PACKAGE_MANIFEST}`, version })) : document.packages ?? [];
+  const records = author ? packageDependencyRecords(root, document) : document.packages ?? [];
   return { path, bytes, document, records, author };
 }
 
-export function setWorkspacePackages(workspace, records) {
-  if (workspace.author) workspace.document.dependencies = Object.fromEntries(records.map(record => [record.manifest.split("/")[1], record.version]));
+// The author declares direct dependencies; the lock inventories all managed
+// packages, including transitives and retained, currently unused installations.
+export function packageDependencyRecords(root, document) {
+  const records = Object.entries(document.dependencies ?? {}).map(([name, version]) => ({ manifest: `packages/${name}/${PACKAGE_MANIFEST}`, version }));
+  for (const entry of readPackageLock(root).packages) {
+    if (!records.some(record => record.manifest === entry.manifest)) records.push({ manifest: entry.manifest, version: entry.version });
+  }
+  return records;
+}
+
+export function setWorkspacePackages(workspace, records, { direct } = {}) {
+  if (workspace.author) {
+    const selected = new Set([...Object.keys(workspace.document.dependencies ?? {}), ...(direct ? [direct] : [])]);
+    workspace.document.dependencies = Object.fromEntries(records.filter(record => selected.has(record.manifest.split("/")[1])).map(record => [record.manifest.split("/")[1], record.version]));
+  }
   else workspace.document.packages = records;
 }
 

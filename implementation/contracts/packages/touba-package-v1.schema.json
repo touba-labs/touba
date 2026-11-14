@@ -274,6 +274,19 @@
           "protocol": {
             "const": "touba-tool-handler-v1"
           },
+          "effect_contract": {
+            "description": "Author recommendation only. The consuming host selects its own effect contract; this field grants no authority and is not a conformance certificate.",
+            "oneOf": [
+              { "type": "object", "additionalProperties": false, "properties": { "kind": { "const": "none" } }, "required": ["kind"] },
+              { "type": "object", "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "external_write" },
+                  "retry_mode": { "enum": ["none", "idempotency_key", "reconcile"] },
+                  "compensation": { "type": "object", "additionalProperties": false,
+                    "properties": { "entry_ref": { "type": "string", "maxLength": 256, "pattern": "^strategy:[A-Za-z0-9_.-]+/[A-Za-z][A-Za-z0-9_]*$" } }, "required": ["entry_ref"] }
+                }, "required": ["kind", "retry_mode"] }
+            ]
+          },
           "configuration": {
             "type": "string",
             "minLength": 1,

@@ -15,13 +15,15 @@ import { requiredResourceReferences } from "../../../contracts/resource-bindings
 import { assertKnownFields, assertManifestFields, assertBindingFields } from "../../../contracts/manifest-fields.mjs";
 import { loadResourceBindingFiles, snapshotResourceBindings } from "../../../contracts/resource-binding-files.mjs";
 import { applyHostDecisions } from "./host-decisions.mjs";
+import { requestRouteConflicts } from '../../../contracts/trigger-routes.mjs';
 import { ownershipMembership, resolveOwnershipInheritance } from './ownership-resolution.mjs';
 import { planPreparedRestoration, applyPreparedRestoration } from './preparation-restoration.mjs';
 import { normalizeFragmentBaselines, reconcileFragmentBindings, updateFragmentBaselines } from "./fragment-governance.mjs";
 import { proposePackageGovernance, normalizeConsumerPolicies, normalizePackageContracts, applyConsumerPolicies } from "./package-governance.mjs";
 import { normalizeTriggerEntries } from "../../touba-manifest/src/generate.mjs";
 import { loadSkillPack, projectContextSelections, normalizeProjectContexts } from "./skill-packs.mjs";
-import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, readPackage } from "./package-contract.mjs";
+import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, readPackage, packageHandlerConfiguration } from "./package-contract.mjs";
+import { normalizeHandlerConfiguration } from '../../../runtime/touba-handler-sdk/src/handler-configuration.mjs';
 import { PACKAGE_LOCK, assertPackageDirectory, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
 
 import {
@@ -506,6 +508,19 @@ export async function prepareProject(options = {}) {
     optionPackagePaths: options.packagePaths ?? [],
     diagnostics,
   });
+  // A failed installed inventory is the primary cause. Compiling imports with
+  // those packages removed would manufacture unrelated missing-symbol errors.
+  if (diagnostics.some(item => item.code === 'PackageIntegrityMismatch'
+    || item.code?.startsWith('PackageLock') || item.code === 'PackageInstallationIncomplete')) {
+    return { workflow_version: PROJECT_MANIFEST_VERSION, command: 'prepare', mode, status: 'error', root,
+      review_digest: packageDigest(Buffer.from(JSON.stringify({ mode, diagnostics }))),
+      project_config_path: projectConfigPath, artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
+      build_root: buildRoot, air_root: airRoot, profile: runProfile, entry_ref: entryRef ?? null,
+      language: languageProfile.language, sdk: languageProfile.sdk, sdk_dependency: null,
+      manifest_path: manifestPath, binding_fragments: [], resource_bindings: [], run_plan_path: null,
+      effective_project_path: null, ownership: null, secret_profiles: [], sources: [], air_inputs: airPaths,
+      packages: [], modules: [], imports: [], tools: [], manifest_requirements: null, actions: [], diagnostics };
+  }
   const compileOptions = {
     ...options,
     moduleSourcePaths: [
@@ -582,13 +597,6 @@ export async function prepareProject(options = {}) {
     airDocuments.push({ document: airDocument, airPath });
   }
 
-  if (sourcePaths.length === 0 && airPaths.length === 0) {
-    diagnostics.push(errorDiagnostic("NoProjectSources", "no .tb source found under src/ and no --air path was provided", {
-      root,
-      source_root: join(root, DEFAULT_SOURCE_ROOT),
-    }));
-  }
-
   const projectModuleNames = airDocuments
     .map((entry) => entry.document?.module?.name)
     .filter((moduleName) => typeof moduleName === "string" && moduleName.length > 0);
@@ -600,8 +608,27 @@ export async function prepareProject(options = {}) {
   });
   diagnostics.push(...packageResolution.diagnostics);
 
-  const assembly = assemblePrepareAirDocuments([...airDocuments, ...packageResolution.entries], {
-    rootModuleNames: projectModuleNames,
+  // An explicitly selected package export is an entry, not an implicit grant
+  // or permission to execute every private declaration in that package.
+  const selectedEntries = new Set([...projectEntrypoints(projectConfigResolution.document ?? {}), ...(entryRef ? [entryRef] : [])]);
+  const entryModuleNames = [...projectModuleNames];
+  for (const selected of selectedEntries) {
+    const moduleName = selected.split(':')[1]?.split('/')[0];
+    if (!packageResolution.packageMembership.has(moduleName)) continue;
+    if (!packageResolution.packageExportsByModule.get(moduleName)?.has(selected)) {
+      diagnostics.push(errorDiagnostic('PackageEntrypointNotExported', 'selected package entry must be an explicitly exported declaration', { entry_ref: selected }));
+    } else if (!entryModuleNames.includes(moduleName)) entryModuleNames.push(moduleName);
+  }
+  if (!entryModuleNames.length) {
+    diagnostics.push(errorDiagnostic("NoProjectSources", "no .tb source, --air path or explicit installed package export was selected", {
+      root, source_root: join(root, DEFAULT_SOURCE_ROOT),
+    }));
+  }
+
+  const packageEntries = packageResolution.entries.map(entry => entryModuleNames.includes(entry.document.module.name)
+    ? { ...entry, sourcePath: entry.packageSourcePath } : entry);
+  const assembly = assemblePrepareAirDocuments([...airDocuments, ...packageEntries], {
+    rootModuleNames: entryModuleNames,
     packageMembership: packageResolution.packageMembership,
     packageExportsByModule: packageResolution.packageExportsByModule,
   });
@@ -778,6 +805,7 @@ export async function prepareProject(options = {}) {
         bindingFragmentComposition.toolRefs, packageHandlerProposals(packageResolution.packages, root, manifestPath));
       proposedManifest = structuredClone(proposal.manifest);
       hostChanges = proposal.changes;
+      validatePackageHandlerConfigurations(proposedManifest, packageHandlerProposals(packageResolution.packages, root, manifestPath));
       applyConsumerPolicies(proposedManifest, expectedManifest, governance?.policies ?? {}, preparedAirDocuments.map(entry => entry.document));
     } catch (error) {
       diagnostics.push(errorDiagnostic(error.code ?? "HostDecisionInvalid",
@@ -832,6 +860,8 @@ export async function prepareProject(options = {}) {
     resourceBindings: resourceBindingsValidation.documents, runPlanPath, expectedRunPlan,
     diagnostics, actions, mode,
   });
+  diagnostics.push(...requestRouteConflicts(preparedAirDocuments.map(entry => entry.document),
+    new Set(Object.entries(proposedManifest.triggers ?? {}).filter(([, trigger]) => trigger.enabled === true).map(([ref]) => ref))));
   inspectManifest({
     currentManifest,
     reviewedManifest: proposedManifest,
@@ -1079,6 +1109,9 @@ export function renderReport(report) {
       lines.push(`- ${item.name}@${item.version} ${item.manifest_path}`);
       for (const handler of item.handlers ?? []) {
         lines.push(`  Proposed handler for ${handler.tool}: ${join(item.root, handler.path)} (${handler.protocol}); review, then select package_handler: ${item.name} in host decisions. Grants and effects require separate consent.`);
+        lines.push(handler.effect_contract
+          ? `    Recommended effect: ${JSON.stringify(handler.effect_contract)}. Author declaration; confirm separately in host decisions.`
+          : '    Effect protocol not declared by the author. Review the handler and test its receipts before selecting an external_write contract.');
       }
     }
   }
@@ -1467,7 +1500,10 @@ function validatePackageManifest(document, { manifestPath, record, diagnostics }
 function packageMetadata(pkg) {
   const exports = Object.fromEntries(Object.keys(PACKAGE_EXPORT_COLLECTIONS).map(kind => [kind, pkg.document.exports[kind] ?? []]));
   return { name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, root: pkg.root, exports,
-    handlers: pkg.document.handlers ?? [], contexts: (pkg.document.contexts ?? []).map(context => context.id), dependencies: pkg.document.dependencies ?? {},
+    handlers: (pkg.document.handlers ?? []).map(handler => {
+      const schema = packageHandlerConfiguration(pkg.root, handler);
+      return { ...handler, ...(schema ? { configuration_schema: schema } : {}) };
+    }), contexts: (pkg.document.contexts ?? []).map(context => context.id), dependencies: pkg.document.dependencies ?? {},
     exports_by_module: packageExportsByModule(exports), contract_tests: (pkg.document.contract_tests ?? []).map(path => join(pkg.root, path)) };
 }
 
@@ -3108,6 +3144,10 @@ function validateBindingFragmentBinding(binding, expected, diagnostics, fragment
 }
 
 function validateManifestBindingShape(binding, diagnostics, fragmentPath, toolRef) {
+  if (Object.hasOwn(binding, "configuration")) {
+    try { normalizeHandlerConfiguration(binding.configuration); }
+    catch { diagnostics.push(errorDiagnostic("HandlerConfigurationInvalid", "invalid handler configuration", { tool_ref: toolRef })); }
+  }
   try { assertBindingFields(binding, `bindings.${toolRef}`); }
   catch (error) { diagnostics.push(errorDiagnostic(error.code, error.message, { fragment_path: fragmentPath, ...error.details })); }
   if (!binding.handler || typeof binding.handler !== "object" || Array.isArray(binding.handler)) {
@@ -4450,9 +4490,23 @@ function packageHandlerProposals(packages, root, manifestPath) {
     if (!proposals.has(handler.tool)) proposals.set(handler.tool, new Map());
     proposals.get(handler.tool).set(pkg.name, command ? { kind: "process", command,
       args: [toPosixPath(relative(root, join(pkg.root, handler.path)))],
-      cwd: toPosixPath(relative(dirname(manifestPath), root) || ".") } : { unsupported: true });
+      cwd: toPosixPath(relative(dirname(manifestPath), root) || "."),
+      ...(handler.configuration_schema ? { configuration_schema: handler.configuration_schema } : {}) } : { unsupported: true });
   }
   return proposals;
+}
+
+function validatePackageHandlerConfigurations(manifest, proposals) {
+  for (const [ref, binding] of Object.entries(manifest.bindings)) {
+    if (Object.hasOwn(binding, 'configuration')) normalizeHandlerConfiguration(binding.configuration);
+    for (const proposal of proposals.get(ref)?.values() ?? []) {
+      const { configuration_schema, ...handler } = proposal;
+      if (isDeepStrictEqual(binding.handler, handler)
+          && !isDeepStrictEqual(binding.configuration?.schema, configuration_schema)) {
+        throw packageError('PackageHandlerConfigurationReviewRequired', 'review the selected handler configuration schema and values');
+      }
+    }
+  }
 }
 
 function expectedStubs(airDocuments, options) {
@@ -4531,6 +4585,16 @@ function inspectEffectiveProject({ path, expected, diagnostics, actions, mode })
 
 function inspectManifest({ currentManifest, reviewedManifest = currentManifest, expectedManifest,
   manifestPath, diagnostics, actions, mode }) {
+  for (const ref of Object.keys(reviewedManifest?.triggers ?? {})) {
+    if (Object.hasOwn(expectedManifest.triggers ?? {}, ref)) continue;
+    diagnostics.push(errorDiagnostic('ManifestTriggerObsolete', 'manifest trigger is absent from current source; review its removal with host decisions remove_triggers', { trigger_ref: ref }));
+    actions.push(action('review_remove_trigger', manifestPath, { target_ref: ref, field: 'remove_trigger', before: true, after: false }));
+  }
+  for (const ref of Object.keys(reviewedManifest?.bindings ?? {})) {
+    if (Object.hasOwn(expectedManifest.bindings ?? {}, ref)) continue;
+    diagnostics.push(errorDiagnostic('ManifestBindingObsolete', `manifest binding ${ref} is absent from current source; review its removal with host decisions remove_bindings`, { tool_ref: ref }));
+    actions.push(action('review_remove_binding', manifestPath, { target_ref: ref, field: 'remove_binding', before: true, after: false }));
+  }
   for (const [ref, expected] of Object.entries(expectedManifest.triggers ?? {})) {
     const actual = reviewedManifest?.triggers?.[ref];
     const limitKeys = ["max_runs_per_day", "timeout_ms"];
@@ -4596,15 +4660,6 @@ function inspectManifest({ currentManifest, reviewedManifest = currentManifest, 
     pushEffectContractDiagnostic(diagnostics, error, { manifest_path: manifestPath });
   }
 
-  const expectedSet = new Set(expectedToolRefs);
-  for (const toolRef of Object.keys(currentManifest.bindings).sort()) {
-    if (!expectedSet.has(toolRef) && Object.hasOwn(reviewedManifest?.bindings ?? {}, toolRef)) {
-      diagnostics.push(errorDiagnostic("ManifestBindingObsolete", `manifest binding ${toolRef} is not declared by current project AIR; review its removal with host decisions remove_bindings`, {
-        manifest_path: manifestPath,
-        tool_ref: toolRef,
-      }));
-    }
-  }
 
   for (const toolRef of expectedToolRefs) {
     const actual = currentManifest.bindings[toolRef];
@@ -4626,6 +4681,7 @@ function inspectManifest({ currentManifest, reviewedManifest = currentManifest, 
 
 function validateDraftManifestEffects(manifest) {
   for (const [toolRef, binding] of Object.entries(manifest.bindings)) {
+    if (Object.hasOwn(binding, 'configuration')) normalizeHandlerConfiguration(binding.configuration);
     // null is an explicit, non-executable draft awaiting a host decision.
     if (binding.effect_contract !== null) normalizeEffectContract(binding.effect_contract, { label: toolRef });
   }
@@ -5080,10 +5136,6 @@ function mergeManifest(currentManifest, expectedManifest, diagnostics, manifestP
   for (const [ref, trigger] of Object.entries(expectedManifest.triggers ?? {})) {
     merged.triggers ??= {};
     if (merged.triggers[ref] === undefined) merged.triggers[ref] = structuredClone(trigger);
-  }
-  for (const ref of Object.keys(merged.triggers ?? {})) {
-    if (!Object.hasOwn(expectedManifest.triggers ?? {}, ref)) diagnostics.push(errorDiagnostic(
-      "ManifestTriggerObsolete", "manifest trigger is absent from current source; remove its host configuration explicitly", { trigger_ref: ref }));
   }
   // Existing host grants, handlers, scopes and effect contracts are authoritative.
   // Source requirements never authorize an expansion or replace a host decision.

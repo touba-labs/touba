@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import { newPackage, testPackage, versionPackage } from "../src/package-author.mjs";
 import { PACKAGE_RUNTIME_VERSION, packageSlug, readPackage, validatePackageDocument } from "../src/package-contract.mjs";
 import semver from "semver";
-import { addPackage, checkPackage, packPackage, removePackage } from "../src/packages.mjs";
+import { addPackage, checkPackage, checkPackageArchive, packPackage, snapshotPackage, unpackPackage, removePackage } from "../src/packages.mjs";
+import { readPackageWorkspace, verifyInstalledPackages } from "../src/package-store.mjs";
 import { initProject, prepareProject } from "../src/project.mjs";
 import { publishPackage } from "../src/package-publish.mjs";
 import { publishRemotePackage } from "../src/package-publish-remote.mjs";
@@ -83,6 +84,10 @@ test("author identity normalizes spaces, keeps organization scope and creates th
   const tested = await testPackage(created.path);
   assert.equal(tested.status, "success", JSON.stringify(tested));
   assert.equal(tested.tests, 1);
+  assert.equal(existsSync(join(created.path, "touba.project.json")), false);
+  assert.equal(existsSync(join(created.path, ".touba")), false);
+  assert.equal((await testPackage(created.path)).status, "success");
+  assert.equal(readPackageWorkspace(created.path).author, true);
   const archive = await packPackage(undefined, { root: join(created.path, "src") });
   assert.equal(archive.output, join(created.path, "dist/atelier-nord.gestion-factures-0.1.0.tar.gz"));
   await assert.rejects(packPackage(created.path), { code: "PackageAlreadyExists" });
@@ -127,17 +132,87 @@ skill Echo
             into answer
         give answer
 `);
-  const prepared = await prepareProject({ root: mid.path, mode: "write", entryRef: "skill:acme.mid/Echo" });
-  assert.equal(prepared.status, "success", JSON.stringify(prepared.diagnostics));
+  // No prior preparation may hide missing distribution metadata.
   const tested = await testPackage(mid.path);
   assert.equal(tested.status, "success", JSON.stringify(tested));
+  const archive = await snapshotPackage(mid.path, { output: join(root, 'composed.tar.gz') });
+  assert.equal((await checkPackageArchive(archive.output)).status, 'success');
+  const extracted = unpackPackage(archive.output, join(root, 'fresh'));
+  assert.equal((await testPackage(extracted)).status, 'success');
   const app = join(root, "consumer"); initProject({ root: app });
-  await addPackage(mid.path, { root: app });
+  await addPackage(archive.output, { root: app });
+  assert.equal(existsSync(join(app, 'packages/acme.mid/touba.packages.lock.json')), false);
   for (const action of ["list", "check"]) {
     const result = command(app, action, "--json");
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.deepEqual(JSON.parse(result.stdout).packages.map(p => p.name).sort(), ["acme.base", "acme.mid"]);
   }
+});
+
+test('test distribution ignores author residue and never modifies author manifests', async t => {
+  const root = workspace(t), pkg = newPackage('fixture.pristine', { root });
+  const manifest = readFileSync(join(pkg.path, 'touba.package.json'));
+  writeFileSync(join(pkg.path, 'residue.txt'), 'not distributed');
+  writeFileSync(join(pkg.path, 'tests/echo.test.mjs'), `import test from 'node:test'; import assert from 'node:assert/strict';
+import {existsSync,writeFileSync} from 'node:fs';
+test('only distributed inputs', () => { assert.equal(existsSync('residue.txt'), false); assert.equal(existsSync('touba.project.json'), false); writeFileSync('touba.project.json', '{}'); });`);
+  for (let i = 0; i < 2; i++) assert.equal((await testPackage(pkg.path)).status, 'success');
+  assert.deepEqual(readFileSync(join(pkg.path, 'touba.package.json')), manifest);
+  assert.equal(existsSync(join(pkg.path, 'touba.project.json')), false);
+});
+
+test('author lock keeps transitive packages without turning them into direct dependencies', async t => {
+  const root = workspace(t);
+  const leaf = newPackage('fixture.leaf', { root, context: true });
+  const middle = newPackage('fixture.middle', { root, context: true });
+  const top = newPackage('fixture.top', { root, context: true });
+  await addPackage(leaf.path, { root: middle.path });
+  await addPackage(middle.path, { root: top.path });
+  assert.deepEqual(readPackage(top.path).document.dependencies, { 'fixture.middle': '0.1.0' });
+  assert.equal(verifyInstalledPackages(top.path, readPackageWorkspace(top.path).records).packages.length, 2);
+  const archive = await snapshotPackage(top.path, { output: join(root, 'top.tar.gz') });
+  assert.equal((await checkPackageArchive(archive.output)).packages.length, 3);
+  const app = join(root, 'app'); initProject({ root: app });
+  await addPackage(archive.output, { root: app });
+  assert.equal(command(app, 'list', '--json').status, 0);
+  removePackage('fixture.middle', { root: top.path });
+  assert.deepEqual(readPackage(top.path).document.dependencies, {});
+  assert.equal(command(top.path, 'list', '--json').status, 0);
+});
+
+test('generated tests support multiple exported entries without freezing the author project', async t => {
+  const root = workspace(t), pkg = newPackage('fixture.multientry', { root });
+  const source = join(pkg.path, 'src/fixture/multientry.tb');
+  const content = readFileSync(source, 'utf8');
+  writeFileSync(source, content + '\n' + content.slice(content.indexOf('skill Echo')).replace('skill Echo', 'skill Second'));
+  edit(pkg.path, manifest => manifest.exports.skills.push('skill:fixture.multientry/Second'));
+  const tests = join(pkg.path, 'tests/echo.test.mjs');
+  writeFileSync(tests, readFileSync(tests, 'utf8') + `\ntest('Second is independently prepared', () => {
+    const result = runEntry('skill:fixture.multientry/Second', { value: 'second entry' });
+    assert.equal(result.status, 'success'); assert.equal(result.result, 'second entry');
+  });\n`);
+  const before = readPackage(pkg.path).digest;
+  const tested = await testPackage(pkg.path);
+  assert.equal(tested.status, 'success', JSON.stringify(tested));
+  assert.equal(tested.tests, 2);
+  assert.equal(readPackage(pkg.path).digest, before);
+  for (const file of ['touba.project.json', '.touba', 'handlers']) assert.equal(existsSync(join(pkg.path, file)), false);
+});
+
+test('transport locks cannot silently replace inventoried locks or ignore tampered dependency digests', async t => {
+  const root = workspace(t), leaf = newPackage('fixture.lockleaf', { root, context: true });
+  const parent = newPackage('fixture.lockparent', { root, context: true });
+  await addPackage(leaf.path, { root: parent.path });
+  edit(parent.path, manifest => manifest.files.push('touba.packages.lock.json'));
+  await assert.rejects(snapshotPackage(parent.path, { output: join(root, 'bad-lock.tar.gz') }), { code: 'PackageLockDistributionConflict' });
+  assert.equal(existsSync(join(root, 'bad-lock.tar.gz')), false);
+  edit(parent.path, manifest => { manifest.files = manifest.files.filter(file => file !== 'touba.packages.lock.json'); });
+  const lockPath = join(parent.path, 'touba.packages.lock.json');
+  const lock = JSON.parse(readFileSync(lockPath));
+  lock.packages[0].digest = 'sha256:' + '0'.repeat(64);
+  writeFileSync(lockPath, JSON.stringify(lock));
+  await assert.rejects(snapshotPackage(parent.path, { output: join(root, 'tampered.tar.gz') }), { code: 'PackageIntegrityMismatch' });
+  assert.equal(existsSync(join(root, 'tampered.tar.gz')), false);
 });
 
 test("package checks reject absent resources and unresolved execution links without raw paths", async t => {

@@ -67,6 +67,11 @@ dans l'exemple généré ; l'import utilise le **module**, jamais un chemin vers
 
 ## Créer le projet auteur
 
+Pour les URL, régions ou identifiants attendus par un handler, utilisez une
+[configuration d'hôte typée et revue](../reference/packages.md#configuration-dun-handler).
+Ces valeurs n'ont pas à être détournées en secrets ; elles ne sont pas injectées
+dans l'environnement parent et n'accordent aucune permission.
+
 `touba package new` ouvre un questionnaire : organisation, nom, description,
 auteur, version, licence et contenu initial. La CLI affiche l'identité et le
 dossier avant confirmation. Annuler ne crée aucun fichier. Pour un script :
@@ -201,6 +206,12 @@ par vos contrats métier. Sans test déclaré, une procédure textuelle retourne
 `no_tests`, avec un code de sortie non nul. Un fichier vide ou une suite
 entièrement ignorée n'est pas présenté comme une réussite.
 
+La commande extrait une distribution neuve dans un dossier temporaire et le
+supprime après le test. Elle ne réutilise pas `.touba/build` de l'auteur et ne
+modifie pas son manifeste. Le test généré installe ensuite le package dans un
+consommateur temporaire par cas, via son helper `runEntry(entry, inputs)`.
+Adaptez l'entrée et les assertions pour ajouter des cas indépendants.
+
 Relisez les tests avant exécution : ce code hôte dispose des droits système de
 votre compte, pas d'une sandbox. Les secrets d'environnement ne sont pas
 transmis par défaut ; `--env NOM` autorise explicitement une variable. Cela
@@ -239,6 +250,12 @@ choisit un autre emplacement ; aucune archive existante n'est écrasée.
 Les fichiers déclarés et la fermeture des dépendances sont inclus. La CLI
 fournit l'empreinte SHA-256. Transmettez l'archive par un canal dont l'origine
 est vérifiable. Aucun serveur Touba n'est nécessaire.
+
+Le verrou de transport des dépendances est généré par l'archive : ne l'ajoutez
+pas à `files`. Le consommateur possède son propre `touba.packages.lock.json`.
+Les transitives sont conservées dans ce verrou sans devenir des dépendances
+directes du manifeste auteur. `PackageLockDistributionConflict` demande de
+retirer l'inclusion explicite du verrou et de produire une nouvelle version.
 
 Dans une application créée avec `touba init`, ajoutez le chemin réel de
 l'archive ou d'un dossier auteur :
@@ -348,9 +365,50 @@ d'un projet à partir d'un AIR seul.
 
 Une seule version exacte par nom, aucun choix implicite de « dernière version ».
 Dépendance absente, cycle ou conflit provoquent un diagnostic. `add` ne remplace
-pas une version installée. Préparez une mise à niveau dans une copie de travail :
-`touba package remove <nom>`, ajout de la nouvelle version, revue des diffs et
-nouvelle préparation. Le retrait refuse une dépendance encore requise.
+pas une version installée. Pour examiner une mise à jour :
+
+```sh
+touba package update /path/to/acme.review-0.2.0.tar.gz --json
+```
+
+La prévisualisation conserve les fichiers installés et rend `review_digest`,
+les versions, empreintes, handlers modifiés et contrats. Après revue :
+
+```sh
+touba package update /path/to/acme.review-0.2.0.tar.gz --accept sha256:EXACT_REVIEW_DIGEST
+touba prepare --mode plan
+```
+
+Le registre configuré permet aussi `touba package update acme.review@0.2.0`.
+L'acceptation est liée au contenu et à l'état du projet ; un changement impose
+une nouvelle revue. Les dépendances encore requises, les minima d'approbation
+et les permissions restent contrôlés. Préparez ensuite les contrats selon la
+procédure précédente. La mise à jour n'exécute aucun handler.
+
+Pour revenir volontairement à une version plus ancienne, ajoutez
+`--allow-downgrade` lors de la prévisualisation et de l'acceptation :
+
+```sh
+touba package update acme.review@0.1.0 --allow-downgrade --json
+touba package update acme.review@0.1.0 --allow-downgrade --accept sha256:EXACT_REVIEW_DIGEST
+```
+
+Cette décision remplace le code installé ; elle n'annule ni les effets déjà
+réalisés ni les migrations de données. Les minima d'approbation du consommateur
+restent en place. Une version retirée du registre reste refusée. Une même version
+ne peut pas être remplacée par un autre contenu. Préparez le projet avant de
+reprendre les exécutions.
+
+Pour sélectionner directement un export exécutable, déclarez sa référence dans
+`entrypoints` de `touba.project.json`, puis préparez et exécutez le projet :
+
+```sh
+touba prepare --entry skill:acme.review/Echo --mode write
+touba run --project . --entry skill:acme.review/Echo --inputs-json '{"value":"Package contract"}'
+```
+
+Les exports privés sont refusés. Un tool externe nécessite toujours ses bindings
+et autorisations, qu'il soit appelé directement ou depuis un autre module.
 
 Pour travailler sur une source mutable, une entrée projet `packages` peut
 indiquer `manifest`, `version` et `editable: true`, hors du répertoire
@@ -366,6 +424,38 @@ touba package add acme.review@0.1.0 --registry ./registry
 Le registry est un dossier ou une URL HTTPS ; aucune adresse par défaut n'est
 supposée. L'identité et l'empreinte de l'archive sont vérifiées. Une version
 retirée est refusée. Le statut éditorial ne remplace pas vos autorisations.
+
+Pour consulter l'état des versions installées dans un registre configuré :
+
+```sh
+touba package audit
+```
+
+Cette lecture explicite affiche le motif connu d'un retrait et sa date de
+consultation. Elle ne modifie rien, ne stoppe aucun run et ne constitue pas une
+recherche exhaustive de vulnérabilités. Une version absente du catalogue est
+inconnue, pas déclarée sûre. Sans accès au registre, la consultation échoue ;
+aucun ancien résultat n'est présenté comme une réponse actuelle.
+
+Après une consultation réussie d'un registre signé, sa copie locale se consulte
+explicitement hors ligne :
+
+```sh
+touba package audit --offline
+touba package list --status
+```
+
+Ces deux commandes ne contactent pas le registre. Elles revérifient la signature,
+les révocations et les révisions déjà connues, puis indiquent la date de collecte
+locale et l'expiration signée. Un cache expiré reste lisible avec un avertissement
+et un code de sortie `1` ; il ne devient jamais une autorisation d'installation.
+Un cache absent, altéré ou signé par une clé révoquée provoque un refus.
+`touba package list` sans option reste limité aux vérifications locales.
+`prepare` n'ajoute aucune consultation réseau.
+
+Le cache `<fichier-de-confiance>.status.sqlite` est régénérable. Il est séparé
+de `<fichier-de-confiance>.sqlite`, qui conserve la continuité des clés et des
+révisions : ne supprimez pas ce dernier pour contourner un refus.
 
 Pour une URL distante, fournir les clés approuvées de l'opérateur avec
 `--trust registry-trust.json`. La CLI vérifie l'index signé, sa validité,
@@ -474,6 +564,16 @@ l'identité du package, par exemple `"acme.billing"`. Cela choisit seulement
 le point d'entrée déclaré. L'hôte approuve séparément grants, secrets, contrat
 d'effet et limites. Aucun stub local inutilisé n'est créé pour le tool ainsi
 sélectionné. Examinez cette sélection dans le plan avant d'appliquer les décisions.
+
+L'auteur peut ajouter `effect_contract` à sa déclaration de handler. Cette
+recommandation apparaît dans la fiche et dans la revue du package ; l'application
+reste responsable du contrat effectif de son binding. Une lecture réseau peut
+déclarer `kind: none` ; une écriture locale peut nécessiter `external_write`.
+Le droit réseau ne permet donc pas de déduire la nature de l'effet.
+
+Pour une écriture, testez le reçu et l'état réellement enregistré par le service,
+y compris si la réponse se perd. Le [guide des effets](effets-idempotents.md#tester-un-handler-de-package)
+présente les cas à couvrir et les assertions JavaScript/Python.
 
 ## Préserver la gouvernance
 

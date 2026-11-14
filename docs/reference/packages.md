@@ -40,6 +40,64 @@ Le manifeste auteur unique est `touba.package.json`, schéma
 le même format de distribution. Les imports `.tb` restent typés.
 
 
+## Configuration d'un handler
+
+Le champ `handlers[].configuration` du package désigne un fichier inventorié.
+Pour recevoir des réglages, ce fichier décrit les champs attendus :
+
+```json
+{
+  "schema_version": "touba-handler-configuration-v1",
+  "fields": {
+    "endpoint": { "type": "string", "required": true, "max_bytes": 2048 },
+    "region": { "type": "string" },
+    "retries": { "type": "integer", "min": 0, "max": 5 }
+  }
+}
+```
+
+L'application fournit les valeurs dans une décision d'hôte revue :
+
+```json
+{
+  "bindings": {
+    "tool:acme.connector/Read": {
+      "package_handler": "acme.connector",
+      "configuration": { "endpoint": "https://example.invalid/api", "retries": 2 },
+      "effect_contract": { "kind": "none" }
+    }
+  }
+}
+```
+
+```sh
+touba prepare --mode plan --host-decisions host-decisions.json
+touba prepare --mode write --host-decisions host-decisions.json
+touba prepare --mode check
+```
+
+Le handler accède à `context.configuration.endpoint` en JavaScript ou à
+`context["configuration"]["endpoint"]` en Python. Un fragment explicite porte
+`configuration: { "schema": ..., "values": ... }` dans le binding concerné.
+Les types sont `string`, `boolean`, `integer` et `number`, sans valeur par défaut
+implicite : 64 champs au plus, clés ASCII de 64 caractères, texte de 4 Kio par
+champ et budget total de 16 Kio. Le budget réserve 32 octets par nombre pour
+rester identique dans les deux SDK. Champs inconnus et valeurs invalides sont refusés.
+
+Ces réglages ne deviennent ni des variables d'environnement, ni des droits,
+ni des secrets. Les traces générales ne les recopient pas ; un handler qui les
+retourne volontairement dans ses résultats peut toutefois les exposer.
+Conservez les valeurs dans la configuration privée de l'application, pas dans
+le package publié. Les identifiants secrets restent des secrets déclarés.
+
+Un changement de schéma demande une nouvelle revue. Un changement de valeurs
+invalide les anciennes approbations et la réutilisation d'un effet associé à
+une autre configuration. Sélectionner explicitement un handler sans schéma
+retire l'ancienne configuration dans le plan. Les anciens fichiers descriptifs
+restent distribuables mais n'activent pas le transport de valeurs. Utilisez un
+runtime et des SDK qui prennent en charge ce contrat ; un ancien SDK refuse
+l'enveloppe enrichie. Sans configuration, l'enveloppe historique reste inchangée.
+
 ## Commandes
 
 | Commande | Effet |
@@ -54,6 +112,11 @@ le même format de distribution. Les imports `.tb` restent typés.
 | `touba package add org.nom@1.0.0 --registry <source>` | Version exacte depuis un registry choisi |
 | `touba package publish [dossier] --registry <dossier>` | Publication statique locale en draft, sans écrasement ni exécution |
 | `touba package list` | Liste et vérifie les dépendances enregistrées |
+| `touba package list --status` | Ajoute les états du cache signé et sa fraîcheur, sans accès réseau |
+| `touba package audit` | Consulte explicitement le registre configuré pour les versions installées |
+| `touba package audit --offline` | Relit le cache signé, en signalant son expiration éventuelle |
+| `touba package update <archive\|nom@version>` | Prévisualise le remplacement ; `--accept <review_digest>` applique le plan exact |
+| `touba package update <cible> --allow-downgrade` | Permet une revue explicite vers une version inférieure, sans annuler les effets passés |
 | `touba package remove org.nom` | Retire une dépendance non requise par une autre |
 
 Toutes acceptent `--json` et `--root`. La racine est découverte depuis les
@@ -61,6 +124,10 @@ sous-dossiers ; pour `new`, `--root` est le parent du nouveau dossier. Sans cibl
 `check` vérifie le package auteur courant ou les dépendances d'une application.
 Code de sortie : `0` réussite, `1` test échoué/absent ou création annulée, `2`
 erreur de contrat/arguments. Check/add/pack/checkout n’exécutent aucun code auteur.
+Pour `audit` et `list --status`, le code `1` signale aussi une version retirée,
+dépréciée, inconnue ou un cache expiré. Une consultation échouée ne devient pas
+une réussite hors ligne implicite. Une signature expirée reste refusée pour
+l'installation, même si l'audit hors ligne permet de lire son ancien état.
 Le service exécute les tests isolés lors de submit et de la publication distante.
 `add --allow-draft` accepte explicitement une version draft du registry choisi.
 Un nom d'organisation local n'atteste ni disponibilité ni propriété publique.
@@ -135,6 +202,17 @@ décrivant la configuration. La CLI vérifie son inclusion, pas la disponibilit�
 du service métier. Le projet choisit le binding process, ses grants, ses
 secrets, son contrat d'effet et ses limites.
 
+`effect_contract`, facultatif dans la proposition de handler, recommande le
+contrat d'effet attendu : par exemple
+`{"kind":"external_write","retry_mode":"reconcile"}`. Il est affiché par le
+plan et suivi dans la revue des contrats du package. Il ne s'applique pas comme
+permission ou binding de l'application. Une recommandation absente n'atteste pas
+l'absence d'effet ; une permission réseau peut aussi servir une simple lecture.
+Vérifiez les reçus avec `assertEffectReceipt` (`@touba/sdk/testing`) ou
+`assert_effect_receipt` (`touba_sdk.testing`), puis testez le comportement du
+service. Les anciens lecteurs refusent ce nouveau champ : indiquez dans
+`runtime_compatibility` la plage du candidat réellement testé.
+
 Après revue, sélectionnez une proposition affichée par `prepare` dans les
 décisions hôte :
 
@@ -171,6 +249,14 @@ Limites : 4 096 fichiers/entrées, 16 Mio par fichier, 64 Mio de contenu,
 | `PackageDependencyConflict` | Résoudre le conflit de versions/contenus |
 | `PackageDependencyCycle` | Supprimer le cycle |
 | `PackageIntegrityMismatch` | Comparer au package et au lock approuvés ; ne pas accepter aveuglément le changement |
+| `PackageLockDistributionConflict` | Retirer le verrou de `files`, puis empaqueter une nouvelle version |
+| `PackageReviewChanged` | Relire la mise à jour ; l'archive ou le projet a changé |
+| `PackageReviewRequired` | Prévisualiser le retour de version et accepter son empreinte exacte |
+| `RegistryStatusCacheMissing` | Effectuer `touba package audit` avec accès au registre signé |
+| `RegistryStatusCacheInvalid` | Rafraîchir le cache explicitement ; conserver la continuité de confiance |
+| `RegistryStatusCacheBusy` | Réessayer après la consultation concurrente |
+| `RegistryStatusCacheUnavailable` | Utiliser un registre distant signé pour la consultation de cache |
+| `PackageEntrypointNotExported` | Choisir un export exécutable déclaré dans le package |
 | `PackageNotInstalled` | Valider et enregistrer avec `package add` |
 | `PackageRequirementMissing` | Fournir l'environnement hôte déclaré |
 | `PackageExportUnknownRef` | Corriger l'export ou sa déclaration |
@@ -187,10 +273,17 @@ Voir le [guide auteur et consommateur](../guides/creer-partager-package.md).
 | `touba package submit [dossier] --registry <URL>` | Archive vérifiée et soumise comme brouillon privé |
 | `touba package checkout <identifiant> --registry <URL> [--root <parent>]` | Nouveau dossier auteur, nommé comme le package |
 | `touba package submit [dossier] [--draft <identifiant>]` | Resoumission vers le brouillon lié ou explicitement choisi |
+| `touba package submit [dossier] --presentation-from <publication-id>` | Nouvelle version avec présentation et illustrations reprises explicitement |
 | `touba package submit [dossier] --ci <autorisation> --registry <URL>` | Nouveau brouillon depuis un job GitHub Actions autorisé |
 
-Les commandes interactives acceptent `--no-browser` et `--json`. L’identité est confirmée
-dans le navigateur à chaque opération. Le service exige l’authentification
+Les commandes interactives acceptent `--no-browser` et `--json`. Un registre
+compatible peut proposer une session conservée dans le coffre système, ouverte
+par `touba package login` et révoquée par `touba package logout`.
+La durée d'auteur annoncée par le service est bornée à une heure au maximum,
+depuis la confirmation initiale. Les jetons courts sont renouvelés pendant cette
+fenêtre ; l'inactivité ou une politique plus stricte peuvent l'écourter.
+`--session-only` garde l'identité en mémoire pour la seule opération.
+Le service exige l’authentification
 renforcée pour ces opérations CLI. `checkout` contrôle l’accès privé et
 l’intégrité avant extraction ; `submit` applique les validations et tests
 isolés du service. La publication reste une action explicite.
@@ -200,6 +293,12 @@ est liée au dépôt GitHub, au workflow, à la branche et à l'environnement. E
 un nouveau brouillon, sans lien local ni remplacement automatique. La publication
 finale exige une personne habilitée et une authentification forte dans le service.
 `--draft` et `--no-browser` ne s’utilisent pas avec `--ci`.
+
+`--presentation-from` exige un registre annonçant cette capacité, une version
+publiée du même package et du même espace, et un nouveau numéro de version.
+Cette reprise est disponible pour une nouvelle soumission interactive, pas pour
+un remplacement, `--ci` ou `--automation`. Sans cette option, la présentation
+initiale d'une nouvelle version provient de son README.
 
 Le lien local `.touba/package-draft.json` est exclu de l’archive. Il contient
 registre, identité/version, identifiant, révision et empreinte, sans jeton.
@@ -213,8 +312,15 @@ Un changement d’archive ou une révision concurrente interrompt le remplacemen
 | `PackageDraftTargetMismatch` | Vérifier registre, identité et version de la cible |
 | `PackageDraftIntegrityMismatch` | Faire vérifier l’archive par l’opérateur |
 | `PackageDraftBusy` | Vérifier l’opération active avant toute récupération du verrou |
+| `PackageDraftLockUnsafe` | Inspecter le verrou et les processus avant toute intervention manuelle |
 | `PackageOperationCancelled` | Consulter le brouillon avant une nouvelle tentative |
 | `PackageDraftRefused` | Vérifier session, droits et diagnostic renvoyé par le service |
+
+Après une interruption brutale, le verrou local est récupéré uniquement si son
+format, son propriétaire et la disparition du processus sur le même hôte sont
+vérifiables. Un verrou ancien, illisible ou provenant d'un autre hôte est conservé.
+Une interruption pendant la récupération peut laisser un fichier `.recovery` à
+examiner. Les contrôles de concurrence du serveur restent appliqués.
 
 ## Registre distant signé
 

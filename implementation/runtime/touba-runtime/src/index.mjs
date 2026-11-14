@@ -7,6 +7,7 @@ import { requiredResourceReferences } from "../../../contracts/resource-bindings
 import { assertManifestFields } from "../../../contracts/manifest-fields.mjs";
 import { normalizeToolApprovalPolicy } from "../../../contracts/tool-approval-policy.mjs";
 import { createProviderCostRecorder } from "./provider-cost-evidence.mjs";
+import { normalizeHandlerConfiguration } from '../../touba-handler-sdk/src/handler-configuration.mjs';
 import {
   agentDecisionProviderContent,
   agentProviderObservationBudgetReport,
@@ -1253,6 +1254,9 @@ function durableStaticRequestDigest(graph, node, context) {
     toolRef,
     arguments: argumentsByName,
     resourceBindings: resourceBindingsForTool(tool, context),
+    ...(context.toolBindingManifest?.bindings.get(toolRef)?.configuration === undefined ? {} : {
+      configurationDigest: canonicalDigest(context.toolBindingManifest.bindings.get(toolRef).configuration),
+    }),
     ...(context.compensation
       ? { controlContext: context.compensation.config.envelope }
       : {}),
@@ -1542,6 +1546,7 @@ function durableManifestProjection(manifest) {
       .map(([toolRef, binding]) => [toolRef, {
         handler: { ...binding.handler },
         ...(binding.approvalPolicy === undefined ? {} : { approval_policy: binding.approvalPolicy }),
+        ...(binding.configuration === undefined ? {} : { configuration_digest: canonicalDigest(binding.configuration) }),
         sandbox: { ...binding.sandbox },
         grants: [...binding.grants],
         secrets: [...binding.secrets],
@@ -5358,6 +5363,7 @@ async function executeToolBodyUnchecked(tool, context) {
         grants: [...binding.grants],
         memory_accesses: memoryAccessesForTrace(tool.memory_accesses ?? []),
         resource_bindings: resourceBindings,
+        ...(binding.configuration === undefined ? {} : { configuration: binding.configuration.values }),
         secret_handles: [...secretHandles],
         limits: { ...binding.limits },
       };
@@ -5430,7 +5436,7 @@ async function executeEffectfulProcessTool(
   const effectScopeId = context.effectScopeId;
   if (typeof effectScopeId !== "string" || effectScopeId.trim() === "") {
     throw new RuntimeFailure(
-      `external write requires effect_scope_id ${toolRef}`,
+      `external write requires effect_scope_id ${toolRef}; configure --effect-journal (SDK: effectJournal, Python: effect_journal). Direct runtime callers also supply effectScopeId`,
       { toolRef },
       "EffectContextRequired",
     );
@@ -5468,6 +5474,7 @@ async function executeEffectfulProcessTool(
     ...(context.compensation
       ? { controlContext: context.compensation.config.envelope }
       : {}),
+    ...(binding.configuration === undefined ? {} : { configurationDigest: canonicalDigest(binding.configuration) }),
   });
   const retryMode = binding.effectContract.retryMode;
   if (resumedEffect) {
@@ -5623,6 +5630,7 @@ async function executeEffectfulProcessTool(
     memory_accesses: memoryAccessesForTrace(tool.memory_accesses ?? []),
     resource_bindings: resourceBindings,
     secret_handles: [...secretHandles],
+    ...(binding.configuration === undefined ? {} : { configuration: binding.configuration.values }),
     limits: { ...binding.limits },
     effect,
     ...(context.compensation
@@ -7378,6 +7386,11 @@ function normalizeManifestBinding(toolRef, binding, manifestVersion) {
     });
   }
   const effectContract = normalizeManifestEffectContract(toolRef, binding, manifestVersion);
+  let configuration;
+  if (Object.hasOwn(binding, 'configuration')) {
+    try { configuration = normalizeHandlerConfiguration(binding.configuration); }
+    catch { throw new ToubaRuntimeError('HandlerConfigurationInvalid', 'invalid handler configuration', { toolRef }); }
+  }
   let approvalPolicy;
   try { approvalPolicy = normalizeToolApprovalPolicy(binding.approval_policy); }
   catch { throw new ToubaRuntimeError("InvalidToolBindingManifest", "invalid binding approval policy", { toolRef }); }
@@ -7458,6 +7471,7 @@ function normalizeManifestBinding(toolRef, binding, manifestVersion) {
     }),
     payloadConstraints,
     effectContract,
+    ...(configuration === undefined ? {} : { configuration }),
     ...(approvalPolicy === undefined ? {} : { approvalPolicy: Object.freeze(approvalPolicy) }),
   });
 }

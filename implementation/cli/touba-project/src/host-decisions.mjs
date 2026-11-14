@@ -1,8 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 import { openSync, fstatSync, readSync, closeSync, constants } from "node:fs";
 import { effectContractToJson, normalizeEffectContract } from "../../touba-manifest/src/effect-contract.mjs";
+import { normalizeHandlerConfiguration } from '../../../runtime/touba-handler-sdk/src/handler-configuration.mjs';
 
-const fields = new Set(["grants", "secrets", "memories", "effect_contract", "timeout_ms", "max_payload_bytes", "package_handler", "handler", "sandbox"]);
+const fields = new Set(["grants", "secrets", "memories", "effect_contract", "timeout_ms", "max_payload_bytes", "package_handler", "handler", "sandbox", "configuration"]);
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const fail = (code, details = {}) => { throw Object.assign(new Error(code), { code, details }); };
@@ -98,10 +99,22 @@ function normalizeField(field, value, required) {
 // Pure, atomic proposal. No input is persisted, executed or treated as a secret value.
 export function applyHostDecisions(manifest, decisions, requirements, fragmentToolRefs = new Set(), packageHandlers = new Map()) {
   if (decisions === undefined) return { manifest, changes: [] };
-  knownKeys(decisions, new Set(["bindings", "modules", "agent_secret_scopes", "remove_bindings", "triggers", "tool_policies", "review_packages", "review_fragments", "restore_fragments"]));
+  knownKeys(decisions, new Set(["bindings", "modules", "agent_secret_scopes", "remove_bindings", "remove_triggers", "triggers", "tool_policies", "review_packages", "review_fragments", "restore_fragments"]));
   decisions = expandModuleDecisions(decisions, requirements);
   const proposed = structuredClone(manifest);
   const changes = [];
+  if (decisions.remove_triggers !== undefined) {
+    const refs = decisions.remove_triggers;
+    if (!Array.isArray(refs) || new Set(refs).size !== refs.length || refs.some(ref => typeof ref !== 'string'
+      || !/^trigger:[A-Za-z_][A-Za-z0-9_.]*\/[A-Za-z_][A-Za-z0-9_]*$/.test(ref))) fail('HostDecisionRemovalInvalid');
+    for (const ref of refs) {
+      if (Object.hasOwn(requirements.triggers ?? {}, ref) || Object.hasOwn(decisions.triggers ?? {}, ref)) fail('HostDecisionRemovalConflict', { target_ref: ref });
+      if (Object.hasOwn(proposed.triggers ?? {}, ref)) {
+        delete proposed.triggers[ref];
+        changes.push({ target_ref: ref, field: 'remove_trigger', before: true, after: false });
+      }
+    }
+  }
   if (decisions.remove_bindings !== undefined) {
     const refs = decisions.remove_bindings;
     if (!Array.isArray(refs) || new Set(refs).size !== refs.length || refs.some(ref => typeof ref !== "string" || !/^tool:[A-Za-z_][A-Za-z0-9_.]*\/[A-Za-z_][A-Za-z0-9_]*$/.test(ref))) fail("HostDecisionRemovalInvalid");
@@ -135,14 +148,34 @@ export function applyHostDecisions(manifest, decisions, requirements, fragmentTo
       if (Object.hasOwn(patch, "handler") && Object.hasOwn(patch, "package_handler")) {
         fail("HostDecisionHandlerConflict", { target_ref: ref });
       }
-      for (const [field, value] of Object.entries(patch)) {
-        if (field === "package_handler") {
-          if (typeof value !== "string" || !packageHandlers.get(ref)?.has(value)) fail("HostDecisionPackageHandlerUnknown", { target_ref: ref, field });
-          const handler = packageHandlers.get(ref).get(value);
-          if (handler.unsupported) fail("HostDecisionPackageHandlerUnsupported", { target_ref: ref, field });
-          change(ref, "handler", proposed.bindings[ref], structuredClone(handler), undefined, candidate => candidate);
-          continue;
+      const target = proposed.bindings[ref];
+      if (Object.hasOwn(patch, 'handler') && target.configuration !== undefined
+          && !isDeepStrictEqual(patch.handler, target.handler) && !Object.hasOwn(patch, 'configuration')) {
+        fail('HandlerConfigurationReviewRequired', { target_ref: ref });
+      }
+      let schema = target.configuration?.schema;
+      if (Object.hasOwn(patch, "package_handler")) {
+        if (typeof patch.package_handler !== "string" || !packageHandlers.get(ref)?.has(patch.package_handler)) fail("HostDecisionPackageHandlerUnknown", { target_ref: ref });
+        const { configuration_schema, ...handler } = packageHandlers.get(ref).get(patch.package_handler);
+        if (handler.unsupported) fail("HostDecisionPackageHandlerUnsupported", { target_ref: ref });
+        schema = configuration_schema;
+        change(ref, "handler", target, structuredClone(handler), undefined, candidate => candidate);
+      }
+      if (Object.hasOwn(patch, "configuration") || Object.hasOwn(patch, "package_handler")) {
+        if (schema === undefined) {
+          if (Object.hasOwn(patch, "configuration")) fail("HandlerConfigurationSchemaRequired", { target_ref: ref });
+          if (target.configuration !== undefined) {
+            change(ref, "configuration", target, null, undefined, candidate => candidate);
+            delete target.configuration;
+          }
+        } else {
+          const configuration = normalizeHandlerConfiguration({ schema,
+            values: Object.hasOwn(patch, "configuration") ? patch.configuration : target.configuration?.values ?? {} });
+          change(ref, "configuration", target, configuration, undefined, normalizeHandlerConfiguration);
         }
+      }
+      for (const [field, value] of Object.entries(patch)) {
+        if (field === "package_handler" || field === "configuration") continue;
         const required = requirements.bindings[ref];
         const normalize = candidate => {
           try { return normalizeField(field, candidate, required); }

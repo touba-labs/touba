@@ -28,6 +28,7 @@ import { emitLocalHandlerDiagnostic } from "./handler-diagnostic.mjs";
 import { PersistentEngineTransport } from "./engine-transport.mjs";
 import { resolveEngineCommand } from "./engine-command.mjs";
 import { validateTracePage, validateTraceReference } from "./trace-reference.mjs";
+import { normalizeHandlerConfigurationValues } from './handler-configuration.mjs';
 
 export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
 const PROTOCOL = TOOL_HANDLER_PROTOCOL_VERSION;
@@ -1276,6 +1277,7 @@ export function createToolHandler(definition) {
       memoryAccesses: envelope.memoryAccesses,
       executionContext: envelope.executionContext,
       resourceBindings: envelope.resourceBindings,
+      configuration: envelope.configuration,
       secretHandles: envelope.secretHandles,
       limits: envelope.limits,
       env: envelope.env,
@@ -1322,6 +1324,11 @@ export async function handleToolRequest(rawInput, expectedToolRef, handler, opti
   try {
     const request = parseRequest(rawInput);
     const envelope = validateEnvelope(request, expectedToolRef, options);
+    let configuration;
+    if (Object.hasOwn(request, 'configuration')) {
+      try { configuration = normalizeHandlerConfigurationValues(request.configuration); }
+      catch { throw new ToubaHandlerError('HandlerConfigurationInvalid', 'invalid handler configuration'); }
+    }
     ({ effect, compensation } = envelope);
     const value = await handler({
       request,
@@ -1331,6 +1338,7 @@ export async function handleToolRequest(rawInput, expectedToolRef, handler, opti
       memoryAccesses: request.memory_accesses ?? [],
       executionContext: request.execution_context === undefined ? undefined : Object.freeze({ ...request.execution_context }),
       resourceBindings: request.resource_bindings ?? [],
+      configuration,
       secretHandles: request.secret_handles ?? [],
       limits: request.limits ?? {},
       env: process.env,
@@ -1591,6 +1599,7 @@ function validateEnvelope(request, expectedToolRef, options) {
     "memory_accesses",
     "execution_context",
     "resource_bindings",
+    "configuration",
     "secret_handles",
     "limits",
     "effect",

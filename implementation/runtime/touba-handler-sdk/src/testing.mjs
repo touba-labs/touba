@@ -1,5 +1,16 @@
 import assert from "node:assert/strict";
-import { ToubaEngineError } from "./index.mjs";
+import { ToubaEngineError, createEffectReceipt } from "./index.mjs";
+
+/** Check protocol evidence for one test case, not the truth of a provider side effect. */
+export function assertEffectReceipt(response, effect, outcome) {
+  assert.ok(response && typeof response.ok === 'boolean', 'expected a handler response');
+  const receipt = response.effect_receipt;
+  assert.ok(receipt && typeof receipt === 'object' && !Array.isArray(receipt), 'expected an effect receipt');
+  const { effect_id, request_digest, ...options } = receipt;
+  assert.equal(options.outcome, outcome, 'unexpected effect outcome');
+  assert.deepEqual(receipt, createEffectReceipt(effect, options), 'receipt must match the exact effect request');
+  return receipt;
+}
 
 /** Script model proposals only. Authority, schemas and effects remain runtime work.
  * Each step is { expect: { mode?, agent_ref?, step_index? }, decision: object|function }.

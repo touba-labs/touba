@@ -47,8 +47,9 @@ export async function sessionLock(key, operation, { signal, wait = 20000 } = {})
 export function sessionStore(registry, access, authorization, { vault = registryVault(), now = () => Date.now() } = {}) {
   const key = sessionKey(registry, access);
   const binding = JSON.stringify([registry, authorization.issuer, authorization.client_id, authorization.scope, authorization.acr]);
-  const maximum = access === 'read' ? 28800 : 600;
-  const supported = authorization.session_max_age_seconds === maximum;
+  const maximum = access === 'read' ? 28800 : authorization.session_max_age_seconds;
+  const supported = Number.isSafeInteger(maximum) && (access === 'read'
+    ? authorization.session_max_age_seconds === maximum : maximum >= 60 && maximum <= 3600);
   return {
     key, supported,
     read() {
@@ -58,16 +59,18 @@ export function sessionStore(registry, access, authorization, { vault = registry
       try { value = JSON.parse(raw); } catch { vault.remove(key); return null; }
       if (!value || value.binding !== binding || typeof value.refresh !== 'string' || !value.refresh.length || value.refresh.length > 32768
         || !Number.isSafeInteger(value.until) || !Number.isSafeInteger(value.started) || value.until <= now() || value.started > now()
-        || value.until - value.started > maximum * 1000 || !supported) { vault.remove(key); return null; }
+        || value.until - value.started > maximum * 1000 || !supported
+        || (value.refreshUntil !== undefined && (!Number.isSafeInteger(value.refreshUntil) || value.refreshUntil <= now() || value.refreshUntil > value.until))) { vault.remove(key); return null; }
       return value;
     },
     write(response, previous) {
       if (!supported || typeof response.refresh_token !== 'string' || !response.refresh_token.length || response.refresh_token.length > 32768) return false;
       const started = previous?.started ?? now();
-      const until = Math.min(previous?.until ?? started + maximum * 1000,
-        Number.isSafeInteger(response.refresh_expires_in) && response.refresh_expires_in > 0 ? now() + response.refresh_expires_in * 1000 : started + maximum * 1000);
-      if (until <= now()) return false;
-      vault.write(key, JSON.stringify({ binding, started, until, refresh: response.refresh_token }));
+      const until = previous?.until ?? started + maximum * 1000;
+      const refreshUntil = Math.min(until, Number.isSafeInteger(response.refresh_expires_in)
+        ? now() + response.refresh_expires_in * 1000 : until);
+      if (until <= now() || refreshUntil <= now()) return false;
+      vault.write(key, JSON.stringify({ binding, started, until, refreshUntil, refresh: response.refresh_token }));
       return true;
     },
     remove() { vault.remove(key); },

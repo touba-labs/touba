@@ -50,7 +50,9 @@ export function createToolApprovalGraphs(indexes, manifest) {
 }
 
 export function approvedOperation(tool, context) {
+  const configuration = context.toolBindingManifest?.bindings.get(tool.id)?.configuration;
   return { tool_ref: tool.id, run_id: context.trace.runId,
+    ...(configuration === undefined ? {} : { configuration_digest: canonicalDigest(configuration) }),
     caller_ref: context.activeCallerRef, agent_ref: context.activeAgentRef,
     arguments: Object.fromEntries((tool.signature.inputs ?? []).map(input => [input.name, context.values.get(`value:${input.name}`)])) };
 }

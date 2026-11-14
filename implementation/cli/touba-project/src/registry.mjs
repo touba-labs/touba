@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { readPackageBytes } from "./package-fetch.mjs";
-import { readSignedRegistry } from "./registry-trust.mjs";
+import { readSignedRegistry, readSignedRegistryStatus } from "./registry-trust.mjs";
 import semver from "semver";
 import { PACKAGE_NAME, exactPackageVersion, packageFile, packagePath } from "./package-contract.mjs";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -26,6 +26,26 @@ const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 const readIndex = (ref, trust, readBytes) => /^https?:\/\//.test(ref)
   ? readSignedRegistry(ref, trust, undefined, readBytes) : readJsonRef(ref, "RegistryIndexSchemaInvalid");
+
+/** Explicit status lookup. Fetches the catalogue, never sends a project inventory. */
+export async function registryPackageStates({ registry, trust, readBytes, offline = false } = {}) {
+  const location = registryLocation(requiredOption(registry, 'registry'));
+  const remote = /^https?:\/\//.test(location.indexRef);
+  if (offline && !remote) fail('RegistryStatusCacheUnavailable', 'offline status requires a cached signed remote registry');
+  const document = remote
+    ? await readSignedRegistryStatus(location.indexRef, trust, readBytes, { offline })
+    : await readIndex(location.indexRef, trust, readBytes);
+  validateIndex(document.value, document.ref);
+  return { registry: location.publicIndexRef, revision: document.revision ?? null,
+    index_digest: document.digest ?? digestBuffer(document.bytes), verified_signature: Boolean(document.signingKey),
+    ...(remote ? { source: document.source, freshness: document.expired ? 'expired' : offline ? 'cached' : 'current',
+      issued_at: new Date(document.issued_at * 1000).toISOString(), expires_at: new Date(document.expires_at * 1000).toISOString(),
+      collected_at: new Date(document.collected_at * 1000).toISOString() } : {}),
+    checked_at: new Date().toISOString(), packages: document.value.packages.map(entry => ({
+      name: entry.package_ref.slice(4), version: entry.version, status: entry.status,
+      ...(entry.withdrawal ? { withdrawal: { ...entry.withdrawal, reason: registryNoticeText(entry.withdrawal.reason) } } : {}),
+    })) };
+}
 
 export async function listRegistryPackages({ registry, trust, readBytes, query = '', offset = 0, limit = 50, includeWithdrawn = false, includeMetadataPath = false } = {}) {
   if (typeof query !== 'string' || query.length > 160 || !Number.isSafeInteger(offset) || offset < 0 || offset > 100000
@@ -65,7 +85,10 @@ export async function resolveRegistryPackage(options = {}) {
   if (metadata.kind !== indexEntry.kind || metadata.status !== indexEntry.status) {
     fail("RegistryMetadataStatusMismatch", `${packageRef}@${version} kind/status does not match index`, indexEntry.metadata_path);
   }
-  if (options.validationOnly !== true) enforceStatus(metadata.status, options);
+  if (indexEntry.withdrawal && canonicalJson(indexEntry.withdrawal) !== canonicalJson(metadata.withdrawal)) {
+    fail('RegistryMetadataStatusMismatch', 'withdrawal differs from the index', indexEntry.metadata_path);
+  }
+  if (options.validationOnly !== true) enforceStatus(metadata.status, options, metadata.withdrawal);
   enforceProtocols(metadata.compatibility?.protocols ?? [], metadataDocument.ref);
 
   const artifacts = verifyArtifacts(metadata.artifacts ?? [], options.sourceRoot);
@@ -83,6 +106,7 @@ export async function resolveRegistryPackage(options = {}) {
       version: metadata.version,
       kind: metadata.kind,
       status: metadata.status,
+      ...(metadata.withdrawal ? { withdrawal: metadata.withdrawal } : {}),
       metadata_path: indexEntry.metadata_path,
       metadata_digest: indexEntry.metadata_digest,
       source: metadata.source,
@@ -132,8 +156,8 @@ export async function checkRegistry(options = {}) {
         if (!current) fail("RegistryPublishedIdentityImmutable", `cannot remove or rename ${entry.package_ref}@${entry.version}; retain it with an explicit status`, entry.metadata_path);
         const oldMeta = (await readJsonRef(resolveRegistryChild(priorLocation.rootRef, entry.metadata_path), "RegistryPackageSchemaInvalid")).value;
         const newMeta = (await readJsonRef(resolveRegistryChild(location.rootRef, current.metadata_path), "RegistryPackageSchemaInvalid")).value;
-        const { status: oldStatus, ...oldContent } = oldMeta;
-        const { status: newStatus, ...newContent } = newMeta;
+        const { status: oldStatus, withdrawal: oldWithdrawal, ...oldContent } = oldMeta;
+        const { status: newStatus, withdrawal: newWithdrawal, ...newContent } = newMeta;
         if (canonicalJson(oldContent) !== canonicalJson(newContent) || current.metadata_path !== entry.metadata_path) fail("RegistryPublishedVersionImmutable", `published content is immutable: ${entry.package_ref}@${entry.version}; publish a new version`, entry.metadata_path);
         preserved++;
       } catch (error) { diagnostics.push({ package: entry.package_ref, version: entry.version, message: error.message }); }
@@ -149,7 +173,7 @@ function canonicalJson(value) {
 }
 
 function validateIndex(index, ref) {
-  if (!isPlainObject(index) || index.index_schema_version !== INDEX_SCHEMA_VERSION || !Array.isArray(index.packages)) {
+  if (!isPlainObject(index) || index.index_schema_version !== INDEX_SCHEMA_VERSION || !Array.isArray(index.packages) || index.packages.length > 10000) {
     fail("RegistryIndexSchemaInvalid", `index must use ${INDEX_SCHEMA_VERSION}`, ref);
   }
   const seen = new Set();
@@ -170,6 +194,7 @@ function validateIndex(index, ref) {
     const identity = `${entry.package_ref}@${entry.version}`;
     if (seen.has(identity)) fail("RegistryIndexSchemaInvalid", "duplicate package version", ref);
     seen.add(identity);
+    validateWithdrawal(entry, ref, 'RegistryIndexSchemaInvalid');
   }
 }
 
@@ -184,6 +209,7 @@ function validateMetadata(metadata, ref) {
   requireString(metadata.kind, "kind", ref, "RegistryPackageSchemaInvalid");
   requireString(metadata.status, "status", ref, "RegistryPackageSchemaInvalid");
   requireString(metadata.summary, "summary", ref, "RegistryPackageSchemaInvalid");
+  validateWithdrawal(metadata, ref, 'RegistryPackageSchemaInvalid');
   if (!PACKAGE_KINDS.has(metadata.kind) || !STATUSES.has(metadata.status)) {
     fail("RegistryPackageSchemaInvalid", "metadata kind/status is invalid", ref);
   }
@@ -226,7 +252,21 @@ function findIndexEntry(index, packageRef, version) {
   fail("RegistryPackageNotFound", `${packageRef} is not listed`, "index.json");
 }
 
-function enforceStatus(status, options) {
+function validateWithdrawal(value, ref, code) {
+  if (value.withdrawal === undefined) return;
+  const event = value.withdrawal;
+  if (value.status !== 'yanked' || !isPlainObject(event) || Object.keys(event).sort().join(',') !== 'changed_at,reason'
+    || typeof event.reason !== 'string' || !event.reason.trim() || event.reason.length > 500
+    || typeof event.changed_at !== 'string' || event.changed_at.length > 40 || !Number.isFinite(Date.parse(event.changed_at))) {
+    fail(code, 'invalid withdrawal event', ref);
+  }
+}
+
+export function registryNoticeText(value) {
+  return value.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ').trim();
+}
+
+function enforceStatus(status, options, withdrawal) {
   if (status === "draft" && options.allowDraft !== true) {
     fail("RegistryPackageDraft", "draft packages require --allow-draft", status);
   }
@@ -234,7 +274,9 @@ function enforceStatus(status, options) {
     fail("RegistryPackageDeprecated", "deprecated packages require --allow-deprecated", status);
   }
   if (status === "yanked") {
-    fail("RegistryPackageYanked", "yanked packages cannot be resolved", status);
+    const withdrawalReason = withdrawal ? registryNoticeText(withdrawal.reason) : undefined;
+    throw Object.assign(new Error(`RegistryPackageYanked: yanked packages cannot be resolved${withdrawalReason ? ': ' + withdrawalReason : ''}`),
+      { code: 'RegistryPackageYanked', path: status, withdrawalReason });
   }
 }
 

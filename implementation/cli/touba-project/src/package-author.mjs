@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
@@ -53,7 +54,7 @@ export function newPackage(name, { root = process.cwd(), org, context = false, d
       writeFileSync(join(staging, source), `module ${module}\n\nskill Echo\n    description "${lang === 'fr' ? 'Renvoyer le texte fourni sans modification.' : 'Return the supplied text unchanged.'}"\n    takes value as Text\n    gives Text\n    do\n        give value\n`);
       mkdirSync(join(staging, "tests"));
       document.contract_tests = ["tests/echo.test.mjs"];
-      writeFileSync(join(staging, "tests/echo.test.mjs"), echoTest(source, module));
+      writeFileSync(join(staging, "tests/echo.test.mjs"), echoTest(module));
     }
     writeFileSync(join(staging, PACKAGE_MANIFEST), json(document));
     writeFileSync(join(staging, "README.md"), packageReadme(name, document.description, context, lang));
@@ -75,8 +76,36 @@ function packageReadme(name, description, context, lang) {
   return `# ${name}\n\n${description}\n\n${content}`;
 }
 
-function echoTest(source, module) {
-  return `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { execFileSync } from "node:child_process";\n\n// Run with touba package test. No SDK install, provider or external effect.\nconst cli = (...args) => execFileSync(process.execPath, [process.env.TOUBA_TEST_CLI, ...args], { encoding: "utf8", timeout: 30000 });\ntest("Echo preserves the supplied text", () => {\n  cli("prepare", "--source", ${JSON.stringify(source)}, "--entry", ${JSON.stringify(`skill:${module}/Echo`)}, "--mode", "write");\n  const run = JSON.parse(cli("run", ${JSON.stringify(`.touba/build/dev/air/${module.replaceAll(".", "/")}.air.json`)}, "--entry", ${JSON.stringify(`skill:${module}/Echo`)}, "--inputs-json", JSON.stringify({ value: "Package contract" }), "--output", "json"));\n  assert.equal(run.status, "success");\n  assert.equal(run.result, "Package contract");\n});\n`;
+function echoTest(module) {
+  return `import test from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Each case installs the distribution into its own consumer project.
+// Run with touba package test. No provider or external effect is used.
+const cli = (...args) => execFileSync(process.execPath, [process.env.TOUBA_TEST_CLI, ...args], { encoding: "utf8", timeout: 30000 });
+function runEntry(entry, inputs) {
+  const project = mkdtempSync(join(tmpdir(), "touba-package-case-"));
+  try {
+    cli("init", "--root", project);
+    cli("package", "add", process.cwd(), "--root", project);
+    const path = join(project, "touba.project.json"), config = JSON.parse(readFileSync(path));
+    delete config.entry;
+    config.entrypoints = [entry];
+    writeFileSync(path, JSON.stringify(config));
+    cli("prepare", "--root", project, "--entry", entry, "--mode", "write");
+    return JSON.parse(cli("run", "--project", project, "--entry", entry, "--inputs-json", JSON.stringify(inputs), "--output", "json"));
+  } finally { rmSync(project, { recursive: true, force: true }); }
+}
+test("Echo preserves the supplied text", () => {
+  const run = runEntry(${JSON.stringify(`skill:${module}/Echo`)}, { value: "Package contract" });
+  assert.equal(run.status, "success");
+  assert.equal(run.result, "Package contract");
+});
+`;
 }
 
 export function versionPackage(target, { root = process.cwd() } = {}) {
@@ -106,26 +135,31 @@ export function versionPackage(target, { root = process.cwd() } = {}) {
 export async function testPackage(path, { env: allowedEnv = [], timeout = 120000, ...options } = {}) {
   path = path ? resolve(path) : findPackageWorkspace(options.root, { author: true });
   assertAuthorWritable(path);
-  const { checkPackage } = await import("./packages.mjs");
-  const checked = await checkPackage(path, options);
-  const tests = checked.closure.first.document.contract_tests ?? [];
-  if (!tests.length) return { status: "no_tests", command: "package test", package: checked.package, notes: ["No author tests are declared. This is not a successful behavioral test."], exitCode: 1 };
-  if (tests.some(file => !/\.test\.(mjs|cjs|js)$/.test(file))) throw packageError("PackageTestFormatInvalid", "contract_tests must name explicit Node .test.mjs, .test.cjs or .test.js files");
-  const env = {};
-  for (const key of ["PATH", "Path", "SystemRoot", "WINDIR", "TMPDIR", "TEMP", "TMP", "TOUBA_COMPILE_BIN"]) if (process.env[key] !== undefined) env[key] = process.env[key];
-  for (const key of allowedEnv) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /^(NODE_OPTIONS|NODE_PATH|TOUBA_TEST_CLI)$/i.test(key)) throw packageError("PackageTestEnvironmentInvalid", `unsupported environment name ${key}`);
-    if (process.env[key] === undefined) throw packageError("PackageTestEnvironmentMissing", `set ${key} before running the test`);
-    env[key] = process.env[key];
-  }
-  env.TOUBA_TEST_CLI = fileURLToPath(new URL("./main.mjs", import.meta.url));
-  const result = spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-timeout=30000", ...tests], { cwd: path, env, encoding: "utf8", timeout, maxBuffer: 4 * 1024 * 1024, killSignal: "SIGKILL" });
-  let stdout = result.stdout ?? "", stderr = result.stderr ?? "";
-  for (const key of allowedEnv) if (env[key]) { stdout = stdout.replaceAll(env[key], "[REDACTED]"); stderr = stderr.replaceAll(env[key], "[REDACTED]"); }
-  // Count explicit TAP subtests, not Node's synthetic success for an empty file.
-  const match = /^# tests (\d+)$/m.exec(stdout), count = match ? Number(match[1]) : 0;
-  const passed = Number(/^# pass (\d+)$/m.exec(stdout)?.[1] ?? 0);
-  const explicit = [...stdout.matchAll(/^# Subtest: (.+)$/gm)].filter(match => !tests.some(file => resolve(path, file) === resolve(path, match[1])));
-  const failed = result.error || result.signal || result.status !== 0 || passed === 0 || explicit.length === 0;
-  return { status: failed ? "error" : "success", command: "package test", package: checked.package, tests: count, stdout, stderr, signal: result.signal, error: result.error?.code, exitCode: failed ? 1 : 0, notes: ["Explicit author tests executed as host code, not an OS sandbox. No environment secrets are inherited unless selected with --env."] };
+  const { snapshotPackage, unpackPackage } = await import("./packages.mjs");
+  const staging = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-test-")));
+  try {
+    await snapshotPackage(path, { ...options, output: join(staging, "package.tar.gz") });
+    const testRoot = unpackPackage(join(staging, "package.tar.gz"), join(staging, "contents"));
+    const document = readPackage(testRoot).document;
+    const tests = document.contract_tests ?? [];
+    if (!tests.length) return { status: "no_tests", command: "package test", package: document.name, notes: ["No author tests are declared. This is not a successful behavioral test."], exitCode: 1 };
+    if (tests.some(file => !/\.test\.(mjs|cjs|js)$/.test(file))) throw packageError("PackageTestFormatInvalid", "contract_tests must name explicit Node .test.mjs, .test.cjs or .test.js files");
+    const env = {};
+    for (const key of ["PATH", "Path", "SystemRoot", "WINDIR", "TMPDIR", "TEMP", "TMP", "TOUBA_COMPILE_BIN"]) if (process.env[key] !== undefined) env[key] = process.env[key];
+    for (const key of allowedEnv) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /^(NODE_OPTIONS|NODE_PATH|TOUBA_TEST_CLI)$/i.test(key)) throw packageError("PackageTestEnvironmentInvalid", `unsupported environment name ${key}`);
+      if (process.env[key] === undefined) throw packageError("PackageTestEnvironmentMissing", `set ${key} before running the test`);
+      env[key] = process.env[key];
+    }
+    env.TOUBA_TEST_CLI = fileURLToPath(new URL("./main.mjs", import.meta.url));
+    const result = spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-timeout=30000", ...tests], { cwd: testRoot, env, encoding: "utf8", timeout, maxBuffer: 4 * 1024 * 1024, killSignal: "SIGKILL" });
+    let stdout = result.stdout ?? "", stderr = result.stderr ?? "";
+    for (const key of allowedEnv) if (env[key]) { stdout = stdout.replaceAll(env[key], "[REDACTED]"); stderr = stderr.replaceAll(env[key], "[REDACTED]"); }
+    // Count explicit TAP subtests, not Node's synthetic success for an empty file.
+    const match = /^# tests (\d+)$/m.exec(stdout), count = match ? Number(match[1]) : 0;
+    const passed = Number(/^# pass (\d+)$/m.exec(stdout)?.[1] ?? 0);
+    const explicit = [...stdout.matchAll(/^# Subtest: (.+)$/gm)].filter(match => !tests.some(file => resolve(testRoot, file) === resolve(testRoot, match[1])));
+    const failed = result.error || result.signal || result.status !== 0 || passed === 0 || explicit.length === 0;
+    return { status: failed ? "error" : "success", command: "package test", package: document.name, tests: count, stdout, stderr, signal: result.signal, error: result.error?.code, exitCode: failed ? 1 : 0, notes: ["Tests execute a fresh distribution in a temporary directory as host code, not an OS sandbox. No environment secrets are inherited unless selected with --env."] };
+  } finally { rmSync(staging, { recursive: true, force: true }); }
 }

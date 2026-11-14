@@ -2,6 +2,16 @@
 import { packageError } from './package-contract.mjs';
 
 const messages = {
+  HandlerConfigurationInvalid: ['Vérifiez les champs, types et limites du schéma de configuration du handler. Les valeurs restent dans la configuration d’hôte.', 'Check the handler configuration fields, types and limits. Values belong in the host configuration.'],
+  HandlerConfigurationSchemaRequired: ['Sélectionnez le handler du package avec son schéma typé, ou déclarez le schéma dans votre fragment d’hôte.', 'Select the package handler with its typed schema, or declare the schema in your host fragment.'],
+  HandlerConfigurationReviewRequired: ['Le handler change. Confirmez aussi les valeurs de configuration à lui transmettre.', 'The handler changed. Confirm the configuration values to pass to it as well.'],
+  PackageHandlerConfigurationReviewRequired: ['Le schéma du handler a changé. Relisez-le puis sélectionnez ce handler et fournissez ses valeurs avec la décision d’hôte.', 'The handler schema changed. Review it, then select the handler and provide its values through the host decision.'],
+  RegistryStatusCacheMissing: ['Aucun état signé en cache. Lancez touba package audit avec accès au registre.', 'No signed status is cached. Run touba package audit with access to the registry.'],
+  RegistryStatusCacheInvalid: ['Le cache est invalide. Rafraîchissez-le avec touba package audit ; conservez le fichier de continuité de confiance.', 'The cache is invalid. Refresh it with touba package audit; preserve the trust continuity file.'],
+  RegistryStatusCacheBusy: ['Une autre consultation modifie le cache. Réessayez après sa fin.', 'Another consultation is updating the cache. Retry when it finishes.'],
+  RegistryStatusCacheUnavailable: ['La consultation hors ligne exige le cache d’un registre distant signé.', 'Offline status requires a cached signed remote registry.'],
+  PackageReviewRequired: ['Prévisualisez le retour de version avec --allow-downgrade, puis acceptez son empreinte exacte avec --accept.', 'Preview the downgrade with --allow-downgrade, then accept its exact digest with --accept.'],
+  PackageReviewChanged: ['Le package ou le projet a changé. Prévisualisez la mise à jour et acceptez la nouvelle empreinte.', 'The package or project changed. Preview the update and accept the new digest.'],
   RegistryPackageYanked: ['Cette version a été retirée. Choisissez une version disponible dans le catalogue.', 'This version was withdrawn. Choose an available version in the catalog.'],
   PackagePublicationTargetInvalid: ['Utilisez HTTPS ou l’origine locale exacte, avec 127.0.0.1 ou [::1]. Le nom localhost n’est pas accepté pour cette connexion.', 'Use HTTPS or the exact local origin with 127.0.0.1 or [::1]. The name localhost is not accepted for this connection.'],
   RegistryConfigurationRequired: ['Configurez le registre du projet : touba package registry <url> --trust <fichier-vérifié>.', 'Configure the project registry: touba package registry <url> --trust <reviewed-file>.'],
@@ -15,10 +25,29 @@ const messages = {
   package_namespace_mismatch: ['Le nom du package appartient à un autre espace. Sélectionnez cet espace ou corrigez le manifeste.', 'The package name belongs to another space. Select that space or correct the manifest.'],
   submission_rate_reached: ['La limite de soumissions est atteinte.', 'The submission limit has been reached.'],
   package_validator_busy: ['Le validateur est occupé. Votre soumission peut être réessayée.', 'The validator is busy. You can retry your submission.'],
+  package_tests_failed: ['Les tests du package ont échoué. Relancez touba package test avant de soumettre.', 'Package tests failed. Run touba package test before submitting again.'],
+  package_validation_failed: ['L’archive est invalide. Lancez touba package check puis touba package pack.', 'The archive is invalid. Run touba package check, then touba package pack.'],
+  package_validator_toolchain_mismatch: ['Le validateur doit être actualisé. Les tests de votre archive n’ont pas été exécutés.', 'The validator needs updating. Your archive tests were not executed.'],
+  package_validation_timeout: ['La validation a dépassé sa durée maximale. Vérifiez la durée des tests.', 'Validation exceeded its time limit. Check test duration.'],
   publication_permission_required: ['Un rôle de propriétaire ou de mainteneur est requis dans cet espace.', 'An owner or maintainer role is required in this space.'],
   strong_authentication_required: ['Confirmez votre identité avec touba package login, puis réessayez.', 'Confirm your identity with touba package login, then retry.'],
+  publication_authentication_required: ['La confirmation de votre identité a expiré ou a été refusée. Lancez touba package logout, puis touba package login et confirmez de nouveau votre identité.', 'Your identity confirmation expired or was refused. Run touba package logout, then touba package login and confirm your identity again.'],
+  PackageDraftBusy: ['Une autre commande utilise ce brouillon. Attendez sa fin. Si elle a été interrompue, relancez la commande ; seul le verrou d’un processus disparu peut être récupéré.', 'Another command is using this draft. Wait for it to finish. If it was interrupted, retry; only a lock belonging to a departed process can be recovered.'],
+  PackageDraftLockUnsafe: ['Le verrou du brouillon est illisible ou ne permet pas une récupération sûre. Vérifiez .touba/package-draft.lock et les processus actifs avant toute intervention.', 'The draft lock cannot be recovered safely. Inspect .touba/package-draft.lock and active processes before taking action.'],
+  PackageAutomationRequestRequired: ['Ajoutez --request-id avec 16 à 100 lettres, chiffres, tirets ou traits de soulignement, sans point. Réutilisez cet identifiant uniquement pour la même requête.', 'Add --request-id with 16 to 100 letters, digits, hyphens or underscores, without dots. Reuse it only for the same request.'],
+  PackageOptionInvalid: ['Option invalide pour cette commande. Consultez touba package --help et vérifiez les options et leurs valeurs.', 'Invalid option for this command. See touba package --help and check the options and their values.'],
+  PackagePresentationReuseUnavailable: ['Ce registre ne propose pas encore la reprise de présentation par la CLI. Aucune archive n’a été soumise. Utilisez son interface pour ajouter une version.', 'This registry does not support CLI presentation reuse yet. No archive was submitted. Use its interface to add a version.'],
+  presentation_source_invalid: ['Choisissez l’identifiant d’une version publiée pour une nouvelle soumission interactive.', 'Select a published version identifier for a new interactive submission.'],
   published_version_immutable: ['Cette version est déjà publiée. Préparez un nouveau numéro avec touba package version.', 'This version is already published. Prepare a new number with touba package version.'],
 };
+
+export function packageSessionNotice({ logout, persistent, read = false, minutes = 10 }, locale) {
+  const fr = packageLocale(locale) === 'fr';
+  if (logout) return fr ? 'Session du registre effacée.' : 'Registry session cleared.';
+  if (!persistent) return fr ? 'Identité temporaire vérifiée puis révoquée. Utilisez login avec le coffre système pour conserver une session.' : 'Temporary identity verified and revoked. Use login with the system vault to retain a session.';
+  if (read) return fr ? 'Session de lecture conservée dans le coffre système, pendant huit heures au maximum. Utilisez touba package logout --read pour vous déconnecter.' : 'Read session kept in the system credential vault for up to eight hours. Use touba package logout --read to disconnect.';
+  return fr ? `Connexion conservée dans le coffre système. Nouvelle confirmation pour les opérations sensibles après ${minutes} minutes. Utilisez touba package logout pour vous déconnecter.` : `Connected using the system credential vault. Sensitive operations require confirmation again after ${minutes} minutes. Use touba package logout to disconnect.`;
+}
 
 export function retrySeconds(value, now = Date.now()) {
   if (!value) return null;
@@ -28,7 +57,14 @@ export function retrySeconds(value, now = Date.now()) {
 
 export function publicationRefusal(code, result, fallback) {
   const reason = /^[a-z_]{1,80}$/.test(result.data?.error ?? '') ? result.data.error : fallback;
-  return Object.assign(packageError(code, reason), { reason, retryAfter: retrySeconds(result.headers?.get('retry-after')) });
+  const diagnostic = result.data?.diagnostic;
+  // Only bounded machine identifiers cross the terminal boundary. Full private
+  // test output remains available in the authenticated browser response.
+  const details = ['package_tests_failed', 'package_validation_failed'].includes(reason)
+    && diagnostic && ['inspection', 'tests'].includes(diagnostic.phase)
+    && typeof diagnostic.code === 'string' && /^[A-Z][A-Za-z0-9]{1,79}$/.test(diagnostic.code)
+    ? [{ code: diagnostic.code, phase: diagnostic.phase, message: reason }] : undefined;
+  return Object.assign(packageError(code, reason), { reason, diagnostics: details, retryAfter: retrySeconds(result.headers?.get('retry-after')) });
 }
 
 export function packageLocale(locale) {
@@ -42,5 +78,8 @@ export function packageDiagnostic(error, locale) {
   if (!message) return error instanceof Error ? error.message : String(error);
   const delay = Number.isSafeInteger(error.retryAfter) && error.retryAfter >= 0
     ? (fr ? ` Réessayez dans ${error.retryAfter} s.` : ` Retry in ${error.retryAfter} s.`) : '';
-  return `${error.code}: ${message[fr ? 0 : 1]}${delay}`;
+  const details = error.diagnostics?.length ? ` [${error.diagnostics[0].phase}: ${error.diagnostics[0].code}]` : '';
+  const withdrawal = error.code === 'RegistryPackageYanked' && typeof error.withdrawalReason === 'string' && error.withdrawalReason.length <= 500
+    ? ` ${fr ? 'Motif' : 'Reason'} : ${error.withdrawalReason.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ')}` : '';
+  return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}`;
 }

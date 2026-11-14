@@ -7,7 +7,7 @@ import semver from "semver";
 export const isNewerPackageVersion = (next, current) => Boolean(semver.valid(next) && semver.valid(current) && semver.gt(next, current));
 export const packageRuntimeCompatibility = required => ({ runtime: runtimeVersion, required, compatible: semver.satisfies(runtimeVersion, required) });
 import { PACKAGE_LIMITS, PACKAGE_MANIFEST, PACKAGE_NAME, PACKAGE_RUNTIME_VERSION as runtimeVersion, assertPackageUnchanged, packageDigest, packageError, packageFile, packagePath, readPackage } from "./package-contract.mjs";
-import { PACKAGE_LOCK, PACKAGE_TRANSACTION, assertAuthorWritable, assertOnlyInventory, assertPlainDirectory, assertPackageDirectory, findPackageWorkspace, readPackageWorkspace, setWorkspacePackages, verifyInstalledPackages } from "./package-store.mjs";
+import { PACKAGE_LOCK, PACKAGE_LOCK_SCHEMA, PACKAGE_TRANSACTION, assertAuthorWritable, assertOnlyInventory, assertPlainDirectory, assertPackageDirectory, findPackageWorkspace, packageDependencyRecords, readPackageWorkspace, setWorkspacePackages, verifyInstalledPackages } from "./package-store.mjs";
 export { newPackage } from "./package-author.mjs";
 import { resolveRegistryPackage } from "./registry.mjs";
 import { createRegistryReader } from "./package-fetch.mjs";
@@ -79,6 +79,10 @@ export async function addRegistryPackage(name, options) {
   finally { await reader.close(); }
 }
 
+export async function updateRegistryPackage(name, options) {
+  return addRegistryPackage(name, { ...options, updating: true });
+}
+
 async function installRegistryPackage(name, options, readBytes) {
   const { artifact, location } = await resolveRegistryArchive(name, options, readBytes);
   const bytes = await readBytes(location, PACKAGE_LIMITS.totalBytes);
@@ -89,7 +93,7 @@ async function installRegistryPackage(name, options, readBytes) {
     const path = unpackPackage(archive, join(staging, "extracted"));
     const pkg = readPackage(path, { runtimeVersion });
     if (pkg.document.name !== name || pkg.document.version !== options.version) throw packageError("PackageDependencyConflict", "archive identity differs from selected registry entry");
-    return await addPackage(path, options);
+    return await (options.updating ? reviewPackageUpdate : addPackage)(path, { ...options, name });
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }
 
@@ -113,8 +117,10 @@ export async function checkPackage(path, options = {}) {
   assertPackageDirectory(realpathSync(path));
   if (existsSync(join(path, PACKAGE_TRANSACTION))) throw packageError("PackageInstallationIncomplete", "package workspace has an active or interrupted transaction");
   if (existsSync(join(path, PACKAGE_LOCK))) {
-    const document = readPackage(path).document;
-    verifyInstalledPackages(path, Object.entries(document.dependencies ?? {}).map(([name, version]) => ({ manifest: `packages/${name}/${PACKAGE_MANIFEST}`, version })));
+    const local = readPackage(path);
+    if (local.files.some(file => file.path === PACKAGE_LOCK)) throw packageError("PackageLockDistributionConflict", "remove touba.packages.lock.json from package files and repack a new version; dependency locks are archive workspace metadata");
+    const document = local.document;
+    verifyInstalledPackages(path, packageDependencyRecords(path, document));
   }
   const closure = packageClosure(path, options);
   const { validatePackageSources } = await import("./project.mjs");
@@ -124,14 +130,18 @@ export async function checkPackage(path, options = {}) {
       contracts = closure.packages.map(pkg => ({ name: pkg.document.name,
         tools: Object.fromEntries(entries.filter(entry => entry.packageName === pkg.document.name)
           .flatMap(entry => (entry.document.definitions?.tools ?? []).filter(tool => tool.id.startsWith(`tool:${entry.document.module.name}/`)))
-          .map(tool => [tool.id, toolContract(tool)])),
-        handlers: (pkg.document.handlers ?? []).map(handler => ({ tool: handler.tool, entrypoint: handler.path })),
+          .map(tool => [tool.id, toolContract(tool, pkg.document.handlers?.find(handler => handler.tool === tool.id), pkg.root)])),
+        handlers: (pkg.document.handlers ?? []).map(handler => ({ tool: handler.tool, entrypoint: handler.path,
+          ...(handler.effect_contract ? { recommended_effect: handler.effect_contract } : {}) })),
       }));
     } : undefined });
   if (diagnostics.length) throw Object.assign(packageError("PackageSourceInvalid",
     diagnostics.map(d => `${d.source_path ?? ""}${d.source_ref ? `:${d.source_ref.start_line + 1}:${d.source_ref.start_column + 1}` : ""} ${d.code}: ${d.message}`.trim()).join("\n")), { diagnostics });
   const missing = ["description", "publisher", "license"].filter(field => !closure.first.document[field]);
-  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: missing.length ? [`Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : [], packages: closure.packages.map(pkg => ({ name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, files: pkg.files.length, requirements: pkg.requirements })), tests: "Source contracts checked. Author tests are not executed automatically.", closure, ...(contracts ? { contracts } : {}) };
+  const effectNotes = closure.packages.flatMap(pkg => (pkg.document.handlers ?? [])
+    .filter(handler => !handler.effect_contract)
+    .map(handler => `Handler ${handler.tool} has no recommended effect contract. Review its side effects and test the receipt protocol; network access alone does not imply an external write.`));
+  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: [...(missing.length ? [`Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : []), ...effectNotes], packages: closure.packages.map(pkg => ({ name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, files: pkg.files.length, requirements: pkg.requirements })), tests: "Source contracts checked. Author tests are not executed automatically.", closure, ...(contracts ? { contracts } : {}) };
 }
 
 function copyPackage(pkg, destination) {
@@ -167,8 +177,18 @@ function writeCheckedArchive(checked, output) {
   if (existsSync(output)) throw packageError("PackageAlreadyExists", "refusing to overwrite archive");
   const staging = mkdtempSync(join(tmpdir(), "touba-package-pack-"));
   try {
+    if (checked.closure.packages.some(pkg => pkg.files.some(file => file.path === PACKAGE_LOCK))) {
+      throw packageError("PackageLockDistributionConflict", "remove touba.packages.lock.json from package files; the archive generates its own verified dependency lock");
+    }
     copyPackage(checked.closure.first, join(staging, "package"));
     for (const pkg of checked.closure.packages.slice(1)) copyPackage(pkg, join(staging, "package/packages", pkg.document.name));
+    // Transport metadata belongs to the archive workspace, not to the root
+    // package inventory. Installation reconstructs the consumer's own lock.
+    if (checked.closure.packages.length > 1) {
+      const packages = checked.closure.packages.slice(1).map(pkg => ({ name: pkg.document.name, version: pkg.document.version,
+        manifest: `packages/${pkg.document.name}/${PACKAGE_MANIFEST}`, digest: pkg.digest, files: pkg.files })).sort((a, b) => a.name.localeCompare(b.name));
+      writeFileSync(join(staging, "package", PACKAGE_LOCK), json({ lock_schema_version: PACKAGE_LOCK_SCHEMA, packages }), { flag: "wx" });
+    }
     const archive = join(staging, "artifact.tar.gz");
     tar.c({ cwd: staging, file: archive, sync: true, gzip: true, portable: true, noMtime: true }, ["package"]);
     const bytes = readFileSync(archive);
@@ -210,7 +230,57 @@ export async function addPackage(path, { root = process.cwd(), ...options } = {}
 
 export async function updatePackage(path, { root = process.cwd(), name, ...options } = {}) {
   if (!PACKAGE_NAME.test(name ?? "")) throw packageError("PackageNameInvalid", "select the installed package to update");
+  if (options['allow-downgrade'] === true && !options.reviewDigest) throw packageError('PackageReviewRequired', 'a downgrade requires an exact accepted review');
   return installPackage(path, { root, ...options }, name);
+}
+
+function updateDirection(version, previous, allowDowngrade) {
+  if (semver.gt(version, previous)) return 'upgrade';
+  if (semver.lt(version, previous) && allowDowngrade === true) return 'downgrade';
+  throw packageError('PackageVersionConflict', 'select a newer version, or review an older version with --allow-downgrade; equal versions are immutable');
+}
+
+function updateReview(workspace, lock, checked, allowDowngrade = false) {
+  const previous = lock.packages.find(item => item.name === checked.package);
+  if (!previous) throw packageError('PackageNotInstalled', 'only an installed package can be updated');
+  const direction = updateDirection(checked.version, previous.version, allowDowngrade);
+  const before = readPackage(resolve(dirname(workspace.path), previous.manifest));
+  const after = checked.closure.first;
+  const handlers = [...new Set([...(before.document.handlers ?? []), ...(after.document.handlers ?? [])].map(h => h.tool))].sort().map(tool => {
+    const describe = pkg => {
+      const h = pkg.document.handlers?.find(h => h.tool === tool);
+      return h ? { path: h.path, digest: pkg.files.find(file => file.path === h.path)?.digest } : null;
+    };
+    return { tool, before: describe(before), after: describe(after) };
+  }).filter(h => JSON.stringify(h.before) !== JSON.stringify(h.after));
+  const plan = { schema_version: 'touba-package-update-review-v1',
+    workspace_digest: packageDigest(Buffer.concat([workspace.bytes, Buffer.from(json(lock))])),
+    package: checked.package, previous: previous.version, version: checked.version, direction,
+    previous_digest: previous.digest, package_digest: after.digest, handlers,
+    packages: checked.packages, contracts: checked.contracts ?? [] };
+  return { ...plan, review_digest: packageDigest(Buffer.from(JSON.stringify(plan))) };
+}
+
+/** Review frozen bytes, then apply only that review to the unchanged workspace. */
+export async function reviewPackageUpdate(path, { root = process.cwd(), accept, ...options } = {}) {
+  root = findPackageWorkspace(root);
+  const staging = realpathSync(mkdtempSync(join(tmpdir(), 'touba-package-update-')));
+  try {
+    let source = resolve(path);
+    if (lstatSync(source).isFile() && !source.endsWith(PACKAGE_MANIFEST)) source = unpackPackage(source, join(staging, 'source'));
+    const archive = join(staging, 'review.tar.gz');
+    await snapshotPackage(source, { output: archive, projectRoot: root });
+    source = unpackPackage(archive, join(staging, 'review'));
+    const workspace = readPackageWorkspace(root), lock = verifyInstalledPackages(root, workspace.records);
+    const checked = await checkPackage(source, { ...options, projectRoot: root, inspectContracts: true });
+    if (options.name && checked.package !== options.name) throw packageError('PackageNameConflict', 'replacement identity differs from the selected package');
+    const review = updateReview(workspace, lock, checked, options['allow-downgrade']);
+    if (accept !== undefined && accept !== review.review_digest) throw packageError('PackageReviewChanged', 'package or workspace changed; review the update again');
+    if (accept !== undefined) return { ...await updatePackage(source, { root, name: checked.package, reviewDigest: accept, 'allow-downgrade': options['allow-downgrade'] }), review };
+    return { ...review, command: 'package update', status: 'review_required', exitCode: 0,
+      notes: [`Review ${review.review_digest}`, ...(review.direction === 'downgrade' ? ['Older code selected explicitly. This does not undo external effects or restore execution data. Consumer governance remains in force.'] : []), ...review.handlers.map(h => `Handler changed: ${h.tool} (${h.before?.digest ?? 'absent'} -> ${h.after?.digest ?? 'absent'})`),
+        'Inspect contracts and dependencies with --json. Apply this exact review using --accept <review_digest>. Execution permissions still require application review.'] };
+  } finally { rmSync(staging, { recursive: true, force: true }); }
 }
 
 async function installPackage(path, { root, ...options }, replacing) {
@@ -233,12 +303,13 @@ async function installPackage(path, { root, ...options }, replacing) {
     path = requestedName ? join(root, "packages", requestedName) : resolve(path);
     if (!existsSync(path)) throw packageError("PackageSourceMissing", "supply a package directory/archive, or place the package in packages/<organization.name> before adding by name; remote installation requires --registry");
     if (!lstatSync(path).isDirectory() && !path.endsWith(PACKAGE_MANIFEST)) path = unpackPackage(path, join(staging, "extracted"));
-    const checked = await checkPackage(path, { ...options, projectRoot: root });
+    const checked = await checkPackage(path, { ...options, projectRoot: root, inspectContracts: Boolean(options.reviewDigest) });
     const packages = checked.closure.packages;
     if (replacing && checked.package !== replacing) throw packageError("PackageNameConflict", "replacement identity differs from the selected package");
+    if (options.reviewDigest && updateReview(workspace, lock, checked, options['allow-downgrade']).review_digest !== options.reviewDigest) throw packageError('PackageReviewChanged', 'package or workspace changed; review the update again');
     if (replacing) {
       const previous = lock.packages.find(entry => entry.name === replacing);
-      if (!semver.gt(checked.version, previous.version)) throw packageError("PackageVersionConflict", "an update requires a newer version; an existing version is immutable");
+      updateDirection(checked.version, previous.version, options['allow-downgrade']);
       for (const record of records) {
         const dependent = readPackage(resolve(root, record.manifest)).document;
         if (dependent.name !== replacing && Object.hasOwn(dependent.dependencies ?? {}, replacing)
@@ -292,7 +363,7 @@ async function installPackage(path, { root, ...options }, replacing) {
       renameSync(update.source, update.destination); installed.push(update.destination);
     }
     lock.packages.sort((a, b) => a.name.localeCompare(b.name));
-    setWorkspacePackages(workspace, records);
+    setWorkspacePackages(workspace, records, { direct: checked.package });
     writeFileSync(join(staging, "lock.json"), json(lock));
     writeFileSync(join(staging, "project.json"), json(config));
     renameSync(join(staging, "lock.json"), join(root, PACKAGE_LOCK));

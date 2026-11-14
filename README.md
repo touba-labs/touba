@@ -120,6 +120,24 @@ from an explicitly selected registry. The installer checks identity,
 compatibility and content before updating the managed `packages/` directory.
 It does not run author tests or install hooks.
 
+`package test` starts from a fresh temporary distribution. The generated test
+uses a separate consumer project for each case and leaves the author folder
+unchanged. Tests still execute host code: review them before running.
+
+To update an installed package, use `touba package update <archive-or-name@version>`
+to preview its exact content, then `--accept <review_digest>` after review.
+Changed project or package bytes require a new review. Run `touba prepare --mode plan`
+afterward to review application contracts and permissions.
+An explicit `--allow-downgrade` review can select an older version while retaining
+consumer approval policies. It does not undo prior effects or data migrations.
+
+`touba package audit` explicitly consults a configured registry for the status
+of installed versions. It reports withdrawals and unknown versions without
+changing installed packages or stopping executions. It is not a vulnerability scanner.
+After a successful signed lookup, `audit --offline` or `list --status` reads
+the verified cache without network access and makes its age and expiry visible.
+Expired status evidence never authorizes installation.
+
 Installation does not grant runtime authority. The consuming program still
 declares its callers, bindings and permissions.
 

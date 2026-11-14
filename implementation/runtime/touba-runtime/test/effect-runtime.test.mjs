@@ -8,6 +8,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
+import { openCliEffectJournal } from '../../../cli/touba-run/src/effect-journal.mjs';
 
 import {
   AIR_CAPABILITY_PROFILE,
@@ -627,15 +631,115 @@ test("refuses an in-process override for external_write but keeps kind none on V
   assert.equal(none.result, "touba-tool-handler-v1");
 });
 
+// These tests observe actual durable writes separately from handler replies.
+// They qualify our protocol, not arbitrary third-party code or business rules.
+for (const language of ['javascript', 'python']) {
+  const python = process.env.TOUBA_TEST_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+  const available = language !== 'python' || spawnSync(python, ['--version']).status === 0;
+  for (const mode of ['missing', 'invalid', 'throw', 'timeout']) {
+    test(`${language} committed write with ${mode} response remains unknown and is not blindly retried`, { skip: !available }, async t => {
+      const f = conformanceFixture(t, language, python, mode, 'reconcile');
+      const first = await f.run();
+      assert.equal(first.status, 'failure');
+      assert.equal(failureCode(first), mode === 'timeout' ? 'ToolHandlerTimeout' : 'ToolHandlerReportedError');
+      assert.equal(f.entry().state, 'unknown');
+      assert.equal(f.count('effects'), 1, 'The response failure did not undo the external write');
+      assert.equal(f.count('calls'), 1);
+      const second = await f.run();
+      assert.equal(failureCode(second), 'EffectReconciliationRequired');
+      assert.equal(f.count('calls'), 1, 'No automatic redispatch without provider evidence');
+      assert.equal(f.entry().attempt_count, 1);
+    });
+  }
+  test(`${language} idempotent provider survives a lost reply, a competing resume and journal reopen`, { skip: !available }, async t => {
+    const f = conformanceFixture(t, language, python, 'timeout', 'idempotency_key');
+    const first = f.run();
+    // Admission covers the whole run, not just the individual SQL statements.
+    assert.throws(() => openCliEffectJournal(f.journalPath), { code: 'EffectJournalBusy' });
+    assert.equal(failureCode(await first), 'ToolHandlerTimeout');
+    assert.equal(f.count('effects'), 1);
+    const before = f.entry();
+    assert.equal(before.state, 'unknown');
+    const second = await f.run();
+    assert.equal(second.status, 'success', failureCode(second));
+    assert.equal(second.result, 'created:record');
+    assert.equal(f.entry().effect_id, before.effect_id);
+    assert.equal(f.entry().attempt_count, 2);
+    assert.equal(f.count('calls'), 2);
+    assert.equal(f.count('effects'), 1, 'Provider uniqueness, not the receipt alone, prevents duplicate writes');
+    const restored = await f.run();
+    assert.equal(restored.status, 'success');
+    assert.equal(restored.result, second.result);
+    assert.equal(f.count('calls'), 2, 'An applied journal entry is restored without another provider call');
+  });
+}
+
+function conformanceFixture(t, language, python, mode, retryMode) {
+  const root = mkdtempSync(join(tmpdir(), 'touba-effect-conformance-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const database = join(root, 'provider.sqlite');
+  const db = new DatabaseSync(database);
+  db.exec('CREATE TABLE calls (id TEXT, digest TEXT, attempt INTEGER); CREATE TABLE effects (id TEXT PRIMARY KEY, digest TEXT NOT NULL, value TEXT NOT NULL);');
+  db.close();
+  const script = fileURLToPath(new URL(`./fixtures/effect-conformance/handler.${language === 'python' ? 'py' : 'mjs'}`, import.meta.url));
+  const manifest = loadToolBindingManifestFromJson(JSON.stringify({ manifest_version: 'touba-manifest-v1', bindings: {
+    'tool:test/Create': { handler: { kind: 'process', command: language === 'python' ? python : process.execPath,
+      // Include Python startup under concurrent CI load. Timeout fixtures hang
+      // after committing, so the durable-write assertion still proves the fault.
+      args: [script, database, mode] }, grants: [], secrets: [], timeout_ms: 5000, max_payload_bytes: 16384,
+      effect_contract: { kind: 'external_write', retry_mode: retryMode } },
+  } }));
+  const journalPath = join(root, 'run.effect-journal.sqlite');
+  const scope = 'synthetic:durable-write';
+  return {
+    journalPath,
+    async run() {
+      const lease = openCliEffectJournal(journalPath);
+      try { return await executeAirDocument(effectDocument(), { entryRef: 'skill:test/CreateFlow',
+        inputs: { query: 'record' }, toolBindingManifest: manifest, effectScopeId: scope, effectJournal: lease.journal }); }
+      finally { lease.close(); }
+    },
+    entry() {
+      const lease = openCliEffectJournal(journalPath);
+      try { return lease.journal.entriesForScope(scope)[0]; }
+      finally { lease.close(); }
+    },
+    count(table) {
+      assert.ok(['calls', 'effects'].includes(table));
+      const connection = new DatabaseSync(database, { readOnly: true });
+      try { return connection.prepare(`SELECT count(*) AS count FROM ${table}`).get().count; }
+      finally { connection.close(); }
+    },
+  };
+}
+
+test('effect identity refuses changed handler configuration without repeating an applied write', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-effect-configuration-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const calls = join(root, 'calls');
+  const schema = { schema_version: 'touba-handler-configuration-v1', fields: { region: { type: 'string', required: true } } };
+  const manifest = region => effectManifest(successHandlerScript(calls), { configuration: { schema, values: { region } } });
+  const journal = journalAdapter();
+  const options = { entryRef: 'skill:test/CreateFlow', inputs: { query: 'one' }, effectScopeId: 'operation:configuration', effectJournal: journal.adapter };
+  const first = await executeAirDocument(effectDocument(), { ...options, toolBindingManifest: manifest('private-region-one') });
+  assert.equal(first.status, 'success', failureCode(first));
+  assert.ok(!JSON.stringify(first).includes('private-region-one'));
+  const replay = await executeAirDocument(effectDocument(), { ...options, toolBindingManifest: manifest('private-region-two') });
+  assert.equal(failureCode(replay), 'EffectRequestConflict');
+  assert.equal(readFileSync(calls, 'utf8'), 'called\n');
+});
+
 function effectManifest(script, {
   kind = "external_write",
   retryMode = "idempotency_key",
   timeoutMs = 1000,
+  configuration,
 } = {}) {
   return loadToolBindingManifestFromJson(JSON.stringify({
     manifest_version: "touba-manifest-v1",
     bindings: {
       "tool:test/Create": {
+        ...(configuration === undefined ? {} : { configuration }),
         handler: {
           kind: "process",
           command: process.execPath,

@@ -22,12 +22,12 @@ async function fixture(t) {
   const packed = await packPackage(author.path, { output: join(parent, 'source.tar.gz') });
   return { parent, author: author.path, bytes: readFileSync(packed.output), row: { id, status: 'draft', name: 'acme.example', version: '0.1.0', revision: 1, archive_digest: packed.digest } };
 }
-function server(t, handler) {
+function server(t, handler, { reuse = false } = {}) {
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (url, opts = {}) => {
     calls.push({ url, opts });
     assert.equal(opts.redirect, 'error');
-    if (url === registry + '/config.json') return json({ registry, authorization: { issuer, client_id: 'cli', scope: 'openid publish', acr: 'strong' } });
+    if (url === registry + '/config.json') return json({ registry, features: { presentation_reuse: reuse }, authorization: { issuer, client_id: 'cli', scope: 'openid publish', acr: 'strong' } });
     if (url === issuer + '/.well-known/openid-configuration') return json({ issuer, device_authorization_endpoint: issuer + '/device', token_endpoint: issuer + '/token', revocation_endpoint: issuer + '/revoke' });
     if (url === issuer + '/device') return json({ device_code: 'test-device', user_code: 'TEST-CODE', expires_in: 10, interval: 1, verification_uri: issuer + '/activate' });
     if (url === issuer + '/token') return json({ access_token: 'unit-private-access', refresh_token: 'unit-private-refresh' });
@@ -87,6 +87,25 @@ test('submit links new draft, resubmits using fresh editorial revision and refus
   assert.equal(uploads, 2);
   assert.equal(existsSync(join(f.author, '.touba/package-draft.lock')), false);
   assert.equal(calls.filter(call => call.url.endsWith('/revoke')).length, 6);
+});
+
+test('new-version presentation reuse is explicit and unavailable to machine credentials or replacement', async t => {
+  const f = await fixture(t);
+  let uploads = 0;
+  server(t, () => { throw Error('Unsupported registry must receive no archive'); });
+  await assert.rejects(submitPackageDraft(f.author, { ...options, 'presentation-from': nextId }), { code: 'PackagePresentationReuseUnavailable' });
+  server(t, (url, opts) => {
+    uploads++;
+    assert.equal(opts.method, 'POST');
+    assert.equal(opts.headers['X-Touba-Presentation-From'], nextId);
+    return json({ ...f.row, archive_digest: packageDigest(opts.body) }, 201);
+  }, { reuse: true });
+  for (const extra of [{ automation: true }, { ci: id }, { draft: id }, { 'presentation-from': '../bad' }]) {
+    await assert.rejects(submitPackageDraft(f.author, { ...options, 'presentation-from': nextId, ...extra }), { code: 'PackageOptionInvalid' });
+  }
+  await submitPackageDraft(f.author, { ...options, 'presentation-from': nextId });
+  await assert.rejects(submitPackageDraft(f.author, { ...options, 'presentation-from': nextId }), { code: 'PackageOptionInvalid' });
+  assert.equal(uploads, 1);
 });
 
 test('invalid local links, symlinks, duplicate options and different remote identities fail closed', async t => {

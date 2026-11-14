@@ -163,7 +163,7 @@ test("CLI registry resolve refuses incompatible protocols", () => {
 });
 
 test("CLI registry resolve refuses yanked packages", () => {
-  const fixture = createRegistryFixture({ status: "yanked" });
+  const fixture = createRegistryFixture({ status: "yanked", withdrawal: { reason: 'Unsafe handler. Use 0.2.0.', changed_at: '2026-11-14T12:00:00Z' } });
   try {
     const result = runCli([
       "registry",
@@ -181,6 +181,7 @@ test("CLI registry resolve refuses yanked packages", () => {
 
     assert.equal(result.status, 2);
     assert.match(result.stderr, /RegistryPackageYanked/);
+    assert.match(result.stderr, /Unsafe handler\. Use 0\.2\.0\./);
   } finally {
     cleanup(fixture.root);
   }
@@ -215,6 +216,7 @@ function createRegistryFixture(options = {}) {
     version: "0.1.0",
     kind: "touba_package",
     status: options.status ?? "draft",
+    ...(options.withdrawal ? { withdrawal: options.withdrawal } : {}),
     summary: "Example pack.",
     source: {
       type: "git",

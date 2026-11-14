@@ -3,9 +3,19 @@ import { readPackageBytes } from './package-fetch.mjs';
 import { packageError } from './package-contract.mjs';
 import { registryTrustState, trustedKeys } from './registry-trust-state.mjs';
 import { realpathSync } from 'node:fs';
+import { registryStatusCache } from './registry-status-cache.mjs';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 export async function readSignedRegistry(indexRef, trustPath, now, readBytes = readPackageBytes) {
+  return readRegistry(indexRef, trustPath, now, readBytes);
+}
+
+// Offline status is evidence for a reader only, never accepted for installation.
+export async function readSignedRegistryStatus(indexRef, trustPath, readBytes = readPackageBytes, { offline = false } = {}) {
+  return readRegistry(indexRef, trustPath, undefined, readBytes, { offline, cache: true });
+}
+
+async function readRegistry(indexRef, trustPath, now, readBytes, { offline = false, cache = false } = {}) {
   if (!trustPath || /^https?:\/\//.test(trustPath)) throw packageError('RegistryTrustRequired', 'select a local trusted registry key file with --trust');
   let trust;
   try { trust = JSON.parse(await readPackageBytes(trustPath, 65536)); }
@@ -16,7 +26,9 @@ export async function readSignedRegistry(indexRef, trustPath, now, readBytes = r
   // backups. A different trust location is an explicit new trust bootstrap.
   const continuity = registryTrustState(realpathSync(trustPath) + '.sqlite', registry);
   continuity.observe(material);
-  const token = (await readBytes(new URL('index.jwt', registry + '/').href, 8 * 1024 * 1024)).toString('utf8');
+  const cacheStore = cache ? registryStatusCache(trustPath, registry) : null;
+  const cached = offline ? cacheStore.read() : null;
+  const token = cached?.token ?? (await readBytes(new URL('index.jwt', registry + '/').href, 8 * 1024 * 1024)).toString('utf8');
   const parts = token.split('.');
   if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) throw packageError('RegistrySignatureInvalid', 'invalid signed registry index');
   let header, payload;
@@ -36,7 +48,7 @@ export async function readSignedRegistry(indexRef, trustPath, now, readBytes = r
   if (!valid) throw packageError('RegistrySignatureInvalid', 'registry signature verification failed');
   now ??= Math.floor(Date.now() / 1000);
   if (payload.registry !== registry || !Number.isSafeInteger(payload.iat) || !Number.isSafeInteger(payload.exp)
-      || payload.iat > now + 30 || payload.exp <= now || payload.exp <= payload.iat || payload.exp - payload.iat > 3600) {
+      || payload.iat < 0 || payload.iat > now + 30 || (!offline && payload.exp <= now) || payload.exp <= payload.iat || payload.exp - payload.iat > 3600) {
     throw packageError('RegistrySignatureExpired', 'registry origin or validity interval is invalid');
   }
   if (!object(payload.index)) throw packageError('RegistrySignatureInvalid', 'signed registry index is missing');
@@ -46,6 +58,9 @@ export async function readSignedRegistry(indexRef, trustPath, now, readBytes = r
   const digest = 'sha256:' + createHash('sha256').update(bytes).digest('hex');
   continuity.accept({ revision: payload.revision, digest, signingKey: header.kid,
     keyFingerprint: material.find(key => key.id === header.kid).fingerprint });
+  if (cache && !offline) cacheStore.write({ registry, token, revision: payload.revision, issued_at: payload.iat, collected_at: now });
   return { value: payload.index, ref: indexRef, bytes, signingKey: header.kid,
-    revision: payload.revision, digest };
+    revision: payload.revision, digest,
+    ...(cache ? { source: offline ? 'cache' : 'registry', expired: payload.exp <= now,
+      issued_at: payload.iat, expires_at: payload.exp, collected_at: cached?.collected_at ?? now } : {}) };
 }

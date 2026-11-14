@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import semver from "semver";
+import { normalizeEffectContract } from '../../touba-manifest/src/effect-contract.mjs';
+import { normalizeHandlerConfigurationSchema } from '../../../runtime/touba-handler-sdk/src/handler-configuration.mjs';
 
 export const PACKAGE_SCHEMA = "touba-package-v1";
 export const PACKAGE_MANIFEST = "touba.package.json";
@@ -25,6 +27,20 @@ function keys(value, allowed, at) {
   for (const key of Object.keys(value)) requireValue(allowed.includes(key), "PackageSchemaMismatch", `${at}.${key} is not supported`);
 }
 export function packageDigest(bytes) { return `sha256:${createHash("sha256").update(bytes).digest("hex")}`; }
+
+export function packageHandlerConfiguration(root, handler) {
+  if (!handler?.configuration) return undefined;
+  const path = packageFile(root, handler.configuration);
+  let document;
+  try { document = JSON.parse(readFileSync(path, "utf8")); }
+  catch {
+    if (path.endsWith('.json')) throw packageError('HandlerConfigurationInvalid', 'invalid handler configuration descriptor');
+    return undefined;
+  } // Legacy descriptive resources do not enable value transport.
+  if (!document?.schema_version?.startsWith?.("touba-handler-configuration-")) return undefined;
+  if (lstatSync(path).size > 65536) throw packageError("HandlerConfigurationInvalid", "configuration descriptor exceeds 64 KiB");
+  return normalizeHandlerConfigurationSchema(document);
+}
 
 // Display labels are not ownership credentials. Normalize only what the author
 // explicitly supplies. Normalize Latin accents; punctuation is still rejected.
@@ -142,11 +158,12 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
   requireValue(Array.isArray(handlers), "PackageSchemaMismatch", "handlers must be an array");
   const boundTools = new Set();
   for (const handler of handlers) {
-    keys(handler, ["tool", "path", "protocol", "configuration", "documentation"], "handler");
+    keys(handler, ["tool", "path", "protocol", "configuration", "documentation", "effect_contract"], "handler");
     requireValue(/^tool:[a-z_][a-z0-9_.]*\/[A-Za-z_][A-Za-z0-9_]*$/.test(handler.tool ?? "") && !boundTools.has(handler.tool), "PackageHandlerInvalid", "handlers must name distinct tool refs");
     boundTools.add(handler.tool); packagePath(handler.path);
     requireValue(handler.protocol === "touba-tool-handler-v1", "PackageHandlerInvalid", "unsupported handler protocol");
     for (const field of ["configuration", "documentation"]) if (handler[field] !== undefined) packagePath(handler[field]);
+    if (handler.effect_contract !== undefined) normalizeEffectContract(handler.effect_contract, { label: `handler ${handler.tool} recommended effect contract` });
   }
   if (document.engines !== undefined) {
     keys(document.engines, ["node", "platforms"], "engines");
@@ -212,6 +229,7 @@ export function readPackage(path, options = {}) {
     for (const resource of context.resources ?? []) include(resource.path);
   }
   for (const handler of document.handlers ?? []) for (const key of ["path", "configuration", "documentation"]) if (handler[key]) include(handler[key]);
+  for (const handler of document.handlers ?? []) packageHandlerConfiguration(root, handler);
   for (const host of document.hosts ?? []) include(host.path);
   if (document.readme) include(document.readme);
   for (const path of document.contract_tests ?? []) include(path);

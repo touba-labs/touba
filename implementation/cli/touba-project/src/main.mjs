@@ -597,6 +597,8 @@ function serveUsage() {
     "touba serve login --config touba.server.json --token-stdin stores the service key from standard input; logout removes this project's stored key.",
     "--max-pending-approvals <n> sets pending approval capacity (default 100, maximum 10000).",
     "--schedule-triggers runs enabled schedule entrypoints with the server's reviewed hosts and secrets; inspect and review interruptions in client.",
+    "--request-triggers admits enabled request triggers on the project listener; --webhook-signature-secret-env NAME supplies the signing secret through the host environment.",
+    "--mcp-discovery-config <path> selects a private inventory of approved local MCP servers; discovery requires explicit consent.",
     "--cloud-notifications forwards minimized operational events to the configured Cloud identity service in the background.",
     "--validation-plan <path> authorizes reviewed host test suites for client, with bounded execution and durable results.",
     "touba validation plan --id <suite> --test <file> [--input <file>] [--engine node|python|package] [--python <absolute-path>] [--out <plan.json>]",

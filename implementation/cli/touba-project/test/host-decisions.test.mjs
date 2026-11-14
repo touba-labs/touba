@@ -46,6 +46,30 @@ function project(t) {
 const manifestAt = root => join(root, ".touba/build/dev/touba.manifest.json");
 const readManifest = root => JSON.parse(readFileSync(manifestAt(root), "utf8"));
 
+test('obsolete triggers require reviewed removal and declared triggers cannot be removed', async t => {
+  const root = project(t), ref = 'trigger:orders.review/Daily';
+  const plain = 'module orders.review\nstrategy Review\n    gives Text\n    do\n        give "ready"\n';
+  writeFileSync(join(root, 'src/orders/review.tb'), plain + '\ntrigger Daily\n    on schedule "0 0 * * *"\n    runs strategy Review\n    limits\n        max_runs_per_day as 2\n        timeout_ms as 1000\n');
+  const first = await prepareProject({ root, mode: 'write' });
+  assert.equal(first.status, 'success', JSON.stringify(first.diagnostics));
+  const before = readFileSync(manifestAt(root), 'utf8');
+  const conflict = await prepareProject({ root, mode: 'write', hostDecisions: { remove_triggers: [ref] } });
+  assert.equal(conflict.status, 'error'); assert.ok(conflict.diagnostics.some(item => item.code === 'HostDecisionRemovalConflict'));
+  assert.equal(readFileSync(manifestAt(root), 'utf8'), before);
+  writeFileSync(join(root, 'src/orders/review.tb'), plain);
+  const refused = await prepareProject({ root, mode: 'write' });
+  assert.equal(refused.status, 'error'); assert.ok(refused.actions.some(item => item.kind === 'review_remove_trigger'));
+  assert.equal(readFileSync(manifestAt(root), 'utf8'), before);
+  const hostDecisions = { remove_triggers: [ref] };
+  const plan = await prepareProject({ root, mode: 'plan', hostDecisions });
+  assert.notEqual(plan.status, 'error', JSON.stringify(plan.diagnostics));
+  assert.equal(readFileSync(manifestAt(root), 'utf8'), before);
+  const written = await prepareProject({ root, mode: 'write', hostDecisions, expectedReviewDigest: plan.review_digest });
+  assert.equal(written.status, 'success', JSON.stringify(written.diagnostics));
+  assert.equal(readManifest(root).triggers[ref], undefined);
+  assert.equal((await prepareProject({ root, mode: 'check' })).status, 'success');
+});
+
 test("obsolete bindings require an explicit removal and active resources cannot be removed", async t => {
   const root = project(t);
   const initial = await prepareProject({ root, mode: "write", hostDecisions: decisions });

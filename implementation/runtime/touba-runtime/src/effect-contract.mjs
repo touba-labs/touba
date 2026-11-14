@@ -101,7 +101,7 @@ export function deriveEffectId(input) {
 }
 
 /**
- * @param {{airDigest: string, toolRef: string, arguments: unknown, resourceBindings: unknown, controlContext?: unknown}} input
+ * @param {{airDigest: string, toolRef: string, arguments: unknown, resourceBindings: unknown, controlContext?: unknown, configurationDigest?: string}} input
  * @returns {string}
  */
 export function deriveEffectRequestDigest(input) {
@@ -113,6 +113,7 @@ export function deriveEffectRequestDigest(input) {
     arguments: input.arguments,
     resource_bindings: input.resourceBindings,
     ...(input.controlContext === undefined ? {} : { control_context: input.controlContext }),
+    ...(input.configurationDigest === undefined ? {} : { configuration_digest: requireSha256(input.configurationDigest, 'configuration_digest', 'EffectContextRequired') }),
   };
   return `sha256:${canonicalSha256(material)}`;
 }

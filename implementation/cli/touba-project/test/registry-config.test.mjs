@@ -80,6 +80,13 @@ test('human errors are translated without changing machine codes or trusting rem
   assert.match(packageDiagnostic(error, 'fr_CA.UTF-8'), /Réessayez dans 423 s/);
   assert.match(packageDiagnostic(error, 'en'), /Retry in 423 s/);
   assert.match(packageDiagnostic({ code: 'RegistryPackageYanked' }, 'fr'), /retirée/);
+  assert.match(packageDiagnostic({ code: 'RegistryPackageYanked', withdrawalReason: 'Use 2.0.0' }, 'fr'), /Motif : Use 2.0.0/);
+  const testFailure = publicationRefusal('PackageDraftRefused', { data: { error: 'package_tests_failed', diagnostic: {
+    phase: 'tests', code: 'PackageTestsFailed', stdout: 'private-log', stderr: 'password=secret',
+  } } }, 'refused');
+  assert.deepEqual(testFailure.diagnostics, [{ phase: 'tests', code: 'PackageTestsFailed', message: 'package_tests_failed' }]);
+  assert.match(packageDiagnostic(testFailure, 'fr'), /\[tests: PackageTestsFailed\]/);
+  assert.doesNotMatch(packageDiagnostic(testFailure, 'en'), /private-log|secret/);
   assert.match(packageDiagnostic({ code: 'PackagePublicationTargetInvalid' }, 'fr'), /localhost/);
   const unsafe = publicationRefusal('PackageDraftRefused', { data: { error: '<script>secret</script>' } }, 'refused');
   assert.equal(unsafe.reason, 'refused'); assert.doesNotMatch(packageDiagnostic(unsafe, 'fr'), /secret/);

@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { normalizeToolApprovalPolicy, combineToolApprovalPolicies } from "../../../contracts/tool-approval-policy.mjs";
-import { PACKAGE_NAME } from "./package-contract.mjs";
+import { PACKAGE_NAME, packageHandlerConfiguration } from "./package-contract.mjs";
+import { normalizeEffectContract, effectContractToJson } from '../../touba-manifest/src/effect-contract.mjs';
+import { normalizeHandlerConfigurationSchema } from '../../../runtime/touba-handler-sdk/src/handler-configuration.mjs';
 
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -24,8 +26,10 @@ export function normalizePackageContracts(value = {}) {
     if (!PACKAGE_NAME.test(name) || !object(contract) || Object.keys(contract).some(k => !["version", "digest", "tools"].includes(k))
         || typeof contract.version !== "string" || contract.version.length > 100 || !digest.test(contract.digest)) fail("PackageGovernanceInvalid");
     for (const [ref, definition] of Object.entries(boundedMap(contract.tools))) {
-      if (!toolRef.test(ref) || !object(definition) || Object.keys(definition).some(k => !["approval_policy", "required_capabilities", "required_secrets", "memory_accesses", "signature"].includes(k))) fail("PackageGovernanceInvalid");
+      if (!toolRef.test(ref) || !object(definition) || Object.keys(definition).some(k => !["approval_policy", "required_capabilities", "required_secrets", "memory_accesses", "signature", "recommended_effect", "configuration_schema"].includes(k))) fail("PackageGovernanceInvalid");
       if (Object.hasOwn(definition, "approval_policy")) normalizeToolApprovalPolicy(definition.approval_policy);
+      if (Object.hasOwn(definition, 'recommended_effect')) normalizeEffectContract(definition.recommended_effect);
+      if (Object.hasOwn(definition, 'configuration_schema')) normalizeHandlerConfigurationSchema(definition.configuration_schema);
       for (const key of ["required_capabilities", "required_secrets"]) if (!Array.isArray(definition[key]) || definition[key].some(v => typeof v !== "string" || v.length > 256)) fail("PackageGovernanceInvalid");
       if (!Array.isArray(definition.memory_accesses) || !object(definition.signature)) fail("PackageGovernanceInvalid");
     }
@@ -37,8 +41,11 @@ function withoutSource(value) {
   if (!object(value)) return value;
   return Object.fromEntries(Object.entries(value).filter(([k]) => k !== "source_ref").sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, withoutSource(v)]));
 }
-export function toolContract(tool) {
+export function toolContract(tool, handler, root) {
+  const schema = root ? packageHandlerConfiguration(root, handler) : handler?.configuration_schema;
   return { ...(Object.hasOwn(tool, "approval_policy") ? { approval_policy: normalizeToolApprovalPolicy(tool.approval_policy) } : {}),
+    ...(handler?.effect_contract ? { recommended_effect: effectContractToJson(normalizeEffectContract(handler.effect_contract)) } : {}),
+    ...(schema ? { configuration_schema: normalizeHandlerConfigurationSchema(schema) } : {}),
     required_capabilities: [...(tool.required_capabilities ?? [])].sort(), required_secrets: [...(tool.required_secrets ?? [])].sort(),
     memory_accesses: withoutSource(tool.memory_accesses ?? []).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
     signature: withoutSource(tool.signature ?? {}) };
@@ -58,7 +65,7 @@ export function proposePackageGovernance({ configuration = {}, packages = [], en
   for (const pkg of packages) {
     const tools = Object.fromEntries(entries.filter(entry => entry.packageName === pkg.name)
       .flatMap(entry => (entry.document.definitions?.tools ?? []).filter(tool => !entry.document.module?.name || tool.id.startsWith(`tool:${entry.document.module.name}/`)))
-      .map(tool => [tool.id, toolContract(tool)]).sort(([a], [b]) => a.localeCompare(b)));
+      .map(tool => [tool.id, toolContract(tool, pkg.handlers?.find(handler => handler.tool === tool.id))]).sort(([a], [b]) => a.localeCompare(b)));
     const next = { version: pkg.version, digest: pkg.digest, tools };
     const before = contracts[pkg.name];
     if (reviews[pkg.name] !== undefined && reviews[pkg.name] !== pkg.digest) fail("PackageGovernanceStale");

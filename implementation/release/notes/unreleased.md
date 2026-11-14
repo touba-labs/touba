@@ -1,5 +1,28 @@
 # Unreleased
 
+## Package workflow and handler configuration, local candidate
+
+Package distributions retain their verified dependency closure without changing
+transitive dependencies into direct dependencies. Generated tests use disposable
+consumers. Explicit exported package entries do not require an application wrapper.
+Update previews bind the exact replacement; downgrades require explicit review
+and do not roll back application effects or consumer authority.
+
+Signed registry status can be cached for offline audit. Expired cached status is
+reported as expired and never authorizes installation. Handler effect recommendations
+remain separate from host grants. SDK receipt assertions test correlation, not
+the truth of an external service's claimed result.
+
+Typed, bounded configuration can be reviewed for a selected package handler.
+The JS and Python SDKs receive a private context copy, without populating the
+environment or general traces. Configuration changes bind effect identities and
+human approval compatibility. Existing descriptive configuration resources remain
+supported; they do not enable runtime value transport. See the package reference.
+
+These changes are candidates for local qualification, not a public release.
+Automatic dependency resolution for handler code, security advisory subscriptions
+and grouped submission accounting remain separate work.
+
 ## Project trigger reliability, source work after 1.5.0-rc.1
 
 Assigned to the [local 1.5.0 candidate](v1.5.0.md). Installation and public

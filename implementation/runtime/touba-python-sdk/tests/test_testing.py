@@ -2,10 +2,20 @@ import asyncio
 import unittest
 from touba_sdk import ToubaEngineError
 from touba_sdk.testing import (create_scripted_decision_provider, assert_run_succeeded,
-                               assert_run_refused, assert_trace_events)
+                               assert_run_refused, assert_trace_events, assert_effect_receipt)
+from touba_sdk import create_effect_receipt, ToubaHandlerError
 
 
 class TestingTests(unittest.TestCase):
+    def test_effect_receipts_require_exact_identity_and_outcome(self):
+        effect = {"effect_id": "effect:sha256:" + "a" * 64, "request_digest": "sha256:" + "b" * 64, "attempt_index": 1}
+        for outcome in ("applied", "not_applied", "unknown"):
+            receipt = create_effect_receipt(effect, {"outcome": outcome, "receipt_ref": "synthetic-1"})
+            self.assertEqual(assert_effect_receipt({"ok": outcome == "applied", "effect_receipt": receipt}, effect, outcome), receipt)
+            for bad in (None, {**receipt, "effect_id": "other"}, {**receipt, "unexpected": True}):
+                with self.assertRaises((AssertionError, ToubaHandlerError)):
+                    assert_effect_receipt({"ok": True, "effect_receipt": bad}, effect, outcome)
+
     def test_script_routing_repetition_isolation_and_exhaustion(self):
         proposal = {"action": "select_capability", "target_ref": "tool:app/Read", "arguments": {}}
         provider = create_scripted_decision_provider([

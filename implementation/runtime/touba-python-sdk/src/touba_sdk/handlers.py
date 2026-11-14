@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import hashlib
 import inspect
 import json
+import math
 import os
 import re
 import sys
@@ -33,6 +34,34 @@ class ToubaHandlerError(Exception):
 
 def _error(code, message):
     raise ToubaHandlerError(code, message)
+
+
+def _configuration(value):
+    def fail():
+        _error("HandlerConfigurationInvalid", "invalid handler configuration")
+    if type(value) is not dict or len(value) > 64:
+        fail()
+    for key, item in value.items():
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", key) or key in ("constructor", "prototype"):
+            fail()
+        if type(item) is str:
+            try:
+                if "\0" in item or len(item.encode("utf-8")) > 4096:
+                    fail()
+            except UnicodeEncodeError:
+                fail()
+        elif type(item) is bool:
+            pass
+        elif type(item) in (int, float):
+            if abs(item) > 9007199254740991 or not math.isfinite(item):
+                fail()
+        else:
+            fail()
+    size = 2 + sum(len(key) + 4 + (len(json.dumps(item, ensure_ascii=False).encode("utf-8")) if type(item) is str
+                                  else 5 if type(item) is bool else 32) for key, item in value.items())
+    if size > 16384:
+        fail()
+    return deepcopy(value)
 
 
 def _object(value, fields, code):
@@ -197,7 +226,7 @@ def _envelope(request, tool_ref, required_grants, required_secret_handles):
     if any(handle not in secrets for handle in required_secret_handles):
         _error("MissingSecretHandle", "Required secret handle missing from handler request")
     _object(request, ["protocol", "operation", "tool_ref", "call_id", "arguments", "grants", "memory_accesses",
-                      "resource_bindings", "secret_handles", "limits", "effect", "compensation", "execution_context"],
+                      "resource_bindings", "secret_handles", "limits", "effect", "compensation", "execution_context", "configuration"],
             "InvalidCompensation" if request["operation"] == "compensate" else "InvalidHandlerRequest")
     if "execution_context" in request:
         context = request["execution_context"]
@@ -278,9 +307,11 @@ async def handle_tool_request(raw_input: str, expected_tool_ref: str, handler: C
         except (ValueError, TypeError):
             _error("InvalidHandlerJson", "Handler request must be valid JSON")
         effect, compensation = _envelope(request, expected_tool_ref, required_grants, required_secret_handles)
+        configuration = _configuration(request["configuration"]) if "configuration" in request else None
         envelope = {"request": request, "raw_input": raw_input, "arguments": request.get("arguments", {}),
                     "grants": request.get("grants", []), "memory_accesses": request.get("memory_accesses", []),
                     "execution_context": deepcopy(request.get("execution_context")),
+                    "configuration": configuration,
                     "resource_bindings": request.get("resource_bindings", []), "secret_handles": request.get("secret_handles", []),
                     "limits": request.get("limits", {}), "env": dict(os.environ),
                     "effect": deepcopy(effect), "compensation": deepcopy(compensation),

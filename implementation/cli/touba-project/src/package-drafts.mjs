@@ -7,6 +7,7 @@ import { assertAuthorWritable, assertPlainDirectory, findPackageWorkspace } from
 import { checkPackageArchive, packPackage, unpackPackage } from './packages.mjs';
 import { automationIdentity, automationDescriptor, automationRequestId } from './package-automation.mjs';
 import { publicationRefusal } from './package-diagnostics.mjs';
+import { acquireDraftLock } from './package-draft-lock.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
@@ -118,6 +119,10 @@ export async function checkoutPackageDraft(id, options = {}) {
 }
 
 export async function submitPackageDraft(path, options = {}) {
+  const presentationFrom = options['presentation-from'];
+  if (presentationFrom !== undefined && (typeof presentationFrom !== 'string' || !UUID.test(presentationFrom) || options.automation || options.ci || options.draft)) {
+    throw packageError('PackageOptionInvalid', 'presentation reuse requires a publication UUID and an interactive new-version submission');
+  }
   if (options.automation) automationRequestId(options['request-id']);
   path ??= findPackageWorkspace(options.root, { author: true });
   const author = readPackage(path, { publishing: true });
@@ -128,11 +133,11 @@ export async function submitPackageDraft(path, options = {}) {
   const matching = linked?.name === author.document.name && linked.version === author.document.version;
   if (matching && linked.registry !== registry && !options.draft) throw packageError('PackageDraftTargetMismatch', 'this author project is linked to another registry; choose its draft explicitly');
   const selected = options.draft ? draftId(options.draft) : matching ? linked.id : undefined;
+  if (presentationFrom && selected) throw packageError('PackageOptionInvalid', 'this version already has a draft; edit its presentation or select a new package version');
   const folder = join(root, '.touba');
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   const lock = join(folder, 'package-draft.lock');
-  try { writeFileSync(lock, String(process.pid) + '\n', { flag: 'wx', mode: 0o600 }); }
-  catch (error) { if (error.code === 'EEXIST') throw packageError('PackageDraftBusy', 'another draft operation is active; inspect .touba/package-draft.lock before recovery'); throw error; }
+  const releaseLock = acquireDraftLock(lock);
   let temporary;
   try {
     temporary = realpathSync(mkdtempSync(join(tmpdir(), 'touba-package-submit-')));
@@ -145,6 +150,7 @@ export async function submitPackageDraft(path, options = {}) {
         identity = options.automation ? automationIdentity(registry, options) : await authorizePublication(registry, { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true, signal, notify: options.notify });
         const api = identity.api ?? registry;
         let previous;
+        if (presentationFrom && identity.presentation_reuse !== true) throw packageError('PackagePresentationReuseUnavailable', 'this registry does not advertise editorial reuse; no archive was submitted');
         if (selected) {
           const response = accepted(await publicationDocument(`${api}/drafts/${selected}`, requestOptions(identity.token, signal)));
           previous = descriptor(options.automation ? automationDescriptor(response) : response, selected);
@@ -155,6 +161,7 @@ export async function submitPackageDraft(path, options = {}) {
         const result = await publicationDocument(`${api}/drafts${selected ? `/${selected}${options.automation ? '/archive' : ''}` : ''}`, { ...request, method: selected ? 'PUT' : 'POST',
           headers: { ...request.headers, 'Content-Type': 'application/gzip', 'X-Touba-Namespace': checked.manifest.name.split('.').slice(0, -1).join('.'),
             ...(previous ? { 'X-Touba-Draft-Revision': String(previous.revision) } : {}),
+            ...(presentationFrom ? { 'X-Touba-Presentation-From': presentationFrom } : {}),
             ...(options.automation ? { 'Idempotency-Key': options['request-id'], 'X-Touba-Package': checked.manifest.name,
               ...(previous ? { 'X-Touba-Revision': String(previous.revision) } : {}) } : {}) }, body: readFileSync(packed.output) });
         const response = accepted(result);
@@ -170,5 +177,5 @@ export async function submitPackageDraft(path, options = {}) {
             ...(!saved ? [`Local draft link was not saved. Resume with --draft ${row.id} --registry ${registry}.`] : [])] };
       } finally { await identity?.revoke(); }
     });
-  } finally { if (temporary) rmSync(temporary, { recursive: true, force: true }); rmSync(lock); }
+  } finally { try { if (temporary) rmSync(temporary, { recursive: true, force: true }); } finally { releaseLock(); } }
 }

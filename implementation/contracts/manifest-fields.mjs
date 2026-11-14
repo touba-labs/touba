@@ -10,7 +10,7 @@ export function assertKnownFields(value, keys, path) {
   }
 }
 export function assertBindingFields(binding, path = "binding") {
-  assertKnownFields(binding, ["handler", "grants", "secrets", "memories", "effect_contract", "timeout_ms", "max_payload_bytes", "payload_constraints", "sandbox", "approval_policy"], path);
+  assertKnownFields(binding, ["handler", "configuration", "grants", "secrets", "memories", "effect_contract", "timeout_ms", "max_payload_bytes", "payload_constraints", "sandbox", "approval_policy"], path);
   if (!object(binding)) return;
   assertKnownFields(binding.handler, ["kind", "command", "args", "cwd"], `${path}.handler`);
   for (const [index, memory] of (Array.isArray(binding.memories) ? binding.memories : []).entries()) assertKnownFields(memory, ["ref", "access"], `${path}.memories.${index}`);

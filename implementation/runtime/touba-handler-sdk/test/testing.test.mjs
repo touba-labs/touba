@@ -1,4 +1,16 @@
 import test from "node:test";
+import { assertEffectReceipt } from '../src/testing.mjs';
+import { createEffectReceipt } from '../src/index.mjs';
+
+test('effect conformance assertion requires exact identity, outcome and bounded receipt fields', () => {
+  const effect = { effect_id: 'effect:sha256:' + 'a'.repeat(64), request_digest: 'sha256:' + 'b'.repeat(64), attempt_index: 1 };
+  for (const outcome of ['applied', 'not_applied', 'unknown']) {
+    const response = { ok: outcome === 'applied', effect_receipt: createEffectReceipt(effect, { outcome, receipt_ref: 'synthetic-1' }) };
+    assert.deepEqual(assertEffectReceipt(response, effect, outcome), response.effect_receipt);
+    for (const receipt of [undefined, { ...response.effect_receipt, effect_id: 'other' }, { ...response.effect_receipt, unexpected: true }])
+      assert.throws(() => assertEffectReceipt({ ...response, effect_receipt: receipt }, effect, outcome));
+  }
+});
 import assert from "node:assert/strict";
 import { ToubaEngine, ToubaEngineError } from "../src/index.mjs";
 import { createScriptedDecisionProvider, assertRunSucceeded, assertRunRefused, assertTraceEvents } from "../src/testing.mjs";

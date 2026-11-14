@@ -34,6 +34,28 @@ test('vault sessions bind registry, issuer, client, scope and original deadline'
   assert.equal(store.read(), null); assert.equal(vault.values.size, 0);
 });
 
+test('one-hour author ceiling stays fixed while shorter idle grants rotate', () => {
+  let now = 1000000; const vault = memoryVault();
+  const config = { ...authorization, session_max_age_seconds: 3600 };
+  const store = sessionStore('https://registry.invalid', 'publication', config, { vault, now: () => now });
+  assert.equal(store.supported, true);
+  assert.equal(store.write({ refresh_token: 'first', refresh_expires_in: 1800 }), true);
+  const initial = store.read();
+  for (let minute = 10; minute < 60; minute += 10) {
+    now = initial.started + minute * 60000;
+    const previous = store.read(); assert.ok(previous);
+    assert.equal(store.write({ refresh_token: 'next', refresh_expires_in: 1800 }, previous), true);
+    assert.equal(store.read().until, initial.started + 3600000);
+  }
+  now = initial.until; assert.equal(store.read(), null);
+  store.write({ refresh_token: 'fresh', refresh_expires_in: 1800 });
+  now += 1800000; assert.equal(store.read(), null, 'Inactivity still expires the refresh credential');
+  assert.equal(store.write({ refresh_token: 'expired', refresh_expires_in: 0 }), false);
+  for (const age of [59, 3601, '3600', true, NaN]) {
+    assert.equal(sessionStore('https://registry.invalid', 'publication', { ...config, session_max_age_seconds: age }, { vault }).supported, false);
+  }
+});
+
 test('parallel refreshes serialize and release locks even after an error', async () => {
   const key = randomBytes(32).toString('hex'); const order = [];
   await Promise.all([sessionLock(key, async () => { order.push(1); await new Promise(r => setTimeout(r, 50)); order.push(2); }), sessionLock(key, () => order.push(3))]);

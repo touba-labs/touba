@@ -100,7 +100,9 @@ async function connectedRegistry(registry, { access = 'publication', noBrowser =
       catch (error) { await release(response); throw error; }
       if (!saved) { await release(response); throw packageError('RegistrySessionUnavailable', 'the identity provider did not issue a bounded reusable session; use --session-only'); }
     }
-    return { token: response.access_token, persistent: saved, async revoke() { if (!saved) await release(response); } };
+    return { token: response.access_token, persistent: saved, session_max_age_seconds: authorization.session_max_age_seconds,
+      presentation_reuse: config.data.features?.presentation_reuse === true,
+      async revoke() { if (!saved) await release(response); } };
   };
   const run = async () => {
     let persistent = !sessionOnly && store.supported, saved;
