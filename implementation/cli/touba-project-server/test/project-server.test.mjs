@@ -1421,7 +1421,7 @@ test("multi-file change sets apply through a recoverable transaction", () => {
   }
 });
 
-test("multi-file change sets restore already written targets when commit fails", () => {
+test("multi-file change sets reject invalid parent paths before changing files", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-change-rollback-"));
   try {
     mkdirSync(join(root, "src"), { recursive: true });
@@ -1462,7 +1462,7 @@ test("multi-file change sets restore already written targets when commit fails",
           reason: "Exercise rollback.",
         },
       }),
-      /rolled back/u,
+      /ENOTDIR|not a directory/u,
     );
     assert.equal(readFileSync(join(root, "src", "main.tb"), "utf8"), original);
     assert.equal(existsSync(join(root, ".touba", "project-change.lock")), false);

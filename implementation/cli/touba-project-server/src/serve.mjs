@@ -30,6 +30,9 @@ import serverPackage from "../package.json" with { type: "json" };
 import { isDecisionContinuationRoute, decisionContinuationOnly, assertDecisionContinuation } from "./decision-continuation.mjs";
 import { readApprovalDossier } from './approval-dossier.mjs';
 import { readOwnershipReadiness } from './ownership-readiness.mjs';
+import { createOwnershipEditor } from './ownership-editor.mjs';
+import { createMcpDiscovery } from '../../touba-project/src/mcp-discovery.mjs';
+import { applyChangeTargetsTransaction, recoverProjectChangeTransactions, replaceFileFromTemp } from "../../touba-project/src/project-transactions.mjs";
 import { projectHandlerIsolation } from './handler-isolation-status.mjs';
 import { toolApprovalReview, PARALLEL_APPROVAL_METADATA_FIELDS, validateParallelApprovalMetadata } from "./tool-approval-review.mjs";
 import { projectOperationBudgets } from "./operation-budgets.mjs";
@@ -409,6 +412,7 @@ function createProjectServerWithLease(options, takeLease) {
     options.contractsRoot ?? fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url)),
   );
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
+  const mcpDiscovery = createMcpDiscovery(options.mcpDiscoveryConfigPath && resolve(projectRoot, options.mcpDiscoveryConfigPath));
   const deploymentTargetUrl = options.deploymentTargetUrl;
   const deploymentTargetToken = options.deploymentTargetToken
     ?? (options.deploymentTargetTokenEnv === undefined
@@ -503,6 +507,9 @@ function createProjectServerWithLease(options, takeLease) {
     configuredTrust: options.packageRegistryTrust ? resolve(projectRoot, options.packageRegistryTrust) : undefined,
     onChange: value => packageSurface.configureRegistry(value) });
   const projectPreparation = createProjectPreparation(projectRoot);
+  const ownershipEditor = createOwnershipEditor(projectRoot, {
+    apply: args => applyChangeTargetsTransaction({ projectRoot, ...args }),
+  });
   const integrationImport = createIntegrationImport(projectRoot, {
     validate: targets => compileProposedSources({ projectRoot, targets }).diagnostics,
     apply: args => applyChangeTargetsTransaction({ projectRoot, ...args }),
@@ -1535,7 +1542,14 @@ function createProjectServerWithLease(options, takeLease) {
             element_source: "/elements/source",
             element_authoring_propose: "/elements/propose",
             integration_import_preview: '/integrations/import/preview',
+            mcp_discovery_targets: '/integrations/mcp/targets',
+            mcp_discover: '/integrations/mcp/discover',
             integration_import_apply: '/integrations/import/apply',
+            ownership: '/ownership',
+            ownership_preview: '/ownership/preview',
+            ownership_apply: '/ownership/apply',
+            ownership_review_preview: '/ownership/reviews/preview',
+            ownership_review_apply: '/ownership/reviews/apply',
             deployments: "/deployments",
             deployment_plan: "/deployments/plan",
             deployment_publish: "/deployments/publish",
@@ -3072,6 +3086,33 @@ function createProjectServerWithLease(options, takeLease) {
       if (request.method === "GET" && url.pathname.startsWith("/changes/")) {
         const proposalId = decodeURIComponent(url.pathname.slice("/changes/".length));
         writeJson(response, 200, getProjectChangeDetail({ projectRoot, changeProposalsPath, proposalId }));
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/integrations/mcp/targets') {
+        writeJson(response,200,mcpDiscovery.targets()); return;
+      }
+      if (request.method === 'POST' && url.pathname === '/integrations/mcp/discover') {
+        const discovered = await mcpDiscovery.discover(await readJsonBody(request));
+        publishEvent(eventClients,'integration.discovered',{target:discovered.target,digest:discovered.digest,actor_id:humanIdentity?.user?.id??null},nextEvent);
+        writeJson(response,200,discovered); return;
+      }
+      if (request.method === 'GET' && url.pathname === '/ownership') {
+        writeJson(response, 200, await ownershipEditor.read()); return;
+      }
+      if (request.method === 'POST' && ['/ownership/preview', '/ownership/apply', '/ownership/reviews/preview', '/ownership/reviews/apply'].includes(url.pathname)) {
+        const body = await readJsonBody(request);
+        const principal = JSON.stringify([humanIdentity?.user?.id ?? 'project-bearer', humanIdentity?.session_id ?? null, humanIdentity?.organization_id ?? null]);
+        const id = humanIdentity?.user?.id;
+        const userRef = id ? (id.startsWith('user:') ? id : `user:${id}`) : null;
+        const reviewing = url.pathname.startsWith('/ownership/reviews/');
+        if (url.pathname.endsWith('/preview')) {
+          if ((body?.action === 'review') !== reviewing) throw serviceError('OwnershipEditorInvalid', 'Use the dedicated review route');
+          writeJson(response, 200, await ownershipEditor.preview(principal, userRef, body));
+        } else {
+          const result = await ownershipEditor.apply(principal, userRef, body, reviewing);
+          publishEvent(eventClients, 'ownership.changed', { transaction_id: result.transaction_id, review_digest: result.review_digest }, nextEvent);
+          writeJson(response, 200, result);
+        }
         return;
       }
       if (request.method === 'POST' && ['/integrations/import/preview', '/integrations/import/apply'].includes(url.pathname)) {
@@ -9291,251 +9332,7 @@ function applySingleChangeTarget({ projectRoot, target }) {
   };
 }
 
-function applyChangeTargetsTransaction({ projectRoot, proposalId, targets, decidedAt, review_actor, reason }) {
-  const toubaRoot = join(projectRoot, ".touba");
-  const lockPath = join(toubaRoot, "project-change.lock");
-  mkdirSync(toubaRoot, { recursive: true });
-  try {
-    mkdirSync(lockPath);
-  } catch (cause) {
-    if (cause?.code === "EEXIST") {
-      throw serviceError("ToubaServeChangeProjectLocked", "another project change is being applied");
-    }
-    throw cause;
-  }
-
-  const transactionId = `${proposalId.replace(/[^A-Za-z0-9_.-]/gu, "_")}-${Date.now()}`;
-  const transactionRoot = join(toubaRoot, "change-transactions", transactionId);
-  const stageRoot = join(transactionRoot, "stage");
-  const backupRoot = join(transactionRoot, "backup");
-  const journalPath = join(transactionRoot, "journal.json");
-  const journal = {
-    schema_version: "touba-project-change-transaction-v1",
-    transaction_id: transactionId,
-    proposal_id: proposalId,
-    status: "preparing",
-    prepared_at: decidedAt,
-    ...(review_actor ? { review_actor, reason } : {}),
-    targets: targets.map((target) => ({
-      path: target.path,
-      content_sha256: target.content_sha256,
-      base_content_exists: target.base_content_exists,
-      base_content_sha256: target.base_content_sha256,
-    })),
-  };
-  mkdirSync(stageRoot, { recursive: true });
-  mkdirSync(backupRoot, { recursive: true });
-  writeTransactionJournal(journalPath, journal);
-
-  const entries = targets.map((target, index) => {
-    const targetPath = safeProjectPath(projectRoot, target.path);
-    const stagePath = join(stageRoot, `${index}.next`);
-    const backupPath = join(backupRoot, `${index}.previous`);
-    writeFileSync(stagePath, target.content, "utf8");
-    if (target.base_content_exists) {
-      writeFileSync(backupPath, readFileSync(targetPath));
-    }
-    return {
-      target,
-      targetPath,
-      stagePath,
-      backupPath,
-    };
-  });
-  journal.status = "prepared";
-  writeTransactionJournal(journalPath, journal);
-
-  const committed = [];
-  try {
-    journal.status = "committing";
-    writeTransactionJournal(journalPath, journal);
-    for (const entry of entries) {
-      mkdirSync(dirname(entry.targetPath), { recursive: true });
-      replaceFileFromTemp(entry.stagePath, entry.targetPath);
-      committed.push(entry);
-    }
-    journal.status = "committed";
-    journal.committed_at = new Date().toISOString();
-    writeTransactionJournal(journalPath, journal);
-  } catch (cause) {
-    const rollbackFailures = [];
-    for (const entry of [...committed].reverse()) {
-      try {
-        if (entry.target.base_content_exists) {
-          const restorePath = `${entry.targetPath}.touba-restore-${process.pid}-${Date.now()}`;
-          writeFileSync(restorePath, readFileSync(entry.backupPath));
-          replaceFileFromTemp(restorePath, entry.targetPath);
-        } else {
-          rmSync(entry.targetPath, { force: true });
-        }
-      } catch (rollbackCause) {
-        rollbackFailures.push(`${entry.target.path}: ${rollbackCause.message}`);
-      }
-    }
-    journal.status = rollbackFailures.length === 0 ? "rolled_back" : "rollback_failed";
-    journal.failed_at = new Date().toISOString();
-    journal.error = cause.message;
-    journal.rollback_failures = rollbackFailures;
-    writeTransactionJournal(journalPath, journal);
-    const error = serviceError(
-      rollbackFailures.length === 0
-        ? "ToubaServeChangeTransactionRolledBack"
-        : "ToubaServeChangeTransactionRecoveryRequired",
-      rollbackFailures.length === 0
-        ? "multi-file project change failed and was rolled back"
-        : "multi-file project change requires operator recovery",
-    );
-    error.diagnostics = rollbackFailures.map((message) =>
-      serviceDiagnostic("ToubaServeChangeRollbackFailed", message)
-    );
-    throw error;
-  } finally {
-    rmSync(lockPath, { recursive: true, force: true });
-  }
-
-  return {
-    write_mode: "recoverable_transaction",
-    project_root: projectRoot,
-    relative_path: targets[0].path,
-    relative_paths: targets.map((target) => target.path),
-    transaction_id: transactionId,
-  };
-}
-
-export function recoverProjectChangeTransactions({
-  projectRoot,
-  recoveredAt = new Date().toISOString(),
-}) {
-  const toubaRoot = join(resolve(projectRoot), ".touba");
-  const transactionsRoot = join(toubaRoot, "change-transactions");
-  const lockPath = join(toubaRoot, "project-change.lock");
-  if (!existsSync(transactionsRoot)) {
-    rmSync(lockPath, { recursive: true, force: true });
-    return { status: "clean", recovered: [] };
-  }
-  const recovered = [];
-  const failures = [];
-  for (const entry of readdirSync(transactionsRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const transactionRoot = join(transactionsRoot, entry.name);
-    const journalPath = join(transactionRoot, "journal.json");
-    if (!existsSync(journalPath)) continue;
-    let journal;
-    try {
-      journal = JSON.parse(readFileSync(journalPath, "utf8"));
-    } catch (cause) {
-      failures.push(`${entry.name}: ${cause.message}`);
-      continue;
-    }
-    if (
-      journal.schema_version !== "touba-project-change-transaction-v1"
-      || !Array.isArray(journal.targets)
-    ) {
-      failures.push(`${entry.name}: invalid transaction journal`);
-      continue;
-    }
-    if (["committed", "rolled_back", "recovered"].includes(journal.status)) {
-      continue;
-    }
-    const transactionFailures = [];
-    if (["committing", "rollback_failed"].includes(journal.status)) {
-      journal.targets.forEach((target, index) => {
-        try {
-          recoverProjectChangeTarget({
-            projectRoot,
-            target,
-            backupPath: join(transactionRoot, "backup", `${index}.previous`),
-          });
-        } catch (cause) {
-          transactionFailures.push(`${target.path}: ${cause.message}`);
-        }
-      });
-    }
-    if (transactionFailures.length === 0) {
-      journal.status = "recovered";
-      journal.recovered_at = recoveredAt;
-      journal.rollback_failures = [];
-      writeTransactionJournal(journalPath, journal);
-      recovered.push(journal.transaction_id ?? entry.name);
-    } else {
-      journal.status = "rollback_failed";
-      journal.rollback_failures = transactionFailures;
-      writeTransactionJournal(journalPath, journal);
-      failures.push(...transactionFailures.map((message) => `${entry.name}: ${message}`));
-    }
-  }
-  if (failures.length > 0) {
-    const error = serviceError(
-      "ToubaServeChangeTransactionRecoveryRequired",
-      "one or more interrupted project changes require operator recovery",
-    );
-    error.diagnostics = failures.map((message) =>
-      serviceDiagnostic("ToubaServeChangeRollbackFailed", message)
-    );
-    throw error;
-  }
-  rmSync(lockPath, { recursive: true, force: true });
-  return {
-    status: recovered.length === 0 ? "clean" : "recovered",
-    recovered,
-  };
-}
-
-function recoverProjectChangeTarget({ projectRoot, target, backupPath }) {
-  const targetPath = safeProjectPath(projectRoot, target.path);
-  const targetExists = existsSync(targetPath);
-  const currentDigest = targetExists ? sha256Buffer(readFileSync(targetPath)) : null;
-  if (target.base_content_exists) {
-    if (!existsSync(backupPath)) {
-      throw serviceError("ToubaServeChangeBackupMissing", "transaction backup is missing");
-    }
-    const backup = readFileSync(backupPath);
-    if (sha256Buffer(backup) !== target.base_content_sha256) {
-      throw serviceError("ToubaServeChangeBackupInvalid", "transaction backup digest is invalid");
-    }
-    if (currentDigest === target.base_content_sha256) {
-      return;
-    }
-    if (currentDigest !== target.content_sha256) {
-      throw serviceError("ToubaServeChangeRecoveryConflict", "target changed after the interrupted transaction");
-    }
-    mkdirSync(dirname(targetPath), { recursive: true });
-    const restorePath = `${targetPath}.touba-recovery-${process.pid}-${Date.now()}`;
-    writeFileSync(restorePath, backup);
-    replaceFileFromTemp(restorePath, targetPath);
-    return;
-  }
-  if (!targetExists) return;
-  if (currentDigest !== target.content_sha256) {
-    throw serviceError("ToubaServeChangeRecoveryConflict", "new target changed after the interrupted transaction");
-  }
-  rmSync(targetPath, { force: true });
-}
-
-function replaceFileFromTemp(tempPath, targetPath) {
-  try {
-    renameSync(tempPath, targetPath);
-  } catch (cause) {
-    if (!["EEXIST", "EPERM"].includes(cause?.code) || !existsSync(targetPath)) {
-      throw cause;
-    }
-    const previousPath = `${targetPath}.touba-previous-${process.pid}-${Date.now()}`;
-    renameSync(targetPath, previousPath);
-    try {
-      renameSync(tempPath, targetPath);
-      rmSync(previousPath, { force: true });
-    } catch (replaceCause) {
-      if (!existsSync(targetPath) && existsSync(previousPath)) {
-        renameSync(previousPath, targetPath);
-      }
-      throw replaceCause;
-    }
-  }
-}
-
-function writeTransactionJournal(path, journal) {
-  writeFileSync(path, `${JSON.stringify(journal, null, 2)}\n`, "utf8");
-}
+export { recoverProjectChangeTransactions } from "../../touba-project/src/project-transactions.mjs";
 
 function isAllowedChangeTarget(relativePath) {
   const normalized = normalizeRelativePath(relativePath);
@@ -12063,6 +11860,12 @@ function bearerTokenFromAuthorization(authorization) {
 }
 
 export function requiredIdentityPermission(method, pathname) {
+  if (method === 'GET' && pathname === '/ownership') return 'governance.read';
+  if (method === 'GET' && pathname === '/integrations/mcp/targets') return 'governance.propose';
+  if (method === 'POST' && pathname === '/integrations/mcp/discover') return 'governance.apply';
+  if (method === 'POST' && pathname.startsWith('/ownership/reviews/')) return 'decisions.act';
+  if (method === 'POST' && pathname === '/ownership/preview') return 'governance.propose';
+  if (method === 'POST' && pathname === '/ownership/apply') return 'governance.apply';
   if (method === 'GET' && pathname === '/operations/incidents') return 'executions.read';
   if (method === 'POST' && /^\/operations\/[^/]+\/close$/.test(pathname)) return 'executions.run';
   if (method === 'GET' && pathname.startsWith('/approvals/dossier/')) return 'decisions.act';
@@ -12687,6 +12490,14 @@ function publishRefreshEvents(eventClients, report, nextEvent) {
 }
 
 function httpStatusForError(code) {
+  if (code === 'McpDiscoveryBusy') return 429;
+  if (code === 'McpDiscoveryTargetUnavailable') return 404;
+  if (code === 'McpDiscoveryConsentRequired') return 400;
+  if (/^Mcp/.test(code ?? '')) return 502;
+  if (code === 'OwnershipReviewerUnauthorized') return 403;
+  if (['OwnershipReviewMissing', 'OwnershipReviewStale', 'ToubaServeChangeConflict'].includes(code)) return 409;
+  if (['OwnershipEditorBusy', 'OwnershipEditorLimit'].includes(code)) return 429;
+  if (/^OwnershipEditor/.test(code ?? '')) return 400;
   if (['TriggerQueueReviewConflict','TriggerQueueWriteConflict','TriggerPlanChanged'].includes(code)) return 409;
   if (['TriggerQueueQueryInvalid','TriggerQueueReviewInvalid','TriggerQueueReconciliationRequired'].includes(code)) return 400;
   if (['TriggerIngressDisabled','TriggerRouteNotFound'].includes(code)) return 404;
@@ -13052,6 +12863,8 @@ function parseArgs(rawArgs) {
       options.webhookSignatureSecretEnv = requiredValue(arg, rawArgs, ++index);
     } else if (arg === '--validation-plan') {
       options.validationPlanPath = requiredValue(arg, rawArgs, ++index);
+    } else if (arg === '--mcp-discovery-config') {
+      options.mcpDiscoveryConfigPath = requiredValue(arg, rawArgs, ++index);
     } else if (arg === "--identity-service-token-env") {
       options.identityServiceTokenEnv = requiredValue(arg, rawArgs, ++index);
     } else if (arg === '--identity-service-token-vault') {

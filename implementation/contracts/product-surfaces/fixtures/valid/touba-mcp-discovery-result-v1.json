@@ -1,0 +1,1 @@
+{"schema_version":"touba-mcp-discovery-result-v1","target":"local","discovered_at":"2026-11-13T12:00:00Z","digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","document":{"tools":[{"name":"lookup","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}]}}

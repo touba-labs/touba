@@ -1,0 +1,13 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"touba-mcp-discovery-targets-v1",
+  "type":"object","additionalProperties":false,"required":["schema_version","items"],
+  "properties":{
+    "schema_version":{"const":"touba-mcp-discovery-targets-v1"},
+    "items":{"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,
+      "required":["id","label","transport","starts_process"],"properties":{
+        "id":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,47}$"},"label":{"type":"string","minLength":1,"maxLength":120},
+        "transport":{"const":"stdio"},"starts_process":{"const":true}
+      }}}
+  }
+}

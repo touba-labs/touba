@@ -14,8 +14,8 @@ export function preparationChanges(actions) {
           if (a !== b) changes.push({ kind: action.kind, subject: tool, field, before: a, after: b });
         }
       }
-    } else if (["would_update_fragment_binding", "update_fragment_binding"].includes(action.kind)) {
-      changes.push({ kind: "update_fragment_binding", subject: action.tool_ref, field: action.field,
+    } else if (["would_update_fragment_binding", "update_fragment_binding", "restore_fragment_binding"].includes(action.kind)) {
+      changes.push({ kind: action.kind === 'restore_fragment_binding' ? action.kind : "update_fragment_binding", subject: action.tool_ref, field: action.field,
         before: value(action.before), after: value(action.after) });
     } else if (action.kind === "review_fragment_binding") {
       changes.push({ kind: action.kind, subject: action.tool_ref, field: "fragment",
@@ -32,10 +32,11 @@ export function preparationChanges(actions) {
 }
 
 export function preparationDecisions(actions) {
-  const decisions = { review_packages: {}, review_fragments: {}, triggers: {} };
+  const decisions = { review_packages: {}, review_fragments: {}, restore_fragments: {}, triggers: {} };
   for (const action of actions) {
     if (["review_package_contract", "adopt_package_contract"].includes(action.kind)) decisions.review_packages[action.package] = action.digest;
     if (action.kind === "review_fragment_binding") decisions.review_fragments[action.tool_ref] = action.digest;
+    if (action.kind === 'restore_fragment_binding') decisions.restore_fragments[action.tool_ref] = { digest: action.digest, reason: 'Preview of recorded projection' };
     if (action.kind === "review_trigger_limits") decisions.triggers[action.target_ref] = { limits: structuredClone(action.after) };
   }
   return decisions;

@@ -1,24 +1,27 @@
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { readPreparedProject } from './prepared-project.mjs';
 
 // Read the explicitly selected maintenance contract, never identity roles.
 // This projection describes declarations; it does not attest a code review.
-export function readOwnershipReadiness(projectRoot) {
-  const empty = status => ({ summary: { status, path: null, team_count: null, target_count: null, review_count: null }, owners: {}, reviews: [], details: null });
-  function read(path) {
+export function readOwnershipFile(projectRoot, path, limit = 1048576) {
     const root = realpathSync(projectRoot), absolute = realpathSync(resolve(root, path));
     const rel = relative(root, absolute);
     if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error();
     const fd = openSync(absolute, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0));
     try {
       const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.size > 1048576) throw new Error();
-      const bytes = Buffer.alloc(1048577); let size = 0;
+      if (!stat.isFile() || stat.size > limit) throw new Error();
+      const bytes = Buffer.alloc(limit + 1); let size = 0;
       while (size < bytes.length) { const count = readSync(fd, bytes, size, bytes.length - size, null); if (!count) break; size += count; }
-      if (size > 1048576) throw new Error();
+      if (size > limit) throw new Error();
       return JSON.parse(bytes.subarray(0, size).toString('utf8'));
     } finally { closeSync(fd); }
-  }
+}
+
+export function readOwnershipReadiness(projectRoot) {
+  const empty = status => ({ summary: { status, path: null, team_count: null, target_count: null, review_count: null }, owners: {}, reviews: [], details: null });
+  const read = path => readOwnershipFile(projectRoot, path);
   let config;
   try { config = read('touba.project.json'); }
   catch (error) { return empty(error.code === 'ENOENT' ? 'not_configured' : 'unavailable'); }
@@ -35,6 +38,11 @@ export function readOwnershipReadiness(projectRoot) {
       if (!reference(ref, targetPattern)
         || !Array.isArray(teams) || !teams.length || teams.some(team => typeof team !== 'string' || !Object.hasOwn(doc.teams, team))) throw new Error();
       owners[ref] = [...new Set(teams)].sort();
+    }
+    if (doc.inherit_owners?.length) {
+      const prepared = readPreparedProject(projectRoot);
+      if (!prepared?.responsibilities) return empty('unavailable');
+      for (const assignment of prepared.responsibilities.assignments) owners[assignment.target_ref] = assignment.teams;
     }
     for (const review of doc.reviews ?? []) if (!object(review) || !reference(review.review_id, /^review:[^\s*]+$/u)
       || !reference(review.target_ref, targetPattern) || !Object.hasOwn(doc.teams, review.reviewer)

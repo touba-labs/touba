@@ -39,10 +39,15 @@ export function normalizeFragmentBaselines(value = {}) {
 
 // A source edit and a generated-manifest edit are different operations. Compare
 // the latter against its last written projection before applying the former.
-export function reconcileFragmentBindings({ baselines, profile, refs, current, expected, proposed, reviews = {}, mode, root, manifestPath }) {
+export function reconcileFragmentBindings({ baselines, profile, refs, current, expected, proposed, reviews = {}, restores = {}, mode, root, manifestPath }) {
   const profiles = normalizeFragmentBaselines(baselines);
   const records = Object.hasOwn(profiles, profile) ? profiles[profile] : {};
   map(reviews, 4096, "BindingFragmentReviewInvalid");
+  map(restores, 4096, 'BindingFragmentRestoreInvalid');
+  for (const [ref, entry] of Object.entries(restores)) {
+    if (!refs.has(ref) || !object(entry) || Object.keys(entry).sort().join() !== 'digest,reason'
+      || !digestPattern.test(entry.digest) || typeof entry.reason !== 'string' || !entry.reason.trim() || entry.reason.length > 1000) fail('BindingFragmentRestoreInvalid');
+  }
   for (const [ref, review] of Object.entries(reviews)) {
     if (!refs.has(ref) || !digestPattern.test(review)) fail("BindingFragmentReviewInvalid");
   }
@@ -59,7 +64,25 @@ export function reconcileFragmentBindings({ baselines, profile, refs, current, e
       continue;
     }
     if (before && current !== null && observed?.digest !== before.digest) {
-      error("BindingFragmentManifestDrift", "generated binding differs from its recorded projection; restore the generated manifest before applying fragment changes", ref);
+      if (next.digest !== before.digest) {
+        error('BindingFragmentRestoreUnavailable', 'the declared binding no longer matches the recorded projection; restore its declared source before requesting recovery', ref);
+        error('BindingFragmentManifestDrift', 'generated binding and declared source both differ; no verified projection can be restored', ref);
+        continue;
+      }
+      for (const field of [...new Set([...Object.keys(observed?.fields ?? {}), ...Object.keys(next.fields)])].sort()) {
+        if (observed?.fields[field] === next.fields[field]) continue;
+        const display = (binding, fingerprint) => bindingReviewValue(field, binding?.[field], fingerprint,
+          { root, grants: binding?.grants ?? [], manifestPath: field === 'sandbox' && manifestPath ? resolve(dirname(manifestPath), binding?.handler?.cwd ?? '.') : manifestPath });
+        actions.push({ kind: 'restore_fragment_binding', tool_ref: ref, digest: review, field,
+          before: display(actual, observed?.fields[field]), after: display(expected.bindings[ref], next.fields[field]),
+          reviewed: restores[ref]?.digest === review });
+      }
+      if (restores[ref]?.digest !== review) {
+        error(restores[ref] ? 'BindingFragmentReviewStale' : 'BindingFragmentManifestDrift', 'review the known projection and select its digest with a reason in host decisions restore_fragments', ref);
+        continue;
+      }
+    } else if (restores[ref]) {
+      error('BindingFragmentReviewStale', 'this restoration no longer matches a generated binding drift', ref);
       continue;
     }
     if (!before && observed && observed.digest !== next.digest) {

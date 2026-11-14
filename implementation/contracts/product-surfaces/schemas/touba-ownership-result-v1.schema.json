@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-ownership-result-v1",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-ownership-result-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "review_digest",
+    "transaction_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "touba-ownership-result-v1"
+    },
+    "status": {
+      "const": "applied"
+    },
+    "review_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "transaction_id": {
+      "type": "string",
+      "maxLength": 1024
+    }
+  }
+}

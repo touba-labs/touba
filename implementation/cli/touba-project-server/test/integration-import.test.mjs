@@ -62,6 +62,10 @@ test('imports keep governance permissions, execution exclusion and application d
     assert.equal(projectActivityKind('POST',path),action==='apply'?'mutation':null);
     assert.throws(()=>assertApplicationRoute({principal:{kind:'service',id:'synthetic'}},'POST',path,()=>null),{code:'ToubaServeApplicationPermissionDenied'});
   }
+  assert.equal(requiredIdentityPermission('GET','/integrations/mcp/targets'),'governance.propose');
+  assert.equal(requiredIdentityPermission('POST','/integrations/mcp/discover'),'governance.apply');
+  assert.equal(projectActivityKind('POST','/integrations/mcp/discover'),'mutation');
+  assert.throws(()=>assertApplicationRoute({principal:{kind:'service',id:'synthetic'}},'POST','/integrations/mcp/discover',()=>null),{code:'ToubaServeApplicationPermissionDenied'});
 });
 test('HTTP import uses a recoverable transaction, preserves existing configuration and prepares in one write',async t=>{
   const root=fixture(t);process.env.TOUBA_IMPORT_QA='import-synthetic';t.after(()=>delete process.env.TOUBA_IMPORT_QA);
@@ -71,6 +75,11 @@ test('HTTP import uses a recoverable transaction, preserves existing configurati
   await service.start();t.after(()=>service.stop());
   const url=`http://127.0.0.1:${service.server.address().port}`,headers={'content-type':'application/json',authorization:'Bearer import-synthetic'};
   const send=(route,body,auth=true)=>fetch(url+route,{method:'POST',headers:auth?headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  assert.equal((await fetch(url+'/integrations/mcp/targets')).status,401);
+  const targets=await fetch(url+'/integrations/mcp/targets',{headers});
+  assert.deepEqual((await targets.json()).items,[]);
+  assert.equal((await send('/integrations/mcp/discover',{target:'unknown'})).status,400);
+  assert.equal((await send('/integrations/mcp/discover',{target:'unknown',confirm_process:true})).status,404);
   assert.equal((await send('/integrations/import/preview',input('openapi'),false)).status,401);
   const response=await send('/integrations/import/preview',{...input('openapi'),authorize_grants:true});
   const preview=await response.json();assert.equal(response.status,200,JSON.stringify(preview));assert.equal(preview.can_apply,true,JSON.stringify(preview));

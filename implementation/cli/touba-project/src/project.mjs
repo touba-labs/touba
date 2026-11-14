@@ -15,6 +15,8 @@ import { requiredResourceReferences } from "../../../contracts/resource-bindings
 import { assertKnownFields, assertManifestFields, assertBindingFields } from "../../../contracts/manifest-fields.mjs";
 import { loadResourceBindingFiles, snapshotResourceBindings } from "../../../contracts/resource-binding-files.mjs";
 import { applyHostDecisions } from "./host-decisions.mjs";
+import { ownershipMembership, resolveOwnershipInheritance } from './ownership-resolution.mjs';
+import { planPreparedRestoration, applyPreparedRestoration } from './preparation-restoration.mjs';
 import { normalizeFragmentBaselines, reconcileFragmentBindings, updateFragmentBaselines } from "./fragment-governance.mjs";
 import { proposePackageGovernance, normalizeConsumerPolicies, normalizePackageContracts, applyConsumerPolicies } from "./package-governance.mjs";
 import { normalizeTriggerEntries } from "../../touba-manifest/src/generate.mjs";
@@ -738,20 +740,6 @@ export async function prepareProject(options = {}) {
   const ownershipPath = configuredOwnershipPath !== undefined
     ? resolve(root, configuredOwnershipPath)
     : null;
-  const ownershipValidation = validateOwnershipForPrepare({
-    ownershipPath,
-    requireOwnership: options.requireOwnership === true,
-    profile: runProfile,
-    preparedAirDocuments,
-    packages: packageResolution.packages,
-    bindingFragments: bindingFragmentComposition.fragments,
-    resourceBindings: resourceBindingsValidation.documents,
-    runPlanPath,
-    expectedRunPlan,
-    diagnostics,
-    actions,
-    mode,
-  });
   const effectiveProjectPath = join(buildRoot, "touba.effective-project.json");
 
   let currentManifest = null;
@@ -782,7 +770,8 @@ export async function prepareProject(options = {}) {
       applyConsumerPolicies(expectedFragmentManifest, expectedManifest, configured?.tool_policies ?? {});
       const fragments = reconcileFragmentBindings({ baselines: configured?.fragment_baselines, profile: runProfile,
         refs: bindingFragmentComposition.toolRefs, current: currentManifest, expected: expectedFragmentManifest,
-        proposed: proposedManifest, reviews: options.hostDecisions?.review_fragments, mode, root, manifestPath });
+        proposed: proposedManifest, reviews: options.hostDecisions?.review_fragments,
+        restores: options.hostDecisions?.restore_fragments, mode, root, manifestPath });
       diagnostics.push(...fragments.diagnostics);
       actions.push(...fragments.actions.map(change => action(change.kind, manifestPath, change)));
       const proposal = applyHostDecisions(proposedManifest, options.hostDecisions, manifestRequirements,
@@ -835,6 +824,14 @@ export async function prepareProject(options = {}) {
   if (mode === "check" && hostChanges.length > 0) diagnostics.push(errorDiagnostic(
     "HostDecisionDrift", "explicit host decisions differ from the current manifest; review with plan and apply with write",
     { manifest_path: manifestPath }));
+  const ownershipValidation = validateOwnershipForPrepare({
+    ownershipPath, documentOverride: options.ownershipDocument,
+    expectedManifest: proposedManifest, requireOwnership: options.requireOwnership === true,
+    profile: runProfile, preparedAirDocuments, packages: packageResolution.packages,
+    bindingFragments: bindingFragmentComposition.fragments,
+    resourceBindings: resourceBindingsValidation.documents, runPlanPath, expectedRunPlan,
+    diagnostics, actions, mode,
+  });
   inspectManifest({
     currentManifest,
     reviewedManifest: proposedManifest,
@@ -874,6 +871,7 @@ export async function prepareProject(options = {}) {
       bindingFragmentPaths,
       resourceBindingsPaths,
       ownershipPath,
+      ownership: ownershipValidation.summary,
       runPlanPath,
       expectedRunPlan,
       expectedSecretHandles,
@@ -937,7 +935,17 @@ export async function prepareProject(options = {}) {
   if (options.expectedReviewDigest !== undefined && options.expectedReviewDigest !== reviewDigest) {
     throw Object.assign(new Error("Project changed since preparation preview; review it again"), { code: "ProjectPreparationReviewStale" });
   }
-  if (mode === "write" && !hasErrorDiagnostics(diagnostics)) {
+  let restoration;
+  if (Object.keys(options.hostDecisions?.restore_fragments ?? {}).length && !hasErrorDiagnostics(diagnostics)) {
+    try { restoration = planPreparedRestoration({ root, manifestPath, manifest: proposedManifest,
+      effectivePath: effectiveProjectPath, effective: expectedEffectiveProject, projectConfigWrite }); }
+    catch (error) { diagnostics.push(errorDiagnostic(error.code, error.message)); }
+  }
+  let restorationReceipt;
+  if (mode === 'write' && restoration && !hasErrorDiagnostics(diagnostics)) {
+    restorationReceipt = applyPreparedRestoration({ root, target: restoration,
+      restores: options.hostDecisions.restore_fragments, actor: options.restorationActor });
+  } else if (mode === "write" && !hasErrorDiagnostics(diagnostics)) {
     if (projectConfigWrite !== undefined) {
       writeFileSync(projectConfigPath, projectConfigWrite, "utf8");
     } else if (projectConfigResolution.document === null) {
@@ -989,6 +997,7 @@ export async function prepareProject(options = {}) {
     workflow_version: PROJECT_MANIFEST_VERSION,
     command: "prepare",
     review_digest: reviewDigest,
+    ...(restorationReceipt ? { restoration: { transaction_id: restorationReceipt.transaction_id } } : {}),
     mode,
     status,
     root,
@@ -3664,6 +3673,8 @@ function findForbiddenResourceBindingPayloadField(value, path = []) {
 
 function validateOwnershipForPrepare({
   ownershipPath,
+  documentOverride,
+  expectedManifest,
   requireOwnership,
   profile,
   preparedAirDocuments,
@@ -3676,14 +3687,17 @@ function validateOwnershipForPrepare({
   actions,
   mode,
 }) {
-  if (ownershipPath === null) {
+  if (documentOverride !== undefined && mode !== 'plan') {
+    throw Object.assign(new Error('An ownership document preview is read-only'), { code: 'OwnershipPreviewReadOnly' });
+  }
+  if (ownershipPath === null && documentOverride === undefined) {
     if (requireOwnership) {
       diagnostics.push(errorDiagnostic("OwnershipMissing", "ownership artifact is required but --ownership was not provided"));
     }
     return { summary: null };
   }
 
-  const document = readOwnershipDocument(ownershipPath, diagnostics);
+  const document = readOwnershipDocument(ownershipPath, diagnostics, documentOverride);
   if (document === null) {
     return {
       summary: {
@@ -3712,7 +3726,24 @@ function validateOwnershipForPrepare({
   });
   const teamRefs = validateOwnershipTeams(document, diagnostics, ownershipPath);
   const ownerRefs = validateOwnershipOwners(document, teamRefs, targets.knownTargetRefs, diagnostics, ownershipPath);
+  let effectiveOwners = [];
+  try {
+    effectiveOwners = resolveOwnershipInheritance({ document, owners: ownerRefs, knownTargets: targets.knownTargetRefs,
+      ...ownershipMembership(preparedAirDocuments.map(entry => entry.document), packages) });
+    for (const item of effectiveOwners) ownerRefs.set(item.target_ref, item.teams);
+  } catch (error) {
+    diagnostics.push(errorDiagnostic(error.code, 'Ownership inheritance requires known explicit owners and unambiguous compiled membership', {
+      ownership_path: ownershipPath, ...error.details,
+    }));
+  }
   const reviewGate = validateOwnershipReviewGates(document, teamRefs, profile, diagnostics, ownershipPath);
+  const revision = packageDigest(Buffer.from(JSON.stringify({ profile,
+    air: preparedAirDocuments.map(entry => entry.document),
+    packages: (packages ?? []).map(({ name, version, digest, modules }) => ({ name, version, digest, modules })),
+    fragments: bindingFragments, resources: resourceBindings, manifest: expectedManifest,
+    ownership: { teams: document.teams, owners: document.owners, inherit_owners: document.inherit_owners,
+      review_gates: document.review_gates },
+  })));
   validateOwnershipReviews(document, teamRefs, targets.knownTargetRefs, reviewGate, profile, diagnostics, ownershipPath);
 
   if (reviewGate !== null) {
@@ -3720,6 +3751,7 @@ function validateOwnershipForPrepare({
       reviewGate,
       owners: ownerRefs,
       reviews: document.reviews ?? [],
+      revision,
       targetsBySubject: targets.bySubject,
       diagnostics,
       ownershipPath,
@@ -3733,6 +3765,12 @@ function validateOwnershipForPrepare({
       profile,
       team_count: teamRefs.size,
       owner_count: ownerRefs.size,
+      effective_owners: effectiveOwners,
+      inherited_owner_count: effectiveOwners.filter(item => item.inherited).length,
+      review_scope_digest: revision,
+      target_refs: [...targets.knownTargetRefs].filter(ref => OWNERSHIP_TARGET_REF_PATTERN.test(ref)).sort(),
+      review_states: (document.reviews ?? []).map(review => ({ review_id: review.review_id,
+        state: review.revision === undefined ? 'declared' : review.revision === revision ? 'current' : 'stale' })),
       gate_count: Object.keys(document.review_gates ?? {}).length,
       review_count: Array.isArray(document.reviews) ? document.reviews.length : 0,
       active_gate_subjects: reviewGate?.subjects ?? [],
@@ -3740,10 +3778,10 @@ function validateOwnershipForPrepare({
   };
 }
 
-function readOwnershipDocument(ownershipPath, diagnostics) {
+function readOwnershipDocument(ownershipPath, diagnostics, documentOverride) {
   let document;
   try {
-    document = JSON.parse(readFileSync(ownershipPath, "utf8"));
+    document = documentOverride === undefined ? JSON.parse(readFileSync(ownershipPath, "utf8")) : structuredClone(documentOverride);
   } catch (error) {
     diagnostics.push(errorDiagnostic("OwnershipSchemaMismatch", error.message, {
       ownership_path: ownershipPath,
@@ -3791,21 +3829,25 @@ function readOwnershipDocument(ownershipPath, diagnostics) {
     diagnostics.push(errorDiagnostic("OwnershipSchemaMismatch", "ownership teams must be an object", {
       ownership_path: ownershipPath,
     }));
+    return null;
   }
   if (document.owners !== undefined && (!document.owners || typeof document.owners !== "object" || Array.isArray(document.owners))) {
     diagnostics.push(errorDiagnostic("OwnershipSchemaMismatch", "ownership owners must be an object", {
       ownership_path: ownershipPath,
     }));
+    return null;
   }
   if (document.review_gates !== undefined && (!document.review_gates || typeof document.review_gates !== "object" || Array.isArray(document.review_gates))) {
     diagnostics.push(errorDiagnostic("OwnershipSchemaMismatch", "ownership review_gates must be an object", {
       ownership_path: ownershipPath,
     }));
+    return null;
   }
   if (document.reviews !== undefined && (!Array.isArray(document.reviews))) {
     diagnostics.push(errorDiagnostic("OwnershipSchemaMismatch", "ownership reviews must be an array", {
       ownership_path: ownershipPath,
     }));
+    return null;
   }
   return document;
 }
@@ -3879,11 +3921,15 @@ function validateOwnershipReviewGates(document, teamRefs, profile, diagnostics, 
     }
     const subjects = normalizeReviewGateSubjects(gate.requires_review_for, diagnostics, ownershipPath, gateProfile);
     const reviewers = normalizeReviewGateReviewers(gate.reviewers, teamRefs, diagnostics, ownershipPath, gateProfile);
+    if (gate.require_revision !== undefined && typeof gate.require_revision !== 'boolean') {
+      diagnostics.push(errorDiagnostic('OwnershipSchemaMismatch', 'require_revision must be boolean', { ownership_path: ownershipPath, profile: gateProfile }));
+    }
     if (gateProfile === profile) {
       activeGate = {
         profile: gateProfile,
         subjects,
         reviewers,
+        require_revision: gate.require_revision === true,
       };
     }
   }
@@ -3954,6 +4000,9 @@ function validateOwnershipReviews(document, teamRefs, knownTargetRefs, reviewGat
         review_id: review.review_id,
       }));
     }
+    if (review.revision !== undefined && (typeof review.revision !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(review.revision))) {
+      diagnostics.push(errorDiagnostic('OwnershipSchemaMismatch', 'review revision must be a sha256 digest', { ownership_path: ownershipPath, review_id: review.review_id }));
+    }
     if (typeof review.profile !== "string" || !RUN_PROFILE_PATTERN.test(review.profile)) {
       diagnostics.push(errorDiagnostic("OwnershipSchemaMismatch", "ownership review profile is invalid", {
         ownership_path: ownershipPath,
@@ -4004,7 +4053,7 @@ function validateOwnershipReviews(document, teamRefs, knownTargetRefs, reviewGat
   }
 }
 
-function enforceOwnershipReviewGate({ reviewGate, owners, reviews, targetsBySubject, diagnostics, ownershipPath, profile }) {
+function enforceOwnershipReviewGate({ reviewGate, owners, reviews, revision, targetsBySubject, diagnostics, ownershipPath, profile }) {
   for (const subject of reviewGate.subjects) {
     for (const targetRef of targetsBySubject.get(subject) ?? []) {
       if (!owners.has(targetRef)) {
@@ -4020,8 +4069,13 @@ function enforceOwnershipReviewGate({ reviewGate, owners, reviews, targetsBySubj
         && review.target_ref === targetRef
         && review.decision === "approved"
         && reviewGate.reviewers.includes(review.reviewer)
+        && (review.revision === revision || (review.revision === undefined && !reviewGate.require_revision))
       ));
       if (!hasApprovedReview) {
+        if (reviews.some(review => review?.profile === profile && review.target_ref === targetRef
+          && review.decision === 'approved' && review.revision !== undefined && review.revision !== revision)) {
+          diagnostics.push(errorDiagnostic('OwnershipReviewedArtifactDrift', `reviewed content differs for ${targetRef}`, { ownership_path: ownershipPath, target_ref: targetRef, profile }));
+        }
         diagnostics.push(errorDiagnostic("ReviewGateMissing", `ownership target ${targetRef} requires an approved ${profile} review for ${subject}`, {
           ownership_path: ownershipPath,
           profile,

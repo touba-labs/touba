@@ -1,0 +1,27 @@
+{
+  "schema_version": "touba-ownership-preview-v1",
+  "id": "synthetic",
+  "review_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "expires_at": "2026-11-13T12:00:00Z",
+  "before": {
+    "path": "touba.ownership.json",
+    "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "teams": [],
+    "assignments": [],
+    "inherit_owners": [],
+    "targets": [],
+    "profiles": [],
+    "reviews": []
+  },
+  "after": {
+    "path": "touba.ownership.json",
+    "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "teams": [],
+    "assignments": [],
+    "inherit_owners": [],
+    "targets": [],
+    "profiles": [],
+    "reviews": []
+  },
+  "diagnostics": []
+}

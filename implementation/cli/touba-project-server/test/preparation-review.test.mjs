@@ -72,7 +72,7 @@ test("preparation serializes concurrent writes and replaces a session's previous
   assert.equal((await applying).status, "success");
 });
 
-test("source fragment changes are shown; a tampered generated manifest is not reconciled by confirmation", async t => {
+test("source fragment changes are shown; tampered grants require explicit restoration to the known baseline", async t => {
   const f = await fixture(t), service = createProjectPreparation(f.root);
   await service.apply("owner", intent(await service.preview("owner")));
   const fragment = json(f.fragmentPath); fragment.bindings[ref].timeout_ms = 7000; save(f.fragmentPath, fragment);
@@ -82,9 +82,12 @@ test("source fragment changes are shown; a tampered generated manifest is not re
   const path = join(f.root, ".touba/build/dev/touba.manifest.json"), manifest = json(path);
   manifest.bindings[ref].grants = ["network"]; save(path, manifest);
   const blocked = await service.preview("owner");
-  assert.equal(blocked.can_apply, false);
-  assert.ok(blocked.diagnostics.some(d => d.code === "BindingFragmentManifestDrift"));
-  await assert.rejects(service.apply("owner", intent(blocked)), { code: "ToubaServePreparationReviewMissing" });
+  assert.equal(blocked.can_apply, true);
+  assert.ok(blocked.changes.some(c => c.kind === 'restore_fragment_binding'));
+  await assert.rejects(service.apply("owner", intent(blocked)), { code: "ToubaServePreparationInvalid" });
+  const reviewed=await service.preview('owner');
+  await service.apply('owner',{...intent(reviewed),reason:'Restore the recorded fragment without the injected grant.'});
+  assert.deepEqual(json(path).bindings[ref].grants,[]);
 });
 
 test("preparation HTTP requires authentication and rejects arbitrary commands, paths, grants and consumer overrides", async t => {

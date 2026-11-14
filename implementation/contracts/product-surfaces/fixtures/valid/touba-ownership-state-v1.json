@@ -1,0 +1,11 @@
+{
+  "schema_version": "touba-ownership-state-v1",
+  "path": "touba.ownership.json",
+  "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "teams": [],
+  "assignments": [],
+  "inherit_owners": [],
+  "targets": [],
+  "profiles": [],
+  "reviews": []
+}

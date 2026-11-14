@@ -1,0 +1,15 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"touba-mcp-discovery-result-v1",
+  "type":"object","additionalProperties":false,"required":["schema_version","target","discovered_at","digest","document"],
+  "properties":{
+    "schema_version":{"const":"touba-mcp-discovery-result-v1"},"target":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,47}$"},
+    "discovered_at":{"type":"string","format":"date-time"},"digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},
+    "document":{"type":"object","additionalProperties":false,"required":["tools"],"properties":{
+      "tools":{"type":"array","maxItems":256,"items":{"type":"object","additionalProperties":false,"required":["name","inputSchema"],"properties":{
+        "name":{"type":"string","pattern":"^[A-Za-z0-9_.-]{1,128}$"},"description":{"type":"string","maxLength":8192},
+        "inputSchema":{"type":"object"},"outputSchema":{"type":"object"}
+      }}}
+    }}
+  }
+}

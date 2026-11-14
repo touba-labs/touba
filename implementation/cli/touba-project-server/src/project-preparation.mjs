@@ -1,6 +1,6 @@
 import { prepareProject } from "../../touba-project/src/project.mjs";
 import { readPreparedProject } from "./prepared-project.mjs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { preparationChanges, preparationDecisions } from "./preparation-review.mjs";
 
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
@@ -60,10 +60,15 @@ export function createProjectPreparation(root, { now = Date.now } = {}) {
           fail("ToubaServePreparationReviewMissing", "Preparation review is unavailable or expired; preview again");
         }
         if (request.review_digest !== item.digest) fail("ProjectPreparationReviewStale", "Preparation digest differs from the reviewed plan");
+        if (Object.keys(item.decisions.restore_fragments).length) {
+          if (typeof request.reason !== 'string' || !request.reason.trim() || request.reason.length > 1000) fail('ToubaServePreparationInvalid', 'Restoration requires a reason');
+          for (const entry of Object.values(item.decisions.restore_fragments)) entry.reason = request.reason.trim();
+        }
         // Single-use even on failure or a disconnected HTTP response.
         pending.delete(request.id);
         const report = await prepareProject({ root, runProfile: "dev", mode: "write",
-          hostDecisions: item.decisions, expectedReviewDigest: item.digest });
+          hostDecisions: item.decisions, expectedReviewDigest: item.digest,
+          restorationActor: `sha256:${createHash('sha256').update(principal).digest('hex')}` });
         if (report.status === "success") readPreparedProject(root);
         return response(report);
       } finally { busy = false; }

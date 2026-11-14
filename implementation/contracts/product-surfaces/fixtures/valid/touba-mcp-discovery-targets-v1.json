@@ -1,0 +1,1 @@
+{"schema_version":"touba-mcp-discovery-targets-v1","items":[{"id":"local","label":"Approved local server","transport":"stdio","starts_process":true}]}

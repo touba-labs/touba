@@ -21,6 +21,7 @@
     "webhook_signature_secret_env": {"$ref": "#/$defs/environment"},
     "cloud_notifications": {"type": "boolean"},
     "validation_plan": {"$ref": "#/$defs/path"},
+    "mcp_discovery_config": {"$ref": "#/$defs/path"},
     "package_hosts": {"type": "boolean"},
     "human_approval_host": {"$ref": "#/$defs/hostModule"},
     "agent_decision_provider": {"$ref": "#/$defs/hostModule"},

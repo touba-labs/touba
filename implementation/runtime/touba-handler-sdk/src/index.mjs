@@ -776,6 +776,67 @@ async function loadMcpBridgeConfig(options) {
   return normalizeMcpBridgeConfig(document);
 }
 
+// Explicit discovery starts the configured process, but never sends tools/call.
+// The caller must approve that executable and its environment before calling.
+export async function discoverMcpTools({ config: document, context = {}, maxPages = 8, maxTools = 256 } = {}) {
+  const config = normalizeMcpBridgeConfig(document);
+  const limits = effectiveMcpLimits(config, context);
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 32
+    || !Number.isSafeInteger(maxTools) || maxTools < 1 || maxTools > 256
+    || limits.timeoutMs > 120000 || limits.maxPayloadBytes > 1048576) {
+    throw new ToubaHandlerError('McpDiscoveryLimitsInvalid', 'Discovery requires bounded time, payload, pages and tools');
+  }
+  const secretValues = [];
+  const env = buildMcpServerEnv(config, context, secretValues);
+  for (const [name, spec] of Object.entries(config.server.env)) {
+    if (spec.from_secret_handle && !secretValues.includes(env[name])) secretValues.push(env[name]);
+  }
+  const child = spawn(config.server.command, config.server.args, { cwd: config.server.cwd, env,
+    stdio: ['pipe','pipe','pipe'], shell: false, windowsHide: true });
+  const client = createMcpJsonRpcClient(child, { timeoutMs: limits.timeoutMs, maxPayloadBytes: limits.maxPayloadBytes, redactionValues: secretValues });
+  const deadline = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, limits.timeoutMs);
+  try {
+    const initialized = await client.request('initialize', { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {},
+      clientInfo: { name: 'touba-mcp-discovery', version: TOUBA_SDK_METADATA.version } });
+    if (initialized?.protocolVersion !== MCP_PROTOCOL_VERSION || !isPlainObject(initialized?.capabilities?.tools)) {
+      throw new ToubaHandlerError('McpDiscoveryUnsupported', 'The server must negotiate the supported protocol and tools capability');
+    }
+    client.notify('notifications/initialized');
+    const tools = [], names = new Set(), cursors = new Set();
+    let cursor;
+    for (let page = 0; page < maxPages; page++) {
+      const result = await client.request('tools/list', cursor === undefined ? {} : { cursor });
+      if (!isPlainObject(result) || !Array.isArray(result.tools)) throw new ToubaHandlerError('McpDiscoveryInvalid', 'Invalid tools list');
+      for (const tool of result.tools) {
+        if (!isPlainObject(tool) || !/^[A-Za-z0-9_.-]{1,128}$/.test(tool.name ?? '') || names.has(tool.name)
+          || !isPlainObject(tool.inputSchema) || tool.outputSchema !== undefined && !isPlainObject(tool.outputSchema)
+          || tool.description !== undefined && (typeof tool.description !== 'string' || tool.description.length > 8192)) {
+          throw new ToubaHandlerError('McpDiscoveryInvalid', 'Tool names must be unique and schemas must be objects');
+        }
+        names.add(tool.name);
+        if (tools.length >= maxTools) throw new ToubaHandlerError('McpDiscoveryLimit', 'Tool count exceeds the configured limit');
+        tools.push({name: tool.name, inputSchema: tool.inputSchema,
+          ...(tool.outputSchema === undefined ? {} : {outputSchema:tool.outputSchema}),
+          ...(tool.description === undefined ? {} : {description:tool.description})});
+      }
+      if (result.nextCursor === undefined) {
+        const snapshot = { tools };
+        // Metadata is untrusted. Refuse echoed credential values rather than
+        // rendering or persisting them as part of a catalogue.
+        const text = JSON.stringify(snapshot);
+        if (secretValues.some(value=>text.includes(value) || text.includes(JSON.stringify(value).slice(1,-1)))) throw new ToubaHandlerError('McpDiscoverySecretEcho', 'Server metadata contains a configured credential');
+        return snapshot;
+      }
+      cursor = result.nextCursor;
+      if (typeof cursor !== 'string' || !cursor || cursor.length > 4096 || cursors.has(cursor)) {
+        throw new ToubaHandlerError('McpDiscoveryInvalid', 'Invalid or repeated pagination cursor');
+      }
+      cursors.add(cursor);
+    }
+    throw new ToubaHandlerError('McpDiscoveryLimit', 'Pagination exceeds the configured limit');
+  } finally { clearTimeout(deadline); await client.close(); }
+}
+
 async function callMcpStdioTool({ config, toolName, argumentsPayload, context }) {
   const limits = effectiveMcpLimits(config, context);
   const secretValues = [];

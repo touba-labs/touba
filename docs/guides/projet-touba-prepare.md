@@ -133,6 +133,34 @@ si l'un change ; retirez-la des commandes après application. Avec une référen
 déjà enregistrée, une altération du manifest produit `BindingFragmentManifestDrift` :
 restaurez sa dernière projection connue avant d'appliquer le fragment.
 
+Le plan propose `restore_fragment_binding` si les sources déclarées correspondent
+encore à la préparation enregistrée. Relisez les différences et utilisez son
+empreinte exacte, avec un motif :
+
+```json title="restore-review.json"
+{
+  "restore_fragments": {
+    "tool:orders.review/ReadOrder": {
+      "digest": "sha256:<empreinte affichée par le plan>",
+      "reason": "Rétablir la projection conforme au fragment relu"
+    }
+  }
+}
+```
+
+```sh title="Terminal"
+touba prepare --mode plan --host-decisions restore-review.json
+touba prepare --mode write --host-decisions restore-review.json
+touba prepare --mode check
+```
+
+La restauration ne modifie que le manifeste généré. Elle conserve les sources,
+le verrou des packages, les politiques d'approbation et les états d'exécution.
+Son journal est conservé sous `.touba/change-transactions`. Aucun effet n'est
+rejoué. Si une autre entrée préparée a changé, la restauration est refusée :
+rétablissez d'abord les sources effectivement relues. Ne supprimez pas le dossier
+de build pour contourner cette vérification.
+
 ## Ressources déclarées et déclencheurs
 
 Référencez les fichiers de ressources dans la configuration du projet :

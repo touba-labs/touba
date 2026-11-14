@@ -2,6 +2,7 @@ import schema from './schemas/touba-project-server-config-v1.schema.json' with {
 import { validateObject } from './validate.mjs';
 
 export const serverConfigPaths = new Set(['identity_file', 'secrets_file', 'validation_plan',
+  'mcp_discovery_config',
   'human_approval_host', 'agent_decision_provider', 'package_registry_trust']);
 const fail = field => { throw Object.assign(new Error(`Invalid project server configuration: ${field}`),
   { code: 'ToubaServeConfigInvalid', field }); };

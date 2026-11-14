@@ -959,6 +959,10 @@ async function registryCommand(rawArgs) {
 
 async function mcpCommand(rawArgs) {
   const [subcommand, configPath, ...tail] = rawArgs;
+  if(subcommand==='discover' && configPath && tail.length===2 && tail[1]==='--confirm-process') {
+    const {createMcpDiscovery}=await import('./mcp-discovery.mjs');
+    return {report:await createMcpDiscovery(configPath).discover({target:tail[0],confirm_process:true}),json:true,exitCode:0};
+  }
   if (subcommand === "import" && configPath && configPath !== "--help" && configPath !== "-h") {
     const options = parseMcpImportOptions(tail);
     if (options.help === true) {
@@ -1609,9 +1613,11 @@ function parseRestScaffoldOptions(rawArgs) {
 function mcpImportUsage() {
   return [
     "Usage: touba mcp import <config.json> --module <module.name> --out <dir> [--mode plan|write|check] [--select <tool>] [--force] [--json]",
+    "       touba mcp discover <targets.json> <target-id> --confirm-process",
     "",
     "Generates reviewable Touba source, manifest fragment, secrets template, handler bridge and import report from an explicit MCP tools snapshot.",
     "Authority remains in manifest, secrets, approvals and runtime policy.",
+    "Discovery explicitly starts an operator-approved local stdio server and lists its tools; it never sends tools/call.",
   ].join("\n");
 }
 

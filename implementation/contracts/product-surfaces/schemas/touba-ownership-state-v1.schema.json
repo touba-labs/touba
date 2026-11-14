@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-ownership-state-v1",
+  "$id": "https://schemas.touba.dev/product-surfaces/touba-ownership-state-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "path",
+    "revision",
+    "teams",
+    "assignments",
+    "inherit_owners",
+    "targets",
+    "profiles",
+    "reviews"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "touba-ownership-state-v1"
+    },
+    "path": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "teams": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "members"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "members": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        }
+      }
+    },
+    "assignments": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target_ref",
+          "teams",
+          "origin_refs",
+          "inherited"
+        ],
+        "properties": {
+          "target_ref": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "teams": {
+            "type": "array",
+            "maxItems": 512,
+            "items": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          "origin_refs": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          "inherited": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "inherit_owners": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "maxLength": 1024
+      }
+    },
+    "targets": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "string",
+        "maxLength": 1024
+      }
+    },
+    "profiles": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "string",
+        "maxLength": 1024
+      }
+    },
+    "reviews": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "review_id",
+          "target_ref",
+          "reviewer",
+          "profile",
+          "decision",
+          "revision",
+          "actor_ref",
+          "recorded_at",
+          "evidence",
+          "state"
+        ],
+        "properties": {
+          "review_id": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "target_ref": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "reviewer": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "profile": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "decision": {
+            "enum": [
+              "approved",
+              "rejected"
+            ]
+          },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 1024
+          },
+          "actor_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 1024
+          },
+          "recorded_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 1024
+          },
+          "evidence": {
+            "enum": [
+              "declared",
+              "server_recorded"
+            ]
+          },
+          "state": {
+            "enum": [
+              "declared",
+              "current",
+              "stale"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

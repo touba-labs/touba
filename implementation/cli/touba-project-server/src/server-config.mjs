@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { validateProjectServerConfig, serverConfigPaths as paths } from '../../../contracts/product-surfaces/server-config.mjs';
 const fields = {
   host: '--host', port: '--port', client_origins: '--client-origin',
+  mcp_discovery_config: '--mcp-discovery-config',
   identity_control_plane_url: '--identity-control-plane-url', identity_service_token_env: '--identity-service-token-env',
   identity_service_token_vault: '--identity-service-token-vault',
   auth_token_env: '--auth-token-env', identity_file: '--identity', secrets_file: '--secrets',

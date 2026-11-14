@@ -1,0 +1,6 @@
+{
+  "schema_version": "touba-ownership-result-v1",
+  "status": "applied",
+  "review_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "transaction_id": "synthetic"
+}

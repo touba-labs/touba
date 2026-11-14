@@ -12,6 +12,22 @@
     "contract"
   ],
   "properties": {
+    "responsibilities": {
+      "type": "object", "additionalProperties": false, "required": ["revision", "assignments"],
+      "properties": {
+        "revision": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "assignments": { "type": "array", "maxItems": 4096, "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["target_ref", "teams", "origin_refs", "inherited"],
+          "properties": {
+            "target_ref": { "type": "string", "maxLength": 1024 },
+            "teams": { "type": "array", "maxItems": 512, "items": { "type": "string", "maxLength": 1024 } },
+            "origin_refs": { "type": "array", "maxItems": 256, "items": { "type": "string", "maxLength": 1024 } },
+            "inherited": { "type": "boolean" }
+          }
+        } }
+      }
+    },
     "schema_version": { "const": "touba-effective-project-v1" },
     "artifact_role": { "const": "derived_non_authoritative" },
     "project": {

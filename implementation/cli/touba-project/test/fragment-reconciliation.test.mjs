@@ -1,4 +1,5 @@
 import test from "node:test";
+import { spawnSync } from 'node:child_process';
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -116,4 +117,49 @@ test("fragment baselines are separated by profile and bound strictly without pri
     { dev: { [ref]: { ...fingerprint, digest: "sha256:" + "0".repeat(64) } } }]) {
     assert.throws(() => normalizeFragmentBaselines(invalid), { code: "BindingFragmentBaselineInvalid" });
   }
+});
+
+test('known fragment projection restores atomically with a reason and exact single-use digest', async t => {
+  const f = await fixture(t), original = readFileSync(f.manifestPath, 'utf8');
+  const manifest = json(f.manifestPath); manifest.bindings[ref].timeout_ms = 555;
+  manifest.bindings[ref].handler.args = ['private-synthetic-value']; save(f.manifestPath, manifest);
+  const plan = await prepareProject({ ...f.options, mode: 'plan' }); refused(plan, 'BindingFragmentManifestDrift');
+  const restore = plan.actions.find(item => item.kind === 'restore_fragment_binding'); assert.ok(restore);
+  assert.equal(JSON.stringify(plan.actions).includes('private-synthetic-value'), false);
+  const hostDecisions = { restore_fragments: { [ref]: { digest: restore.digest, reason: 'Restore the reviewed declaration' } } };
+  const reviewed = await prepareProject({ ...f.options, mode: 'plan', hostDecisions }); good(reviewed);
+  const result = await prepareProject({ ...f.options, mode: 'write', hostDecisions, expectedReviewDigest: reviewed.review_digest }); good(result);
+  assert.equal(readFileSync(f.manifestPath, 'utf8'), original);
+  const receipt = json(join(f.root, '.touba/change-transactions', result.restoration.transaction_id, 'journal.json'));
+  assert.equal(receipt.status, 'committed'); assert.equal(receipt.reason, 'Restore the reviewed declaration');
+  assert.equal(JSON.stringify(receipt).includes('private-synthetic-value'), false);
+  good(await prepareProject({ ...f.options, mode: 'check' }));
+  refused(await prepareProject({ ...f.options, mode: 'write', hostDecisions }), 'BindingFragmentReviewStale');
+});
+
+test('restoration never combines unrelated source changes or grants with recovery', async t => {
+  const f = await fixture(t), manifest = json(f.manifestPath); manifest.bindings[ref].timeout_ms = 555; save(f.manifestPath, manifest);
+  const original = readFileSync(f.manifestPath, 'utf8');
+  const plan = await prepareProject({ ...f.options, mode: 'plan' });
+  const restore = plan.actions.find(item => item.kind === 'restore_fragment_binding');
+  const hostDecisions = { restore_fragments: { [ref]: { digest: restore.digest, reason: 'Synthetic restoration' } } };
+  const path = join(f.root, 'src/fragment/demo.tb'); writeFileSync(path, readFileSync(path, 'utf8') + '\n');
+  refused(await prepareProject({ ...f.options, mode: 'write', hostDecisions }), 'BindingFragmentRestoreUnavailable');
+  assert.equal(readFileSync(f.manifestPath, 'utf8'), original);
+  for (const restores of [{ [ref]: restore.digest }, { [ref]: { digest: restore.digest, reason: '' } },
+    { 'tool:foreign/Run': { digest: restore.digest, reason: 'Unreviewed target' } }]) {
+    refused(await prepareProject({ ...f.options, mode: 'write', hostDecisions: { restore_fragments: restores } }), 'BindingFragmentRestoreInvalid');
+  }
+});
+
+test('CLI restores the same known projection through explicit host decisions', async t => {
+  const f = await fixture(t), manifest = json(f.manifestPath); manifest.bindings[ref].timeout_ms = 123; save(f.manifestPath, manifest);
+  const plan = await prepareProject({ ...f.options, mode: 'plan' });
+  const digest = plan.actions.find(item => item.kind === 'restore_fragment_binding').digest;
+  save(join(f.root, 'restore.json'), { restore_fragments: { [ref]: { digest, reason: 'Reviewed CLI recovery' } } });
+  const result = spawnSync(process.execPath, [new URL('../src/main.mjs', import.meta.url).pathname, 'prepare', '--root', f.root,
+    '--entry', f.options.entryRef, '--mode', 'write', '--host-decisions', 'restore.json', '--json'], { cwd: f.root, encoding: 'utf8', timeout: 30000 });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(json(f.manifestPath).bindings[ref].timeout_ms, 10000);
+  assert.ok(JSON.parse(result.stdout).restoration.transaction_id.startsWith('restore-'));
 });

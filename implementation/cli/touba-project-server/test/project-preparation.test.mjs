@@ -11,6 +11,25 @@ import { createProjectPreparation } from "../src/project-preparation.mjs";
 import { createToubaProjectServer } from "../src/serve.mjs";
 import { validateObject } from "../../../contracts/product-surfaces/validate.mjs";
 import schema from "../../../contracts/product-surfaces/schemas/touba-project-preparation-v1.schema.json" with { type: "json" };
+import { toolReviewFixture, toolReviewRef } from './fixtures/tool-review-project.mjs';
+
+test('reviewed preparation restores a known binding, requires a reason and refuses stale state', async t => {
+  const fixture = await toolReviewFixture({ language: 'javascript' }); t.after(() => rmSync(fixture.directory, { recursive: true, force: true }));
+  const root = fixture.root, first = await prepareProject({ root, mode: 'write' });
+  assert.equal(first.status, 'success', JSON.stringify(first.diagnostics));
+  const original = readFileSync(first.manifest_path, 'utf8'), manifest = JSON.parse(original);
+  manifest.bindings[toolReviewRef].timeout_ms = 777; writeFileSync(first.manifest_path, JSON.stringify(manifest));
+  const preparation = createProjectPreparation(root), preview = await preparation.preview('alice-session');
+  assert.equal(preview.can_apply, true, JSON.stringify(preview.diagnostics));
+  assert.ok(preview.changes.some(change => change.kind === 'restore_fragment_binding'));
+  const body = { id: preview.id, review_digest: preview.review_digest };
+  await assert.rejects(preparation.apply('bob-session', body), { code: 'ToubaServePreparationReviewMissing' });
+  await assert.rejects(preparation.apply('alice-session', body), { code: 'ToubaServePreparationInvalid' });
+  const result = await preparation.apply('alice-session', { ...body, reason: 'Restore the declared binding' });
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(readFileSync(first.manifest_path, 'utf8'), original); readPreparedProject(root);
+  await assert.rejects(preparation.apply('alice-session', body), { code: 'ToubaServePreparationReviewMissing' });
+});
 
 test("package installation and source editing need explicit preparation before execution", async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-preparation-")));

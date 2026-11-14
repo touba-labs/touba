@@ -24,6 +24,7 @@ export function buildEffectiveProjectDocument(options) {
     bindingFragmentPaths,
     resourceBindingsPaths,
     ownershipPath,
+    ownership,
     runPlanPath,
     expectedRunPlan,
     expectedSecretHandles,
@@ -76,6 +77,9 @@ export function buildEffectiveProjectDocument(options) {
   return {
     schema_version: EFFECTIVE_PROJECT_SCHEMA_VERSION,
     artifact_role: "derived_non_authoritative",
+    ...(ownership?.review_scope_digest ? { responsibilities: {
+      revision: ownership.review_scope_digest, assignments: ownership.effective_owners,
+    } } : {}),
     project: {
       artifact_layout: projectConfig.artifact_layout,
       profile,
