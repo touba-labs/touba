@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import { npmCommand } from "./npm-command.mjs";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -10,6 +11,14 @@ import {
   renderUninstallPowerShell,
   renderWindowsCmdLauncher,
 } from "./package-release.mjs";
+
+test("distribution inventories every shared root runtime contract", () => {
+  const source = readFileSync(new URL("./package-local-toolchain.mjs", import.meta.url), "utf8");
+  const contracts = readdirSync(new URL("../../../contracts/", import.meta.url))
+    .filter(name => name.endsWith(".mjs") && !name.endsWith(".test.mjs"));
+  assert.ok(contracts.includes("trigger-routes.mjs"));
+  for (const name of contracts) assert.ok(source.includes(JSON.stringify(name)), `Missing packaged contract: ${name}`);
+});
 
 test("isolated release roots work for packaging and archive qualification", () => {
   assert.equal(parsePackageReleaseArgs(["--release-root", "candidate artifacts"]).releaseRoot, resolve("candidate artifacts"));
