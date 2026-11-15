@@ -58,6 +58,40 @@ test('new publications reject Python bytecode without changing legacy installed 
   assert.equal(readPackage(pkg.path).digest, original.digest);
 });
 
+test('generated test helper accepts reviewed tool decisions without changing the author project', async t => {
+  const root = workspace(t), pkg = newPackage('fixture.toolbox', { root });
+  const ref = 'tool:fixture.toolbox/Read';
+  edit(pkg.path, manifest => {
+    manifest.exports = { strategies: ['strategy:fixture.toolbox/Run'], tools: [ref] };
+    manifest.handlers = [{ tool: ref, path: 'handlers/read.mjs', protocol: 'touba-tool-handler-v1', effect_contract: { kind: 'none' } }];
+  });
+  mkdirSync(join(pkg.path, 'handlers'));
+  writeFileSync(join(pkg.path, 'handlers/read.mjs'), `for await (const chunk of process.stdin) {}\nprocess.stdout.write(JSON.stringify({ok:true,value:'Package contract'}));\n`);
+  writeFileSync(join(pkg.path, 'src/fixture/toolbox.tb'), `module fixture.toolbox
+tool Read
+    gives Text
+strategy Run
+    takes value as Text
+    gives Text
+    uses Read
+    do
+        Read
+            into result
+        give result
+`);
+  const testFile = join(pkg.path, 'tests/echo.test.mjs');
+  const template = readFileSync(testFile, 'utf8');
+  const decisions = { bindings: { [ref]: { package_handler: 'fixture.toolbox', effect_contract: { kind: 'none' } } } };
+  writeFileSync(testFile, template.replace('skill:fixture.toolbox/Echo', 'strategy:fixture.toolbox/Run')
+    .replace('{ value: "Package contract" });', `{ value: "Package contract" }, ${JSON.stringify({ hostDecisions: decisions, effectJournal: true })});`));
+  const before = readPackage(pkg.path).digest;
+  const report = await testPackage(pkg.path);
+  assert.equal(report.status, 'success', report.stdout + report.stderr);
+  assert.equal(readPackage(pkg.path).digest, before);
+  assert.equal(existsSync(join(pkg.path, 'touba.project.json')), false);
+  assert.equal(existsSync(join(pkg.path, 'effects.effect-journal.sqlite')), false);
+});
+
 test("Cloud presentation can follow packing, while direct publication requires a README", async t => {
   const root = workspace(t), pkg = newPackage("acme.presentation", { root, publisher: "Acme", license: "MIT" });
   edit(pkg.path, manifest => { delete manifest.readme; });

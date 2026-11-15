@@ -4,9 +4,9 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { initProject } from '../src/project.mjs';
+import { initProject, prepareProject } from '../src/project.mjs';
 import { newPackage, addPackage } from '../src/packages.mjs';
-import { auditPackageStatus } from '../src/package-status.mjs';
+import { auditPackageStatus, cachedPackageDiagnostics } from '../src/package-status.mjs';
 import { registryPackageStates } from '../src/registry.mjs';
 import { packageCommand } from '../src/package-command.mjs';
 import { readSignedRegistry } from '../src/registry-trust.mjs';
@@ -79,6 +79,13 @@ test('status consultation accepts only a fresh signed index with bounded withdra
   await assert.rejects(registryPackageStates(options), { code: 'RegistrySignatureExpired' });
   payload = token([{ ...item, withdrawal: { ...item.withdrawal, reason: 'x'.repeat(501) } }], { revision: 2 });
   await assert.rejects(registryPackageStates(options), { code: 'RegistryIndexSchemaInvalid' });
+  const reason = '🔒'.repeat(500);
+  payload = token([{ ...item, withdrawal: { ...item.withdrawal, reason } }], { revision: 3 });
+  const unicode = await registryPackageStates(options);
+  assert.equal(unicode.packages[0].withdrawal.reason, reason);
+  assert.ok(packageDiagnostic({ code: 'RegistryPackageYanked', withdrawalReason: reason }, 'fr').includes(reason));
+  payload = token([{ ...item, withdrawal: { ...item.withdrawal, reason: reason + '🔒' } }], { revision: 4 });
+  await assert.rejects(registryPackageStates(options), { code: 'RegistryIndexSchemaInvalid' });
 });
 
 function signedFixture(t) {
@@ -95,6 +102,29 @@ function signedFixture(t) {
   };
   return { root, registry, trust, trustDocument, saveTrust, now, token };
 }
+
+test('preparation shows a signed cached withdrawal without network or a new execution policy', async t => {
+  const f = signedFixture(t), consumer = join(f.root, 'consumer'); initProject({ root: consumer });
+  const source = newPackage('fixture.notice', { root: f.root, version: '1.0.0', context: true }).path;
+  await addPackage(source, { root: consumer });
+  assert.deepEqual(await cachedPackageDiagnostics(consumer), []);
+  configureRegistry(f.registry, { root: consumer, trust: f.trust });
+  let requests = 0;
+  t.mock.method(globalThis, 'fetch', async () => { requests++; throw new Error('unexpected network'); });
+  assert.equal((await cachedPackageDiagnostics(consumer))[0].code, 'PackageStatusUnavailable');
+  await registryPackageStates({ registry: f.registry, trust: f.trust, readBytes: async () => Buffer.from(f.token([
+    { ...entry, status: 'yanked', withdrawal: { reason: 'Use the corrected release', changed_at: '2026-11-14T12:00:00Z' } },
+  ])) });
+  const prepared = await prepareProject({ root: consumer, mode: 'plan' });
+  const warnings = prepared.diagnostics.filter(item => item.code === 'PackageVersionWithdrawn');
+  assert.equal(warnings.length, 1); assert.match(warnings[0].message, /Use the corrected release/);
+  assert.equal(warnings[0].severity, 'warning'); assert.equal(warnings[0].source, 'cache');
+  assert.equal(requests, 0);
+  t.mock.method(Date, 'now', () => (f.now + 61) * 1000);
+  const expired = await cachedPackageDiagnostics(consumer);
+  assert.ok(expired.some(item => item.code === 'PackageStatusExpired'));
+  assert.ok(expired.some(item => item.code === 'PackageVersionWithdrawn' && item.freshness === 'expired'));
+});
 
 test('cached status is explicitly offline, expires without becoming an installation authority and survives network failure', async t => {
   const f = signedFixture(t), consumer = join(f.root, 'consumer'); initProject({ root: consumer });

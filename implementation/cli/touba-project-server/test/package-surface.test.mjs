@@ -169,6 +169,9 @@ test("package update preview exposes compiled rights, approval and handlers and 
   const next = await surface.preview("owner", readFileSync(join(root, "updated.tar.gz")));
   assert.equal(next.operation, "update"); assert.equal(next.previous_version, "1.0.0");
   assert.equal(next.contracts[0].tools[ref].approval_policy, undefined);
+  assert.deepEqual(validateObject(previewSchema, next), []);
+  assert.equal(next.contract_changes[0].before.approval_policy.role, 'controller');
+  assert.equal(next.contract_changes[0].after.approval_policy, undefined);
   assert.equal(surface.inventory().packages[0].version, "1.0.0", "preview leaves the old version intact");
   await assert.rejects(surface.apply("other", next), { code: "ToubaServePackagePreviewMissing" });
   await surface.apply("owner", next);

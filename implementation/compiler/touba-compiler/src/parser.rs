@@ -45,7 +45,15 @@ fn recovered_cst_diagnostic(
     } else {
         recovered.kind()
     };
-    let base_message = parse_error_message(source);
+    let recovered_text = source.get(recovered.byte_range()).unwrap_or("").trim();
+    let has_text_parameter = source.lines().any(|line| {
+        line.split_whitespace().take(3).eq(["takes", "text", "as"])
+    });
+    let base_message = if recovered_text == "text" && has_text_parameter {
+        "`text` starts the built-in conversion `text(value)` and cannot be used as a bare parameter expression here. Rename the parameter, for example `takes value as Text`, and use `value` in its body.".to_string()
+    } else {
+        parse_error_message(source)
+    };
     let message = if base_message == "Tree-sitter CST contains a syntax error" {
         format!(
             "Touba compiler rejects recovered Tree-sitter syntax node `{kind}`; source must parse without ERROR or MISSING nodes"

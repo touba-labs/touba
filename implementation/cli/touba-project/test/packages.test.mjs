@@ -24,6 +24,28 @@ function manifest(path, edit) { const file = join(path, PACKAGE_MANIFEST); const
 function author(root, name = "example.echo", options = {}) { const pkg = newPackage(name, { root, ...options }); manifest(pkg.path, m => { m.publisher = "Package test author"; m.license = "MIT"; }); return pkg.path; }
 function consumer(root) { const path = join(root, "consumer"); mkdirSync(path); initProject({ root: path }); return path; }
 
+test('prepare groups shared compilation failures across packages without losing distinct positions', async t => {
+  const root = workspace(t), project = consumer(root);
+  mkdirSync(join(project, 'src/client'), { recursive: true });
+  writeFileSync(join(project, 'src/client/main.tb'), 'module client.main\ntype Input\n    value is Text\n');
+  for (const name of ['example.first', 'example.second', 'example.third']) {
+    await addPackage(author(root, name), { root: project });
+  }
+  let calls = 0;
+  const diagnostic = line => ({ code: 'AstError', severity: 'error', message: 'Synthetic dependency error',
+    source_path: 'shared/invalid.tb', source_ref: { source_id: 'shared/invalid.tb', start_line: line, start_column: 4 } });
+  const report = await prepareProject({ root: project, mode: 'plan', compileSource: () => {
+    calls++;
+    const first = diagnostic(3);
+    throw Object.assign(new Error('Synthetic'), { diagnostics: [
+      calls % 2 ? first : Object.fromEntries(Object.entries(first).reverse()), diagnostic(7),
+    ] });
+  } });
+  assert.ok(calls >= 4);
+  assert.deepEqual(report.diagnostics.filter(d => d.code === 'AstError').map(d => d.source_ref.start_line), [3, 7]);
+  assert.equal(report.status, 'error');
+});
+
 test("package compiler failures preserve source diagnostics without cascading missing exports", async t => {
   const root = workspace(t), source = author(root);
   writeFileSync(join(source, 'src/example/echo.tb'), 'module example.echo\ntype Broken\n    value is UnknownType\n');

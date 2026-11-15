@@ -9,7 +9,7 @@ import { newPackage, addPackage, updatePackage, reviewPackageUpdate, updateRegis
 import { packageCommand } from '../src/package-command.mjs';
 import { readPackageWorkspace, verifyInstalledPackages } from "../src/package-store.mjs";
 
-async function fixture(t, withHandler = false) {
+async function fixture(t, withHandler = false, withSecret = false) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-update-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const consumer = join(root, "consumer"); initProject({ root: consumer });
@@ -19,7 +19,7 @@ async function fixture(t, withHandler = false) {
     manifest.exports = { tools: ['tool:fixture.update/Read'] };
     manifest.handlers = [{ tool: 'tool:fixture.update/Read', path: 'handlers/read.mjs', protocol: 'touba-tool-handler-v1' }];
     writeFileSync(path, JSON.stringify(manifest));
-    writeFileSync(join(source, 'src/fixture/update.tb'), 'module fixture.update\ntool Read\n    gives Text\n');
+    writeFileSync(join(source, 'src/fixture/update.tb'), 'module fixture.update\ntool Read\n    gives Text\n' + (withSecret ? '    requires secret_read\n    secrets API_KEY\n' : ''));
     mkdirSync(join(source, 'handlers'));
     writeFileSync(join(source, 'handlers/read.mjs'), 'throw new Error("Installation must never execute me");\n');
   }
@@ -46,6 +46,21 @@ test("explicit update changes only the selected package and keeps consumer gover
   f.version("1.0.0");
   await assert.rejects(updatePackage(f.source, { root: f.consumer, name: "fixture.update" }), { code: "PackageVersionConflict" });
   assert.equal(f.lock().packages[0].version, "1.1.0");
+});
+
+test('review shows secret removal before and after and in the concise CLI output', async t => {
+  const f = await fixture(t, true, true); f.version('1.1.0');
+  const source = join(f.source, 'src/fixture/update.tb');
+  writeFileSync(source, readFileSync(source, 'utf8').replace('    secrets API_KEY\n', ''));
+  const plan = await reviewPackageUpdate(f.source, { root: f.consumer });
+  assert.equal(plan.contract_changes.length, 1);
+  const change = plan.contract_changes[0];
+  assert.deepEqual(change.before.required_secrets, ['API_KEY']);
+  assert.deepEqual(change.after.required_secrets, []);
+  const text = (await packageCommand(['update', f.source, '--root', f.consumer])).text;
+  assert.match(text, /required_secrets: \["API_KEY"\] -> \[\]/);
+  assert.equal(f.lock().packages[0].version, '1.0.0');
+  assert.equal((await reviewPackageUpdate(f.source, { root: f.consumer, accept: plan.review_digest })).status, 'success');
 });
 
 test('a code-only handler change is visible and binds the accepted review without granting capabilities', async t => {

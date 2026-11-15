@@ -29,6 +29,7 @@ import { PersistentEngineTransport } from "./engine-transport.mjs";
 import { resolveEngineCommand } from "./engine-command.mjs";
 import { validateTracePage, validateTraceReference } from "./trace-reference.mjs";
 import { normalizeHandlerConfigurationValues } from './handler-configuration.mjs';
+export { resolvePackageResource, PackageDependencyError } from './package-resources.mjs';
 
 export const TOOL_HANDLER_PROTOCOL_VERSION = "touba-tool-handler-v1";
 const PROTOCOL = TOOL_HANDLER_PROTOCOL_VERSION;

@@ -145,6 +145,7 @@ export async function submitPackageDraft(path, options = {}) {
       let identity;
       try {
         const packed = await packPackage(root, { output: join(temporary, 'package.tar.gz') });
+        if (options.expectedArchiveDigest !== undefined && options.expectedArchiveDigest !== packed.digest) throw packageError('PackageProjectChanged', 'the package changed after suite review; prepare the suite again');
         const checked = await checkPackageArchive(packed.output, { publishing: true });
         if (checked.manifest.name !== author.document.name || checked.manifest.version !== author.document.version) throw packageError('PackageProjectChanged', 'package identity changed while preparing the submission');
         identity = options.automation ? automationIdentity(registry, options) : await authorizePublication(registry, { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true, signal, notify: options.notify });
@@ -156,6 +157,12 @@ export async function submitPackageDraft(path, options = {}) {
           previous = descriptor(options.automation ? automationDescriptor(response) : response, selected);
           if (previous.name !== checked.manifest.name || previous.version !== checked.manifest.version) throw packageError('PackageDraftTargetMismatch', 'the selected draft has a different package identity or version');
           if (matching && linked.registry === registry && linked.id === selected && previous.archive_digest !== linked.archive_digest) throw packageError('PackageDraftConflict', 'the remote archive changed; review it before submitting your local changes');
+        }
+        if (options.skipUnchanged === true && previous?.ready === true && previous.archive_digest === packed.digest) {
+          saveLink(root, registry, previous);
+          return { status: 'success', command: 'package submit', package: previous.name, version: previous.version,
+            draft: previous.id, registry, archive_digest: previous.archive_digest, unchanged: true,
+            local_link_saved: true, preview: reviewUrl(registry, previous), notes: ['The same archive is already qualified in this private draft. No upload or publication.'] };
         }
         const request = requestOptions(identity.token, signal, 210000);
         const result = await publicationDocument(`${api}/drafts${selected ? `/${selected}${options.automation ? '/archive' : ''}` : ''}`, { ...request, method: selected ? 'PUT' : 'POST',

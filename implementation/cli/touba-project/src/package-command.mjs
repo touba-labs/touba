@@ -4,12 +4,13 @@ import { createInterface } from "node:readline/promises";
 import { publishPackage } from "./package-publish.mjs";
 import { publishRemotePackage } from "./package-publish-remote.mjs";
 import { checkoutPackageDraft, submitPackageDraft } from "./package-drafts.mjs";
+import { submitPackageSuite } from './package-suite.mjs';
 import { submitCiPackage } from "./package-ci.mjs";
 import { requestPackagePublication } from "./package-automation.mjs";
 import { authorIdentity, newPackage, testPackage, versionPackage } from "./package-author.mjs";
 import { configureRegistry, registryOptions } from './package-registry-config.mjs';
 import { authorizeRegistry, publicationUrl } from './package-identity.mjs';
-import { packageSessionNotice } from './package-diagnostics.mjs';
+import { packageSessionNotice, withPackageLocale } from './package-diagnostics.mjs';
 import { auditPackageStatus } from './package-status.mjs';
 import { addPackage, addRegistryPackage, reviewPackageUpdate, updateRegistryPackage, checkPackage, checkPackageArchive, packPackage, removePackage } from "./packages.mjs";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, packageError } from "./package-contract.mjs";
@@ -28,6 +29,7 @@ export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organizati
        touba package submit [directory] [--registry <URL>] [--draft <draft-id> | --presentation-from <publication-id>] [--no-browser] [--root <author>]
        touba package submit [directory] --ci <authorization-id> --registry <URL> [--root <author>]
        touba package submit [directory] --automation --registry <URL> --request-id <unique-id> [--draft <id>]
+       touba package submit-suite <suite.json> --registry <URL> [--max-packages <1..32>] [--max-bytes <bytes>] [--timeout-seconds <1..1800>] [--no-browser] [--root <directory>]
        touba package checkout <draft-id> --automation --registry <URL> [--root <parent>]
        touba package request-publication <draft-id> --automation --registry <URL> --revision <number> --request-id <unique-id>
        touba package add <name|directory|archive.tar.gz> [--root <workspace>]
@@ -39,12 +41,14 @@ export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organizati
 All commands support --json. new and version ask questions only in an interactive terminal.
 Author and private-read operations support --session-only to avoid saving a credential.
 Installation registry and trust options may be omitted after package registry configuration.
+Every package command accepts --lang fr|en for messages and browser authentication.
 Creation is offline. Package tests execute reviewed host code, never during check/add/pack.`;
 
 function parse(args) {
   const [action, ...rest] = args;
   const allowed = { new: ["context", "yes", "root", "org", "description", "publisher", "license", "version"], check: ["root", "publishing"], test: ["root", "env"], version: ["root"], pack: ["root", "output"], publish: ["root", "registry", "no-browser"], checkout: ["root", "registry", "no-browser"], submit: ["root", "registry", "draft", "no-browser", "ci"], add: ["root", "registry", "trust", "version", "allow-draft", "no-browser"], list: ["root"], remove: ["root"] };
   allowed.checkout.push("automation");
+  allowed['submit-suite'] = ['root', 'registry', 'no-browser', 'session-only', 'max-packages', 'max-bytes', 'timeout-seconds'];
   allowed.new.push("lang");
   allowed.registry = ["root", "trust"];
   allowed.login = ['registry', 'root', 'no-browser', 'read', 'session-only'];
@@ -65,7 +69,7 @@ function parse(args) {
       target = arg; continue;
     }
     const key = arg.slice(2);
-    if (key !== "json" && !allowed[action].includes(key)) throw packageError("PackageOptionInvalid", `option not valid for package ${action}: ${arg}`);
+    if (!["json", "lang"].includes(key) && !allowed[action].includes(key)) throw packageError("PackageOptionInvalid", `option not valid for package ${action}: ${arg}`);
     if (Object.hasOwn(options, key) && key !== "env") throw packageError("PackageOptionInvalid", `duplicate option ${arg}`);
     if (["json", "context", "yes", "publishing", "allow-draft", "no-browser", "automation", "read", "session-only", "offline", "status", "allow-downgrade"].includes(key)) options[key] = true;
     else {
@@ -127,7 +131,11 @@ async function create(target, options) {
 
 export async function packageCommand(args) {
   if (!args.length || args.includes("--help") || args[0] === "-h") return { text: PACKAGE_USAGE, exitCode: 0 };
-  const { action, target, options } = parse(args);
+  const parsed = parse(args);
+  return withPackageLocale(parsed.options.lang, () => executePackageCommand(parsed));
+}
+
+async function executePackageCommand({ action, target, options }) {
   if (action === 'audit' || action === 'list' && options.status) {
     Object.assign(options, registryOptions(options));
     if (!options.registry) throw packageError('RegistryConfigurationRequired', 'select a registry explicitly or configure this workspace');
@@ -154,6 +162,7 @@ export async function packageCommand(args) {
   else if (action === "request-publication") report = await requestPackagePublication(target, options);
   else if (action === "checkout") report = await checkoutPackageDraft(target, options);
   else if (action === "submit") report = await (options.ci ? submitCiPackage : submitPackageDraft)(target, options);
+  else if (action === 'submit-suite') report = await submitPackageSuite(target, options);
   else if (action === "version") {
     const root = findPackageWorkspace(options.root, { author: true });
     let next = target;

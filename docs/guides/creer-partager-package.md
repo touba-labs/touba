@@ -217,6 +217,33 @@ votre compte, pas d'une sandbox. Les secrets d'environnement ne sont pas
 transmis par défaut ; `--env NOM` autorise explicitement une variable. Cela
 n'empêche pas un test de lire un fichier accessible. Isolez les tests tiers.
 
+### Tester une stratégie qui utilise un outil
+
+Le helper `runEntry` du test généré accepte les décisions d'hôte du consommateur
+de test. Elles sont explicites et ne modifient pas les droits du package :
+
+```javascript
+const run = runEntry('strategy:acme.invoice/Run', { value: 'Exemple' }, {
+  hostDecisions: {
+    bindings: {
+      'tool:acme.invoice/Read': {
+        package_handler: 'acme.invoice',
+        grants: [],
+        effect_contract: { kind: 'none' },
+      },
+    },
+  },
+});
+assert.equal(run.status, 'success');
+```
+
+Cet exemple suppose un outil sans effet externe. Pour une écriture simulée,
+choisissez son vrai contrat d'effet dans les décisions et passez
+`effectJournal: true` au helper. Vérifiez aussi le reçu et l'état du simulateur.
+Une reprise exige le même journal durable : le helper crée un consommateur neuf
+par appel et ne constitue donc pas à lui seul un test de rejeu. Les dépendances
+verrouillées sont installées avec l'archive, sans chemins différents chez l'auteur.
+
 ## Exigences d'une entreprise ou d'un auteur
 
 Avant diffusion :
@@ -557,6 +584,10 @@ Après une interruption, consultez le service pour savoir si la soumission a
 abouti. Un verrou local résiduel doit être examiné avant récupération.
 Les mêmes commandes s’appliquent aux handlers JavaScript et Python.
 
+Pour une collection, utilisez [un lot de soumissions borné](../reference/packages.md#soumettre-plusieurs-packages)
+avec `touba package submit-suite suite.json --registry <url>`. Il conserve les
+brouillons individuels et s'arrête au premier problème, sans publication automatique.
+
 ## Sélectionner un handler proposé
 
 Dans les décisions hôtes, `bindings[toolRef].package_handler` sélectionne
@@ -570,6 +601,14 @@ recommandation apparaît dans la fiche et dans la revue du package ; l'applicati
 reste responsable du contrat effectif de son binding. Une lecture réseau peut
 déclarer `kind: none` ; une écriture locale peut nécessiter `external_write`.
 Le droit réseau ne permet donc pas de déduire la nature de l'effet.
+Sans recommandation, `prepare` affiche `PackageEffectRecommendationMissing` ;
+l'hôte choisit toujours le contrat effectif. Les tests déclarés réussis prouvent
+les cas exécutés, pas la conformité universelle d'un connecteur ni la qualification
+d'un fournisseur réel.
+
+Pour accéder aux ressources d'une dépendance depuis un handler, utilisez le
+[résolveur SDK](../reference/packages.md#ressources-dune-dépendance-depuis-un-handler).
+Il utilise le verrou du package, au lieu d'un chemin dépendant de `cwd()`.
 
 Pour une écriture, testez le reçu et l'état réellement enregistré par le service,
 y compris si la réponse se perd. Le [guide des effets](effets-idempotents.md#tester-un-handler-de-package)

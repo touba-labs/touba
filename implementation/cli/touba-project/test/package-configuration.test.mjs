@@ -43,6 +43,7 @@ process.stdout.write(JSON.stringify({ok:true,value:'configured'}));`);
   const decisions = { bindings: { [ref]: { configuration: values, ...selected } } }; // Order must not matter.
   const plan = await prepareProject({ ...options, mode: 'plan', hostDecisions: decisions });
   assert.notEqual(plan.status, 'error', JSON.stringify(plan.diagnostics));
+  assert.ok(plan.diagnostics.some(d => d.code === 'PackageEffectRecommendationMissing' && d.tool_ref === ref));
   const different = structuredClone(decisions); different.bindings[ref].configuration.endpoint += '/changed';
   await assert.rejects(prepareProject({ ...options, mode: 'write', hostDecisions: different, expectedReviewDigest: plan.review_digest }), { code: 'ProjectPreparationReviewStale' });
   const prepared = await prepareProject({ ...options, mode: 'write', hostDecisions: decisions, expectedReviewDigest: plan.review_digest });

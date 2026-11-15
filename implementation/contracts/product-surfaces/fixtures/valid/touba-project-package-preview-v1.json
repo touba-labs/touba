@@ -5,5 +5,8 @@
   "archive_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "expires_at": "2026-10-30T12:00:00Z", "name": "example.echo", "version": "1.0.0",
   "validation": "source_contracts",
+  "operation": "update", "previous_version": "0.9.0",
+  "contract_changes": [{ "package": "example.echo", "tool": "tool:example.echo/Read",
+    "before": { "required_secrets": ["API_KEY"] }, "after": { "required_secrets": [] } }],
   "packages": [{ "name": "example.echo", "version": "1.0.0", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }]
 }

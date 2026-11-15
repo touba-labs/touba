@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, realpathS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { addPackage, updatePackage, removePackage, isNewerPackageVersion, packageRuntimeCompatibility, checkPackageArchive, snapshotPackage, resolveRegistryArchive } from "../../touba-project/src/packages.mjs";
+import { addPackage, updatePackage, reviewPackageUpdate, removePackage, isNewerPackageVersion, packageRuntimeCompatibility, checkPackageArchive, snapshotPackage, resolveRegistryArchive } from "../../touba-project/src/packages.mjs";
 import { readPackageWorkspace, verifyInstalledPackages } from "../../touba-project/src/package-store.mjs";
 import { PACKAGE_LIMITS, PACKAGE_NAME, packageFile } from "../../touba-project/src/package-contract.mjs";
 import { packageHostInventory, readPackageHostPlan } from "../../touba-project/src/package-host-plan.mjs";
@@ -89,13 +89,15 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
       if (updating && !isNewerPackageVersion(checked.version, existing.version)) fail("PackageVersionConflict", "an update requires a newer version");
       if (source.name !== undefined && checked.package !== source.name) fail("ToubaServePackageInvalid", "Folder and package identities differ");
       if (source.proof && (checked.package !== source.proof.name || checked.version !== source.proof.version)) fail('PackageDependencyConflict', 'archive identity differs from the signed registry selection');
+      const review = updating ? await reviewPackageUpdate(archive, { root }) : null;
       if (closed || before !== revision()) fail("ToubaServePackageConflict", "Project changed during preview");
       const id = randomUUID(), expires = now() + 300000;
-      pending.set(id, { principal, directory, archive, digest: hash(bytes), revision: before, expires, proof: source.proof, updating: updating ? checked.package : null });
+      pending.set(id, { principal, directory, archive, digest: hash(bytes), revision: before, expires, proof: source.proof, updating: updating ? checked.package : null, reviewDigest: review?.review_digest });
       return { schema_version: "touba-project-package-preview-v1", id, revision: before, archive_digest: hash(bytes),
         expires_at: new Date(expires).toISOString(), name: checked.package, version: checked.version,
         operation: updating ? "update" : "install", previous_version: existing?.version ?? null,
         contracts: checked.contracts,
+        ...(review ? { contract_changes: review.contract_changes } : {}),
         packages: checked.packages.map(summary), validation: "source_contracts" };
     } catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
     finally { working = false; }
@@ -218,7 +220,7 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
       pending.delete(request.id);
       try {
         if (item.proof) await verifyResolution(item.proof);
-        return await (item.updating ? updatePackage(item.archive, { root, name: item.updating }) : addPackage(item.archive, { root }));
+        return await (item.updating ? updatePackage(item.archive, { root, name: item.updating, reviewDigest: item.reviewDigest }) : addPackage(item.archive, { root }));
       }
       finally { rmSync(item.directory, { recursive: true, force: true }); working = false; }
     },

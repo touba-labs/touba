@@ -5,6 +5,9 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { openCliEffectJournal } from '../../../cli/touba-run/src/effect-journal.mjs';
+import { buildHandlerSandboxPlan } from '../src/handler-protocol.mjs';
 
 import {
   AIR_CAPABILITY_PROFILE,
@@ -634,14 +638,16 @@ test("refuses an in-process override for external_write but keeps kind none on V
 // These tests observe actual durable writes separately from handler replies.
 // They qualify our protocol, not arbitrary third-party code or business rules.
 for (const language of ['javascript', 'python']) {
+ for (const confined of [false, true]) {
   const python = process.env.TOUBA_TEST_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
-  const available = language !== 'python' || spawnSync(python, ['--version']).status === 0;
+  const available = (!confined || process.platform === 'darwin') && (language !== 'python' || spawnSync(python, ['--version']).status === 0);
+  const label = language + (confined ? ' under native macOS confinement' : '');
   for (const mode of ['missing', 'invalid', 'throw', 'timeout']) {
-    test(`${language} committed write with ${mode} response remains unknown and is not blindly retried`, { skip: !available }, async t => {
-      const f = conformanceFixture(t, language, python, mode, 'reconcile');
+    test(`${label} committed write with ${mode} response remains unknown and is not blindly retried`, { skip: !available }, async t => {
+      const f = conformanceFixture(t, language, python, mode, 'reconcile', confined);
       const first = await f.run();
       assert.equal(first.status, 'failure');
-      assert.equal(failureCode(first), mode === 'timeout' ? 'ToolHandlerTimeout' : 'ToolHandlerReportedError');
+      assert.equal(failureCode(first), mode === 'timeout' ? 'ToolHandlerTimeout' : 'ToolHandlerReportedError', JSON.stringify(first.diagnostics));
       assert.equal(f.entry().state, 'unknown');
       assert.equal(f.count('effects'), 1, 'The response failure did not undo the external write');
       assert.equal(f.count('calls'), 1);
@@ -651,8 +657,8 @@ for (const language of ['javascript', 'python']) {
       assert.equal(f.entry().attempt_count, 1);
     });
   }
-  test(`${language} idempotent provider survives a lost reply, a competing resume and journal reopen`, { skip: !available }, async t => {
-    const f = conformanceFixture(t, language, python, 'timeout', 'idempotency_key');
+  test(`${label} idempotent provider survives a lost reply, a competing resume and journal reopen`, { skip: !available }, async t => {
+    const f = conformanceFixture(t, language, python, 'timeout', 'idempotency_key', confined);
     const first = f.run();
     // Admission covers the whole run, not just the individual SQL statements.
     assert.throws(() => openCliEffectJournal(f.journalPath), { code: 'EffectJournalBusy' });
@@ -672,23 +678,37 @@ for (const language of ['javascript', 'python']) {
     assert.equal(restored.result, second.result);
     assert.equal(f.count('calls'), 2, 'An applied journal entry is restored without another provider call');
   });
+ }
 }
 
-function conformanceFixture(t, language, python, mode, retryMode) {
-  const root = mkdtempSync(join(tmpdir(), 'touba-effect-conformance-'));
+function conformanceFixture(t, language, python, mode, retryMode, confined = false) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba-effect-conformance-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const database = join(root, 'provider.sqlite');
+  const provider = join(root, 'provider'); mkdirSync(provider);
+  const database = join(provider, 'provider.sqlite');
   const db = new DatabaseSync(database);
   db.exec('CREATE TABLE calls (id TEXT, digest TEXT, attempt INTEGER); CREATE TABLE effects (id TEXT PRIMARY KEY, digest TEXT NOT NULL, value TEXT NOT NULL);');
   db.close();
   const script = fileURLToPath(new URL(`./fixtures/effect-conformance/handler.${language === 'python' ? 'py' : 'mjs'}`, import.meta.url));
+  const sandbox = confined ? conformanceSandbox(language, python, provider) : undefined;
+  const command = language === 'python' && confined
+    ? spawnSync(python, ['-I', '-S', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).stdout.trim()
+    : language === 'python' ? python : process.execPath;
   const manifest = loadToolBindingManifestFromJson(JSON.stringify({ manifest_version: 'touba-manifest-v1', bindings: {
-    'tool:test/Create': { handler: { kind: 'process', command: language === 'python' ? python : process.execPath,
+    'tool:test/Create': { handler: { kind: 'process', command,
       // Include Python startup under concurrent CI load. Timeout fixtures hang
       // after committing, so the durable-write assertion still proves the fault.
-      args: [script, database, mode] }, grants: [], secrets: [], timeout_ms: 5000, max_payload_bytes: 16384,
+      args: [script, database, mode], cwd: root }, grants: confined ? ['filesystem_read', 'filesystem_write'] : [],
+      ...(sandbox ? { sandbox } : {}), secrets: [], timeout_ms: 5000, max_payload_bytes: 16384,
       effect_contract: { kind: 'external_write', retry_mode: retryMode } },
   } }));
+  if (confined) {
+    const binding = manifest.bindings.get('tool:test/Create');
+    const plan = buildHandlerSandboxPlan({ binding });
+    const startup = spawnSync(plan.command, plan.args, { cwd: root, env: { PYTHONDONTWRITEBYTECODE: '1' },
+      input: '{}', encoding: 'utf8', timeout: 10000 });
+    assert.equal(startup.status, 0, startup.stderr);
+  }
   const journalPath = join(root, 'run.effect-journal.sqlite');
   const scope = 'synthetic:durable-write';
   return {
@@ -711,6 +731,40 @@ function conformanceFixture(t, language, python, mode, retryMode) {
       finally { connection.close(); }
     },
   };
+}
+
+function conformanceSandbox(language, python, provider) {
+  const files = new Set();
+  const inventory = directory => {
+    for (const item of readdirSync(directory, { withFileTypes: true })) {
+      if (['site-packages', '__pycache__', 'tests', 'test'].includes(item.name)) continue;
+      const path = join(directory, item.name);
+      if (item.isDirectory()) inventory(path);
+      else if (item.isFile() && /\.(py|mjs|json|so|dylib)$/.test(item.name)) files.add(realpathSync(path));
+    }
+  };
+  if (language === 'python') {
+    const probe = spawnSync(python, ['-I', '-S', '-c', 'import sys,sysconfig,json,_sqlite3;print(json.dumps([sys.base_prefix,sysconfig.get_path("stdlib"),_sqlite3.__file__]))'], { encoding: 'utf8' });
+    assert.equal(probe.status, 0, probe.stderr);
+    const [base, stdlib, sqliteModule] = JSON.parse(probe.stdout); inventory(stdlib);
+    const linked = spawnSync('/usr/bin/otool', ['-L', sqliteModule], { encoding: 'utf8' });
+    assert.equal(linked.status, 0, linked.stderr);
+    for (const line of linked.stdout.split('\n').slice(1)) {
+      const path = line.trim().split(' (')[0];
+      if (path.startsWith('/') && existsSync(path)) files.add(realpathSync(path));
+    }
+    for (const path of [join(base, 'Python'), join(base, 'Python3'), join(base, 'Resources/Python.app/Contents/MacOS/Python')]) {
+      if (existsSync(path)) files.add(realpathSync(path));
+    }
+    inventory(fileURLToPath(new URL('../../touba-python-sdk/src/touba_sdk/', import.meta.url)));
+  } else {
+    const sdk = fileURLToPath(new URL('../../touba-handler-sdk/', import.meta.url));
+    inventory(join(sdk, 'src')); files.add(join(sdk, 'package.json'));
+    files.add(fileURLToPath(new URL('../../../contracts/machine/value-contracts.mjs', import.meta.url)));
+  }
+  assert.ok(files.size > 0 && files.size < 4096);
+  // The handler can access only its simulated provider, not the run journal.
+  return { required: true, code_paths: [...files], read_paths: [provider], write_paths: [provider] };
 }
 
 test('effect identity refuses changed handler configuration without repeating an applied write', async t => {

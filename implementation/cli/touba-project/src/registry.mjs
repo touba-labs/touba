@@ -256,7 +256,7 @@ function validateWithdrawal(value, ref, code) {
   if (value.withdrawal === undefined) return;
   const event = value.withdrawal;
   if (value.status !== 'yanked' || !isPlainObject(event) || Object.keys(event).sort().join(',') !== 'changed_at,reason'
-    || typeof event.reason !== 'string' || !event.reason.trim() || event.reason.length > 500
+    || typeof event.reason !== 'string' || !event.reason.trim() || [...event.reason].length > 500
     || typeof event.changed_at !== 'string' || event.changed_at.length > 40 || !Number.isFinite(Date.parse(event.changed_at))) {
     fail(code, 'invalid withdrawal event', ref);
   }

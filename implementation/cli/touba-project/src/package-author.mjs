@@ -80,15 +80,15 @@ function echoTest(module) {
   return `import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Each case installs the distribution into its own consumer project.
 // Run with touba package test. No provider or external effect is used.
 const cli = (...args) => execFileSync(process.execPath, [process.env.TOUBA_TEST_CLI, ...args], { encoding: "utf8", timeout: 30000 });
-function runEntry(entry, inputs) {
-  const project = mkdtempSync(join(tmpdir(), "touba-package-case-"));
+function runEntry(entry, inputs, { hostDecisions, effectJournal = false } = {}) {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-case-")));
   try {
     cli("init", "--root", project);
     cli("package", "add", process.cwd(), "--root", project);
@@ -96,10 +96,21 @@ function runEntry(entry, inputs) {
     delete config.entry;
     config.entrypoints = [entry];
     writeFileSync(path, JSON.stringify(config));
-    cli("prepare", "--root", project, "--entry", entry, "--mode", "write");
-    return JSON.parse(cli("run", "--project", project, "--entry", entry, "--inputs-json", JSON.stringify(inputs), "--output", "json"));
+    const preparation = ["prepare", "--root", project, "--entry", entry, "--mode", "write"];
+    if (hostDecisions !== undefined) {
+      const decisionsPath = join(project, "host-decisions.json");
+      writeFileSync(decisionsPath, JSON.stringify(hostDecisions));
+      preparation.push("--host-decisions", decisionsPath);
+    }
+    cli(...preparation);
+    return JSON.parse(cli("run", "--project", project, "--entry", entry, "--inputs-json", JSON.stringify(inputs),
+      ...(effectJournal ? ["--effect-journal", join(project, "effects.effect-journal.sqlite")] : []), "--output", "json"));
   } finally { rmSync(project, { recursive: true, force: true }); }
 }
+// A strategy using tools supplies its reviewed hostDecisions explicitly.
+// Select package_handler, grants and effect_contract per tool. For external
+// writes, set effectJournal: true and assert the simulated effect and receipt.
+// Each call owns a fresh consumer; never test replay with a fresh journal.
 test("Echo preserves the supplied text", () => {
   const run = runEntry(${JSON.stringify(`skill:${module}/Echo`)}, { value: "Package contract" });
   assert.equal(run.status, "success");

@@ -5,6 +5,8 @@ import { randomBytes } from 'node:crypto';
 import { sessionStore, sessionLock } from '../src/registry-session.mjs';
 import { registryVault } from '../src/registry-vault.mjs';
 import { authorizeRegistry } from '../src/package-identity.mjs';
+import { withPackageLocale, packageLocale, packageDiagnostic } from '../src/package-diagnostics.mjs';
+import { packageCommand } from '../src/package-command.mjs';
 
 const memoryVault = () => { const values = new Map(); return { values, read: key => values.get(key), write: (key, value) => values.set(key, value), remove: key => values.delete(key) }; };
 const authorization = { issuer: 'https://id.invalid/realm', client_id: 'author', scope: 'write', acr: 'mfa', session_max_age_seconds: 600 };
@@ -85,7 +87,7 @@ test('device grant is reused, refresh rotates, logout revokes, invalid grants re
     const form = new URLSearchParams(raw); let body;
     if (req.url === '/registry/config.json') { body = { registry: root + '/registry', authorization: { ...authorization, issuer: root + '/identity' } }; if (failConfig) res.statusCode = 503; }
     else if (req.url === '/identity/.well-known/openid-configuration') body = { issuer: root + '/identity', device_authorization_endpoint: root + '/identity/device', token_endpoint: root + '/identity/token', revocation_endpoint: root + '/identity/revoke' };
-    else if (req.url === '/identity/device') { issued++; body = { device_code: 'fixture', user_code: 'CODE-1234', expires_in: 10, interval: 1, verification_uri: root + '/identity/verify' }; }
+    else if (req.url === '/identity/device') { issued++; assert.equal(form.get('ui_locales'), 'fr'); body = { device_code: 'fixture', user_code: 'CODE-1234', expires_in: 10, interval: 1, verification_uri: root + '/identity/verify' }; }
     else if (req.url === '/identity/revoke') { revoked.push(form.get('token')); body = {}; }
     else if (form.get('grant_type') === 'refresh_token') {
       refreshed++; assert.match(form.get('refresh_token'), /^refresh-/);
@@ -99,27 +101,47 @@ test('device grant is reused, refresh rotates, logout revokes, invalid grants re
   t.after(() => { server.closeAllConnections(); server.close(); });
   root = 'http://127.0.0.1:' + server.address().port;
   const options = { vault, noBrowser: true, notify: text => notices.push(text) };
-  const first = await authorizeRegistry(root + '/registry', options); await first.revoke();
+  const connect = (selected = options) => withPackageLocale('fr', () => authorizeRegistry(root + '/registry', selected));
+  const first = await connect(); await first.revoke();
+  assert.ok(notices.some(text => text.includes('kc_locale=fr')));
   assert.equal(first.persistent, true); assert.deepEqual(revoked, []);
-  const second = await authorizeRegistry(root + '/registry', options);
+  const second = await connect();
   assert.equal(second.token, 'access-refreshed'); assert.equal(issued, 1); assert.equal(refreshed, 1);
   failRefresh = true;
-  await assert.rejects(authorizeRegistry(root + '/registry', options), { code: 'PackagePublicationUnavailable' });
+  await assert.rejects(connect(), { code: 'PackagePublicationUnavailable' });
   assert.equal(issued, 1); assert.equal(vault.values.size, 1);
   failRefresh = false;
-  rejected = true; await authorizeRegistry(root + '/registry', options); assert.equal(issued, 2);
-  await authorizeRegistry(root + '/registry', { ...options, logout: true });
+  rejected = true; await connect(); assert.equal(issued, 2);
+  await connect({ ...options, logout: true });
   assert.deepEqual(revoked, ['refresh-device']); assert.equal(vault.values.size, 0);
   assert.ok(notices.every(text => !/refresh-|access-/.test(text)));
-  const oneShot = await authorizeRegistry(root + '/registry', { ...options, sessionOnly: true }); await oneShot.revoke();
+  const oneShot = await connect({ ...options, sessionOnly: true }); await oneShot.revoke();
   assert.equal(oneShot.persistent, false); assert.equal(vault.values.size, 0);
   assert.deepEqual(revoked.slice(-2), ['refresh-device', 'access-device']);
-  await authorizeRegistry(root + '/registry', options);
+  await connect();
   failConfig = true;
-  await assert.rejects(authorizeRegistry(root + '/registry', { ...options, logout: true }), { code: 'RegistryLogoutIncomplete' });
+  await assert.rejects(connect({ ...options, logout: true }), { code: 'RegistryLogoutIncomplete' });
   assert.equal(vault.values.size, 0);
   failConfig = false;
   const locked = { read: () => null, remove: () => {}, write: () => { throw Object.assign(Error('vault unavailable'), { code: 'RegistryVaultUnavailable' }); } };
-  await assert.rejects(authorizeRegistry(root + '/registry', { ...options, vault: locked }), { code: 'RegistryVaultUnavailable' });
+  await assert.rejects(connect({ ...options, vault: locked }), { code: 'RegistryVaultUnavailable' });
   assert.deepEqual(revoked.slice(-2), ['refresh-device', 'access-device']);
+});
+
+test('explicit CLI locale takes precedence without mutating concurrent commands or the shell', async () => {
+  const original = { ...process.env };
+  assert.deepEqual(await Promise.all(['fr', 'en'].map(lang => withPackageLocale(lang, async () => {
+    await new Promise(resolve => setTimeout(resolve, 5));
+    return packageLocale();
+  }))), ['fr', 'en']);
+  for (const lang of ['fr', 'en']) {
+    await assert.rejects(packageCommand(['login', '--registry', 'invalid', '--lang', lang]), error => {
+      assert.equal(error.code, 'PackagePublicationTargetInvalid');
+      assert.equal(error.packageLocale, lang);
+      assert.match(packageDiagnostic(error), lang === 'fr' ? /Utilisez HTTPS/ : /Use HTTPS/);
+      return true;
+    });
+  }
+  await assert.rejects(packageCommand(['login', '--lang', 'invalid']), { code: 'PackageOptionInvalid' });
+  assert.deepEqual({ ...process.env }, original);
 });

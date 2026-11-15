@@ -240,12 +240,22 @@ function updateDirection(version, previous, allowDowngrade) {
   throw packageError('PackageVersionConflict', 'select a newer version, or review an older version with --allow-downgrade; equal versions are immutable');
 }
 
-function updateReview(workspace, lock, checked, allowDowngrade = false) {
+async function updateReview(workspace, lock, checked, allowDowngrade = false) {
   const previous = lock.packages.find(item => item.name === checked.package);
   if (!previous) throw packageError('PackageNotInstalled', 'only an installed package can be updated');
   const direction = updateDirection(checked.version, previous.version, allowDowngrade);
   const before = readPackage(resolve(dirname(workspace.path), previous.manifest));
   const after = checked.closure.first;
+  const previousCheck = await checkPackage(before.root, { projectRoot: dirname(workspace.path), inspectContracts: true });
+  const oldContracts = new Map(previousCheck.contracts.map(pkg => [pkg.name, pkg.tools]));
+  const newContracts = new Map((checked.contracts ?? []).map(pkg => [pkg.name, pkg.tools]));
+  const contractChanges = [...new Set([...oldContracts.keys(), ...newContracts.keys()])].sort().flatMap(name => {
+    const oldTools = oldContracts.get(name) ?? {}, newTools = newContracts.get(name) ?? {};
+    return [...new Set([...Object.keys(oldTools), ...Object.keys(newTools)])].sort().flatMap(tool => {
+      const before = oldTools[tool] ?? null, after = newTools[tool] ?? null;
+      return JSON.stringify(before) === JSON.stringify(after) ? [] : [{ package: name, tool, before, after }];
+    });
+  });
   const handlers = [...new Set([...(before.document.handlers ?? []), ...(after.document.handlers ?? [])].map(h => h.tool))].sort().map(tool => {
     const describe = pkg => {
       const h = pkg.document.handlers?.find(h => h.tool === tool);
@@ -257,7 +267,7 @@ function updateReview(workspace, lock, checked, allowDowngrade = false) {
     workspace_digest: packageDigest(Buffer.concat([workspace.bytes, Buffer.from(json(lock))])),
     package: checked.package, previous: previous.version, version: checked.version, direction,
     previous_digest: previous.digest, package_digest: after.digest, handlers,
-    packages: checked.packages, contracts: checked.contracts ?? [] };
+    packages: checked.packages, contracts: checked.contracts ?? [], contract_changes: contractChanges };
   return { ...plan, review_digest: packageDigest(Buffer.from(JSON.stringify(plan))) };
 }
 
@@ -274,11 +284,14 @@ export async function reviewPackageUpdate(path, { root = process.cwd(), accept, 
     const workspace = readPackageWorkspace(root), lock = verifyInstalledPackages(root, workspace.records);
     const checked = await checkPackage(source, { ...options, projectRoot: root, inspectContracts: true });
     if (options.name && checked.package !== options.name) throw packageError('PackageNameConflict', 'replacement identity differs from the selected package');
-    const review = updateReview(workspace, lock, checked, options['allow-downgrade']);
+    const review = await updateReview(workspace, lock, checked, options['allow-downgrade']);
     if (accept !== undefined && accept !== review.review_digest) throw packageError('PackageReviewChanged', 'package or workspace changed; review the update again');
     if (accept !== undefined) return { ...await updatePackage(source, { root, name: checked.package, reviewDigest: accept, 'allow-downgrade': options['allow-downgrade'] }), review };
     return { ...review, command: 'package update', status: 'review_required', exitCode: 0,
       notes: [`Review ${review.review_digest}`, ...(review.direction === 'downgrade' ? ['Older code selected explicitly. This does not undo external effects or restore execution data. Consumer governance remains in force.'] : []), ...review.handlers.map(h => `Handler changed: ${h.tool} (${h.before?.digest ?? 'absent'} -> ${h.after?.digest ?? 'absent'})`),
+        ...review.contract_changes.flatMap(change => ['required_secrets', 'required_capabilities', 'approval_policy', 'recommended_effect', 'configuration_schema']
+          .filter(key => JSON.stringify(change.before?.[key]) !== JSON.stringify(change.after?.[key]))
+          .map(key => `${change.tool} ${key}: ${JSON.stringify(change.before?.[key] ?? null)} -> ${JSON.stringify(change.after?.[key] ?? null)}`)),
         'Inspect contracts and dependencies with --json. Apply this exact review using --accept <review_digest>. Execution permissions still require application review.'] };
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }
@@ -306,7 +319,7 @@ async function installPackage(path, { root, ...options }, replacing) {
     const checked = await checkPackage(path, { ...options, projectRoot: root, inspectContracts: Boolean(options.reviewDigest) });
     const packages = checked.closure.packages;
     if (replacing && checked.package !== replacing) throw packageError("PackageNameConflict", "replacement identity differs from the selected package");
-    if (options.reviewDigest && updateReview(workspace, lock, checked, options['allow-downgrade']).review_digest !== options.reviewDigest) throw packageError('PackageReviewChanged', 'package or workspace changed; review the update again');
+    if (options.reviewDigest && (await updateReview(workspace, lock, checked, options['allow-downgrade'])).review_digest !== options.reviewDigest) throw packageError('PackageReviewChanged', 'package or workspace changed; review the update again');
     if (replacing) {
       const previous = lock.packages.find(entry => entry.name === replacing);
       updateDirection(checked.version, previous.version, options['allow-downgrade']);

@@ -1,6 +1,27 @@
 import { findPackageWorkspace, readPackageWorkspace, verifyInstalledPackages } from './package-store.mjs';
 import { registryPackageStates } from './registry.mjs';
 import { createRegistryReader } from './package-fetch.mjs';
+import { configuredRegistry } from './package-registry-config.mjs';
+
+export async function cachedPackageDiagnostics(root) {
+  try {
+    const configuration = configuredRegistry(root);
+    if (!configuration) return [];
+    const report = await auditPackageStatus({ ...configuration, root, offline: true });
+    const evidence = { source: 'cache', collected_at: report.collected_at, expires_at: report.expires_at, freshness: report.freshness };
+    return [
+      ...(report.freshness === 'expired' ? [{ severity: 'warning', code: 'PackageStatusExpired',
+        message: 'The cached signed catalogue has expired. Refresh explicitly with touba package audit.', ...evidence }] : []),
+      ...report.packages.filter(pkg => pkg.status === 'yanked').map(pkg => ({ severity: 'warning', code: 'PackageVersionWithdrawn',
+        package_name: pkg.name, version: pkg.version, ...evidence,
+        message: `${pkg.name}@${pkg.version} was withdrawn in the last verified catalogue.${pkg.withdrawal ? ' Reason: ' + pkg.withdrawal.reason : ''} No live consultation was made.`,
+      })),
+    ];
+  } catch (error) {
+    return [{ severity: 'warning', code: 'PackageStatusUnavailable', reason: error.code ?? 'RegistryStatusUnavailable',
+      message: 'Withdrawal status could not be verified from the local cache. Run touba package audit explicitly. No network request was made.' }];
+  }
+}
 
 export async function auditPackageStatus(options) {
   const root = findPackageWorkspace(options.root), workspace = readPackageWorkspace(root);

@@ -14,13 +14,24 @@
     "validation": { "const": "source_contracts" },
     "operation": { "enum": ["install", "update"] },
     "previous_version": { "type": ["string", "null"] },
+    "contract_changes": { "type": "array", "maxItems": 4096, "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["package", "tool", "before", "after"],
+      "properties": {
+        "package": { "type": "string", "maxLength": 180 },
+        "tool": { "type": "string", "maxLength": 512 },
+        "before": { "type": ["object", "null"], "maxProperties": 32 },
+        "after": { "type": ["object", "null"], "maxProperties": 32 }
+      }
+    } },
     "contracts": { "type": "array", "maxItems": 128, "items": {
       "type": "object", "additionalProperties": false, "required": ["name", "tools", "handlers"],
       "properties": {
         "name": { "type": "string" }, "tools": { "type": "object", "maxProperties": 4096 },
         "handlers": { "type": "array", "maxItems": 4096, "items": {
           "type": "object", "additionalProperties": false, "required": ["tool", "entrypoint"],
-          "properties": { "tool": { "type": "string" }, "entrypoint": { "type": "string" } }
+          "properties": { "tool": { "type": "string" }, "entrypoint": { "type": "string" },
+            "recommended_effect": { "type": "object" } }
         } }
       }
     } },

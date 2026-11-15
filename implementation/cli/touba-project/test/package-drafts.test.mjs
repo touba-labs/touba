@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { newPackage } from '../src/package-author.mjs';
 import { packageCommand } from '../src/package-command.mjs';
 import { checkoutPackageDraft, submitPackageDraft } from '../src/package-drafts.mjs';
-import { checkPackageArchive, packPackage } from '../src/packages.mjs';
+import { addPackage, checkPackageArchive, packPackage } from '../src/packages.mjs';
+import { submitPackageSuite } from '../src/package-suite.mjs';
 import { packageDigest } from '../src/package-contract.mjs';
 import { publicationBytes } from '../src/package-publish-remote.mjs';
 
@@ -38,6 +39,99 @@ function server(t, handler, { reuse = false } = {}) {
   return calls;
 }
 const revoked = calls => assert.equal(calls.filter(call => call.url === issuer + '/revoke').length, 2);
+
+test('a bounded suite orders dependencies, keeps individual drafts and resumes unchanged without uploading', async t => {
+  const f = await fixture(t), dependent = newPackage('acme.dependent', { root: f.parent, license: 'MIT', publisher: 'Acme' }).path;
+  await addPackage(f.author, { root: dependent });
+  const suite = join(f.parent, 'suite.json'); writeFileSync(suite, JSON.stringify(['dependent', 'example']));
+  const rows = new Map(), uploaded = [];
+  server(t, async (url, opts) => {
+    if (!opts.method) return json(rows.get(url.split('/').at(-1)));
+    assert.equal(opts.method, 'POST');
+    const path = join(f.parent, `upload-${uploaded.length}.tar.gz`); writeFileSync(path, opts.body);
+    const checked = await checkPackageArchive(path, { publishing: true });
+    const name = checked.manifest.name, draft = uploaded.length === 0 ? id : nextId;
+    const row = { status: 'draft', id: draft, name, version: '0.1.0', archive_digest: packageDigest(opts.body), revision: 1, ready: true };
+    rows.set(draft, row); uploaded.push(name); return json(row, 201);
+  });
+  const first = await submitPackageSuite(suite, options);
+  assert.equal(first.status, 'success');
+  assert.deepEqual(uploaded, ['acme.example', 'acme.dependent']);
+  const second = await submitPackageSuite(suite, options);
+  assert.equal(second.status, 'success'); assert.equal(uploaded.length, 2);
+  assert.equal(second.results.every(row => row.unchanged), true);
+});
+
+test('suite preflight refuses count, byte, duplicate and directory errors before network', async t => {
+  const f = await fixture(t), suite = join(f.parent, 'suite.json');
+  let calls = 0; t.mock.method(globalThis, 'fetch', async () => { calls++; throw new Error('unexpected network'); });
+  for (const [paths, extra, code] of [
+    [['example', 'example'], { 'max-packages': 1 }, 'PackageSuiteLimitExceeded'],
+    [['example'], { 'max-bytes': 1 }, 'PackageSuiteLimitExceeded'],
+    [['example', 'example'], {}, 'PackageSuiteConflict'],
+    [['../outside'], {}, 'PackageSuiteInvalid'],
+  ]) {
+    writeFileSync(suite, JSON.stringify(paths));
+    await assert.rejects(submitPackageSuite(suite, { ...options, ...extra }), { code });
+  }
+  assert.equal(calls, 0);
+});
+
+test('suite stops on 429, preserves Retry-After and does not retry or visit later packages', async t => {
+  const f = await fixture(t);
+  newPackage('acme.second', { root: f.parent, license: 'MIT', publisher: 'Acme' });
+  const suite = join(f.parent, 'suite.json'); writeFileSync(suite, JSON.stringify(['example', 'second']));
+  let uploads = 0;
+  const calls = server(t, () => {
+    uploads++;
+    return new Response(JSON.stringify({ error: 'submission_rate_reached' }), { status: 429, headers: { 'Retry-After': '75' } });
+  });
+  const result = await submitPackageSuite(suite, { ...options, lang: 'fr' });
+  assert.equal(uploads, 1);
+  assert.deepEqual(result.results, [{ package: 'acme.example', version: '0.1.0', status: 'error',
+    code: 'PackageDraftRefused', reason: 'submission_rate_reached', retry_after: 75 }]);
+  assert.match(result.notes[0], /^Lot arrêté/);
+  assert.equal(existsSync(join(f.author, '.touba/package-draft.lock')), false);
+  revoked(calls);
+});
+
+test('suite does not skip unqualified equal bytes and stops after cancellation', async t => {
+  const f = await fixture(t), suite = join(f.parent, 'suite.json');
+  newPackage('acme.second', { root: f.parent, license: 'MIT', publisher: 'Acme' });
+  writeFileSync(suite, JSON.stringify(['example', 'second']));
+  mkdirSync(join(f.author, '.touba'), { recursive: true });
+  writeFileSync(join(f.author, '.touba/package-draft.json'), JSON.stringify({ ...f.row, registry }));
+  const controller = new AbortController();
+  let uploads = 0;
+  server(t, (url, opts) => {
+    if (!opts.method) return json({ ...f.row, ready: false });
+    assert.equal(opts.method, 'PUT'); uploads++;
+    controller.abort();
+    return json({ ...f.row, revision: 2, archive_digest: packageDigest(opts.body), ready: true });
+  });
+  const result = await submitPackageSuite(suite, { ...options, signal: controller.signal });
+  assert.equal(result.status, 'error');
+  assert.equal(uploads, 1);
+  assert.equal(result.results.at(-1).code, 'PackageOperationCancelled');
+  assert.equal(existsSync(join(f.author, '.touba/package-draft.lock')), false);
+});
+
+test('suite preserves previous success and rejects edits made after preflight', async t => {
+  const f = await fixture(t), second = newPackage('acme.second', { root: f.parent, license: 'MIT', publisher: 'Acme' }).path;
+  const suite = join(f.parent, 'suite.json'); writeFileSync(suite, JSON.stringify(['example', 'second']));
+  let uploads = 0;
+  server(t, (url, opts) => {
+    uploads++;
+    writeFileSync(join(second, 'README.md'), '# Changed after review\n');
+    return json({ ...f.row, archive_digest: packageDigest(opts.body), ready: true }, 201);
+  });
+  const result = await submitPackageSuite(suite, options);
+  assert.equal(result.status, 'error'); assert.equal(uploads, 1);
+  assert.equal(result.results[0].status, 'success');
+  assert.equal(result.results[1].code, 'PackageProjectChanged');
+  assert.equal(existsSync(join(f.author, '.touba/package-draft.json')), true);
+  assert.equal(existsSync(join(second, '.touba/package-draft.json')), false);
+});
 
 test('checkout validates exact bytes, creates author folder without running code and excludes local link from archives', async t => {
   const f = await fixture(t), parent = root(t);

@@ -1,5 +1,19 @@
 // Human diagnostics; stable machine codes and source diagnostics stay intact.
 import { packageError } from './package-contract.mjs';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+const localeContext = new AsyncLocalStorage();
+
+export async function withPackageLocale(locale, callback) {
+  if (locale !== undefined && !['fr', 'en'].includes(locale)) {
+    throw packageError('PackageOptionInvalid', '--lang must be fr or en');
+  }
+  const selected = packageLocale(locale);
+  return localeContext.run(selected, async () => {
+    try { return await callback(); }
+    catch (error) { error.packageLocale = selected; throw error; }
+  });
+}
 
 const messages = {
   HandlerConfigurationInvalid: ['Vérifiez les champs, types et limites du schéma de configuration du handler. Les valeurs restent dans la configuration d’hôte.', 'Check the handler configuration fields, types and limits. Values belong in the host configuration.'],
@@ -68,18 +82,18 @@ export function publicationRefusal(code, result, fallback) {
 }
 
 export function packageLocale(locale) {
-  locale ??= process.env.TOUBA_LOCALE || process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || 'en';
+  locale ??= localeContext.getStore() ?? (process.env.TOUBA_LOCALE || process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || 'en');
   return /^fr(?:$|[-_.])/i.test(locale) ? 'fr' : 'en';
 }
 
 export function packageDiagnostic(error, locale) {
-  const fr = packageLocale(locale) === 'fr';
+  const fr = packageLocale(locale ?? error.packageLocale) === 'fr';
   const message = messages[error.reason] ?? messages[error.code];
   if (!message) return error instanceof Error ? error.message : String(error);
   const delay = Number.isSafeInteger(error.retryAfter) && error.retryAfter >= 0
     ? (fr ? ` Réessayez dans ${error.retryAfter} s.` : ` Retry in ${error.retryAfter} s.`) : '';
   const details = error.diagnostics?.length ? ` [${error.diagnostics[0].phase}: ${error.diagnostics[0].code}]` : '';
-  const withdrawal = error.code === 'RegistryPackageYanked' && typeof error.withdrawalReason === 'string' && error.withdrawalReason.length <= 500
+  const withdrawal = error.code === 'RegistryPackageYanked' && typeof error.withdrawalReason === 'string' && [...error.withdrawalReason].length <= 500
     ? ` ${fr ? 'Motif' : 'Reason'} : ${error.withdrawalReason.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ')}` : '';
   return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}`;
 }

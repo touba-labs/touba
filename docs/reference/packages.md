@@ -111,6 +111,7 @@ l'enveloppe enrichie. Sans configuration, l'enveloppe historique reste inchangé
 | `touba package add <nom\|dossier\|archive>` | Installation verrouillée ; un nom seul désigne le dossier copié dans `packages/` |
 | `touba package add org.nom@1.0.0 --registry <source>` | Version exacte depuis un registry choisi |
 | `touba package publish [dossier] --registry <dossier>` | Publication statique locale en draft, sans écrasement ni exécution |
+| `touba package submit-suite suite.json --registry <url>` | Soumet un lot explicite de projets auteurs, séquentiellement, sous forme de brouillons privés |
 | `touba package list` | Liste et vérifie les dépendances enregistrées |
 | `touba package list --status` | Ajoute les états du cache signé et sa fraîcheur, sans accès réseau |
 | `touba package audit` | Consulte explicitement le registre configuré pour les versions installées |
@@ -119,7 +120,10 @@ l'enveloppe enrichie. Sans configuration, l'enveloppe historique reste inchangé
 | `touba package update <cible> --allow-downgrade` | Permet une revue explicite vers une version inférieure, sans annuler les effets passés |
 | `touba package remove org.nom` | Retire une dépendance non requise par une autre |
 
-Toutes acceptent `--json` et `--root`. La racine est découverte depuis les
+Toutes acceptent `--json`, `--root` et `--lang fr` ou `--lang en`. La langue
+explicite prime sur celle du terminal et accompagne la connexion par appareil.
+Les motifs écrits par un éditeur restent dans leur langue d'origine.
+La racine est découverte depuis les
 sous-dossiers ; pour `new`, `--root` est le parent du nouveau dossier. Sans cible,
 `check` vérifie le package auteur courant ou les dépendances d'une application.
 Code de sortie : `0` réussite, `1` test échoué/absent ou création annulée, `2`
@@ -128,9 +132,73 @@ Pour `audit` et `list --status`, le code `1` signale aussi une version retirée,
 dépréciée, inconnue ou un cache expiré. Une consultation échouée ne devient pas
 une réussite hors ligne implicite. Une signature expirée reste refusée pour
 l'installation, même si l'audit hors ligne permet de lire son ancien état.
+`prepare` signale les retraits déjà connus dans ce cache et sa fraîcheur,
+sans connexion réseau ni modification d'une exécution. Rafraîchissez l'état
+explicitement avec `touba package audit`.
 Le service exécute les tests isolés lors de submit et de la publication distante.
 `add --allow-draft` accepte explicitement une version draft du registry choisi.
 Un nom d'organisation local n'atteste ni disponibilité ni propriété publique.
+
+### Soumettre plusieurs packages
+
+Le fichier du lot contient les chemins relatifs des dossiers auteurs, par exemple
+`["utilitaires", "facturation"]`. Chaque chemin reste sous son dossier parent.
+La CLI vérifie toutes les archives, leurs dépendances verrouillées et leur taille
+avant le premier envoi. Les dépendances présentes dans le lot précèdent leurs
+consommateurs. Une même version doit désigner les mêmes fichiers partout.
+
+Les limites par défaut sont 16 packages, 256 Mio d'archives et 15 minutes, avec
+un seul envoi à la fois. `--max-packages`, `--max-bytes` et `--timeout-seconds`
+permettent de les régler, jusqu'à 32 packages, 512 Mio et 30 minutes. Les limites
+et quotas du registre continuent à s'appliquer indépendamment.
+
+Le lot s'arrête au premier refus ou à l'annulation. Les brouillons déjà créés
+restent disponibles ; le résultat donne chaque état et le délai de nouvel essai
+reçu du serveur. Vérifiez une soumission interrompue dans le service avant de
+relancer. À la reprise, une archive identique déjà qualifiée dans son brouillon
+n'est pas renvoyée. Un brouillon non qualifié reste soumis à vérification.
+Le lot ne publie aucune version et ne réessaie pas automatiquement.
+
+### Ressources d'une dépendance depuis un handler
+
+Les SDK proposent `resolvePackageResource` en JavaScript et
+`resolve_package_resource` en Python. Le handler indique son propre manifeste,
+le nom d'une dépendance déclarée et un fichier inventorié de cette dépendance :
+
+```javascript
+import { resolvePackageResource } from '@touba/sdk';
+const schemaPath = resolvePackageResource(
+  new URL('../touba.package.json', import.meta.url),
+  'acme.schemas',
+  'resources/invoice.json',
+);
+```
+
+```python
+from pathlib import Path
+from touba_sdk import resolve_package_resource
+
+schema_path = resolve_package_resource(
+    Path(__file__).resolve().parent.parent / 'touba.package.json',
+    'acme.schemas',
+    'resources/invoice.json',
+)
+```
+
+Ces exemples placent le handler dans `handlers/`. Le résolveur fonctionne dans
+le dossier auteur, l'archive extraite et le consommateur installé, sans dépendre
+du dossier courant ni rechercher un manifeste dans les parents. Il vérifie la
+version verrouillée, les empreintes et l'inventaire avant de rendre un chemin.
+Les liens symboliques, traversées, dépendances absentes et fichiers non inventoriés
+sont refusés. Chaque résolution est bornée : 4 096 fichiers par package,
+16 Mio par fichier et 64 Mio d'inventaire.
+
+Le résolveur ne charge pas de code et n'accorde aucun droit. Sous confinement,
+l'hôte doit autoriser séparément la lecture du verrou, des manifestes et des
+fichiers vérifiés, via son inventaire `code_paths`. L'inventaire de fichiers ne
+remplace pas les exports Touba ni les contrôles d'appel d'un outil. Pour invoquer
+un outil exporté, utilisez les mécanismes gouvernés du langage ; ce helper sert
+aux ressources et bibliothèques hôtes explicitement sélectionnées.
 
 ### Champs du manifeste
 

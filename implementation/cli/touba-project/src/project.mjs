@@ -25,6 +25,7 @@ import { loadSkillPack, projectContextSelections, normalizeProjectContexts } fro
 import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, readPackage, packageHandlerConfiguration } from "./package-contract.mjs";
 import { normalizeHandlerConfiguration } from '../../../runtime/touba-handler-sdk/src/handler-configuration.mjs';
 import { PACKAGE_LOCK, assertPackageDirectory, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
+import { cachedPackageDiagnostics } from './package-status.mjs';
 
 import {
   generateHandlerContractTestFromAirTool,
@@ -607,6 +608,12 @@ export async function prepareProject(options = {}) {
     compileOptions,
   });
   diagnostics.push(...packageResolution.diagnostics);
+  if (packageResolution.packages.length) diagnostics.push(...await cachedPackageDiagnostics(root));
+  for (const pkg of packageResolution.packages) for (const handler of pkg.handlers ?? []) {
+    if (!handler.effect_contract) diagnostics.push({ severity: 'warning', code: 'PackageEffectRecommendationMissing',
+      message: `Handler ${handler.tool} has no recommended effect contract. Review its side effects and receipt protocol; network access alone does not imply an external write.`,
+      package_name: pkg.name, tool_ref: handler.tool });
+  }
 
   // An explicitly selected package export is an entry, not an implicit grant
   // or permission to execute every private declaration in that package.
@@ -1022,7 +1029,17 @@ export async function prepareProject(options = {}) {
     }
   }
 
-  const status = computeStatus(mode, diagnostics, actions);
+  // Compilation visits shared dependencies from each entry. Keep distinct
+  // source locations, but report an identical diagnostic only once, including
+  // errors encountered while compiling installed packages.
+  const seenDiagnostics = new Set();
+  const uniqueDiagnostics = diagnostics.filter(diagnostic => {
+    const key = stableJson(diagnostic);
+    if (seenDiagnostics.has(key)) return false;
+    seenDiagnostics.add(key);
+    return true;
+  });
+  const status = computeStatus(mode, uniqueDiagnostics, actions);
   return {
     workflow_version: PROJECT_MANIFEST_VERSION,
     command: "prepare",
@@ -1055,7 +1072,7 @@ export async function prepareProject(options = {}) {
     tools: expectedToolRefs,
     manifest_requirements: manifestRequirements,
     actions,
-    diagnostics,
+    diagnostics: uniqueDiagnostics,
   };
 }
 

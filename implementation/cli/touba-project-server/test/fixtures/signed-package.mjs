@@ -3,8 +3,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { newPackage, packPackage } from '../../../touba-project/src/packages.mjs';
 
-export async function signedPackageFixture(root, registry, name = 'fixture.remote') {
+export async function signedPackageFixture(root, registry, name = 'fixture.remote', configure = () => {}) {
   const pkg = newPackage(name, { root, publisher: 'Fixture', description: 'Synthetic signed package', license: 'Apache-2.0', version: '1.0.0' });
+  await configure(pkg.path);
   const runtimeCompatibility = JSON.parse(readFileSync(join(pkg.path, 'touba.package.json'))).touba.runtime_compatibility;
   const packed = await packPackage(pkg.path, { output: join(root, name + '.tar.gz') });
   const bytes = readFileSync(packed.output), key = generateKeyPairSync('ed25519');
