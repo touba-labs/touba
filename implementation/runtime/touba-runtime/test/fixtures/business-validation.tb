@@ -1,0 +1,22 @@
+module business.validation
+
+function WithinLimit
+    takes proposed as Int
+    takes ceiling as Int
+    gives Boolean
+    do
+        give proposed >= 0 and proposed <= ceiling
+
+strategy ValidatePrice
+    takes proposed as Int
+    takes ceiling as Int
+    gives Text
+    do
+        WithinLimit
+            with proposed as proposed
+            with ceiling as ceiling
+            into accepted
+        if accepted
+            give "accepted"
+        else
+            stop

@@ -2,7 +2,7 @@ import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteTraceStore } from "../src/sqlite-trace-store.mjs";
@@ -17,12 +17,15 @@ before(() => {
 });
 const options = entry => ({ entryRef: entry, inputs: { value: "synthetic" } });
 
-test("the published business rule admits only nonnegative amounts within the supplied limit", async t => {
-  const root = mkdtempSync(join(tmpdir(), "touba-business-rule-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const page = readFileSync(new URL("../../../../docs/tutoriels/fonctions-metier-pures.md", import.meta.url), "utf8");
-  const source = page.match(/```touba title="business-validation.tb"\n([\s\S]*?)```/)[1];
-  const filename = join(root, "rule.tb"); writeFileSync(filename, source);
+test("the business rule admits only nonnegative amounts within the supplied limit", async () => {
+  // Core checkouts carry their own example. The documentation is maintained
+  // separately and can be checked explicitly during combined qualification.
+  const filename = fileURLToPath(new URL("fixtures/business-validation.tb", import.meta.url));
+  if (process.env.TOUBA_DOCUMENTATION_ROOT) {
+    const page = readFileSync(join(process.env.TOUBA_DOCUMENTATION_ROOT, "tutoriels/fonctions-metier-pures.md"), "utf8");
+    const source = page.match(/```touba title="business-validation.tb"\n([\s\S]*?)```/)[1];
+    assert.equal(source.trim(), readFileSync(filename, "utf8").trim(), "The published example must match its tested fixture");
+  }
   const compiler = fileURLToPath(new URL(`../../../target/debug/touba-compile${process.platform === "win32" ? ".exe" : ""}`, import.meta.url));
   const document = JSON.parse(execFileSync(compiler, [filename], { encoding: "utf8" }));
   for (const proposed of [-1, 0, 50, 100, 101]) {
