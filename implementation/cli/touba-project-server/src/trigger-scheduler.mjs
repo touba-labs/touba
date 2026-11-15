@@ -9,6 +9,12 @@ import { readProjectEntrypoints } from '../../touba-project/src/project-entrypoi
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const states = ['waiting','running','pending','success','failed','interrupted'];
+const validControlReview = review => review && Object.keys(review).every(key => ['at','reason','actor'].includes(key))
+  && typeof review.at === 'string' && Number.isFinite(Date.parse(review.at))
+  && typeof review.reason === 'string' && review.reason.trim().length > 0 && review.reason.length <= 500
+  && review.actor && Object.keys(review.actor).every(key => ['kind','id'].includes(key))
+  && ['user','service'].includes(review.actor.kind) && typeof review.actor.id === 'string'
+  && review.actor.id.length > 0 && review.actor.id.length <= 256;
 
 /** Plans come only from a verified preparation, explicit entrypoints and enabled bindings. */
 export function readSchedulePlans(root) {
@@ -48,6 +54,7 @@ export function schedulerStore(path) {
       if (row.retry_at !== undefined && (!Number.isSafeInteger(row.retry_at) || row.retry_at < 0)) fail('ToubaSchedulerStateInvalid');
       if (row.paused !== undefined && typeof row.paused !== 'boolean'
         || row.control_revision !== undefined && (!Number.isSafeInteger(row.control_revision) || row.control_revision < 0)) fail('ToubaSchedulerStateInvalid');
+      if (row.control_review !== undefined && !validControlReview(row.control_review)) fail('ToubaSchedulerStateInvalid');
     },
     checkTransaction(db) { if (db.prepare('SELECT count(*) AS n FROM records').get().n > 100) fail('ToubaSchedulerCapacityExceeded'); },
   });
@@ -110,7 +117,8 @@ export function createTriggerScheduler({ enabled, path, plans, execute, pending,
       if (!row || row.signature !== plan.signature) {
         // A new/revised schedule starts at its next UTC-aligned interval.
         row = { ...plan, slot, status: 'waiting', run_id: null, error: null, skipped: row?.skipped ?? 0,
-          paused: row?.paused ?? false, control_revision: row?.control_revision ?? 0 };
+          paused: row?.paused ?? false, control_revision: row?.control_revision ?? 0,
+          ...(row?.control_review ? {control_review:row.control_review} : {}) };
         rows.splice(0, rows.length, row); store.write(rows); continue;
       }
       if (row.retry_at > now()) continue;
@@ -152,6 +160,7 @@ export function createTriggerScheduler({ enabled, path, plans, execute, pending,
       if (controls?.run_id !== row.run_id) fail('ToubaSchedulerReviewConflict');
       row.paused = controls?.paused ?? false;
       row.control_revision = controls?.control_revision ?? 0;
+      if (controls?.control_review) row.control_review = controls.control_review;
       row.slot = Math.max(row.slot, controls?.slot ?? 0);
       latest.splice(0, latest.length, row); store.write(latest);
     }
@@ -185,14 +194,17 @@ export function createTriggerScheduler({ enabled, path, plans, execute, pending,
       row.status = 'waiting'; row.error = null; row.slot = Math.max(row.slot, Math.floor(now()/row.interval_ms));
       store.write(rows); return { trigger_ref, run_id, status: 'acknowledged' };
     },
-    control({trigger_ref, signature, control_revision, paused, reason}) {
+    control({trigger_ref, signature, control_revision, paused, reason}, actor = {kind:'service',id:'local-operator'}) {
       if (!enabled || typeof trigger_ref !== 'string' || !trigger_ref.startsWith('trigger:') || typeof signature !== 'string'
         || typeof paused !== 'boolean' || typeof reason !== 'string' || !reason.trim() || reason.length > 500
         || !Number.isSafeInteger(control_revision) || control_revision < 0) fail('ToubaSchedulerReviewInvalid');
+      const review = {at:new Date(now()).toISOString(),reason:reason.trim(),actor};
+      if (!validControlReview(review)) fail('ToubaSchedulerReviewInvalid');
       const rows = store.read([{id:trigger_ref}]), row=rows[0];
       if (!row || row.signature !== signature || (row.control_revision ?? 0) !== control_revision
         || (row.paused ?? false) === paused) fail('ToubaSchedulerReviewConflict');
       row.paused=paused; row.control_revision=control_revision+1;
+      row.control_review=review;
       // Resuming never catches up missed slots or clears an interrupted run.
       if (!paused) row.slot=Math.max(row.slot,Math.floor(now()/row.interval_ms));
       store.write(rows);

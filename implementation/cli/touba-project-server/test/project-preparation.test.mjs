@@ -12,6 +12,33 @@ import { createToubaProjectServer } from "../src/serve.mjs";
 import { validateObject } from "../../../contracts/product-surfaces/validate.mjs";
 import schema from "../../../contracts/product-surfaces/schemas/touba-project-preparation-v1.schema.json" with { type: "json" };
 import { toolReviewFixture, toolReviewRef } from './fixtures/tool-review-project.mjs';
+import previewSchema from '../../../contracts/product-surfaces/schemas/touba-project-preparation-preview-v1.schema.json' with { type: 'json' };
+
+test('preparation presents obsolete removals and applies only the unchanged reviewed plan', async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba-removal-review-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  initProject({ root }); const module = newModule('test.main', { root });
+  const source = 'module test.main\nstrategy Echo\n    gives Text\n    do\n        give "ready"\n';
+  writeFileSync(module.source_path, source + '\ntrigger Daily\n    on schedule "0 0 * * *"\n    runs strategy Echo\n    limits\n        max_runs_per_day as 2\n        timeout_ms as 1000\n');
+  const first = await prepareProject({ root, mode: 'write' });
+  assert.equal(first.status, 'success', JSON.stringify(first.diagnostics));
+  const original = readFileSync(first.manifest_path, 'utf8');
+  writeFileSync(module.source_path, source);
+  const preparation = createProjectPreparation(root), preview = await preparation.preview('alice');
+  assert.deepEqual(validateObject(previewSchema, preview), []);
+  assert.equal(preview.can_apply, true, JSON.stringify(preview.diagnostics));
+  assert.deepEqual(preview.changes.find(item => item.kind === 'remove_trigger'), {
+    kind: 'remove_trigger', subject: 'trigger:test.main/Daily', field: 'present', before: 'true', after: 'false' });
+  assert.equal(readFileSync(first.manifest_path, 'utf8'), original);
+  const request = { id: preview.id, review_digest: preview.review_digest };
+  await assert.rejects(preparation.apply('bob', request), { code: 'ToubaServePreparationReviewMissing' });
+  writeFileSync(module.source_path, source.replace('ready', 'changed'));
+  await assert.rejects(preparation.apply('alice', request), { code: 'ProjectPreparationReviewStale' });
+  assert.equal(readFileSync(first.manifest_path, 'utf8'), original);
+  const next = await preparation.preview('alice');
+  assert.equal((await preparation.apply('alice', { id: next.id, review_digest: next.review_digest })).status, 'success');
+  readPreparedProject(root);
+});
 
 test('reviewed preparation restores a known binding, requires a reason and refuses stale state', async t => {
   const fixture = await toolReviewFixture({ language: 'javascript' }); t.after(() => rmSync(fixture.directory, { recursive: true, force: true }));

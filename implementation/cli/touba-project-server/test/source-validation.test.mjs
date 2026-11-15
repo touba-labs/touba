@@ -6,6 +6,29 @@ import { join } from "node:path";
 import { compileProposedSources } from "../src/source-validation.mjs";
 import { toolReviewFixture } from "./fixtures/tool-review-project.mjs";
 import { proposeProjectChangeSet, applyProjectChange } from "../src/serve.mjs";
+import {requestRouteConflicts} from '../../../contracts/trigger-routes.mjs';
+
+test('request route uniqueness includes distinct modules but deduplicates imported definitions', () => {
+  const a={id:'trigger:a.main/One',event:{kind:'request',value:'POST /shared'}};
+  const b={id:'trigger:b.main/Two',event:{kind:'request',value:'POST /shared'}};
+  const docs=[{definitions:{triggers:[a]}},{definitions:{triggers:[a,b]}}];
+  assert.equal(requestRouteConflicts(docs).length,1);
+  assert.deepEqual(requestRouteConflicts(docs,new Set([a.id])),[]);
+  assert.deepEqual(requestRouteConflicts(docs).at(0).details.trigger_refs,[a.id,b.id]);
+});
+
+test('source review refuses a duplicate webhook path before writing source', t => {
+  const root=mkdtempSync(join(tmpdir(),'touba-route-review-'));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  mkdirSync(join(root,'src'));
+  const strategy='module route.test\nstrategy Work\n    gives Int\n    do\n        give 1\n';
+  const trigger=name=>`trigger ${name}\n    on request POST "/shared"\n    runs strategy Work\n    limits\n        max_runs_per_day as 5\n        timeout_ms as 5000\n`;
+  const original=strategy+trigger('First');
+  writeFileSync(join(root,'src/test.tb'),original);
+  const result=compileProposedSources({projectRoot:root,targets:[{path:'src/test.tb',content:original+trigger('Second')}]});
+  assert.ok(result.diagnostics.some(item=>item.code==='TriggerRouteConflict'),JSON.stringify(result.diagnostics));
+  assert.equal(readFileSync(join(root,'src/test.tb'),'utf8'),original);
+});
 
 test("review compiles imports and reverse dependants without changing active sources", t => {
   const root = mkdtempSync(join(tmpdir(), "touba-source-review-test-"));

@@ -81,6 +81,17 @@ test('HTTP import uses a recoverable transaction, preserves existing configurati
   assert.equal((await send('/integrations/mcp/discover',{target:'unknown'})).status,400);
   assert.equal((await send('/integrations/mcp/discover',{target:'unknown',confirm_process:true})).status,404);
   assert.equal((await send('/integrations/import/preview',input('openapi'),false)).status,401);
+  const unsupported = input('openapi');
+  unsupported.document = structuredClone(unsupported.document);
+  unsupported.document.paths['/lookup'].post.requestBody.content['application/json'].schema = { $ref: 'https://example.invalid/remote' };
+  const rejected = await send('/integrations/import/preview', unsupported);
+  assert.equal(rejected.status, 422);
+  const refusal = await rejected.json();
+  assert.equal(refusal.code, 'ToubaServeImportUnsupported');
+  assert.equal(refusal.diagnostics[0].operation, 'lookup'); assert.match(refusal.diagnostics[0].message, /local/);
+  const noSchema = input('mcp'); delete noSchema.document.tools[0].inputSchema;
+  const rejectedMcp = await send('/integrations/import/preview', noSchema);
+  assert.equal(rejectedMcp.status, 422); assert.ok((await rejectedMcp.json()).diagnostics.some(item => item.operation === 'lookup'));
   const response=await send('/integrations/import/preview',{...input('openapi'),authorize_grants:true});
   const preview=await response.json();assert.equal(response.status,200,JSON.stringify(preview));assert.equal(preview.can_apply,true,JSON.stringify(preview));
   const applied=await send('/integrations/import/apply',{id:preview.id,review_digest:preview.review_digest,reason:'Synthetic import qualification'});

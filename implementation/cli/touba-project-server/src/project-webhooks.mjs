@@ -17,7 +17,7 @@ const safeCode = value => /^[A-Za-z][A-Za-z0-9]{0,99}$/.test(value ?? '') ? valu
 const active = new Set(['queued', 'processing', 'continuing', 'awaiting_human']);
 
 /** All exposed routes share the same verified preparation and execution host. */
-export function readProjectRequestRoutes(root) {
+export function readProjectRequestRoutes(root, { isolateConflicts = false } = {}) {
   const prepared = readPreparedProject(root);
   if (!prepared) fail('ToubaServePreparedProjectInvalid');
   const manifestInput = prepared.inputs.find(item => item.kind === 'manifest');
@@ -28,7 +28,11 @@ export function readProjectRequestRoutes(root) {
   for (const input of prepared.inputs.filter(item => item.kind === 'air')) {
     const document = loadAirFromJson(readFileSync(join(root, input.path), 'utf8'));
     const exposedDocument = {...document,definitions:{...document.definitions,triggers:(document.definitions.triggers??[]).filter(trigger=>exposed.has(trigger.id))}};
-    for (const route of buildRequestRoutes(exposedDocument, manifest)) {
+    // Check routing conflicts across all modules, without losing unrelated routes.
+    const candidates = exposedDocument.definitions.triggers.flatMap(trigger => buildRequestRoutes({
+      ...exposedDocument, definitions: { ...exposedDocument.definitions, triggers: [trigger] },
+    }, manifest));
+    for (const route of candidates) {
       if (!exposed.has(route.trigger.id)) continue;
       const signature = digest([route.trigger, prepared.inputs.map(item => [item.path, item.digest_sha256])]);
       if (routes.has(route.trigger.id)) {
@@ -36,9 +40,12 @@ export function readProjectRequestRoutes(root) {
         continue;
       }
       const key = `${route.method} ${route.path}`;
-      if (paths.has(key)) fail('TriggerRouteConflict', `Multiple exposed triggers declare ${key}`);
-      paths.set(key, route.trigger.id);
+      const previous = paths.get(key);
+      if (previous && !isolateConflicts) fail('TriggerRouteConflict', `Multiple exposed triggers declare ${key}`);
+      if (previous) routes.get(previous).conflict = true;
+      else paths.set(key, route.trigger.id);
       routes.set(route.trigger.id, {...route, document, signature,
+        conflict: Boolean(previous),
         limit: Math.min(route.trigger.limits.max_runs_per_day, manifest.triggers.get(route.trigger.id).limits?.max_runs_per_day ?? Infinity)});
       if (routes.size > 100) fail('TriggerRouteCapacityExceeded');
     }
@@ -115,14 +122,14 @@ export function createProjectWebhooks({enabled, root, queuePath, statePath, sign
     assertOwned(entry);
     let release, dispatched = false;
     try {
-      const route = readProjectRequestRoutes(root).find(item => item.trigger.id === entry.trigger_ref);
+      const route = readProjectRequestRoutes(root, { isolateConflicts: true }).find(item => !item.conflict && item.trigger.id === entry.trigger_ref);
       if (!route || route.signature !== entry.plan_signature) fail('TriggerPlanChanged', 'Review the event against the current preparation');
       release = gate.enter('execution');
       entry.effects_started = true;
       entry.run_id = `webhook_${digest(entry.queue_id).slice(0,40)}`;
       open().progress(entry); // Persist intent and worker ownership before entering the runtime.
       dispatched = true;
-      const authority = () => !stopping && readProjectRequestRoutes(root).some(item => item.trigger.id === entry.trigger_ref && item.signature === entry.plan_signature);
+      const authority = () => !stopping && readProjectRequestRoutes(root, { isolateConflicts: true }).some(item => !item.conflict && item.trigger.id === entry.trigger_ref && item.signature === entry.plan_signature);
       const result = await execute({...entry,authority,cancelled:()=>stopping});
       const pending = outcome(entry.run_id)?.status === 'pending';
       entry.status = pending?'awaiting_human':result.status === 'success'?'succeeded':'failed';
@@ -153,8 +160,9 @@ export function createProjectWebhooks({enabled, root, queuePath, statePath, sign
       if (request.headers.origin) fail('TriggerIngressOriginRejected');
       const initialUrl = new URL(request.url,'http://127.0.0.1');
       const path = initialUrl.pathname.slice(WEBHOOK_PREFIX.length);
-      const route = readProjectRequestRoutes(root).find(item=>item.method===request.method&&item.path===path);
+      const route = readProjectRequestRoutes(root, { isolateConflicts: true }).find(item=>item.method===request.method&&item.path===path);
       if (!route) fail('TriggerRouteNotFound');
+      if (route.conflict) fail('TriggerRouteConflict');
       const body = await readBoundedBody(request,route.payload?.maxBytes ?? 65536);
       if (stopping) fail('TriggerIngressDisabled');
       assertWebhookSignature(request,body.buffer,signatureSecret,now());
@@ -163,7 +171,7 @@ export function createProjectWebhooks({enabled, root, queuePath, statePath, sign
       // Body reading yields: pin the same reviewed preparation before admission.
       const release = gate.enter('execution');
       try {
-        if (!readProjectRequestRoutes(root).some(item=>item.trigger.id===route.trigger.id&&item.signature===route.signature)) fail('TriggerPlanChanged');
+        if (!readProjectRequestRoutes(root, { isolateConflicts: true }).some(item=>!item.conflict&&item.trigger.id===route.trigger.id&&item.signature===route.signature)) fail('TriggerPlanChanged');
         const eventId=request.headers['x-touba-event-id'], existing=open().find(route.trigger.id,eventId);
         if (existing) {
           assertOwned(existing);
@@ -190,7 +198,11 @@ export function createProjectWebhooks({enabled, root, queuePath, statePath, sign
       if (typeof after!=='string'||after.length>128||!Number.isInteger(limit)||limit<1||limit>100) fail('TriggerQueueQueryInvalid');
       const all=metadata(); all.forEach(assertOwned);
       let routes=[],code=observationError;
-      try { if(enabled) routes=readProjectRequestRoutes(root).map(item=>({trigger_ref:item.trigger.id,method:item.method,path:WEBHOOK_PREFIX+item.path})); }
+      try { if(enabled) {
+        const observed = readProjectRequestRoutes(root, { isolateConflicts: true });
+        if (observed.some(item => item.conflict)) code = 'TriggerRouteConflict';
+        routes=observed.filter(item => !item.conflict).map(item=>({trigger_ref:item.trigger.id,method:item.method,path:WEBHOOK_PREFIX+item.path}));
+      } }
       catch(error){code=safeCode(error.code);}
       const selected=all.length ? open().page({after,limit}).entries : [];
       const counts=Object.fromEntries(['queued','processing','awaiting_human','interrupted','succeeded','failed','dead_lettered','closed'].map(status=>[status,0]));
@@ -208,7 +220,7 @@ export function createProjectWebhooks({enabled, root, queuePath, statePath, sign
       if(action==='close'&&reconciled!==true) fail('TriggerQueueReconciliationRequired');
       if(action==='retry') {
         if(!enabled||stopping) fail('TriggerIngressDisabled');
-        const route=readProjectRequestRoutes(root).find(item=>item.trigger.id===entry.trigger_ref);
+        const route=readProjectRequestRoutes(root, { isolateConflicts: true }).find(item=>!item.conflict&&item.trigger.id===entry.trigger_ref);
         if(!route) fail('TriggerRouteNotFound');
         if(route.signature!==entry.plan_signature) fail('TriggerPlanChanged', 'Discard this event and submit a new delivery for the changed preparation');
         validateWebhookArguments(route.document,route.target,entry.arguments);

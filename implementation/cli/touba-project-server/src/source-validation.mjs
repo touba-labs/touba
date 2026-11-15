@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compilerInputsForFile } from "../../touba-project/src/project.mjs";
+import { requestRouteConflicts } from '../../../contracts/trigger-routes.mjs';
 
 const cli = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
 const fail = message => { throw Object.assign(new Error(message), { code: "ToubaServeSourceContextInvalid" }); };
@@ -71,7 +72,7 @@ export function compileProposedSources({ projectRoot, targets }) {
     let report;
     try { report = JSON.parse(result.stdout); } catch { /* compiler start failure */ }
     if (report?.ok === true && report.air?.air_schema_version === "touba-air-v1" && result.status === 0) {
-      return { air: report.air, diagnostics: [] };
+      return { air: report.air, diagnostics: requestRouteConflicts([report.air]) };
     }
     const diagnostics = report?.diagnostics?.map(item => {
       const location = item.source_ref;

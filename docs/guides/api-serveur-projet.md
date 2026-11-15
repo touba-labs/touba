@@ -39,7 +39,7 @@ utilisent une signature HMAC dédiée, distincte de l'identité des utilisateurs
 Le [guide des triggers](triggers-gouvernes.md) décrit son format, les quotas et
 les réponses HTTP. Les approbations suivent les routes habituelles des décisions.
 
-`GET /triggers/webhooks?limit=25&after=<curseur>` exige `events.read` et retourne
+`GET /triggers/webhooks?limit=25&after=<curseur>` exige `executions.read` et retourne
 `touba-project-webhooks-v1` : routes, compteurs, page d'événements et curseur
 suivant. Les arguments privés ne figurent pas dans cette liste.
 
@@ -57,6 +57,35 @@ Une opération active, une attente ou une interruption empêche les mutations
 concurrentes du projet. Le contrôle hors ligne et l'archivage conservent ce
 registre et sa protection contre le rejeu. Les états d'un ancien service
 autonome ne sont ni importés ni rejoués automatiquement.
+
+Un couple méthode HTTP et chemin ne peut désigner deux triggers actifs. La
+préparation et les aperçus de modification refusent ce conflit, y compris entre
+modules. Si un conflit apparaît dans une configuration déjà préparée, seules
+les routes concernées sont indisponibles ; les autres restent utilisables.
+
+## Retirer une déclaration locale
+
+Le contrat `touba-element-authoring-request-v1` accepte, pour un outil ou un
+trigger local existant, `source_remove: {"base_digest": "<empreinte lue>"}`
+à la place de `source_update`. Le serveur propose le retrait de la déclaration,
+de ses liaisons dans les fragments déclarés et de son entrée de projet, si elle
+existe. Il compile le projet complet et refuse les références encore utilisées.
+Le retrait du dernier point d'entrée exige d'en choisir un autre auparavant.
+
+L'aperçu ne supprime rien. Les fichiers proposés passent par la revue des
+changements et ses contrôles habituels d'identité, de dérive et d'activité.
+Les liens symboliques et les chemins privés ou extérieurs sont refusés. Les
+handlers et les historiques restent conservés. Après application, la préparation
+présente le retrait des configurations devenues obsolètes avant son acceptation.
+Les outils importés depuis un package restent gérés par le contrat du package.
+
+## Arrêter le serveur
+
+`Ctrl+C` ou `SIGTERM` arrête l'admission, termine l'arrêt des opérations puis
+ferme les abonnements SSE avant de libérer le verrou du serveur. Les clients
+peuvent garder leurs pages ouvertes. Attendez la sortie du processus avant de
+redémarrer ; un serveur encore actif est identifié par son PID. Un effet externe
+déjà engagé garde les garanties de son propre contrat, même pendant un arrêt.
 
 ## Identité applicative Cloud
 

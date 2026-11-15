@@ -89,6 +89,9 @@ Le contrat générique du serveur expose `POST /triggers/scheduler/control` avec
 Lire ces valeurs dans `GET /triggers/scheduler` avant la décision. Un changement
 concurrent rend la demande périmée ; relire l'état avant de confirmer de nouveau.
 L'action exige `governance.apply` et inscrit l'acteur et le motif dans le journal.
+La lecture suivante expose aussi `control_review`, avec `at`, `reason` et
+`actor`, pour consulter la dernière revue après un redémarrage. L'acteur est
+établi par le serveur ; le client ne peut pas le remplacer dans la demande.
 
 Les intervalles suivent les bornes UTC. Un nouveau plan commence à l'échéance
 suivante. Après une interruption du service, les occurrences intermédiaires sont

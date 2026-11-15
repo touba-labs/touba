@@ -100,15 +100,18 @@ test('pause is durable through a pending approval and resume only schedules futu
   let scheduler=createTriggerScheduler(f.options);
   await scheduler.tick(); pending=true;
   const request={trigger_ref:plan.trigger_ref,signature:plan.signature,control_revision:0,paused:true,reason:'Maintenance'};
-  scheduler.control(request);
+  scheduler.control(request, {kind:'user',id:'reviewer-one'});
   assert.throws(()=>scheduler.control(request),{code:'ToubaSchedulerReviewConflict'});
   assert.equal(scheduler.status().schedules[0].status,'pending');
   assert.equal(scheduler.status().schedules[0].next_run_at,null);
   await scheduler.stop(); scheduler=createTriggerScheduler(f.options);
   f.setTime(105000); await scheduler.tick();
   assert.equal(scheduler.status().schedules[0].paused,true);
+  assert.equal(scheduler.status().schedules[0].control_review.reason,'Maintenance');
+  assert.deepEqual(scheduler.status().schedules[0].control_review.actor,{kind:'user',id:'reviewer-one'});
   pending=false; await scheduler.tick(); assert.equal(f.calls.length,0);
   scheduler.control({...request,paused:false,control_revision:1});
+  assert.equal(scheduler.status().schedules[0].control_review.actor.id,'local-operator');
   await scheduler.tick(); assert.equal(f.calls.length,0);
   f.setTime(106000); await scheduler.tick(); assert.equal(f.calls.length,1);
   assert.equal(scheduler.status().schedules[0].control_revision,2);
@@ -125,6 +128,7 @@ test('pausing while an occurrence runs preserves its result and stops the next o
   complete({status:'success'}); await tick;
   assert.equal(scheduler.status().schedules[0].status,'success');
   assert.equal(scheduler.status().schedules[0].paused,true);
+  assert.equal(scheduler.status().schedules[0].control_review.reason,'Pause future runs');
   f.setTime(105000); await scheduler.tick();
   assert.equal(scheduler.status().schedules[0].slot,101);
   await scheduler.stop();

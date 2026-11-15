@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -16,6 +16,55 @@ import {
 } from "../src/element-authoring.mjs";
 
 const MODULE_REF = "demo.authoring";
+
+test('reviewed local removal uses compiler spans and rejects remaining callers or stale source', () => {
+  const project=createProject();
+  try {
+    const path=join(project.root,'src/main.tb');
+    // Unicode before the declaration exercises compiler byte offsets.
+    writeFileSync(path,BASE_SOURCE+'\n# Échéance à retirer\ntrigger Obsolete\n    on schedule "every 1h"\n    runs strategy ExistingStrategy\n    with request as "ok"\n    limits\n        max_runs_per_day as 2\n        timeout_ms as 30000\n');
+    const source=readElementSource({projectRoot:project.root,elementRef:`trigger:${MODULE_REF}/Obsolete`});
+    const request={...requestFor({kind:'trigger',name:'Obsolete',description:''}),source_remove:{base_digest:source.base_digest}};
+    const preview=buildElementAuthoringPreview({projectRoot:project.root,request});
+    assert.equal(preview.status,'ready');assert.match(preview.changes[0].diff,/-trigger Obsolete/);
+    const changes=buildElementAuthoringChangeSet({projectRoot:project.root,request}).changes;
+    assert.match(changes[0].content,/# Échéance à retirer/);
+    assert.equal(readFileSync(path,'utf8'),source.content,'preview never writes');
+    const tool=readElementSource({projectRoot:project.root,elementRef:`tool:${MODULE_REF}/ExistingTool`});
+    assert.throws(()=>buildElementAuthoringPreview({projectRoot:project.root,request:{...requestFor({kind:'tool',name:'ExistingTool',description:''}),source_remove:{base_digest:tool.base_digest}}}),{code:'ToubaServeChangeValidationFailed'});
+    writeFileSync(path,source.content+'\n');
+    assert.throws(()=>buildElementAuthoringChangeSet({projectRoot:project.root,request}),{code:'ToubaServeElementPreviewStale'});
+  } finally {project.dispose();}
+});
+
+test('fragment review only accepts declared project fragments with the binding contract', () => {
+  const project=createProject();
+  try {
+    const fragment={fragment_schema_version:'touba-binding-fragment-v1',source:{kind:'project'},bindings:{}};
+    writeFileSync(join(project.root,'touba.project.json'),JSON.stringify({configuration:{binding_fragments:['adapter.json','.touba/private.json']}}));
+    writeFileSync(join(project.root,'adapter.json'),JSON.stringify(fragment));
+    const proposal={schema_version:'touba-project-change-proposal-v1',proposal_id:'fragment',action:'write_text_file',
+      target:{path:'adapter.json'},content:JSON.stringify(fragment),requested_by:{kind:'user',id:'reviewer'},reason:'Review selected fragment'};
+    const options={projectRoot:project.root,changeProposalsPath:join(project.root,'.touba/changes.sqlite')};
+    assert.doesNotThrow(()=>proposeProjectChange({...options,proposal}));
+    for (const path of ['other.json','.touba/private.json','../outside.json']) {
+      assert.throws(()=>proposeProjectChange({...options,proposal:{...proposal,proposal_id:'invalid-'+path,target:{path}}}));
+    }
+    assert.throws(()=>proposeProjectChange({...options,proposal:{...proposal,proposal_id:'malformed',content:'{"credentials":"never accept"}'}}),{code:'ToubaServeChangeValidationFailed'});
+    if (process.platform !== 'win32') {
+      rmSync(join(project.root,'adapter.json'));
+      symlinkSync(join(project.root,'touba.project.json'),join(project.root,'adapter.json'));
+      assert.throws(()=>proposeProjectChange({...options,proposal:{...proposal,proposal_id:'linked-fragment'}}),{code:'ToubaServeChangeTargetRejected'});
+      rmSync(join(project.root,'adapter.json'));
+      writeFileSync(join(project.root,'adapter.json'),JSON.stringify(fragment));
+      const config=readFileSync(join(project.root,'touba.project.json'));
+      writeFileSync(join(project.root,'linked-config.json'),config);
+      rmSync(join(project.root,'touba.project.json'));
+      symlinkSync(join(project.root,'linked-config.json'),join(project.root,'touba.project.json'));
+      assert.throws(()=>proposeProjectChange({...options,proposal:{...proposal,proposal_id:'linked-config'}}),{code:'ToubaServeChangeTargetRejected'});
+    }
+  } finally {project.dispose();}
+});
 
 test('source editor preview derives approval prerequisites from compiled tools', () => {
   const project = createProject();

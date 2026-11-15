@@ -141,7 +141,9 @@ test('multiple selected OpenAPI operations share a compilable module and remain 
     assert.throws(() => scaffoldRestTool(options), /distinct/);
     config.operation_ids = ['lookup']; config.openapi.paths['/duplicate'] = config.openapi.paths['/lookup'];
     writeFileSync(configPath, JSON.stringify(config));
-    assert.throws(() => scaffoldRestTool(options), /ambiguous/);
+    const ambiguous = scaffoldRestTool(options);
+    assert.equal(ambiguous.status, 'error');
+    assert.match(ambiguous.diagnostics[0].message, /ambiguous/i);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

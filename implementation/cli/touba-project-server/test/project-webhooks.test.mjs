@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createHmac} from 'node:crypto';
+import {createHmac,createHash} from 'node:crypto';
 import {mkdtempSync,rmSync,mkdirSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -13,6 +13,7 @@ import {createSqliteTriggerQueue} from '../../touba-trigger-service/src/sqlite-q
 import {createServer} from 'node:http';
 import {approvalHostTemplate} from '../../../contracts/product-surfaces/approval-host-template.mjs';
 import {createHostModuleLoader} from '../../touba-run/src/host-modules.mjs';
+import {readPreparedProject} from '../src/prepared-project.mjs';
 
 const secret='synthetic-webhook-secret-for-tests-only-1234';
 const trigger='trigger:qa.webhook/Job';
@@ -84,7 +85,10 @@ test('project ingress validates before 202, uses the shared quota and preserves 
   const body=JSON.stringify({amount:7}),signed=headers(body,'original');signed['x-touba-event-id']='changed';
   assert.equal((await s.send('/_touba/events/pay',body,signed)).status,401);
   const accepted=await s.event();assert.equal(accepted.status,202,await accepted.clone().text());
-  assert.equal((await s.event('second')).status,429);
+  const limited = await s.event('second');
+  assert.equal(limited.status,429);
+  assert.ok(Number(limited.headers.get('Retry-After')) > 0);
+  assert.ok(Date.parse((await limited.json()).retry_at) > Date.now());
   const done=await waitFor(async()=>{const value=await s.status();return value.counts.succeeded&&value;});
   assert.equal(done.entries[0].attempt_count,1);
   assert.equal(readFileSync(join(f.root,'payments.txt'),'utf8'),'paid\n');
@@ -159,17 +163,37 @@ trigger Other
         max_runs_per_day as 5
         timeout_ms as 10000
 `);
-  const config=JSON.parse(readFileSync(join(f.root,'touba.project.json')));config.entrypoints=[trigger,'trigger:qa.other/Other'];
+  writeFileSync(join(f.root,'src/qa/healthy.tb'),readFileSync(join(f.root,'src/qa/other.tb'),'utf8')
+    .replace('module qa.other','module qa.healthy').replace('trigger Other','trigger Healthy').replace('"/other"','"/healthy"'));
+  const config=JSON.parse(readFileSync(join(f.root,'touba.project.json')));config.entrypoints=[trigger,'trigger:qa.other/Other','trigger:qa.healthy/Healthy'];
   writeFileSync(join(f.root,'touba.project.json'),JSON.stringify(config));
   const manifest=JSON.parse(readFileSync(join(f.root,'touba.manifest.json')));manifest.triggers['trigger:qa.other/Other']={enabled:true,source:{kind:'request'},payload:{content_types:['application/json'],max_bytes:65536,map:{amount:'$.amount'}},limits:{max_runs_per_day:5,timeout_ms:10000}};
+  manifest.triggers['trigger:qa.healthy/Healthy']=structuredClone(manifest.triggers['trigger:qa.other/Other']);
   writeFileSync(join(f.root,'touba.manifest.json'),JSON.stringify(manifest));await f.prepare();
-  assert.equal((await s.status()).routes.length,2);
+  assert.equal((await s.status()).routes.length,3);
   assert.equal((await s.event('other',{amount:8},'/_touba/events/other')).status,202);
   await waitFor(async()=> (await s.status()).counts.succeeded===1);
   writeFileSync(join(f.root,'src/qa/other.tb'),readFileSync(join(f.root,'src/qa/other.tb'),'utf8').replace('"/other"','"/pay"'));
-  await f.prepare();
+  for (const mode of ['plan', 'write']) {
+    const result = await prepareProject({root:f.root,mode,manifestPath:'touba.manifest.json'});
+    assert.equal(result.status,'error');
+    assert.ok(result.diagnostics.some(item=>item.code==='TriggerRouteConflict'));
+  }
+  // Model a previously accepted preparation with conflicting routes. This is
+  // a synthetic legacy artifact, not a path that bypasses normal preparation.
+  const prepared=readPreparedProject(f.root,{verify:false});
+  for (const input of prepared.inputs.filter(item=>item.kind==='air')) {
+    const path=join(f.root,input.path),document=JSON.parse(readFileSync(path,'utf8'));
+    for (const item of document.definitions.triggers??[]) if(item.id==='trigger:qa.other/Other') item.event.value='POST /pay';
+    writeFileSync(path,JSON.stringify(document));
+  }
+  for(const input of prepared.inputs)input.digest_sha256=`sha256:${createHash('sha256').update(readFileSync(join(f.root,input.path))).digest('hex')}`;
+  writeFileSync(join(f.root,'.touba/build/dev/touba.effective-project.json'),JSON.stringify(prepared));
   assert.throws(()=>readProjectRequestRoutes(f.root),{code:'TriggerRouteConflict'});
   assert.equal((await s.event()).status,503);
+  assert.equal((await s.status()).code,'TriggerRouteConflict');
+  assert.equal((await s.event('healthy',{amount:9},'/_touba/events/healthy')).status,202);
+  await waitFor(async()=> (await s.status()).counts.succeeded===2);
   await s.stop();
   await assert.rejects(s.start(),{code:'TriggerRouteConflict'});
 });

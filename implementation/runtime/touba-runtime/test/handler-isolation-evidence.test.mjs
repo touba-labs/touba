@@ -65,6 +65,12 @@ test('real confined execution persists across restart, distinguishes failed resu
     }
   };
   assert.equal(projectHandlerIsolation(binding, toolRef, store).state, 'not_observed');
+  const invalid = projectHandlerIsolation({...binding, handler:{...binding.handler,cwd:'/missing-private-location'}},toolRef,store);
+  assert.equal(invalid.state,'unavailable');
+  assert.equal(invalid.diagnostic,'HandlerSandboxPathInvalid');
+  assert.ok(!JSON.stringify(invalid).includes('/missing-private-location'));
+  const brokenStore = {handlerIsolation:()=>{throw Object.assign(new Error('private storage detail'),{code:'PrivateValue'});}};
+  assert.equal(projectHandlerIsolation(binding,toolRef,brokenStore).diagnostic,'HandlerIsolationObservationUnavailable');
   assert.equal((await run()).value, 7);
   const record = store.handlerIsolation(toolRef);
   assert.ok(validHandlerIsolationObservation(record.observation));

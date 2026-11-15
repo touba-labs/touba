@@ -346,7 +346,10 @@ if (isMainModule()) {
     const service = createToubaProjectServer(options);
     let stopping = false;
     const shutdownSignals = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
-    for (const signal of shutdownSignals) process.once(signal, async () => {
+    // A terminal signal reaches the process group and is also forwarded by the
+    // CLI parent. Keep listeners during draining so a duplicate cannot bypass
+    // the graceful shutdown and leave the state lease behind.
+    for (const signal of shutdownSignals) process.on(signal, async () => {
       if (stopping) return;
       stopping = true;
       hostModules.close();
@@ -1369,9 +1372,11 @@ function createProjectServerWithLease(options, takeLease) {
   };
 
   const applicationAdmission = createApplicationAdmission();
+  let stopping = false, stoppingPromise = null;
   const server = createServer(async (request, response) => {
     let releaseActivity = () => {};
     try {
+      if (stopping) { response.setHeader('Connection', 'close'); writeJson(response, 503, { status: 'error', code: 'ToubaServeStopping' }); return; }
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${host}:${port}`}`);
       if (url.pathname.startsWith(WEBHOOK_PREFIX+'/')) {
         try {
@@ -1383,8 +1388,9 @@ function createProjectServerWithLease(options, takeLease) {
               ['TriggerReplayRejected','TriggerEventPayloadConflict','TriggerPlanChanged'].includes(code)?409:
                 code==='TriggerPayloadTooLarge'?413:code==='TriggerPayloadContentTypeUnsupported'?415:
                 ['TriggerPayloadInvalid','TriggerEventIdInvalid'].includes(code)?400:503;
-          if(status===429)response.setHeader('Retry-After',Math.max(1,Math.ceil(((Math.floor(Date.now()/86400000)+1)*86400000-Date.now())/1000)));
-          writeJson(response,status,{status:'error',code});
+          const retryAt = status === 429 ? (Math.floor(Date.now() / 86400000) + 1) * 86400000 : null;
+          if (retryAt !== null) response.setHeader('Retry-After', Math.max(1, Math.ceil((retryAt - Date.now()) / 1000)));
+          writeJson(response,status,{status:'error',code,...(retryAt === null ? {} : { retry_at: new Date(retryAt).toISOString() })});
         }
         return;
       }
@@ -1452,6 +1458,9 @@ function createProjectServerWithLease(options, takeLease) {
           sessionId => getInteractionSession({ sessionId, sessionsPath: interactionSessionsPath }));
         applicationAdmission(identityResult, request.method);
       }
+      // Authorization can complete after shutdown started. Do not admit a late
+      // stream or operation after the workers and client inventory are drained.
+      if (stopping) { response.setHeader('Connection', 'close'); writeJson(response, 503, { status: 'error', code: 'ToubaServeStopping' }); return; }
       releaseActivity = activityGate.enter(projectActivityKind(request.method, url.pathname));
       if (request.method === "GET" && url.pathname === "/health") {
         writeJson(response, 200, {
@@ -2533,10 +2542,11 @@ function createProjectServerWithLease(options, takeLease) {
         if (!isPlainObject(body) || Object.keys(body).some(key => !['trigger_ref','signature','control_revision','paused','reason'].includes(key))) {
           throw serviceError('ToubaSchedulerReviewInvalid', 'control must identify the reviewed schedule, revision and reason');
         }
-        const result = scheduler.control(body);
+        const actor = humanIdentity ? bindHumanActor({}, 'requested_by', humanIdentity).requested_by
+          : {kind:'service',id:'local-operator'};
+        const result = scheduler.control(body, actor);
         publishEvent(eventClients, 'trigger.schedule.controlled', {...result,
-          actor: humanIdentity ? bindHumanActor({}, 'requested_by', humanIdentity).requested_by
-            : {kind:'service',id:'local-operator'}, reason:body.reason.trim()}, nextEvent);
+          actor, reason:body.reason.trim()}, nextEvent);
         writeJson(response, 200, result); return;
       }
       if (request.method === 'GET' && url.pathname === '/triggers/webhooks') {
@@ -3403,38 +3413,38 @@ function createProjectServerWithLease(options, takeLease) {
       }
     },
     async stop() {
-      await webhooks.stop();
-      await validation.stop();
-      await scheduler.stop();
-      await notifications.stop();
-      explorerSurface.close();
-      packageSurface.close();
-      registryTrust.close();
-      await traceExplorerSurface.close();
-      humanWaitState.stopping = true;
-      humanWaitState.workerRequested = false;
-      if (humanWaitState.timer !== null) {
-        humanWaitRuntime.clearTimer(humanWaitState.timer);
-        humanWaitState.timer = null;
-        humanWaitState.timerDueAt = null;
-      }
-      if (humanWaitState.workerPromise !== null) {
-        await Promise.allSettled([humanWaitState.workerPromise]);
-      }
-      for (const controller of interactionOperationControllers.values()) {
-        controller.cancelRequested = true;
-      }
-      await Promise.allSettled([...interactionOperationTasks]);
-      for (const client of eventClients) {
-        client.end();
-      }
-      eventClients.clear();
-      if (!server.listening) {
-        return;
-      }
-      await new Promise((resolveClose, rejectClose) => {
-        server.close((error) => error ? rejectClose(error) : resolveClose());
-      });
+      if (stoppingPromise) return stoppingPromise;
+      stopping = true;
+      stoppingPromise = (async () => {
+        await webhooks.stop();
+        await validation.stop();
+        await scheduler.stop();
+        await notifications.stop();
+        explorerSurface.close();
+        packageSurface.close();
+        registryTrust.close();
+        await traceExplorerSurface.close();
+        humanWaitState.stopping = true;
+        humanWaitState.workerRequested = false;
+        if (humanWaitState.timer !== null) {
+          humanWaitRuntime.clearTimer(humanWaitState.timer);
+          humanWaitState.timer = null;
+          humanWaitState.timerDueAt = null;
+        }
+        if (humanWaitState.workerPromise !== null) {
+          await Promise.allSettled([humanWaitState.workerPromise]);
+        }
+        for (const controller of interactionOperationControllers.values()) {
+          controller.cancelRequested = true;
+        }
+        await Promise.allSettled([...interactionOperationTasks]);
+        for (const client of eventClients) {
+          client.end();
+        }
+        eventClients.clear();
+        if (server.listening) await new Promise(resolveClose => server.close(resolveClose));
+      })();
+      return stoppingPromise;
     },
     server,
   };
@@ -8996,7 +9006,7 @@ function validateChangeProposal({ projectRoot, proposal, sourceTargets }) {
   }
   const targetPath = requiredNonEmptyString(proposal.target.path, "target.path");
   safeProjectPath(projectRoot, targetPath);
-  if (!isAllowedChangeTarget(targetPath)) {
+  if (!isAllowedChangeTarget(targetPath) && !isDeclaredBindingFragmentTarget(projectRoot,targetPath)) {
     throw serviceError("ToubaServeChangeTargetRejected", "project changes may target .tb source or approved Touba project metadata only");
   }
   const content = requiredString(proposal.content, "content");
@@ -9047,7 +9057,8 @@ function validateChangeApplyRequest(request) {
 function validateChangeContent(proposal, { projectRoot, sourceTargets, onCompiled } = {}) {
   const diagnostics = [];
   const targetPath = proposal.target.path;
-  if (CHANGE_TARGET_JSON_FILES.has(basename(targetPath))) {
+  const declaredFragment = isDeclaredBindingFragmentTarget(projectRoot,targetPath);
+  if (CHANGE_TARGET_JSON_FILES.has(basename(targetPath)) || declaredFragment) {
     try {
       const document = JSON.parse(proposal.content);
       if (basename(targetPath) === 'touba.bindings.json' && targetPath !== 'touba.bindings.json') throw new Error('project binding fragment must be at the project root');
@@ -9055,7 +9066,7 @@ function validateChangeContent(proposal, { projectRoot, sourceTargets, onCompile
         if (targetPath !== 'touba.hosts.json') throw new Error('host plan must be at the project root');
         validatePackageHostPlan(document, projectRoot);
       }
-      diagnostics.push(...validateProjectMetadataDocument(basename(targetPath), document));
+      diagnostics.push(...validateProjectMetadataDocument(declaredFragment ? 'touba.bindings.json' : basename(targetPath), document));
     } catch (cause) {
       diagnostics.push(serviceDiagnostic("ToubaServeChangeJsonInvalid", `${targetPath} is not valid JSON: ${cause.message}`));
     }
@@ -9333,6 +9344,27 @@ function applySingleChangeTarget({ projectRoot, target }) {
 }
 
 export { recoverProjectChangeTransactions } from "../../touba-project/src/project-transactions.mjs";
+
+function isDeclaredBindingFragmentTarget(projectRoot, relativePath) {
+  if (!projectRoot || !relativePath.endsWith('.json')) return false;
+  try {
+    const normalized=normalizeRelativePath(relativePath);
+    if (normalized.split('/').some(part=>!part || ['.','..','.git','.touba','packages','node_modules'].includes(part))) return false;
+    const path=safeProjectPath(projectRoot,'touba.project.json');
+    const configStat=lstatSync(path);
+    if (!configStat.isFile() || configStat.isSymbolicLink() || configStat.size>MAX_CHANGE_CONTENT_BYTES) return false;
+    let target=projectRoot;
+    for (const part of normalized.split('/')) {
+      target=join(target,part);
+      let stat;
+      try { stat=lstatSync(target); } catch (error) { if(error.code==='ENOENT') break; throw error; }
+      if (stat.isSymbolicLink()) return false;
+    }
+    const config=JSON.parse(readFileSync(path,'utf8'));
+    return Array.isArray(config.configuration?.binding_fragments)
+      && config.configuration.binding_fragments.includes(normalized);
+  } catch { return false; }
+}
 
 function isAllowedChangeTarget(relativePath) {
   const normalized = normalizeRelativePath(relativePath);
@@ -11874,7 +11906,7 @@ export function requiredIdentityPermission(method, pathname) {
   if (method === 'POST' && pathname === '/triggers/scheduler/acknowledge') return 'governance.apply';
   if (method === 'POST' && pathname === '/triggers/scheduler/control') return 'governance.apply';
   if (method === 'POST' && pathname === '/triggers/webhooks/review') return 'governance.apply';
-  if (method === 'GET' && pathname === '/triggers/webhooks') return 'events.read';
+  if (method === 'GET' && pathname === '/triggers/webhooks') return 'executions.read';
   if (pathname === "/traces/explorer") return "executions.read";
   if (method === "GET" && (
     /^\/runs\/[^/]+\/trace(?:\/segments\/\d+)?$/u.test(pathname)
@@ -12197,9 +12229,8 @@ function openEventStream({ request, response, identity, eventClients, nextEvent,
       retained_to_sequence: replay.retained_to_sequence,
     },
   }));
-  request.on("close", () => {
-    eventClients.delete(response);
-  });
+  // Incoming request completion does not mean the outgoing stream has closed.
+  // registerEventClient owns cleanup through the response's close event.
 }
 
 function publishEvent(eventClients, type, payload, nextEvent) {
@@ -12490,6 +12521,11 @@ function publishRefreshEvents(eventClients, report, nextEvent) {
 }
 
 function httpStatusForError(code) {
+  if (code === 'ToubaServeElementRemovalInvalid') return 422;
+  if (code === 'ToubaServeImportUnsupported') return 422;
+  if (['ToubaServeImportExists', 'ToubaServeImportStale', 'ToubaServeImportReviewMissing'].includes(code)) return 409;
+  if (code === 'ToubaServeImportLimit') return 429;
+  if (code === 'ToubaServeImportInvalid') return 400;
   if (code === 'McpDiscoveryBusy') return 429;
   if (code === 'McpDiscoveryTargetUnavailable') return 404;
   if (code === 'McpDiscoveryConsentRequired') return 400;

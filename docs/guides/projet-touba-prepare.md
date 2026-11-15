@@ -1012,3 +1012,15 @@ Le plan affiche `remove_binding`. Un tool encore déclaré est protégé ; un bi
 fourni par fragment se retire dans ce fragment. Les fichiers handlers restent
 en place pour votre revue. Les imports du rapport sont regroupés par relation
 source, sans répéter une même relation lors de la préparation de plusieurs entrées.
+
+Pour un trigger déjà retiré de la source, la décision correspondante est :
+
+```json title="host-decisions.json"
+{"remove_triggers":["trigger:orders.review/OldSchedule"]}
+```
+
+La même séquence `plan`, `write`, `check` retire sa configuration du manifeste
+généré. Le plan affiche `remove_trigger`. Une déclaration encore présente dans
+les sources ne peut pas être retirée ainsi ; désactivez-la avec `triggers` ou
+modifiez d'abord la source. Les historiques de déclenchement et d'effets restent
+conservés. La préparation n'exécute et ne rejoue aucune opération.

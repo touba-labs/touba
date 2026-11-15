@@ -20,7 +20,7 @@
     "changes": { "type": "array", "maxItems": 512, "items": {
       "type": "object", "additionalProperties": false, "required": ["kind", "subject", "field", "before", "after"],
       "properties": {
-        "kind": { "enum": ["review_package_contract", "adopt_package_contract", "review_fragment_binding", "update_fragment_binding", "restore_fragment_binding", "update_trigger"] },
+        "kind": { "enum": ["review_package_contract", "adopt_package_contract", "review_fragment_binding", "adopt_fragment_binding", "update_fragment_binding", "restore_fragment_binding", "update_trigger", "remove_binding", "remove_trigger"] },
         "subject": { "type": "string", "maxLength": 512 }, "field": { "type": "string", "maxLength": 100 },
         "before": { "type": ["string", "null"], "maxLength": 16384 },
         "after": { "type": ["string", "null"], "maxLength": 16384 }

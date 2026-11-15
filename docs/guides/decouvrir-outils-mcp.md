@@ -51,7 +51,10 @@ L'environnement parent n'est pas transmis. Une variable nécessaire peut utilise
 
 Le serveur de projet peut charger ces cibles avec
 `--mcp-discovery-config /chemin/absolu/mcp-targets.json` ou le champ
-`mcp_discovery_config` de son profil. La liste exige `governance.propose` ; la
+`mcp_discovery_config` de son profil. Dans le profil, ce chemin est relatif à la
+racine du projet, par exemple `.touba/private/mcp-targets.json`, et ne sort pas
+du projet. Pour un inventaire privé extérieur, utiliser l'option CLI avec le
+chemin absolu. Exclure ce fichier de Git. La liste exige `governance.propose` ; la
 découverte exige `governance.apply`, une confirmation explicite et un projet au
 repos. Une clé applicative d'exécution n'autorise pas ces routes. Les clients
 ne peuvent transmettre ni commande, ni URL, ni environnement arbitraire.

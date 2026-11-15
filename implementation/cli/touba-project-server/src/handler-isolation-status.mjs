@@ -1,6 +1,9 @@
 import { preflightProcessToolHandler } from '../../../runtime/touba-runtime/src/handler-protocol.mjs';
 import { handlerIsolationIdentity, sameHandlerIsolationIdentity, validHandlerIsolationObservation } from '../../../runtime/touba-runtime/src/handler-isolation-evidence.mjs';
 
+const publicDiagnostics = new Set(['HandlerSandboxPathInvalid','HandlerSandboxEnvironmentInvalid',
+  'HandlerSandboxUnsupportedPlatform','HandlerSandboxUnsupportedPolicy','HandlerSandboxGrantMissing','HandlerSandboxPythonRuntimeMissing']);
+
 // The authoritative journal belongs to the host. Project-authored reports,
 // observations from another context and changed selected files cannot supply
 // a current badge. This is execution evidence, not remote host attestation.
@@ -24,5 +27,6 @@ export function projectHandlerIsolation(binding, toolRef, traceStorage) {
       ? 'stale' : record.observation.protocol_observed ? 'observed' : 'incomplete',
     run_id: record.run_id, observed_at: record.observed_at,
     outcome: record.observation.outcome, evidence_ref: record.event_id };
-  } catch { return { ...result, state: 'unavailable' }; }
+  } catch (error) { return { ...result, state: 'unavailable',
+    diagnostic: publicDiagnostics.has(error.code) ? error.code : 'HandlerIsolationObservationUnavailable' }; }
 }

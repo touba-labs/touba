@@ -14,6 +14,11 @@ export function preparationChanges(actions) {
           if (a !== b) changes.push({ kind: action.kind, subject: tool, field, before: a, after: b });
         }
       }
+    } else if (action.kind === 'adopt_fragment_binding') {
+      changes.push({ kind: 'adopt_fragment_binding', subject: action.tool_ref, field: 'binding', before: null, after: 'true' });
+    } else if (['would_apply_host_decision', 'apply_host_decision'].includes(action.kind)
+      && ['remove_binding', 'remove_trigger'].includes(action.field)) {
+      changes.push({ kind: action.field, subject: action.target_ref, field: 'present', before: 'true', after: 'false' });
     } else if (["would_update_fragment_binding", "update_fragment_binding", "restore_fragment_binding"].includes(action.kind)) {
       changes.push({ kind: action.kind === 'restore_fragment_binding' ? action.kind : "update_fragment_binding", subject: action.tool_ref, field: action.field,
         before: value(action.before), after: value(action.after) });
@@ -32,12 +37,14 @@ export function preparationChanges(actions) {
 }
 
 export function preparationDecisions(actions) {
-  const decisions = { review_packages: {}, review_fragments: {}, restore_fragments: {}, triggers: {} };
+  const decisions = { review_packages: {}, review_fragments: {}, restore_fragments: {}, triggers: {}, remove_bindings: [], remove_triggers: [] };
   for (const action of actions) {
     if (["review_package_contract", "adopt_package_contract"].includes(action.kind)) decisions.review_packages[action.package] = action.digest;
     if (action.kind === "review_fragment_binding") decisions.review_fragments[action.tool_ref] = action.digest;
     if (action.kind === 'restore_fragment_binding') decisions.restore_fragments[action.tool_ref] = { digest: action.digest, reason: 'Preview of recorded projection' };
     if (action.kind === "review_trigger_limits") decisions.triggers[action.target_ref] = { limits: structuredClone(action.after) };
+    if (action.kind === 'review_remove_binding') decisions.remove_bindings.push(action.target_ref);
+    if (action.kind === 'review_remove_trigger') decisions.remove_triggers.push(action.target_ref);
   }
   return decisions;
 }

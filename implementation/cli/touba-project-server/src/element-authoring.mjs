@@ -15,6 +15,7 @@ import { projectPythonCommand } from "../../touba-manifest/src/python-sdk-depend
 import { compileProposedSources } from "./source-validation.mjs";
 import { readPreparedProject } from "./prepared-project.mjs";
 import { parseTriggerRunnerSchedule } from '../../../contracts/trigger-schedule.mjs';
+import { elementRemovalChanges } from './element-removal.mjs';
 
 export const ELEMENT_AUTHORING_SCHEMA_VERSION = "touba-element-authoring-request-v1";
 
@@ -47,6 +48,19 @@ const DECLARATION = /^(type|enum|memory|function|tool|skill|agent|strategy|trigg
 const MODULE_LINE = /^module\s+([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)\s*$/mu;
 
 export function buildElementAuthoringChangeSet({ projectRoot, request }) {
+  if (request?.source_remove !== undefined) {
+    assertKnownKeys(request, ['schema_version','proposal_id','module_ref','element','requested_by','reason','preview_digest','source_remove'], 'request');
+    assertKnownKeys(request.element, ['kind','name','description'], 'element');
+    assertKnownKeys(request.source_remove, ['base_digest'], 'source_remove');
+    if (request.schema_version !== ELEMENT_AUTHORING_SCHEMA_VERSION || !['tool','trigger'].includes(request.element?.kind))
+      throw authoringError('ToubaServeElementAuthoringInvalid', 'removal requires a local tool or trigger');
+    const ref = `${request.element.kind}:${request.module_ref}/${request.element.name}`;
+    const current = readElementSource({projectRoot,elementRef:ref});
+    if (current.base_digest !== request.source_remove.base_digest) throw authoringError('ToubaServeElementPreviewStale', 'source changed since removal was opened');
+    return {proposal_id:nonEmptyString(request.proposal_id,'proposal_id'),requested_by:normalizeActor(request.requested_by),
+      reason:nonEmptyString(request.reason,'reason'),preview_digest:request.preview_digest ?? null,element_ref:ref,
+      changes:elementRemovalChanges({projectRoot,current})};
+  }
   if (request?.source_update !== undefined) return buildSourceUpdate({ projectRoot, request });
   const normalized = normalizeElementAuthoringRequest(request);
   if (normalized.element.kind === "module") {

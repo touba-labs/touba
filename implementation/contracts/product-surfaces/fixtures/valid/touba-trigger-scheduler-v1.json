@@ -1,1 +1,26 @@
-{"schema_version":"touba-trigger-scheduler-v1","enabled":false,"status":"disabled","error":null,"last_poll_at":null,"schedules":[]}
+{
+  "schema_version": "touba-trigger-scheduler-v1",
+  "enabled": true,
+  "status": "ready",
+  "error": null,
+  "last_poll_at": "2026-11-14T12:00:00Z",
+  "schedules": [{
+    "trigger_ref": "trigger:example/ScheduledReview",
+    "signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "interval_ms": 60000,
+    "slot": 1,
+    "status": "waiting",
+    "run_id": null,
+    "error": null,
+    "skipped": 0,
+    "next_run_at": null,
+    "active": true,
+    "paused": true,
+    "control_revision": 1,
+    "control_review": {
+      "at": "2026-11-14T12:00:00Z",
+      "reason": "Review the next scheduled occurrence",
+      "actor": {"kind": "user", "id": "operator-example"}
+    }
+  }]
+}

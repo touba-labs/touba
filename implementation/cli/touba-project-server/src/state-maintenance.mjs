@@ -65,7 +65,7 @@ export function acquireStateLease(projectRoot, { recovery = false } = {}) {
       catch (cause) {
         if (cause.code === "ESRCH") { unlinkSync(file); continue; }
       }
-      fail("ToubaStateInUse", "stop the project server before state maintenance");
+      fail("ToubaStateInUse", `project state is in use by process ${owner.pid}; stop that process cleanly before restarting or maintaining the project`);
     }
   }
   fail("ToubaStateInUse");

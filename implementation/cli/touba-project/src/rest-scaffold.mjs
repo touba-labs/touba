@@ -8,6 +8,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { renderImportedField, renderJsonFieldAdapters } from "./import-field-adapters.mjs";
 import { validateImportFiles, importedObjectSchemaError } from './import-files.mjs';
+import { openApiOperation } from './openapi-operation.mjs';
 
 export const TOUBA_REST_SCAFFOLD_CONFIG_VERSION = "touba-rest-scaffold-config-v1";
 export const TOUBA_REST_SCAFFOLD_REPORT_VERSION = "touba-rest-scaffold-report-v1";
@@ -47,7 +48,7 @@ export function scaffoldRestTool(options = {}) {
     config: id === null ? config : { ...config, operation_id: id } }));
   const generation = generations[0];
   const tools = generations.flatMap(item => item.tool ? [item.tool] : []);
-  const names = tools.flatMap(tool => [tool.toolName, tool.inputTypeName, tool.outputTypeName]);
+  const names = tools.flatMap(tool => [tool.toolName, tool.inputTypeName, tool.outputTypeName, ...tool.records.map(record => record.name)]);
   if (new Set(names).size !== names.length) throw new Error('selected operations produce colliding Touba names; rename the operations explicitly');
   const generationErrors = generations.flatMap(item => item.diagnostics);
   generation.files = generationErrors.some(item => item.severity === 'error') ? []
@@ -81,12 +82,12 @@ export function scaffoldRestTool(options = {}) {
     operation: generation.operationSummary,
     operations: generations.map(item => item.operationSummary),
     generated_tools: tools.map(tool => ({ operation_name: tool.operationName, tool_ref: tool.toolRef,
-      input_type: tool.inputTypeName, output_type: tool.outputTypeName, secret_handles: tool.secretHandles })),
+      input_type: tool.inputFields.length ? tool.inputTypeName : null, output_type: tool.outputTypeName, secret_handles: tool.secretHandles })),
     generated_tool: generation.tool === null ? null : {
       operation_name: generation.tool.operationName,
       tool_name: generation.tool.toolName,
       tool_ref: generation.tool.toolRef,
-      input_type: generation.tool.inputTypeName,
+      input_type: generation.tool.inputFields.length ? generation.tool.inputTypeName : null,
       output_type: generation.tool.outputTypeName,
       secret_handles: generation.tool.secretHandles,
     },
@@ -141,7 +142,13 @@ export function renderRestScaffoldReport(report) {
 function generateRestScaffold({ root, outputRoot, moduleName, config }) {
   const diagnostics = [];
   const service = validateConfig(config, diagnostics);
-  const normalizedOperation = normalizeOperationConfig(config, diagnostics);
+  let normalizedOperation;
+  try { normalizedOperation = normalizeOperationConfig(config); }
+  catch (error) {
+    return { service, diagnostics: [errorDiagnostic('RestOperationNotMappable', error.message, { operation: config.operation_id ?? '<invalid>' })],
+      operationSummary: { source: 'openapi', operation_id: config.operation_id ?? null }, tool: null, files: [],
+      refusedOperation: { operation_name: config.operation_id ?? '<invalid>', reason: error.message } };
+  }
   const operationSummary = normalizedOperation.summary;
   const mapped = mapOperation(normalizedOperation.operation, moduleName, service);
   const refusedOperation = mapped.refusal === null ? null : {
@@ -237,7 +244,7 @@ function normalizeOperationConfig(config) {
   }
   if (isPlainObject(config.openapi)) {
     const operationId = requiredString(config.operation_id, "operation_id");
-    const operation = operationFromOpenApi(config.openapi, operationId);
+    const operation = openApiOperation(config.openapi, operationId);
     if (operation === null) {
       throw new Error(`operation_id ${operationId} was not found in OpenAPI document`);
     }
@@ -252,88 +259,6 @@ function normalizeOperationConfig(config) {
     };
   }
   throw new Error("REST scaffold config must contain operation or openapi + operation_id");
-}
-
-function operationFromOpenApi(openapi, operationId) {
-  if (!isPlainObject(openapi.paths)) {
-    throw new Error("openapi.paths must be an object");
-  }
-  const matches = [];
-  for (const [path, pathItem] of Object.entries(openapi.paths)) {
-    if (!isPlainObject(pathItem)) {
-      continue;
-    }
-    for (const [rawMethod, operation] of Object.entries(pathItem)) {
-      const method = rawMethod.toUpperCase();
-      if (!SUPPORTED_METHODS.has(method) || !isPlainObject(operation)) {
-        continue;
-      }
-      if (operation.operationId !== operationId) {
-        continue;
-      }
-      if (pathItem.$ref || pathItem.parameters?.length || operation.$ref) throw new Error('OpenAPI references and path-level parameters require explicit resolution before import');
-      const parameters = operation.parameters ?? [];
-      if (!Array.isArray(parameters) || parameters.some(p => !isPlainObject(p) || p.$ref || p.in !== 'query' || p.style || p.explode !== undefined
-        || !isPlainObject(p.schema) || ['array', 'object'].includes(p.schema.type))
-        || new Set(parameters.map(p => p.name)).size !== parameters.length
-        || (parameters.length && (operation.requestBody || !['GET', 'DELETE'].includes(method)))) {
-        throw new Error('OpenAPI parameters require explicit scalar query mappings on GET/DELETE; mixed body, path, header and serialization mappings are not supported');
-      }
-      if (operation.requestBody?.$ref || Object.values(operation.responses ?? {}).some(response => response?.$ref)) throw new Error('OpenAPI references require explicit resolution before import');
-      matches.push({
-        name: operation.operationId,
-        operationId: operation.operationId,
-        description: operation.summary ?? operation.description ?? "",
-        method,
-        path,
-        secret_handles: operation["x-touba-secret-handles"],
-        inputSchema: inputSchemaFromOpenApiOperation(operation),
-        outputSchema: outputSchemaFromOpenApiOperation(operation),
-      });
-    }
-  }
-  if (matches.length > 1) throw new Error(`operation_id ${operationId} is ambiguous in OpenAPI document`);
-  return matches[0] ?? null;
-}
-
-function inputSchemaFromOpenApiOperation(operation) {
-  const requestBodySchema = operation.requestBody?.content?.["application/json"]?.schema;
-  if (isPlainObject(requestBodySchema)) {
-    return requestBodySchema;
-  }
-  const properties = {};
-  const required = [];
-  for (const parameter of Array.isArray(operation.parameters) ? operation.parameters : []) {
-    if (!isPlainObject(parameter) || typeof parameter.name !== "string") {
-      continue;
-    }
-    properties[parameter.name] = isPlainObject(parameter.schema) ? parameter.schema : { type: "string" };
-    if (parameter.required === true) {
-      required.push(parameter.name);
-    }
-  }
-  return {
-    type: "object",
-    properties,
-    required,
-  };
-}
-
-function outputSchemaFromOpenApiOperation(operation) {
-  const responses = isPlainObject(operation.responses) ? operation.responses : {};
-  for (const code of ["200", "201", "202", "default"]) {
-    const schema = responses[code]?.content?.["application/json"]?.schema;
-    if (isPlainObject(schema)) {
-      return schema;
-    }
-  }
-  return {
-    type: "object",
-    properties: {
-      content: { type: "string" },
-    },
-    required: ["content"],
-  };
 }
 
 function mapOperation(operation, moduleName, service) {
@@ -351,21 +276,23 @@ function mapOperation(operation, moduleName, service) {
   if (typeof operation.path !== "string" || !operation.path.startsWith("/")) {
     return { tool: null, refusal: `${operationName}: path must start with /` };
   }
-  const target = new URL(operation.path, service.baseUrl);
-  if (target.origin !== new URL(service.baseUrl).origin || target.search || target.hash || /[{}\\\\\s]/u.test(operation.path)) {
+  const route = operation.path.replace(/\{([^{}]+)\}/g, (match, name) => operation.parameter_locations?.[name] === 'path' ? 'parameter' : match);
+  const target = new URL(route, service.baseUrl);
+  if (target.origin !== new URL(service.baseUrl).origin || target.search || target.hash || /[{}\\\\\s]/u.test(route)) {
     return { tool: null, refusal: `${operationName}: path must stay on the configured service without unresolved parameters` };
   }
   const toolName = pascalCase(operationName);
   if (!IDENTIFIER_PATTERN.test(toolName)) {
     return { tool: null, refusal: `${operationName}: cannot produce a Touba tool identifier` };
   }
-  const inputFields = schemaObjectFields(operation.inputSchema, "inputSchema");
+  const records = [];
+  const inputFields = schemaObjectFields(operation.inputSchema, "inputSchema", `${toolName}Request`, records);
   if (inputFields.refusal) {
     return { tool: null, refusal: `${operationName}: ${inputFields.refusal}` };
   }
   const outputFields = operation.outputSchema === undefined
     ? { fields: [{ name: "content", originalName: "content", type: "Text", required: true, description: "" }], fallback: true }
-    : schemaObjectFields(operation.outputSchema, "outputSchema");
+    : schemaObjectFields(operation.outputSchema, "outputSchema", `${toolName}Result`, records);
   if (outputFields.refusal) {
     return { tool: null, refusal: `${operationName}: ${outputFields.refusal}` };
   }
@@ -395,6 +322,9 @@ function mapOperation(operation, moduleName, service) {
       method,
       path: operation.path,
       bodyMode,
+      parameterLocations: operation.parameter_locations ?? {},
+      outputArray: operation.output_array === true,
+      records,
       toolName,
       toolRef: `tool:${moduleName}/${toolName}`,
       inputTypeName: `${toolName}Request`,
@@ -446,7 +376,8 @@ function normalizeAuth(auth, secretHandles) {
   };
 }
 
-function schemaObjectFields(schema, label) {
+function schemaObjectFields(schema, label, recordName, records, depth = 0) {
+  if (depth > 8 || records.length > 128) return { refusal: `${label} exceeds the record nesting limit` };
   if (!isPlainObject(schema)) {
     return { refusal: `${label} must be a JSON Schema object` };
   }
@@ -468,22 +399,36 @@ function schemaObjectFields(schema, label) {
     if (fields.some(field => field.name === name)) {
       return { refusal: `${label}.${rawName} collides with another field after name conversion` };
     }
-    const type = mapJsonSchemaType(property);
-    if (type === null) {
+    const mapped = mapJsonSchemaField(property, `${recordName}${pascalCase(rawName)}`, records, depth + 1);
+    if (!mapped) {
       return { refusal: `${label}.${rawName} uses an unsupported schema shape` };
     }
     fields.push({
       name,
       originalName: rawName,
-      type,
+      ...mapped,
       required: required.has(rawName),
       description: isPlainObject(property) && typeof property.description === "string" ? property.description : "",
     });
   }
-  if (fields.length === 0) {
-    return { refusal: `${label}.properties must contain at least one field` };
-  }
   return { fields };
+}
+
+function mapJsonSchemaField(property, name, records, depth) {
+  if (depth > 8 || !isPlainObject(property)) return null;
+  if (property.type === 'object') {
+    const mapped = schemaObjectFields(property, name, name, records, depth);
+    if (mapped.refusal) return null;
+    records.push({ name, fields: mapped.fields });
+    return { type: name, fields: mapped.fields };
+  }
+  if (property.type === 'array') {
+    if (Object.keys(property).some(key => !['type', 'items', 'description', 'title', '$comment', 'examples'].includes(key))) return null;
+    const item = mapJsonSchemaField(property.items, `${name}Item`, records, depth + 1);
+    return item ? { type: `List of ${item.type}`, item } : null;
+  }
+  const type = mapJsonSchemaType(property);
+  return type ? { type } : null;
 }
 
 function mapJsonSchemaType(property) {
@@ -557,7 +502,7 @@ function buildFiles({ root, outputRoot, moduleName, service, tools }) {
     generated_tool: {
       operation_name: tool.operationName,
       tool_ref: tool.toolRef,
-      input_type: tool.inputTypeName,
+      input_type: tool.inputFields.length ? tool.inputTypeName : null,
       output_type: tool.outputTypeName,
       secret_handles: tool.secretHandles,
     },
@@ -577,8 +522,9 @@ function renderToubaSource(moduleName, tool) {
   const lines = [
     `module ${moduleName}`,
     "",
-    `type ${tool.inputTypeName}`,
   ];
+  for (const record of tool.records) lines.push(`type ${record.name}`, ...record.fields.map(renderImportedField), '');
+  if (tool.inputFields.length) lines.push(`type ${tool.inputTypeName}`);
   for (const field of tool.inputFields) {
     lines.push(renderImportedField(field));
   }
@@ -589,7 +535,7 @@ function renderToubaSource(moduleName, tool) {
   }
   lines.push("");
   lines.push(`tool ${tool.toolName}`);
-  lines.push(`    takes request as ${tool.inputTypeName}`);
+  if (tool.inputFields.length) lines.push(`    takes request as ${tool.inputTypeName}`);
   lines.push(`    gives ${tool.outputTypeName}`);
   lines.push(tool.secretHandles.length > 0 ? "    requires network, secret_read" : "    requires network");
   if (tool.secretHandles.length > 0) {
@@ -635,11 +581,13 @@ function renderHandlerConfig(service, tool) {
       method: tool.method,
       path: tool.path,
       body_mode: tool.bodyMode,
+      output_array: tool.outputArray,
       auth: tool.auth,
       request_fields: tool.inputFields.map((field) => ({
         field: field.name,
         source_name: field.originalName,
         required: field.required,
+        location: tool.parameterLocations[field.originalName] ?? (tool.bodyMode === 'json' ? 'body' : 'query'),
       })),
     },
   }, null, 2)}\n`;
@@ -657,11 +605,11 @@ ${renderJsonFieldAdapters(tool)}
 
 await defineTool({
   toolRef: ${JSON.stringify(tool.toolRef)},
-  inputSignature: [{ name: "request", type_ref: ${JSON.stringify(`type:${tool.toolRef.slice("tool:".length).split("/")[0]}/${tool.inputTypeName}`)} }],
+  inputSignature: ${JSON.stringify(tool.inputFields.length ? [{ name: 'request', type_ref: `type:${tool.toolRef.slice('tool:'.length).split('/')[0]}/${tool.inputTypeName}` }] : [])},
   outputType: ${JSON.stringify(`type:${tool.toolRef.slice("tool:".length).split("/")[0]}/${tool.outputTypeName}`)},
   requiredGrants: ${JSON.stringify(tool.secretHandles.length > 0 ? ["network", "secret_read"] : ["network"])},
   requiredSecretHandles: ${JSON.stringify(tool.secretHandles)},
-  run: async ({ request, context }) => {
+  run: async ({ request = {}, context }) => {
     if (!request || typeof request !== "object" || Array.isArray(request)) {
       throw new ToubaHandlerError("InvalidArguments", "request must be an object");
     }
@@ -669,7 +617,16 @@ await defineTool({
     const operation = config.operation;
     const wireRequest = toJsonRequest(request);
     const service = config.service;
-    const url = new URL(operation.path, service.base_url);
+    let path = operation.path;
+    for (const field of operation.request_fields.filter(field => field.location === "path")) {
+      const value = wireRequest[field.source_name];
+      if (value === undefined || value === null || [".", "..", ""].includes(String(value))) {
+        throw new ToubaHandlerError("InvalidArguments", "path parameter is missing or unsafe");
+      }
+      path = path.replaceAll("{" + field.source_name + "}", encodeURIComponent(String(value)));
+    }
+    const url = new URL(path, service.base_url);
+    if (url.origin !== new URL(service.base_url).origin) throw new ToubaHandlerError("InvalidArguments", "path left the configured service");
     const headers = { Accept: "application/json" };
     let body;
 
@@ -681,13 +638,14 @@ await defineTool({
       if (value === undefined || value === null) {
         continue;
       }
-      if (operation.body_mode === "query") {
+      if (field.location === "query") {
         url.searchParams.set(field.source_name, String(value));
       }
     }
 
     if (operation.body_mode === "json") {
-      body = JSON.stringify(wireRequest);
+      body = JSON.stringify(Object.fromEntries(operation.request_fields.filter(field => field.location === "body")
+        .filter(field => Object.hasOwn(wireRequest, field.source_name)).map(field => [field.source_name, wireRequest[field.source_name]])));
       headers["Content-Type"] = "application/json";
     }
 
@@ -713,7 +671,8 @@ await defineTool({
       let result;
       try { result = JSON.parse(text); }
       catch { result = { content: text }; }
-      return fromJsonResult(result);
+      if (operation.output_array && !Array.isArray(result)) throw new ToubaHandlerError("InvalidOutput", "expected a JSON array result");
+      return fromJsonResult(operation.output_array ? { items: result } : result);
     } finally {
       clearTimeout(timeout);
     }

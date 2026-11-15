@@ -48,6 +48,7 @@
             "properties": {
               "state": { "enum": ["not_observed", "not_required", "observed", "stale", "incomplete", "unavailable"] },
               "preflight": { "enum": ["available", "unavailable", "not_required"] },
+              "diagnostic": {"enum":["HandlerSandboxPathInvalid","HandlerSandboxEnvironmentInvalid","HandlerSandboxUnsupportedPlatform","HandlerSandboxUnsupportedPolicy","HandlerSandboxGrantMissing","HandlerSandboxPythonRuntimeMissing","HandlerIsolationObservationUnavailable"]},
               "run_id": { "type": ["string", "null"], "maxLength": 1024 },
               "observed_at": { "type": ["string", "null"] },
               "outcome": { "enum": ["completed", "failed", null] },

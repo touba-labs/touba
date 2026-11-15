@@ -125,6 +125,7 @@ test("rest scaffold refuses unsupported schema shapes without writing files", ()
           properties: {
             nested: {
               type: "object",
+              additionalProperties: true,
               properties: {
                 value: { type: "string" },
               },

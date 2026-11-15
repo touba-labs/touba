@@ -62,7 +62,13 @@ export function planIntegrationImport(projectRoot, request) {
       tools: request.document.tools,
     } });
   }
-  if (report.status !== 'success' || report.refused_tools?.length) fail('ToubaServeImportUnsupported', 'A selected operation has an unsupported contract. Review the CLI import diagnostics before importing it.');
+  if (report.status !== 'success' || report.refused_tools?.length) {
+    const clean = value => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 600);
+    const diagnostics = report.diagnostics.filter(item => item.severity === 'error' || item.code === 'McpToolNotMappable')
+      .slice(0, 24).map(item => ({ code: 'ImportOperationUnsupported', severity: 'error',
+        operation: clean(item.details?.operation ?? item.details?.tool ?? ''), message: clean(item.message) }));
+    throw Object.assign(new Error('Selected contracts require changes before import'), { code: 'ToubaServeImportUnsupported', diagnostics });
+  }
   const files = report.files.map(file => ({ path: file.relative_path.replaceAll('\\', '/'), role: file.kind, content: file.content }));
   const source = files.find(file => file.role === 'source'), generatedSource = source.path;
   source.path = `src/integrations/${request.name}.tb`;
