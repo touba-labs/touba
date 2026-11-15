@@ -12,6 +12,7 @@ export { newPackage } from "./package-author.mjs";
 import { resolveRegistryPackage } from "./registry.mjs";
 import { createRegistryReader } from "./package-fetch.mjs";
 import { toolContract } from "./package-governance.mjs";
+import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
@@ -37,13 +38,13 @@ export async function checkPackageArchive(archive, options = {}) {
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }
 
-// Exact closure, supplied inside the root package or already present in the
+// Exact resolved closure, supplied inside the root package or already present in the
 // consuming project. No ambient workspace search, latest selection or network.
 export function packageClosure(path, { projectRoot, publishing = false } = {}) {
   const first = readPackage(path, { runtimeVersion, publishing });
   const packages = new Map();
   const active = new Set();
-  function visit(pkg) {
+  function visit(pkg, chain = []) {
     const { name, version } = pkg.document;
     if (active.has(name)) throw packageError("PackageDependencyCycle", `dependency cycle at ${name}`);
     const previous = packages.get(name);
@@ -56,15 +57,18 @@ export function packageClosure(path, { projectRoot, publishing = false } = {}) {
     if (packages.size > 128 || [...packages.values()].reduce((sum, item) => sum + item.files.reduce((n, file) => n + file.size, 0), 0) > PACKAGE_LIMITS.totalBytes) throw packageError("PackageTooLarge", "dependency closure exceeds limits");
     for (const [dependency, expected] of Object.entries(pkg.document.dependencies ?? {})) {
       if (active.has(dependency)) throw packageError("PackageDependencyCycle", `dependency cycle at ${dependency}`);
-      const candidates = [join(pkg.root, "packages", dependency), join(first.root, "packages", dependency), ...(projectRoot ? [join(projectRoot, "packages", dependency)] : [])];
-      const found = [...new Set(candidates)].filter(candidate => existsSync(join(candidate, PACKAGE_MANIFEST)));
+      const candidates = [join(pkg.root, "packages", dependency), join(first.root, "packages", dependency)];
+      let found = [...new Set(candidates)].filter(candidate => existsSync(join(candidate, PACKAGE_MANIFEST)));
+      // An explicitly supplied closure owns its candidates. The consumer is a
+      // fallback, not a competing source that can replace reviewed archive bytes.
+      if (!found.length && projectRoot && existsSync(join(projectRoot, 'packages', dependency, PACKAGE_MANIFEST))) found = [join(projectRoot, 'packages', dependency)];
       if (!found.length && !packages.has(dependency)) throw packageError("PackageDependencyMissing", `${name} requires ${dependency}@${expected}; supply it under packages/${dependency}`);
       for (const candidate of found) {
         const child = readPackage(candidate, { runtimeVersion, publishing });
-        if (child.document.name !== dependency || child.document.version !== expected) throw packageError("PackageDependencyConflict", `expected ${dependency}@${expected}`);
-        visit(child);
+        if (child.document.name !== dependency || !satisfiesPackageConstraint(child.document.version, expected, pkg.document.package_schema_version)) throw packageError("PackageDependencyConflict", `${[...chain, name, dependency].join(' -> ')} requires ${expected}; selected ${child.document.version}`);
+        visit(child, [...chain, name]);
       }
-      if (packages.get(dependency).document.version !== expected) throw packageError("PackageDependencyConflict", `expected ${dependency}@${expected}`);
+      if (!satisfiesPackageConstraint(packages.get(dependency).document.version, expected, pkg.document.package_schema_version)) throw packageError("PackageDependencyConflict", `${[...chain, name, dependency].join(' -> ')} requires ${expected}; selected ${packages.get(dependency).document.version}`);
     }
     active.delete(name);
   }
@@ -123,6 +127,10 @@ export async function checkPackage(path, options = {}) {
     verifyInstalledPackages(path, packageDependencyRecords(path, document));
   }
   const closure = packageClosure(path, options);
+  return checkPackageClosure(closure, options);
+}
+
+async function checkPackageClosure(closure, options = {}) {
   const { validatePackageSources } = await import("./project.mjs");
   let contracts;
   const diagnostics = await validatePackageSources(closure.packages, { ...options,
@@ -141,7 +149,13 @@ export async function checkPackage(path, options = {}) {
   const effectNotes = closure.packages.flatMap(pkg => (pkg.document.handlers ?? [])
     .filter(handler => !handler.effect_contract)
     .map(handler => `Handler ${handler.tool} has no recommended effect contract. Review its side effects and test the receipt protocol; network access alone does not imply an external write.`));
-  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: [...(missing.length ? [`Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : []), ...effectNotes], packages: closure.packages.map(pkg => ({ name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, files: pkg.files.length, requirements: pkg.requirements })), tests: "Source contracts checked. Author tests are not executed automatically.", closure, ...(contracts ? { contracts } : {}) };
+  const resolvedVersions = new Map(closure.packages.map(pkg => [pkg.document.name, pkg.document.version]));
+  const packages = closure.packages.map(pkg => ({ name: pkg.document.name, version: pkg.document.version,
+    digest: pkg.digest, files: pkg.files.length, requirements: pkg.requirements,
+    // Evidence uses the exact resolved closure, independently of author constraints.
+    dependencies: Object.fromEntries(Object.keys(pkg.document.dependencies ?? {}).sort()
+      .map(name => [name, resolvedVersions.get(name)])) }));
+  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: [...(missing.length ? [`Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : []), ...effectNotes], packages, tests: "Source contracts checked. Author tests are not executed automatically.", closure, ...(contracts ? { contracts } : {}) };
 }
 
 function copyPackage(pkg, destination) {
@@ -244,10 +258,29 @@ async function updateReview(workspace, lock, checked, allowDowngrade = false) {
   const previous = lock.packages.find(item => item.name === checked.package);
   if (!previous) throw packageError('PackageNotInstalled', 'only an installed package can be updated');
   const direction = updateDirection(checked.version, previous.version, allowDowngrade);
+  const roots = (checked.updateRoots ?? [checked.package]).map(name => {
+    const prior = lock.packages.find(item => item.name === name);
+    const next = checked.closure.packages.find(pkg => pkg.document.name === name);
+    if (!prior || !next) throw packageError('PackageNotInstalled', 'every requested root must be installed');
+    return { name, previous: prior.version, version: next.document.version,
+      direction: updateDirection(next.document.version, prior.version, allowDowngrade) };
+  });
+  const graph = candidateUpdateGraph(workspace, lock, checked, allowDowngrade);
   const before = readPackage(resolve(dirname(workspace.path), previous.manifest));
   const after = checked.closure.first;
-  const previousCheck = await checkPackage(before.root, { projectRoot: dirname(workspace.path), inspectContracts: true });
-  const oldContracts = new Map(previousCheck.contracts.map(pkg => [pkg.name, pkg.tools]));
+  const oldContracts = new Map();
+  const oldPackages = new Map();
+  const replacedNames = new Set(checked.closure.packages.map(pkg => pkg.document.name));
+  for (const candidate of checked.closure.packages) {
+    const old = lock.packages.find(entry => entry.name === candidate.document.name);
+    if (!old) continue;
+    const installed = readPackage(resolve(dirname(workspace.path), old.manifest));
+    oldPackages.set(old.name, installed);
+    const previousCheck = await checkPackage(installed.root, { projectRoot: dirname(workspace.path), inspectContracts: true });
+    // Dependencies dropped by the new root remain installed until an explicit
+    // removal. Do not describe their unchanged contracts as removed authority.
+    for (const pkg of previousCheck.contracts) if (replacedNames.has(pkg.name)) oldContracts.set(pkg.name, pkg.tools);
+  }
   const newContracts = new Map((checked.contracts ?? []).map(pkg => [pkg.name, pkg.tools]));
   const contractChanges = [...new Set([...oldContracts.keys(), ...newContracts.keys()])].sort().flatMap(name => {
     const oldTools = oldContracts.get(name) ?? {}, newTools = newContracts.get(name) ?? {};
@@ -256,19 +289,110 @@ async function updateReview(workspace, lock, checked, allowDowngrade = false) {
       return JSON.stringify(before) === JSON.stringify(after) ? [] : [{ package: name, tool, before, after }];
     });
   });
-  const handlers = [...new Set([...(before.document.handlers ?? []), ...(after.document.handlers ?? [])].map(h => h.tool))].sort().map(tool => {
+  const handlers = checked.closure.packages.flatMap(after => {
+    const before = oldPackages.get(after.document.name);
+    return [...new Set([...(before?.document.handlers ?? []), ...(after.document.handlers ?? [])].map(h => h.tool))].sort().map(tool => {
     const describe = pkg => {
-      const h = pkg.document.handlers?.find(h => h.tool === tool);
+      const h = pkg?.document.handlers?.find(h => h.tool === tool);
       return h ? { path: h.path, digest: pkg.files.find(file => file.path === h.path)?.digest } : null;
     };
     return { tool, before: describe(before), after: describe(after) };
   }).filter(h => JSON.stringify(h.before) !== JSON.stringify(h.after));
+  });
   const plan = { schema_version: 'touba-package-update-review-v1',
     workspace_digest: packageDigest(Buffer.concat([workspace.bytes, Buffer.from(json(lock))])),
     package: checked.package, previous: previous.version, version: checked.version, direction,
     previous_digest: previous.digest, package_digest: after.digest, handlers,
-    packages: checked.packages, contracts: checked.contracts ?? [], contract_changes: contractChanges };
+    packages: checked.packages, changes: graph.changes, constraints: graph.constraints,
+    contracts: checked.contracts ?? [], contract_changes: contractChanges };
+  if (checked.updateRoots) plan.roots = roots;
+  if (checked.updateSources) plan.sources = checked.updateSources;
   return { ...plan, review_digest: packageDigest(Buffer.from(JSON.stringify(plan))) };
+}
+
+function candidateUpdateGraph(workspace, lock, checked, allowDowngrade) {
+  const root = dirname(workspace.path);
+  const selected = new Map(lock.packages.map(entry => [entry.name, readPackage(resolve(root, entry.manifest))]));
+  const changes = [];
+  for (const pkg of checked.closure.packages) {
+    const before = selected.get(pkg.document.name);
+    if (before && before.digest !== pkg.digest) {
+      updateDirection(pkg.document.version, before.document.version, allowDowngrade);
+      changes.push({ name: pkg.document.name, before: { version: before.document.version, digest: before.digest }, after: { version: pkg.document.version, digest: pkg.digest } });
+    } else if (!before) changes.push({ name: pkg.document.name, before: null, after: { version: pkg.document.version, digest: pkg.digest } });
+    selected.set(pkg.document.name, pkg);
+  }
+  const constraints = [];
+  for (const pkg of [...selected.values(), ...(workspace.author ? [{ document: workspace.document }] : [])]) {
+    for (const [name, constraint] of Object.entries(pkg.document.dependencies ?? {})) {
+      const version = selected.get(name)?.document.version;
+      // An author's explicit direct exact pin follows its requested update;
+      // ranges and every installed package's constraints remain authoritative.
+      const directPin = workspace.author && pkg.document === workspace.document && (checked.updateRoots ?? [checked.package]).includes(name) && /^\d+\.\d+\.\d+(?:[-+].*)?$/.test(constraint);
+      if (!directPin && !satisfiesPackageConstraint(version, constraint, pkg.document.package_schema_version)) throw packageError('PackageInUse', `${pkg.document.name} -> ${name} requires ${constraint}; selected ${version ?? 'absent'}`);
+      constraints.push({ consumer: pkg.document.name, dependency: name, constraint: directPin ? version : constraint, version });
+    }
+  }
+  const active = new Set(), visited = new Set();
+  const visit = name => {
+    if (active.has(name)) throw packageError('PackageDependencyCycle', `dependency cycle at ${name}`);
+    if (visited.has(name)) return;
+    active.add(name);
+    for (const dependency of Object.keys(selected.get(name)?.document.dependencies ?? {})) visit(dependency);
+    active.delete(name); visited.add(name);
+  };
+  for (const name of selected.keys()) visit(name);
+  return { changes: changes.sort((a, b) => a.name.localeCompare(b.name)), constraints: constraints.sort((a, b) => `${a.consumer}/${a.dependency}`.localeCompare(`${b.consumer}/${b.dependency}`)) };
+}
+
+/** Explicit roots are selected together; ambiguous bundled alternatives are never guessed. */
+export async function reviewPackageUpdates(paths, { root = process.cwd(), accept, ...options } = {}) {
+  if (!Array.isArray(paths) || paths.length < 1 || paths.length > 32 || paths.some(path => typeof path !== 'string' || !path)) throw packageError('PackageUpdateSetInvalid', 'select between 1 and 32 package sources');
+  root = findPackageWorkspace(root);
+  const staging = realpathSync(mkdtempSync(join(tmpdir(), 'touba-package-update-set-')));
+  try {
+    const checks = []; let bytes = 0;
+    for (const [index, path] of paths.entries()) {
+      let source = resolve(path);
+      if (lstatSync(source).isFile() && !source.endsWith(PACKAGE_MANIFEST)) source = unpackPackage(source, join(staging, `source-${index}`));
+      const archive = join(staging, `${index}.tar.gz`);
+      await snapshotPackage(source, { output: archive, projectRoot: root });
+      bytes += lstatSync(archive).size;
+      if (bytes > PACKAGE_LIMITS.totalBytes) throw packageError('PackageTooLarge', 'package update sources exceed the total byte limit');
+      source = unpackPackage(archive, join(staging, `review-${index}`));
+      checks.push(await checkPackage(source, { projectRoot: root }));
+    }
+    const roots = new Map();
+    for (const [index, check] of checks.entries()) {
+      const expected = options.sourceReviews?.[index];
+      if (expected?.expected_name && (check.package !== expected.expected_name || check.version !== expected.version)) throw packageError('PackageDependencyConflict', 'archive identity differs from its selected registry entry');
+      if (roots.has(check.package)) throw packageError('PackageUpdateSetInvalid', `duplicate explicit root ${check.package}`);
+      roots.set(check.package, check.closure.first);
+    }
+    const selected = new Map(roots);
+    for (const check of checks) for (const pkg of check.closure.packages) {
+      if (roots.has(pkg.document.name)) continue;
+      const prior = selected.get(pkg.document.name);
+      if (prior && prior.digest !== pkg.digest) throw packageError('PackageDependencyConflict', `ambiguous bundled dependency ${pkg.document.name}; select its exact replacement explicitly`);
+      selected.set(pkg.document.name, pkg);
+    }
+    const packages = [...selected.values()].sort((a, b) => a.document.name.localeCompare(b.document.name));
+    if (packages.length > 128 || packages.reduce((sum, pkg) => sum + pkg.files.reduce((n, file) => n + file.size, 0), 0) > PACKAGE_LIMITS.totalBytes) throw packageError('PackageTooLarge', 'combined closure exceeds limits');
+    const first = roots.get([...roots.keys()].sort()[0]);
+    const workspace = readPackageWorkspace(root), lock = verifyInstalledPackages(root, workspace.records);
+    const combined = { package: first.document.name, version: first.document.version,
+      updateRoots: [...roots.keys()].sort(), closure: { first, packages } };
+    // Check every consumer and the combined graph before compiling these sources.
+    candidateUpdateGraph(workspace, lock, combined, options['allow-downgrade']);
+    const sources = checks.map((check, index) => ({ name: check.package, digest: check.closure.first.digest,
+      ...(options.sourceReviews?.[index] ?? { path: resolve(paths[index]) }) })).sort((a, b) => a.name.localeCompare(b.name));
+    const checked = { ...await checkPackageClosure(combined.closure, { projectRoot: root, inspectContracts: true }), updateRoots: combined.updateRoots, updateSources: sources };
+    const review = await updateReview(workspace, lock, checked, options['allow-downgrade']);
+    if (accept !== undefined && accept !== review.review_digest) throw packageError('PackageReviewChanged', 'package set or workspace changed; review again');
+    if (accept === undefined) return { ...review, command: 'package update-set', status: 'review_required', exitCode: 0,
+      notes: [`Review ${review.review_digest}`, 'Review every root, dependency and contract before accepting this exact set.'] };
+    return { ...await installPackage(first.root, { root, reviewDigest: accept, 'allow-downgrade': options['allow-downgrade'] }, first.document.name, checked), command: 'package update-set', review };
+  } finally { rmSync(staging, { recursive: true, force: true }); }
 }
 
 /** Review frozen bytes, then apply only that review to the unchanged workspace. */
@@ -296,7 +420,7 @@ export async function reviewPackageUpdate(path, { root = process.cwd(), accept, 
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }
 
-async function installPackage(path, { root, ...options }, replacing) {
+async function installPackage(path, { root, ...options }, replacing, frozenCheck) {
   root = findPackageWorkspace(root);
   const workspace = readPackageWorkspace(root);
   const { path: configPath, bytes: configBytes, document: config } = workspace;
@@ -316,18 +440,14 @@ async function installPackage(path, { root, ...options }, replacing) {
     path = requestedName ? join(root, "packages", requestedName) : resolve(path);
     if (!existsSync(path)) throw packageError("PackageSourceMissing", "supply a package directory/archive, or place the package in packages/<organization.name> before adding by name; remote installation requires --registry");
     if (!lstatSync(path).isDirectory() && !path.endsWith(PACKAGE_MANIFEST)) path = unpackPackage(path, join(staging, "extracted"));
-    const checked = await checkPackage(path, { ...options, projectRoot: root, inspectContracts: Boolean(options.reviewDigest) });
+    const checked = frozenCheck ?? await checkPackage(path, { ...options, projectRoot: root, inspectContracts: Boolean(options.reviewDigest) });
     const packages = checked.closure.packages;
     if (replacing && checked.package !== replacing) throw packageError("PackageNameConflict", "replacement identity differs from the selected package");
     if (options.reviewDigest && (await updateReview(workspace, lock, checked, options['allow-downgrade'])).review_digest !== options.reviewDigest) throw packageError('PackageReviewChanged', 'package or workspace changed; review the update again');
     if (replacing) {
       const previous = lock.packages.find(entry => entry.name === replacing);
       updateDirection(checked.version, previous.version, options['allow-downgrade']);
-      for (const record of records) {
-        const dependent = readPackage(resolve(root, record.manifest)).document;
-        if (dependent.name !== replacing && Object.hasOwn(dependent.dependencies ?? {}, replacing)
-          && dependent.dependencies[replacing] !== checked.version) throw packageError("PackageInUse", `${dependent.name} requires ${replacing}@${dependent.dependencies[replacing]}`);
-      }
+      candidateUpdateGraph(workspace, lock, checked, options['allow-downgrade']);
     }
     if (requestedName && checked.package !== requestedName) throw packageError("PackageNameConflict", "folder identity differs from the requested package");
     if (workspace.author && packages.some(pkg => pkg.document.name === config.name)) throw packageError("PackageDependencyCycle", "a package cannot depend on itself");
@@ -337,7 +457,7 @@ async function installPackage(path, { root, ...options }, replacing) {
       const destination = join(root, "packages", pkg.document.name);
       const manifest = `packages/${pkg.document.name}/${PACKAGE_MANIFEST}`;
       const existing = lock.packages.find(entry => entry.name === pkg.document.name);
-      const replacement = existing && pkg.document.name === replacing;
+      const replacement = existing && replacing && (pkg.document.name === replacing || (options.reviewDigest && existing.digest !== pkg.digest));
       if (existing && !replacement && (existing.version !== pkg.document.version || existing.digest !== pkg.digest)) throw packageError("PackageDependencyConflict", `different package already installed: ${pkg.document.name}`);
       const aliases = records.filter(record => resolve(root, record.manifest) === resolve(root, manifest));
       if (aliases.length > 1) throw packageError("PackageNameConflict", `duplicate project entry ${manifest}`);
@@ -350,7 +470,7 @@ async function installPackage(path, { root, ...options }, replacing) {
         if (current.digest !== pkg.digest && !replacement) throw packageError("PackageAlreadyExists", `refusing to replace ${destination}`);
         if (replacement) {
           copyPackage(pkg, join(staging, pkg.document.name));
-          updates.push({ source: join(staging, pkg.document.name), destination, backup: join(staging, "previous-package") });
+          updates.push({ source: join(staging, pkg.document.name), destination, backup: join(staging, `previous-${pkg.document.name}`) });
         }
       } else {
         copyPackage(pkg, join(staging, pkg.document.name));
@@ -376,7 +496,7 @@ async function installPackage(path, { root, ...options }, replacing) {
       renameSync(update.source, update.destination); installed.push(update.destination);
     }
     lock.packages.sort((a, b) => a.name.localeCompare(b.name));
-    setWorkspacePackages(workspace, records, { direct: checked.package });
+    setWorkspacePackages(workspace, records, { direct: checked.updateRoots ?? checked.package });
     writeFileSync(join(staging, "lock.json"), json(lock));
     writeFileSync(join(staging, "project.json"), json(config));
     renameSync(join(staging, "lock.json"), join(root, PACKAGE_LOCK));

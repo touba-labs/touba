@@ -108,6 +108,35 @@ export class ToubaEngine {
 
   async close() { this.closed = true; await this.transport?.close(); }
 
+  /** Offline maintenance only. The default is a preview; accept binds exact reviewed bytes. */
+  async adoptState(options = {}) {
+    if (this.closed) throw new ToubaEngineError('state', 'Engine is closed', { code: 'EngineClosed' });
+    if (Object.keys(options).some(key => !['reason', 'accept', 'recover', 'maxBackupBytes', 'signal'].includes(key))
+      || options.recover !== undefined && typeof options.recover !== 'boolean'
+      || options.recover && (options.reason !== undefined || options.accept !== undefined)) throw new ToubaEngineError('options', 'Invalid state adoption options', { code: 'ToubaStateOptionsInvalid' });
+    const args = ['state', 'adopt', '--project', this.projectRoot, '--json'];
+    if (options.recover) args.push('--recover');
+    else {
+      args.push('--reason', requireString(options.reason, 'adoptState.reason'));
+      if (options.accept !== undefined) {
+        if (typeof options.accept !== 'string' || !/^[a-f0-9]{64}$/.test(options.accept)) throw new ToubaEngineError('options', 'Invalid review digest', { code: 'ToubaStateOptionsInvalid' });
+        args.push('--accept', options.accept);
+      }
+    }
+    if (options.maxBackupBytes !== undefined) {
+      if (!Number.isSafeInteger(options.maxBackupBytes) || options.maxBackupBytes < 1) throw new ToubaEngineError('options', 'Invalid backup byte limit', { code: 'ToubaStateOptionsInvalid' });
+      args.push('--max-backup-bytes', String(options.maxBackupBytes));
+    }
+    const result = await this.#runCommand('state', args, { signal: options.signal, allowFailure: true });
+    let value;
+    try { value = JSON.parse(result.stdout); } catch { throw new ToubaEngineError('state', 'Invalid adoption response; inspect state before retrying', { code: 'InvalidStateAdoptionResult' }); }
+    if (result.status !== 0) throw new ToubaEngineError('state', 'State adoption refused', {
+      code: value?.schema_version === 'touba-state-adoption-error-v1' && /^[A-Za-z][A-Za-z0-9_]{0,127}$/.test(value.code ?? '') ? value.code : 'ToubaStateAdoptionFailed' });
+    if (!(value?.schema_version === 'touba-state-adoption-v1' && ['preview', 'adopted'].includes(value.status)
+      || value?.schema_version === 'touba-state-adoption-recovery-v1' && ['not_adopted', 'adopted'].includes(value.status))) throw new ToubaEngineError('state', 'Invalid adoption response', { code: 'InvalidStateAdoptionResult' });
+    return value;
+  }
+
   async compile(options = {}) {
     if (this.closed) throw new ToubaEngineError("compile", "Engine is closed", { code: "EngineClosed" });
     const source = requireString(options.source, "compile.source");

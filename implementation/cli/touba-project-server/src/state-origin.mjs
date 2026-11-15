@@ -28,17 +28,38 @@ export function currentStateBuild() {
 }
 function failure(code) { return Object.assign(new Error(code), { code }); }
 
+export function validateStateOrigin(value, projectRoot) {
+  const build = id => typeof id === 'string' && /^(?:source:)?[a-f0-9]{64}$/.test(id);
+  const keys = (object, names) => Object.keys(object).sort().join(',') === names.sort().join(',');
+  if (!value || !build(value.build_id) || value.project_root !== realpathSync(projectRoot)) throw failure('ToubaServeStateOriginInvalid');
+  if (value.schema_version === 'touba-serve-state-origin-v1') {
+    if (!keys(value, ['schema_version', 'project_root', 'build_id'])) throw failure('ToubaServeStateOriginInvalid');
+  } else if (value.schema_version === 'touba-serve-state-origin-v2') {
+    if (!keys(value, ['schema_version', 'project_root', 'build_id', 'initial_build_id', 'transitions'])
+      || !build(value.initial_build_id) || !Array.isArray(value.transitions) || !value.transitions.length || value.transitions.length > 128) throw failure('ToubaServeStateOriginInvalid');
+    let previous = value.initial_build_id;
+    for (const row of value.transitions) {
+      if (!row || !keys(row, ['from_build_id', 'to_build_id', 'review_digest', 'backup_id', 'recorded_at', 'reason'])
+        || row.from_build_id !== previous || !build(row.to_build_id) || row.to_build_id === previous
+        || !/^[a-f0-9]{64}$/.test(row.review_digest ?? '') || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(row.backup_id ?? '')
+        || !Number.isFinite(Date.parse(row.recorded_at)) || typeof row.reason !== 'string' || !row.reason.trim()
+        || row.reason.length > 500 || /[\u0000-\u001f\u007f]/u.test(row.reason)) throw failure('ToubaServeStateOriginInvalid');
+      previous = row.to_build_id;
+    }
+    if (previous !== value.build_id) throw failure('ToubaServeStateOriginInvalid');
+  } else throw failure('ToubaServeStateOriginInvalid');
+  return value;
+}
+
 export function inspectStateOrigin(projectRoot) {
   const path = join(projectRoot, ".touba/state-origin.json");
   if (!existsSync(path)) return { status: "unrecorded", build_id: null };
   const stat = lstatSync(path);
-  if (stat.isSymbolicLink() || !stat.isFile()) throw failure("ToubaServeStateOriginInvalid");
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 || stat.size > 256 * 1024) throw failure("ToubaServeStateOriginInvalid");
   let value;
   try { value = JSON.parse(readFileSync(path, "utf8")); } catch { throw failure("ToubaServeStateOriginInvalid"); }
-  if (value?.schema_version !== "touba-serve-state-origin-v1" || typeof value.project_root !== "string"
-      || typeof value.build_id !== "string" || !/^(?:source:)?[a-f0-9]{64}$/.test(value.build_id)
-      || Object.keys(value).sort().join(",") !== "build_id,project_root,schema_version") throw failure("ToubaServeStateOriginInvalid");
-  if (value.project_root !== realpathSync(projectRoot)) throw failure("ToubaServeStateProjectMismatch");
+  if (value?.project_root !== realpathSync(projectRoot)) throw failure("ToubaServeStateProjectMismatch");
+  validateStateOrigin(value, projectRoot);
   return { status: value.build_id === currentStateBuild() ? "matching" : "different_build", build_id: value.build_id };
 }
 

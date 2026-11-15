@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import signal
 import tempfile
@@ -379,6 +380,39 @@ class AsyncToubaEngine:
             raise ToubaEngineError("version", "InvalidVersionResult")
         return result
 
+    async def adopt_state(self, *, reason: str | None = None, accept: str | None = None,
+                          recover: bool = False, max_backup_bytes: int | None = None,
+                          timeout: float | None = None, cancel_event: Event | None = None) -> dict[str, Any]:
+        """Preview by default. An exact review is required to adopt stopped compatible state."""
+        if type(recover) is not bool or recover and (reason is not None or accept is not None):
+            raise ToubaEngineError("options", "ToubaStateOptionsInvalid")
+        args = ["state", "adopt", "--project", str(self.project_root), "--json"]
+        if recover:
+            args.append("--recover")
+        else:
+            if not isinstance(reason, str) or not reason.strip() or reason.startswith("--"):
+                raise ToubaEngineError("options", "ToubaStateRecoveryReasonRequired")
+            args.extend(["--reason", reason])
+            if accept is not None:
+                if not isinstance(accept, str) or not re.fullmatch(r"[a-f0-9]{64}", accept):
+                    raise ToubaEngineError("options", "ToubaStateOptionsInvalid")
+                args.extend(["--accept", accept])
+        if max_backup_bytes is not None:
+            if type(max_backup_bytes) is not int or not 1 <= max_backup_bytes <= 9007199254740991:
+                raise ToubaEngineError("options", "ToubaStateOptionsInvalid")
+            args.extend(["--max-backup-bytes", str(max_backup_bytes)])
+        code, raw = await self._execute("state", args, timeout=timeout, cancel_event=cancel_event)
+        value = _parse(raw, "state")
+        if code:
+            failure = value.get("code") if isinstance(value, dict) and value.get("schema_version") == "touba-state-adoption-error-v1" else None
+            raise ToubaEngineError("state", failure if isinstance(failure, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,127}", failure) else "ToubaStateAdoptionFailed")
+        if not isinstance(value, dict) or not (
+            value.get("schema_version") == "touba-state-adoption-v1" and value.get("status") in ("preview", "adopted")
+            or value.get("schema_version") == "touba-state-adoption-recovery-v1" and value.get("status") in ("not_adopted", "adopted")
+        ):
+            raise ToubaEngineError("state", "InvalidStateAdoptionResult")
+        return value
+
     async def compile(self, source: str, *, timeout: float | None = None, cancel_event: Event | None = None) -> CompileResult:
         code, raw = await self._execute("compile", ["compile", self._path(source), "--stdout"], timeout=timeout, cancel_event=cancel_event)
         if code != 0:
@@ -503,6 +537,12 @@ class ToubaEngine:
 
     def version(self) -> dict[str, Any]:
         return self._run(self._async.version())
+
+    def adopt_state(self, *, reason: str | None = None, accept: str | None = None,
+                    recover: bool = False, max_backup_bytes: int | None = None,
+                    timeout: float | None = None, cancel_event: Event | None = None) -> dict[str, Any]:
+        return self._run(self._async.adopt_state(reason=reason, accept=accept, recover=recover,
+            max_backup_bytes=max_backup_bytes, timeout=timeout, cancel_event=cancel_event))
 
     def compile(self, source: str, *, timeout: float | None = None, cancel_event: Event | None = None) -> CompileResult:
         return self._run(self._async.compile(source, timeout=timeout, cancel_event=cancel_event))

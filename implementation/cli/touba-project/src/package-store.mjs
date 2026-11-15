@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, exactPackageVersion, isWithin, packageError, packageFile, readPackage } from "./package-contract.mjs";
+import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
 
 export const PACKAGE_LOCK = "touba.packages.lock.json";
 export const PACKAGE_TRANSACTION = ".touba-package-installing";
@@ -69,8 +70,13 @@ export function readPackageWorkspace(root) {
 // The author declares direct dependencies; the lock inventories all managed
 // packages, including transitives and retained, currently unused installations.
 export function packageDependencyRecords(root, document) {
-  const records = Object.entries(document.dependencies ?? {}).map(([name, version]) => ({ manifest: `packages/${name}/${PACKAGE_MANIFEST}`, version }));
-  for (const entry of readPackageLock(root).packages) {
+  const lock = readPackageLock(root);
+  const records = Object.entries(document.dependencies ?? {}).map(([name, constraint]) => {
+    const selected = lock.packages.find(entry => entry.name === name)?.version ?? constraint;
+    if (!satisfiesPackageConstraint(selected, constraint, document.package_schema_version)) throw packageError('PackageDependencyConflict', `${document.name} requires ${name}@${constraint}; select and lock an exact compatible version`);
+    return { manifest: `packages/${name}/${PACKAGE_MANIFEST}`, version: selected };
+  });
+  for (const entry of lock.packages) {
     if (!records.some(record => record.manifest === entry.manifest)) records.push({ manifest: entry.manifest, version: entry.version });
   }
   return records;
@@ -78,8 +84,11 @@ export function packageDependencyRecords(root, document) {
 
 export function setWorkspacePackages(workspace, records, { direct } = {}) {
   if (workspace.author) {
-    const selected = new Set([...Object.keys(workspace.document.dependencies ?? {}), ...(direct ? [direct] : [])]);
-    workspace.document.dependencies = Object.fromEntries(records.filter(record => selected.has(record.manifest.split("/")[1])).map(record => [record.manifest.split("/")[1], record.version]));
+    const selected = new Set([...Object.keys(workspace.document.dependencies ?? {}), ...(Array.isArray(direct) ? direct : direct ? [direct] : [])]);
+    workspace.document.dependencies = Object.fromEntries(records.filter(record => selected.has(record.manifest.split("/")[1])).map(record => {
+      const name = record.manifest.split('/')[1], constraint = workspace.document.dependencies?.[name];
+      return [name, constraint && !exactPackageVersion(constraint) ? constraint : record.version];
+    }));
   }
   else workspace.document.packages = records;
 }

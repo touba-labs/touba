@@ -4,6 +4,7 @@ import { packageError } from './package-contract.mjs';
 import { sessionKey, sessionLock, sessionStore } from './registry-session.mjs';
 import { registryVault } from './registry-vault.mjs';
 import { packageLocale } from './package-diagnostics.mjs';
+import { ephemeralRegistryIdentity } from './registry-ephemeral.mjs';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 export function publicationUrl(value) {
@@ -100,9 +101,12 @@ async function connectedRegistry(registry, { access = 'publication', noBrowser =
       catch (error) { await release(response); throw error; }
       if (!saved) { await release(response); throw packageError('RegistrySessionUnavailable', 'the identity provider did not issue a bounded reusable session; use --session-only'); }
     }
-    return { token: response.access_token, persistent: saved, session_max_age_seconds: authorization.session_max_age_seconds,
-      presentation_reuse: config.data.features?.presentation_reuse === true,
-      async revoke() { if (!saved) await release(response); } };
+    const features = { session_max_age_seconds: authorization.session_max_age_seconds,
+      presentation_reuse: config.data.features?.presentation_reuse === true };
+    if (!saved) return ephemeralRegistryIdentity(response, { maximum: authorization.session_max_age_seconds,
+      refresh: token => document(endpoint, form({ client_id, grant_type: 'refresh_token', refresh_token: token })),
+      release, features });
+    return { ...features, token: response.access_token, persistent: true, async revoke() { return true; } };
   };
   const run = async () => {
     let persistent = !sessionOnly && store.supported, saved;

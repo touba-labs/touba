@@ -1,0 +1,7 @@
+{
+  "schema_version": "touba-state-adoption-v1", "status": "preview",
+  "project_root": "/example/project", "from_build_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "to_build_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "reason": "Reviewed compatible build", "files": [], "bytes": 0,
+  "review_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-package-details-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "revision",
+    "name",
+    "version",
+    "digest",
+    "contracts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "touba-package-details-v1"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "contracts": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "tools",
+          "handlers"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "object",
+            "maxProperties": 4096
+          },
+          "handlers": {
+            "type": "array",
+            "maxItems": 4096,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "tool",
+                "entrypoint"
+              ],
+              "properties": {
+                "tool": {
+                  "type": "string"
+                },
+                "entrypoint": {
+                  "type": "string"
+                },
+                "recommended_effect": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

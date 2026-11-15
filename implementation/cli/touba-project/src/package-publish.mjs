@@ -63,7 +63,7 @@ export async function publishPackage(path, options = {}) {
       namespace: parts.slice(0, -1).join("."), name: parts.at(-1), version, kind: "touba_package", status: "draft",
       summary: author.document.description,
       source: { type: "package_archive", url: archivePath, path: archivePath, revision: archive.digest },
-      compatibility: { touba: author.document.touba.runtime_compatibility, protocols: ["touba-package-v1"] },
+      compatibility: { touba: author.document.touba.runtime_compatibility, protocols: [author.document.package_schema_version] },
       artifacts: [{ kind: "package_archive", path: archivePath, digest: archive.digest }] };
     const metadataBytes = json(metadata);
     index.packages.push({ package_ref: metadata.package_ref, version, kind: metadata.kind, status: metadata.status,

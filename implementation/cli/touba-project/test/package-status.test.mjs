@@ -107,7 +107,9 @@ test('preparation shows a signed cached withdrawal without network or a new exec
   const f = signedFixture(t), consumer = join(f.root, 'consumer'); initProject({ root: consumer });
   const source = newPackage('fixture.notice', { root: f.root, version: '1.0.0', context: true }).path;
   await addPackage(source, { root: consumer });
-  assert.deepEqual(await cachedPackageDiagnostics(consumer), []);
+  const unconfigured = await cachedPackageDiagnostics(consumer);
+  assert.equal(unconfigured[0].code, 'PackageStatusNotConfigured');
+  assert.match(unconfigured[0].message, /touba package registry/);
   configureRegistry(f.registry, { root: consumer, trust: f.trust });
   let requests = 0;
   t.mock.method(globalThis, 'fetch', async () => { requests++; throw new Error('unexpected network'); });

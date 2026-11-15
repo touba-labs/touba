@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "touba-package-catalogue-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "items", "total", "next_offset", "revision", "index_digest", "checked_at", "source", "verified_signature", "expires_at"],
+  "properties": {
+    "schema_version": {"const": "touba-package-catalogue-v1"},
+    "items": {"type": "array", "maxItems": 10, "items": {
+      "type": "object", "additionalProperties": false, "required": ["name", "version", "status", "metadata_path"],
+      "properties": {
+        "name": {"type": "string"}, "version": {"type": "string"}, "metadata_path": {"type": "string"},
+        "status": {"enum": ["draft", "reviewed", "validated", "deprecated", "yanked"]},
+        "compatibility": {"type": "object", "additionalProperties": false, "required": ["runtime", "required", "compatible"], "properties": {"runtime": {"type": "string"}, "required": {"type": "string"}, "compatible": {"type": "boolean"}}},
+        "installed_version": {"type": ["string", "null"]}, "newer_than_installed": {"type": ["boolean", "null"]},
+        "withdrawal": {"type": "object", "additionalProperties": false, "required": ["reason", "changed_at"], "properties": {"reason": {"type": "string", "maxLength": 500}, "changed_at": {"type": "string", "maxLength": 40}}}
+      }
+    }},
+    "total": {"type": "integer", "minimum": 0}, "next_offset": {"type": ["integer", "null"], "minimum": 0},
+    "revision": {"type": ["integer", "null"]}, "index_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "checked_at": {"type": "string"}, "source": {"type": "string"}, "verified_signature": {"type": "boolean"}, "expires_at": {"type": ["string", "null"]}
+  }
+}

@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import semver from "semver";
 import { normalizeEffectContract } from '../../touba-manifest/src/effect-contract.mjs';
 import { normalizeHandlerConfigurationSchema } from '../../../runtime/touba-handler-sdk/src/handler-configuration.mjs';
+import { validPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
 
 export const PACKAGE_SCHEMA = "touba-package-v1";
 export const PACKAGE_MANIFEST = "touba.package.json";
@@ -84,7 +85,7 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
     requireValue(!AUTHORITY.has(key), "PackageAuthorityFieldForbidden", `${key} cannot grant package authority`);
     requireValue(FIELDS.has(key), "PackageSchemaMismatch", `unknown manifest field ${key}`);
   }
-  requireValue(document.package_schema_version === PACKAGE_SCHEMA, "PackageSchemaMismatch", `expected ${PACKAGE_SCHEMA}`);
+  requireValue([PACKAGE_SCHEMA, 'touba-package-v2'].includes(document.package_schema_version), "PackageSchemaMismatch", "expected touba-package-v1 or touba-package-v2");
   requireValue(PACKAGE_NAME.test(document.name ?? ""), "PackageSchemaMismatch", "name must be a qualified lowercase identifier, e.g. acme.billing");
   requireValue(exactPackageVersion(document.version), "PackageSchemaMismatch", "version must be an exact SemVer version");
   requireValue(document.root === undefined || document.root === ".", "PackagePathInvalid", "package root is the manifest directory; root, when present, must be .");
@@ -147,8 +148,8 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
   }
   requireValue(exportCount + contexts.length + hosts.length > 0, "PackageExportMissing", "export at least one declaration, context or host module");
   if (document.dependencies !== undefined) {
-    requireValue(object(document.dependencies), "PackageDependencyInvalid", "dependencies must map package names to exact versions");
-    for (const [name, version] of Object.entries(document.dependencies)) requireValue(PACKAGE_NAME.test(name) && name !== document.name && exactPackageVersion(version), "PackageDependencyInvalid", `invalid dependency ${name}; use exact versions`);
+    requireValue(object(document.dependencies), "PackageDependencyInvalid", "dependencies must map package names to declared constraints");
+    for (const [name, version] of Object.entries(document.dependencies)) requireValue(PACKAGE_NAME.test(name) && name !== document.name && validPackageConstraint(version, document.package_schema_version), "PackageDependencyInvalid", `invalid dependency ${name}; use exact versions, or full-version comparators in touba-package-v2`);
   }
   requireValue(document.files === undefined || Array.isArray(document.files), "PackageSchemaMismatch", "files must be an array");
   for (const path of document.files ?? []) packagePath(path);

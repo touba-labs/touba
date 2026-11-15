@@ -14,7 +14,7 @@ import { registerEventClient, writeSse } from "./event-clients.mjs";
 import { setProjectMetadataScope, projectMetadataResponse } from './project-metadata.mjs';
 import { readChangeProposals, saveChangeProposals, pageChangeProposals, countChangeProposals, auditChangeProposals } from "./change-store.mjs";
 import { createProjectTraceExplorer } from "./trace-explorer-surface.mjs";
-import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT } from "./package-surface.mjs";
+import { createProjectPackageSurface, PACKAGE_UPLOAD_LIMIT, PACKAGE_UPDATE_UPLOAD_LIMIT } from "./package-surface.mjs";
 import { createRegistryTrustReview } from './registry-trust-review.mjs';
 import { inspectPackageInstallation } from "./package-inspection.mjs";
 import { createProjectPreparation } from "./project-preparation.mjs";
@@ -1487,6 +1487,8 @@ function createProjectServerWithLease(options, takeLease) {
             project_prepare_apply: "/project/prepare/apply",
             packages: "/packages/installed",
             package_preview: "/packages/preview",
+            package_details: "/packages/details",
+            package_updates_preview: "/packages/updates/preview",
             package_local_preview: "/packages/local/preview",
             ...(options.packageRegistry || registryTrust.available ? {
               package_registry: "/packages/registry",
@@ -1702,8 +1704,17 @@ function createProjectServerWithLease(options, takeLease) {
         if (request.method === "GET" && url.pathname === "/packages/installed") {
           writeJson(response, 200, packageSurface.inventory()); return;
         }
+        if (request.method === 'POST' && url.pathname === '/packages/details') {
+          const body = await readJsonBody(request);
+          if (!isPlainObject(body) || Object.keys(body).length !== 1 || typeof body.name !== 'string') throw serviceError('ToubaServePackageInvalid', 'Expected only a package name');
+          writeJson(response, 200, await packageSurface.details(body.name)); return;
+        }
         if (request.method === "POST" && url.pathname === "/packages/preview") {
           const preview = await packageSurface.receive(async () => packageSurface.preview(principal, await readBinaryBody(request, PACKAGE_UPLOAD_LIMIT)));
+          writeJson(response, 200, preview); return;
+        }
+        if (request.method === 'POST' && url.pathname === '/packages/updates/preview') {
+          const preview = await packageSurface.receive(async () => packageSurface.previewUpdates(principal, await readJsonBody(request, PACKAGE_UPDATE_UPLOAD_LIMIT)));
           writeJson(response, 200, preview); return;
         }
         if (request.method === "POST" && url.pathname === "/packages/local/preview") {
@@ -1735,7 +1746,7 @@ function createProjectServerWithLease(options, takeLease) {
         if (request.method === "POST" && url.pathname === "/packages/apply") {
           const intent = await readJsonBody(request);
           const result = await packageSurface.apply(principal, intent);
-          publishEvent(eventClients, result.command === "package update" ? "package.updated" : "package.installed", {
+          publishEvent(eventClients, ['package update', 'package update-set'].includes(result.command) ? "package.updated" : "package.installed", {
             actor_id: humanIdentity?.user?.id ?? null,
             authentication: humanIdentity ? "human_session" : "project_bearer",
             archive_digest: intent.archive_digest,
@@ -7829,7 +7840,7 @@ function buildProjectPackages({ projectRoot, artifacts, diagnostics }) {
     }
     const name = nonEmptyString(document?.name);
     const version = nonEmptyString(document?.version);
-    const valid = document?.package_schema_version === "touba-package-v1"
+    const valid = ["touba-package-v1", "touba-package-v2"].includes(document?.package_schema_version)
       && name !== undefined
       && version !== undefined
       && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)
@@ -7837,7 +7848,7 @@ function buildProjectPackages({ projectRoot, artifacts, diagnostics }) {
     if (!valid) {
       diagnostics.push(serviceDiagnostic(
         "ToubaProjectPackageInvalid",
-        `${artifact.relative_path} is not a valid touba-package-v1 document`,
+        `${artifact.relative_path} is not a supported Touba package document`,
         "warning",
         artifact.relative_path,
       ));
@@ -9150,7 +9161,7 @@ function validateProjectMetadataDocument(fileName, document) {
       document,
       fileName,
       field: "package_schema_version",
-      expected: "touba-package-v1",
+      expected: document.package_schema_version === 'touba-package-v2' ? 'touba-package-v2' : 'touba-package-v1',
     });
     if (typeof document.name !== "string" || document.name.trim() === "") {
       diagnostics.push(serviceDiagnostic("ToubaServeChangePackageNameMissing", `${fileName}.name is required`));
@@ -11947,12 +11958,13 @@ export function requiredIdentityPermission(method, pathname) {
   }
   if (pathname === "/packages/apply" || pathname === "/packages/remove/apply") return "governance.apply";
   if (pathname === '/packages/registry/trust/preview' || pathname === '/packages/registry/trust/apply') return 'registry.manage';
+  if (pathname === '/packages/details') return 'governance.read';
   if (pathname === "/project/prepare") return "governance.apply";
   if (pathname === "/project/prepare/preview") return "governance.propose";
   if (pathname === "/project/prepare/apply") return "governance.apply";
   if (pathname === '/integrations/import/preview') return 'governance.propose';
   if (pathname === '/integrations/import/apply') return 'governance.apply';
-  if (pathname === "/packages/preview" || pathname === "/packages/local/preview" || pathname === "/packages/cancel" || pathname === "/packages/remove/preview"
+  if (pathname === "/packages/preview" || pathname === "/packages/updates/preview" || pathname === "/packages/local/preview" || pathname === "/packages/cancel" || pathname === "/packages/remove/preview"
     || pathname === '/packages/registry/resolve' || /^\/packages\/registry\/[a-f0-9-]{36}\/preview$/.test(pathname)) return "governance.propose";
   if (pathname === "/packages/installed") return "projects.read";
   if (pathname === '/packages/registry/catalogue') return 'projects.read';
@@ -12743,7 +12755,7 @@ export function checkToubaProjectState(options = {}) {
         return {schema_version:'touba-validation-store-v1',records,active_operations:records.filter(row=>row.status==='running').length};
       }],
       ['projectWebhooksPath', '.touba/project-webhooks.sqlite', auditRecoveryTriggerQueue],
-      ...(options.abandonWaits ? [
+      ...(options.abandonWaits || options.adoptState ? [
         ['triggerQueuePath', '.touba/trigger-queue.sqlite', auditRecoveryTriggerQueue],
         ['triggerStatePath', '.touba/triggers.sqlite', auditRecoveryTriggerState],
       ] : []),

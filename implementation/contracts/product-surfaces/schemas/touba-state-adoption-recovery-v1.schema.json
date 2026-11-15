@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-state-adoption-recovery-v1", "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "status", "backup_id", "restored_stores"],
+  "properties": {
+    "schema_version": {"const": "touba-state-adoption-recovery-v1"},
+    "status": {"enum": ["adopted", "not_adopted"]},
+    "backup_id": {"type": "string", "pattern": "^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$"},
+    "restored_stores": {"const": 0}
+  }
+}

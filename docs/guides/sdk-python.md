@@ -120,6 +120,21 @@ vérification de signature éditeur.
 
 ## Mise à jour
 
+### Conserver un historique au repos
+
+Dans le candidat 1.5.0, `engine.adopt_state(reason="Mise à jour revue")` produit
+un aperçu hors ligne pour la toolchain courante. Après revue et confirmation par
+l'exploitant, rappeler la méthode avec le même motif et
+`accept=preview["review_digest"]`. `AsyncToubaEngine` propose la même méthode
+asynchrone. `max_backup_bytes` borne le volume à sauvegarder.
+
+Le serveur doit être arrêté. Les attentes, opérations inachevées et effets
+incertains bloquent l'adoption. Les historiques conservent leur provenance.
+`engine.adopt_state(recover=True)` résout une interruption après vérification
+du reçu et des octets, sans restauration de store ni rejeu d'opération.
+Voir [le guide de conservation](stockage-et-conservation.md).
+
+
 Après une mise à jour de Touba, mettez explicitement le SDK du projet à jour :
 
 ```sh

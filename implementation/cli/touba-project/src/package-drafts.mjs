@@ -18,6 +18,10 @@ function draftId(value) {
   return value;
 }
 function descriptor(value, expected) {
+  if (object(value) && value.status === 'replaced' && UUID.test(value.id ?? '')
+    && UUID.test(value.replacement_id ?? '') && value.replacement_id !== value.id && (!expected || value.id === expected)) {
+    throw packageError('PackageDraftReplaced', `This draft was replaced. Review the current draft in Cloud, then select it explicitly with --draft ${value.replacement_id}. No archive was submitted.`);
+  }
   if (!object(value) || value.status !== 'draft' || !UUID.test(value.id ?? '') || (expected && value.id !== expected)
       || typeof value.name !== 'string' || value.name.length > 180 || !PACKAGE_NAME.test(value.name)
       || !exactPackageVersion(value.version) || !DIGEST.test(value.archive_digest ?? '')
@@ -148,7 +152,10 @@ export async function submitPackageDraft(path, options = {}) {
         if (options.expectedArchiveDigest !== undefined && options.expectedArchiveDigest !== packed.digest) throw packageError('PackageProjectChanged', 'the package changed after suite review; prepare the suite again');
         const checked = await checkPackageArchive(packed.output, { publishing: true });
         if (checked.manifest.name !== author.document.name || checked.manifest.version !== author.document.version) throw packageError('PackageProjectChanged', 'package identity changed while preparing the submission');
-        identity = options.automation ? automationIdentity(registry, options) : await authorizePublication(registry, { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true, signal, notify: options.notify });
+        const authorization = { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true, signal, notify: options.notify };
+        identity = options.automation ? automationIdentity(registry, options)
+          : options.publicationSession ? await options.publicationSession.acquire(registry, authorization)
+          : await authorizePublication(registry, authorization);
         const api = identity.api ?? registry;
         let previous;
         if (presentationFrom && identity.presentation_reuse !== true) throw packageError('PackagePresentationReuseUnavailable', 'this registry does not advertise editorial reuse; no archive was submitted');
@@ -164,6 +171,7 @@ export async function submitPackageDraft(path, options = {}) {
             draft: previous.id, registry, archive_digest: previous.archive_digest, unchanged: true,
             local_link_saved: true, preview: reviewUrl(registry, previous), notes: ['The same archive is already qualified in this private draft. No upload or publication.'] };
         }
+        if (options.publicationSession && !options.automation) await identity.ensureFresh?.();
         const request = requestOptions(identity.token, signal, 210000);
         const result = await publicationDocument(`${api}/drafts${selected ? `/${selected}${options.automation ? '/archive' : ''}` : ''}`, { ...request, method: selected ? 'PUT' : 'POST',
           headers: { ...request.headers, 'Content-Type': 'application/gzip', 'X-Touba-Namespace': checked.manifest.name.split('.').slice(0, -1).join('.'),
@@ -178,11 +186,17 @@ export async function submitPackageDraft(path, options = {}) {
         let saved = true;
         try { saveLink(root, registry, row); } catch { saved = false; }
         const preview = reviewUrl(registry, row);
+        const replacement = previous && previous.id !== row.id
+          ? { previous_draft: previous.id, previous_preview: reviewUrl(registry, previous), draft: row.id, preview } : undefined;
         return { status: 'success', command: 'package submit', package: row.name, version: row.version, draft: row.id,
           registry, archive_digest: row.archive_digest, preview, local_link_saved: saved,
+          ...(replacement ? { replacement } : {}),
           notes: [`Private draft verified. Preview and publish explicitly: ${preview}`,
+            ...(replacement ? [options.lang === 'fr'
+              ? `Brouillon remplacé : ${replacement.previous_preview} → ${preview}. Utilisez le nouveau lien.`
+              : `Draft replaced: ${replacement.previous_preview} → ${preview}. Use the new link.`] : []),
             ...(!saved ? [`Local draft link was not saved. Resume with --draft ${row.id} --registry ${registry}.`] : [])] };
-      } finally { await identity?.revoke(); }
+      } finally { if (!options.publicationSession || options.automation) await identity?.revoke(); }
     });
   } finally { try { if (temporary) rmSync(temporary, { recursive: true, force: true }); } finally { releaseLock(); } }
 }

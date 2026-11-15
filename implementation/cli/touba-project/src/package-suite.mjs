@@ -5,6 +5,8 @@ import { packPackage } from './packages.mjs';
 import { readPackage, packageError } from './package-contract.mjs';
 import { submitPackageDraft } from './package-drafts.mjs';
 import { packageLocale } from './package-diagnostics.mjs';
+import { createPublicationSession } from './package-publication-session.mjs';
+import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
 
 const integer = (value, fallback, maximum) => {
   const number = value === undefined ? fallback : Number(value);
@@ -23,7 +25,8 @@ export async function submitPackageSuite(file, options = {}) {
   const timer = setTimeout(cancel, timeout);
   const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
   process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
-  let temporary;
+  let temporary, result;
+  const publicationSession = createPublicationSession();
   try {
     const path = resolve(options.root ?? process.cwd(), file), stat = lstatSync(path);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16384) throw packageError('PackageSuiteInvalid', 'suite must be a regular JSON file of at most 16 KiB');
@@ -54,7 +57,7 @@ export async function submitPackageSuite(file, options = {}) {
       for (const [dependency, version] of Object.entries(pkg.document.dependencies ?? {})) {
         const selected = packages.get(dependency);
         if (!selected) continue; // The archive already includes its verified closure.
-        if (selected.document.version !== version) throw packageError('PackageSuiteConflict', 'suite dependency versions disagree');
+        if (!satisfiesPackageConstraint(selected.document.version, version, pkg.document.package_schema_version)) throw packageError('PackageSuiteConflict', 'suite dependency versions disagree');
         // Equal versions with different bytes must not be submitted as a coherent suite.
         const installed = readPackage(join(pkg.root, 'packages', dependency));
         const source = readPackage(selected.root);
@@ -68,25 +71,33 @@ export async function submitPackageSuite(file, options = {}) {
     for (const pkg of ordered) {
       try {
         signal.throwIfAborted();
-        const result = await submitPackageDraft(pkg.root, { ...options, signal, expectedArchiveDigest: pkg.digest, skipUnchanged: true });
-        results.push(result);
-        if (result.local_link_saved === false) throw packageError('PackageDraftLinkUnavailable', 'save the returned draft ID before resuming the suite');
+        const submitted = await submitPackageDraft(pkg.root, { ...options, signal, publicationSession, expectedArchiveDigest: pkg.digest, skipUnchanged: true });
+        results.push(submitted);
+        if (submitted.local_link_saved === false) throw packageError('PackageDraftLinkUnavailable', 'save the returned draft ID before resuming the suite');
       } catch (error) {
         const failure = { package: pkg.document.name, version: pkg.document.version,
           status: 'error', code: signal.aborted ? 'PackageOperationCancelled' : error.code ?? 'PackageSuiteFailed' };
         if (Number.isSafeInteger(error.retryAfter) && error.retryAfter >= 0) failure.retry_after = error.retryAfter;
         if (typeof error.reason === 'string' && /^[a-z_]{1,80}$/.test(error.reason)) failure.reason = error.reason;
         results.push(failure);
-        return { status: 'error', command: 'package submit-suite', results, bytes, elapsed_ms: Date.now() - started,
+        return result = { status: 'error', command: 'package submit-suite', results, bytes, elapsed_ms: Date.now() - started,
           notes: [packageLocale(options.lang) === 'fr'
             ? 'Lot arrêté. Les brouillons précédents restent disponibles. Vérifiez une soumission interrompue avant de réessayer ; les brouillons qualifiés inchangés ne sont pas renvoyés.'
             : 'Suite stopped. Earlier private drafts remain available. Inspect an interrupted submission before retrying; unchanged qualified drafts are not uploaded again.', JSON.stringify(failure)], exitCode: 1 };
       }
     }
-    return { status: 'success', command: 'package submit-suite', results, bytes, elapsed_ms: Date.now() - started,
+    return result = { status: 'success', command: 'package submit-suite', results, bytes, elapsed_ms: Date.now() - started,
       notes: results.map(row => `${row.package}@${row.version}: ${packageLocale(options.lang) === 'fr'
         ? row.unchanged ? 'inchangé' : 'vérifié' : row.unchanged ? 'unchanged' : 'verified'} ${row.preview}`) };
   } finally {
+    const revoked = await publicationSession.close();
+    if (!revoked) {
+      const warning = packageLocale(options.lang) === 'fr'
+        ? 'La révocation de la session temporaire reste à confirmer depuis votre compte. Les résultats des soumissions sont conservés.'
+        : 'Confirm temporary session revocation from your account. Submission results are preserved.';
+      if (result) { result.session_cleanup = 'unconfirmed'; result.notes.push(warning); }
+      else options.notify?.(warning);
+    }
     clearTimeout(timer); process.off('SIGINT', cancel); process.off('SIGTERM', cancel);
     if (temporary) rmSync(temporary, { recursive: true, force: true });
   }

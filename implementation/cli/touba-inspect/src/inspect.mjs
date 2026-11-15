@@ -54,7 +54,7 @@ const EXPECTED_ARCHITECTURE_SCHEMA_VERSION = "architecture-projection-v1";
 const SUPPORTED_MANIFEST_VERSIONS = new Set([
   TOUBA_MANIFEST_V1,
 ]);
-const EXPECTED_PACKAGE_SCHEMA_VERSION = "touba-package-v1";
+const PACKAGE_SCHEMA_VERSIONS = new Set(['touba-package-v1', 'touba-package-v2']);
 const EXPECTED_BINDING_FRAGMENT_SCHEMA_VERSION = "touba-binding-fragment-v1";
 const EXPECTED_RESOURCE_BINDINGS_SCHEMA_VERSION = "touba-resource-bindings-v1";
 const EXPECTED_RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v1";
@@ -178,7 +178,7 @@ export function inspectPath(inputPath, options = {}) {
     });
   }
 
-  if (artifact.package_schema_version === EXPECTED_PACKAGE_SCHEMA_VERSION) {
+  if (PACKAGE_SCHEMA_VERSIONS.has(artifact.package_schema_version)) {
     return inspectionDocument(absolutePath, "touba_package", {
       source: absent("source artifact not provided"),
       air: absent("AIR artifact not provided"),
@@ -2402,11 +2402,11 @@ function validateCompatibility({
   }
   if (
     packageSummary.present &&
-    packageSummary.package_schema_version !== EXPECTED_PACKAGE_SCHEMA_VERSION
+    !PACKAGE_SCHEMA_VERSIONS.has(packageSummary.package_schema_version)
   ) {
     diagnostics.push({
       code: "PackageSchemaMismatch",
-      message: `expected ${EXPECTED_PACKAGE_SCHEMA_VERSION}, got ${valueOrAbsent(
+      message: `expected ${[...PACKAGE_SCHEMA_VERSIONS].join(' or ')}, got ${valueOrAbsent(
         packageSummary.package_schema_version,
       )}`,
     });

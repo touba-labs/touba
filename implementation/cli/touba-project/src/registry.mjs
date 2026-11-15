@@ -16,6 +16,7 @@ const PACKAGE_KINDS = new Set(["touba_package"]);
 const SUPPORTED_PROTOCOLS = new Set([
   "touba-skill-pack-v1",
   "touba-package-v1",
+  "touba-package-v2",
   "budget-bq1-v1",
   "memory-pi1-v1",
   "touba-tool-handler-v1",
@@ -59,7 +60,10 @@ export async function listRegistryPackages({ registry, trust, readBytes, query =
   return { items: entries.slice(offset, offset + limit).map(item => ({ name: item.package_ref.slice(4), version: item.version, status: item.status,
     ...(includeMetadataPath ? { metadata_path: item.metadata_path } : {}) })),
     total: entries.length, next_offset: offset + limit < entries.length ? offset + limit : null,
-    revision: document.revision ?? null, index_digest: document.digest ?? digestBuffer(document.bytes) };
+    revision: document.revision ?? null, index_digest: document.digest ?? digestBuffer(document.bytes),
+    checked_at: new Date().toISOString(), source: location.publicIndexRef,
+    verified_signature: Boolean(document.signingKey),
+    expires_at: document.expires_at ? new Date(document.expires_at * 1000).toISOString() : null };
 }
 
 export async function resolveRegistryPackage(options = {}) {

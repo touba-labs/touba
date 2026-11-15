@@ -31,7 +31,7 @@ function server(t, handler, { reuse = false } = {}) {
     if (url === registry + '/config.json') return json({ registry, features: { presentation_reuse: reuse }, authorization: { issuer, client_id: 'cli', scope: 'openid publish', acr: 'strong' } });
     if (url === issuer + '/.well-known/openid-configuration') return json({ issuer, device_authorization_endpoint: issuer + '/device', token_endpoint: issuer + '/token', revocation_endpoint: issuer + '/revoke' });
     if (url === issuer + '/device') return json({ device_code: 'test-device', user_code: 'TEST-CODE', expires_in: 10, interval: 1, verification_uri: issuer + '/activate' });
-    if (url === issuer + '/token') return json({ access_token: 'unit-private-access', refresh_token: 'unit-private-refresh' });
+    if (url === issuer + '/token') return json({ access_token: 'unit-private-access', refresh_token: 'unit-private-refresh', expires_in: 300, refresh_expires_in: 3600 });
     if (url === issuer + '/revoke') return new Response(null, { status: 204 });
     assert.equal(opts.headers.Authorization, 'Bearer unit-private-access');
     return handler(url, opts);
@@ -40,12 +40,25 @@ function server(t, handler, { reuse = false } = {}) {
 }
 const revoked = calls => assert.equal(calls.filter(call => call.url === issuer + '/revoke').length, 2);
 
+test('a replaced draft requires explicit selection and never uploads or follows its successor', async t => {
+  const f = await fixture(t);
+  const calls = server(t, (url, opts) => {
+    assert.equal(url, registry + '/drafts/' + id);
+    assert.equal(opts.method, undefined);
+    return json({ status: 'replaced', id, replacement_id: nextId, space_id: '33333333-3333-4333-8333-333333333333' });
+  });
+  await assert.rejects(submitPackageDraft(f.author, { ...options, draft: id }), { code: 'PackageDraftReplaced' });
+  assert.equal(calls.filter(call => call.url.startsWith(registry + '/drafts/')).length, 1);
+  assert.equal(existsSync(join(f.author, '.touba/package-draft.json')), false);
+  revoked(calls);
+});
+
 test('a bounded suite orders dependencies, keeps individual drafts and resumes unchanged without uploading', async t => {
   const f = await fixture(t), dependent = newPackage('acme.dependent', { root: f.parent, license: 'MIT', publisher: 'Acme' }).path;
   await addPackage(f.author, { root: dependent });
   const suite = join(f.parent, 'suite.json'); writeFileSync(suite, JSON.stringify(['dependent', 'example']));
   const rows = new Map(), uploaded = [];
-  server(t, async (url, opts) => {
+  const calls = server(t, async (url, opts) => {
     if (!opts.method) return json(rows.get(url.split('/').at(-1)));
     assert.equal(opts.method, 'POST');
     const path = join(f.parent, `upload-${uploaded.length}.tar.gz`); writeFileSync(path, opts.body);
@@ -54,12 +67,17 @@ test('a bounded suite orders dependencies, keeps individual drafts and resumes u
     const row = { status: 'draft', id: draft, name, version: '0.1.0', archive_digest: packageDigest(opts.body), revision: 1, ready: true };
     rows.set(draft, row); uploaded.push(name); return json(row, 201);
   });
-  const first = await submitPackageSuite(suite, options);
+  const first = await submitPackageSuite(suite, { ...options, 'session-only': true });
   assert.equal(first.status, 'success');
   assert.deepEqual(uploaded, ['acme.example', 'acme.dependent']);
-  const second = await submitPackageSuite(suite, options);
+  assert.equal(calls.filter(call => call.url === issuer + '/device').length, 1);
+  revoked(calls);
+  const second = await submitPackageSuite(suite, { ...options, 'session-only': true });
   assert.equal(second.status, 'success'); assert.equal(uploaded.length, 2);
   assert.equal(second.results.every(row => row.unchanged), true);
+  assert.equal(calls.filter(call => call.url === issuer + '/device').length, 2);
+  assert.equal(calls.filter(call => call.url === issuer + '/revoke').length, 4);
+  for (const folder of [f.author, dependent]) assert.ok(!readFileSync(join(folder, '.touba/package-draft.json'), 'utf8').includes('unit-private'));
 });
 
 test('suite preflight refuses count, byte, duplicate and directory errors before network', async t => {
@@ -172,10 +190,15 @@ test('submit links new draft, resubmits using fresh editorial revision and refus
   });
   const first = await submitPackageDraft(f.author, options);
   assert.equal(first.draft, id); assert.equal(first.local_link_saved, true);
+  assert.equal(first.replacement, undefined);
   current.revision = 4; // A Cloud presentation edit does not invalidate local source.
   const second = await submitPackageDraft(f.author, { 'no-browser': true, notify() {} });
   assert.equal(second.draft, nextId);
   assert.equal(second.preview, `https://registry.example.test/cloud/library?draft=${nextId}`);
+  assert.equal(second.replacement.previous_draft, id);
+  assert.equal(second.replacement.previous_preview, `https://registry.example.test/cloud/library?draft=${id}`);
+  assert.equal(second.replacement.preview, second.preview);
+  assert.ok(second.notes.some(note => note.includes('Draft replaced:')));
   current.archive_digest = 'sha256:' + 'a'.repeat(64);
   await assert.rejects(submitPackageDraft(f.author, options), { code: 'PackageDraftConflict' });
   assert.equal(uploads, 2);

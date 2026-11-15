@@ -19,6 +19,48 @@ function workspace(t) { const root = realpathSync(mkdtempSync(join(tmpdir(), "to
 function command(cwd, ...args) { return spawnSync(process.execPath, [cli, "package", ...args], { cwd, encoding: "utf8", timeout: 90000, maxBuffer: 4 * 1024 * 1024 }); }
 function edit(root, fn) { const file = join(root, "touba.package.json"), data = JSON.parse(readFileSync(file)); fn(data); writeFileSync(file, JSON.stringify(data)); }
 
+test('package tests use the toolchain SDK and preserve the author dependency tree', async t => {
+  const root = workspace(t), pkg = newPackage('fixture.sdk', { root, publisher: 'Fixture', license: 'MIT' });
+  const dependency = newPackage('fixture.base', { root, context: true });
+  await addPackage(dependency.path, { root: pkg.path });
+  const testFile = join(pkg.path, 'tests/echo.test.mjs');
+  writeFileSync(testFile, `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createEffectReceipt, resolvePackageResource, ToubaEngine } from '@touba/sdk';
+import { assertEffectReceipt } from '@touba/sdk/testing';
+test('actual SDK receipts and locked resources', () => {
+  assert.equal(typeof ToubaEngine, 'function');
+  const effect = { effect_id: 'effect:sha256:' + 'a'.repeat(64), request_digest: 'sha256:' + 'b'.repeat(64), attempt_index: 1 };
+  const response = { ok: true, effect_receipt: createEffectReceipt(effect, { outcome: 'applied', receipt_ref: 'synthetic' }) };
+  assert.deepEqual(assertEffectReceipt(response, effect, 'applied'), response.effect_receipt);
+  assert.throws(() => assertEffectReceipt({ ok: true }, effect, 'applied'));
+  const manifest = new URL('../touba.package.json', import.meta.url);
+  assert.match(readFileSync(resolvePackageResource(manifest, 'fixture.base', 'SKILL.md'), 'utf8'), /Review/);
+  assert.throws(() => resolvePackageResource(manifest, 'fixture.unknown', 'SKILL.md'), { code: 'PackageDependencyUndeclared' });
+  assert.equal(process.env.TOUBA_TEST_UNSELECTED_SECRET, undefined);
+});`);
+  const previous = process.env.TOUBA_TEST_UNSELECTED_SECRET;
+  process.env.TOUBA_TEST_UNSELECTED_SECRET = 'synthetic-not-for-tests';
+  t.after(() => { if (previous === undefined) delete process.env.TOUBA_TEST_UNSELECTED_SECRET; else process.env.TOUBA_TEST_UNSELECTED_SECRET = previous; });
+  const before = readPackage(pkg.path).digest;
+  assert.equal(existsSync(join(pkg.path, 'node_modules')), false);
+  const first = await testPackage(pkg.path);
+  assert.equal(first.status, 'success', first.stdout + first.stderr);
+  assert.equal(existsSync(join(pkg.path, 'node_modules')), false);
+  const fake = join(pkg.path, 'node_modules/@touba/sdk'); mkdirSync(fake, { recursive: true });
+  writeFileSync(join(fake, 'package.json'), JSON.stringify({ name: '@touba/sdk', type: 'module', exports: './fake.mjs' }));
+  const sentinel = "throw new Error('Author SDK must not be imported');\n";
+  writeFileSync(join(fake, 'fake.mjs'), sentinel);
+  const packed = await snapshotPackage(pkg.path, { output: join(root, 'package.tar.gz') });
+  for (const target of [pkg.path, unpackPackage(packed.output, join(root, 'fresh'))]) {
+    const report = await testPackage(target);
+    assert.equal(report.status, 'success', report.stdout + report.stderr);
+  }
+  assert.equal(readPackage(pkg.path).digest, before);
+  assert.equal(readFileSync(join(fake, 'fake.mjs'), 'utf8'), sentinel);
+});
+
 test('new packages opt into the candidate without weakening existing compatibility ranges', t => {
   const pkg = newPackage('fixture.candidate', { root: workspace(t) });
   const document = readPackage(pkg.path).document;

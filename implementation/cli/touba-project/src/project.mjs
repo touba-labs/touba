@@ -26,6 +26,7 @@ import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, r
 import { normalizeHandlerConfiguration } from '../../../runtime/touba-handler-sdk/src/handler-configuration.mjs';
 import { PACKAGE_LOCK, assertPackageDirectory, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
 import { cachedPackageDiagnostics } from './package-status.mjs';
+import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
 
 import {
   generateHandlerContractTestFromAirTool,
@@ -609,11 +610,6 @@ export async function prepareProject(options = {}) {
   });
   diagnostics.push(...packageResolution.diagnostics);
   if (packageResolution.packages.length) diagnostics.push(...await cachedPackageDiagnostics(root));
-  for (const pkg of packageResolution.packages) for (const handler of pkg.handlers ?? []) {
-    if (!handler.effect_contract) diagnostics.push({ severity: 'warning', code: 'PackageEffectRecommendationMissing',
-      message: `Handler ${handler.tool} has no recommended effect contract. Review its side effects and receipt protocol; network access alone does not imply an external write.`,
-      package_name: pkg.name, tool_ref: handler.tool });
-  }
 
   // An explicitly selected package export is an entry, not an implicit grant
   // or permission to execute every private declaration in that package.
@@ -626,7 +622,7 @@ export async function prepareProject(options = {}) {
       diagnostics.push(errorDiagnostic('PackageEntrypointNotExported', 'selected package entry must be an explicitly exported declaration', { entry_ref: selected }));
     } else if (!entryModuleNames.includes(moduleName)) entryModuleNames.push(moduleName);
   }
-  if (!entryModuleNames.length) {
+  if (!entryModuleNames.length && !sourcePaths.length && !airPaths.length) {
     diagnostics.push(errorDiagnostic("NoProjectSources", "no .tb source, --air path or explicit installed package export was selected", {
       root, source_root: join(root, DEFAULT_SOURCE_ROOT),
     }));
@@ -819,6 +815,16 @@ export async function prepareProject(options = {}) {
         `invalid host decision${error.details?.path ? ` at ${error.details.path}` : ""}${error.details?.target_ref ? ` for ${error.details.target_ref}` : ""}${error.details?.field ? `, field ${error.details.field}` : ""}; no preparation changes were written`,
         { manifest_path: manifestPath, ...error.details }));
     }
+  }
+  for (const pkg of packageResolution.packages) for (const handler of pkg.handlers ?? []) {
+    let reviewed = false;
+    try {
+      const contract = proposedManifest.bindings?.[handler.tool]?.effect_contract;
+      reviewed = !hasErrorDiagnostics(diagnostics) && Boolean(contract && normalizeEffectContract(contract));
+    } catch { /* Invalid host contracts remain diagnostic errors, never a review. */ }
+    if (!handler.effect_contract && !reviewed) diagnostics.push({ severity: 'warning', code: 'PackageEffectRecommendationMissing',
+      message: `Handler ${handler.tool} has no recommended effect contract. Review its side effects and receipt protocol; network access alone does not imply an external write.`,
+      package_name: pkg.name, tool_ref: handler.tool });
   }
   if (!hasErrorDiagnostics(diagnostics) && languageProfile.language === "javascript") {
     for (const [toolRef, binding] of Object.entries(proposedManifest.bindings)) {
@@ -1376,7 +1382,7 @@ function collectPackageInputs({ root, projectPackageRecords, optionPackagePaths,
     active.add(pkg.name);
     for (const [name, version] of Object.entries(pkg.dependencies)) {
       const dependency = names.get(name);
-      if (!dependency || dependency.version !== version) diagnostics.push(errorDiagnostic("PackageDependencyMissing", `${pkg.name} requires ${name}@${version}; install it explicitly`));
+      if (!dependency || !satisfiesPackageConstraint(dependency.version, version, pkg.package_schema_version)) diagnostics.push(errorDiagnostic("PackageDependencyMissing", `${pkg.name} -> ${name} requires ${version}; selected ${dependency?.version ?? 'absent'}; install an exact compatible candidate explicitly`));
       else visit(dependency);
     }
     active.delete(pkg.name); visited.add(pkg.name);
@@ -1516,7 +1522,7 @@ function validatePackageManifest(document, { manifestPath, record, diagnostics }
 
 function packageMetadata(pkg) {
   const exports = Object.fromEntries(Object.keys(PACKAGE_EXPORT_COLLECTIONS).map(kind => [kind, pkg.document.exports[kind] ?? []]));
-  return { name: pkg.document.name, version: pkg.document.version, digest: pkg.digest, root: pkg.root, exports,
+  return { name: pkg.document.name, version: pkg.document.version, package_schema_version: pkg.document.package_schema_version, digest: pkg.digest, root: pkg.root, exports,
     handlers: (pkg.document.handlers ?? []).map(handler => {
       const schema = packageHandlerConfiguration(pkg.root, handler);
       return { ...handler, ...(schema ? { configuration_schema: schema } : {}) };

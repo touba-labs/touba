@@ -3,6 +3,8 @@ import { migrateCompensationStore, createSqliteCompensationStore } from "../../.
 
 const usage = [
   "Usage: touba state migrate <kind> <source.json> --out <new.sqlite> [--apply]",
+  "       touba state adopt --project <directory> --reason <text> [--accept <review-digest>] [--max-backup-bytes <bytes>]",
+  "       touba state adopt --project <directory> --recover",
   "       touba state list effects|compensations <path.sqlite> [--after <cursor>] [--limit <1..1000>]",
   "Kinds: effects, compensations, checkpoints, human-requests, human-decisions, changes, interaction-sessions, interaction-assets",
   "Migration previews validation; --apply creates a new database and an exact source backup.",
@@ -12,6 +14,23 @@ const usage = [
 
 export async function stateCommand(args) {
   if (!args.length || ["--help", "-h"].includes(args[0])) return { text: usage, exitCode: 0 };
+  if (args[0] === 'adopt') {
+    const fields = { '--project': 'projectRoot', '--reason': 'reason', '--accept': 'accept', '--max-backup-bytes': 'maxBackupBytes', '--recover': 'recover' }, options = {};
+    for (let i = 1; i < args.length; i++) {
+      const flag = args[i], key = fields[flag];
+      if (flag === '--json' && args.indexOf(flag) === i) continue;
+      if (!key || Object.hasOwn(options, key)) throw new Error(`unexpected option ${flag}`);
+      if (key === 'recover') { options[key] = true; continue; }
+      const value = args[++i];
+      if (!value || value.startsWith('--')) throw new Error(`${flag} requires a value`);
+      options[key] = key === 'maxBackupBytes' ? Number(value) : value;
+    }
+    if (options.recover && (options.reason !== undefined || options.accept !== undefined)) throw new Error('--recover cannot be combined with --reason or --accept');
+    const { adoptProjectState, recoverStateAdoption } = await import('../../touba-project-server/src/state-adoption.mjs');
+    const { checkToubaProjectState } = await import('../../touba-project-server/src/serve.mjs');
+    const result = options.recover ? recoverStateAdoption(options) : adoptProjectState(options, checkToubaProjectState);
+    return { text: JSON.stringify(result, null, 2), exitCode: 0 };
+  }
   const [command, kind, source, ...flags] = args;
   if (!["migrate", "list"].includes(command) || !source || source.startsWith("--")) throw new Error(usage);
   const options = {};

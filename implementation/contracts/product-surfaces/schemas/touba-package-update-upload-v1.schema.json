@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "touba-package-update-upload-v1",
+  "type": "object", "additionalProperties": false, "required": ["schema_version", "archives"],
+  "properties": {
+    "schema_version": {"const": "touba-package-update-upload-v1"},
+    "archives": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 4, "maxLength": 89478488}}
+  },
+  "description": "Canonical base64 archive bytes, at most 64 MiB decoded in aggregate. No paths, credentials or network instructions. Core checks encoding, archive content, installed roots and the complete dependency graph."
+}

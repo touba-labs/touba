@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "touba-state-adoption-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "status", "project_root", "from_build_id", "to_build_id", "reason", "files", "bytes", "review_digest"],
+  "anyOf": [
+    {"properties": {"status": {"const": "preview"}}},
+    {"properties": {"status": {"const": "adopted"}}, "required": ["backup_id", "origin_before", "origin_after"]}
+  ],
+  "properties": {
+    "schema_version": {"const": "touba-state-adoption-v1"},
+    "status": {"enum": ["preview", "adopted"]},
+    "project_root": {"type": "string", "minLength": 1, "maxLength": 32768},
+    "from_build_id": {"$ref": "#/$defs/build"}, "to_build_id": {"$ref": "#/$defs/build"},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 500},
+    "files": {"type": "array", "maxItems": 100000, "items": {
+      "type": "object", "additionalProperties": false, "required": ["path", "bytes", "sha256"],
+      "properties": {"path": {"type": "string", "minLength": 1, "maxLength": 32768}, "bytes": {"type": "integer", "minimum": 0}, "sha256": {"$ref": "#/$defs/digest"}}
+    }},
+    "bytes": {"type": "integer", "minimum": 0}, "review_digest": {"$ref": "#/$defs/digest"},
+    "backup_id": {"$ref": "#/$defs/id"},
+    "origin_before": {"$ref": "#/$defs/origin"}, "origin_after": {"$ref": "#/$defs/origin"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "id": {"type": "string", "pattern": "^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$"},
+    "build": {"type": "string", "pattern": "^(source:)?[a-f0-9]{64}$"},
+    "origin": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "project_root", "build_id"],
+      "anyOf": [
+        {"properties": {"schema_version": {"const": "touba-serve-state-origin-v1"}}},
+        {"properties": {"schema_version": {"const": "touba-serve-state-origin-v2"}}, "required": ["initial_build_id", "transitions"]}
+      ],
+      "properties": {
+        "schema_version": {"enum": ["touba-serve-state-origin-v1", "touba-serve-state-origin-v2"]},
+        "project_root": {"type": "string", "minLength": 1, "maxLength": 32768}, "build_id": {"$ref": "#/$defs/build"},
+        "initial_build_id": {"$ref": "#/$defs/build"},
+        "transitions": {"type": "array", "minItems": 1, "maxItems": 128, "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["from_build_id", "to_build_id", "review_digest", "backup_id", "recorded_at", "reason"],
+          "properties": {"from_build_id": {"$ref": "#/$defs/build"}, "to_build_id": {"$ref": "#/$defs/build"},
+            "review_digest": {"$ref": "#/$defs/digest"}, "backup_id": {"$ref": "#/$defs/id"},
+            "recorded_at": {"type": "string", "maxLength": 40}, "reason": {"type": "string", "minLength": 1, "maxLength": 500}}
+        }}
+      }
+    }
+  }
+}

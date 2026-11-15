@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, exactPackageVersion, packageError, packageSlug, readPackage } from "./package-contract.mjs";
 import { assertAuthorWritable, assertPackageDirectory, assertPlainDirectory, findPackageWorkspace, PACKAGE_TRANSACTION } from "./package-store.mjs";
+import { stagePackageTestSdk } from './package-test-sdk.mjs';
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
@@ -163,6 +164,7 @@ export async function testPackage(path, { env: allowedEnv = [], timeout = 120000
       env[key] = process.env[key];
     }
     env.TOUBA_TEST_CLI = fileURLToPath(new URL("./main.mjs", import.meta.url));
+    stagePackageTestSdk(staging);
     const result = spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-timeout=30000", ...tests], { cwd: testRoot, env, encoding: "utf8", timeout, maxBuffer: 4 * 1024 * 1024, killSignal: "SIGKILL" });
     let stdout = result.stdout ?? "", stderr = result.stderr ?? "";
     for (const key of allowedEnv) if (env[key]) { stdout = stdout.replaceAll(env[key], "[REDACTED]"); stderr = stderr.replaceAll(env[key], "[REDACTED]"); }

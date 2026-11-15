@@ -10,6 +10,7 @@ import { validateObject } from "../../../contracts/product-surfaces/validate.mjs
 import previewSchema from "../../../contracts/product-surfaces/schemas/touba-project-package-preview-v1.schema.json" with { type: "json" };
 import inventorySchema from "../../../contracts/product-surfaces/schemas/touba-project-packages-v1.schema.json" with { type: "json" };
 import removalSchema from "../../../contracts/product-surfaces/schemas/touba-project-package-removal-v1.schema.json" with { type: "json" };
+import detailsSchema from '../../../contracts/product-surfaces/schemas/touba-package-details-v1.schema.json' with { type: 'json' };
 
 async function fixture(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-studio-package-test-")));
@@ -39,10 +40,46 @@ test("client package archive is checked, confirmed once, installed with canonica
   assert.deepEqual(validateObject(inventorySchema, inventory), []);
   assert.equal(inventory.packages.length, 1);
   assert.equal(inventory.packages[0].name, "fixture.echo");
+  const details = await surface.details('fixture.echo');
+  assert.deepEqual(validateObject(detailsSchema, details), []);
+  assert.equal(details.name, 'fixture.echo'); assert.equal(details.contracts.length, 1);
+  await assert.rejects(surface.details('../outside'), { code: 'ToubaServePackageInvalid' });
+  await assert.rejects(surface.details('fixture.missing'), { code: 'PackageNotInstalled' });
   assert.match(inventory.packages[0].digest, /^sha256:/);
   const project = JSON.parse(readFileSync(join(root, "touba.project.json")));
   assert.equal(project.grants, undefined);
   await assert.rejects(surface.apply("alice", preview), { code: "ToubaServePackagePreviewMissing" });
+});
+
+test('a group of independent upgrades has one owner-bound review and a single final lock', async t => {
+  const { surface, root, bytes } = await fixture(t);
+  await surface.apply('alice', await surface.preview('alice', bytes));
+  const source = join(root, 'author'); mkdirSync(source);
+  const archives = [];
+  for (const [name, version] of [['fixture.other', '1.0.0'], ['fixture.echo', '1.1.0'], ['fixture.other', '1.1.0']]) {
+    const folder = join(source, `${name}-${version}`); mkdirSync(folder);
+    const pkg = newPackage(name, { root: folder, publisher: 'Fixture', description: 'Synthetic update', license: 'Apache-2.0', version });
+    const packed = await packPackage(pkg.path, { output: join(folder, 'archive.tar.gz') });
+    const content = readFileSync(packed.output);
+    if (version === '1.0.0') await surface.apply('alice', await surface.preview('alice', content));
+    else archives.push(content.toString('base64'));
+  }
+  const upload = { schema_version: 'touba-package-update-upload-v1', archives };
+  const preview = await surface.previewUpdates('alice', upload);
+  assert.deepEqual(validateObject(previewSchema, preview), []);
+  assert.equal(preview.roots.length, 2); assert.equal(preview.dependency_changes.length, 2);
+  assert.deepEqual(surface.inventory().packages.map(row => row.version), ['1.0.0', '1.0.0']);
+  await assert.rejects(surface.apply('bob', preview), { code: 'ToubaServePackagePreviewMissing' });
+  await assert.rejects(surface.apply('alice', { ...preview, archive_digest: 'sha256:' + '0'.repeat(64) }), { code: 'ToubaServePackageConflict' });
+  const result = await surface.apply('alice', preview);
+  assert.equal(result.command, 'package update-set'); assert.equal(result.status, 'success');
+  assert.equal(Object.hasOwn(result, 'review'), false);
+  assert.equal(JSON.stringify(result).includes('touba-package-updates-'), false);
+  assert.deepEqual(surface.inventory().packages.map(row => row.version), ['1.1.0', '1.1.0']);
+  await assert.rejects(surface.apply('alice', preview), { code: 'ToubaServePackagePreviewMissing' });
+  for (const malformed of [{ ...upload, path: '/outside' }, { ...upload, archives: [] }, { ...upload, archives: ['AAAA\n'] }, { ...upload, archives: Array(33).fill('AAAA') }]) {
+    await assert.rejects(surface.previewUpdates('alice', malformed), { code: 'ToubaServePackageInvalid' });
+  }
 });
 
 test("client package previews refuse malformed archive, stale project, expiry and wrong cancellation owner", async t => {

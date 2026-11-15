@@ -60,6 +60,33 @@ function indexStore(root) {
 }
 function journal(root, readOnly = true) { return createSqliteTraceStore({ filename: join(root, ".touba/traces.sqlite"), readOnly }); }
 export function readNativeTraceIndex(root, runId) { return indexStore(root).read([{ id: runId }])[0] ?? null; }
+// Offline compatibility check on a private copy. Never resume or terminalize a run.
+export function auditNativeTraceJournal(root) {
+  const index = indexStore(root); let after, records = 0, active_operations = 0;
+  const store = existsSync(join(root, '.touba/traces.sqlite')) ? journal(root) : null;
+  try {
+    for (;;) {
+      const page = index.page({ after, limit: 100 });
+      for (const value of page.items) {
+        records++;
+        if (!value.complete) active_operations++;
+        let identity;
+        for (const segment of value.segments) if (segment.reference) {
+          if (!store) fail('ToubaServeNativeTraceStoreInvalid');
+          store.readReference(segment.reference, { limit: 1 });
+          const reader = store.snapshot(segment.reference.segment_id);
+          validateTraceMachineStream(reader.header, reader.events());
+          const current = logicalRunDigest(reader.header.run);
+          if (identity && current !== identity) fail('ToubaServeNativeTraceStoreInvalid');
+          identity = current;
+        }
+      }
+      if (page.next === null) break;
+      after = page.next;
+    }
+    return { schema_version: INDEX_SCHEMA, records, active_operations };
+  } finally { store?.close(); }
+}
 export function readNativeTracePage(root, runId, segmentIndex, options = {}) {
   const index = readNativeTraceIndex(root, runId);
   if (!Number.isSafeInteger(segmentIndex) || segmentIndex < 0) fail("ToubaServeNativeTracePageInvalid");

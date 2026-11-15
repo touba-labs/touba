@@ -2,16 +2,17 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, realpathS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { addPackage, updatePackage, reviewPackageUpdate, removePackage, isNewerPackageVersion, packageRuntimeCompatibility, checkPackageArchive, snapshotPackage, resolveRegistryArchive } from "../../touba-project/src/packages.mjs";
+import { addPackage, updatePackage, reviewPackageUpdate, reviewPackageUpdates, removePackage, isNewerPackageVersion, packageRuntimeCompatibility, checkPackage, checkPackageArchive, snapshotPackage, resolveRegistryArchive } from "../../touba-project/src/packages.mjs";
 import { readPackageWorkspace, verifyInstalledPackages } from "../../touba-project/src/package-store.mjs";
 import { PACKAGE_LIMITS, PACKAGE_NAME, packageFile } from "../../touba-project/src/package-contract.mjs";
 import { packageHostInventory, readPackageHostPlan } from "../../touba-project/src/package-host-plan.mjs";
-import { listRegistryPackages, resolveRegistryPackage } from '../../touba-project/src/registry.mjs';
+import { listRegistryPackages, resolveRegistryPackage, registryNoticeText } from '../../touba-project/src/registry.mjs';
 
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const summary = ({ name, version, digest }) => ({ name, version, digest });
 export const PACKAGE_UPLOAD_LIMIT = PACKAGE_LIMITS.totalBytes;
+export const PACKAGE_UPDATE_UPLOAD_LIMIT = Math.ceil(PACKAGE_UPLOAD_LIMIT / 3) * 4 + 4096;
 
 /** Preview owns an immutable upload; apply delegates every installation check to Core. */
 export function createProjectPackageSurface(root, { now = Date.now, registry, trust } = {}) {
@@ -97,7 +98,7 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
         expires_at: new Date(expires).toISOString(), name: checked.package, version: checked.version,
         operation: updating ? "update" : "install", previous_version: existing?.version ?? null,
         contracts: checked.contracts,
-        ...(review ? { contract_changes: review.contract_changes } : {}),
+        ...(review ? { contract_changes: review.contract_changes, dependency_changes: review.changes, dependency_constraints: review.constraints } : {}),
         packages: checked.packages.map(summary), validation: "source_contracts" };
     } catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
     finally { working = false; }
@@ -125,13 +126,14 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
           if (location !== new URL('index.jwt', registryRoot + '/').href) fail('ToubaServePackageInvalid', 'unexpected registry catalogue location');
           return Buffer.from(proof.index_jwt);
         } });
-      if (proof.metadata === undefined) return result;
+      if (proof.metadata === undefined) return { schema_version: 'touba-package-catalogue-v1', ...result };
       if (!Array.isArray(proof.metadata) || proof.metadata.length !== result.items.length
         || proof.metadata.some(value => typeof value !== 'string')
         || Buffer.byteLength(JSON.stringify(proof.metadata)) > 1024 * 1024) fail('ToubaServePackageInvalid', 'invalid catalogue metadata page');
       // A page is bounded to ten records. The browser carries bytes, never a
       // network instruction; Core checks signatures and metadata digests again.
       const items = [];
+      const installed = verifyInstalledPackages(root, readPackageWorkspace(root).records).packages;
       for (const [index, item] of result.items.entries()) {
         const resolution = await resolveRegistryPackage({ registry: registryRoot, trust, packageRef: `pkg:${item.name}`,
           version: item.version, validationOnly: true, readBytes: async location => {
@@ -139,9 +141,25 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
             if (location === new URL(item.metadata_path, registryRoot + '/').href) return Buffer.from(proof.metadata[index]);
             fail('ToubaServePackageInvalid', 'unexpected catalogue metadata location');
           } });
-        items.push({ ...item, compatibility: packageRuntimeCompatibility(resolution.compatibility.touba) });
+        const current = installed.find(pkg => pkg.name === item.name);
+        items.push({ ...item, compatibility: packageRuntimeCompatibility(resolution.compatibility.touba),
+          installed_version: current?.version ?? null, newer_than_installed: current ? isNewerPackageVersion(item.version, current.version) : null,
+          ...(resolution.package.withdrawal ? { withdrawal: { ...resolution.package.withdrawal, reason: registryNoticeText(resolution.package.withdrawal.reason) } } : {}) });
       }
-      return { ...result, items };
+      return { schema_version: 'touba-package-catalogue-v1', ...result, items };
+    },
+    async details(name) {
+      if (closed || working) fail('ToubaServePackageBusy', 'a package operation is in progress');
+      if (typeof name !== 'string' || !PACKAGE_NAME.test(name)) fail('ToubaServePackageInvalid', 'select an installed package');
+      working = true;
+      try {
+        const before = revision(), installed = verifyInstalledPackages(root, readPackageWorkspace(root).records).packages.find(pkg => pkg.name === name);
+        if (!installed) fail('PackageNotInstalled', 'package is not installed');
+        const checked = await checkPackage(packageFile(root, installed.manifest), { projectRoot: root, inspectContracts: true });
+        if (closed || before !== revision()) fail('ToubaServePackageConflict', 'project changed during inspection');
+        return { schema_version: 'touba-package-details-v1', revision: before, ...summary(installed),
+          contracts: checked.contracts.filter(pkg => pkg.name === name) };
+      } finally { working = false; }
     },
     async resolveRegistry(principal, proof) {
       expire();
@@ -175,6 +193,37 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
     },
     preview: (principal, bytes) => preview(principal, { bytes }),
     previewLocal: (principal, name) => preview(principal, { name }),
+    async previewUpdates(principal, request) {
+      expire();
+      if (closed || working) fail('ToubaServePackageBusy', 'a package operation is in progress');
+      if (pending.size + resolutions.size >= 2) fail('ToubaServePackageCapacity', 'finish or cancel a pending preview');
+      if (!request || Object.keys(request).sort().join(',') !== 'archives,schema_version'
+        || request.schema_version !== 'touba-package-update-upload-v1' || !Array.isArray(request.archives)
+        || !request.archives.length || request.archives.length > 32) fail('ToubaServePackageInvalid', 'select 1 to 32 package archives');
+      working = true;
+      const directory = realpathSync(mkdtempSync(join(tmpdir(), 'touba-package-updates-')));
+      try {
+        const before = revision(), archives = [];
+        let total = 0;
+        for (const [index, encoded] of request.archives.entries()) {
+          if (typeof encoded !== 'string' || encoded.length > PACKAGE_UPDATE_UPLOAD_LIMIT) fail('ToubaServePackageInvalid', 'invalid archive encoding');
+          const bytes = Buffer.from(encoded, 'base64'); total += bytes.length;
+          if (!bytes.length || total > PACKAGE_UPLOAD_LIMIT || bytes.toString('base64') !== encoded) fail('ToubaServePackageInvalid', 'invalid archive encoding or aggregate size');
+          const path = join(directory, `${index}.tar.gz`); writeFileSync(path, bytes, { flag: 'wx', mode: 0o600 });
+          archives.push({ path, digest: hash(bytes) });
+        }
+        const review = await reviewPackageUpdates(archives.map(row => row.path), { root });
+        if (closed || before !== revision()) fail('ToubaServePackageConflict', 'project changed during preview');
+        const id = randomUUID(), expires = now() + 300000, digest = hash(Buffer.from(JSON.stringify(archives.map(row => row.digest))));
+        pending.set(id, { principal, directory, archives, digest, revision: before, expires, reviewDigest: review.review_digest });
+        return { schema_version: 'touba-project-package-preview-v1', id, revision: before, archive_digest: digest,
+          expires_at: new Date(expires).toISOString(), operation: 'update', name: review.package, version: review.version,
+          previous_version: review.previous, roots: review.roots, contracts: review.contracts, contract_changes: review.contract_changes,
+          dependency_changes: review.changes, dependency_constraints: review.constraints,
+          packages: review.packages.map(summary), validation: 'source_contracts' };
+      } catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
+      finally { working = false; }
+    },
     previewRemoval(principal, name) {
       expire();
       if (closed || working) fail("ToubaServePackageBusy", "A package operation is in progress");
@@ -214,11 +263,18 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
       const item = pending.get(request?.id);
       if (!item || item.removal || item.principal !== principal) fail("ToubaServePackagePreviewMissing", "Package preview is unavailable");
       if (request.revision !== item.revision || revision() !== item.revision || request.archive_digest !== item.digest
-        || hash(readFileSync(item.archive)) !== item.digest) fail("ToubaServePackageConflict", "Package or project changed; preview again");
+        || (item.archives ? item.archives.some(row => hash(readFileSync(row.path)) !== row.digest)
+          : hash(readFileSync(item.archive)) !== item.digest)) fail("ToubaServePackageConflict", "Package or project changed; preview again");
       working = true;
       // Claim once, including failed installation. Core rolls back its own transaction.
       pending.delete(request.id);
       try {
+        if (item.archives) {
+          const result = await reviewPackageUpdates(item.archives.map(row => row.path), { root, accept: item.reviewDigest });
+          // The browser already holds the bounded preview. CLI source paths are
+          // private staging details, not part of the HTTP application receipt.
+          return { status: result.status, command: result.command, packages: result.packages.map(summary), notes: result.notes };
+        }
         if (item.proof) await verifyResolution(item.proof);
         return await (item.updating ? updatePackage(item.archive, { root, name: item.updating, reviewDigest: item.reviewDigest }) : addPackage(item.archive, { root }));
       }

@@ -212,6 +212,11 @@ modifie pas son manifeste. Le test généré installe ensuite le package dans un
 consommateur temporaire par cas, via son helper `runEntry(entry, inputs)`.
 Adaptez l'entrée et les assertions pour ajouter des cas indépendants.
 
+Les tests peuvent importer `@touba/sdk` et `@touba/sdk/testing` : la commande
+fournit les entrées du SDK de sa propre toolchain, hors de l'archive testée.
+Elle ne reprend pas le `node_modules` de l'auteur et n'installe rien par réseau.
+L'installation du SDK dans une application consommatrice reste une étape distincte.
+
 Relisez les tests avant exécution : ce code hôte dispose des droits système de
 votre compte, pas d'une sandbox. Les secrets d'environnement ne sont pas
 transmis par défaut ; `--env NOM` autorise explicitement une variable. Cela
@@ -587,6 +592,17 @@ Les mêmes commandes s’appliquent aux handlers JavaScript et Python.
 Pour une collection, utilisez [un lot de soumissions borné](../reference/packages.md#soumettre-plusieurs-packages)
 avec `touba package submit-suite suite.json --registry <url>`. Il conserve les
 brouillons individuels et s'arrête au premier problème, sans publication automatique.
+Avec `--session-only`, une même connexion temporaire sert aux packages du lot
+visant le même registre. Elle reste en mémoire puis est révoquée à la fin du lot,
+y compris en cas d'échec. Le renouvellement des jetons conserve l'échéance
+initiale, au plus une heure selon le service ; l'activité ne prolonge pas le MFA.
+Chaque archive conserve ses propres contrôles et compteurs. Si la révocation
+distante ne peut être confirmée, le résultat le signale sans perdre les brouillons.
+
+Avant publication, le service vérifie aussi les dépendances embarquées. Publiez
+leurs versions exactes d'abord, depuis les feuilles du graphe jusqu'aux packages
+qui les utilisent. Une dépendance privée, retirée ou de contenu différent bloque
+la diffusion du parent. Les usages locaux restent possibles sans cette publication.
 
 ## Sélectionner un handler proposé
 

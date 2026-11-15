@@ -190,8 +190,8 @@ test('explicit downgrade cannot break another installed package exact dependency
   const before = f.lock();
   f.version('1.0.0');
   const options = { root: f.consumer, 'allow-downgrade': true };
-  const plan = await reviewPackageUpdate(f.source, options);
-  await assert.rejects(reviewPackageUpdate(f.source, { ...options, accept: plan.review_digest }), { code: 'PackageInUse' });
+  await assert.rejects(reviewPackageUpdate(f.source, options), { code: 'PackageInUse' });
+  await assert.rejects(reviewPackageUpdate(f.source, { ...options, accept: 'sha256:' + '0'.repeat(64) }), { code: 'PackageInUse' });
   assert.deepEqual(f.lock(), before);
   assert.equal(existsSync(join(f.consumer, '.touba-package-installing')), false);
 });

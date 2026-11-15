@@ -33,9 +33,10 @@ test('package configuration is explicit, reviewed, repeatable and never an envir
   writeFileSync(join(source, 'handlers/read.mjs'), `let raw='';for await(const chunk of process.stdin)raw+=chunk;
 const r=JSON.parse(raw);if(r.configuration?.endpoint!=='https://example.invalid/private-marker'||process.env.endpoint)throw new Error('invalid configuration');
 process.stdout.write(JSON.stringify({ok:true,value:'configured'}));`);
-  await checkPackage(source);
+  assert.match((await checkPackage(source)).notes.join(' '), /no recommended effect contract/);
   await addPackage(source, { root: app });
   const options = { root: app, entryRef: ref };
+  assert.ok((await prepareProject({ ...options, mode: 'plan' })).diagnostics.some(d => d.code === 'PackageEffectRecommendationMissing' && d.tool_ref === ref));
   const selected = { package_handler: 'example.config', effect_contract: { kind: 'none' } };
   const missing = await prepareProject({ ...options, mode: 'write', hostDecisions: { bindings: { [ref]: selected } } });
   assert.equal(missing.status, 'error');
@@ -43,7 +44,7 @@ process.stdout.write(JSON.stringify({ok:true,value:'configured'}));`);
   const decisions = { bindings: { [ref]: { configuration: values, ...selected } } }; // Order must not matter.
   const plan = await prepareProject({ ...options, mode: 'plan', hostDecisions: decisions });
   assert.notEqual(plan.status, 'error', JSON.stringify(plan.diagnostics));
-  assert.ok(plan.diagnostics.some(d => d.code === 'PackageEffectRecommendationMissing' && d.tool_ref === ref));
+  assert.equal(plan.diagnostics.some(d => d.code === 'PackageEffectRecommendationMissing'), false);
   const different = structuredClone(decisions); different.bindings[ref].configuration.endpoint += '/changed';
   await assert.rejects(prepareProject({ ...options, mode: 'write', hostDecisions: different, expectedReviewDigest: plan.review_digest }), { code: 'ProjectPreparationReviewStale' });
   const prepared = await prepareProject({ ...options, mode: 'write', hostDecisions: decisions, expectedReviewDigest: plan.review_digest });
@@ -56,6 +57,7 @@ process.stdout.write(JSON.stringify({ok:true,value:'configured'}));`);
   for (const mode of ['plan', 'write', 'check']) {
     const result = await prepareProject({ ...options, mode });
     assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.equal(result.diagnostics.some(d => d.code === 'PackageEffectRecommendationMissing'), false);
   }
   const run = spawnSync(process.execPath, [cli, 'run', '--project', app, '--entry', ref, '--output', 'json'], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stdout + run.stderr);

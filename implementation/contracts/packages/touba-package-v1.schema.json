@@ -255,6 +255,19 @@
         ]
       }
     },
+    "hosts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "path"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "kind": { "enum": ["human_approval", "decision_provider"] },
+          "path": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "\\.(mjs|cjs|js|py)$" }
+        }
+      }
+    },
     "handlers": {
       "type": "array",
       "items": {

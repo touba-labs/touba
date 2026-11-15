@@ -1,5 +1,5 @@
 // Human diagnostics; stable machine codes and source diagnostics stay intact.
-import { packageError } from './package-contract.mjs';
+import { PACKAGE_NAME, exactPackageVersion, packageError } from './package-contract.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 const localeContext = new AsyncLocalStorage();
@@ -35,11 +35,14 @@ const messages = {
   RegistryConfigurationInvalid: ['Vérifiez la configuration du registre et le fichier local de clés, puis relancez touba package registry.', 'Check the registry configuration and local key file, then run touba package registry again.'],
   RegistryTrustRequired: ['Sélectionnez un fichier de clés vérifié avec --trust. Son empreinte doit être confirmée auprès de l’exploitant.', 'Select a verified key file with --trust. Confirm its fingerprint with the operator.'],
   RegistrySessionBusy: ['Une autre commande utilise cette session. Réessayez après sa fin.', 'Another command is using this session. Retry when it finishes.'],
+  RegistrySessionExpired: ['La session temporaire a expiré. Relancez la commande et confirmez de nouveau votre identité ; les brouillons déjà reçus sont conservés.', 'The temporary session expired. Start the command again and confirm your identity; previously received drafts are preserved.'],
   publication_suspended: ['La publication de cet espace est suspendue. Contactez l’administration Touba.', 'Publication is suspended for this space. Contact Touba administration.'],
   package_namespace_mismatch: ['Le nom du package appartient à un autre espace. Sélectionnez cet espace ou corrigez le manifeste.', 'The package name belongs to another space. Select that space or correct the manifest.'],
   submission_rate_reached: ['La limite de soumissions est atteinte.', 'The submission limit has been reached.'],
   package_validator_busy: ['Le validateur est occupé. Votre soumission peut être réessayée.', 'The validator is busy. You can retry your submission.'],
   package_tests_failed: ['Les tests du package ont échoué. Relancez touba package test avant de soumettre.', 'Package tests failed. Run touba package test before submitting again.'],
+  package_closure_required: ['Soumettez de nouveau l’archive avec le validateur actualisé pour vérifier ses dépendances.', 'Submit the archive again with the updated validator to verify its dependencies.'],
+  package_dependencies_not_publishable: ['Publiez les dépendances exactes dans l’ordre ci-dessous avant ce package. Le brouillon est conservé.', 'Publish the exact dependencies in the order below before this package. The draft is preserved.'],
   package_validation_failed: ['L’archive est invalide. Lancez touba package check puis touba package pack.', 'The archive is invalid. Run touba package check, then touba package pack.'],
   package_validator_toolchain_mismatch: ['Le validateur doit être actualisé. Les tests de votre archive n’ont pas été exécutés.', 'The validator needs updating. Your archive tests were not executed.'],
   package_validation_timeout: ['La validation a dépassé sa durée maximale. Vérifiez la durée des tests.', 'Validation exceeded its time limit. Check test duration.'],
@@ -78,7 +81,13 @@ export function publicationRefusal(code, result, fallback) {
     && diagnostic && ['inspection', 'tests'].includes(diagnostic.phase)
     && typeof diagnostic.code === 'string' && /^[A-Z][A-Za-z0-9]{1,79}$/.test(diagnostic.code)
     ? [{ code: diagnostic.code, phase: diagnostic.phase, message: reason }] : undefined;
-  return Object.assign(packageError(code, reason), { reason, diagnostics: details, retryAfter: retrySeconds(result.headers?.get('retry-after')) });
+  const dependencies = reason === 'package_dependencies_not_publishable' && diagnostic?.phase === 'dependencies'
+    && diagnostic.code === reason && Array.isArray(diagnostic.dependencies) && diagnostic.dependencies.length < 128
+    && diagnostic.dependencies.every(item => item && typeof item.name === 'string' && item.name.length <= 256 && PACKAGE_NAME.test(item.name)
+      && typeof item.version === 'string' && item.version.length <= 128 && exactPackageVersion(item.version)
+      && ['not_available', 'revalidation_required', 'content_mismatch'].includes(item.reason))
+    ? diagnostic.dependencies.map(({ name, version, reason }) => ({ name, version, reason })) : undefined;
+  return Object.assign(packageError(code, reason), { reason, diagnostics: details, dependencies, retryAfter: retrySeconds(result.headers?.get('retry-after')) });
 }
 
 export function packageLocale(locale) {
@@ -95,5 +104,8 @@ export function packageDiagnostic(error, locale) {
   const details = error.diagnostics?.length ? ` [${error.diagnostics[0].phase}: ${error.diagnostics[0].code}]` : '';
   const withdrawal = error.code === 'RegistryPackageYanked' && typeof error.withdrawalReason === 'string' && [...error.withdrawalReason].length <= 500
     ? ` ${fr ? 'Motif' : 'Reason'} : ${error.withdrawalReason.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ')}` : '';
-  return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}`;
+  const reasons = fr ? { not_available: 'version publiée indisponible', revalidation_required: 'revérification par l’exploitant requise', content_mismatch: 'contenu différent de la version publiée' }
+    : { not_available: 'published version unavailable', revalidation_required: 'operator revalidation required', content_mismatch: 'content differs from the published version' };
+  const dependencies = error.dependencies?.map(item => `\n  ${item.name}@${item.version}: ${reasons[item.reason]}`).join('') ?? '';
+  return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}${dependencies}`;
 }

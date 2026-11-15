@@ -9,6 +9,67 @@ import stat
 _MANIFEST = "touba.package.json"
 _NAME = re.compile(r"[a-z_][a-z0-9_-]*(\.[a-z_][a-z0-9_-]*)+\Z")
 _HASH = re.compile(r"sha256:[a-f0-9]{64}\Z")
+_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\Z")
+
+
+def _version(value):
+    if not isinstance(value, str) or len(value) > 256:
+        return None
+    match = _VERSION.fullmatch(value)
+    if match is None:
+        return None
+    core = tuple(int(part) for part in match.groups()[:3])
+    pre = tuple((match.group(4) or "").split(".")) if match.group(4) else ()
+    if any(part > 9007199254740991 for part in core) or any(part.isascii() and part.isdigit() and len(part) > 1 and part[0] == "0" for part in pre):
+        return None
+    return core, pre
+
+
+def _compare(left, right):
+    if left[0] != right[0]:
+        return -1 if left[0] < right[0] else 1
+    a, b = left[1], right[1]
+    if not a or not b:
+        return int(not a) - int(not b)
+    for av, bv in zip(a, b):
+        if av == bv:
+            continue
+        an, bn = av.isdigit(), bv.isdigit()
+        if an and bn:
+            return -1 if int(av) < int(bv) else 1
+        if an != bn:
+            return -1 if an else 1
+        return -1 if av < bv else 1
+    return (len(a) > len(b)) - (len(a) < len(b))
+
+
+def _satisfies_constraint(selected, constraint, schema):
+    """Exact v1 pins or bounded v2 full-version comparator conjunctions."""
+    parsed = _version(selected)
+    if parsed is None or schema not in ("touba-package-v1", "touba-package-v2"):
+        return False
+    if _version(constraint) is not None:
+        return selected == constraint
+    if (schema != "touba-package-v2" or not isinstance(constraint, str)
+        or len(constraint) > 1024 or constraint != constraint.strip()):
+        return False
+    terms = constraint.split(" ")
+    if not 1 <= len(terms) <= 8:
+        return False
+    comparisons = []
+    for term in terms:
+        match = re.fullmatch(r"(>=|<=|>|<|=)(.+)", term)
+        value = _version(match.group(2)) if match else None
+        if value is None:
+            return False
+        comparisons.append((match.group(1), value))
+    if parsed[1] and not any(value[1] and value[0] == parsed[0] for _, value in comparisons):
+        return False
+    for operator, value in comparisons:
+        order = _compare(parsed, value)
+        if not {"=": order == 0, ">": order > 0, ">=": order >= 0, "<": order < 0, "<=": order <= 0}[operator]:
+            return False
+    return True
 
 
 class PackageDependencyError(Exception):
@@ -94,7 +155,7 @@ def resolve_package_resource(manifest_path, dependency, resource):
             _fail("PackageSymlinkForbidden")
         root = manifest_path.parent.resolve(strict=True)
         owner = json.loads(_bytes(_path(root, _MANIFEST), 1024 * 1024))
-        if (owner.get("package_schema_version") != "touba-package-v1" or not _NAME.fullmatch(owner.get("name", ""))
+        if (owner.get("package_schema_version") not in ("touba-package-v1", "touba-package-v2") or not _NAME.fullmatch(owner.get("name", ""))
             or type(owner.get("dependencies")) is not dict or dependency not in owner["dependencies"]):
             _fail("PackageDependencyUndeclared")
         installed = root.parent.name == "packages"
@@ -116,7 +177,7 @@ def resolve_package_resource(manifest_path, dependency, resource):
                 _fail("PackageLockInvalid")
             _verify(root, own)
         entry = next((item for item in lock["packages"] if item["name"] == dependency), None)
-        if entry is None or entry["version"] != owner["dependencies"][dependency]:
+        if entry is None or not _satisfies_constraint(entry["version"], owner["dependencies"][dependency], owner["package_schema_version"]):
             _fail("PackageDependencyMissing")
         target = _path(workspace, entry["manifest"]).parent
         _verify(target, entry)

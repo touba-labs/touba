@@ -36,8 +36,77 @@ processus hôte se configure séparément avec la politique de sandbox.
 
 
 Le manifeste auteur unique est `touba.package.json`, schéma
-`touba-package-v1`. Une procédure contextuelle et un agent réutilisable utilisent
+`touba-package-v1` pour les dépendances exactes, ou `touba-package-v2` pour les
+plages déclarées. Une procédure contextuelle et un agent réutilisable utilisent
 le même format de distribution. Les imports `.tb` restent typés.
+
+## Dépendances compatibles, résolution exacte
+
+Dans un package auteur, installez d'abord la version exacte testée de la dépendance.
+Pour permettre son évolution chez les consommateurs, sélectionnez ensuite
+`"package_schema_version": "touba-package-v2"` et déclarez votre contrainte :
+
+```json
+{
+  "dependencies": { "acme.base": ">=1.0.0 <2.0.0" }
+}
+```
+
+La plage affirme la compatibilité choisie par l'auteur. Testez les versions
+que vous annoncez compatibles ; Touba vérifie la contrainte, pas l'ensemble du
+comportement métier. Le verrou et l'archive retiennent toujours les versions
+exactes et les empreintes de tous les fichiers. Ils restent à versionner.
+Les lecteurs antérieurs refusent le nouveau schéma explicitement.
+
+Une contrainte est une version exacte ou une conjonction d'au plus huit
+comparateurs `=`, `>`, `>=`, `<`, `<=`, séparés par une espace et suivis d'une
+version complète. Les raccourcis `^`, `~`, `*`, les alternatives `||` et les
+versions partielles ne sont pas acceptés. Une préversion exige un comparateur
+qui la vise explicitement avec le même triplet majeur/mineur/correctif.
+Les pins exacts conservent aussi leur suffixe de build exact.
+
+`package update` revoit le candidat fourni et sa fermeture. Un changement de
+dépendance embarquée apparaît dans `changes` et les contraintes des consommateurs
+dans `constraints` avec `--json`. Une revue acceptée remplace l'ensemble en une
+transaction ; les autres packages gardent leurs octets. Une contrainte installée
+incompatible refuse l'opération dès l'aperçu. Même nom et même version avec
+d'autres fichiers, revue périmée et préversion non admise restent refusés.
+L'application conserve ses exigences de gouvernance et prépare ensuite le projet.
+
+Touba ne choisit aucune « dernière version » et n'effectue aucun téléchargement
+implicite pour résoudre une plage. Fournissez une archive fermée ou un candidat
+exact depuis votre registre de confiance. Une seule version par nom est admise.
+Pour plusieurs racines indépendantes, préparez `updates.json` :
+
+```json
+{
+  "schema_version": "touba-package-update-set-v1",
+  "packages": [
+    { "path": "../shared" },
+    { "path": "../billing-1.2.0.tar.gz" },
+    { "name": "acme.rules", "version": "1.3.0", "registry": "https://packages.example/registry", "trust": "registry-trust.json" }
+  ]
+}
+```
+
+Les chemins sont relatifs au fichier de sélection. Chaque cible doit déjà être
+installée. Jusqu'à 32 sources explicites peuvent former une fermeture de
+128 packages au maximum, dans les limites de taille des packages. Un registre
+HTTP est vérifié avec sa propre confiance locale, sa signature et les octets
+exacts de l'archive. Une source locale reste une sélection explicite de fichiers.
+
+```sh
+touba package update-set updates.json --json
+touba package update-set updates.json --accept <review_digest>
+```
+
+Les racines, leurs origines, contraintes et changements sont revus ensemble.
+Deux dépendances embarquées différentes sont refusées, sauf si leur remplacement
+exact est lui-même sélectionné comme racine et satisfait tous les consommateurs.
+La sélection n'infère aucune compatibilité. La confirmation revérifie la confiance,
+les archives et le workspace ; aucun handler ne s'exécute pendant l'installation.
+Un échec de la transaction restaure l'ensemble remplacé. Une interruption du
+processus laisse un marqueur de transaction qui bloque l'utilisation avant examen.
 
 
 ## Configuration d'un handler
@@ -100,6 +169,14 @@ l'enveloppe enrichie. Sans configuration, l'enveloppe historique reste inchangé
 
 ## Commandes
 
+`package test` fournit le SDK JavaScript de sa toolchain aux tests déclarés,
+y compris l'entrée `@touba/sdk/testing` pour vérifier les reçus. Le harnais
+n'importe pas le SDK installé chez l'auteur, ne modifie pas son dossier et
+n'effectue aucun téléchargement. Les tests locaux restent du code hôte à isoler.
+`PackageTestSdkInvalid` signale une incohérence du SDK de la toolchain ; utilisez
+une distribution complète de Touba. Installer un autre SDK chez l'auteur ne
+corrige pas ce défaut de distribution.
+
 | Commande | Effet |
 | --- | --- |
 | `touba package new` | Questionnaire et confirmation avant création |
@@ -135,6 +212,10 @@ l'installation, même si l'audit hors ligne permet de lire son ancien état.
 `prepare` signale les retraits déjà connus dans ce cache et sa fraîcheur,
 sans connexion réseau ni modification d'une exécution. Rafraîchissez l'état
 explicitement avec `touba package audit`.
+Un audit ponctuel avec `--registry` et `--trust` ne configure pas le projet.
+Sélectionnez explicitement `touba package registry <url> --trust <fichier-vérifié>`
+pour que `prepare` relise ce cache. Sans configuration, le statut de retrait
+reste signalé comme non vérifié, et les packages locaux restent utilisables.
 Le service exécute les tests isolés lors de submit et de la publication distante.
 `add --allow-draft` accepte explicitement une version draft du registry choisi.
 Un nom d'organisation local n'atteste ni disponibilité ni propriété publique.
@@ -303,6 +384,14 @@ dans `diagnostics` : `code`, `message`, `severity`, `source_path` et
 `PackageSourceInvalid`. Les indices de ligne et colonne JSON commencent à
 zéro ; l'affichage terminal commence à un. La compilation invalide est
 signalée avant les exports, pour éviter une cascade de faux exports absents.
+
+Pour une archive valide, `packages` décrit toute la fermeture : nom, version
+résolue, empreinte de contenu et `dependencies` vers des versions exactes.
+`archive_digest` identifie séparément l'archive compressée. Un service de
+publication peut exiger que chaque dépendance soit déjà publiée avec ce contenu.
+Les refus `package_dependencies_not_publishable` donnent les dépendances à
+traiter dans l'ordre ; `package_closure_required` demande une nouvelle soumission
+avec le validateur actualisé. Ils ne publient aucune dépendance automatiquement.
 
 Les chemins sont relatifs et confinés ; liens symboliques et liens durs dans
 les archives, fichiers spéciaux, chemins sortants et collisions sont refusés.

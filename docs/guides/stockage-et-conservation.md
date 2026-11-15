@@ -100,6 +100,47 @@ empêche de démarrer silencieusement un historique vide. Conservez la build
 ayant produit les autres états et suivez le diagnostic `serve --check-state`
 avant tout changement de build.
 
+## Changer de build avec un projet au repos
+
+La commande `state adopt` du candidat courant permet de conserver l'historique
+serveur compatible dans les chemins standard. Arrêtez tous les processus qui
+écrivent cet état, puis demandez un aperçu avec la nouvelle toolchain :
+
+```bash
+touba state adopt --project ./mon-projet --reason "Mise à jour revue de la toolchain"
+touba state adopt --project ./mon-projet --reason "Mise à jour revue de la toolchain" --accept EMPREINTE_DE_L_APERCU
+```
+
+Le contrôle refuse les attentes humaines, les opérations actives ou interrompues,
+les effets incertains, les formats inconnus et les données sans origine connue.
+Un journal SQLite occupé ou une modification après aperçu impose une nouvelle
+vérification. Les chemins personnalisés et les journaux dotés d'une exportation
+de traces ne sont pas encore pris en charge par ce parcours.
+
+Une sauvegarde privée de l'état est vérifiée dans `.touba/state-adoptions/` avant
+l'adoption. Elle conserve aussi les preuves locales et, s'il existe, le fichier
+standard `state/secrets.local.json`. Cette copie peut donc contenir des secrets :
+gardez-la privée, hors Git, avec les protections de votre projet. L'aperçu ne
+contient que les chemins, tailles et empreintes, jamais les valeurs. Les stores
+personnalisés dans `state/` nécessitent un adaptateur de compatibilité.
+Les stores et les traces restent identiques ; seule l'origine de
+l'état reçoit une chaîne de transitions de build. Cette chaîne n'autorise pas
+la reprise d'un ancien checkpoint. Le format d'origine v2 est refusé par les
+anciennes toolchains. La limite de copie par défaut est de 2 Gio ; ajustez-la
+explicitement avec `--max-backup-bytes` après vérification de l'espace disponible.
+
+En cas d'interruption, le démarrage est bloqué. La commande suivante vérifie les
+copies et constate si le changement d'origine a eu lieu :
+
+```bash
+touba state adopt --project ./mon-projet --recover
+```
+
+Elle ne restaure pas de stores et ne réexécute aucun effet. Une divergence des
+données demande une réconciliation par l'exploitant. Cette vérification de format
+ne démontre pas la compatibilité métier : rejouez aussi vos tests applicatifs.
+Le parcours reste en qualification avant la prochaine distribution.
+
 ## Exporter vers PostgreSQL
 
 Un processus séparé peut envoyer les traces progressivement vers PostgreSQL.

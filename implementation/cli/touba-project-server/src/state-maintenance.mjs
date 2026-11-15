@@ -41,8 +41,9 @@ function stateRoot(projectRoot) {
   return directory;
 }
 
-export function acquireStateLease(projectRoot, { recovery = false } = {}) {
+export function acquireStateLease(projectRoot, { recovery = false, adoptionRecovery = false } = {}) {
   const root = stateRoot(projectRoot), file = join(root, "server-state.lock");
+  if (!adoptionRecovery && lstatSync(join(root, 'state-adoption.pending.json'), { throwIfNoEntry: false })) fail('ToubaStateAdoptionInterrupted', 'recover the pending state adoption before serving');
   if (!recovery && lstatSync(join(root, 'state-archive.pending.json'), { throwIfNoEntry: false })) fail("ToubaStateArchiveInterrupted", "restore the pending state archive before serving");
   const token = randomUUID();
   for (let attempt = 0; attempt < 2; attempt++) {

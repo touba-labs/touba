@@ -22,7 +22,7 @@ function both(manifest, name, resource) {
   return js;
 }
 
-test('JS/Python resolve declared resources from author, clean archive and relocated consumer with the same integrity refusals', async t => {
+for (const schema of ['touba-package-v1', 'touba-package-v2']) test(`${schema}: JS/Python resolve declared resources from author, archive and relocated consumer with the same integrity refusals`, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba-dependency-resources-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const shared = newPackage('fixture.shared', { root, publisher: 'Fixture', license: 'MIT' }).path;
@@ -33,6 +33,12 @@ test('JS/Python resolve declared resources from author, clean archive and reloca
   document.files.push('helpers'); writeFileSync(manifest, JSON.stringify(document));
   const owner = newPackage('fixture.owner', { root, publisher: 'Fixture', license: 'MIT' }).path;
   await addPackage(shared, { root: owner });
+  if (schema === 'touba-package-v2') {
+    const path = join(owner, 'touba.package.json'), document = JSON.parse(readFileSync(path));
+    document.package_schema_version = schema;
+    document.dependencies['fixture.shared'] = '>=0.1.0 <2.0.0';
+    writeFileSync(path, JSON.stringify(document));
+  }
   for (const resource of ['helpers/value.mjs', 'helpers/value.py']) {
     assert.equal(both(join(owner, 'touba.package.json'), 'fixture.shared', resource).path, join(owner, 'packages/fixture.shared', resource));
   }
@@ -81,7 +87,8 @@ process.stdout.write(JSON.stringify({ok:true,value:denied&&readFileSync(path,'ut
       binding: { handler: { command, args: [handler], cwd: app }, grants: [], secrets: [],
         sandbox: { required: true, code_paths: [...lockedFiles, lockPath, ...code] },
         limits: { timeout_ms: 10000, max_payload_bytes: 16384 } } });
-    assert.equal((await run(nodeHandler, process.execPath, [resolver])).value, true);
+    const constraints = fileURLToPath(new URL('../../../runtime/touba-handler-sdk/src/package-constraints.mjs', import.meta.url));
+    assert.equal((await run(nodeHandler, process.execPath, [resolver, constraints])).value, true);
     // Removing the reviewed dependency inventory does not gain access through
     // the resolver. The whole project directory is never granted.
     await assert.rejects(runProcessToolHandler({ toolRef: 'tool:fixture.test/Read', secretHandles: [], request: { arguments: {} },

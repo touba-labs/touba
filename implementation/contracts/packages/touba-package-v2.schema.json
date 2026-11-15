@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://touba-labs.com/schemas/touba-package-v2.schema.json",
+  "title": "Touba package with declared dependency constraints",
+  "description": "Versioned extension of v1. Resolution remains exact and locked. Unrecognized readers must refuse it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "package_schema_version": {
+      "const": "touba-package-v2"
+    },
+    "name": {
+      "$ref": "touba-package-v1.schema.json#/properties/name"
+    },
+    "version": {
+      "$ref": "touba-package-v1.schema.json#/properties/version"
+    },
+    "root": {
+      "$ref": "touba-package-v1.schema.json#/properties/root"
+    },
+    "touba": {
+      "$ref": "touba-package-v1.schema.json#/properties/touba"
+    },
+    "exports": {
+      "$ref": "touba-package-v1.schema.json#/properties/exports"
+    },
+    "description": {
+      "$ref": "touba-package-v1.schema.json#/properties/description"
+    },
+    "publisher": {
+      "$ref": "touba-package-v1.schema.json#/properties/publisher"
+    },
+    "license": {
+      "$ref": "touba-package-v1.schema.json#/properties/license"
+    },
+    "readme": {
+      "$ref": "touba-package-v1.schema.json#/properties/readme"
+    },
+    "files": {
+      "$ref": "touba-package-v1.schema.json#/properties/files"
+    },
+    "dependencies": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z_][a-z0-9_-]*(\\.[a-z_][a-z0-9_-]*)+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "description": "Exact SemVer or up to eight space-separated full-version comparators (=, >, >=, <, <=). Core validates syntax and prerelease admission."
+      }
+    },
+    "contexts": {
+      "$ref": "touba-package-v1.schema.json#/properties/contexts"
+    },
+    "handlers": {
+      "$ref": "touba-package-v1.schema.json#/properties/handlers"
+    },
+    "hosts": {
+      "$ref": "touba-package-v1.schema.json#/properties/hosts"
+    },
+    "engines": {
+      "$ref": "touba-package-v1.schema.json#/properties/engines"
+    },
+    "provenance": {
+      "$ref": "touba-package-v1.schema.json#/properties/provenance"
+    },
+    "contract_tests": {
+      "$ref": "touba-package-v1.schema.json#/properties/contract_tests"
+    }
+  },
+  "required": [
+    "package_schema_version",
+    "name",
+    "version",
+    "touba",
+    "exports"
+  ]
+}

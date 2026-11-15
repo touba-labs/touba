@@ -2,6 +2,7 @@ import { constants, existsSync, lstatSync, openSync, fstatSync, readSync, closeS
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { satisfiesPackageConstraint } from './package-constraints.mjs';
 
 const MANIFEST = 'touba.package.json';
 const NAME = /^[a-z_][a-z0-9_-]*(\.[a-z_][a-z0-9_-]*)+$/;
@@ -75,7 +76,7 @@ export function resolvePackageResource(manifestPath, dependency, resource) {
     if (lstatSync(dirname(manifestPath)).isSymbolicLink()) fail('PackageSymlinkForbidden');
     const root = realpathSync(dirname(manifestPath));
     const owner = JSON.parse(bytes(resourcePath(root, MANIFEST), 1024 * 1024));
-    if (owner.package_schema_version !== 'touba-package-v1' || !NAME.test(owner.name ?? '')
+    if (!['touba-package-v1', 'touba-package-v2'].includes(owner.package_schema_version) || !NAME.test(owner.name ?? '')
         || !object(owner.dependencies) || !Object.hasOwn(owner.dependencies, dependency)) fail('PackageDependencyUndeclared');
     const installed = basename(dirname(root)) === 'packages';
     const workspace = installed ? dirname(dirname(root)) : root;
@@ -94,7 +95,7 @@ export function resolvePackageResource(manifestPath, dependency, resource) {
       verify(root, own);
     }
     const entry = lock.packages.find(entry => entry.name === dependency);
-    if (!entry || entry.version !== owner.dependencies[dependency]) fail('PackageDependencyMissing');
+    if (!entry || !satisfiesPackageConstraint(entry.version, owner.dependencies[dependency], owner.package_schema_version)) fail('PackageDependencyMissing');
     const target = dirname(resourcePath(workspace, entry.manifest));
     verify(target, entry);
     if (!entry.files.some(item => item.path === resource)) fail('PackageResourceUndeclared');

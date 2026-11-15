@@ -6,7 +6,8 @@ import { configuredRegistry } from './package-registry-config.mjs';
 export async function cachedPackageDiagnostics(root) {
   try {
     const configuration = configuredRegistry(root);
-    if (!configuration) return [];
+    if (!configuration) return [{ severity: 'warning', code: 'PackageStatusNotConfigured',
+      message: 'Package withdrawal status is not checked: this workspace has no trusted registry configuration. Local packages remain usable. To reuse an audit during preparation, configure touba package registry <url> --trust <verified-file>, then run touba package audit. No network request was made.' }];
     const report = await auditPackageStatus({ ...configuration, root, offline: true });
     const evidence = { source: 'cache', collected_at: report.collected_at, expires_at: report.expires_at, freshness: report.freshness };
     return [
@@ -26,6 +27,8 @@ export async function cachedPackageDiagnostics(root) {
 export async function auditPackageStatus(options) {
   const root = findPackageWorkspace(options.root), workspace = readPackageWorkspace(root);
   const lock = verifyInstalledPackages(root, workspace.records);
+  const configured = configuredRegistry(root);
+  const remembered = configured?.registry === options.registry && configured?.trust === options.trust;
   const reader = options.offline ? { readBytes: async () => { throw new Error('Offline audit must not access the network'); }, close: async () => {} }
     : createRegistryReader(options.registry, { noBrowser: options['no-browser'] === true,
       sessionOnly: options['session-only'] === true });
@@ -37,6 +40,7 @@ export async function auditPackageStatus(options) {
     const attention = evidence.freshness === 'expired' || packages.some(item => item.status !== 'validated');
     return { command: 'package audit', status: attention ? 'attention' : 'success', exitCode: attention ? 1 : 0,
       ...evidence, packages, notes: [
+        ...(!remembered ? ['This one-off audit does not configure preparation. Use touba package registry <url> --trust <verified-file> explicitly to select the trusted catalogue for this workspace.'] : []),
         ...(evidence.source === 'cache' ? [`Cached signed catalogue collected at ${evidence.collected_at}; expires at ${evidence.expires_at}. ${evidence.freshness === 'expired' ? 'Expired: refresh explicitly before relying on its status.' : 'Offline snapshot, not a live consultation.'}`] : []),
         ...packages.filter(item => item.status !== 'validated').map(item =>
           `${item.name}@${item.version}: ${item.status}${item.withdrawal ? ': ' + item.withdrawal.reason : ''}`),

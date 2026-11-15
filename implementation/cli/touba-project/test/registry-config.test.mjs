@@ -8,6 +8,22 @@ import { initProject } from '../src/project.mjs';
 import { configureRegistry, configuredRegistry, registryOptions } from '../src/package-registry-config.mjs';
 import { registryTrustState, trustedKeys } from '../src/registry-trust-state.mjs';
 import { packageDiagnostic, publicationRefusal, retrySeconds } from '../src/package-diagnostics.mjs';
+
+test('publication closure errors expose only safe dependency identities and translate the remedy', () => {
+  const data = { error: 'package_dependencies_not_publishable', diagnostic: { phase: 'dependencies',
+    code: 'package_dependencies_not_publishable', dependencies: [
+      { name: 'acme.leaf', version: '1.0.0', reason: 'not_available', private: 'do-not-expose' },
+    ] } };
+  const error = publicationRefusal('PackagePublicationRefused', { data }, 'refused');
+  for (const locale of ['fr', 'en']) {
+    const rendered = packageDiagnostic(error, locale);
+    assert.match(rendered, /acme.leaf@1.0.0/);
+    assert.doesNotMatch(rendered, /do-not-expose/);
+    assert.match(rendered, locale === 'fr' ? /brouillon est conservé/ : /draft is preserved/);
+  }
+  data.diagnostic.dependencies[0].name = 'unsafe\nterminal';
+  assert.equal(publicationRefusal('PackagePublicationRefused', { data }, 'refused').dependencies, undefined);
+});
 import { packageCommand } from '../src/package-command.mjs';
 import { newPackage } from '../src/package-author.mjs';
 import { packPackage } from '../src/packages.mjs';

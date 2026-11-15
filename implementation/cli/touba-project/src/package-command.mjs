@@ -5,6 +5,7 @@ import { publishPackage } from "./package-publish.mjs";
 import { publishRemotePackage } from "./package-publish-remote.mjs";
 import { checkoutPackageDraft, submitPackageDraft } from "./package-drafts.mjs";
 import { submitPackageSuite } from './package-suite.mjs';
+import { updatePackageSet } from './package-update-set.mjs';
 import { submitCiPackage } from "./package-ci.mjs";
 import { requestPackagePublication } from "./package-automation.mjs";
 import { authorIdentity, newPackage, testPackage, versionPackage } from "./package-author.mjs";
@@ -37,6 +38,7 @@ export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organizati
        touba package list [--status] [--root <workspace>]
        touba package audit [--offline] [--registry <URL>] [--trust <keys.json>] [--no-browser] [--root <workspace>]
        touba package update <directory|archive.tar.gz|name@version> [--registry <URL>] [--allow-downgrade] [--accept <review_digest>] [--root <workspace>]
+       touba package update-set <updates.json> [--accept <review_digest>] [--allow-downgrade] [--no-browser] [--session-only] [--root <workspace>]
        touba package remove <name> [--root <workspace>]
 All commands support --json. new and version ask questions only in an interactive terminal.
 Author and private-read operations support --session-only to avoid saving a credential.
@@ -55,6 +57,7 @@ function parse(args) {
   allowed.logout = ['registry', 'root', 'read'];
   for (const key of ['checkout', 'submit', 'publish', 'add']) allowed[key].push('session-only');
   allowed.update = [...allowed.add, 'accept', 'allow-downgrade'];
+  allowed['update-set'] = ['root', 'accept', 'allow-downgrade', 'no-browser', 'session-only'];
   allowed.audit = ['root', 'registry', 'trust', 'no-browser', 'session-only', 'offline'];
   allowed.list.push('status');
   allowed.submit.push("automation", "request-id", "presentation-from");
@@ -80,7 +83,7 @@ function parse(args) {
     }
   }
   if (['list', 'audit'].includes(action) && target !== undefined) throw packageError("PackageOptionInvalid", `package ${action} does not take a target`);
-  if (["add", "update", "remove", "checkout"].includes(action) && !target) throw packageError("PackageTargetRequired", `package ${action} needs a target`);
+  if (["add", "update", "update-set", "remove", "checkout"].includes(action) && !target) throw packageError("PackageTargetRequired", `package ${action} needs a target`);
   if (["add", "update"].includes(action) && target.includes("@") && !target.includes("/") && !target.includes("\\")) {
     if (options.version || target.split("@").length !== 2 || target.endsWith("@")) throw packageError("PackageOptionInvalid", "specify exactly one nonempty version");
     [target, options.version] = target.split("@");
@@ -163,6 +166,7 @@ async function executePackageCommand({ action, target, options }) {
   else if (action === "checkout") report = await checkoutPackageDraft(target, options);
   else if (action === "submit") report = await (options.ci ? submitCiPackage : submitPackageDraft)(target, options);
   else if (action === 'submit-suite') report = await submitPackageSuite(target, options);
+  else if (action === 'update-set') report = await updatePackageSet(target, options);
   else if (action === "version") {
     const root = findPackageWorkspace(options.root, { author: true });
     let next = target;

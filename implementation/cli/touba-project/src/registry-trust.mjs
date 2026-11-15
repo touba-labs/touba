@@ -61,6 +61,7 @@ async function readRegistry(indexRef, trustPath, now, readBytes, { offline = fal
   if (cache && !offline) cacheStore.write({ registry, token, revision: payload.revision, issued_at: payload.iat, collected_at: now });
   return { value: payload.index, ref: indexRef, bytes, signingKey: header.kid,
     revision: payload.revision, digest,
+    issued_at: payload.iat, expires_at: payload.exp,
     ...(cache ? { source: offline ? 'cache' : 'registry', expired: payload.exp <= now,
       issued_at: payload.iat, expires_at: payload.exp, collected_at: cached?.collected_at ?? now } : {}) };
 }

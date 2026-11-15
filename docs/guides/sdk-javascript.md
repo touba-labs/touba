@@ -96,6 +96,21 @@ vérification de signature éditeur.
 
 ## Mise à jour
 
+### Conserver un historique au repos
+
+Dans le candidat 1.5.0, `await engine.adoptState({ reason })` produit un aperçu
+hors ligne du passage à la toolchain courante. Après revue et confirmation par
+l'exploitant, rappeler la méthode avec le même motif et
+`accept: preview.review_digest`. Le serveur doit être arrêté. Toute attente,
+opération inachevée ou effet incertain interdit l'adoption. Les fichiers sont
+sauvegardés et vérifiés avant le changement d'origine ; les anciennes traces
+gardent leur identité. `maxBackupBytes` borne le volume à conserver.
+
+`await engine.adoptState({ recover: true })` résout une interruption uniquement
+si la sauvegarde et l'état courant correspondent au reçu. Il ne restaure aucun
+store et ne rejoue aucune opération. Voir [le guide de conservation](stockage-et-conservation.md).
+
+
 Mettre à jour la CLI ne remplace pas les copies de `@touba/sdk` dans les projets. Vérifiez depuis chaque application :
 
 ```sh

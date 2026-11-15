@@ -129,7 +129,10 @@ try {
     process.kill(process.pid, result.signal);
   }
 } catch (error) {
-  if (args[0] === "package" && args.includes("--json")) {
+  if (args[0] === 'state' && args[1] === 'adopt' && args.includes('--json')) {
+    process.stdout.write(JSON.stringify({ schema_version: 'touba-state-adoption-error-v1',
+      code: typeof error.code === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,127}$/.test(error.code) ? error.code : 'ToubaStateAdoptionFailed' }) + '\n');
+  } else if (args[0] === "package" && args.includes("--json")) {
     process.stdout.write(`${JSON.stringify({ status: "error", command: `package ${args[1] ?? ""}`.trim(), code: error.code ?? "PackageCommandFailed", diagnostics: error.diagnostics ?? [{ code: error.code ?? "PackageCommandFailed", message: error instanceof Error ? error.message : String(error) }] })}\n`);
   } else {
     const message = args[0] === 'package'

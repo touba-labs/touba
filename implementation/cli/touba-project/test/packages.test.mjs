@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import * as tar from "tar";
-import { newPackage, checkPackage, packPackage, addPackage, addRegistryPackage, unpackPackage, removePackage } from "../src/packages.mjs";
+import { newPackage, checkPackage, checkPackageArchive, packPackage, addPackage, addRegistryPackage, unpackPackage, removePackage } from "../src/packages.mjs";
 import { PACKAGE_MANIFEST, packageDigest, readPackage, validatePackageDocument } from "../src/package-contract.mjs";
 import { PACKAGE_LOCK, verifyInstalledPackages } from "../src/package-store.mjs";
 import { initProject, prepareProject, compilerInputsForFile, resolveProjectRunArgs } from "../src/project.mjs";
@@ -23,6 +23,24 @@ function workspace(t) { const root = realpathSync(mkdtempSync(join(tmpdir(), "to
 function manifest(path, edit) { const file = join(path, PACKAGE_MANIFEST); const value = JSON.parse(readFileSync(file)); edit(value); writeFileSync(file, JSON.stringify(value, null, 2) + "\n"); }
 function author(root, name = "example.echo", options = {}) { const pkg = newPackage(name, { root, ...options }); manifest(pkg.path, m => { m.publisher = "Package test author"; m.license = "MIT"; }); return pkg.path; }
 function consumer(root) { const path = join(root, "consumer"); mkdirSync(path); initProject({ root: path }); return path; }
+
+test('prepare distinguishes absent inputs from invalid selected source and AIR', async t => {
+  const root = workspace(t), project = consumer(root);
+  const empty = await prepareProject({ root: project, mode: 'plan' });
+  assert.ok(empty.diagnostics.some(item => item.code === 'NoProjectSources'));
+  const source = join(project, 'invalid.tb'), air = join(project, 'invalid.air.json');
+  writeFileSync(source, 'module example.invalid\nskill Echo\n    takes text as Text\n    gives Text\n    do\n        give text\n');
+  writeFileSync(air, '{');
+  for (const mode of ['plan', 'write', 'check']) {
+    for (const [selection, expected] of [[{ sourcePaths: [source] }, 'AstError'], [{ airPaths: [air] }, 'AirReadFailed']]) {
+      const report = await prepareProject({ root: project, mode, ...selection });
+      assert.equal(report.status, 'error');
+      assert.ok(report.diagnostics.some(item => item.code === expected), JSON.stringify(report.diagnostics));
+      assert.equal(report.diagnostics.some(item => item.code === 'NoProjectSources'), false,
+        'a rejected selected input is not an absent input');
+    }
+  }
+});
 
 test('prepare groups shared compilation failures across packages without losing distinct positions', async t => {
   const root = workspace(t), project = consumer(root);
@@ -620,6 +638,12 @@ test("dependency closure is exact, offline, bundled and rejects cycles/conflicts
   const bundled = join(a, "packages/example.child");
   assert.equal((await checkPackage(a)).packages.length, 2);
   const archive = join(root, "closure.tar.gz"); await packPackage(a, { output: archive });
+  const proof = await checkPackageArchive(archive);
+  assert.deepEqual(proof.packages.map(({ name, version, dependencies }) => ({ name, version, dependencies })), [
+    { name: "example.parent", version: "0.1.0", dependencies: { "example.child": "0.1.0" } },
+    { name: "example.child", version: "0.1.0", dependencies: {} },
+  ]);
+  assert.equal(proof.archive_digest, packageDigest(readFileSync(archive)));
   const project = consumer(root); await addPackage(archive, { root: project });
   const config = JSON.parse(readFileSync(join(project, "touba.project.json")));
   assert.equal(config.packages.length, 2); assert.equal(verifyInstalledPackages(project, config.packages).packages.length, 2);
