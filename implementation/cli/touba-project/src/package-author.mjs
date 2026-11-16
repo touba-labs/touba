@@ -29,7 +29,7 @@ export function newPackage(name, { root = process.cwd(), org, context = false, d
   assertPlainDirectory(root);
   if (readdirSync(root).some(entry => entry.toLowerCase() === shortName.toLowerCase())) throw packageError("PackageAlreadyExists", `refusing to replace ${path}`);
   const document = { package_schema_version: PACKAGE_SCHEMA, name, version,
-    description: description ?? `Reusable ${name} package.`,
+    description: description ?? (lang === 'fr' ? `Package réutilisable ${name}.` : `Reusable ${name} package.`),
     touba: { air_profile: "touba-air-json-canonical-v1",
       // A candidate package opts into its exact prerelease. Existing manifests
       // retain their own compatibility range and the standard SemVer checks.
@@ -63,7 +63,9 @@ export function newPackage(name, { root = process.cwd(), org, context = false, d
     // mkdir is exclusive even when another creator wins after the first check.
     mkdirSync(path); ownedDestination = true;
     for (const entry of readdirSync(staging)) renameSync(join(staging, entry), join(path, entry));
-    return { status: "success", command: "package new", path, package: name, version, notes: ["Created an author project. Run package check and package test; complete publication metadata before packing."] };
+    return { status: "success", command: "package new", path, package: name, version, notes: [lang === 'fr'
+      ? 'Projet auteur créé. Lancez package check puis package test ; complétez les métadonnées de publication avant de créer l’archive.'
+      : 'Created an author project. Run package check and package test; complete publication metadata before packing.'] };
   } catch (error) {
     if (ownedDestination) rmSync(path, { recursive: true, force: true });
     throw error;

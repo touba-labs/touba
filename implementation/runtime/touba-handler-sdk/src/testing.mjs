@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { ToubaEngineError, createEffectReceipt } from "./index.mjs";
+export { assertEffectScenario } from './effect-scenarios.mjs';
 
 /** Check protocol evidence for one test case, not the truth of a provider side effect. */
 export function assertEffectReceipt(response, effect, outcome) {

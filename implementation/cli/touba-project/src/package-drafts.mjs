@@ -20,7 +20,7 @@ function draftId(value) {
 function descriptor(value, expected) {
   if (object(value) && value.status === 'replaced' && UUID.test(value.id ?? '')
     && UUID.test(value.replacement_id ?? '') && value.replacement_id !== value.id && (!expected || value.id === expected)) {
-    throw packageError('PackageDraftReplaced', `This draft was replaced. Review the current draft in Cloud, then select it explicitly with --draft ${value.replacement_id}. No archive was submitted.`);
+    throw Object.assign(packageError('PackageDraftReplaced', `This draft was replaced. Review the current draft, then select it explicitly with --draft ${value.replacement_id}. No archive was submitted.`), { replacementId: value.replacement_id });
   }
   if (!object(value) || value.status !== 'draft' || !UUID.test(value.id ?? '') || (expected && value.id !== expected)
       || typeof value.name !== 'string' || value.name.length > 180 || !PACKAGE_NAME.test(value.name)

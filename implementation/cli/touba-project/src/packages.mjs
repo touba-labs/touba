@@ -13,6 +13,7 @@ import { resolveRegistryPackage } from "./registry.mjs";
 import { createRegistryReader } from "./package-fetch.mjs";
 import { toolContract } from "./package-governance.mjs";
 import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
+import { selectPackageClosure } from './package-selection.mjs';
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
@@ -88,6 +89,7 @@ export async function updateRegistryPackage(name, options) {
 }
 
 async function installRegistryPackage(name, options, readBytes) {
+  const trustBytes = options.trust ? readFileSync(options.trust) : null;
   const { artifact, location } = await resolveRegistryArchive(name, options, readBytes);
   const bytes = await readBytes(location, PACKAGE_LIMITS.totalBytes);
   if (packageDigest(bytes) !== artifact.digest) throw packageError("PackageIntegrityMismatch", "registry archive digest mismatch");
@@ -97,7 +99,10 @@ async function installRegistryPackage(name, options, readBytes) {
     const path = unpackPackage(archive, join(staging, "extracted"));
     const pkg = readPackage(path, { runtimeVersion });
     if (pkg.document.name !== name || pkg.document.version !== options.version) throw packageError("PackageDependencyConflict", "archive identity differs from selected registry entry");
-    return await (options.updating ? reviewPackageUpdate : addPackage)(path, { ...options, name });
+    if (trustBytes && !trustBytes.equals(readFileSync(options.trust))) throw packageError('PackageReviewChanged', 'registry trust changed during verification');
+    return await (options.updating ? reviewPackageUpdate : addPackage)(path, { ...options, name,
+      sourceReviews: [{ registry: options.registry, version: options.version, expected_name: name,
+        archive_digest: artifact.digest, trust_digest: trustBytes ? packageDigest(trustBytes) : null }] });
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }
 
@@ -239,7 +244,14 @@ export function unpackPackage(archive, destination) {
 }
 
 export async function addPackage(path, { root = process.cwd(), ...options } = {}) {
+  if (options.accept !== undefined || options.review === true) return reviewPackageInstallation(path, { root, ...options });
   return installPackage(path, { root, ...options });
+}
+
+export async function reviewPackageInstallation(path, { root = process.cwd(), ...options } = {}) {
+  root = findPackageWorkspace(root);
+  const source = PACKAGE_NAME.test(path) ? join(root, 'packages', path) : path;
+  return reviewPackageUpdates([source], { root, ...options, preferInstalled: true, installing: true, command: 'package add' });
 }
 
 export async function updatePackage(path, { root = process.cwd(), name, ...options } = {}) {
@@ -256,17 +268,19 @@ function updateDirection(version, previous, allowDowngrade) {
 
 async function updateReview(workspace, lock, checked, allowDowngrade = false) {
   const previous = lock.packages.find(item => item.name === checked.package);
-  if (!previous) throw packageError('PackageNotInstalled', 'only an installed package can be updated');
-  const direction = updateDirection(checked.version, previous.version, allowDowngrade);
+  if (!previous && !checked.composition) throw packageError('PackageNotInstalled', 'only an installed package can be updated');
+  const describeDirection = (prior, next) => !prior ? 'add'
+    : checked.composition && prior.digest === next.digest ? 'keep'
+    : updateDirection(next.document.version, prior.version, allowDowngrade);
+  const direction = describeDirection(previous, checked.closure.first);
   const roots = (checked.updateRoots ?? [checked.package]).map(name => {
     const prior = lock.packages.find(item => item.name === name);
     const next = checked.closure.packages.find(pkg => pkg.document.name === name);
-    if (!prior || !next) throw packageError('PackageNotInstalled', 'every requested root must be installed');
-    return { name, previous: prior.version, version: next.document.version,
-      direction: updateDirection(next.document.version, prior.version, allowDowngrade) };
+    if ((!prior && !checked.composition) || !next) throw packageError('PackageNotInstalled', 'every requested root must be installed');
+    return { name, previous: prior?.version ?? null, version: next.document.version,
+      direction: describeDirection(prior, next) };
   });
   const graph = candidateUpdateGraph(workspace, lock, checked, allowDowngrade);
-  const before = readPackage(resolve(dirname(workspace.path), previous.manifest));
   const after = checked.closure.first;
   const oldContracts = new Map();
   const oldPackages = new Map();
@@ -299,14 +313,15 @@ async function updateReview(workspace, lock, checked, allowDowngrade = false) {
     return { tool, before: describe(before), after: describe(after) };
   }).filter(h => JSON.stringify(h.before) !== JSON.stringify(h.after));
   });
-  const plan = { schema_version: 'touba-package-update-review-v1',
+  const plan = { schema_version: roots.some(row => ['add', 'keep'].includes(row.direction)) ? 'touba-package-update-review-v2' : 'touba-package-update-review-v1',
     workspace_digest: packageDigest(Buffer.concat([workspace.bytes, Buffer.from(json(lock))])),
-    package: checked.package, previous: previous.version, version: checked.version, direction,
-    previous_digest: previous.digest, package_digest: after.digest, handlers,
+    package: checked.package, previous: previous?.version ?? null, version: checked.version, direction,
+    previous_digest: previous?.digest ?? null, package_digest: after.digest, handlers,
     packages: checked.packages, changes: graph.changes, constraints: graph.constraints,
     contracts: checked.contracts ?? [], contract_changes: contractChanges };
   if (checked.updateRoots) plan.roots = roots;
   if (checked.updateSources) plan.sources = checked.updateSources;
+  if (checked.resolutions) plan.resolutions = checked.resolutions;
   return { ...plan, review_digest: packageDigest(Buffer.from(JSON.stringify(plan))) };
 }
 
@@ -322,17 +337,20 @@ function candidateUpdateGraph(workspace, lock, checked, allowDowngrade) {
     } else if (!before) changes.push({ name: pkg.document.name, before: null, after: { version: pkg.document.version, digest: pkg.digest } });
     selected.set(pkg.document.name, pkg);
   }
-  const constraints = [];
+  const constraints = [], conflicts = [];
   for (const pkg of [...selected.values(), ...(workspace.author ? [{ document: workspace.document }] : [])]) {
     for (const [name, constraint] of Object.entries(pkg.document.dependencies ?? {})) {
       const version = selected.get(name)?.document.version;
       // An author's explicit direct exact pin follows its requested update;
       // ranges and every installed package's constraints remain authoritative.
       const directPin = workspace.author && pkg.document === workspace.document && (checked.updateRoots ?? [checked.package]).includes(name) && /^\d+\.\d+\.\d+(?:[-+].*)?$/.test(constraint);
-      if (!directPin && !satisfiesPackageConstraint(version, constraint, pkg.document.package_schema_version)) throw packageError('PackageInUse', `${pkg.document.name} -> ${name} requires ${constraint}; selected ${version ?? 'absent'}`);
+      if (!directPin && !satisfiesPackageConstraint(version, constraint, pkg.document.package_schema_version)) conflicts.push({ consumer: pkg.document.name, dependency: name, constraint, version: version ?? null });
       constraints.push({ consumer: pkg.document.name, dependency: name, constraint: directPin ? version : constraint, version });
     }
   }
+  if (conflicts.length) throw Object.assign(packageError('PackageInUse', conflicts
+    .sort((a, b) => `${a.consumer}/${a.dependency}`.localeCompare(`${b.consumer}/${b.dependency}`))
+    .map(row => `${row.consumer} -> ${row.dependency} requires ${row.constraint}; selected ${row.version ?? 'absent'}`).join('; ')), { constraints: conflicts });
   const active = new Set(), visited = new Set();
   const visit = name => {
     if (active.has(name)) throw packageError('PackageDependencyCycle', `dependency cycle at ${name}`);
@@ -351,12 +369,13 @@ export async function reviewPackageUpdates(paths, { root = process.cwd(), accept
   root = findPackageWorkspace(root);
   const staging = realpathSync(mkdtempSync(join(tmpdir(), 'touba-package-update-set-')));
   try {
-    const checks = []; let bytes = 0;
+    const checks = [], sourceDigests = []; let bytes = 0;
     for (const [index, path] of paths.entries()) {
       let source = resolve(path);
       if (lstatSync(source).isFile() && !source.endsWith(PACKAGE_MANIFEST)) source = unpackPackage(source, join(staging, `source-${index}`));
       const archive = join(staging, `${index}.tar.gz`);
       await snapshotPackage(source, { output: archive, projectRoot: root });
+      sourceDigests.push(packageDigest(readFileSync(archive)));
       bytes += lstatSync(archive).size;
       if (bytes > PACKAGE_LIMITS.totalBytes) throw packageError('PackageTooLarge', 'package update sources exceed the total byte limit');
       source = unpackPackage(archive, join(staging, `review-${index}`));
@@ -369,29 +388,29 @@ export async function reviewPackageUpdates(paths, { root = process.cwd(), accept
       if (roots.has(check.package)) throw packageError('PackageUpdateSetInvalid', `duplicate explicit root ${check.package}`);
       roots.set(check.package, check.closure.first);
     }
-    const selected = new Map(roots);
-    for (const check of checks) for (const pkg of check.closure.packages) {
-      if (roots.has(pkg.document.name)) continue;
-      const prior = selected.get(pkg.document.name);
-      if (prior && prior.digest !== pkg.digest) throw packageError('PackageDependencyConflict', `ambiguous bundled dependency ${pkg.document.name}; select its exact replacement explicitly`);
-      selected.set(pkg.document.name, pkg);
+    const workspace = readPackageWorkspace(root), lock = verifyInstalledPackages(root, workspace.records);
+    const installed = new Map(lock.packages.map(entry => [entry.name, readPackage(resolve(root, entry.manifest))]));
+    if (options.installing) for (const [name, pkg] of roots) {
+      if (installed.has(name) && installed.get(name).digest !== pkg.digest) throw packageError('PackageDependencyConflict', `different package already installed: ${name}; review an update explicitly`);
     }
-    const packages = [...selected.values()].sort((a, b) => a.document.name.localeCompare(b.document.name));
+    const preferInstalled = options.preferInstalled ?? [...roots.keys()].some(name => !installed.has(name));
+    const packages = selectPackageClosure(roots, checks, installed, { preferInstalled });
     if (packages.length > 128 || packages.reduce((sum, pkg) => sum + pkg.files.reduce((n, file) => n + file.size, 0), 0) > PACKAGE_LIMITS.totalBytes) throw packageError('PackageTooLarge', 'combined closure exceeds limits');
     const first = roots.get([...roots.keys()].sort()[0]);
-    const workspace = readPackageWorkspace(root), lock = verifyInstalledPackages(root, workspace.records);
     const combined = { package: first.document.name, version: first.document.version,
-      updateRoots: [...roots.keys()].sort(), closure: { first, packages } };
+      composition: true, updateRoots: [...roots.keys()].sort(), closure: { first, packages } };
     // Check every consumer and the combined graph before compiling these sources.
     candidateUpdateGraph(workspace, lock, combined, options['allow-downgrade']);
     const sources = checks.map((check, index) => ({ name: check.package, digest: check.closure.first.digest,
-      ...(options.sourceReviews?.[index] ?? { path: resolve(paths[index]) }) })).sort((a, b) => a.name.localeCompare(b.name));
-    const checked = { ...await checkPackageClosure(combined.closure, { projectRoot: root, inspectContracts: true }), updateRoots: combined.updateRoots, updateSources: sources };
+      ...(options.sourceReviews?.[index] ?? { path: resolve(paths[index]), archive_digest: sourceDigests[index] }) })).sort((a, b) => a.name.localeCompare(b.name));
+    const resolutions = checks.map(check => ({ package: check.package, author_closure: check.packages.map(({ name, version, digest }) => ({ name, version, digest })) })).sort((a, b) => a.package.localeCompare(b.package));
+    const checked = { ...await checkPackageClosure(combined.closure, { projectRoot: root, inspectContracts: true }), composition: true,
+      updateRoots: combined.updateRoots, updateSources: sources, resolutions };
     const review = await updateReview(workspace, lock, checked, options['allow-downgrade']);
     if (accept !== undefined && accept !== review.review_digest) throw packageError('PackageReviewChanged', 'package set or workspace changed; review again');
-    if (accept === undefined) return { ...review, command: 'package update-set', status: 'review_required', exitCode: 0,
-      notes: [`Review ${review.review_digest}`, 'Review every root, dependency and contract before accepting this exact set.'] };
-    return { ...await installPackage(first.root, { root, reviewDigest: accept, 'allow-downgrade': options['allow-downgrade'] }, first.document.name, checked), command: 'package update-set', review };
+    if (accept === undefined) return { ...review, command: options.command ?? 'package update-set', status: 'review_required', exitCode: 0,
+      notes: [`Review ${review.review_digest}`, 'Review every root, dependency and contract with --json. Apply this exact selection using --accept <review_digest>.'] };
+    return { ...await installPackage(first.root, { root, reviewDigest: accept, 'allow-downgrade': options['allow-downgrade'] }, first.document.name, checked), command: options.command ?? 'package update-set', review };
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }
 
@@ -426,7 +445,7 @@ async function installPackage(path, { root, ...options }, replacing, frozenCheck
   const { path: configPath, bytes: configBytes, document: config } = workspace;
   const records = [...workspace.records];
   const lock = verifyInstalledPackages(root, records);
-  if (replacing && !lock.packages.some(entry => entry.name === replacing)) throw packageError("PackageNotInstalled", "only an installed package can be updated");
+  if (replacing && !frozenCheck?.composition && !lock.packages.some(entry => entry.name === replacing)) throw packageError("PackageNotInstalled", "only an installed package can be updated");
   const oldLock = existsSync(join(root, PACKAGE_LOCK)) ? readFileSync(join(root, PACKAGE_LOCK)) : undefined;
   assertPlainDirectory(join(root, "packages"));
   const staging = mkdtempSync(join(root, ".touba-package-stage-"));
@@ -438,15 +457,19 @@ async function installPackage(path, { root, ...options }, replacing, frozenCheck
   try {
     const requestedName = PACKAGE_NAME.test(path) ? path : undefined;
     path = requestedName ? join(root, "packages", requestedName) : resolve(path);
+    const selectedSource = path;
     if (!existsSync(path)) throw packageError("PackageSourceMissing", "supply a package directory/archive, or place the package in packages/<organization.name> before adding by name; remote installation requires --registry");
     if (!lstatSync(path).isDirectory() && !path.endsWith(PACKAGE_MANIFEST)) path = unpackPackage(path, join(staging, "extracted"));
     const checked = frozenCheck ?? await checkPackage(path, { ...options, projectRoot: root, inspectContracts: Boolean(options.reviewDigest) });
     const packages = checked.closure.packages;
+    if (!replacing && !frozenCheck && packages.some(pkg => lock.packages.some(entry => entry.name === pkg.document.name && entry.digest !== pkg.digest))) {
+      return await reviewPackageInstallation(selectedSource, { root, ...options });
+    }
     if (replacing && checked.package !== replacing) throw packageError("PackageNameConflict", "replacement identity differs from the selected package");
     if (options.reviewDigest && (await updateReview(workspace, lock, checked, options['allow-downgrade'])).review_digest !== options.reviewDigest) throw packageError('PackageReviewChanged', 'package or workspace changed; review the update again');
     if (replacing) {
       const previous = lock.packages.find(entry => entry.name === replacing);
-      updateDirection(checked.version, previous.version, options['allow-downgrade']);
+      if (!checked.composition) updateDirection(checked.version, previous.version, options['allow-downgrade']);
       candidateUpdateGraph(workspace, lock, checked, options['allow-downgrade']);
     }
     if (requestedName && checked.package !== requestedName) throw packageError("PackageNameConflict", "folder identity differs from the requested package");

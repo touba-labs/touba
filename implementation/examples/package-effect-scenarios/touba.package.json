@@ -1,0 +1,16 @@
+{
+  "package_schema_version": "touba-package-v1",
+  "name": "example.effect_scenarios",
+  "version": "0.1.0",
+  "description": "Explicit effect scenarios against a private synthetic service.",
+  "publisher": "Example",
+  "license": "Apache-2.0",
+  "touba": { "air_profile": "touba-air-json-canonical-v1", "runtime_compatibility": ">=1.5.0 <2.0.0" },
+  "exports": { "tools": ["tool:example.effect_scenarios/Write"], "skills": ["skill:example.effect_scenarios/WriteOnce"] },
+  "files": ["src"],
+  "readme": "README.md",
+  "handlers": [{ "tool": "tool:example.effect_scenarios/Write", "path": "handler.mjs",
+    "protocol": "touba-tool-handler-v1", "configuration": "configuration.json",
+    "effect_contract": { "kind": "external_write", "retry_mode": "idempotency_key" } }],
+  "contract_tests": ["tests/effects.test.mjs"]
+}

@@ -212,7 +212,8 @@ modifie pas son manifeste. Le test généré installe ensuite le package dans un
 consommateur temporaire par cas, via son helper `runEntry(entry, inputs)`.
 Adaptez l'entrée et les assertions pour ajouter des cas indépendants.
 
-Les tests peuvent importer `@touba/sdk` et `@touba/sdk/testing` : la commande
+Les tests peuvent importer `@touba/sdk`, `@touba/sdk/testing` et les entrées
+publiques de `@touba/runtime` : la commande
 fournit les entrées du SDK de sa propre toolchain, hors de l'archive testée.
 Elle ne reprend pas le `node_modules` de l'auteur et n'installe rien par réseau.
 L'installation du SDK dans une application consommatrice reste une étape distincte.
@@ -221,6 +222,39 @@ Relisez les tests avant exécution : ce code hôte dispose des droits système d
 votre compte, pas d'une sandbox. Les secrets d'environnement ne sont pas
 transmis par défaut ; `--env NOM` autorise explicitement une variable. Cela
 n'empêche pas un test de lire un fichier accessible. Isolez les tests tiers.
+
+### Scénarios explicites de conformité des effets
+
+`assertEffectScenario` dans `@touba/sdk/testing` et `assert_effect_scenario`
+dans `touba_sdk.testing` vérifient le même contrat `touba-effect-scenario-v1`.
+L'auteur choisit les scénarios et les ajoute à ses `contract_tests`. Ces
+assertions n'exécutent et ne rejouent aucune opération elles-mêmes.
+
+Le package d'exemple `implementation/examples/package-effect-scenarios` montre
+un service HTTP local synthétique, son stockage transactionnel et le handler
+réel du package installé dans un consommateur temporaire. Le contrôleur mesure
+les appels et les écritures du service et rouvre le même journal entre les trois
+exécutions. Trois cas sont disponibles :
+
+- `duplicate` : une écriture, puis deux relectures du résultat sans nouvel appel ;
+- `lost_reply` : réponse perdue après écriture, reprise avec la même clé et
+  déduplication par le service, puis relecture sans nouvel appel ;
+- `reconciliation_required` : réponse perdue, effet incertain conservé et deux
+  tentatives refusées sans nouvelle émission.
+
+Deux contrôles négatifs vérifient que le reçu absent et une clé changée à la
+reprise font échouer le scénario. Leur réussite signifie que ces défauts ont
+été détectés. Le résultat identifie le scénario avec la portée
+`author_test_synthetic_service`, sans arguments, valeurs métier ou reçu détaillé.
+Ces observations restent des tests fournis par l'auteur. Elles ne certifient
+pas leur propre source d'observation, un fournisseur distant ou tous les usages
+du handler. Le service réel doit assurer la déduplication transactionnelle ou
+la réconciliation prévues par son contrat.
+
+Exécutez les tests tiers dans un worker isolé, sans réseau sortant. Le service
+synthétique utilise uniquement le loopback interne. Installer ou inspecter un
+package ne lance aucun de ces scénarios. Les packages sans ces tests conservent
+leur format et leur comportement existants.
 
 ### Tester une stratégie qui utilise un outil
 
@@ -308,6 +342,45 @@ Dans une application, l'ajout met à jour `touba.project.json` et
 `dependencies` dans `touba.package.json` et le même lock. Versionnez ces
 fichiers et conservez les dossiers installés pour travailler hors réseau.
 `prepare`, l'éditeur et `run --project` contrôlent leur intégrité.
+
+### Composer des packages compatibles
+
+Dans le candidat en qualification, un ajout peut proposer de réutiliser une
+dépendance installée dont la version satisfait les contraintes déclarées.
+L'archive de l'auteur reste inchangée. La CLI rend `review_required` : relisez
+les versions exactes, les contraintes et les changements de contrats, puis
+acceptez l'empreinte retournée.
+
+```sh
+touba package add ./acme.review-0.2.0.tar.gz --json
+touba package add ./acme.review-0.2.0.tar.gz --accept sha256:EMPREINTE_AFFICHEE
+```
+
+Pour revoir ensemble des ajouts, des versions conservées et des mises à jour :
+
+```json title="selection.json"
+{
+  "schema_version": "touba-package-update-set-v1",
+  "packages": [
+    { "path": "./acme.base-1.1.0.tar.gz" },
+    { "path": "./acme.review-0.2.0.tar.gz" }
+  ]
+}
+```
+
+```sh
+touba package update-set selection.json --json
+touba package update-set selection.json --accept sha256:EMPREINTE_AFFICHEE
+```
+
+Les chemins sont relatifs au fichier de sélection. Une racine inchangée est
+conservée, pas réinstallée sous un contenu différent. Un conflit nomme les
+consommateurs concernés. Une modification après l'aperçu impose une nouvelle
+revue. Aucune plage ne certifie la compatibilité métier : testez votre application.
+
+Un lot de soumission a un autre rôle : il transporte les archives originales,
+avec leurs dépendances exactes. Une version compatible publiée ne remplace
+pas automatiquement la preuve de publication d'une version embarquée.
 
 ## Faire évoluer une version
 

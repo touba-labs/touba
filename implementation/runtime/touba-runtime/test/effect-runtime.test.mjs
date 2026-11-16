@@ -16,6 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { openCliEffectJournal } from '../../../cli/touba-run/src/effect-journal.mjs';
 import { buildHandlerSandboxPlan } from '../src/handler-protocol.mjs';
+import { assertEffectScenario } from '../../touba-handler-sdk/src/testing.mjs';
 
 import {
   AIR_CAPABILITY_PROFILE,
@@ -645,28 +646,38 @@ for (const language of ['javascript', 'python']) {
   for (const mode of ['missing', 'invalid', 'throw', 'timeout']) {
     test(`${label} committed write with ${mode} response remains unknown and is not blindly retried`, { skip: !available }, async t => {
       const f = conformanceFixture(t, language, python, mode, 'reconcile', confined);
+      const observations = { before: f.observe(), runs: [] };
       const first = await f.run();
+      observations.runs.push(f.snapshot(first));
       assert.equal(first.status, 'failure');
       assert.equal(failureCode(first), mode === 'timeout' ? 'ToolHandlerTimeout' : 'ToolHandlerReportedError', JSON.stringify(first.diagnostics));
       assert.equal(f.entry().state, 'unknown');
       assert.equal(f.count('effects'), 1, 'The response failure did not undo the external write');
       assert.equal(f.count('calls'), 1);
       const second = await f.run();
+      observations.runs.push(f.snapshot(second));
       assert.equal(failureCode(second), 'EffectReconciliationRequired');
       assert.equal(f.count('calls'), 1, 'No automatic redispatch without provider evidence');
       assert.equal(f.entry().attempt_count, 1);
+      observations.runs.push(f.snapshot(await f.run()));
+      assertEffectScenario({ schema_version: 'touba-effect-scenario-v1', id: `interrupted-${mode}`,
+        tool_ref: 'tool:test/Create', case: 'reconciliation_required' }, observations);
     });
   }
   test(`${label} idempotent provider survives a lost reply, a competing resume and journal reopen`, { skip: !available }, async t => {
     const f = conformanceFixture(t, language, python, 'timeout', 'idempotency_key', confined);
+    const observations = { before: f.observe(), runs: [] };
     const first = f.run();
     // Admission covers the whole run, not just the individual SQL statements.
     assert.throws(() => openCliEffectJournal(f.journalPath), { code: 'EffectJournalBusy' });
-    assert.equal(failureCode(await first), 'ToolHandlerTimeout');
+    const interrupted = await first;
+    assert.equal(failureCode(interrupted), 'ToolHandlerTimeout');
+    observations.runs.push(f.snapshot(interrupted));
     assert.equal(f.count('effects'), 1);
     const before = f.entry();
     assert.equal(before.state, 'unknown');
     const second = await f.run();
+    observations.runs.push(f.snapshot(second));
     assert.equal(second.status, 'success', failureCode(second));
     assert.equal(second.result, 'created:record');
     assert.equal(f.entry().effect_id, before.effect_id);
@@ -674,9 +685,19 @@ for (const language of ['javascript', 'python']) {
     assert.equal(f.count('calls'), 2);
     assert.equal(f.count('effects'), 1, 'Provider uniqueness, not the receipt alone, prevents duplicate writes');
     const restored = await f.run();
+    observations.runs.push(f.snapshot(restored));
     assert.equal(restored.status, 'success');
     assert.equal(restored.result, second.result);
     assert.equal(f.count('calls'), 2, 'An applied journal entry is restored without another provider call');
+    assertEffectScenario({ schema_version: 'touba-effect-scenario-v1', id: 'lost-reply',
+      tool_ref: 'tool:test/Create', case: 'lost_reply' }, observations);
+  });
+  test(`${label} duplicate scenario observes one durable write after two journal reopens`, { skip: !available }, async t => {
+    const f = conformanceFixture(t, language, python, 'healthy', 'idempotency_key', confined);
+    const observations = { before: f.observe(), runs: [] };
+    for (let i = 0; i < 3; i++) observations.runs.push(f.snapshot(await f.run()));
+    assertEffectScenario({ schema_version: 'touba-effect-scenario-v1', id: 'duplicate',
+      tool_ref: 'tool:test/Create', case: 'duplicate' }, observations);
   });
  }
 }
@@ -713,6 +734,12 @@ function conformanceFixture(t, language, python, mode, retryMode, confined = fal
   const scope = 'synthetic:durable-write';
   return {
     journalPath,
+    observe() { return { calls: this.count('calls'), writes: this.count('effects') }; },
+    snapshot(result) {
+      const { tool_ref, effect_id, request_digest, state, attempt_count, receipt } = this.entry();
+      return { status: result.status, reason: result.status === 'success' ? result.reason : failureCode(result),
+        effect: { tool_ref, effect_id, request_digest, state, attempt_count, ...(receipt ? { receipt } : {}) }, service: this.observe() };
+    },
     async run() {
       const lease = openCliEffectJournal(journalPath);
       try { return await executeAirDocument(effectDocument(), { entryRef: 'skill:test/CreateFlow',

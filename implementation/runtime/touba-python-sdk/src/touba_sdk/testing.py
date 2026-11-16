@@ -3,6 +3,7 @@ from copy import deepcopy
 import inspect
 from .engine import ToubaEngineError
 from .handlers import create_effect_receipt
+from .effect_scenarios import assert_effect_scenario
 
 
 def assert_effect_receipt(response, effect, outcome):

@@ -33,11 +33,13 @@ test('prepare distinguishes absent inputs from invalid selected source and AIR',
   writeFileSync(air, '{');
   for (const mode of ['plan', 'write', 'check']) {
     for (const [selection, expected] of [[{ sourcePaths: [source] }, 'AstError'], [{ airPaths: [air] }, 'AirReadFailed']]) {
-      const report = await prepareProject({ root: project, mode, ...selection });
+      const report = await prepareProject({ root: project, mode, entryRef: 'skill:example.invalid/Echo', ...selection });
       assert.equal(report.status, 'error');
       assert.ok(report.diagnostics.some(item => item.code === expected), JSON.stringify(report.diagnostics));
       assert.equal(report.diagnostics.some(item => item.code === 'NoProjectSources'), false,
         'a rejected selected input is not an absent input');
+      assert.equal(report.diagnostics.some(item => item.code === 'RunPlanEntryUnknown'), false,
+        'a failed compilation does not prove the selected entry is absent');
     }
   }
 });

@@ -64,6 +64,13 @@ process.stdout.write(JSON.stringify({ok:true,value:'configured'}));`);
   assert.equal(JSON.parse(run.stdout).result, 'configured');
   assert.ok(!run.stdout.includes('private-marker'));
 
+  const invalidSource = join(app, 'src/invalid.tb');
+  writeFileSync(invalidSource, 'module invalid\nstrategy Broken\n    give ???\n');
+  const invalid = await prepareProject({ ...options, mode: 'plan' });
+  assert.ok(invalid.diagnostics.some(d => d.severity === 'error'));
+  assert.equal(invalid.diagnostics.some(d => d.code === 'PackageEffectRecommendationMissing'), false);
+  rmSync(invalidSource);
+
   document.version = '1.0.1'; write(documentPath, document);
   write(join(source, 'handlers/configuration.json'), { ...schema, fields: { ...schema.fields, region: { type: 'string', required: true } } });
   const update = await reviewPackageUpdate(source, { root: app });

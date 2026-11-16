@@ -141,6 +141,12 @@ données demande une réconciliation par l'exploitant. Cette vérification de fo
 ne démontre pas la compatibilité métier : rejouez aussi vos tests applicatifs.
 Le parcours reste en qualification avant la prochaine distribution.
 
+Un refus `ToubaStateAdoptionStoreUnsupported` en JSON peut inclure `store`,
+chemin relatif borné dans `.touba/`. Ce champ aide à identifier le fichier
+à examiner ; il ne contient ni son contenu ni le chemin absolu du projet.
+Ne déplacez pas ce fichier pour contourner le contrôle. Conservez la build
+précédente jusqu'à la qualification d'un adaptateur ou d'une migration adaptée.
+
 ## Exporter vers PostgreSQL
 
 Un processus séparé peut envoyer les traces progressivement vers PostgreSQL.

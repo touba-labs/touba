@@ -1,0 +1,5 @@
+{
+  "schema_version": "touba-package-update-upload-v2",
+  "archives": ["e30="],
+  "registry": { "index_jwt": "synthetic.signature.fixture", "entries": [{ "name": "example.package", "version": "1.0.0", "metadata": "{}" }] }
+}

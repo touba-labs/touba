@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://touba-labs.com/schemas/touba-effect-scenario-result-v1.schema.json",
+  "title": "Author synthetic-service effect scenario result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scenario", "scope", "status", "observations"],
+  "properties": {
+    "schema_version": {"const": "touba-effect-scenario-result-v1"},
+    "scenario": {"$ref": "touba-effect-scenario-v1.schema.json"},
+    "scope": {"const": "author_test_synthetic_service"},
+    "status": {"const": "passed"},
+    "observations": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["status", "reason", "state", "calls", "writes"],
+        "properties": {
+          "status": {"enum": ["success", "failure"]},
+          "reason": {"enum": ["completed", "EffectReconciliationRequired", "ToolHandlerTimeout", "ToolHandlerReportedError", "ToolHandlerNonZeroExit", "EffectReceiptInvalid"]},
+          "state": {"enum": ["applied", "unknown"]},
+          "calls": {"type": "integer", "minimum": 1, "maximum": 2},
+          "writes": {"const": 1}
+        }
+      }
+    }
+  }
+}

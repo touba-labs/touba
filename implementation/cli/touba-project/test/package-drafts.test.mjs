@@ -95,6 +95,27 @@ test('suite preflight refuses count, byte, duplicate and directory errors before
   assert.equal(calls, 0);
 });
 
+test('a submission suite preserves independent exact closures when another compatible version is selected', async t => {
+  const f = await fixture(t), dependent = newPackage('acme.dependent', { root: f.parent, license: 'MIT', publisher: 'Acme' }).path;
+  await addPackage(f.author, { root: dependent });
+  const edit = (path, fields) => { const file = join(path, 'touba.package.json'); writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file)), ...fields })); };
+  edit(dependent, { package_schema_version: 'touba-package-v2', dependencies: { 'acme.example': '>=0.1.0 <1.0.0' } });
+  edit(f.author, { version: '0.2.0' });
+  const suite = join(f.parent, 'suite.json'); writeFileSync(suite, JSON.stringify(['dependent', 'example']));
+  const uploaded = [];
+  server(t, async (url, opts) => {
+    assert.equal(opts.method, 'POST');
+    const path = join(f.parent, `independent-${uploaded.length}.tar.gz`); writeFileSync(path, opts.body);
+    const checked = await checkPackageArchive(path, { publishing: true }); uploaded.push(checked);
+    return json({ status: 'draft', id: uploaded.length === 1 ? id : nextId, name: checked.package, version: checked.version,
+      archive_digest: packageDigest(opts.body), revision: 1, ready: true }, 201);
+  });
+  const result = await submitPackageSuite(suite, options);
+  assert.equal(result.status, 'success');
+  assert.equal(uploaded[0].packages.find(row => row.name === 'acme.example').version, '0.1.0');
+  assert.equal(uploaded[1].version, '0.2.0');
+});
+
 test('suite stops on 429, preserves Retry-After and does not retry or visit later packages', async t => {
   const f = await fixture(t);
   newPackage('acme.second', { root: f.parent, license: 'MIT', publisher: 'Acme' });

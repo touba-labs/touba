@@ -14,10 +14,10 @@ export async function signedPackageFixture(root, registry, name = 'fixture.remot
   const trust = { schema_version: 'touba-registry-trust-v1', registry, keys: [{ id: 'qa', status: 'active', public_key: key.publicKey.export({ type: 'spki', format: 'pem' }) }] };
   const trustPath = join(root, name + '-trust.json'); writeFileSync(trustPath, JSON.stringify(trust));
   const [namespace, short] = name.split('.');
-  function proof({ status = 'validated', revision = 1, compatibility = runtimeCompatibility, withdrawal, releases = [{version: '1.0.0', bytes}], exp = Math.floor(Date.now() / 1000) + 300 } = {}) {
+  function proof({ status = 'validated', revision = 1, compatibility = runtimeCompatibility, withdrawal, releases = [{version: '1.0.0', bytes}], exp = Math.floor(Date.now() / 1000) + 300, index: selectedIndex, prefix = '' } = {}) {
     const metadataByPath = {}, entries = releases.map((release, index) => {
-      const metadataPath = releases.length === 1 ? 'metadata.json' : `metadata-${index}.json`;
-      const archivePath = releases.length === 1 ? 'archive.tar.gz' : `archive-${index}.tar.gz`;
+      const metadataPath = prefix + (releases.length === 1 ? 'metadata.json' : `metadata-${index}.json`);
+      const archivePath = prefix + (releases.length === 1 ? 'archive.tar.gz' : `archive-${index}.tar.gz`);
       const metadata = JSON.stringify({ schema_version: 'touba-registry-package-v1', package_ref: `pkg:${name}`, namespace, name: short,
         version: release.version, kind: 'touba_package', status, ...(withdrawal ? { withdrawal } : {}), summary: 'Isolated registry fixture',
         source: { type: 'archive', url: registry + '/' + archivePath, path: archivePath, revision: digest(release.bytes) },
@@ -28,7 +28,7 @@ export async function signedPackageFixture(root, registry, name = 'fixture.remot
         metadata_path: metadataPath, metadata_digest: digest(metadata), ...(withdrawal ? { withdrawal } : {}) };
     });
     const metadata = Object.values(metadataByPath)[0];
-    const index = { index_schema_version: 'touba-registry-index-v1', packages: entries };
+    const index = selectedIndex ?? { index_schema_version: 'touba-registry-index-v1', packages: entries };
     const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
     const message = encode({ alg: 'EdDSA', kid: 'qa', typ: 'touba-registry+jwt' }) + '.'
       + encode({ registry, iat: Math.floor(Date.now() / 1000), exp, revision, index });

@@ -49,6 +49,10 @@ test('explicit audit reports installed withdrawals and unknown versions without 
   assert.equal(result.status, 'attention'); assert.equal(result.exitCode, 1);
   assert.equal(result.verified_signature, false); assert.ok(result.checked_at);
   assert.equal(result.packages[0].withdrawal.reason, withdrawal.reason);
+  const french = JSON.parse((await packageCommand(['audit', '--root', consumer, '--registry', registry, '--lang', 'fr', '--json'])).text);
+  assert.equal(french.packages[0].status, 'yanked');
+  assert.match(french.notes.join(' '), /retiré/);
+  assert.doesNotMatch(french.notes.join(' '), /This command|No package|one-off/);
   save([]);
   const missing = await auditPackageStatus({ root: consumer, registry });
   assert.equal(missing.status, 'attention'); assert.equal(missing.packages[0].status, 'unknown');

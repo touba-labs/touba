@@ -59,7 +59,13 @@ test('a shared diamond evolves after review without republishing its compatible 
   assert.equal(JSON.parse(run.stdout).result, 'compatible');
   for (const version of ['2.0.0', '1.2.0-rc.1']) {
     edit(f.base, { version });
-    await assert.rejects(reviewPackageUpdate(f.base, { root: f.app }), error => error.code === 'PackageInUse' && /fixture\.(left|right) -> fixture.shared/.test(error.message));
+    await assert.rejects(reviewPackageUpdate(f.base, { root: f.app }), error => error.code === 'PackageInUse'
+      && error.constraints.length === 2 && error.constraints.every(row => row.dependency === 'fixture.shared')
+      && /fixture\.(left|right) -> fixture.shared/.test(error.message));
+    const cli = fileURLToPath(new URL('../src/main.mjs', import.meta.url));
+    const refused = spawnSync(process.execPath, [cli, 'package', 'update', f.base, '--root', f.app, '--json'], { encoding: 'utf8' });
+    assert.equal(refused.status, 2);
+    assert.equal(JSON.parse(refused.stdout).constraints.length, 2);
     assert.deepEqual(f.lock(), current);
   }
   edit(f.base, { version: '1.1.0', description: 'Different content at an already selected version' });

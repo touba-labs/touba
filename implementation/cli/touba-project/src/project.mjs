@@ -637,6 +637,9 @@ export async function prepareProject(options = {}) {
   });
   diagnostics.push(...assembly.diagnostics);
   const preparedAirDocuments = assembly.entries;
+  const programUnavailable = airDocuments.length !== sourcePaths.length + airPaths.length
+    || hasErrorDiagnostics(packageResolution.diagnostics) || hasErrorDiagnostics(assembly.diagnostics)
+    || entryModuleNames.length === 0;
   for (const { document, sourcePath } of preparedAirDocuments) {
     if (sourcePath === undefined) continue;
     const airPath = airOutputPath(root, document.module.name, airRoot);
@@ -750,7 +753,10 @@ export async function prepareProject(options = {}) {
     : entryRef !== undefined
       ? join(buildRoot, "touba.run-plan.json")
       : null;
-  const expectedRunPlan = runPlanPath === null
+  // Missing entries cannot be inferred from a failed compilation. Preserve
+  // the primary compilation diagnostics before proposing a run plan. Missing
+  // prepared files or host configuration do not hide independent plan errors.
+  const expectedRunPlan = runPlanPath === null || programUnavailable
     ? null
     : buildExpectedRunPlan({
       root,
@@ -820,7 +826,9 @@ export async function prepareProject(options = {}) {
     let reviewed = false;
     try {
       const contract = proposedManifest.bindings?.[handler.tool]?.effect_contract;
-      reviewed = !hasErrorDiagnostics(diagnostics) && Boolean(contract && normalizeEffectContract(contract));
+      // This informational warning describes the binding, not the global
+      // preparation result. An unrelated source error cannot erase its contract.
+      reviewed = Boolean(contract && normalizeEffectContract(contract));
     } catch { /* Invalid host contracts remain diagnostic errors, never a review. */ }
     if (!handler.effect_contract && !reviewed) diagnostics.push({ severity: 'warning', code: 'PackageEffectRecommendationMissing',
       message: `Handler ${handler.tool} has no recommended effect contract. Review its side effects and receipt protocol; network access alone does not imply an external write.`,

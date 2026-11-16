@@ -21,6 +21,12 @@ const EXCLUDED = new Set(['build', 'sdk', 'packages', 'cache', 'state-archives',
   'product-identity.json', 'handler-sandbox-status.json', 'package-hosts.json', 'registry.json']);
 const PENDING = 'state-adoption.pending.json';
 const fail = (code, message = code) => { throw Object.assign(new Error(message), { code }); };
+const unsupported = store => {
+  const safe = typeof store === 'string' && store.length <= 240 && /^(?:state\/)?[A-Za-z0-9_.-]+$/.test(store)
+    && !store.split('/').some(part => part === '.' || part === '..');
+  throw Object.assign(new Error('A state adapter review is required; preserve this store and use the previous build until compatibility is established'),
+    { code: 'ToubaStateAdoptionStoreUnsupported', ...(safe ? { store } : {}) });
+};
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function fileDigest(path) {
@@ -55,7 +61,7 @@ function inventory(root, maxBytes, recovering = false) {
       // or returned. Other stores in state/ need an explicit compatibility adapter.
       if (name === 'state') {
         for (const child of readdirSync(path).sort()) {
-          if (child !== 'secrets.local.json') fail('ToubaStateAdoptionStoreUnsupported');
+          if (child !== 'secrets.local.json') unsupported(`state/${child}`);
           visit(`state/${child}`);
         }
         return;
@@ -76,7 +82,7 @@ function inventory(root, maxBytes, recovering = false) {
       if (lstatSync(join(root, name)).isSymbolicLink()) fail('ToubaStatePathInvalid');
       continue;
     }
-    if (!FILES.has(name)) fail('ToubaStateAdoptionStoreUnsupported', `State adapter required for ${name}; no file was removed`);
+    if (!FILES.has(name)) unsupported(name);
     visit(name);
   }
   return rows;
@@ -92,8 +98,8 @@ function lockStores(root, files) {
       if (db.prepare('PRAGMA integrity_check').get().integrity_check !== 'ok') fail('ToubaStateAdoptionStoreInvalid');
       if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").get()) fail('ToubaStateAdoptionStoreInvalid');
       const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(row => row.name);
-      if (tables.includes('metadata') && (tables.length !== 2 || !tables.includes('records'))) fail('ToubaStateAdoptionStoreUnsupported');
-      if (row.path === 'traces.sqlite' && tables.some(name => !['touba_trace_storage', 'touba_trace_segments', 'touba_trace_events', 'touba_trace_origins'].includes(name))) fail('ToubaStateAdoptionStoreUnsupported');
+      if (tables.includes('metadata') && (tables.length !== 2 || !tables.includes('records'))) unsupported(row.path);
+      if (row.path === 'traces.sqlite' && tables.some(name => !['touba_trace_storage', 'touba_trace_segments', 'touba_trace_events', 'touba_trace_origins'].includes(name))) unsupported(row.path);
     }
     return held;
   } catch (error) { releaseStores(held); if (error.errcode === 5 || error.errcode === 6) fail('ToubaStateInUse'); throw error; }

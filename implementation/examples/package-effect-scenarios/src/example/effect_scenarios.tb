@@ -1,0 +1,17 @@
+module example.effect_scenarios
+
+tool Write
+    description "Commit a record in the explicitly selected test service."
+    takes value as Text
+    gives Text
+    requires network
+
+skill WriteOnce
+    takes value as Text
+    gives Text
+    uses Write
+    do
+        Write
+            with value as value
+            into written
+        give written

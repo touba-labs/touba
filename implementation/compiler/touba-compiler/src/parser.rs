@@ -49,7 +49,13 @@ fn recovered_cst_diagnostic(
     let has_text_parameter = source.lines().any(|line| {
         line.split_whitespace().take(3).eq(["takes", "text", "as"])
     });
-    let base_message = if recovered_text == "text" && has_text_parameter {
+    // A failed interpolation may be recovered as one ERROR node rather than
+    // an inner bare identifier. Recognize only this precise conversion shape;
+    // the presence of an unrelated parameter must not relabel other errors.
+    let expression = recovered_text.strip_prefix('{').and_then(|value| value.strip_suffix('}'))
+        .unwrap_or(recovered_text);
+    let compact_expression: String = expression.chars().filter(|value| !value.is_whitespace()).collect();
+    let base_message = if has_text_parameter && (recovered_text == "text" || compact_expression == "text(text)") {
         "`text` starts the built-in conversion `text(value)` and cannot be used as a bare parameter expression here. Rename the parameter, for example `takes value as Text`, and use `value` in its body.".to_string()
     } else {
         parse_error_message(source)

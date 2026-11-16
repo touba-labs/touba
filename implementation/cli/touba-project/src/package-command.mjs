@@ -11,7 +11,7 @@ import { requestPackagePublication } from "./package-automation.mjs";
 import { authorIdentity, newPackage, testPackage, versionPackage } from "./package-author.mjs";
 import { configureRegistry, registryOptions } from './package-registry-config.mjs';
 import { authorizeRegistry, publicationUrl } from './package-identity.mjs';
-import { packageSessionNotice, withPackageLocale } from './package-diagnostics.mjs';
+import { packageLocale, packageSessionNotice, withPackageLocale } from './package-diagnostics.mjs';
 import { auditPackageStatus } from './package-status.mjs';
 import { addPackage, addRegistryPackage, reviewPackageUpdate, updateRegistryPackage, checkPackage, checkPackageArchive, packPackage, removePackage } from "./packages.mjs";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, packageError } from "./package-contract.mjs";
@@ -33,8 +33,8 @@ export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organizati
        touba package submit-suite <suite.json> --registry <URL> [--max-packages <1..32>] [--max-bytes <bytes>] [--timeout-seconds <1..1800>] [--no-browser] [--root <directory>]
        touba package checkout <draft-id> --automation --registry <URL> [--root <parent>]
        touba package request-publication <draft-id> --automation --registry <URL> --revision <number> --request-id <unique-id>
-       touba package add <name|directory|archive.tar.gz> [--root <workspace>]
-       touba package add <name>@<version> --registry <directory|URL> [--trust <keys.json>] [--allow-draft] [--no-browser] [--root <workspace>]
+       touba package add <name|directory|archive.tar.gz> [--accept <review_digest>] [--root <workspace>]
+       touba package add <name>@<version> --registry <directory|URL> [--trust <keys.json>] [--accept <review_digest>] [--allow-draft] [--no-browser] [--root <workspace>]
        touba package list [--status] [--root <workspace>]
        touba package audit [--offline] [--registry <URL>] [--trust <keys.json>] [--no-browser] [--root <workspace>]
        touba package update <directory|archive.tar.gz|name@version> [--registry <URL>] [--allow-downgrade] [--accept <review_digest>] [--root <workspace>]
@@ -56,7 +56,8 @@ function parse(args) {
   allowed.login = ['registry', 'root', 'no-browser', 'read', 'session-only'];
   allowed.logout = ['registry', 'root', 'read'];
   for (const key of ['checkout', 'submit', 'publish', 'add']) allowed[key].push('session-only');
-  allowed.update = [...allowed.add, 'accept', 'allow-downgrade'];
+  allowed.add.push('accept');
+  allowed.update = [...allowed.add, 'allow-downgrade'];
   allowed['update-set'] = ['root', 'accept', 'allow-downgrade', 'no-browser', 'session-only'];
   allowed.audit = ['root', 'registry', 'trust', 'no-browser', 'session-only', 'offline'];
   allowed.list.push('status');
@@ -108,26 +109,28 @@ async function questionnaire(callback) {
 }
 
 async function create(target, options) {
+  const fr = packageLocale() === 'fr';
   const interactive = process.stdin.isTTY && process.stderr.isTTY && !options.yes && !options.json;
   if (interactive) {
     const cancelled = await questionnaire(async ask => {
       if (!target || !PACKAGE_NAME.test(target)) {
-        options.org ??= await ask("Organization");
-        target ??= await ask("Package name");
+        options.org ??= await ask(fr ? 'Organisation' : 'Organization');
+        target ??= await ask(fr ? 'Nom du package' : 'Package name');
       }
       options.description ??= await ask("Description");
-      options.publisher ??= options.org ?? await ask("Author or organization");
-      options.version ??= await ask("Initial version", "0.1.0");
-      options.license ??= await ask("License (leave blank to choose later)");
+      options.publisher ??= options.org ?? await ask(fr ? 'Auteur ou organisation' : 'Author or organization');
+      options.version ??= await ask(fr ? 'Version initiale' : 'Initial version', "0.1.0");
+      options.license ??= await ask(fr ? 'Licence (laisser vide pour choisir plus tard)' : 'License (leave blank to choose later)');
       if (!options.context) {
-        const content = await ask("Initial content: executable or context", "executable");
+        const content = await ask(fr ? 'Contenu initial : executable ou context' : 'Initial content: executable or context', "executable");
         if (!["executable", "context"].includes(content)) throw packageError("PackageInputInvalid", "choose executable or context; nothing created");
         options.context = content === "context";
       }
       const name = authorIdentity(target, options.org);
-      return !/^(y|yes)$/i.test(await ask(`Create ${name} in ${name.split(".").at(-1)}/? yes/no`, "no"));
+      const answer = await ask(fr ? `Créer ${name} dans ${name.split('.').at(-1)}/ ? oui/non` : `Create ${name} in ${name.split(".").at(-1)}/? yes/no`, fr ? 'non' : 'no');
+      return !(fr ? /^(o|oui|y|yes)$/i : /^(y|yes)$/i).test(answer);
     });
-    if (cancelled) return { status: "cancelled", command: "package new", notes: ["Nothing created."], exitCode: 1 };
+    if (cancelled) return { status: "cancelled", command: "package new", notes: [fr ? 'Aucun fichier créé.' : 'Nothing created.'], exitCode: 1 };
   }
   return newPackage(target, options);
 }
@@ -173,7 +176,7 @@ async function executePackageCommand({ action, target, options }) {
     if (!next) {
       if (options.json) throw packageError("PackageInputRequired", "provide patch, minor, major or an exact version with --json");
       const current = JSON.parse(readFileSync(join(root, PACKAGE_MANIFEST))).version;
-      next = await questionnaire(ask => ask(`Current ${current}. Choose patch, minor, major or an exact version`));
+      next = await questionnaire(ask => ask(packageLocale() === 'fr' ? `Version actuelle ${current}. Choisissez patch, minor, major ou une version exacte` : `Current ${current}. Choose patch, minor, major or an exact version`));
     }
     report = versionPackage(next, { root });
   } else if (action === 'update') report = await (options.registry ? updateRegistryPackage : reviewPackageUpdate)(target, options);
@@ -185,9 +188,10 @@ async function executePackageCommand({ action, target, options }) {
       const checked = await checkPackage(join(root, record.manifest), { ...options, projectRoot: root });
       packages.push({ name: checked.package, version: checked.version, installed: lock.packages.some(pkg => pkg.name === checked.package) });
     }
-    report = { status: "success", command: `package ${action}`, packages, notes: packages.length ? [] : ["No registered packages."] };
+    report = { status: "success", command: `package ${action}`, packages, notes: packages.length ? [] : [packageLocale() === 'fr' ? 'Aucun package enregistré.' : 'No registered packages.'] };
   } else report = await ({ check: target?.endsWith(".tar.gz") ? checkPackageArchive : checkPackage, test: testPackage, pack: packPackage, publish: /^https?:\/\//.test(options.registry ?? '') ? publishRemotePackage : publishPackage, add: options.registry ? addRegistryPackage : addPackage, remove: removePackage })[action](target, options);
   delete report.closure;
-  const text = options.json ? JSON.stringify(report, null, 2) : [report.command + ": " + report.status, report.path ?? report.output ?? report.package ?? "", ...(report.previous ? [`${report.previous} -> ${report.version}`] : []), ...(report.notes ?? []), ...(Array.isArray(report.packages) ? report.packages.map(pkg => `${pkg.name}@${pkg.version}`) : []), report.stdout ?? "", report.stderr ?? ""].filter(Boolean).join("\n");
+  const status = packageLocale() === 'fr' ? ({ success: 'réussi', attention: 'à vérifier', error: 'erreur', review: 'à relire', cancelled: 'annulé' })[report.status] ?? report.status : report.status;
+  const text = options.json ? JSON.stringify(report, null, 2) : [report.command + ": " + status, report.path ?? report.output ?? report.package ?? "", ...(report.previous ? [`${report.previous} -> ${report.version}`] : []), ...(report.notes ?? []), ...(Array.isArray(report.packages) ? report.packages.map(pkg => `${pkg.name}@${pkg.version}`) : []), report.stdout ?? "", report.stderr ?? ""].filter(Boolean).join("\n");
   return { text, exitCode: report.exitCode ?? (report.status === "success" ? 0 : 1) };
 }

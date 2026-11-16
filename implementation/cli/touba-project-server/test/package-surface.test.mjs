@@ -4,10 +4,11 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectPackageSurface } from "../src/package-surface.mjs";
-import { newPackage, packPackage, unpackPackage } from "../../touba-project/src/packages.mjs";
+import { newPackage, packPackage, unpackPackage, addPackage } from "../../touba-project/src/packages.mjs";
 import { initProject, prepareProject } from "../../touba-project/src/project.mjs";
 import { validateObject } from "../../../contracts/product-surfaces/validate.mjs";
 import previewSchema from "../../../contracts/product-surfaces/schemas/touba-project-package-preview-v1.schema.json" with { type: "json" };
+import previewV2Schema from "../../../contracts/product-surfaces/schemas/touba-project-package-preview-v2.schema.json" with { type: "json" };
 import inventorySchema from "../../../contracts/product-surfaces/schemas/touba-project-packages-v1.schema.json" with { type: "json" };
 import removalSchema from "../../../contracts/product-surfaces/schemas/touba-project-package-removal-v1.schema.json" with { type: "json" };
 import detailsSchema from '../../../contracts/product-surfaces/schemas/touba-package-details-v1.schema.json' with { type: 'json' };
@@ -80,6 +81,29 @@ test('a group of independent upgrades has one owner-bound review and a single fi
   for (const malformed of [{ ...upload, path: '/outside' }, { ...upload, archives: [] }, { ...upload, archives: ['AAAA\n'] }, { ...upload, archives: Array(33).fill('AAAA') }]) {
     await assert.rejects(surface.previewUpdates('alice', malformed), { code: 'ToubaServePackageInvalid' });
   }
+});
+
+test('installation previews reuse compatible dependencies and mixed selections use the v2 contract', async t => {
+  const { surface, root } = await fixture(t);
+  const base = newPackage('fixture.base', { root, publisher: 'Fixture', license: 'MIT', version: '1.0.0' }).path;
+  const parent = newPackage('fixture.parent', { root, publisher: 'Fixture', license: 'MIT', version: '1.0.0' }).path;
+  await addPackage(base, { root: parent });
+  const edit = (path, fields) => { const file = join(path, 'touba.package.json'); writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file)), ...fields })); };
+  edit(parent, { package_schema_version: 'touba-package-v2', dependencies: { 'fixture.base': '>=1.0.0 <2.0.0' } });
+  edit(base, { version: '1.1.0' });
+  const bytes = async (path, name) => readFileSync((await packPackage(path, { output: join(root, name) })).output);
+  const baseBytes = await bytes(base, 'base.tar.gz'), parentBytes = await bytes(parent, 'parent.tar.gz');
+  await surface.apply('owner', await surface.preview('owner', baseBytes));
+  const single = await surface.preview('owner', parentBytes);
+  assert.deepEqual(validateObject(previewSchema, single), []);
+  assert.equal(single.packages.find(p => p.name === 'fixture.base').version, '1.1.0');
+  surface.cancel('owner', single.id);
+  const group = await surface.previewUpdates('owner', { schema_version: 'touba-package-update-upload-v1', archives: [parentBytes, baseBytes].map(b => b.toString('base64')) });
+  assert.deepEqual(validateObject(previewV2Schema, group), []);
+  assert.deepEqual(group.roots.map(r => r.direction), ['keep', 'add']);
+  assert.equal(surface.inventory().packages.length, 1);
+  await surface.apply('owner', group);
+  assert.equal(surface.inventory().packages.length, 2);
 });
 
 test("client package previews refuse malformed archive, stale project, expiry and wrong cancellation owner", async t => {

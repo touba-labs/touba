@@ -3345,6 +3345,7 @@ function createProjectServerWithLease(options, takeLease) {
         code: error.code ?? "ToubaServeRequestFailed",
         message: error.message,
         diagnostics: Array.isArray(error.diagnostics) ? error.diagnostics : undefined,
+        constraints: (await import('../../../runtime/touba-handler-sdk/src/package-conflicts.mjs')).packageConflictDetails(error.constraints),
       });
     } finally { releaseActivity(); }
   });

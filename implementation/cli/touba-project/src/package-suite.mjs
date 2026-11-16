@@ -6,7 +6,6 @@ import { readPackage, packageError } from './package-contract.mjs';
 import { submitPackageDraft } from './package-drafts.mjs';
 import { packageLocale } from './package-diagnostics.mjs';
 import { createPublicationSession } from './package-publication-session.mjs';
-import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
 
 const integer = (value, fallback, maximum) => {
   const number = value === undefined ? fallback : Number(value);
@@ -42,24 +41,25 @@ export async function submitPackageSuite(file, options = {}) {
       const root = realpathSync(resolve(base, item)), subpath = relative(base, root);
       if (subpath === '..' || subpath.startsWith('..' + '/') || isAbsolute(subpath) || subpath.startsWith('..\\')) throw packageError('PackageSuiteInvalid', 'author paths must stay below the suite directory');
       const pkg = readPackage(root, { publishing: true });
-      if (packages.has(pkg.document.name)) throw packageError('PackageSuiteConflict', 'each package must occur only once in a suite');
+      const identity = `${pkg.document.name}@${pkg.document.version}`;
+      if (packages.has(identity)) throw packageError('PackageSuiteConflict', 'each exact package version must occur only once in a suite');
       const packed = await packPackage(root, { output: join(temporary, `${packages.size}.tar.gz`) });
       bytes += lstatSync(packed.output).size;
       if (bytes > maxBytes) throw packageError('PackageSuiteLimitExceeded', 'suite archives exceed the byte limit');
-      packages.set(pkg.document.name, { root, document: pkg.document, digest: packed.digest });
+      packages.set(identity, { root, document: pkg.document, digest: packed.digest });
     }
     const ordered = [], visiting = new Set(), visited = new Set();
     function visit(pkg) {
-      const name = pkg.document.name;
+      const name = `${pkg.document.name}@${pkg.document.version}`;
       if (visiting.has(name)) throw packageError('PackageSuiteCycle', 'suite dependencies form a cycle');
       if (visited.has(name)) return;
       visiting.add(name);
-      for (const [dependency, version] of Object.entries(pkg.document.dependencies ?? {})) {
-        const selected = packages.get(dependency);
-        if (!selected) continue; // The archive already includes its verified closure.
-        if (!satisfiesPackageConstraint(selected.document.version, version, pkg.document.package_schema_version)) throw packageError('PackageSuiteConflict', 'suite dependency versions disagree');
-        // Equal versions with different bytes must not be submitted as a coherent suite.
+      for (const dependency of Object.keys(pkg.document.dependencies ?? {})) {
         const installed = readPackage(join(pkg.root, 'packages', dependency));
+        const selected = packages.get(`${dependency}@${installed.document.version}`);
+        // Every draft retains its independently verified exact archive closure.
+        // A different selected version does not replace that embedded version.
+        if (!selected) continue;
         const source = readPackage(selected.root);
         if (installed.digest !== source.digest) throw packageError('PackageSuiteConflict', 'a suite dependency differs from its installed locked copy');
         visit(selected);

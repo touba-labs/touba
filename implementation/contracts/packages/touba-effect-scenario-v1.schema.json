@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://touba-labs.com/schemas/touba-effect-scenario-v1.schema.json",
+  "title": "Explicit synthetic-service effect test scenario",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "tool_ref", "case"],
+  "properties": {
+    "schema_version": {"const": "touba-effect-scenario-v1"},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$"},
+    "tool_ref": {"type": "string", "pattern": "^tool:[a-z_][a-z0-9_.]*/[A-Za-z_][A-Za-z0-9_]*$"},
+    "case": {"enum": ["duplicate", "lost_reply", "reconciliation_required"]}
+  }
+}

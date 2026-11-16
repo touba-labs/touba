@@ -31,6 +31,33 @@ test('signed registry uses consumer trust and canonical resolution, then explici
   await assert.rejects(surface.apply('alice', preview), { code: 'ToubaServePackagePreviewMissing' });
 });
 
+test('grouped registry selections preserve every signed archive and recheck trust before the transaction', async t => {
+  const data = await fixture(t), { root, surface, proof, bytes, trust, trustPath } = data;
+  const other = await signedPackageFixture(root, trust.registry, 'fixture.other');
+  const proofs = [proof(), other.proof()];
+  const index = { index_schema_version: 'touba-registry-index-v1', packages: proofs.map((p, i) => ({
+    ...JSON.parse(Buffer.from(p.index_jwt.split('.')[1], 'base64url')).index.packages[0], metadata_path: `metadata-${i}.json`,
+  })) };
+  const upload = { schema_version: 'touba-package-update-upload-v2', archives: [bytes, other.bytes].map(b => b.toString('base64')),
+    registry: { index_jwt: proof({ index }).index_jwt, entries: proofs.map(({ name, version, metadata }) => ({ name, version, metadata })) } };
+  const tampered = structuredClone(upload); tampered.archives.reverse();
+  await assert.rejects(surface.previewUpdates('alice', tampered), { code: 'PackageIntegrityMismatch' });
+  const wrongMetadata = structuredClone(upload); wrongMetadata.registry.entries[1].metadata += ' ';
+  await assert.rejects(surface.previewUpdates('alice', wrongMetadata), { code: 'RegistryMetadataDigestMismatch' });
+  await assert.rejects(surface.previewUpdates('alice', { ...upload, registry: { ...upload.registry, url: 'https://other.test' } }), { code: 'ToubaServePackageInvalid' });
+  const preview = await surface.previewUpdates('alice', upload);
+  assert.equal(preview.schema_version, 'touba-project-package-preview-v2');
+  assert.equal(surface.inventory().packages.length, 0);
+  await assert.rejects(surface.apply('bob', preview), { code: 'ToubaServePackagePreviewMissing' });
+  await surface.apply('alice', preview);
+  assert.deepEqual(surface.inventory().packages.map(row => row.name), ['fixture.other', 'fixture.remote']);
+  const again = await surface.previewUpdates('alice', upload);
+  const before = JSON.stringify(surface.inventory());
+  trust.keys[0].status = 'revoked'; writeFileSync(trustPath, JSON.stringify(trust));
+  await assert.rejects(surface.apply('alice', again), /trusted|revoked|active/i);
+  assert.equal(JSON.stringify(surface.inventory()), before);
+});
+
 test('registry refuses altered, expired, withdrawn and incompatible evidence; no network fallback', async t => {
   const { surface, proof, bytes } = await fixture(t);
   const altered = proof(); altered.metadata += ' ';

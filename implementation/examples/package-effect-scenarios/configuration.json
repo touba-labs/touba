@@ -1,0 +1,7 @@
+{
+  "schema_version": "touba-handler-configuration-v1",
+  "fields": {
+    "endpoint": { "type": "string", "required": true },
+    "behavior": { "type": "string", "required": true }
+  }
+}

@@ -102,7 +102,7 @@ test('adoption refuses live server ownership, database writers, unknown stores a
   const db = new DatabaseSync(f.sessionsPath); db.exec('BEGIN IMMEDIATE');
   try { assert.throws(() => adopt(f.options), { code: 'ToubaStateInUse' }); } finally { db.exec('ROLLBACK'); db.close(); }
   writeFileSync(join(f.root, 'unknown.sqlite'), 'unknown');
-  assert.throws(() => adopt(f.options), { code: 'ToubaStateAdoptionStoreUnsupported' }); rmSync(join(f.root, 'unknown.sqlite'));
+  assert.throws(() => adopt(f.options), { code: 'ToubaStateAdoptionStoreUnsupported', store: 'unknown.sqlite' }); rmSync(join(f.root, 'unknown.sqlite'));
   symlinkSync(f.sessionsPath, join(f.root, 'traces.sqlite'));
   assert.throws(() => adopt(f.options), { code: 'ToubaStatePathInvalid' }); rmSync(join(f.root, 'traces.sqlite'));
   const mutate = new DatabaseSync(f.sessionsPath); mutate.exec('CREATE TABLE future_format (id INTEGER)'); mutate.close();

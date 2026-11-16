@@ -1,6 +1,7 @@
 // Human diagnostics; stable machine codes and source diagnostics stay intact.
 import { PACKAGE_NAME, exactPackageVersion, packageError } from './package-contract.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { packageConflictDetails } from '../../../runtime/touba-handler-sdk/src/package-conflicts.mjs';
 
 const localeContext = new AsyncLocalStorage();
 
@@ -16,6 +17,12 @@ export async function withPackageLocale(locale, callback) {
 }
 
 const messages = {
+  PackageCreationCancelled: ['Création annulée. Aucun fichier modifié.', 'Creation cancelled. No files were changed.'],
+  PackageInputInvalid: ['Choisissez executable ou context. Aucun fichier créé.', 'Choose executable or context. No files were created.'],
+  PackageFileMissing: ['Une ressource déclarée dans le manifeste du package est absente. Vérifiez les chemins et les fichiers avant de recréer l’archive.', 'A declared package resource is missing. Check manifest paths and files before creating the archive again.'],
+  PackageDraftReplaced: ['Ce brouillon a été remplacé. Relisez le nouveau brouillon et sélectionnez-le explicitement. Aucune archive soumise.', 'This draft was replaced. Review the new draft and select it explicitly. No archive was submitted.'],
+  PackageInUse: ['Des contraintes de dépendances empêchent cette sélection. Relisez les consommateurs et choisissez leurs versions ensemble.', 'Dependency constraints prevent this selection. Review the consumers and select their versions together.'],
+  PackageDependencyConflict: ['La sélection des dépendances est incompatible ou ambiguë. Sélectionnez explicitement les versions à revoir ensemble.', 'The dependency selection is incompatible or ambiguous. Explicitly select the versions to review together.'],
   HandlerConfigurationInvalid: ['Vérifiez les champs, types et limites du schéma de configuration du handler. Les valeurs restent dans la configuration d’hôte.', 'Check the handler configuration fields, types and limits. Values belong in the host configuration.'],
   HandlerConfigurationSchemaRequired: ['Sélectionnez le handler du package avec son schéma typé, ou déclarez le schéma dans votre fragment d’hôte.', 'Select the package handler with its typed schema, or declare the schema in your host fragment.'],
   HandlerConfigurationReviewRequired: ['Le handler change. Confirmez aussi les valeurs de configuration à lui transmettre.', 'The handler changed. Confirm the configuration values to pass to it as well.'],
@@ -107,5 +114,8 @@ export function packageDiagnostic(error, locale) {
   const reasons = fr ? { not_available: 'version publiée indisponible', revalidation_required: 'revérification par l’exploitant requise', content_mismatch: 'contenu différent de la version publiée' }
     : { not_available: 'published version unavailable', revalidation_required: 'operator revalidation required', content_mismatch: 'content differs from the published version' };
   const dependencies = error.dependencies?.map(item => `\n  ${item.name}@${item.version}: ${reasons[item.reason]}`).join('') ?? '';
-  return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}${dependencies}`;
+  const conflicts = packageConflictDetails(error.constraints)?.map(row => `\n  ${row.consumer} → ${row.dependency}: ${row.constraint}; ${fr ? 'sélection' : 'selected'} ${row.version ?? (fr ? 'absente' : 'missing')}`).join('') ?? '';
+  const replacement = error.code === 'PackageDraftReplaced' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(error.replacementId ?? '')
+    ? ` --draft ${error.replacementId}` : '';
+  return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}`;
 }
