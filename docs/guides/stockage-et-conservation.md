@@ -111,6 +111,11 @@ touba state adopt --project ./mon-projet --reason "Mise à jour revue de la tool
 touba state adopt --project ./mon-projet --reason "Mise à jour revue de la toolchain" --accept EMPREINTE_DE_L_APERCU
 ```
 
+Sans `--json`, la commande présente un aperçu lisible avec builds, nombre de
+fichiers, taille et empreinte de revue. Utilisez `--lang fr` ou `--lang en` pour
+choisir la langue. Les scripts doivent demander explicitement `--json` ; les
+SDK le font déjà. La présentation ne modifie ni l'empreinte ni les contrôles.
+
 Le contrôle refuse les attentes humaines, les opérations actives ou interrompues,
 les effets incertains, les formats inconnus et les données sans origine connue.
 Un journal SQLite occupé ou une modification après aperçu impose une nouvelle

@@ -378,9 +378,57 @@ conservée, pas réinstallée sous un contenu différent. Un conflit nomme les
 consommateurs concernés. Une modification après l'aperçu impose une nouvelle
 revue. Aucune plage ne certifie la compatibilité métier : testez votre application.
 
+La revue en texte affiche chaque racine et sa direction, les dépendances testées
+par chaque auteur et les versions sélectionnées. `--json` conserve ces données
+pour les intégrations. Un conflit de composition indique les contraintes des
+packages qui imposent la sélection et de ceux qu'elle rend incompatibles, avec
+la version actuellement installée. L'origine distingue un package sélectionné,
+un consommateur déjà installé et le manifeste du projet auteur.
+
+Si une version antérieure est réellement souhaitée, constituez le fichier de
+sélection et relisez `touba package update-set selection.json --allow-downgrade`.
+Confirmez ensuite la même commande avec `--accept` et l'empreinte affichée.
+Cette option appartient à la mise à jour revue, pas à `package add`. Elle
+n'autorise ni un conflit de dépendances ni un contenu différent à version égale.
+
 Un lot de soumission a un autre rôle : il transporte les archives originales,
 avec leurs dépendances exactes. Une version compatible publiée ne remplace
 pas automatiquement la preuve de publication d'une version embarquée.
+
+## Diagnostiquer un fournisseur Python
+
+Un callback de fournisseur qui lève une exception générique est signalé par
+`PythonHostCallbackFailed`. Cela ne signifie pas que le processus est absent :
+`PythonHostUnavailable` reste réservé à son indisponibilité. TLS, transport et
+délai disposent de leurs diagnostics distincts. Aucun statut HTTP n'est déduit
+du texte d'une exception.
+
+Pour transmettre un statut reçu du fournisseur, le module d'hôte peut lever
+`ToubaAgentDecisionProviderError`. Cet exemple synthétique ne fait aucun appel :
+
+```python
+from touba_sdk import ToubaAgentDecisionProviderError
+
+def provider_http_error(status):
+    if type(status) is not int or not 400 <= status <= 599:
+        raise ValueError("Expected an HTTP error status")
+    return ToubaAgentDecisionProviderError(
+        "ProviderHttpError", "Provider request failed", {"http_status": status}
+    )
+
+try:
+    raise provider_http_error(401)
+except ToubaAgentDecisionProviderError as error:
+    assert error.details == {"http_status": 401}
+```
+
+Dans l'adaptateur réel, utilisez le statut de la réponse HTTP, jamais la clé,
+les en-têtes ou le corps de réponse. Le pont filtre les détails et ne publie
+pas le message privé. Le runtime garde le statut borné sous
+`provider_http_status` dans son événement d'échec ; un code libre du fournisseur
+n'est pas automatiquement un nouveau code du langage. L'échec reste un échec,
+sans nouvelle tentative implicite. Les traces générales ne remplacent pas le
+diagnostic privé de l'hôte.
 
 ## Faire évoluer une version
 

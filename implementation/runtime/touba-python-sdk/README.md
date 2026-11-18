@@ -37,6 +37,39 @@ Python API options use `snake_case`; model messages and runtime wire keys
 retain their protocol spelling. Installing a handler does not grant tools,
 secrets or caller permissions.
 
+## Provider callback diagnostics
+
+A generic provider callback exception is reported as `PythonHostCallbackFailed`.
+`PythonHostUnavailable` identifies an unavailable backend, not a rejected model
+request. TLS, transport and timeout failures retain separate codes. No HTTP
+status is inferred from an exception message.
+
+An adapter can preserve a bounded HTTP status using the typed provider error.
+This executable example is synthetic and makes no network request:
+
+```python
+from touba_sdk import ToubaAgentDecisionProviderError
+
+def provider_http_error(status):
+    if type(status) is not int or not 400 <= status <= 599:
+        raise ValueError("Expected an HTTP error status")
+    return ToubaAgentDecisionProviderError(
+        "ProviderHttpError", "Provider request failed", {"http_status": status}
+    )
+
+try:
+    raise provider_http_error(401)
+except ToubaAgentDecisionProviderError as error:
+    assert error.details == {"http_status": 401}
+```
+
+Use the actual response status in a real adapter. Never include keys, headers or
+response bodies. The bridge filters details and omits private messages. Runtime
+failure events preserve the bounded status as `provider_http_status`; arbitrary
+provider codes do not become language error codes. Failure stays a failure and
+does not trigger an implicit retry. Inspect sensitive diagnostics locally in
+the trusted host, outside general traces.
+
 ## Development
 
 From the implementation workspace, run `node tools/check-python-sdk.mjs`.

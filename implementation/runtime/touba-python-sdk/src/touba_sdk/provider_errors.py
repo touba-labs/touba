@@ -1,4 +1,18 @@
 """Provider diagnostics shared by host adapters, never a second runtime."""
+import ssl
+
+
+def provider_error_code(error):
+    """Classify a callback failure without exposing its message or traceback."""
+    if isinstance(error, ToubaAgentDecisionProviderError):
+        return error.code
+    if isinstance(error, ssl.SSLError):
+        return "PythonHostTlsFailed"
+    if isinstance(error, TimeoutError):
+        return "PythonHostTimeout"
+    if isinstance(error, (ConnectionError, OSError)):
+        return "PythonHostTransportFailed"
+    return "PythonHostCallbackFailed"
 
 
 def provider_diagnostic_details(value):

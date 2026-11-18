@@ -74,7 +74,10 @@ export function registryTrustState(path, registry) {
       update(state => {
         const key = state.keys.find(entry => entry.id === signingKey);
         if (key?.status !== 'active' || key.fingerprint !== keyFingerprint) fail('RegistryKeyUntrusted', 'the signing key is unknown or revoked');
-        if (revision < state.revision) fail('RegistryRollbackRefused', 'signed index predates the last accepted registry revision');
+        if (revision < state.revision) fail('RegistryRollbackRefused',
+          `received signed revision ${revision}; last accepted revision ${state.revision}. `
+          + 'Retry the read with the same trust file. If this persists, report both revisions to the registry operator; '
+          + 'do not delete the trust state or disable signature verification');
         if (revision === state.revision && digest !== state.digest) fail('RegistryRevisionConflict', 'the same signed revision has different content');
         state.revision = revision; state.digest = digest;
       });

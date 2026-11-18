@@ -17,6 +17,9 @@ export async function withPackageLocale(locale, callback) {
 }
 
 const messages = {
+  PackageVersionConflict: ['Cette version est incompatible avec la sélection. Le contenu d’une version existante reste immuable.', 'This version conflicts with the selection. An existing version’s content remains immutable.'],
+  package_version_immutable: ['Le contenu d’une version existante est immuable. Choisissez une nouvelle version.', 'An existing version’s content is immutable. Choose a new version.'],
+  package_downgrade_review_required: ['Une dépendance plus ancienne est sélectionnée. Relisez le lot avec touba package update-set --allow-downgrade, puis confirmez son empreinte avec --accept.', 'An older dependency is selected. Review the set with touba package update-set --allow-downgrade, then confirm its digest with --accept.'],
   PackageCreationCancelled: ['Création annulée. Aucun fichier modifié.', 'Creation cancelled. No files were changed.'],
   PackageInputInvalid: ['Choisissez executable ou context. Aucun fichier créé.', 'Choose executable or context. No files were created.'],
   PackageFileMissing: ['Une ressource déclarée dans le manifeste du package est absente. Vérifiez les chemins et les fichiers avant de recréer l’archive.', 'A declared package resource is missing. Check manifest paths and files before creating the archive again.'],
@@ -114,7 +117,7 @@ export function packageDiagnostic(error, locale) {
   const reasons = fr ? { not_available: 'version publiée indisponible', revalidation_required: 'revérification par l’exploitant requise', content_mismatch: 'contenu différent de la version publiée' }
     : { not_available: 'published version unavailable', revalidation_required: 'operator revalidation required', content_mismatch: 'content differs from the published version' };
   const dependencies = error.dependencies?.map(item => `\n  ${item.name}@${item.version}: ${reasons[item.reason]}`).join('') ?? '';
-  const conflicts = packageConflictDetails(error.constraints)?.map(row => `\n  ${row.consumer} → ${row.dependency}: ${row.constraint}; ${fr ? 'sélection' : 'selected'} ${row.version ?? (fr ? 'absente' : 'missing')}`).join('') ?? '';
+  const conflicts = packageConflictDetails(error.constraints)?.map(row => `\n  ${row.consumer}${row.origin ? ` (${(fr ? { selected: 'sélectionné', installed: 'installé', author: 'projet auteur' } : { selected: 'selected', installed: 'installed', author: 'author project' })[row.origin]})` : ''} → ${row.dependency}: ${row.constraint}; ${fr ? 'sélection' : 'selected'} ${row.version ?? (fr ? 'absente' : 'missing')}${row.current_version !== undefined ? `; ${fr ? 'actuelle' : 'current'} ${row.current_version ?? (fr ? 'absente' : 'missing')}` : ''}`).join('') ?? '';
   const replacement = error.code === 'PackageDraftReplaced' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(error.replacementId ?? '')
     ? ` --draft ${error.replacementId}` : '';
   return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}`;

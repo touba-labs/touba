@@ -7,6 +7,7 @@ import semver from "semver";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, exactPackageVersion, packageError, packageSlug, readPackage } from "./package-contract.mjs";
 import { assertAuthorWritable, assertPackageDirectory, assertPlainDirectory, findPackageWorkspace, PACKAGE_TRANSACTION } from "./package-store.mjs";
 import { stagePackageTestSdk } from './package-test-sdk.mjs';
+import { packageLocale } from './package-diagnostics.mjs';
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
@@ -139,7 +140,7 @@ export function versionPackage(target, { root = process.cwd() } = {}) {
     const updated = { ...pkg.document, version: next };
     writeFileSync(join(staging, PACKAGE_MANIFEST), json(updated));
     renameSync(join(staging, PACKAGE_MANIFEST), file);
-    return { status: "success", command: "package version", package: pkg.document.name, previous: pkg.document.version, version: next, notes: ["Version updated. No commit, tag, publication or consumer dependency was changed."] };
+    return { status: "success", command: "package version", package: pkg.document.name, previous: pkg.document.version, version: next, notes: [packageLocale() === 'fr' ? "Version mise à jour. Aucun commit, tag, publication ni dépendance d’un consommateur n’a été modifié." : "Version updated. No commit, tag, publication or consumer dependency was changed."] };
   } finally {
     if (staging) rmSync(staging, { recursive: true, force: true });
     rmSync(marker);

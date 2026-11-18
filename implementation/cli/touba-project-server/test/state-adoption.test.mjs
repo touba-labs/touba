@@ -174,9 +174,17 @@ for (const tampered of ['backup', 'live']) test(`interrupted adoption refuses re
   assert.throws(() => acquireStateLease(f.projectRoot), { code: 'ToubaStateAdoptionInterrupted' });
 });
 test('CLI adoption preview and exact acceptance share the offline contract', async t => {
-  const f = fixture(t), args = ['adopt', '--project', f.projectRoot, '--reason', 'Local compatibility test'];
+  const f = fixture(t), args = ['adopt', '--project', f.projectRoot, '--reason', 'Local compatibility test', '--json'];
   const preview = JSON.parse((await stateCommand(args)).text);
   assert.equal(preview.status, 'preview');
+  for (const lang of ['fr', 'en']) {
+    const human = (await stateCommand([...args.filter(value => value !== '--json'), '--lang', lang])).text;
+    assert.ok(human.startsWith(lang === 'fr' ? 'Aperçu' : 'Preview'));
+    assert.ok(human.includes(preview.review_digest));
+    assert.ok(human.includes('--accept'));
+    assert.equal(JSON.parse((await stateCommand([...args, '--lang', lang])).text).review_digest, preview.review_digest);
+  }
+  await assert.rejects(stateCommand([...args, '--lang', 'invalid']), /--lang/);
   const result = JSON.parse((await stateCommand([...args, '--accept', preview.review_digest])).text);
   assert.equal(result.status, 'adopted');
   await assert.rejects(stateCommand(['adopt', '--recover', '--accept', 'abc']), /cannot be combined/);

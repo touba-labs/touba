@@ -136,7 +136,8 @@ try {
         && /^(?:state\/)?[A-Za-z0-9_.-]+$/.test(error.store) && !error.store.split('/').some(part => part === '.' || part === '..') ? { store: error.store } : {}) }) + '\n');
   } else if (args[0] === "package" && args.includes("--json")) {
     const { packageConflictDetails } = await import('../../../runtime/touba-handler-sdk/src/package-conflicts.mjs');
-    process.stdout.write(`${JSON.stringify({ status: "error", command: `package ${args[1] ?? ""}`.trim(), code: error.code ?? "PackageCommandFailed", constraints: packageConflictDetails(error.constraints), diagnostics: error.diagnostics ?? [{ code: error.code ?? "PackageCommandFailed", message: error instanceof Error ? error.message : String(error) }] })}\n`);
+    const { packageDiagnostic } = await import('./package-diagnostics.mjs');
+    process.stdout.write(`${JSON.stringify({ status: "error", command: `package ${args[1] ?? ""}`.trim(), code: error.code ?? "PackageCommandFailed", constraints: packageConflictDetails(error.constraints), diagnostics: error.diagnostics ?? [{ code: error.code ?? "PackageCommandFailed", message: packageDiagnostic(error) }] })}\n`);
   } else {
     const message = args[0] === 'package'
       ? (await import('./package-diagnostics.mjs')).packageDiagnostic(error)

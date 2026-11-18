@@ -4840,7 +4840,9 @@ async function callAgentDecisionProviderAttemptBody(request, context, attemptInd
     if (error instanceof RuntimeFailure || error instanceof RuntimeCancelled) {
       throw error;
     }
-    const message = "provider request failed; inspect the trusted host locally";
+    const message = error?.name === 'ToubaAgentDecisionProviderError' && error.code === 'PythonHostCallbackFailed'
+      ? 'provider callback raised an unclassified exception; inspect the trusted host locally'
+      : 'provider request failed; inspect the trusted host locally';
     const localDecisionError = error?.name === "ToubaAgentDecisionProviderError"
       && new Set(["ProviderCostBoundUnavailable", "ProviderCostBudgetExceeded", "ProviderBudgetBlocked", "ProviderCostBoundViolated",
         "ProviderBudgetStorageUnsafe", "ProviderBudgetStorageUnavailable", "ProviderRequestAborted", "ProviderCostEvidenceInvalid",

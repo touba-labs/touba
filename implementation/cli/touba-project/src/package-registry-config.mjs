@@ -4,6 +4,7 @@ import { packageError } from './package-contract.mjs';
 import { assertAuthorWritable, assertPlainDirectory, findPackageWorkspace } from './package-store.mjs';
 import { publicationUrl } from './package-identity.mjs';
 import { registryTrustState, trustedKeys } from './registry-trust-state.mjs';
+import { packageLocale } from './package-diagnostics.mjs';
 
 const CONFIG = 'registry.json';
 function regularJson(path, maximum) {
@@ -48,7 +49,7 @@ export function configureRegistry(registry, { root = process.cwd(), trust } = {}
   } finally { rmSync(staging, { recursive: true, force: true }); }
   return { command: 'package registry', status: 'success', registry, trust,
     fingerprints: keys.map(key => ({ id: key.id, sha256: key.fingerprint, status: key.status })),
-    notes: ['Registry configured for this workspace. Keep the reviewed trust file and its continuity database. Install with touba package add organization.package@version.'] };
+    notes: [packageLocale() === 'fr' ? 'Registre configuré pour ce projet. Conservez le fichier de confiance revu et sa base de continuité. Installez avec touba package add organisation.package@version.' : 'Registry configured for this workspace. Keep the reviewed trust file and its continuity database. Install with touba package add organization.package@version.'] };
 }
 
 export function registryOptions(options) {

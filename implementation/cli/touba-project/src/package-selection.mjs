@@ -8,7 +8,7 @@ export function selectPackageClosure(roots, checks, installed, { preferInstalled
   for (const pkg of [...installed.values(), ...checks.flatMap(check => check.closure.packages)]) {
     const { name, version } = pkg.document, identity = `${name}@${version}`;
     if (identities.has(identity) && identities.get(identity) !== pkg.digest) {
-      throw packageError('PackageVersionConflict', `${identity} has different content; equal versions are immutable`);
+      throw Object.assign(packageError('PackageVersionConflict', `${identity} has different content; equal versions are immutable`), { reason: 'package_version_immutable' });
     }
     identities.set(identity, pkg.digest);
   }

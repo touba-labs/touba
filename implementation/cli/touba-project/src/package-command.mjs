@@ -13,6 +13,7 @@ import { configureRegistry, registryOptions } from './package-registry-config.mj
 import { authorizeRegistry, publicationUrl } from './package-identity.mjs';
 import { packageLocale, packageSessionNotice, withPackageLocale } from './package-diagnostics.mjs';
 import { auditPackageStatus } from './package-status.mjs';
+import { packageReportText } from './package-text.mjs';
 import { addPackage, addRegistryPackage, reviewPackageUpdate, updateRegistryPackage, checkPackage, checkPackageArchive, packPackage, removePackage } from "./packages.mjs";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, packageError } from "./package-contract.mjs";
 import { findPackageWorkspace, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
@@ -191,7 +192,6 @@ async function executePackageCommand({ action, target, options }) {
     report = { status: "success", command: `package ${action}`, packages, notes: packages.length ? [] : [packageLocale() === 'fr' ? 'Aucun package enregistré.' : 'No registered packages.'] };
   } else report = await ({ check: target?.endsWith(".tar.gz") ? checkPackageArchive : checkPackage, test: testPackage, pack: packPackage, publish: /^https?:\/\//.test(options.registry ?? '') ? publishRemotePackage : publishPackage, add: options.registry ? addRegistryPackage : addPackage, remove: removePackage })[action](target, options);
   delete report.closure;
-  const status = packageLocale() === 'fr' ? ({ success: 'réussi', attention: 'à vérifier', error: 'erreur', review: 'à relire', cancelled: 'annulé' })[report.status] ?? report.status : report.status;
-  const text = options.json ? JSON.stringify(report, null, 2) : [report.command + ": " + status, report.path ?? report.output ?? report.package ?? "", ...(report.previous ? [`${report.previous} -> ${report.version}`] : []), ...(report.notes ?? []), ...(Array.isArray(report.packages) ? report.packages.map(pkg => `${pkg.name}@${pkg.version}`) : []), report.stdout ?? "", report.stderr ?? ""].filter(Boolean).join("\n");
+  const text = options.json ? JSON.stringify(report, null, 2) : packageReportText(report, packageLocale());
   return { text, exitCode: report.exitCode ?? (report.status === "success" ? 0 : 1) };
 }

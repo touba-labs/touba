@@ -43,6 +43,12 @@ test('explicit audit reports installed withdrawals and unknown versions without 
   const save = packages => writeFileSync(join(registry, 'index.json'), JSON.stringify(index(packages)));
   save([entry]);
   assert.equal((await auditPackageStatus({ root: consumer, registry })).status, 'success');
+  for (const lang of ['fr', 'en']) {
+    const text = (await packageCommand(['audit', '--root', consumer, '--registry', registry, '--lang', lang])).text;
+    assert.match(text, lang === 'fr' ? /fixture.notice@1.0.0: validé/ : /fixture.notice@1.0.0: validated/);
+    assert.match(text, /\d{4}-\d{2}-\d{2}T/);
+    assert.doesNotMatch(text, /checked_at/);
+  }
   const withdrawal = { reason: 'Replaced after review', changed_at: '2026-11-14T12:00:00Z' };
   save([{ ...entry, status: 'yanked', withdrawal }]);
   const result = JSON.parse((await packageCommand(['audit', '--root', consumer, '--registry', registry, '--json'])).text);
@@ -115,6 +121,8 @@ test('preparation shows a signed cached withdrawal without network or a new exec
   assert.equal(unconfigured[0].code, 'PackageStatusNotConfigured');
   assert.match(unconfigured[0].message, /touba package registry/);
   configureRegistry(f.registry, { root: consumer, trust: f.trust });
+  const configured = (await packageCommand(['registry', f.registry, '--root', consumer, '--trust', f.trust, '--lang', 'fr'])).text;
+  assert.match(configured, /Registre configuré/); assert.doesNotMatch(configured, /Registry configured/);
   let requests = 0;
   t.mock.method(globalThis, 'fetch', async () => { requests++; throw new Error('unexpected network'); });
   assert.equal((await cachedPackageDiagnostics(consumer))[0].code, 'PackageStatusUnavailable');

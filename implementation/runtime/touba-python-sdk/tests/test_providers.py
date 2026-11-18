@@ -3,6 +3,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import re
+import ssl
 import subprocess
 from pathlib import Path
 import sys
@@ -45,6 +46,79 @@ def generated(_options):
 
 
 class ProviderTests(unittest.TestCase):
+    def test_callback_failures_are_classified_without_messages_or_hidden_retries(self):
+        cases = [(RuntimeError('private-sentinel'), 'PythonHostCallbackFailed'),
+                 (ssl.SSLError('private-sentinel'), 'PythonHostTlsFailed'),
+                 (TimeoutError('private-sentinel'), 'PythonHostTimeout'),
+                 (ConnectionError('private-sentinel'), 'PythonHostTransportFailed'),
+                 (ToubaAgentDecisionProviderError('ProviderHttpError', 'private-sentinel', {'http_status': 401, 'headers': 'private-sentinel'}), 'ProviderHttpError')]
+        for error, code in cases:
+            for asynchronous in (False, True):
+                with self.subTest(code=code, asynchronous=asynchronous):
+                    calls = []
+                    def fail(_options):
+                        calls.append(1)
+                        raise error
+                    async def async_fail(options):
+                        return fail(options)
+                    provider = create_ai_sdk_decision_provider(model='fixture', generate_object=async_fail if asynchronous else fail,
+                        json_schema=lambda schema: schema, history=False)
+                    try:
+                        with self.assertRaises(ToubaAgentDecisionProviderError) as raised:
+                            asyncio.run(provider(request()))
+                        self.assertEqual(raised.exception.code, code)
+                        self.assertEqual(raised.exception.details, {'http_status': 401} if code == 'ProviderHttpError' else {})
+                        self.assertNotIn('private-sentinel', str(raised.exception))
+                        self.assertEqual(len(calls), 1)
+                    finally:
+                        provider.close()
+        for invalid in (True, '401', 99, 600, None):
+            self.assertEqual(ToubaAgentDecisionProviderError('ProviderHttpError', 'private', {'http_status': invalid}).details, {})
+
+    def test_callback_classification_survives_nested_backend_host_and_runtime(self):
+        for exception, expected, status in [('RuntimeError("private-sentinel")', 'PythonHostCallbackFailed', None),
+                ('ToubaAgentDecisionProviderError("ProviderHttpError", "private-sentinel", {"http_status":401,"body":"private-sentinel"})', None, 401)]:
+            with self.subTest(exception=expected or status), tempfile.TemporaryDirectory(prefix='touba-py-callback-') as folder:
+                root = Path(folder)
+                (root / 'main.tb').write_text(SOURCE)
+                (root / 'provider.py').write_text('''from touba_sdk import create_ai_sdk_decision_provider, ToubaAgentDecisionProviderError
+def fail(options):
+    raise ''' + exception + '''
+provider = create_ai_sdk_decision_provider(model='fixture', generate_object=fail, json_schema=lambda schema: schema, history=False)
+async def decide_agent_capability(request):
+    return await provider(request)
+''')
+                engine = ToubaEngine(project_root=root, command=os.environ['TOUBA_TEST_NODE'], command_args=[os.environ['TOUBA_TEST_CLI']],
+                                    env={'TOUBA_HOST_PYTHON': sys.executable})
+                with self.assertRaises(ToubaEngineError) as raised:
+                    engine.run(source='main.tb', entry_ref='strategy:python.providers/Run', agent_decision_provider='provider.py', timeout=20)
+                details = raised.exception.details
+                failure = next(event['payload'] for event in details['trace']['events'] if event['kind'] == 'failure_detected')
+                if expected:
+                    self.assertEqual(failure['provider_error_code'], expected)
+                self.assertEqual(failure.get('provider_http_status'), status)
+                self.assertNotIn('private-sentinel', json.dumps(details))
+
+    def test_closed_backend_remains_unavailable_without_restart(self):
+        from touba_sdk._backend import Backend
+        backend = Backend()
+        backend.close()
+        with self.assertRaises(ToubaAgentDecisionProviderError) as raised:
+            backend.request(method='create', kind='fixture', options={}).result(timeout=2)
+        self.assertEqual(raised.exception.code, 'PythonHostUnavailable')
+
+    def test_provider_error_examples_in_french_and_english_execute_offline(self):
+        sdk = Path(__file__).resolve().parents[1]
+        for path in (sdk / 'README.md', sdk.parents[1].parent / 'docs/guides/creer-partager-package.md'):
+            blocks = re.findall(r'```python\n(.*?)\n```', path.read_text(), re.S)
+            examples = [block for block in blocks if 'def provider_http_error(status):' in block]
+            self.assertEqual(len(examples), 1, str(path))
+            namespace = {}
+            exec(compile(examples[0], str(path), 'exec'), namespace)
+            for invalid in (True, 200, 600, '401', None):
+                with self.assertRaises(ValueError):
+                    namespace['provider_http_error'](invalid)
+
     def test_chat_http_both_interfaces_history_and_invalid_responses(self):
         received = []
         response_mode = ["valid"]

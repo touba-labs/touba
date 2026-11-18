@@ -14,6 +14,7 @@ import { createRegistryReader } from "./package-fetch.mjs";
 import { toolContract } from "./package-governance.mjs";
 import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
 import { selectPackageClosure } from './package-selection.mjs';
+import { packageLocale } from './package-diagnostics.mjs';
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
@@ -151,16 +152,17 @@ async function checkPackageClosure(closure, options = {}) {
   if (diagnostics.length) throw Object.assign(packageError("PackageSourceInvalid",
     diagnostics.map(d => `${d.source_path ?? ""}${d.source_ref ? `:${d.source_ref.start_line + 1}:${d.source_ref.start_column + 1}` : ""} ${d.code}: ${d.message}`.trim()).join("\n")), { diagnostics });
   const missing = ["description", "publisher", "license"].filter(field => !closure.first.document[field]);
+  const fr = packageLocale(options.lang) === 'fr';
   const effectNotes = closure.packages.flatMap(pkg => (pkg.document.handlers ?? [])
     .filter(handler => !handler.effect_contract)
-    .map(handler => `Handler ${handler.tool} has no recommended effect contract. Review its side effects and test the receipt protocol; network access alone does not imply an external write.`));
+    .map(handler => fr ? `Le handler ${handler.tool} ne recommande aucun contrat d’effet. Vérifiez ses effets et testez le protocole de reçu ; un accès réseau ne signifie pas à lui seul une écriture externe.` : `Handler ${handler.tool} has no recommended effect contract. Review its side effects and test the receipt protocol; network access alone does not imply an external write.`));
   const resolvedVersions = new Map(closure.packages.map(pkg => [pkg.document.name, pkg.document.version]));
   const packages = closure.packages.map(pkg => ({ name: pkg.document.name, version: pkg.document.version,
     digest: pkg.digest, files: pkg.files.length, requirements: pkg.requirements,
     // Evidence uses the exact resolved closure, independently of author constraints.
     dependencies: Object.fromEntries(Object.keys(pkg.document.dependencies ?? {}).sort()
       .map(name => [name, resolvedVersions.get(name)])) }));
-  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: [...(missing.length ? [`Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : []), ...effectNotes], packages, tests: "Source contracts checked. Author tests are not executed automatically.", closure, ...(contracts ? { contracts } : {}) };
+  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: [...(missing.length ? [fr ? `Avant le partage, complétez ${missing.join(", ")} dans ${PACKAGE_MANIFEST}.` : `Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : []), ...effectNotes], packages, tests: fr ? "Contrats source vérifiés. Les tests de l’auteur ne sont pas exécutés automatiquement." : "Source contracts checked. Author tests are not executed automatically.", closure, ...(contracts ? { contracts } : {}) };
 }
 
 function copyPackage(pkg, destination) {
@@ -263,7 +265,10 @@ export async function updatePackage(path, { root = process.cwd(), name, ...optio
 function updateDirection(version, previous, allowDowngrade) {
   if (semver.gt(version, previous)) return 'upgrade';
   if (semver.lt(version, previous) && allowDowngrade === true) return 'downgrade';
-  throw packageError('PackageVersionConflict', 'select a newer version, or review an older version with --allow-downgrade; equal versions are immutable');
+  throw Object.assign(packageError('PackageVersionConflict', semver.eq(version, previous)
+    ? 'an existing version cannot contain different bytes'
+    : 'review an older dependency selection with touba package update-set --allow-downgrade'),
+  { reason: semver.eq(version, previous) ? 'package_version_immutable' : 'package_downgrade_review_required' });
 }
 
 async function updateReview(workspace, lock, checked, allowDowngrade = false) {
@@ -272,6 +277,7 @@ async function updateReview(workspace, lock, checked, allowDowngrade = false) {
   const describeDirection = (prior, next) => !prior ? 'add'
     : checked.composition && prior.digest === next.digest ? 'keep'
     : updateDirection(next.document.version, prior.version, allowDowngrade);
+  const graph = candidateUpdateGraph(workspace, lock, checked, allowDowngrade);
   const direction = describeDirection(previous, checked.closure.first);
   const roots = (checked.updateRoots ?? [checked.package]).map(name => {
     const prior = lock.packages.find(item => item.name === name);
@@ -280,7 +286,6 @@ async function updateReview(workspace, lock, checked, allowDowngrade = false) {
     return { name, previous: prior?.version ?? null, version: next.document.version,
       direction: describeDirection(prior, next) };
   });
-  const graph = candidateUpdateGraph(workspace, lock, checked, allowDowngrade);
   const after = checked.closure.first;
   const oldContracts = new Map();
   const oldPackages = new Map();
@@ -332,7 +337,9 @@ function candidateUpdateGraph(workspace, lock, checked, allowDowngrade) {
   for (const pkg of checked.closure.packages) {
     const before = selected.get(pkg.document.name);
     if (before && before.digest !== pkg.digest) {
-      updateDirection(pkg.document.version, before.document.version, allowDowngrade);
+      // Different bytes at an equal version are always refused. Diagnose graph
+      // incompatibilities before asking for a downgrade that cannot satisfy them.
+      if (semver.eq(pkg.document.version, before.document.version)) updateDirection(pkg.document.version, before.document.version, allowDowngrade);
       changes.push({ name: pkg.document.name, before: { version: before.document.version, digest: before.digest }, after: { version: pkg.document.version, digest: pkg.digest } });
     } else if (!before) changes.push({ name: pkg.document.name, before: null, after: { version: pkg.document.version, digest: pkg.digest } });
     selected.set(pkg.document.name, pkg);
@@ -348,9 +355,24 @@ function candidateUpdateGraph(workspace, lock, checked, allowDowngrade) {
       constraints.push({ consumer: pkg.document.name, dependency: name, constraint: directPin ? version : constraint, version });
     }
   }
+  const relatedConstraints = names => constraints.filter(row => names.has(row.dependency))
+    .map(row => ({ ...row, version: row.version ?? null,
+      current_version: lock.packages.find(pkg => pkg.name === row.dependency)?.version ?? null,
+      origin: workspace.author && row.consumer === workspace.document.name ? 'author'
+        : (checked.updateRoots ?? [checked.package]).includes(row.consumer)
+          || selected.get(row.consumer)?.digest !== lock.packages.find(pkg => pkg.name === row.consumer)?.digest ? 'selected' : 'installed' }))
+    .sort((a, b) => `${a.consumer}/${a.dependency}`.localeCompare(`${b.consumer}/${b.dependency}`));
   if (conflicts.length) throw Object.assign(packageError('PackageInUse', conflicts
     .sort((a, b) => `${a.consumer}/${a.dependency}`.localeCompare(`${b.consumer}/${b.dependency}`))
-    .map(row => `${row.consumer} -> ${row.dependency} requires ${row.constraint}; selected ${row.version ?? 'absent'}`).join('; ')), { constraints: conflicts });
+    .map(row => `${row.consumer} -> ${row.dependency} requires ${row.constraint}; selected ${row.version ?? 'absent'}`).join('; ')),
+  { constraints: relatedConstraints(new Set(conflicts.map(row => row.dependency))) });
+  for (const change of changes) if (change.before) {
+    try { updateDirection(change.after.version, change.before.version, allowDowngrade); }
+    catch (error) {
+      error.constraints = relatedConstraints(new Set([change.name]));
+      throw error;
+    }
+  }
   const active = new Set(), visited = new Set();
   const visit = name => {
     if (active.has(name)) throw packageError('PackageDependencyCycle', `dependency cycle at ${name}`);
@@ -409,7 +431,9 @@ export async function reviewPackageUpdates(paths, { root = process.cwd(), accept
     const review = await updateReview(workspace, lock, checked, options['allow-downgrade']);
     if (accept !== undefined && accept !== review.review_digest) throw packageError('PackageReviewChanged', 'package set or workspace changed; review again');
     if (accept === undefined) return { ...review, command: options.command ?? 'package update-set', status: 'review_required', exitCode: 0,
-      notes: [`Review ${review.review_digest}`, 'Review every root, dependency and contract with --json. Apply this exact selection using --accept <review_digest>.'] };
+      notes: [`${packageLocale(options.lang) === 'fr' ? 'Revue' : 'Review'} ${review.review_digest}`,
+        packageLocale(options.lang) === 'fr' ? 'Relisez chaque package, dépendance et contrat. Appliquez cette sélection exacte avec --accept <review_digest>. Détails machine : --json.'
+          : 'Review every root, dependency and contract. Apply this exact selection using --accept <review_digest>. Machine details: --json.'] };
     return { ...await installPackage(first.root, { root, reviewDigest: accept, 'allow-downgrade': options['allow-downgrade'] }, first.document.name, checked), command: options.command ?? 'package update-set', review };
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }
@@ -431,11 +455,11 @@ export async function reviewPackageUpdate(path, { root = process.cwd(), accept, 
     if (accept !== undefined && accept !== review.review_digest) throw packageError('PackageReviewChanged', 'package or workspace changed; review the update again');
     if (accept !== undefined) return { ...await updatePackage(source, { root, name: checked.package, reviewDigest: accept, 'allow-downgrade': options['allow-downgrade'] }), review };
     return { ...review, command: 'package update', status: 'review_required', exitCode: 0,
-      notes: [`Review ${review.review_digest}`, ...(review.direction === 'downgrade' ? ['Older code selected explicitly. This does not undo external effects or restore execution data. Consumer governance remains in force.'] : []), ...review.handlers.map(h => `Handler changed: ${h.tool} (${h.before?.digest ?? 'absent'} -> ${h.after?.digest ?? 'absent'})`),
-        ...review.contract_changes.flatMap(change => ['required_secrets', 'required_capabilities', 'approval_policy', 'recommended_effect', 'configuration_schema']
-          .filter(key => JSON.stringify(change.before?.[key]) !== JSON.stringify(change.after?.[key]))
-          .map(key => `${change.tool} ${key}: ${JSON.stringify(change.before?.[key] ?? null)} -> ${JSON.stringify(change.after?.[key] ?? null)}`)),
-        'Inspect contracts and dependencies with --json. Apply this exact review using --accept <review_digest>. Execution permissions still require application review.'] };
+      notes: packageLocale(options.lang) === 'fr' ? [`Revue ${review.review_digest}`,
+        ...(review.direction === 'downgrade' ? ['Une version antérieure est sélectionnée explicitement. Les effets externes et les données d’exécution ne sont pas restaurés. La gouvernance du consommateur reste active.'] : []),
+        'Relisez les contrats et dépendances. Confirmez cette revue exacte avec --accept <review_digest>. Les permissions d’exécution restent à revoir par l’application.']
+        : [`Review ${review.review_digest}`, ...(review.direction === 'downgrade' ? ['Older code selected explicitly. This does not undo external effects or restore execution data. Consumer governance remains in force.'] : []),
+          'Review contracts and dependencies. Apply this exact review using --accept <review_digest>. Execution permissions still require application review.'] };
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }
 
@@ -526,7 +550,7 @@ async function installPackage(path, { root, ...options }, replacing, frozenCheck
     metadataChanged = true;
     renameSync(join(staging, "project.json"), configPath);
     settled = true;
-    return { status: "success", command: replacing ? "package update" : "package add", packages: checked.packages, notes: ["Installed and registered. Execution permissions remain in the consuming project."] };
+    return { status: "success", command: replacing ? "package update" : "package add", packages: checked.packages, notes: [packageLocale() === 'fr' ? 'Installé et enregistré. Les permissions d’exécution restent dans le projet consommateur.' : 'Installed and registered. Execution permissions remain in the consuming project.'] };
   } catch (error) {
     if (transaction) {
       if (metadataChanged) {

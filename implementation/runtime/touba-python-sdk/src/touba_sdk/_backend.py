@@ -10,7 +10,7 @@ import os
 import subprocess
 import threading
 from ._host_context import execution_context
-from .provider_errors import ToubaAgentDecisionProviderError, provider_diagnostic_details
+from .provider_errors import ToubaAgentDecisionProviderError, provider_diagnostic_details, provider_error_code
 from ._engine_command import resolve_engine_command
 
 MAX_BYTES = 8 * 1024 * 1024
@@ -142,7 +142,7 @@ class Backend:
                 result = context.run(asyncio.run, invoke())
             self.send({"callback_reply": message["callback"], "result": self.pack(result)})
         except BaseException as error:
-            code = error.code if isinstance(error, ToubaAgentDecisionProviderError) else "PythonHostUnavailable"
+            code = provider_error_code(error)
             try:
                 self.send({"callback_reply": message["callback"], "error": {"code": code,
                     "details": provider_diagnostic_details(getattr(error, "details", None))}})

@@ -7,8 +7,7 @@ import json
 from pathlib import Path
 import sys
 import threading
-import ssl
-from .provider_errors import ToubaAgentDecisionProviderError, provider_diagnostic_details
+from .provider_errors import ToubaAgentDecisionProviderError, provider_diagnostic_details, provider_error_code
 from ._host_context import execution_context
 
 MAX_BYTES = 8 * 1024 * 1024
@@ -84,11 +83,7 @@ def main():
         except BaseException as error:
             from .handlers import _diagnostic
             _diagnostic(error)
-            code = error.code if isinstance(error, ToubaAgentDecisionProviderError) else (
-                "PythonHostTlsFailed" if isinstance(error, ssl.SSLError) else
-                "PythonHostTimeout" if isinstance(error, TimeoutError) else
-                "PythonHostTransportFailed" if isinstance(error, (ConnectionError, OSError)) else
-                "PythonHostCallbackFailed")
+            code = provider_error_code(error)
             send({"protocol": "touba-python-host-v1", "id": request_id, "error": {"code": code,
                 "details": provider_diagnostic_details(getattr(error, "details", None))}})
         finally:

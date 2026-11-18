@@ -46,7 +46,20 @@ test('remote indexes require explicit trust, valid signatures, origin and freshn
   token = make(replacement.privateKey, 'second', { revision: 2 });
   assert.equal((await readSignedRegistry(url, file)).revision, 2);
   token = make(replacement.privateKey, 'second');
+  await assert.rejects(readSignedRegistry(url, file), error => {
+    assert.equal(error.code, 'RegistryRollbackRefused');
+    assert.match(error.message, /received signed revision 1; last accepted revision 2/);
+    assert.match(error.message, /same trust file/);
+    assert.match(error.message, /do not delete the trust state/);
+    assert.ok(!error.message.includes(file));
+    assert.ok(!error.message.includes(registry));
+    return true;
+  });
+  // A refused older response must leave continuity unchanged. A new read is
+  // explicit, and succeeds only if the response passes all original checks.
   await assert.rejects(readSignedRegistry(url, file), { code: 'RegistryRollbackRefused' });
+  token = make(replacement.privateKey, 'second', { revision: 2 });
+  assert.equal((await readSignedRegistry(url, file)).revision, 2);
   token = make(replacement.privateKey, 'second', { revision: 2, index: { ...index, unexpected: true } });
   await assert.rejects(readSignedRegistry(url, file), { code: 'RegistryRevisionConflict' });
   for (const revision of [undefined, null, 0, -1, 1.5, '3', Number.MAX_SAFE_INTEGER + 1]) {
