@@ -33,7 +33,7 @@ test('handwritten manifests reject confusable names and invisible metadata direc
   for (const field of ['description', 'publisher', 'license']) {
     assert.throws(() => validatePackageDocument({ ...document, [field]: 'text\u202eexe.txt' }), { code: 'PackageMetadataInvalid' });
   }
-  validatePackageDocument({ ...document, name: 'example-team.http-client', description: 'عربي Français' });
+  validatePackageDocument({ ...document, name: 'example-team.http-client', exports: { skills: ['skill:example_team.http_client/Echo'] }, description: 'عربي Français' });
 });
 
 test('a different package cannot claim installed exported modules; failed add leaves bytes intact', async t => {
@@ -43,7 +43,7 @@ test('a different package cannot claim installed exported modules; failed add le
   const impostor = join(root, 'impostor');
   cpSync(pkg, impostor, { recursive: true });
   manifest(impostor, doc => { doc.name = 'other.echo'; });
-  await assert.rejects(addPackage(impostor, { root: project }), { code: 'PackageModuleConflict' });
+  await assert.rejects(addPackage(impostor, { root: project }), { code: 'PackageModuleOwnershipMismatch' });
   assert.deepEqual(readFileSync(join(project, 'touba.project.json')), before[0]);
   assert.deepEqual(readFileSync(join(project, PACKAGE_LOCK)), before[1]);
   assert.equal(existsSync(join(project, 'packages/other.echo')), false);

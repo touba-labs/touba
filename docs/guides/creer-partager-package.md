@@ -113,8 +113,28 @@ Les anciens noms restent conservés dans les archives et les catalogues, sans
 renommage automatique. Une archive non canonique doit être republiée sous une
 identité conforme avant installation avec ce candidat.
 
-Deux packages différents ne peuvent pas exporter le même chemin de module dans
-une composition. Un conflit est signalé avant l'écriture de l'installation.
+Dans le candidat en préparation, chaque export appartient à la racine du
+package ou à un de ses sous-modules. Ainsi `acme.sql-effects` exporte depuis
+`acme.sql_effects` ou `acme.sql_effects.extra`, mais pas depuis
+`acme.sql_effects_other` ni `other.sql_effects`. La conversion remplace chaque
+tiret par un soulignement, en conservant les points.
+
+Cette règle couvre les huit catégories d'exports et chaque dépendance de
+l'archive. Pour exposer une opération d'une dépendance, déclarez une opération
+dans votre propre module qui appelle l'import typé. Le réexport direct d'une
+référence étrangère est refusé par `PackageModuleOwnershipMismatch`.
+
+Deux packages distincts ne peuvent pas revendiquer un même module, ni un parent
+et son sous-module dans une composition. `acme.tools` et `acme.toolbox` restent
+distincts. `PackageModuleConflict` signale le chevauchement avant l'écriture
+de l'installation. Ces règles de nommage complètent les vérifications
+d'intégrité ; elles n'authentifient pas l'auteur d'une archive locale et
+n'accordent aucun droit d'exécution.
+
+Une archive historique aux exports étrangers reste conservée telle quelle.
+Préparez une nouvelle version conforme et revoyez les imports des consommateurs,
+plutôt que de modifier une copie installée. La récupération d'une réservation
+dans un registre ne rend pas cette ancienne archive admissible à l'exécution.
 
 `packages/` est réservé aux dépendances, dans un projet auteur comme dans une
 application créée avec `touba init`. Un fichier, un lien ou un alias de casse

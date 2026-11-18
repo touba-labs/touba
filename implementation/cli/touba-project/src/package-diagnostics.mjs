@@ -18,7 +18,8 @@ export async function withPackageLocale(locale, callback) {
 
 const messages = {
   PackageNameInvalid: ['Utilisez des segments en minuscules, avec chiffres et tirets simples, séparés par des points. Les identités historiques ne sont pas renommées automatiquement.', 'Use lowercase segments with digits and single hyphens, separated by dots. Historical identities are not renamed automatically.'],
-  PackageModuleConflict: ['Deux packages revendiquent le même module. Choisissez un seul propriétaire de ce module avant l’installation.', 'Two packages claim the same module. Select one owner for that module before installation.'],
+  PackageModuleConflict: ['Les modules de deux packages se chevauchent. Choisissez un seul propriétaire avant l’installation.', 'Two packages claim overlapping modules. Select one owner before installation.'],
+  PackageModuleOwnershipMismatch: ['Un export est hors du module du package. Utilisez son nom canonique (tirets remplacés par des soulignements) ou un sous-module.', 'An export is outside the package module. Use its canonical name (hyphens replaced by underscores) or a submodule.'],
   PackageMetadataInvalid: ['Retirez les caractères invisibles qui changent le sens d’affichage des métadonnées.', 'Remove invisible direction controls from display metadata.'],
   PackagePathInvalid: ['Le chemin est invalide. Utilisez un chemin relatif portable, sans remontée de dossier ni nom réservé.', 'Invalid path. Use a portable relative path without parent traversal or reserved names.'],
   PackageArchiveInvalid: ['Archive invalide. Recréez-la avec touba package pack après vérification du package.', 'Invalid archive. Check the package, then recreate it with touba package pack.'],
@@ -76,6 +77,16 @@ const messages = {
   published_version_immutable: ['Cette version est déjà publiée. Préparez un nouveau numéro avec touba package version.', 'This version is already published. Prepare a new number with touba package version.'],
 };
 
+messages.package_module_conflict = messages.PackageModuleConflict;
+messages.package_module_ownership_mismatch = messages.PackageModuleOwnershipMismatch;
+
+function safeModuleClaims(value) {
+  return Array.isArray(value) && value.length <= 2 && value.every(row =>
+    typeof row?.package === 'string' && row.package.length <= 256 && PACKAGE_NAME.test(row.package)
+    && typeof row.module === 'string' && row.module.length <= 256 && /^[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+$/.test(row.module))
+    ? value.map(row => ({ package: row.package, module: row.module })) : [];
+}
+
 export function packageSessionNotice({ logout, persistent, read = false, minutes = 10 }, locale) {
   const fr = packageLocale(locale) === 'fr';
   if (logout) return fr ? 'Session du registre effacée.' : 'Registry session cleared.';
@@ -105,7 +116,9 @@ export function publicationRefusal(code, result, fallback) {
       && typeof item.version === 'string' && item.version.length <= 128 && exactPackageVersion(item.version)
       && ['not_available', 'revalidation_required', 'content_mismatch'].includes(item.reason))
     ? diagnostic.dependencies.map(({ name, version, reason }) => ({ name, version, reason })) : undefined;
-  return Object.assign(packageError(code, reason), { reason, diagnostics: details, dependencies, retryAfter: retrySeconds(result.headers?.get('retry-after')) });
+  const moduleClaims = reason === 'package_module_conflict' && diagnostic?.phase === 'ownership' && diagnostic.code === 'PackageModuleConflict'
+    ? safeModuleClaims(diagnostic.claims) : [];
+  return Object.assign(packageError(code, reason), { reason, diagnostics: details, dependencies, moduleClaims, retryAfter: retrySeconds(result.headers?.get('retry-after')) });
 }
 
 export function packageLocale(locale) {
@@ -128,5 +141,6 @@ export function packageDiagnostic(error, locale) {
   const conflicts = packageConflictDetails(error.constraints)?.map(row => `\n  ${row.blocking === true ? (fr ? '[bloquant] ' : '[blocking] ') : row.blocking === false ? '[compatible] ' : ''}${row.consumer}${row.origin ? ` (${(fr ? { selected: 'sélectionné', installed: 'installé', author: 'projet auteur' } : { selected: 'selected', installed: 'installed', author: 'author project' })[row.origin]})` : ''} → ${row.dependency}: ${row.constraint}; ${fr ? 'sélection' : 'selected'} ${row.version ?? (fr ? 'absente' : 'missing')}${row.current_version !== undefined ? `; ${fr ? 'actuelle' : 'current'} ${row.current_version ?? (fr ? 'absente' : 'missing')}` : ''}`).join('') ?? '';
   const replacement = error.code === 'PackageDraftReplaced' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(error.replacementId ?? '')
     ? ` --draft ${error.replacementId}` : '';
-  return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}`;
+  const claims = safeModuleClaims(error.moduleClaims).map(row => `\n  ${row.package}: ${row.module}`).join('');
+  return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}${claims}`;
 }

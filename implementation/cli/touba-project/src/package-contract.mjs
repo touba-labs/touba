@@ -33,17 +33,43 @@ function keys(value, allowed, at) {
 }
 export function packageDigest(bytes) { return `sha256:${createHash("sha256").update(bytes).digest("hex")}`; }
 
+export function packageModuleRoot(name) {
+  requireValue(typeof name === 'string' && CANONICAL_PACKAGE_NAME.test(name), 'PackageNameInvalid', 'package name must be canonical');
+  return name.replaceAll('-', '_');
+}
+
+export function assertPackageExportOwnership(name, module) {
+  const root = packageModuleRoot(name);
+  if (module !== root && !module.startsWith(root + '.')) {
+    throw Object.assign(packageError('PackageModuleOwnershipMismatch',
+      `module ${module} is outside package ${name}; exports must belong to ${root} or its submodules`),
+    { moduleClaims: [{ module, package: name }] });
+  }
+}
+
 export function assertPackageModuleOwnership(packages) {
   const owners = new Map();
+  function conflict(module, claimed, previous, name) {
+    throw Object.assign(packageError('PackageModuleConflict', 'modules ' + module + ' and ' + claimed + ' overlap between ' + previous + ' and ' + name),
+      { moduleClaims: [{ module: claimed, package: previous }, { module, package: name }] });
+  }
   for (const pkg of packages) {
     for (const ref of Object.values(pkg.document.exports).flat()) {
       const module = ref.slice(ref.indexOf(':') + 1, ref.indexOf('/'));
+      assertPackageExportOwnership(pkg.document.name, module);
       const previous = owners.get(module);
-      if (previous && previous !== pkg.document.name) {
-        throw packageError('PackageModuleConflict', 'module ' + module + ' is claimed by both ' + previous + ' and ' + pkg.document.name);
-      }
+      if (previous && previous !== pkg.document.name) conflict(module, module, previous, pkg.document.name);
       owners.set(module, pkg.document.name);
     }
+  }
+  // Lexical order puts parents before children. Avoid comparing every export
+  // against every other export when admitting large dependency sets.
+  const parents = [];
+  for (const module of [...owners.keys()].sort()) {
+    while (parents.length && !module.startsWith(parents.at(-1) + '.')) parents.pop();
+    const claimed = parents.at(-1);
+    if (claimed && owners.get(claimed) !== owners.get(module)) conflict(module, claimed, owners.get(claimed), owners.get(module));
+    parents.push(module);
   }
 }
 
@@ -119,6 +145,7 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
     for (const ref of refs) {
       const match = typeof ref === "string" && /^(\w+):([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+)\/([A-Za-z_][A-Za-z0-9_]*)$/.exec(ref);
       requireValue(match && match[1] === EXPORT_KINDS[kind], "PackageExportUnknownRef", `invalid ${kind} export ${ref}`);
+      assertPackageExportOwnership(document.name, match[2]);
       requireValue(!seen.has(ref), "PackageNameConflict", `duplicate export ${ref}`);
       seen.add(ref); exportCount++;
     }
