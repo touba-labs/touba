@@ -30,7 +30,8 @@
       "type": "object", "additionalProperties": false, "required": ["consumer", "dependency", "constraint", "version"],
       "properties": {
         "consumer": { "type": "string", "minLength": 1 }, "dependency": { "type": "string", "minLength": 1 },
-        "constraint": { "type": "string", "minLength": 1, "maxLength": 1024 }, "version": { "type": "string", "minLength": 1 }
+        "constraint": { "type": "string", "minLength": 1, "maxLength": 1024 }, "version": { "type": "string", "minLength": 1 },
+        "blocking": { "type": "boolean" }
       }
     } },
     "contract_changes": { "type": "array", "maxItems": 4096, "items": {

@@ -2,12 +2,49 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { registryTrustState, trustedKeys } from '../src/registry-trust-state.mjs';
-import { readSignedRegistry } from '../src/registry-trust.mjs';
+import { readSignedRegistry, readSignedRegistryStatus } from '../src/registry-trust.mjs';
+import { registryStatusCache } from '../src/registry-status-cache.mjs';
+
+test('installation reads refresh shared status without accepting an old network response or stale offline cache', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-shared-status-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const registry = 'https://registry.example.invalid', file = join(root, 'trust.json');
+  const key = generateKeyPairSync('ed25519');
+  writeFileSync(file, JSON.stringify({ schema_version: 'touba-registry-trust-v1', registry,
+    keys: [{ id: 'key', status: 'active', public_key: key.publicKey.export({ type: 'spki', format: 'pem' }) }] }));
+  const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const make = revision => {
+    const body = encode({ alg: 'EdDSA', typ: 'touba-registry+jwt', kid: 'key' }) + '.' + encode({
+      registry, revision, iat: now, exp: now + 3600,
+      index: { index_schema_version: 'touba-registry-index-v1', packages: [] },
+    });
+    return body + '.' + sign(null, Buffer.from(body), key.privateKey).toString('base64url');
+  };
+  const url = registry + '/index.json';
+  const old = make(27);
+  await readSignedRegistryStatus(url, file, async () => Buffer.from(old));
+  await readSignedRegistry(url, file, now, async () => Buffer.from(make(28)));
+  const noNetwork = async () => { assert.fail('offline status must not access the network'); };
+  assert.equal((await readSignedRegistryStatus(url, file, noNetwork, { offline: true })).revision, 28);
+  await assert.rejects(readSignedRegistry(url, file, now, async () => Buffer.from(old)),
+    { code: 'RegistryRollbackRefused' });
+  // Simulate a previously interrupted delivery that advanced continuity only.
+  const material = trustedKeys(JSON.parse(readFileSync(file, 'utf8')), registry);
+  registryTrustState(file + '.sqlite', registry).accept({ revision: 29,
+    digest: (await readSignedRegistryStatus(url, file, noNetwork, { offline: true })).digest,
+    signingKey: 'key', keyFingerprint: material[0].fingerprint });
+  await assert.rejects(readSignedRegistryStatus(url, file, noNetwork, { offline: true }),
+    { code: 'RegistryStatusCacheStale' });
+  assert.equal(registryStatusCache(file, registry).read().revision, 28);
+  await readSignedRegistry(url, file, now, async () => Buffer.from(make(29)));
+  assert.equal((await readSignedRegistryStatus(url, file, noNetwork, { offline: true })).revision, 29);
+});
 
 test('remote indexes require explicit trust, valid signatures, origin and freshness; keys rotate and revoke', async t => {
   const temporary = mkdtempSync(join(tmpdir(), 'touba-trust-'));

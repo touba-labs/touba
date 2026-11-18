@@ -46,7 +46,8 @@ test('explicit audit reports installed withdrawals and unknown versions without 
   for (const lang of ['fr', 'en']) {
     const text = (await packageCommand(['audit', '--root', consumer, '--registry', registry, '--lang', lang])).text;
     assert.match(text, lang === 'fr' ? /fixture.notice@1.0.0: validé/ : /fixture.notice@1.0.0: validated/);
-    assert.match(text, /\d{4}-\d{2}-\d{2}T/);
+    assert.doesNotMatch(text, /\d{4}-\d{2}-\d{2}T/);
+    assert.match(text, new RegExp(String(new Date().getFullYear())));
     assert.doesNotMatch(text, /checked_at/);
   }
   const withdrawal = { reason: 'Replaced after review', changed_at: '2026-11-14T12:00:00Z' };
@@ -176,9 +177,9 @@ test('offline cache rechecks signature, current revocation and the continuity re
   const f = signedFixture(t), options = { registry: f.registry, trust: f.trust };
   await registryPackageStates({ ...options, readBytes: async () => Buffer.from(f.token()) });
   const cache = registryStatusCache(f.trust, f.registry), original = cache.read();
-  // A newer signed revision encountered during installation invalidates the older status cache.
+  // Installation refreshes the shared cache after accepting the signed revision.
   await readSignedRegistry(f.registry + '/index.json', f.trust, undefined, async () => Buffer.from(f.token([entry], { revision: 2 })));
-  await assert.rejects(registryPackageStates({ ...options, offline: true }), { code: 'RegistryRollbackRefused' });
+  assert.equal((await registryPackageStates({ ...options, offline: true })).revision, 2);
   await registryPackageStates({ ...options, readBytes: async () => Buffer.from(f.token([entry], { revision: 2 })) });
   const latest = cache.read();
   cache.write(original);

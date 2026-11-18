@@ -7,8 +7,10 @@ export function packageConflictDetails(value) {
       || !version(row.version) || typeof row.constraint !== 'string' || !row.constraint.length || row.constraint.length > 1024
       || !/^[0-9A-Za-z.*+~^<>=| -]+$/.test(row.constraint)
       || (Object.hasOwn(row, 'current_version') && !version(row.current_version))
-      || (Object.hasOwn(row, 'origin') && !['author', 'selected', 'installed'].includes(row.origin)))) return undefined;
-  return value.map(({ consumer, dependency, constraint, version, current_version, origin }) => ({ consumer, dependency, constraint, version,
-    ...(current_version !== undefined ? { current_version } : {}), ...(origin !== undefined ? { origin } : {}) }))
+      || (Object.hasOwn(row, 'origin') && !['author', 'selected', 'installed'].includes(row.origin))
+      || (Object.hasOwn(row, 'blocking') && typeof row.blocking !== 'boolean'))) return undefined;
+  return value.map(({ consumer, dependency, constraint, version, current_version, origin, blocking }) => ({ consumer, dependency, constraint, version,
+    ...(current_version !== undefined ? { current_version } : {}), ...(origin !== undefined ? { origin } : {}),
+    ...(blocking !== undefined ? { blocking } : {}) }))
     .sort((a, b) => `${a.consumer}/${a.dependency}`.localeCompare(`${b.consumer}/${b.dependency}`));
 }

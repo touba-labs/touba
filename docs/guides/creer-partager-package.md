@@ -104,6 +104,18 @@ Le manifeste unique porte l'identité, la version, les exports et les exigences.
 Le module généré remplace les tirets par des underscores : identité de package
 et référence de module sont distinctes. Les imports existants ne sont pas réécrits.
 
+Le nom du package utilise des segments séparés par des points, chacun commençant
+par une lettre ASCII minuscule, suivie de lettres, chiffres et tirets simples.
+Par exemple `acme.sql-effects` est accepté ; les underscores et tirets répétés
+ne le sont pas. Cette admission s'applique aussi à un manifeste écrit à la main.
+Les métadonnées refusent les caractères invisibles qui inversent l'affichage.
+Les anciens noms restent conservés dans les archives et les catalogues, sans
+renommage automatique. Une archive non canonique doit être republiée sous une
+identité conforme avant installation avec ce candidat.
+
+Deux packages différents ne peuvent pas exporter le même chemin de module dans
+une composition. Un conflit est signalé avant l'écriture de l'installation.
+
 `packages/` est réservé aux dépendances, dans un projet auteur comme dans une
 application créée avec `touba init`. Un fichier, un lien ou un alias de casse
 `Packages` à cet emplacement est refusé, jamais remplacé. Le badge VS Code
@@ -384,6 +396,9 @@ pour les intégrations. Un conflit de composition indique les contraintes des
 packages qui imposent la sélection et de ceux qu'elle rend incompatibles, avec
 la version actuellement installée. L'origine distingue un package sélectionné,
 un consommateur déjà installé et le manifeste du projet auteur.
+Chaque contrainte précise `bloquante` ou `compatible` (`blocking` dans le format
+d'intégration) : la présence d'un consommateur dans le diagnostic ne signifie
+pas à elle seule qu'il empêche la mise à jour.
 
 Si une version antérieure est réellement souhaitée, constituez le fichier de
 sélection et relisez `touba package update-set selection.json --allow-downgrade`.
@@ -609,6 +624,10 @@ Un cache absent, altéré ou signé par une clé révoquée provoque un refus.
 Le cache `<fichier-de-confiance>.status.sqlite` est régénérable. Il est séparé
 de `<fichier-de-confiance>.sqlite`, qui conserve la continuité des clés et des
 révisions : ne supprimez pas ce dernier pour contourner un refus.
+Une consultation en ligne acceptée de l'index signé, y compris pendant une
+installation, actualise aussi le cache de statut. Si une ancienne copie du cache
+est en retard sur la continuité conservée, `RegistryStatusCacheStale` demande
+une nouvelle consultation en ligne ; aucune révision connue n'est effacée.
 
 Pour une URL distante, fournir les clés approuvées de l'opérateur avec
 `--trust registry-trust.json`. La CLI vérifie l'index signé, sa validité,

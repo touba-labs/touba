@@ -26,7 +26,7 @@ async function readRegistry(indexRef, trustPath, now, readBytes, { offline = fal
   // backups. A different trust location is an explicit new trust bootstrap.
   const continuity = registryTrustState(realpathSync(trustPath) + '.sqlite', registry);
   continuity.observe(material);
-  const cacheStore = cache ? registryStatusCache(trustPath, registry) : null;
+  const cacheStore = registryStatusCache(trustPath, registry);
   const cached = offline ? cacheStore.read() : null;
   const token = cached?.token ?? (await readBytes(new URL('index.jwt', registry + '/').href, 8 * 1024 * 1024)).toString('utf8');
   const parts = token.split('.');
@@ -56,9 +56,18 @@ async function readRegistry(indexRef, trustPath, now, readBytes, { offline = fal
   const bytes = Buffer.from(JSON.stringify(payload.index));
   if (bytes.length > 4 * 1024 * 1024) throw packageError('PackageTooLarge', 'registry index exceeds limit');
   const digest = 'sha256:' + createHash('sha256').update(bytes).digest('hex');
-  continuity.accept({ revision: payload.revision, digest, signingKey: header.kid,
-    keyFingerprint: material.find(key => key.id === header.kid).fingerprint });
-  if (cache && !offline) cacheStore.write({ registry, token, revision: payload.revision, issued_at: payload.iat, collected_at: now });
+  try {
+    continuity.accept({ revision: payload.revision, digest, signingKey: header.kid,
+      keyFingerprint: material.find(key => key.id === header.kid).fingerprint });
+  } catch (error) {
+    if (offline && error.code === 'RegistryRollbackRefused') {
+      throw packageError('RegistryStatusCacheStale', 'the local status cache is older than the accepted registry revision; run touba package audit online with the same trust file');
+    }
+    throw error;
+  }
+  // Every accepted network read advances the shared status cache, including
+  // installation reads. Continuity stays authoritative if a cache write fails.
+  if (!offline) cacheStore.write({ registry, token, revision: payload.revision, issued_at: payload.iat, collected_at: now });
   return { value: payload.index, ref: indexRef, bytes, signingKey: header.kid,
     revision: payload.revision, digest,
     issued_at: payload.iat, expires_at: payload.exp,

@@ -70,7 +70,7 @@ async function experiment(kind, behavior = 'healthy') {
     writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, dependencies: { '@touba/sdk': TOUBA_SDK_METADATA.version } }));
     const policy = kind === 'reconciliation_required' ? 'reconcile' : 'idempotency_key';
     const host = join(root, 'host.json');
-    writeFileSync(host, JSON.stringify({ bindings: { [tool]: { package_handler: 'example.effect_scenarios', grants: ['network'],
+    writeFileSync(host, JSON.stringify({ bindings: { [tool]: { package_handler: 'example.effect-scenarios', grants: ['network'],
       effect_contract: { kind: 'external_write', retry_mode: policy }, configuration: { endpoint: provider.endpoint, behavior } } } }));
     cli('prepare', '--root', consumer, '--entry', entry, '--mode', 'write', '--host-decisions', host);
     const airDocument = json(join(consumer, '.touba/build/dev/air/example/effect_scenarios.air.json'));

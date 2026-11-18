@@ -1,6 +1,6 @@
 {
   "package_schema_version": "touba-package-v1",
-  "name": "example.effect_scenarios",
+  "name": "example.effect-scenarios",
   "version": "0.1.0",
   "description": "Explicit effect scenarios against a private synthetic service.",
   "publisher": "Example",

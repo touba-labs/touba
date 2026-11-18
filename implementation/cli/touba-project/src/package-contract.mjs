@@ -12,6 +12,10 @@ export const PACKAGE_RUNTIME_VERSION = JSON.parse(readFileSync(new URL("../packa
 export const PACKAGE_LIMITS = Object.freeze({ files: 4096, fileBytes: 16 * 1024 * 1024, totalBytes: 64 * 1024 * 1024, manifestBytes: 1024 * 1024, depth: 32 });
 export const EXPORT_KINDS = Object.freeze({ types: "type", defines: "constant", functions: "function", tools: "tool", skills: "skill", agents: "agent", strategies: "strategy", memories: "memory" });
 export const PACKAGE_NAME = /^[a-z_][a-z0-9_-]*(\.[a-z_][a-z0-9_-]*)+$/;
+// Historical signed catalogue entries keep their exact identities, including
+// withdrawn versions. New executable manifests use one canonical spelling.
+export const CANONICAL_PACKAGE_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/;
+const DIRECTION_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 const FIELDS = new Set(["package_schema_version", "name", "version", "root", "touba", "exports", "description", "publisher", "license", "readme", "files", "dependencies", "contexts", "handlers", "hosts", "engines", "provenance", "contract_tests"]);
 const CONTEXT_ID = /^[a-z][a-z0-9-]*$/;
 const RESOURCE_KINDS = new Set(["procedure", "reference", "example", "template", "sample", "script", "fixture"]);
@@ -28,6 +32,20 @@ function keys(value, allowed, at) {
   for (const key of Object.keys(value)) requireValue(allowed.includes(key), "PackageSchemaMismatch", `${at}.${key} is not supported`);
 }
 export function packageDigest(bytes) { return `sha256:${createHash("sha256").update(bytes).digest("hex")}`; }
+
+export function assertPackageModuleOwnership(packages) {
+  const owners = new Map();
+  for (const pkg of packages) {
+    for (const ref of Object.values(pkg.document.exports).flat()) {
+      const module = ref.slice(ref.indexOf(':') + 1, ref.indexOf('/'));
+      const previous = owners.get(module);
+      if (previous && previous !== pkg.document.name) {
+        throw packageError('PackageModuleConflict', 'module ' + module + ' is claimed by both ' + previous + ' and ' + pkg.document.name);
+      }
+      owners.set(module, pkg.document.name);
+    }
+  }
+}
 
 export function packageHandlerConfiguration(root, handler) {
   if (!handler?.configuration) return undefined;
@@ -86,7 +104,7 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
     requireValue(FIELDS.has(key), "PackageSchemaMismatch", `unknown manifest field ${key}`);
   }
   requireValue([PACKAGE_SCHEMA, 'touba-package-v2'].includes(document.package_schema_version), "PackageSchemaMismatch", "expected touba-package-v1 or touba-package-v2");
-  requireValue(PACKAGE_NAME.test(document.name ?? ""), "PackageSchemaMismatch", "name must be a qualified lowercase identifier, e.g. acme.billing");
+  requireValue(typeof document.name === 'string' && document.name.length <= 256 && CANONICAL_PACKAGE_NAME.test(document.name), "PackageNameInvalid", "name must use lowercase letters, digits and single hyphens in dot-separated segments, e.g. acme.billing");
   requireValue(exactPackageVersion(document.version), "PackageSchemaMismatch", "version must be an exact SemVer version");
   requireValue(document.root === undefined || document.root === ".", "PackagePathInvalid", "package root is the manifest directory; root, when present, must be .");
   keys(document.touba, ["air_profile", "runtime_compatibility"], "touba");
@@ -179,6 +197,9 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
     requireValue(Object.values(document.provenance).every(text), "PackageSchemaMismatch", "provenance values must be nonempty text");
   }
   for (const field of ["description", "publisher", "license", "readme"]) if (document[field] !== undefined) requireValue(text(document[field]), "PackageSchemaMismatch", `${field} must be nonempty text`);
+  for (const field of ["description", "publisher", "license"]) if (document[field] !== undefined) {
+    requireValue(!DIRECTION_CONTROLS.test(document[field]), "PackageMetadataInvalid", "display metadata must not contain invisible direction controls");
+  }
   if (document.readme) packagePath(document.readme);
   return document;
 }

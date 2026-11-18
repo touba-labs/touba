@@ -4,13 +4,14 @@ import { packageLocale } from './package-diagnostics.mjs';
 
 export function stateAdoptionText(result, locale) {
   const fr = locale === 'fr';
+  const colon = fr ? ' : ' : ': ';
   const statuses = fr ? { preview: 'Aperçu, aucun état modifié', adopted: 'Adoption terminée', not_adopted: 'Adoption non appliquée' }
     : { preview: 'Preview, no state changed', adopted: 'Adoption completed', not_adopted: 'Adoption not applied' };
   return [statuses[result.status] ?? result.status,
-    ...(result.project_root ? [`${fr ? 'Projet' : 'Project'}: ${result.project_root}`, `${result.from_build_id} -> ${result.to_build_id}`,
-      `${fr ? 'Motif' : 'Reason'}: ${result.reason}`, `${result.files.length} ${fr ? 'fichiers' : 'files'}, ${result.bytes} ${fr ? 'octets' : 'bytes'}`,
-      `${fr ? 'Empreinte de revue' : 'Review digest'}: ${result.review_digest}`] : []),
-    ...(result.backup_id ? [`${fr ? 'Sauvegarde' : 'Backup'}: ${result.backup_id}`] : []),
+    ...(result.project_root ? [`${fr ? 'Projet' : 'Project'}${colon}${result.project_root}`, `${result.from_build_id} -> ${result.to_build_id}`,
+      `${fr ? 'Motif' : 'Reason'}${colon}${result.reason}`, `${result.files.length} ${fr ? 'fichiers' : 'files'}, ${result.bytes} ${fr ? 'octets' : 'bytes'}`,
+      `${fr ? 'Empreinte de revue' : 'Review digest'}${colon}${result.review_digest}`] : []),
+    ...(result.backup_id ? [`${fr ? 'Sauvegarde' : 'Backup'}${colon}${result.backup_id}`] : []),
     ...(result.status === 'preview' ? [fr ? 'Relisez cet aperçu, puis relancez la même commande avec --accept <empreinte>. Le projet doit rester au repos.' : 'Review this preview, then repeat the same command with --accept <digest>. The project must remain idle.'] : []),
   ].join('\n');
 }

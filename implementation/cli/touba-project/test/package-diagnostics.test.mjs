@@ -32,3 +32,18 @@ test('missing files and replaced drafts have safe bilingual guidance', () => {
     assert.doesNotMatch(packageDiagnostic(replaced, lang), /SECRET|--draft/);
   }
 });
+
+test('parser errors honor explicit locale and safe diagnostics distinguish blocking consumers', async()=>{
+  await assert.rejects(packageCommand(['list','--unknown','--lang','fr']),error=>{
+    assert.match(packageDiagnostic(error),/Option invalide/);return true;
+  });
+  for(const code of ['RegistryTrustInvalid','PackagePathInvalid','PackageArchiveInvalid']) {
+    assert.doesNotMatch(packageDiagnostic(Object.assign(new Error('ENOENT private-sentinel'),{code}),'fr'),/ENOENT|private-sentinel/);
+  }
+  const error={code:'PackageInUse',constraints:[
+    {consumer:'example.old',dependency:'example.base',constraint:'1.0.0',version:'2.0.0',blocking:true},
+    {consumer:'example.new',dependency:'example.base',constraint:'2.0.0',version:'2.0.0',blocking:false},
+  ]};
+  assert.match(packageDiagnostic(error,'fr'),/\[bloquant\] example.old/);
+  assert.match(packageDiagnostic(error,'fr'),/\[compatible\] example.new/);
+});

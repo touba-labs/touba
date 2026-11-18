@@ -33,7 +33,13 @@ export function configureRegistry(registry, { root = process.cwd(), trust } = {}
   registry = publicationUrl(registry);
   if (!trust || /^https?:/.test(trust)) throw packageError('RegistryTrustRequired', 'select a local key file verified through a trusted channel with --trust');
   trust = resolve(trust);
-  const keys = trustedKeys(regularJson(trust, 65536), registry);
+  let document;
+  try { document = regularJson(trust, 65536); }
+  catch (error) {
+    if (error.code === 'RegistryConfigurationInvalid') throw error;
+    throw packageError('RegistryTrustInvalid', 'select a readable bounded local registry trust file');
+  }
+  const keys = trustedKeys(document, registry);
   trust = realpathSync(trust);
   // Reuse the exact continuity store used for installation. Reconfiguration
   // does not reset index revisions or resurrect revoked keys.

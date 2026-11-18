@@ -138,8 +138,11 @@ async function create(target, options) {
 
 export async function packageCommand(args) {
   if (!args.length || args.includes("--help") || args[0] === "-h") return { text: PACKAGE_USAGE, exitCode: 0 };
-  const parsed = parse(args);
-  return withPackageLocale(parsed.options.lang, () => executePackageCommand(parsed));
+  const languageIndex = args.indexOf('--lang');
+  return withPackageLocale(languageIndex < 0 ? undefined : args[languageIndex + 1], () => {
+    const parsed = parse(args);
+    return executePackageCommand(parsed);
+  });
 }
 
 async function executePackageCommand({ action, target, options }) {

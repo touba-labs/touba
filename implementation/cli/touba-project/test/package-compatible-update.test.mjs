@@ -18,7 +18,7 @@ function edit(path, changes) {
   const manifest = join(path, 'touba.package.json');
   writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest)), ...changes }));
 }
-async function fixture(t) {
+async function fixture(t, leftConstraint = '>=1.0.0 <2.0.0') {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba-compatible-update-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const base = newPackage('fixture.shared', { root, version: '1.0.0', publisher: 'Fixture', license: 'MIT' }).path;
@@ -26,13 +26,25 @@ async function fixture(t) {
   const right = newPackage('fixture.right', { root, version: '1.0.0', publisher: 'Fixture', license: 'MIT' }).path;
   for (const side of [left, right]) {
     await addPackage(base, { root: side });
-    edit(side, { package_schema_version: 'touba-package-v2', dependencies: { 'fixture.shared': '>=1.0.0 <2.0.0' } });
+    edit(side, { package_schema_version: 'touba-package-v2', dependencies: { 'fixture.shared': side === left ? leftConstraint : '>=1.0.0 <2.0.0' } });
   }
   const app = join(root, 'app'); initProject({ root: app });
   for (const side of [left, right]) await addPackage(side, { root: app });
   const lock = () => verifyInstalledPackages(app, readPackageWorkspace(app).records);
   return { root, base, left, right, app, lock };
 }
+
+test('a conflict identifies the blocking consumer without blaming compatible consumers', async t => {
+  const f = await fixture(t, '>=1.0.0 <1.1.0'), before = f.lock();
+  edit(f.base, { version: '1.1.0' });
+  await assert.rejects(reviewPackageUpdate(f.base, { root: f.app }), error => {
+    assert.equal(error.code, 'PackageInUse');
+    assert.deepEqual(error.constraints.map(row => [row.consumer, row.blocking]).sort(),
+      [['fixture.left', true], ['fixture.right', false]]);
+    return true;
+  });
+  assert.deepEqual(f.lock(), before);
+});
 
 test('a shared diamond evolves after review without republishing its compatible consumers', async t => {
   const f = await fixture(t), old = f.lock();

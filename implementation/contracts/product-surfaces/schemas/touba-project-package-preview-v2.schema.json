@@ -140,6 +140,7 @@
           "version"
         ],
         "properties": {
+          "blocking": { "type": "boolean" },
           "consumer": {
             "type": "string",
             "minLength": 1

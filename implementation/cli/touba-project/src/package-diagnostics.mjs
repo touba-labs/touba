@@ -17,6 +17,13 @@ export async function withPackageLocale(locale, callback) {
 }
 
 const messages = {
+  PackageNameInvalid: ['Utilisez des segments en minuscules, avec chiffres et tirets simples, séparés par des points. Les identités historiques ne sont pas renommées automatiquement.', 'Use lowercase segments with digits and single hyphens, separated by dots. Historical identities are not renamed automatically.'],
+  PackageModuleConflict: ['Deux packages revendiquent le même module. Choisissez un seul propriétaire de ce module avant l’installation.', 'Two packages claim the same module. Select one owner for that module before installation.'],
+  PackageMetadataInvalid: ['Retirez les caractères invisibles qui changent le sens d’affichage des métadonnées.', 'Remove invisible direction controls from display metadata.'],
+  PackagePathInvalid: ['Le chemin est invalide. Utilisez un chemin relatif portable, sans remontée de dossier ni nom réservé.', 'Invalid path. Use a portable relative path without parent traversal or reserved names.'],
+  PackageArchiveInvalid: ['Archive invalide. Recréez-la avec touba package pack après vérification du package.', 'Invalid archive. Check the package, then recreate it with touba package pack.'],
+  RegistryTrustInvalid: ['Le fichier de confiance est absent, illisible ou invalide. Sélectionnez le fichier local vérifié avec --trust.', 'The trust file is missing, unreadable or invalid. Select the verified local file with --trust.'],
+  space_not_found: ['Cet espace est absent ou inaccessible à votre compte. Vérifiez son identifiant et vos appartenances.', 'This space is missing or inaccessible to your account. Check its identifier and your memberships.'],
   PackageVersionConflict: ['Cette version est incompatible avec la sélection. Le contenu d’une version existante reste immuable.', 'This version conflicts with the selection. An existing version’s content remains immutable.'],
   package_version_immutable: ['Le contenu d’une version existante est immuable. Choisissez une nouvelle version.', 'An existing version’s content is immutable. Choose a new version.'],
   package_downgrade_review_required: ['Une dépendance plus ancienne est sélectionnée. Relisez le lot avec touba package update-set --allow-downgrade, puis confirmez son empreinte avec --accept.', 'An older dependency is selected. Review the set with touba package update-set --allow-downgrade, then confirm its digest with --accept.'],
@@ -33,6 +40,7 @@ const messages = {
   RegistryStatusCacheMissing: ['Aucun état signé en cache. Lancez touba package audit avec accès au registre.', 'No signed status is cached. Run touba package audit with access to the registry.'],
   RegistryStatusCacheInvalid: ['Le cache est invalide. Rafraîchissez-le avec touba package audit ; conservez le fichier de continuité de confiance.', 'The cache is invalid. Refresh it with touba package audit; preserve the trust continuity file.'],
   RegistryStatusCacheBusy: ['Une autre consultation modifie le cache. Réessayez après sa fin.', 'Another consultation is updating the cache. Retry when it finishes.'],
+  RegistryStatusCacheStale: ['Le cache local est antérieur à la dernière révision vérifiée. Lancez touba package audit en ligne avec le même fichier de confiance.', 'The local cache predates the last verified revision. Run touba package audit online with the same trust file.'],
   RegistryStatusCacheUnavailable: ['La consultation hors ligne exige le cache d’un registre distant signé.', 'Offline status requires a cached signed remote registry.'],
   PackageReviewRequired: ['Prévisualisez le retour de version avec --allow-downgrade, puis acceptez son empreinte exacte avec --accept.', 'Preview the downgrade with --allow-downgrade, then accept its exact digest with --accept.'],
   PackageReviewChanged: ['Le package ou le projet a changé. Prévisualisez la mise à jour et acceptez la nouvelle empreinte.', 'The package or project changed. Preview the update and accept the new digest.'],
@@ -117,7 +125,7 @@ export function packageDiagnostic(error, locale) {
   const reasons = fr ? { not_available: 'version publiée indisponible', revalidation_required: 'revérification par l’exploitant requise', content_mismatch: 'contenu différent de la version publiée' }
     : { not_available: 'published version unavailable', revalidation_required: 'operator revalidation required', content_mismatch: 'content differs from the published version' };
   const dependencies = error.dependencies?.map(item => `\n  ${item.name}@${item.version}: ${reasons[item.reason]}`).join('') ?? '';
-  const conflicts = packageConflictDetails(error.constraints)?.map(row => `\n  ${row.consumer}${row.origin ? ` (${(fr ? { selected: 'sélectionné', installed: 'installé', author: 'projet auteur' } : { selected: 'selected', installed: 'installed', author: 'author project' })[row.origin]})` : ''} → ${row.dependency}: ${row.constraint}; ${fr ? 'sélection' : 'selected'} ${row.version ?? (fr ? 'absente' : 'missing')}${row.current_version !== undefined ? `; ${fr ? 'actuelle' : 'current'} ${row.current_version ?? (fr ? 'absente' : 'missing')}` : ''}`).join('') ?? '';
+  const conflicts = packageConflictDetails(error.constraints)?.map(row => `\n  ${row.blocking === true ? (fr ? '[bloquant] ' : '[blocking] ') : row.blocking === false ? '[compatible] ' : ''}${row.consumer}${row.origin ? ` (${(fr ? { selected: 'sélectionné', installed: 'installé', author: 'projet auteur' } : { selected: 'selected', installed: 'installed', author: 'author project' })[row.origin]})` : ''} → ${row.dependency}: ${row.constraint}; ${fr ? 'sélection' : 'selected'} ${row.version ?? (fr ? 'absente' : 'missing')}${row.current_version !== undefined ? `; ${fr ? 'actuelle' : 'current'} ${row.current_version ?? (fr ? 'absente' : 'missing')}` : ''}`).join('') ?? '';
   const replacement = error.code === 'PackageDraftReplaced' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(error.replacementId ?? '')
     ? ` --draft ${error.replacementId}` : '';
   return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}`;

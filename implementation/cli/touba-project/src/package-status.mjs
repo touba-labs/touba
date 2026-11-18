@@ -27,6 +27,8 @@ export async function cachedPackageDiagnostics(root) {
 
 export async function auditPackageStatus(options) {
   const fr = packageLocale(options.lang) === 'fr';
+  const date = value => new Intl.DateTimeFormat(fr ? 'fr-CA' : 'en-CA',
+    { dateStyle: 'medium', timeStyle: 'long' }).format(new Date(value));
   const root = findPackageWorkspace(options.root), workspace = readPackageWorkspace(root);
   const lock = verifyInstalledPackages(root, workspace.records);
   const configured = configuredRegistry(root);
@@ -43,10 +45,10 @@ export async function auditPackageStatus(options) {
     return { command: 'package audit', status: attention ? 'attention' : 'success', exitCode: attention ? 1 : 0,
       ...evidence, packages, notes: [
         ...(!remembered ? [fr ? 'Cette consultation ponctuelle ne configure pas la préparation. Sélectionnez le catalogue de confiance avec touba package registry <url> --trust <fichier-vérifié>.' : 'This one-off audit does not configure preparation. Use touba package registry <url> --trust <verified-file> explicitly to select the trusted catalogue for this workspace.'] : []),
-        ...(evidence.source === 'cache' ? [fr ? `Catalogue signé en cache, recueilli le ${evidence.collected_at}, expiration ${evidence.expires_at}. ${evidence.freshness === 'expired' ? 'Périmé : actualisez explicitement avant de vous fier à son état.' : 'Copie hors ligne, sans consultation actuelle.'}` : `Cached signed catalogue collected at ${evidence.collected_at}; expires at ${evidence.expires_at}. ${evidence.freshness === 'expired' ? 'Expired: refresh explicitly before relying on its status.' : 'Offline snapshot, not a live consultation.'}`] : []),
+        ...(evidence.source === 'cache' ? [fr ? `Catalogue signé en cache, recueilli le ${date(evidence.collected_at)}, expiration ${date(evidence.expires_at)}. ${evidence.freshness === 'expired' ? 'Périmé : actualisez explicitement avant de vous fier à son état.' : 'Copie hors ligne, sans consultation actuelle.'}` : `Cached signed catalogue collected at ${date(evidence.collected_at)}; expires at ${date(evidence.expires_at)}. ${evidence.freshness === 'expired' ? 'Expired: refresh explicitly before relying on its status.' : 'Offline snapshot, not a live consultation.'}`] : []),
         ...packages.filter(item => item.status !== 'validated').map(item =>
           `${item.name}@${item.version}: ${fr ? ({ yanked: 'retiré', unknown: 'inconnu' })[item.status] ?? item.status : item.status}${item.withdrawal ? ': ' + item.withdrawal.reason : ''}`),
-        fr ? `État de ces noms et versions dans le registre sélectionné au ${evidence.checked_at}. Un état inconnu ne garantit pas la sûreté.` : `Status of these names and versions in the selected registry at ${evidence.checked_at}. Unknown is not a safety clearance.`,
+        fr ? `État de ces noms et versions dans le registre sélectionné au ${date(evidence.checked_at)}. Un état inconnu ne garantit pas la sûreté.` : `Status of these names and versions in the selected registry at ${date(evidence.checked_at)}. Unknown is not a safety clearance.`,
         fr ? 'L’intégrité locale a été vérifiée séparément. Aucun package modifié et aucune exécution arrêtée.' : 'Local integrity was checked separately. No package was changed and no running execution was stopped.',
         fr ? 'Cette commande vérifie les retraits, pas une base de vulnérabilités. Relancez-la explicitement pour actualiser.' : 'This command checks withdrawal status, not a vulnerability database. Run it again explicitly to refresh.',
       ] };

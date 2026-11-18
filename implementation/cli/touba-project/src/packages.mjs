@@ -15,6 +15,7 @@ import { toolContract } from "./package-governance.mjs";
 import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
 import { selectPackageClosure } from './package-selection.mjs';
 import { packageLocale } from './package-diagnostics.mjs';
+import { assertPackageModuleOwnership } from './package-contract.mjs';
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
@@ -137,6 +138,7 @@ export async function checkPackage(path, options = {}) {
 }
 
 async function checkPackageClosure(closure, options = {}) {
+  assertPackageModuleOwnership(closure.packages);
   const { validatePackageSources } = await import("./project.mjs");
   let contracts;
   const diagnostics = await validatePackageSources(closure.packages, { ...options,
@@ -344,6 +346,7 @@ function candidateUpdateGraph(workspace, lock, checked, allowDowngrade) {
     } else if (!before) changes.push({ name: pkg.document.name, before: null, after: { version: pkg.document.version, digest: pkg.digest } });
     selected.set(pkg.document.name, pkg);
   }
+  assertPackageModuleOwnership(selected.values());
   const constraints = [], conflicts = [];
   for (const pkg of [...selected.values(), ...(workspace.author ? [{ document: workspace.document }] : [])]) {
     for (const [name, constraint] of Object.entries(pkg.document.dependencies ?? {})) {
@@ -351,8 +354,9 @@ function candidateUpdateGraph(workspace, lock, checked, allowDowngrade) {
       // An author's explicit direct exact pin follows its requested update;
       // ranges and every installed package's constraints remain authoritative.
       const directPin = workspace.author && pkg.document === workspace.document && (checked.updateRoots ?? [checked.package]).includes(name) && /^\d+\.\d+\.\d+(?:[-+].*)?$/.test(constraint);
-      if (!directPin && !satisfiesPackageConstraint(version, constraint, pkg.document.package_schema_version)) conflicts.push({ consumer: pkg.document.name, dependency: name, constraint, version: version ?? null });
-      constraints.push({ consumer: pkg.document.name, dependency: name, constraint: directPin ? version : constraint, version });
+      const blocking = !directPin && !satisfiesPackageConstraint(version, constraint, pkg.document.package_schema_version);
+      if (blocking) conflicts.push({ consumer: pkg.document.name, dependency: name, constraint, version: version ?? null });
+      constraints.push({ consumer: pkg.document.name, dependency: name, constraint: directPin ? version : constraint, version, blocking });
     }
   }
   const relatedConstraints = names => constraints.filter(row => names.has(row.dependency))
@@ -486,6 +490,12 @@ async function installPackage(path, { root, ...options }, replacing, frozenCheck
     if (!lstatSync(path).isDirectory() && !path.endsWith(PACKAGE_MANIFEST)) path = unpackPackage(path, join(staging, "extracted"));
     const checked = frozenCheck ?? await checkPackage(path, { ...options, projectRoot: root, inspectContracts: Boolean(options.reviewDigest) });
     const packages = checked.closure.packages;
+    const candidateNames = new Set(packages.map(pkg => pkg.document.name));
+    assertPackageModuleOwnership([
+      ...lock.packages.filter(pkg => !candidateNames.has(pkg.name)).map(pkg => readPackage(resolve(root, pkg.manifest))),
+      ...packages,
+      ...(workspace.author ? [{ document: workspace.document }] : []),
+    ]);
     if (!replacing && !frozenCheck && packages.some(pkg => lock.packages.some(entry => entry.name === pkg.document.name && entry.digest !== pkg.digest))) {
       return await reviewPackageInstallation(selectedSource, { root, ...options });
     }

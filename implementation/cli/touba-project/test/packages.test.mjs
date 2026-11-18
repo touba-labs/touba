@@ -24,6 +24,31 @@ function manifest(path, edit) { const file = join(path, PACKAGE_MANIFEST); const
 function author(root, name = "example.echo", options = {}) { const pkg = newPackage(name, { root, ...options }); manifest(pkg.path, m => { m.publisher = "Package test author"; m.license = "MIT"; }); return pkg.path; }
 function consumer(root) { const path = join(root, "consumer"); mkdirSync(path); initProject({ root: path }); return path; }
 
+test('handwritten manifests reject confusable names and invisible metadata direction controls', t => {
+  const root = workspace(t), pkg = author(root);
+  const document = readPackage(pkg).document;
+  for (const name of ['example_team.echo', 'example--team.echo', '_example.echo', 'example.echo-', 'example..echo']) {
+    assert.throws(() => validatePackageDocument({ ...document, name }), { code: 'PackageNameInvalid' });
+  }
+  for (const field of ['description', 'publisher', 'license']) {
+    assert.throws(() => validatePackageDocument({ ...document, [field]: 'text\u202eexe.txt' }), { code: 'PackageMetadataInvalid' });
+  }
+  validatePackageDocument({ ...document, name: 'example-team.http-client', description: 'عربي Français' });
+});
+
+test('a different package cannot claim installed exported modules; failed add leaves bytes intact', async t => {
+  const root = workspace(t), pkg = author(root), project = consumer(root);
+  await addPackage(pkg, { root: project });
+  const before = [readFileSync(join(project, 'touba.project.json')), readFileSync(join(project, PACKAGE_LOCK))];
+  const impostor = join(root, 'impostor');
+  cpSync(pkg, impostor, { recursive: true });
+  manifest(impostor, doc => { doc.name = 'other.echo'; });
+  await assert.rejects(addPackage(impostor, { root: project }), { code: 'PackageModuleConflict' });
+  assert.deepEqual(readFileSync(join(project, 'touba.project.json')), before[0]);
+  assert.deepEqual(readFileSync(join(project, PACKAGE_LOCK)), before[1]);
+  assert.equal(existsSync(join(project, 'packages/other.echo')), false);
+});
+
 test('prepare distinguishes absent inputs from invalid selected source and AIR', async t => {
   const root = workspace(t), project = consumer(root);
   const empty = await prepareProject({ root: project, mode: 'plan' });
