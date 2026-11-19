@@ -16,7 +16,7 @@ import { auditPackageStatus } from './package-status.mjs';
 import { packageReportText } from './package-text.mjs';
 import { addPackage, addRegistryPackage, reviewPackageUpdate, updateRegistryPackage, checkPackage, checkPackageArchive, packPackage, removePackage } from "./packages.mjs";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, packageError } from "./package-contract.mjs";
-import { findPackageWorkspace, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
+import { findPackageWorkspace, inspectInstalledPackages, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
 
 export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organization>] [--description <text>] [--publisher <text>] [--license <license>] [--version <version>] [--lang fr|en] [--context] [--yes] [--root <parent>]
        touba package registry <URL> --trust <verified-keys.json> [--root <workspace>]
@@ -186,13 +186,20 @@ async function executePackageCommand({ action, target, options }) {
   } else if (action === 'update') report = await (options.registry ? updateRegistryPackage : reviewPackageUpdate)(target, options);
   else if (action === "list" || (action === "check" && !target && !existsSync(join(findPackageWorkspace(options.root), PACKAGE_MANIFEST)))) {
     const root = findPackageWorkspace(options.root), workspace = readPackageWorkspace(root);
-    const lock = verifyInstalledPackages(root, workspace.records);
+    const inspected = action === 'list' ? inspectInstalledPackages(root, workspace.records) : null;
+    const lock = inspected?.lock ?? verifyInstalledPackages(root, workspace.records);
     const packages = [];
     for (const record of workspace.records) {
+      const installed = inspected?.packages.get(resolve(root, record.manifest));
+      if (installed) {
+        packages.push({ name: installed.document.name, version: installed.document.version, installed: true,
+          ...(installed.restrictions.length ? { restrictions: installed.restrictions } : {}) });
+        continue;
+      }
       const checked = await checkPackage(join(root, record.manifest), { ...options, projectRoot: root });
       packages.push({ name: checked.package, version: checked.version, installed: lock.packages.some(pkg => pkg.name === checked.package) });
     }
-    report = { status: "success", command: `package ${action}`, packages, notes: packages.length ? [] : [packageLocale() === 'fr' ? 'Aucun package enregistré.' : 'No registered packages.'] };
+    report = { status: packages.some(pkg => pkg.restrictions?.length) ? 'attention' : 'success', command: `package ${action}`, packages, notes: packages.length ? [] : [packageLocale() === 'fr' ? 'Aucun package enregistré.' : 'No registered packages.'] };
   } else report = await ({ check: target?.endsWith(".tar.gz") ? checkPackageArchive : checkPackage, test: testPackage, pack: packPackage, publish: /^https?:\/\//.test(options.registry ?? '') ? publishRemotePackage : publishPackage, add: options.registry ? addRegistryPackage : addPackage, remove: removePackage })[action](target, options);
   delete report.closure;
   const text = options.json ? JSON.stringify(report, null, 2) : packageReportText(report, packageLocale());

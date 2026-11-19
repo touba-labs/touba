@@ -136,6 +136,13 @@ Préparez une nouvelle version conforme et revoyez les imports des consommateurs
 plutôt que de modifier une copie installée. La récupération d'une réservation
 dans un registre ne rend pas cette ancienne archive admissible à l'exécution.
 
+Si elle est déjà installée, [le parcours de récupération](recuperer-package-historique.md)
+permet de la lister, d'en auditer le statut et de la retirer explicitement, sans
+assouplir l'intégrité ou les règles d'exécution. Les noms publics, descriptions
+et README refusent les contrôles d'affichage trompeurs (bidi, séparateurs cachés,
+contrôles de terminal). Les textes RTL ordinaires, accents et emoji restent
+acceptés ; les jointures Unicode ZWJ/ZWNJ ne sont pas interdites globalement.
+
 `packages/` est réservé aux dépendances, dans un projet auteur comme dans une
 application créée avec `touba init`. Un fichier, un lien ou un alias de casse
 `Packages` à cet emplacement est refusé, jamais remplacé. Le badge VS Code

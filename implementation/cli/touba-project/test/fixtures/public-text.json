@@ -1,0 +1,21 @@
+{
+  "allowed": [
+    "Équipe, contrôle et fiabilité",
+    "العربية",
+    "עברית",
+    "می‌روم",
+    "👩‍💻",
+    "é",
+    "Première ligne\nDeuxième ligne\tSuite\r\n"
+  ],
+  "refused": [
+    "avant‮après",
+    "avant​après",
+    "avant⁠après",
+    "avant­après",
+    "avant﻿après",
+    "avant\u001baprès",
+    "avantaprès",
+    "avant⁦après"
+  ]
+}

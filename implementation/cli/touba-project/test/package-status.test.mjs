@@ -45,7 +45,7 @@ test('explicit audit reports installed withdrawals and unknown versions without 
   assert.equal((await auditPackageStatus({ root: consumer, registry })).status, 'success');
   for (const lang of ['fr', 'en']) {
     const text = (await packageCommand(['audit', '--root', consumer, '--registry', registry, '--lang', lang])).text;
-    assert.match(text, lang === 'fr' ? /fixture.notice@1.0.0: validé/ : /fixture.notice@1.0.0: validated/);
+    assert.match(text, lang === 'fr' ? /fixture.notice@1.0.0 : validé/ : /fixture.notice@1.0.0: validated/);
     assert.doesNotMatch(text, /\d{4}-\d{2}-\d{2}T/);
     assert.match(text, new RegExp(String(new Date().getFullYear())));
     assert.doesNotMatch(text, /checked_at/);

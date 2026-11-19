@@ -26,6 +26,7 @@ import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, r
 import { normalizeHandlerConfiguration } from '../../../runtime/touba-handler-sdk/src/handler-configuration.mjs';
 import { PACKAGE_LOCK, assertPackageDirectory, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
 import { cachedPackageDiagnostics } from './package-status.mjs';
+import { packageDiagnostic } from './package-diagnostics.mjs';
 import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
 
 import {
@@ -513,6 +514,7 @@ export async function prepareProject(options = {}) {
   // A failed installed inventory is the primary cause. Compiling imports with
   // those packages removed would manufacture unrelated missing-symbol errors.
   if (diagnostics.some(item => item.code === 'PackageIntegrityMismatch'
+    || ['PackageNameInvalid', 'PackageModuleOwnershipMismatch', 'PackageMetadataInvalid'].includes(item.code)
     || item.code?.startsWith('PackageLock') || item.code === 'PackageInstallationIncomplete')) {
     return { workflow_version: PROJECT_MANIFEST_VERSION, command: 'prepare', mode, status: 'error', root,
       review_digest: packageDigest(Buffer.from(JSON.stringify({ mode, diagnostics }))),
@@ -1347,7 +1349,12 @@ export function compilerInputsForFile(sourcePath) {
 function collectPackageInputs({ root, projectPackageRecords, optionPackagePaths, diagnostics }) {
   const inputs = [];
   try { verifyInstalledPackages(root, projectPackageRecords); }
-  catch (error) { diagnostics.push(errorDiagnostic(error.code ?? "PackageLockInvalid", error.message)); return inputs; }
+  catch (error) {
+    const historical = ['PackageNameInvalid', 'PackageModuleOwnershipMismatch', 'PackageMetadataInvalid'].includes(error.code);
+    diagnostics.push(errorDiagnostic(error.code ?? "PackageLockInvalid", historical ? packageDiagnostic(error) : error.message,
+      historical && error.packageName ? { package_name: error.packageName } : {}));
+    return inputs;
+  }
   const loadedManifestPaths = new Set();
   const records = [
     ...projectPackageRecords.map((record, index) => ({

@@ -189,6 +189,12 @@ test('explicit downgrade cannot break another installed package exact dependency
   await addPackage(parent, { root: f.consumer });
   const before = f.lock();
   f.version('1.0.0');
+  await assert.rejects(packageCommand(['add', f.source, '--root', f.consumer, '--lang', 'fr']), error => {
+    assert.equal(error.code, 'PackageDependencyConflict');
+    assert.deepEqual(error.constraints, [{consumer:'fixture.parent',dependency:'fixture.update',constraint:'1.1.0',
+      current_version:'1.1.0',version:'1.0.0',origin:'installed',blocking:true}]);
+    return true;
+  });
   const options = { root: f.consumer, 'allow-downgrade': true };
   await assert.rejects(reviewPackageUpdate(f.source, options), { code: 'PackageInUse' });
   await assert.rejects(reviewPackageUpdate(f.source, { ...options, accept: 'sha256:' + '0'.repeat(64) }), { code: 'PackageInUse' });

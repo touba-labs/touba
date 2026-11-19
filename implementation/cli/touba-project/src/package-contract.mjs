@@ -15,7 +15,8 @@ export const PACKAGE_NAME = /^[a-z_][a-z0-9_-]*(\.[a-z_][a-z0-9_-]*)+$/;
 // Historical signed catalogue entries keep their exact identities, including
 // withdrawn versions. New executable manifests use one canonical spelling.
 export const CANONICAL_PACKAGE_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/;
-const DIRECTION_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+import { UNSAFE_PUBLIC_TEXT } from './public-text.mjs';
+const INSTALLED_INSPECTION = Symbol('installed-package-inspection');
 const FIELDS = new Set(["package_schema_version", "name", "version", "root", "touba", "exports", "description", "publisher", "license", "readme", "files", "dependencies", "contexts", "handlers", "hosts", "engines", "provenance", "contract_tests"]);
 const CONTEXT_ID = /^[a-z][a-z0-9-]*$/;
 const RESOURCE_KINDS = new Set(["procedure", "reference", "example", "template", "sample", "script", "fixture"]);
@@ -43,7 +44,7 @@ export function assertPackageExportOwnership(name, module) {
   if (module !== root && !module.startsWith(root + '.')) {
     throw Object.assign(packageError('PackageModuleOwnershipMismatch',
       `module ${module} is outside package ${name}; exports must belong to ${root} or its submodules`),
-    { moduleClaims: [{ module, package: name }] });
+    { packageName: name, moduleClaims: [{ module, package: name }] });
   }
 }
 
@@ -122,7 +123,7 @@ export function packageFile(root, path) {
   return current;
 }
 
-export function validatePackageDocument(document, { runtimeVersion, publishing = false } = {}) {
+export function validatePackageDocument(document, { runtimeVersion, publishing = false, [INSTALLED_INSPECTION]: inspecting = false } = {}) {
   requireValue(object(document), "PackageSchemaMismatch", "manifest must be an object");
   for (const key of Object.keys(document)) {
     requireValue(!["registry", "registries", "registry_url"].includes(key), "PackageRegistryForbidden", "a package cannot choose the consumer's registry");
@@ -130,7 +131,10 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
     requireValue(FIELDS.has(key), "PackageSchemaMismatch", `unknown manifest field ${key}`);
   }
   requireValue([PACKAGE_SCHEMA, 'touba-package-v2'].includes(document.package_schema_version), "PackageSchemaMismatch", "expected touba-package-v1 or touba-package-v2");
-  requireValue(typeof document.name === 'string' && document.name.length <= 256 && CANONICAL_PACKAGE_NAME.test(document.name), "PackageNameInvalid", "name must use lowercase letters, digits and single hyphens in dot-separated segments, e.g. acme.billing");
+  if (!(typeof document.name === 'string' && document.name.length <= 256 && (inspecting ? PACKAGE_NAME : CANONICAL_PACKAGE_NAME).test(document.name))) {
+    throw Object.assign(packageError('PackageNameInvalid', 'name must use lowercase letters, digits and single hyphens in dot-separated segments, e.g. acme.billing'),
+      { packageName: typeof document.name === 'string' && document.name.length <= 256 && PACKAGE_NAME.test(document.name) ? document.name : undefined });
+  }
   requireValue(exactPackageVersion(document.version), "PackageSchemaMismatch", "version must be an exact SemVer version");
   requireValue(document.root === undefined || document.root === ".", "PackagePathInvalid", "package root is the manifest directory; root, when present, must be .");
   keys(document.touba, ["air_profile", "runtime_compatibility"], "touba");
@@ -145,7 +149,7 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
     for (const ref of refs) {
       const match = typeof ref === "string" && /^(\w+):([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+)\/([A-Za-z_][A-Za-z0-9_]*)$/.exec(ref);
       requireValue(match && match[1] === EXPORT_KINDS[kind], "PackageExportUnknownRef", `invalid ${kind} export ${ref}`);
-      assertPackageExportOwnership(document.name, match[2]);
+      if (!inspecting) assertPackageExportOwnership(document.name, match[2]);
       requireValue(!seen.has(ref), "PackageNameConflict", `duplicate export ${ref}`);
       seen.add(ref); exportCount++;
     }
@@ -225,7 +229,7 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
   }
   for (const field of ["description", "publisher", "license", "readme"]) if (document[field] !== undefined) requireValue(text(document[field]), "PackageSchemaMismatch", `${field} must be nonempty text`);
   for (const field of ["description", "publisher", "license"]) if (document[field] !== undefined) {
-    requireValue(!DIRECTION_CONTROLS.test(document[field]), "PackageMetadataInvalid", "display metadata must not contain invisible direction controls");
+    if (!inspecting) requireValue(!UNSAFE_PUBLIC_TEXT.test(document[field]), "PackageMetadataInvalid", "display metadata contains hidden separators or control characters");
   }
   if (document.readme) packagePath(document.readme);
   return document;
@@ -280,7 +284,11 @@ export function readPackage(path, options = {}) {
   for (const handler of document.handlers ?? []) for (const key of ["path", "configuration", "documentation"]) if (handler[key]) include(handler[key]);
   for (const handler of document.handlers ?? []) packageHandlerConfiguration(root, handler);
   for (const host of document.hosts ?? []) include(host.path);
-  if (document.readme) include(document.readme);
+  if (document.readme) {
+    include(document.readme);
+    if (!options[INSTALLED_INSPECTION]) requireValue(!UNSAFE_PUBLIC_TEXT.test(readFileSync(packageFile(root, document.readme), 'utf8')),
+      'PackageMetadataInvalid', 'README contains hidden separators or control characters');
+  }
   for (const path of document.contract_tests ?? []) include(path);
   for (const refs of Object.values(document.exports)) for (const ref of refs) {
     const module = ref.slice(ref.indexOf(":") + 1, ref.indexOf("/"));
@@ -293,6 +301,27 @@ export function readPackage(path, options = {}) {
 export function assertPackageUnchanged(pkg) {
   const current = readPackage(pkg.root);
   requireValue(current.digest === pkg.digest, "PackageIntegrityMismatch", `package ${pkg.document.name} changed during the operation`);
+}
+
+// Read-only recovery of a locked installation, never an admission path. Callers
+// must still compare this inventory with the exact lock before presenting it or
+// removing files. The private option cannot be enabled by a manifest or CLI flag.
+export function inspectInstalledPackage(path) {
+  const pkg = readPackage(path, { [INSTALLED_INSPECTION]: true });
+  const restrictions = [];
+  for (const field of ['description', 'publisher', 'license']) if (UNSAFE_PUBLIC_TEXT.test(pkg.document[field] ?? '')) {
+    restrictions.push({ code: 'PackageMetadataInvalid', field });
+  }
+  if (pkg.document.readme && UNSAFE_PUBLIC_TEXT.test(readFileSync(packageFile(pkg.root, pkg.document.readme), 'utf8'))) {
+    restrictions.push({ code: 'PackageMetadataInvalid', field: 'readme' });
+  }
+  if (!CANONICAL_PACKAGE_NAME.test(pkg.document.name)) restrictions.push({ code: 'PackageNameInvalid', package: pkg.document.name });
+  const root = pkg.document.name.replaceAll('-', '_');
+  const modules = new Set(Object.values(pkg.document.exports).flat().map(ref => ref.slice(ref.indexOf(':') + 1, ref.indexOf('/'))));
+  for (const module of modules) if (module !== root && !module.startsWith(root + '.')) {
+    restrictions.push({ code: 'PackageModuleOwnershipMismatch', package: pkg.document.name, module });
+  }
+  return { ...pkg, restrictions };
 }
 
 export function isWithin(root, path) { const base = resolve(root); const target = resolve(path); return target === base || target.startsWith(base + sep); }

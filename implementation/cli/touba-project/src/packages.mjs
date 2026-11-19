@@ -7,7 +7,7 @@ import semver from "semver";
 export const isNewerPackageVersion = (next, current) => Boolean(semver.valid(next) && semver.valid(current) && semver.gt(next, current));
 export const packageRuntimeCompatibility = required => ({ runtime: runtimeVersion, required, compatible: semver.satisfies(runtimeVersion, required) });
 import { PACKAGE_LIMITS, PACKAGE_MANIFEST, PACKAGE_NAME, PACKAGE_RUNTIME_VERSION as runtimeVersion, assertPackageUnchanged, packageDigest, packageError, packageFile, packagePath, readPackage } from "./package-contract.mjs";
-import { PACKAGE_LOCK, PACKAGE_LOCK_SCHEMA, PACKAGE_TRANSACTION, assertAuthorWritable, assertOnlyInventory, assertPlainDirectory, assertPackageDirectory, findPackageWorkspace, packageDependencyRecords, readPackageWorkspace, setWorkspacePackages, verifyInstalledPackages } from "./package-store.mjs";
+import { PACKAGE_LOCK, PACKAGE_LOCK_SCHEMA, PACKAGE_TRANSACTION, assertAuthorWritable, assertOnlyInventory, assertPlainDirectory, assertPackageDirectory, findPackageWorkspace, inspectInstalledPackages, packageDependencyRecords, readPackageWorkspace, setWorkspacePackages, verifyInstalledPackages } from "./package-store.mjs";
 export { newPackage } from "./package-author.mjs";
 import { resolveRegistryPackage } from "./registry.mjs";
 import { createRegistryReader } from "./package-fetch.mjs";
@@ -417,7 +417,17 @@ export async function reviewPackageUpdates(paths, { root = process.cwd(), accept
     const workspace = readPackageWorkspace(root), lock = verifyInstalledPackages(root, workspace.records);
     const installed = new Map(lock.packages.map(entry => [entry.name, readPackage(resolve(root, entry.manifest))]));
     if (options.installing) for (const [name, pkg] of roots) {
-      if (installed.has(name) && installed.get(name).digest !== pkg.digest) throw packageError('PackageDependencyConflict', `different package already installed: ${name}; review an update explicitly`);
+      if (installed.has(name) && installed.get(name).digest !== pkg.digest) {
+        const consumers = [...installed.values(), ...(workspace.author ? [{ document: workspace.document }] : [])];
+        throw Object.assign(packageError('PackageDependencyConflict', `different package already installed: ${name}; review an update explicitly`), {
+          constraints: consumers.filter(item => Object.hasOwn(item.document.dependencies ?? {}, name)).map(item => ({
+            consumer: item.document.name, dependency: name, constraint: item.document.dependencies[name],
+            current_version: installed.get(name).document.version, version: pkg.document.version,
+            origin: item.document === workspace.document ? 'author' : 'installed',
+            blocking: !satisfiesPackageConstraint(pkg.document.version, item.document.dependencies[name], item.document.package_schema_version),
+          })),
+        });
+      }
     }
     const preferInstalled = options.preferInstalled ?? [...roots.keys()].some(name => !installed.has(name));
     const packages = selectPackageClosure(roots, checks, installed, { preferInstalled });
@@ -584,11 +594,11 @@ export function removePackage(name, { root = process.cwd() } = {}) {
   root = findPackageWorkspace(root);
   const workspace = readPackageWorkspace(root);
   const { path: configPath, bytes: configBytes, document: config, records } = workspace;
-  const lock = verifyInstalledPackages(root, records);
+  const { lock, packages: inspected } = inspectInstalledPackages(root, records);
   const entry = lock.packages.find(item => item.name === name);
   if (!entry) throw packageError("PackageNotInstalled", `${name} is not an installed package`);
   for (const record of records) {
-    const pkg = readPackage(resolve(root, record.manifest));
+    const pkg = inspected.get(resolve(root, record.manifest)) ?? readPackage(resolve(root, record.manifest));
     if (pkg.document.name !== name && Object.hasOwn(pkg.document.dependencies ?? {}, name)) throw packageError("PackageInUse", `${pkg.document.name} depends on ${name}`);
   }
   const lockBytes = readFileSync(join(root, PACKAGE_LOCK));
@@ -606,7 +616,7 @@ export function removePackage(name, { root = process.cwd() } = {}) {
     renameSync(join(staging, "lock.json"), join(root, PACKAGE_LOCK));
     renameSync(join(staging, "project.json"), configPath);
     settled = true;
-    return { status: "success", command: "package remove", package: name, notes: ["Removed installed package and its lock entry. Project source imports are unchanged; prepare again before running."] };
+    return { status: "success", command: "package remove", package: name, notes: [packageLocale() === 'fr' ? "Package installé et entrée du verrou retirés. Les imports sources restent inchangés ; préparez de nouveau le projet avant exécution." : "Removed installed package and its lock entry. Project source imports are unchanged; prepare again before running."] };
   } catch (error) {
     if (transaction && moved) {
       renameSync(saved, destination);

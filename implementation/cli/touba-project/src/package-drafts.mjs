@@ -6,7 +6,7 @@ import { PACKAGE_LIMITS, PACKAGE_NAME, exactPackageVersion, packageDigest, packa
 import { assertAuthorWritable, assertPlainDirectory, findPackageWorkspace } from './package-store.mjs';
 import { checkPackageArchive, packPackage, unpackPackage } from './packages.mjs';
 import { automationIdentity, automationDescriptor, automationRequestId } from './package-automation.mjs';
-import { publicationRefusal } from './package-diagnostics.mjs';
+import { packageLocale, publicationRefusal } from './package-diagnostics.mjs';
 import { acquireDraftLock } from './package-draft-lock.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -78,6 +78,7 @@ const requestOptions = (token, signal, milliseconds = 15000) => ({
 const reviewUrl = (registry, row) => new URL(`/cloud/library?draft=${row.id}`, registry).href;
 
 export async function checkoutPackageDraft(id, options = {}) {
+  const fr = packageLocale(options.lang) === 'fr';
   draftId(id);
   const registry = publicationUrl(options.registry);
   // Resolve the selected existing parent; never adopt a link below it.
@@ -113,7 +114,7 @@ export async function checkoutPackageDraft(id, options = {}) {
       for (const entry of readdirSync(source)) renameSync(join(source, entry), join(destination, entry));
       owned = false;
       return { status: 'success', command: 'package checkout', path: destination, package: row.name, version: row.version,
-        draft: row.id, registry, archive_digest: row.archive_digest, notes: ['Author project created. Review the source and tests, then use touba package submit. No author code was executed.'] };
+        draft: row.id, registry, archive_digest: row.archive_digest, notes: [fr ? 'Projet auteur créé. Relisez le code et les tests, puis utilisez touba package submit. Aucun code auteur exécuté.' : 'Author project created. Review the source and tests, then use touba package submit. No author code was executed.'] };
     } finally {
       await identity?.revoke();
       if (owned) rmSync(destination, { recursive: true, force: true });
@@ -123,6 +124,7 @@ export async function checkoutPackageDraft(id, options = {}) {
 }
 
 export async function submitPackageDraft(path, options = {}) {
+  const fr = packageLocale(options.lang) === 'fr';
   const presentationFrom = options['presentation-from'];
   if (presentationFrom !== undefined && (typeof presentationFrom !== 'string' || !UUID.test(presentationFrom) || options.automation || options.ci || options.draft)) {
     throw packageError('PackageOptionInvalid', 'presentation reuse requires a publication UUID and an interactive new-version submission');
@@ -169,7 +171,7 @@ export async function submitPackageDraft(path, options = {}) {
           saveLink(root, registry, previous);
           return { status: 'success', command: 'package submit', package: previous.name, version: previous.version,
             draft: previous.id, registry, archive_digest: previous.archive_digest, unchanged: true,
-            local_link_saved: true, preview: reviewUrl(registry, previous), notes: ['The same archive is already qualified in this private draft. No upload or publication.'] };
+            local_link_saved: true, preview: reviewUrl(registry, previous), notes: [fr ? 'Cette archive est déjà qualifiée dans ce brouillon privé. Aucun transfert ni publication.' : 'The same archive is already qualified in this private draft. No upload or publication.'] };
         }
         if (options.publicationSession && !options.automation) await identity.ensureFresh?.();
         const request = requestOptions(identity.token, signal, 210000);
@@ -191,11 +193,11 @@ export async function submitPackageDraft(path, options = {}) {
         return { status: 'success', command: 'package submit', package: row.name, version: row.version, draft: row.id,
           registry, archive_digest: row.archive_digest, preview, local_link_saved: saved,
           ...(replacement ? { replacement } : {}),
-          notes: [`Private draft verified. Preview and publish explicitly: ${preview}`,
-            ...(replacement ? [options.lang === 'fr'
+          notes: [fr ? `Brouillon privé vérifié. Prévisualisez-le puis publiez-le explicitement : ${preview}` : `Private draft verified. Preview and publish explicitly: ${preview}`,
+            ...(replacement ? [fr
               ? `Brouillon remplacé : ${replacement.previous_preview} → ${preview}. Utilisez le nouveau lien.`
               : `Draft replaced: ${replacement.previous_preview} → ${preview}. Use the new link.`] : []),
-            ...(!saved ? [`Local draft link was not saved. Resume with --draft ${row.id} --registry ${registry}.`] : [])] };
+            ...(!saved ? [fr ? `Le lien local du brouillon n’a pas été enregistré. Reprenez avec --draft ${row.id} --registry ${registry}.` : `Local draft link was not saved. Resume with --draft ${row.id} --registry ${registry}.`] : [])] };
       } finally { if (!options.publicationSession || options.automation) await identity?.revoke(); }
     });
   } finally { try { if (temporary) rmSync(temporary, { recursive: true, force: true }); } finally { releaseLock(); } }

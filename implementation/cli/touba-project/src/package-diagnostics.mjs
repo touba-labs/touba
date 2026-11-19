@@ -20,7 +20,7 @@ const messages = {
   PackageNameInvalid: ['Utilisez des segments en minuscules, avec chiffres et tirets simples, séparés par des points. Les identités historiques ne sont pas renommées automatiquement.', 'Use lowercase segments with digits and single hyphens, separated by dots. Historical identities are not renamed automatically.'],
   PackageModuleConflict: ['Les modules de deux packages se chevauchent. Choisissez un seul propriétaire avant l’installation.', 'Two packages claim overlapping modules. Select one owner before installation.'],
   PackageModuleOwnershipMismatch: ['Un export est hors du module du package. Utilisez son nom canonique (tirets remplacés par des soulignements) ou un sous-module.', 'An export is outside the package module. Use its canonical name (hyphens replaced by underscores) or a submodule.'],
-  PackageMetadataInvalid: ['Retirez les caractères invisibles qui changent le sens d’affichage des métadonnées.', 'Remove invisible direction controls from display metadata.'],
+  PackageMetadataInvalid: ['Retirez les caractères de contrôle et les séparateurs invisibles des métadonnées et du README.', 'Remove control characters and hidden separators from metadata and the README.'],
   PackagePathInvalid: ['Le chemin est invalide. Utilisez un chemin relatif portable, sans remontée de dossier ni nom réservé.', 'Invalid path. Use a portable relative path without parent traversal or reserved names.'],
   PackageArchiveInvalid: ['Archive invalide. Recréez-la avec touba package pack après vérification du package.', 'Invalid archive. Check the package, then recreate it with touba package pack.'],
   RegistryTrustInvalid: ['Le fichier de confiance est absent, illisible ou invalide. Sélectionnez le fichier local vérifié avec --trust.', 'The trust file is missing, unreadable or invalid. Select the verified local file with --trust.'],
@@ -43,6 +43,7 @@ const messages = {
   RegistryStatusCacheBusy: ['Une autre consultation modifie le cache. Réessayez après sa fin.', 'Another consultation is updating the cache. Retry when it finishes.'],
   RegistryStatusCacheStale: ['Le cache local est antérieur à la dernière révision vérifiée. Lancez touba package audit en ligne avec le même fichier de confiance.', 'The local cache predates the last verified revision. Run touba package audit online with the same trust file.'],
   RegistryStatusCacheUnavailable: ['La consultation hors ligne exige le cache d’un registre distant signé.', 'Offline status requires a cached signed remote registry.'],
+  RegistryRollbackRefused: ['Le catalogue reçu est antérieur à la dernière révision vérifiée. Réessayez auprès du registre ; conservez le fichier de continuité de confiance.', 'The received catalog predates the last verified revision. Retry with the registry; preserve the trust continuity file.'],
   PackageReviewRequired: ['Prévisualisez le retour de version avec --allow-downgrade, puis acceptez son empreinte exacte avec --accept.', 'Preview the downgrade with --allow-downgrade, then accept its exact digest with --accept.'],
   PackageReviewChanged: ['Le package ou le projet a changé. Prévisualisez la mise à jour et acceptez la nouvelle empreinte.', 'The package or project changed. Preview the update and accept the new digest.'],
   RegistryPackageYanked: ['Cette version a été retirée. Choisissez une version disponible dans le catalogue.', 'This version was withdrawn. Choose an available version in the catalog.'],
@@ -77,7 +78,7 @@ const messages = {
   published_version_immutable: ['Cette version est déjà publiée. Préparez un nouveau numéro avec touba package version.', 'This version is already published. Prepare a new number with touba package version.'],
 };
 
-messages.package_module_conflict = messages.PackageModuleConflict;
+messages.package_module_conflict = ['Ce module est déjà réservé par un autre package publié. Demandez une revue de propriété au registre ; aucune installation locale ne libère cette réservation.', 'This module is already reserved by another published package. Request an ownership review from the registry; a local installation cannot release that claim.'];
 messages.package_module_ownership_mismatch = messages.PackageModuleOwnershipMismatch;
 
 function safeModuleClaims(value) {
@@ -128,7 +129,8 @@ export function packageLocale(locale) {
 
 export function packageDiagnostic(error, locale) {
   const fr = packageLocale(locale ?? error.packageLocale) === 'fr';
-  const message = messages[error.reason] ?? messages[error.code];
+  const underlying = error.reason === 'package_validation_failed' ? error.diagnostics?.[0]?.code : undefined;
+  const message = messages[underlying] ?? messages[error.reason] ?? messages[error.code];
   if (!message) return error instanceof Error ? error.message : String(error);
   const delay = Number.isSafeInteger(error.retryAfter) && error.retryAfter >= 0
     ? (fr ? ` Réessayez dans ${error.retryAfter} s.` : ` Retry in ${error.retryAfter} s.`) : '';
@@ -142,5 +144,9 @@ export function packageDiagnostic(error, locale) {
   const replacement = error.code === 'PackageDraftReplaced' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(error.replacementId ?? '')
     ? ` --draft ${error.replacementId}` : '';
   const claims = safeModuleClaims(error.moduleClaims).map(row => `\n  ${row.package}: ${row.module}`).join('');
-  return `${error.code}: ${message[fr ? 0 : 1]}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}${claims}`;
+  const identity = typeof error.packageName === 'string' && error.packageName.length <= 256 && PACKAGE_NAME.test(error.packageName)
+    ? ` ${error.packageName}.` : '';
+  const recovery = ['PackageNameInvalid', 'PackageModuleOwnershipMismatch', 'PackageMetadataInvalid'].includes(error.code)
+    ? (fr ? ' Pour une installation historique, utilisez package list ou package audit, puis package remove avec son nom exact.' : ' For a historical installation, use package list or package audit, then package remove with its exact name.') : '';
+  return `${error.code}: ${message[fr ? 0 : 1]}${identity}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}${claims}${recovery}`;
 }

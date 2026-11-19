@@ -28,7 +28,14 @@ export function packageReportText(report, locale) {
     }
     for (const handler of plan.handlers ?? []) lines.push(`${fr ? 'Handler modifié' : 'Changed handler'}: ${handler.tool} (${handler.before?.digest ?? 'absent'} -> ${handler.after?.digest ?? 'absent'})`);
   }
-  for (const pkg of report.packages ?? []) lines.push(`${pkg.name}@${pkg.version}${pkg.status ? ': ' + state(pkg.status) : ''}`);
+  for (const pkg of report.packages ?? []) {
+    lines.push(`${pkg.name}@${pkg.version}${pkg.status ? (fr ? ' : ' : ': ') + state(pkg.status) : ''}`);
+    if (pkg.restrictions?.length) {
+      for (const restriction of pkg.restrictions) lines.push(`  ${restriction.code}${restriction.module ? ': ' + restriction.module : ''}`);
+      lines.push(fr ? `  Installation historique non admissible. Retirez-la avec touba package remove ${pkg.name}, puis revoyez les imports et préparez le projet.`
+        : `  Historical installation is not admissible. Use touba package remove ${pkg.name}, then review imports and prepare the project.`);
+    }
+  }
   lines.push(report.stdout ?? '', report.stderr ?? '');
   return lines.filter(Boolean).join('\n');
 }

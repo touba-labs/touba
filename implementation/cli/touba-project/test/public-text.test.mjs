@@ -1,0 +1,18 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { UNSAFE_PUBLIC_TEXT } from '../src/public-text.mjs';
+import { validatePackageDocument } from '../src/package-contract.mjs';
+const corpus = JSON.parse(readFileSync(new URL('./fixtures/public-text.json', import.meta.url)));
+const document = {package_schema_version:'touba-package-v1',name:'acme.tools',version:'1.0.0',
+  touba:{air_profile:'touba-air-json-canonical-v1',runtime_compatibility:'>=1.0.0 <2.0.0'},exports:{skills:['skill:acme.tools/Run']}};
+test('public text corpus preserves scripts and emoji and rejects deceptive controls', () => {
+  for (const value of corpus.allowed) {
+    assert.equal(UNSAFE_PUBLIC_TEXT.test(value), false);
+    assert.doesNotThrow(() => validatePackageDocument({...document,description:value}));
+  }
+  for (const value of corpus.refused) {
+    assert.equal(UNSAFE_PUBLIC_TEXT.test(value), true);
+    for (const field of ['description','publisher','license']) assert.throws(() => validatePackageDocument({...document,[field]:value}), {code:'PackageMetadataInvalid'});
+  }
+});

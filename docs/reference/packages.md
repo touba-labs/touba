@@ -378,6 +378,13 @@ n'est jamais supprimé automatiquement.
 
 ## Vérifications et diagnostics
 
+Les copies installées historiques peuvent être inspectées par `package list`
+et `package audit`, puis retirées par leur nom exact avec `package remove`.
+Les restrictions de nom, module ou présentation sont séparées du statut signé
+du registre. Cette lecture conserve inventaire et empreintes ; elle n'autorise
+pas leur compilation, admission ou exécution. Voir
+[la récupération bilingue](../guides/recuperer-package-historique.md).
+
 `touba package check --json` conserve les erreurs source sous forme d'objets
 dans `diagnostics` : `code`, `message`, `severity`, `source_path` et
 `source_ref` lorsqu'ils sont disponibles. Le code global est

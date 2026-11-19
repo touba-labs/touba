@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { packageCommand } from '../src/package-command.mjs';
-import { packageDiagnostic } from '../src/package-diagnostics.mjs';
+import { packageDiagnostic, publicationRefusal } from '../src/package-diagnostics.mjs';
 import { initProject } from '../src/project.mjs';
 
 test('French list and new messages retain stable machine status', async t => {
@@ -46,4 +46,15 @@ test('parser errors honor explicit locale and safe diagnostics distinguish block
   ]};
   assert.match(packageDiagnostic(error,'fr'),/\[bloquant\] example.old/);
   assert.match(packageDiagnostic(error,'fr'),/\[compatible\] example.new/);
+});
+
+test('rollback and metadata refusal have localized remedies without private output', () => {
+  const rollback = {code:'RegistryRollbackRefused'};
+  assert.match(packageDiagnostic(rollback,'fr'), /continuité de confiance/);
+  assert.match(packageDiagnostic(rollback,'en'), /trust continuity/);
+  const error = publicationRefusal('PackageDraftRefused', {data:{error:'package_validation_failed',
+    diagnostic:{phase:'inspection',code:'PackageMetadataInvalid',message:'PRIVATE_SENTINEL'}}}, 'refused');
+  assert.match(packageDiagnostic(error,'fr'), /README/);
+  assert.match(packageDiagnostic(error,'en'), /README/);
+  assert.doesNotMatch(packageDiagnostic(error,'fr'), /PRIVATE_SENTINEL/);
 });

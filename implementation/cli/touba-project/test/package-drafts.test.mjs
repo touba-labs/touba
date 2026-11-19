@@ -209,7 +209,9 @@ test('submit links new draft, resubmits using fresh editorial revision and refus
     current.archive_digest = packageDigest(opts.body);
     return json(current, 201);
   });
-  const first = await submitPackageDraft(f.author, options);
+  const first = await submitPackageDraft(f.author, { ...options, lang: 'fr' });
+  assert.match(first.notes[0], /^Brouillon privé vérifié/);
+  assert.doesNotMatch(first.notes.join(' '), /Private draft/);
   assert.equal(first.draft, id); assert.equal(first.local_link_saved, true);
   assert.equal(first.replacement, undefined);
   current.revision = 4; // A Cloud presentation edit does not invalidate local source.
