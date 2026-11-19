@@ -1,5 +1,21 @@
 # Référence des packages
 
+## Texte public des packages
+
+Les métadonnées de présentation et le README refusent les caractères de
+contrôle, les changements invisibles de direction, les fillers invisibles et
+les caractères Unicode TAG qui peuvent dissimuler du texte. Les séparateurs
+U+2028 et U+2029 sont également refusés : utilisez les retours à la ligne
+ordinaires dans les descriptions et le Markdown. Les scripts RTL ordinaires,
+les accents, les jointures ZWJ/ZWNJ et les emoji courants restent utilisables.
+Les emoji construits avec des caractères TAG sont concernés par ce refus.
+
+Corrigez le texte du projet auteur puis recréez son archive. Une archive déjà
+publiée conserve ses octets et son empreinte. Pour une ancienne installation
+refusée, utilisez le [parcours de récupération](../guides/recuperer-package-historique.md).
+Cette règle de présentation ne remplace ni la vérification d'intégrité ni les
+contrôles de gouvernance ; elle ne certifie pas qu'un texte visible est fiable.
+
 ## Modules hôtes partagés
 
 Un package peut distribuer un adaptateur d'attestation ou de décision dans

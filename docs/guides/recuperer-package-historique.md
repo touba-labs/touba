@@ -27,6 +27,11 @@ Le retrait est explicite et conserve les autres packages. Un package encore
 requis par une dépendance doit d'abord être retiré ou remplacé avec celle-ci,
 selon un plan revu. Les imports du programme ne sont pas réécrits : adaptez-les,
 installez une version conforme puis revoyez la préparation avant exécution.
+Relisez aussi les points d'entrée et les contrats de packages dans
+`touba.project.json` : le retrait ne supprime pas ces décisions d'application.
+Après correction des références et revue du plan, utilisez
+`touba prepare --mode write`, puis `touba prepare --mode check` pour un contrôle
+bloquant. Le mode `plan` produit un aperçu ; lisez son statut et ses diagnostics.
 Le retrait ne rejoue aucun effet et ne nettoie pas les données d'exécution.
 
 Si l'intégrité, le schéma, un lien ou une transaction interrompue est refusé,
@@ -47,6 +52,11 @@ catalogue verification and trust continuity remain required. Historical naming,
 export or presentation restrictions are reported separately from registry status;
 they do not authorize installation or execution. Dependent packages prevent
 removal until an explicit replacement or removal plan resolves their references.
+Also review entry points and package contracts in `touba.project.json`;
+removal preserves these application decisions. After correcting references and
+reviewing the plan, run `touba prepare --mode write`, then
+`touba prepare --mode check` for a blocking check. The plan is a preview:
+read its status and diagnostics.
 
 On an integrity, unknown-schema, link or interrupted-transaction error, preserve
 the evidence and restore a verified complete backup or request a targeted review.

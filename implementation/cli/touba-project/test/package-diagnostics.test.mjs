@@ -58,3 +58,23 @@ test('rollback and metadata refusal have localized remedies without private outp
   assert.match(packageDiagnostic(error,'en'), /README/);
   assert.doesNotMatch(packageDiagnostic(error,'fr'), /PRIVATE_SENTINEL/);
 });
+
+test('recovery advice belongs only to installed packages and missing roots have stable diagnostics', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'touba-package-diagnostic-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for(const lang of ['fr', 'en']) {
+    for(const code of ['PackageNotInstalled','PackageIntegrityMismatch','PackageSymlinkForbidden']) {
+      const rendered = packageDiagnostic(Object.assign(new Error('PRIVATE_SENTINEL'), {code}), lang);
+      assert.ok(rendered.startsWith(code + ': '));
+      assert.doesNotMatch(rendered, /PRIVATE_SENTINEL/);
+    }
+    const author = {code:'PackageMetadataInvalid'};
+    assert.doesNotMatch(packageDiagnostic(author,lang), /package remove/);
+    assert.match(packageDiagnostic({...author,installedPackageContext:true},lang), /package remove/);
+    await assert.rejects(packageCommand(['remove','example.tools','--root',join(root,'missing'),'--lang',lang]), error => {
+      assert.equal(error.code,'PackageProjectRequired');
+      assert.doesNotMatch(packageDiagnostic(error), /ENOENT|PRIVATE_SENTINEL|realpath/);
+      return true;
+    });
+  }
+});

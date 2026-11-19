@@ -27,7 +27,12 @@ export function assertPackageDirectory(root) {
 }
 
 export function findPackageWorkspace(start = process.cwd(), { author = false } = {}) {
-  let current = realpathSync(start);
+  let current;
+  try { current = realpathSync(start); }
+  catch (error) {
+    if (!['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code)) throw error;
+    throw packageError(author ? 'PackageAuthorRequired' : 'PackageProjectRequired', 'select an accessible existing project directory');
+  }
   if (!lstatSync(current).isDirectory()) current = dirname(current);
   for (;;) {
     if (existsSync(join(current, PACKAGE_MANIFEST))) return current;
@@ -156,7 +161,9 @@ function verifyInstalledInventory(root, records, read) {
     const entry = lock.packages.find(p => resolve(root, p.manifest) === manifest);
     if (!entry) throw packageError("PackageNotInstalled", `run touba package add ${relative(root, dirname(manifest))} to verify and register this package`);
     assertPlainDirectory(dirname(manifest));
-    const pkg = read(manifest);
+    let pkg;
+    try { pkg = read(manifest); }
+    catch (error) { error.installedPackageContext = true; throw error; }
     if (pkg.document.name !== entry.name || pkg.document.version !== entry.version || record.version !== entry.version || pkg.digest !== entry.digest || JSON.stringify(pkg.files) !== JSON.stringify(entry.files)) throw packageError("PackageIntegrityMismatch", `installed package ${entry.name} differs from its lock`);
     assertOnlyInventory(pkg);
     packages.set(manifest, pkg);

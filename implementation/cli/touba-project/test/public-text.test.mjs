@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { UNSAFE_PUBLIC_TEXT } from '../src/public-text.mjs';
 import { validatePackageDocument } from '../src/package-contract.mjs';
 const corpus = JSON.parse(readFileSync(new URL('./fixtures/public-text.json', import.meta.url)));
+for (const [first, last] of corpus.refused_ranges) for(let point=first;point<=last;point++) corpus.refused.push('before'+String.fromCodePoint(point)+'after');
 const document = {package_schema_version:'touba-package-v1',name:'acme.tools',version:'1.0.0',
   touba:{air_profile:'touba-air-json-canonical-v1',runtime_compatibility:'>=1.0.0 <2.0.0'},exports:{skills:['skill:acme.tools/Run']}};
 test('public text corpus preserves scripts and emoji and rejects deceptive controls', () => {

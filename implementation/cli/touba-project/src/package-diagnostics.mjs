@@ -17,6 +17,11 @@ export async function withPackageLocale(locale, callback) {
 }
 
 const messages = {
+  PackageNotInstalled: ['Ce package n’est pas installé dans le projet sélectionné. Vérifiez touba package list et le dossier --root.', 'This package is not installed in the selected project. Check touba package list and the --root directory.'],
+  PackageIntegrityMismatch: ['Les fichiers installés diffèrent du verrou. Conservez les preuves et restaurez une copie vérifiée ; ne supprimez pas le verrou pour contourner ce refus.', 'Installed files differ from the lock. Preserve evidence and restore a verified copy; do not delete the lock to bypass this refusal.'],
+  PackageSymlinkForbidden: ['Un lien est interdit dans les fichiers gérés. Conservez les preuves et restaurez une copie vérifiée sans lien.', 'A link is forbidden in managed files. Preserve evidence and restore a verified copy without links.'],
+  PackageProjectRequired: ['Le dossier sélectionné est absent ou ne contient pas de projet Touba valide. Vérifiez --root ou placez-vous dans le projet.', 'The selected directory is missing or contains no valid Touba project. Check --root or enter the project directory.'],
+  PackageAuthorRequired: ['Sélectionnez le dossier d’un projet auteur de package existant avec --root.', 'Select an existing package author project directory with --root.'],
   PackageNameInvalid: ['Utilisez des segments en minuscules, avec chiffres et tirets simples, séparés par des points. Les identités historiques ne sont pas renommées automatiquement.', 'Use lowercase segments with digits and single hyphens, separated by dots. Historical identities are not renamed automatically.'],
   PackageModuleConflict: ['Les modules de deux packages se chevauchent. Choisissez un seul propriétaire avant l’installation.', 'Two packages claim overlapping modules. Select one owner before installation.'],
   PackageModuleOwnershipMismatch: ['Un export est hors du module du package. Utilisez son nom canonique (tirets remplacés par des soulignements) ou un sous-module.', 'An export is outside the package module. Use its canonical name (hyphens replaced by underscores) or a submodule.'],
@@ -146,7 +151,7 @@ export function packageDiagnostic(error, locale) {
   const claims = safeModuleClaims(error.moduleClaims).map(row => `\n  ${row.package}: ${row.module}`).join('');
   const identity = typeof error.packageName === 'string' && error.packageName.length <= 256 && PACKAGE_NAME.test(error.packageName)
     ? ` ${error.packageName}.` : '';
-  const recovery = ['PackageNameInvalid', 'PackageModuleOwnershipMismatch', 'PackageMetadataInvalid'].includes(error.code)
+  const recovery = error.installedPackageContext === true && ['PackageNameInvalid', 'PackageModuleOwnershipMismatch', 'PackageMetadataInvalid'].includes(error.code)
     ? (fr ? ' Pour une installation historique, utilisez package list ou package audit, puis package remove avec son nom exact.' : ' For a historical installation, use package list or package audit, then package remove with its exact name.') : '';
   return `${error.code}: ${message[fr ? 0 : 1]}${identity}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}${claims}${recovery}`;
 }
