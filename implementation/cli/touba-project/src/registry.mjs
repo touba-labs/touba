@@ -55,11 +55,13 @@ export async function listRegistryPackages({ registry, trust, readBytes, query =
   const document = await readIndex(location.indexRef, trust, readBytes);
   validateIndex(document.value, document.ref);
   const entries = document.value.packages.filter(item => (includeWithdrawn || ['validated', 'deprecated'].includes(item.status))
-    && (exact ? item.package_ref === `pkg:${query}` : item.package_ref.toLowerCase().includes(query.trim().toLowerCase())))
-    .sort((a, b) => a.package_ref.localeCompare(b.package_ref) || semver.rcompare(a.version, b.version));
-  return { items: entries.slice(offset, offset + limit).map(item => ({ name: item.package_ref.slice(4), version: item.version, status: item.status,
+    && (exact ? item.package_ref === `pkg:${query}` : `${item.package_ref} ${item.summary ?? ''}`.toLowerCase().includes(query.trim().toLowerCase())))
+    .sort((a, b) => a.package_ref.localeCompare(b.package_ref) || Number(Boolean(semver.prerelease(a.version))) - Number(Boolean(semver.prerelease(b.version))) || semver.rcompare(a.version, b.version));
+  const selected = exact ? entries : entries.filter((item, index) => index === 0 || entries[index - 1].package_ref !== item.package_ref);
+  return { items: selected.slice(offset, offset + limit).map(item => ({ name: item.package_ref.slice(4), version: item.version, status: item.status,
+    prerelease: Boolean(semver.prerelease(item.version)), ...(item.summary !== undefined ? { description: registryNoticeText(item.summary) } : {}),
     ...(includeMetadataPath ? { metadata_path: item.metadata_path } : {}) })),
-    total: entries.length, next_offset: offset + limit < entries.length ? offset + limit : null,
+    total: selected.length, next_offset: offset + limit < selected.length ? offset + limit : null,
     revision: document.revision ?? null, index_digest: document.digest ?? digestBuffer(document.bytes),
     checked_at: new Date().toISOString(), source: location.publicIndexRef,
     verified_signature: Boolean(document.signingKey),
@@ -191,6 +193,7 @@ function validateIndex(index, ref) {
     requireString(entry.status, "status", ref, "RegistryIndexSchemaInvalid");
     requireString(entry.metadata_path, "metadata_path", ref, "RegistryIndexSchemaInvalid");
     requireDigest(entry.metadata_digest, "metadata_digest", ref, "RegistryIndexSchemaInvalid");
+    if (entry.summary !== undefined && (typeof entry.summary !== 'string' || entry.summary.length > 4000)) fail('RegistryIndexSchemaInvalid', 'summary must be a bounded string', ref);
     if (!PACKAGE_KINDS.has(entry.kind) || !STATUSES.has(entry.status)) {
       fail("RegistryIndexSchemaInvalid", "index package entry kind/status is invalid", ref);
     }

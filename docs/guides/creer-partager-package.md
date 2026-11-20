@@ -657,7 +657,9 @@ publiques revues. Les anciennes configurations locales dans `.touba/registry.jso
 restent lisibles. Une configuration partagée existante a priorité ; sa mise à
 jour demande de nouveau `--shared` ou une sélection explicite par commande.
 
-Ajoutez à `.gitignore` les états locaux associés au fichier de clés :
+`registry --shared` ajoute à `.gitignore` les chemins précis des états locaux
+associés au fichier de clés. `touba init` exclut aussi les fichiers SQLite et
+leurs journaux. Pour un ancien projet, vérifiez notamment :
 
 ```gitignore
 /registry-trust.json.sqlite*
@@ -670,6 +672,33 @@ jeton ni identifiant personnel n'entre dans la configuration partagée. Après
 un clone, chaque développeur vérifie la configuration et établit sa propre
 continuité. Un fichier de confiance d'un autre registre est signalé séparément
 d'un fichier mal formé.
+
+La session de lecture privée appartient à l'utilisateur du système, pas au
+projet. Après authentification, la CLI indique le compte utilisé, sans afficher
+de jeton. Pour changer de compte sur le même registre :
+
+```sh
+touba package logout --registry https://registry.example.org/registry --read
+touba package login --registry https://registry.example.org/registry --read
+```
+
+Un package absent et un package inaccessible peuvent produire le même refus,
+afin de préserver sa confidentialité. Vérifiez le compte et son appartenance
+à l'espace avant de réessayer. `--session-only` évite la conservation du jeton.
+
+`search` recherche les noms et descriptions signées, avec une ligne par package
+et une version stable en premier lorsqu'elle existe. `info` montre les versions,
+leurs descriptions et les préversions explicitement désignées. Un catalogue
+ancien sans descriptions reste utilisable, avec recherche dans les noms.
+`audit` signale une version stable plus récente sans l'installer ni affirmer
+sa compatibilité. Une mise à jour conserve sa revue de contrats et son verrou.
+
+Pour une dépendance d'auteur encore absente, commencez par installer une version
+exacte avec `add nom@version`, puis déclarez la plage compatible souhaitée.
+Si la plage a été déclarée avant l'installation et ne possède aucun verrou,
+retirez temporairement cette seule entrée, installez la version exacte puis
+remettez la plage. Conservez les autres dépendances et leurs verrous. Pour un
+package déjà installé à une autre version, utilisez `update` et sa revue.
 
 ### Restaurer un dossier de package absent
 

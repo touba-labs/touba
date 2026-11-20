@@ -33,6 +33,9 @@ export function packageReportText(report, locale) {
   }
   for (const pkg of report.packages ?? []) {
     lines.push(`${pkg.name}@${pkg.version}${pkg.status ? (fr ? ' : ' : ': ') + state(pkg.status) : ''}`);
+    if (pkg.prerelease) lines.push(fr ? '  Préversion : validation technique, pas une version stable.' : '  Prerelease: technical validation, not a stable release.');
+    if (pkg.description) lines.push(`  ${pkg.description}`);
+    if (pkg.available_version) lines.push(fr ? `  Version stable disponible : ${pkg.available_version}. Examinez touba package update ${pkg.name}@${pkg.available_version} ; compatibilité et consentement restent à vérifier.` : `  Stable version available: ${pkg.available_version}. Review touba package update ${pkg.name}@${pkg.available_version}; compatibility and consent still need checking.`);
     for (const [name, version] of Object.entries(pkg.dependencies ?? {})) lines.push(fr
       ? `  Dépendance embarquée de ${pkg.name} : ${name}@${version} (version exacte de la fermeture, pas une sélection de dernière version).`
       : `  Bundled dependency of ${pkg.name}: ${name}@${version} (exact closure version, not a latest-version selection).`);

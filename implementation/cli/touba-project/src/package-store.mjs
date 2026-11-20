@@ -85,7 +85,11 @@ export function readPackageWorkspace(root) {
 export function packageDependencyRecords(root, document) {
   const lock = readPackageLock(root);
   const records = Object.entries(document.dependencies ?? {}).map(([name, constraint]) => {
-    const selected = lock.packages.find(entry => entry.name === name)?.version ?? constraint;
+    const locked = lock.packages.find(entry => entry.name === name);
+    if (!locked && !exactPackageVersion(constraint)) throw Object.assign(packageError('PackageDependencyConflict', 'dependency range has no exact installed selection'), {
+      reason: 'PackageDependencySelectionMissing', packageName: name,
+    });
+    const selected = locked?.version ?? constraint;
     if (!satisfiesPackageConstraint(selected, constraint, document.package_schema_version)) throw packageError('PackageDependencyConflict', `${document.name} requires ${name}@${constraint}; select and lock an exact compatible version`);
     return { manifest: `packages/${name}/${PACKAGE_MANIFEST}`, version: selected };
   });

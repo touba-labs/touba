@@ -1683,6 +1683,9 @@ function ensureProjectGitignore(root, created, preserved) {
     "node_modules/",
     "*.air.json",
     "*.trace.json",
+    "*.sqlite",
+    "*.sqlite-wal",
+    "*.sqlite-shm",
     ".env",
   ];
   const current = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";

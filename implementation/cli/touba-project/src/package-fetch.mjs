@@ -2,6 +2,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { packageError } from "./package-contract.mjs";
 import { authorizeRegistry, publicationUrl } from "./package-identity.mjs";
 import { setTimeout as delay } from 'node:timers/promises';
+import { packageLocale } from './package-diagnostics.mjs';
 
 async function remoteBytes(url, maxBytes, authorization, callerSignal) {
   const deadline = Date.now() + 20000;
@@ -70,6 +71,13 @@ export function createRegistryReader(location, { noBrowser = false, notify, sign
   const root = new URL(registry + '/');
   let identity;
   let attempted = false;
+  const context = error => {
+    if (identity && ['RegistryAuthenticationRequired', 'RegistryFetchFailed'].includes(error.code)) {
+      error.registryReadAccount = identity.account_label;
+      error.registryReadOrigin = registry;
+    }
+    return error;
+  };
   return {
     async readBytes(url, maximum) {
       const target = new URL(url);
@@ -79,10 +87,15 @@ export function createRegistryReader(location, { noBrowser = false, notify, sign
       }
       try { return await readPackageBytes(target.href, maximum, identity?.token, signal); }
       catch (error) {
-        if (error.code !== 'RegistryAuthenticationRequired' || attempted) throw error;
+        if (error.code !== 'RegistryAuthenticationRequired' || attempted) throw context(error);
         attempted = true;
         identity = await authorizeRegistry(registry, { access: 'read', noBrowser, notify, signal, sessionOnly });
-        return readPackageBytes(target.href, maximum, identity.token, signal);
+        const announce = notify ?? (text => process.stderr.write(text + '\n'));
+        announce(packageLocale() === 'fr'
+          ? `Lecture du registre avec ${identity.account_label}. Cette session appartient à l’utilisateur du système, pas au projet.`
+          : `Reading the registry as ${identity.account_label}. This session belongs to the OS user, not the project.`);
+        try { return await readPackageBytes(target.href, maximum, identity.token, signal); }
+        catch (failure) { throw context(failure); }
       }
     },
     async close() { try { await identity?.revoke(); } finally { identity = undefined; } },

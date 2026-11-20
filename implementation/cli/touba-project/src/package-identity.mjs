@@ -4,6 +4,7 @@ import { packageError } from './package-contract.mjs';
 import { sessionKey, sessionLock, sessionStore } from './registry-session.mjs';
 import { registryVault } from './registry-vault.mjs';
 import { packageLocale } from './package-diagnostics.mjs';
+import { registryAccountLabel } from './registry-account-label.mjs';
 import { ephemeralRegistryIdentity } from './registry-ephemeral.mjs';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -102,6 +103,7 @@ async function connectedRegistry(registry, { access = 'publication', noBrowser =
       if (!saved) { await release(response); throw packageError('RegistrySessionUnavailable', 'the identity provider did not issue a bounded reusable session; use --session-only'); }
     }
     const features = { session_max_age_seconds: authorization.session_max_age_seconds,
+      account_label: registryAccountLabel(response.access_token),
       presentation_reuse: config.data.features?.presentation_reuse === true };
     if (!saved) return ephemeralRegistryIdentity(response, { maximum: authorization.session_max_age_seconds,
       refresh: token => document(endpoint, form({ client_id, grant_type: 'refresh_token', refresh_token: token })),

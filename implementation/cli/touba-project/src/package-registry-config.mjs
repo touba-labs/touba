@@ -8,6 +8,20 @@ import { packageLocale } from './package-diagnostics.mjs';
 
 const CONFIG = 'registry.json';
 const SHARED = 'touba.registry.json';
+function ignoreLocalRegistryState(root, portable) {
+  const path = join(root, '.gitignore');
+  let current = '';
+  if (present(path)) {
+    const info = lstatSync(path);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 65536) throw packageError('RegistryConfigurationInvalid', '.gitignore must be a bounded regular file');
+    current = readFileSync(path, 'utf8');
+  }
+  const literal = '/' + portable.replace(/[\\[\]*?!# ]/g, '\\$&');
+  const entries = ['.sqlite', '.status.sqlite'].flatMap(suffix => ['', '-wal', '-shm'].map(sidecar => literal + suffix + sidecar));
+  const lines = new Set(current.split(/\r?\n/));
+  const missing = entries.filter(entry => !lines.has(entry));
+  if (missing.length) writeFileSync(path, current + (current && !current.endsWith('\n') ? '\n' : '') + missing.join('\n') + '\n');
+}
 function present(path) {
   try { lstatSync(path); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
@@ -61,6 +75,7 @@ export function configureRegistry(registry, { root = process.cwd(), trust, share
   if (shared) {
     portable = relative(root, trust).replaceAll('\\', '/'); packagePath(portable);
     assertPlainDirectory(dirname(join(root, portable)));
+    ignoreLocalRegistryState(root, portable);
   } else if (present(join(root, SHARED))) throw packageError('RegistrySharedConfigurationPresent', 'review the shared configuration with --shared or pass a per-command --registry override');
   // Reuse the exact continuity store used for installation. Reconfiguration
   // does not reset index revisions or resurrect revoked keys.

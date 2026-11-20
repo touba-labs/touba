@@ -117,6 +117,9 @@ test('shared registry configuration survives a clone without absolute paths or c
   const key = generateKeyPairSync('ed25519');
   writeFileSync(file, JSON.stringify({ schema_version: 'touba-registry-trust-v1', registry, keys: [{ id: 'fixture', status: 'active', public_key: key.publicKey.export({ type: 'spki', format: 'pem' }) }] }));
   configureRegistry(registry, { root, trust: file, shared: true });
+  const ignored = readFileSync(join(root, '.gitignore'), 'utf8');
+  for (const suffix of ['.sqlite', '.sqlite-wal', '.sqlite-shm', '.status.sqlite', '.status.sqlite-wal', '.status.sqlite-shm']) assert.ok(ignored.includes('/trust.json' + suffix));
+  assert.ok(!ignored.split('\n').includes('/trust.json'), 'The public key remains versionable');
   const config = JSON.parse(readFileSync(join(root, 'touba.registry.json')));
   assert.equal(config.trust, 'trust.json'); assert.equal(JSON.stringify(config).includes(root), false);
   const clone = join(root, 'clone'); mkdirSync(clone); initProject({ root: clone });

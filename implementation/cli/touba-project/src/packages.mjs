@@ -82,7 +82,8 @@ export function packageClosure(path, { projectRoot, publishing = false } = {}) {
 
 export async function addRegistryPackage(name, options) {
   if (!PACKAGE_NAME.test(name)) throw packageError('PackageNameInvalid', 'select a canonical qualified package name');
-  if (!options.registry || !options.version) throw packageError("PackageRegistryOptionMissing", "select name@version and a registry");
+  if (!options.version) throw packageError('PackageExactVersionRequired', 'select name@version explicitly');
+  if (!options.registry) throw packageError("PackageRegistryOptionMissing", "select a registry");
   if (!exactPackageVersion(options.version)) throw packageError('PackageExactVersionRequired', 'select an exact semantic version');
   const reader = createRegistryReader(options.registry, { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true });
   try { return await installRegistryPackage(name, options, reader.readBytes); }
@@ -429,6 +430,7 @@ export async function reviewPackageUpdates(paths, { root = process.cwd(), accept
       if (installed.has(name) && installed.get(name).digest !== pkg.digest) {
         const consumers = [...installed.values(), ...(workspace.author ? [{ document: workspace.document }] : [])];
         throw Object.assign(packageError('PackageDependencyConflict', `different package already installed: ${name}; review an update explicitly`), {
+          reason: 'PackageUpdateReviewRequired', packageName: name,
           constraints: consumers.filter(item => Object.hasOwn(item.document.dependencies ?? {}, name)).map(item => ({
             consumer: item.document.name, dependency: name, constraint: item.document.dependencies[name],
             current_version: installed.get(name).document.version, version: pkg.document.version,

@@ -4,6 +4,7 @@ import { registryPackageStates } from './registry.mjs';
 import { createRegistryReader } from './package-fetch.mjs';
 import { configuredRegistry } from './package-registry-config.mjs';
 import { packageLocale } from './package-diagnostics.mjs';
+import semver from 'semver';
 
 export async function cachedPackageDiagnostics(root) {
   try {
@@ -42,7 +43,10 @@ export async function auditPackageStatus(options) {
     const versions = new Map(catalogue.map(item => [item.name + '@' + item.version, item]));
     const packages = lock.packages.map(installed => {
       const restrictions = inspected.get(resolve(root, installed.manifest)).restrictions;
+      const latest = catalogue.filter(item => item.name === installed.name && item.status === 'validated' && !semver.prerelease(item.version))
+        .sort((a, b) => semver.rcompare(a.version, b.version))[0]?.version;
       return { name: installed.name, version: installed.version, installed_digest: installed.digest,
+        ...(latest && semver.gt(latest, installed.version) ? { available_version: latest } : {}),
         ...(versions.get(installed.name + '@' + installed.version) ?? { status: 'unknown' }),
         ...(restrictions.length ? { restrictions } : {}) };
     });

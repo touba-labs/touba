@@ -198,8 +198,9 @@ async function executePackageCommand({ action, target, options }) {
       const catalog = await listRegistryPackages({ registry: options.registry, trust: options.trust, readBytes: reader.readBytes,
         query: target ?? '', exact: action === 'info', offset: Number(options.offset ?? 0), includeWithdrawn: options.withdrawn === true });
       report = { command: `package ${action}`, status: 'success', ...catalog, packages: catalog.items,
-        notes: [packageLocale() === 'fr' ? 'Versions du catalogue vérifié. Choisissez une version exacte à installer ; aucune mise à jour automatique.'
+        notes: [...(!catalog.items.length ? [packageLocale() === 'fr' ? 'Aucun résultat dans le catalogue accessible à ce compte.' : 'No results in the catalog accessible to this account.'] : []), packageLocale() === 'fr' ? 'Versions du catalogue vérifié. Choisissez une version exacte à installer ; aucune mise à jour automatique.'
           : 'Versions from the verified catalog. Choose an exact version to install; no automatic update.',
+          ...(action === 'search' ? [packageLocale() === 'fr' ? 'Une ligne par package, version stable en premier. Consultez touba package info <nom> pour les versions et préversions.' : 'One row per package, stable versions first. Use touba package info <name> for versions and prereleases.'] : []),
           ...(catalog.next_offset === null ? [] : [`--offset ${catalog.next_offset}`])] };
     } finally { await reader.close(); }
   }
