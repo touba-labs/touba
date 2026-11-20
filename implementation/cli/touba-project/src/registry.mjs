@@ -48,14 +48,14 @@ export async function registryPackageStates({ registry, trust, readBytes, offlin
     })) };
 }
 
-export async function listRegistryPackages({ registry, trust, readBytes, query = '', offset = 0, limit = 50, includeWithdrawn = false, includeMetadataPath = false } = {}) {
+export async function listRegistryPackages({ registry, trust, readBytes, query = '', exact = false, offset = 0, limit = 50, includeWithdrawn = false, includeMetadataPath = false } = {}) {
   if (typeof query !== 'string' || query.length > 160 || !Number.isSafeInteger(offset) || offset < 0 || offset > 100000
     || !Number.isInteger(limit) || limit < 1 || limit > 100 || typeof includeWithdrawn !== 'boolean') fail('RegistryIndexSchemaInvalid', 'invalid catalogue query');
   const location = registryLocation(requiredOption(registry, 'registry'));
   const document = await readIndex(location.indexRef, trust, readBytes);
   validateIndex(document.value, document.ref);
   const entries = document.value.packages.filter(item => (includeWithdrawn || ['validated', 'deprecated'].includes(item.status))
-    && item.package_ref.toLowerCase().includes(query.trim().toLowerCase()))
+    && (exact ? item.package_ref === `pkg:${query}` : item.package_ref.toLowerCase().includes(query.trim().toLowerCase())))
     .sort((a, b) => a.package_ref.localeCompare(b.package_ref) || semver.rcompare(a.version, b.version));
   return { items: entries.slice(offset, offset + limit).map(item => ({ name: item.package_ref.slice(4), version: item.version, status: item.status,
     ...(includeMetadataPath ? { metadata_path: item.metadata_path } : {}) })),

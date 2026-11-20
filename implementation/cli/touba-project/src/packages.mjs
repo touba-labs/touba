@@ -7,7 +7,7 @@ import semver from "semver";
 export const isNewerPackageVersion = (next, current) => Boolean(semver.valid(next) && semver.valid(current) && semver.gt(next, current));
 export const packageRuntimeCompatibility = required => ({ runtime: runtimeVersion, required, compatible: semver.satisfies(runtimeVersion, required) });
 import { PACKAGE_LIMITS, PACKAGE_MANIFEST, PACKAGE_NAME, PACKAGE_RUNTIME_VERSION as runtimeVersion, assertPackageUnchanged, packageDigest, packageError, packageFile, packagePath, readPackage } from "./package-contract.mjs";
-import { PACKAGE_LOCK, PACKAGE_LOCK_SCHEMA, PACKAGE_TRANSACTION, assertAuthorWritable, assertOnlyInventory, assertPlainDirectory, assertPackageDirectory, findPackageWorkspace, inspectInstalledPackages, packageDependencyRecords, readPackageWorkspace, setWorkspacePackages, verifyInstalledPackages } from "./package-store.mjs";
+import { PACKAGE_LOCK, PACKAGE_LOCK_SCHEMA, PACKAGE_TRANSACTION, acquirePackageTransaction, assertAuthorWritable, assertOnlyInventory, assertPlainDirectory, assertPackageDirectory, findPackageWorkspace, inspectInstalledPackages, packageDependencyRecords, readPackageWorkspace, setWorkspacePackages, verifyInstalledPackages } from "./package-store.mjs";
 export { newPackage } from "./package-author.mjs";
 import { resolveRegistryPackage } from "./registry.mjs";
 import { createRegistryReader } from "./package-fetch.mjs";
@@ -16,6 +16,7 @@ import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/s
 import { selectPackageClosure } from './package-selection.mjs';
 import { packageLocale } from './package-diagnostics.mjs';
 import { assertPackageModuleOwnership } from './package-contract.mjs';
+import { exactPackageVersion } from './package-contract.mjs';
 
 const json = value => JSON.stringify(value, null, 2) + "\n";
 
@@ -80,7 +81,9 @@ export function packageClosure(path, { projectRoot, publishing = false } = {}) {
 }
 
 export async function addRegistryPackage(name, options) {
-  if (!PACKAGE_NAME.test(name) || !options.registry || !options.version) throw packageError("PackageRegistryOptionMissing", "use a qualified package name, --version and --registry");
+  if (!PACKAGE_NAME.test(name)) throw packageError('PackageNameInvalid', 'select a canonical qualified package name');
+  if (!options.registry || !options.version) throw packageError("PackageRegistryOptionMissing", "select name@version and a registry");
+  if (!exactPackageVersion(options.version)) throw packageError('PackageExactVersionRequired', 'select an exact semantic version');
   const reader = createRegistryReader(options.registry, { noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true });
   try { return await installRegistryPackage(name, options, reader.readBytes); }
   finally { await reader.close(); }
@@ -155,6 +158,11 @@ async function checkPackageClosure(closure, options = {}) {
     diagnostics.map(d => `${d.source_path ?? ""}${d.source_ref ? `:${d.source_ref.start_line + 1}:${d.source_ref.start_column + 1}` : ""} ${d.code}: ${d.message}`.trim()).join("\n")), { diagnostics });
   const missing = ["description", "publisher", "license"].filter(field => !closure.first.document[field]);
   const fr = packageLocale(options.lang) === 'fr';
+  const initial = closure.first.document;
+  const templateFields = [];
+  if ([`Package réutilisable ${initial.name}.`, `Reusable ${initial.name} package.`].includes(initial.description)) templateFields.push('description');
+  if (initial.readme && /Le skill Echo et son test forment un exemple de départ|The Echo skill and its test are a starting example|Add tests for your procedure’s acceptance criteria|Ajoutez des tests pour les critères de votre procédure/.test(readFileSync(packageFile(closure.first.root, initial.readme), 'utf8'))) templateFields.push('readme');
+  const warnings = templateFields.length ? [{ code: 'PackageScaffoldUnchanged', fields: templateFields }] : [];
   const effectNotes = closure.packages.flatMap(pkg => (pkg.document.handlers ?? [])
     .filter(handler => !handler.effect_contract)
     .map(handler => fr ? `Le handler ${handler.tool} ne recommande aucun contrat d’effet. Vérifiez ses effets et testez le protocole de reçu ; un accès réseau ne signifie pas à lui seul une écriture externe.` : `Handler ${handler.tool} has no recommended effect contract. Review its side effects and test the receipt protocol; network access alone does not imply an external write.`));
@@ -164,10 +172,11 @@ async function checkPackageClosure(closure, options = {}) {
     // Evidence uses the exact resolved closure, independently of author constraints.
     dependencies: Object.fromEntries(Object.keys(pkg.document.dependencies ?? {}).sort()
       .map(name => [name, resolvedVersions.get(name)])) }));
-  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, notes: [...(missing.length ? [fr ? `Avant le partage, complétez ${missing.join(", ")} dans ${PACKAGE_MANIFEST}.` : `Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : []), ...effectNotes], packages, tests: fr ? "Contrats source vérifiés. Les tests de l’auteur ne sont pas exécutés automatiquement." : "Source contracts checked. Author tests are not executed automatically.", closure, ...(contracts ? { contracts } : {}) };
+  return { status: "success", command: "package check", package: closure.first.document.name, version: closure.first.document.version, publishing: { ready: missing.length === 0, missing, name_availability: "not_checked" }, warnings, notes: [...(missing.length ? [fr ? `Avant le partage, complétez ${missing.join(", ")} dans ${PACKAGE_MANIFEST}.` : `Before sharing, complete ${missing.join(", ")} in ${PACKAGE_MANIFEST}.`] : []), ...effectNotes,
+    ...(warnings.length ? [fr ? `Exemple de départ encore présent (${templateFields.join(', ')}). Adaptez la présentation et vérifiez le comportement avant publication ; cet avertissement n’est pas une certification de qualité.` : `Starter example still present (${templateFields.join(', ')}). Adapt the presentation and verify behavior before publication; this warning is not quality certification.`] : [])], packages, tests: fr ? "Contrats source vérifiés. Les tests de l’auteur ne sont pas exécutés automatiquement." : "Source contracts checked. Author tests are not executed automatically.", closure, ...(contracts ? { contracts } : {}) };
 }
 
-function copyPackage(pkg, destination) {
+export function copyPackage(pkg, destination) {
   assertPackageUnchanged(pkg);
   mkdirSync(destination, { recursive: true });
   for (const file of pkg.files) {
@@ -551,7 +560,7 @@ async function installPackage(path, { root, ...options }, replacing, frozenCheck
     if (!readFileSync(configPath).equals(configBytes)) throw packageError("PackageProjectChanged", "project changed during validation; retry");
     const nowLock = existsSync(join(root, PACKAGE_LOCK)) ? readFileSync(join(root, PACKAGE_LOCK)) : undefined;
     if (oldLock?.toString() !== nowLock?.toString()) throw packageError("PackageProjectChanged", "lock changed during validation; retry");
-    writeFileSync(join(root, PACKAGE_TRANSACTION), json({ pid: process.pid, staging, replacing, packages: packages.map(p => p.document.name) }), { flag: "wx", mode: 0o600 });
+    acquirePackageTransaction(root, { pid: process.pid, staging, replacing, packages: packages.map(p => p.document.name) });
     transaction = true;
     // Recheck after acquiring the exclusive marker: another installation may
     // have completed between the earlier snapshot check and this acquisition.
@@ -597,16 +606,18 @@ export function removePackage(name, { root = process.cwd() } = {}) {
   const { lock, packages: inspected } = inspectInstalledPackages(root, records);
   const entry = lock.packages.find(item => item.name === name);
   if (!entry) throw packageError("PackageNotInstalled", `${name} is not an installed package`);
+  const removedExports = new Set(Object.values(inspected.get(resolve(root, entry.manifest)).document.exports ?? {}).flat());
+  const orphanedEntrypoints = (config.entrypoints ?? []).filter(value => typeof value === 'string' && removedExports.has(value));
   for (const record of records) {
     const pkg = inspected.get(resolve(root, record.manifest)) ?? readPackage(resolve(root, record.manifest));
-    if (pkg.document.name !== name && Object.hasOwn(pkg.document.dependencies ?? {}, name)) throw packageError("PackageInUse", `${pkg.document.name} depends on ${name}`);
+    if (pkg.document.name !== name && Object.hasOwn(pkg.document.dependencies ?? {}, name)) throw Object.assign(packageError("PackageInUse", `${pkg.document.name} depends on ${name}`), { packageName: pkg.document.name });
   }
   const lockBytes = readFileSync(join(root, PACKAGE_LOCK));
   const staging = mkdtempSync(join(root, ".touba-package-stage-"));
   const destination = dirname(resolve(root, entry.manifest)), saved = join(staging, "removed");
   let transaction = false, moved = false, settled = false;
   try {
-    writeFileSync(join(root, PACKAGE_TRANSACTION), json({ pid: process.pid, staging, remove: name }), { flag: "wx", mode: 0o600 }); transaction = true;
+    acquirePackageTransaction(root, { pid: process.pid, staging, remove: name }); transaction = true;
     if (!readFileSync(configPath).equals(configBytes) || !readFileSync(join(root, PACKAGE_LOCK)).equals(lockBytes)) throw packageError("PackageProjectChanged", "project changed during validation; retry");
     renameSync(destination, saved); moved = true;
     setWorkspacePackages(workspace, records.filter(record => resolve(root, record.manifest) !== resolve(root, entry.manifest)));
@@ -616,7 +627,9 @@ export function removePackage(name, { root = process.cwd() } = {}) {
     renameSync(join(staging, "lock.json"), join(root, PACKAGE_LOCK));
     renameSync(join(staging, "project.json"), configPath);
     settled = true;
-    return { status: "success", command: "package remove", package: name, notes: [packageLocale() === 'fr' ? "Package installé et entrée du verrou retirés. Les imports sources restent inchangés ; préparez de nouveau le projet avant exécution." : "Removed installed package and its lock entry. Project source imports are unchanged; prepare again before running."] };
+    return { status: "success", command: "package remove", package: name, orphaned_entrypoints: orphanedEntrypoints,
+      notes: [packageLocale() === 'fr' ? "Package installé et entrée du verrou retirés. Les imports sources restent inchangés ; préparez de nouveau le projet avant exécution." : "Removed installed package and its lock entry. Project source imports are unchanged; prepare again before running.",
+        ...(orphanedEntrypoints.length ? [(packageLocale() === 'fr' ? 'Points d’entrée à revoir : ' : 'Entrypoints to review: ') + orphanedEntrypoints.join(', ')] : [])] };
   } catch (error) {
     if (transaction && moved) {
       renameSync(saved, destination);

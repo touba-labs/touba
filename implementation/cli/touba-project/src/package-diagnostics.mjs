@@ -17,6 +17,19 @@ export async function withPackageLocale(locale, callback) {
 }
 
 const messages = {
+  RegistrySharedConfigurationPresent: ['Ce projet utilise touba.registry.json. Relisez-le avec package registry --shared ; pour une commande ponctuelle, passez --registry et --trust explicitement.', 'This project uses touba.registry.json. Review it with package registry --shared; for one command, pass --registry and --trust explicitly.'],
+  PackageInstalledContentMissing: ['Des fichiers du package verrouillé sont absents. Pour un dossier de package entièrement manquant, utilisez touba package restore avec son registre vérifié. Un dossier présent mais incomplet demande une récupération contrôlée ; aucun fichier modifié ne sera écrasé.', 'Locked package files are missing. For a completely absent package directory, use touba package restore with its verified registry. A present but incomplete directory needs controlled recovery; modified files will not be overwritten.'],
+  RegistryUnavailable: ['Le registre est injoignable. Vérifiez son adresse, votre connexion et sa disponibilité, puis réessayez.', 'The registry is unreachable. Check its address, your connection and its availability, then retry.'],
+  RegistryTimeout: ['Le registre n’a pas répondu dans les 20 secondes. Réessayez lorsque le service est disponible.', 'The registry did not respond within 20 seconds. Retry when the service is available.'],
+  RegistryRequestCancelled: ['La lecture du registre a été annulée.', 'The registry read was cancelled.'],
+  RegistryFetchFailed: ['Le registre a refusé la lecture. Vérifiez sa disponibilité et vos droits d’accès.', 'The registry refused the read. Check its availability and your access rights.'],
+  RegistryTrustTargetMismatch: ['Ce fichier de confiance appartient à un autre registre. Sélectionnez les clés vérifiées pour l’adresse choisie ; ne modifiez pas l’adresse dans le fichier de clés.', 'This trust file belongs to another registry. Select verified keys for the selected address; do not edit the address in the key file.'],
+  RegistryPackageNotFound: ['Ce package est absent du catalogue vérifié. Vérifiez son nom exact avec touba package search.', 'This package is absent from the verified catalog. Check its exact name with touba package search.'],
+  RegistryPackageVersionMissing: ['Cette version est absente du catalogue vérifié. Consultez touba package info <nom>, puis choisissez une version exacte.', 'This version is absent from the verified catalog. Use touba package info <name>, then select an exact version.'],
+  PackageRegistryOptionMissing: ['Indiquez le nom canonique et la version exacte : touba package add acme.outils@1.0.0 --registry <adresse>.', 'Specify the canonical name and exact version: touba package add acme.tools@1.0.0 --registry <address>.'],
+  PackageExactVersionRequired: ['Choisissez une version exacte, par exemple acme.outils@1.0.0. latest et les plages ne sélectionnent pas automatiquement une version à installer.', 'Select an exact version, for example acme.tools@1.0.0. latest and ranges do not automatically select a version to install.'],
+  PackageInstallationIncomplete: ['Une installation est active ou a été interrompue. Attendez sa fin ; si elle a été interrompue, examinez .touba-package-installing avant toute récupération.', 'An installation is active or was interrupted. Wait for it to finish; if interrupted, inspect .touba-package-installing before recovery.'],
+  PackageProjectChanged: ['Le projet ou son verrou a changé pendant l’opération. Attendez la fin de l’autre commande et relancez la vérification.', 'The project or its lock changed during the operation. Wait for the other command to finish and repeat verification.'],
   PackageNotInstalled: ['Ce package n’est pas installé dans le projet sélectionné. Vérifiez touba package list et le dossier --root.', 'This package is not installed in the selected project. Check touba package list and the --root directory.'],
   PackageIntegrityMismatch: ['Les fichiers installés diffèrent du verrou. Conservez les preuves et restaurez une copie vérifiée ; ne supprimez pas le verrou pour contourner ce refus.', 'Installed files differ from the lock. Preserve evidence and restore a verified copy; do not delete the lock to bypass this refusal.'],
   PackageSymlinkForbidden: ['Un lien est interdit dans les fichiers gérés. Conservez les preuves et restaurez une copie vérifiée sans lien.', 'A link is forbidden in managed files. Preserve evidence and restore a verified copy without links.'],
@@ -50,7 +63,7 @@ const messages = {
   RegistryStatusCacheUnavailable: ['La consultation hors ligne exige le cache d’un registre distant signé.', 'Offline status requires a cached signed remote registry.'],
   RegistryRollbackRefused: ['Le catalogue reçu est antérieur à la dernière révision vérifiée. Réessayez auprès du registre ; conservez le fichier de continuité de confiance.', 'The received catalog predates the last verified revision. Retry with the registry; preserve the trust continuity file.'],
   PackageReviewRequired: ['Prévisualisez le retour de version avec --allow-downgrade, puis acceptez son empreinte exacte avec --accept.', 'Preview the downgrade with --allow-downgrade, then accept its exact digest with --accept.'],
-  PackageReviewChanged: ['Le package ou le projet a changé. Prévisualisez la mise à jour et acceptez la nouvelle empreinte.', 'The package or project changed. Preview the update and accept the new digest.'],
+  PackageReviewChanged: ['L’empreinte acceptée ne correspond pas à la proposition actuelle. Relisez le plan et copiez son empreinte exacte ; le package, le projet ou la confiance peuvent avoir changé.', 'The accepted digest does not match the current proposal. Review the plan and copy its exact digest; the package, project or trust may have changed.'],
   RegistryPackageYanked: ['Cette version a été retirée. Choisissez une version disponible dans le catalogue.', 'This version was withdrawn. Choose an available version in the catalog.'],
   PackagePublicationTargetInvalid: ['Utilisez HTTPS ou l’origine locale exacte, avec 127.0.0.1 ou [::1]. Le nom localhost n’est pas accepté pour cette connexion.', 'Use HTTPS or the exact local origin with 127.0.0.1 or [::1]. The name localhost is not accepted for this connection.'],
   RegistryConfigurationRequired: ['Configurez le registre du projet : touba package registry <url> --trust <fichier-vérifié>.', 'Configure the project registry: touba package registry <url> --trust <reviewed-file>.'],
@@ -140,6 +153,11 @@ export function packageDiagnostic(error, locale) {
   const delay = Number.isSafeInteger(error.retryAfter) && error.retryAfter >= 0
     ? (fr ? ` Réessayez dans ${error.retryAfter} s.` : ` Retry in ${error.retryAfter} s.`) : '';
   const details = error.diagnostics?.length ? ` [${error.diagnostics[0].phase}: ${error.diagnostics[0].code}]` : '';
+  const http = Number.isInteger(error.httpStatus) && error.httpStatus >= 400 && error.httpStatus <= 599 ? ` HTTP ${error.httpStatus}.` : '';
+  const issue = error.publicTextIssue;
+  const publicText = issue && ['description', 'publisher', 'license', 'readme'].includes(issue.field)
+    && /^U\+[0-9A-F]{4,6}$/.test(issue.codepoint ?? '') && Number.isSafeInteger(issue.position) && issue.position > 0
+    ? ` ${issue.field}: ${issue.codepoint}, position ${issue.position}.` : '';
   const withdrawal = error.code === 'RegistryPackageYanked' && typeof error.withdrawalReason === 'string' && [...error.withdrawalReason].length <= 500
     ? ` ${fr ? 'Motif' : 'Reason'} : ${error.withdrawalReason.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ')}` : '';
   const reasons = fr ? { not_available: 'version publiée indisponible', revalidation_required: 'revérification par l’exploitant requise', content_mismatch: 'contenu différent de la version publiée' }
@@ -153,5 +171,5 @@ export function packageDiagnostic(error, locale) {
     ? ` ${error.packageName}.` : '';
   const recovery = error.installedPackageContext === true && ['PackageNameInvalid', 'PackageModuleOwnershipMismatch', 'PackageMetadataInvalid'].includes(error.code)
     ? (fr ? ' Pour une installation historique, utilisez package list ou package audit, puis package remove avec son nom exact.' : ' For a historical installation, use package list or package audit, then package remove with its exact name.') : '';
-  return `${error.code}: ${message[fr ? 0 : 1]}${identity}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}${claims}${recovery}`;
+  return `${error.code}: ${message[fr ? 0 : 1]}${identity}${http}${publicText}${delay}${details}${withdrawal}${dependencies}${conflicts}${replacement}${claims}${recovery}`;
 }

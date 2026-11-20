@@ -612,6 +612,102 @@ installation verrouillée. Ne mélangez pas les deux modes pour une même identi
 
 ## Registry choisi explicitement
 
+### Découvrir et installer une version
+
+Depuis un projet dont le registre est configuré, consultez le catalogue vérifié :
+
+```sh
+touba package search review
+touba package info acme.review
+touba package add acme.review@0.1.0
+touba package search --help --lang fr
+```
+
+La recherche affiche au plus 50 versions par page. L'option `--offset` permet
+de poursuivre ; `--withdrawn` inclut les versions retirées, sans les rendre
+installables. `info` demande un nom exact. L'installation demande aussi une
+version exacte : `latest`, `^1.0.0` et les plages ne sélectionnent aucun build.
+Les noms de packages utilisent des segments en minuscules séparés par des points.
+
+Les dépendances Touba sont embarquées avec leurs versions exactes dans la
+fermeture de l'archive et son verrou. Ce mécanisme ne lance ni `pip install`
+ni `npm install`. Le consommateur prépare l'environnement des handlers Python
+ou JavaScript, ses bindings et ses autorisations selon les instructions de
+l'auteur. Une dépendance installée ne devient pas automatiquement un point
+d'entrée exécutable de l'application.
+
+Le choix `touba init --language python` prépare un projet orienté SDK Python ;
+il ne convertit pas les handlers `.mjs` des packages en Python. Un tel handler
+reste du JavaScript exécuté avec Node, selon son binding et les prérequis du
+package. L'application peut utiliser les deux langages. Installez et qualifiez
+chaque environnement nécessaire, ainsi que son confinement, avant exploitation.
+
+### Partager la configuration avec l'équipe
+
+Enregistrez les clés publiques de l'opérateur dans `registry-trust.json`, à la
+racine du projet, puis vérifiez leur empreinte par un canal de confiance :
+
+```sh
+touba package registry https://registry.example.org/registry --trust registry-trust.json --shared
+```
+
+La commande affiche les empreintes SHA-256 des clés au format SPKI DER et crée
+`touba.registry.json`, avec un chemin relatif. Versionnez ce fichier et les clés
+publiques revues. Les anciennes configurations locales dans `.touba/registry.json`
+restent lisibles. Une configuration partagée existante a priorité ; sa mise à
+jour demande de nouveau `--shared` ou une sélection explicite par commande.
+
+Ajoutez à `.gitignore` les états locaux associés au fichier de clés :
+
+```gitignore
+/registry-trust.json.sqlite*
+/registry-trust.json.status.sqlite*
+```
+
+Ces exclusions ne suppriment aucun état local. Conservez la base de continuité
+des clés et révisions : elle empêche le retour à un ancien index signé. Aucun
+jeton ni identifiant personnel n'entre dans la configuration partagée. Après
+un clone, chaque développeur vérifie la configuration et établit sa propre
+continuité. Un fichier de confiance d'un autre registre est signalé séparément
+d'un fichier mal formé.
+
+### Restaurer un dossier de package absent
+
+Si le dossier géré d'un package a été supprimé, `list` le signale sans masquer
+les autres entrées. Le code n'est plus exécutable tant que son contenu manque.
+La commande suivante restaure les octets correspondant au verrou existant :
+
+```sh
+touba package list
+touba package restore acme.review
+touba package check
+```
+
+Sans nom, `restore` traite tous les dossiers gérés absents dans les limites du
+lot. Le registre choisi doit fournir les mêmes versions, inventaires et
+empreintes. Une version retirée ou un contenu différent est refusé. Un dossier
+présent, même partiellement modifié, n'est jamais écrasé par cette commande.
+La restauration ne change ni le projet ni son verrou et n'exécute aucun handler.
+Elle ne restaure pas les sources locales en mode éditable.
+
+Un marqueur de transaction déjà présent indique une opération en cours ou
+interrompue. Examinez cette opération avant de réessayer ; ne supprimez pas
+automatiquement ce marqueur pour contourner le refus. Les lectures réseau
+transitoires sont bornées en durée et en tentatives ; les écritures et refus
+d'authentification ne sont pas rejoués automatiquement.
+
+Après `package remove`, les points d'entrée qui visaient le package retiré
+sont signalés. Révisez-les explicitement et relancez `prepare` avant exécution.
+
+### Relire le contenu de départ
+
+`package check` avertit si la description ou le README conserve les formulations
+du squelette généré. Ce signal aide l'auteur à préparer son contenu ; il ne
+bloque pas un exemple pédagogique légitime et ne certifie pas la qualité métier.
+Les tests, effets, permissions, gouvernance et prérequis restent à documenter.
+
+### Sélection par commande
+
 ```sh title="Forme de la commande"
 touba package add acme.review@0.1.0 --registry ./registry
 ```

@@ -8,10 +8,11 @@ const keyId = /^[A-Za-z0-9_.-]{1,128}$/;
 const fail = (code, message) => { throw packageError(code, message); };
 
 export function trustedKeys(trust, registry) {
-  if (!object(trust) || trust.schema_version !== 'touba-registry-trust-v1' || trust.registry !== registry
+  if (!object(trust) || trust.schema_version !== 'touba-registry-trust-v1' || typeof trust.registry !== 'string'
       || !Array.isArray(trust.keys) || trust.keys.length < 1 || trust.keys.length > 64) {
     fail('RegistryTrustInvalid', 'trust file must identify this registry and between 1 and 64 keys');
   }
+  if (trust.registry !== registry) fail('RegistryTrustTargetMismatch', 'this trust file belongs to another registry');
   const ids = new Set(), fingerprints = new Set();
   return trust.keys.map(entry => {
     if (!object(entry) || typeof entry.id !== 'string' || !keyId.test(entry.id) || !['active', 'revoked'].includes(entry.status)

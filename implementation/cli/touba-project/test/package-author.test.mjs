@@ -83,7 +83,11 @@ test('French starter preserves the supplied purpose and a runnable translated ex
   const readme = readFileSync(join(created.path, 'README.md'), 'utf8');
   assert.match(readme, /Vérifier des échéances/); assert.match(readme, /exemple de départ/);
   assert.match(readFileSync(join(created.path, 'src/fixture/fr.tb'), 'utf8'), /Renvoyer le texte fourni/);
-  assert.equal((await checkPackage(created.path)).status, 'success');
+  const checked = await checkPackage(created.path);
+  assert.equal(checked.status, 'success');
+  assert.deepEqual(checked.warnings, [{ code: 'PackageScaffoldUnchanged', fields: ['readme'] }]);
+  writeFileSync(join(created.path, 'README.md'), '# Echo\nReturns the exact supplied value without external effects.\n');
+  assert.deepEqual((await checkPackage(created.path)).warnings, []);
   assert.throws(() => newPackage('fixture.bad', { root, lang: 'bad' }), { code: 'PackageLanguageInvalid' });
   assert.equal(existsSync(join(root, 'bad')), false);
 });

@@ -44,6 +44,17 @@ function fixture(t, name, module, dependencies = {}, metadata = {}) {
 }
 const snapshot = f => ['touba.project.json', 'touba.packages.lock.json'].map(path => readFileSync(join(f.root, path), 'utf8'));
 
+test('removal reports orphaned entry points and keeps them for explicit review', async t => {
+  const f = fixture(t, 'legacy_team.tools', 'legacy_team.tools');
+  const path = join(f.root, 'touba.project.json'), config = JSON.parse(readFileSync(path));
+  config.entrypoints = ['skill:legacy_team.tools/Run']; writeFileSync(path, json(config));
+  const display = (await packageCommand(['list', '--root', f.root, '--lang', 'fr'])).text;
+  assert.match(display, /segments en minuscules/);
+  const result = removePackage('legacy_team.tools', { root: f.root });
+  assert.deepEqual(result.orphaned_entrypoints, config.entrypoints);
+  assert.deepEqual(JSON.parse(readFileSync(path)).entrypoints, config.entrypoints);
+});
+
 for(const metadata of [{description:'Hidden\u200b text'},{readme:'README.md'}])
 test('historical unsafe presentation is inspectable and removable, never admitted',async t=>{
   const f=fixture(t,'legacy.tools','legacy.tools',{},metadata);

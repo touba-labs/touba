@@ -10,6 +10,13 @@ ordinaires dans les descriptions et le Markdown. Les scripts RTL ordinaires,
 les accents, les jointures ZWJ/ZWNJ et les emoji courants restent utilisables.
 Les emoji construits avec des caractères TAG sont concernés par ce refus.
 
+La politique couvre la propriété Unicode 17.0 `Default_Ignorable_Code_Point`.
+Les jointures et sélecteurs de variante ne sont admis que dans leur contexte
+linguistique ou graphique prévu : une suite de sélecteurs derrière un emoji
+est refusée. Un nom composé uniquement de blancs Braille est également refusé.
+Les diagnostics indiquent le champ et le point de code, sans restituer le texte
+caché. Une position désigne un point de code Unicode, à partir de 1.
+
 Corrigez le texte du projet auteur puis recréez son archive. Une archive déjà
 publiée conserve ses octets et son empreinte. Pour une ancienne installation
 refusée, utilisez le [parcours de récupération](../guides/recuperer-package-historique.md).

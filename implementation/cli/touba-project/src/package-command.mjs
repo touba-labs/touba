@@ -14,12 +14,15 @@ import { authorizeRegistry, publicationUrl } from './package-identity.mjs';
 import { packageLocale, packageSessionNotice, withPackageLocale } from './package-diagnostics.mjs';
 import { auditPackageStatus } from './package-status.mjs';
 import { packageReportText } from './package-text.mjs';
+import { listRegistryPackages } from './registry.mjs';
+import { createRegistryReader } from './package-fetch.mjs';
+import { restorePackages } from './package-restore.mjs';
 import { addPackage, addRegistryPackage, reviewPackageUpdate, updateRegistryPackage, checkPackage, checkPackageArchive, packPackage, removePackage } from "./packages.mjs";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, packageError } from "./package-contract.mjs";
 import { findPackageWorkspace, inspectInstalledPackages, readPackageWorkspace, verifyInstalledPackages } from "./package-store.mjs";
 
 export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organization>] [--description <text>] [--publisher <text>] [--license <license>] [--version <version>] [--lang fr|en] [--context] [--yes] [--root <parent>]
-       touba package registry <URL> --trust <verified-keys.json> [--root <workspace>]
+       touba package registry <URL> --trust <verified-keys.json> [--shared] [--root <workspace>]
        touba package login [--registry <URL>] [--read] [--no-browser] [--root <workspace>]
        touba package logout [--registry <URL>] [--read] [--root <workspace>]
        touba package check [directory|archive.tar.gz] [--publishing] [--root <workspace>]
@@ -37,10 +40,13 @@ export const PACKAGE_USAGE = `Usage: touba package new [name] [--org <organizati
        touba package add <name|directory|archive.tar.gz> [--accept <review_digest>] [--root <workspace>]
        touba package add <name>@<version> --registry <directory|URL> [--trust <keys.json>] [--accept <review_digest>] [--allow-draft] [--no-browser] [--root <workspace>]
        touba package list [--status] [--root <workspace>]
+       touba package search [text] [--registry <URL>] [--trust <keys.json>] [--offset <number>] [--withdrawn] [--root <workspace>]
+       touba package info <name> [--registry <URL>] [--trust <keys.json>] [--offset <number>] [--withdrawn] [--root <workspace>]
        touba package audit [--offline] [--registry <URL>] [--trust <keys.json>] [--no-browser] [--root <workspace>]
        touba package update <directory|archive.tar.gz|name@version> [--registry <URL>] [--allow-downgrade] [--accept <review_digest>] [--root <workspace>]
        touba package update-set <updates.json> [--accept <review_digest>] [--allow-downgrade] [--no-browser] [--session-only] [--root <workspace>]
        touba package remove <name> [--root <workspace>]
+       touba package restore [name] [--registry <URL>] [--trust <keys.json>] [--no-browser] [--root <workspace>]
 All commands support --json. new and version ask questions only in an interactive terminal.
 Author and private-read operations support --session-only to avoid saving a credential.
 Installation registry and trust options may be omitted after package registry configuration.
@@ -53,7 +59,7 @@ function parse(args) {
   allowed.checkout.push("automation");
   allowed['submit-suite'] = ['root', 'registry', 'no-browser', 'session-only', 'max-packages', 'max-bytes', 'timeout-seconds'];
   allowed.new.push("lang");
-  allowed.registry = ["root", "trust"];
+  allowed.registry = ["root", "trust", "shared"];
   allowed.login = ['registry', 'root', 'no-browser', 'read', 'session-only'];
   allowed.logout = ['registry', 'root', 'read'];
   for (const key of ['checkout', 'submit', 'publish', 'add']) allowed[key].push('session-only');
@@ -61,6 +67,8 @@ function parse(args) {
   allowed.update = [...allowed.add, 'allow-downgrade'];
   allowed['update-set'] = ['root', 'accept', 'allow-downgrade', 'no-browser', 'session-only'];
   allowed.audit = ['root', 'registry', 'trust', 'no-browser', 'session-only', 'offline'];
+  allowed.search = allowed.info = ['root', 'registry', 'trust', 'no-browser', 'session-only', 'offset', 'withdrawn'];
+  allowed.restore = ['root', 'registry', 'trust', 'no-browser', 'session-only'];
   allowed.list.push('status');
   allowed.submit.push("automation", "request-id", "presentation-from");
   allowed["request-publication"] = ["automation", "registry", "revision", "request-id"];
@@ -76,7 +84,7 @@ function parse(args) {
     const key = arg.slice(2);
     if (!["json", "lang"].includes(key) && !allowed[action].includes(key)) throw packageError("PackageOptionInvalid", `option not valid for package ${action}: ${arg}`);
     if (Object.hasOwn(options, key) && key !== "env") throw packageError("PackageOptionInvalid", `duplicate option ${arg}`);
-    if (["json", "context", "yes", "publishing", "allow-draft", "no-browser", "automation", "read", "session-only", "offline", "status", "allow-downgrade"].includes(key)) options[key] = true;
+    if (["json", "context", "yes", "publishing", "allow-draft", "no-browser", "automation", "read", "session-only", "offline", "status", "allow-downgrade", "withdrawn", "shared"].includes(key)) options[key] = true;
     else {
       if (!rest[i + 1] || rest[i + 1].startsWith("--")) throw packageError("PackageOptionInvalid", `missing value for ${arg}`);
       const value = rest[++i];
@@ -137,16 +145,31 @@ async function create(target, options) {
 }
 
 export async function packageCommand(args) {
-  if (!args.length || args.includes("--help") || args[0] === "-h") return { text: PACKAGE_USAGE, exitCode: 0 };
   const languageIndex = args.indexOf('--lang');
   return withPackageLocale(languageIndex < 0 ? undefined : args[languageIndex + 1], () => {
+    if (!args.length || args.includes('--help') || args.includes('-h')) return { text: packageHelp(args[0]), exitCode: 0 };
     const parsed = parse(args);
     return executePackageCommand(parsed);
   });
 }
 
+function packageHelp(action) {
+  const fr = packageLocale() === 'fr';
+  const lines = PACKAGE_USAGE.split('\n').filter(line => line.trim().replace(/^Usage: /, '').startsWith(`touba package ${action} `));
+  const usage = lines.length ? lines.map(line => line.trim().replace(/^Usage: /, '')).join('\n') : PACKAGE_USAGE.split('\n').filter(line => line.includes('touba package ')).join('\n');
+  const notes = {
+    add: fr ? 'Utilisez nom@version avec une version exacte, ou un chemin local. Les étiquettes latest et les plages ne sont pas installées automatiquement.' : 'Use name@version with an exact version, or a local path. The latest tag and version ranges are not installed automatically.',
+    search: fr ? 'Recherche dans le catalogue vérifié. Au plus 50 résultats par page ; poursuivez avec --offset. Aucun package installé.' : 'Search the verified catalog. At most 50 results per page; continue with --offset. No package is installed.',
+    info: fr ? 'Affiche les versions d’un nom exact dans le catalogue vérifié. Ajoutez --withdrawn pour inclure les versions retirées.' : 'Show versions for an exact name in the verified catalog. Add --withdrawn to include withdrawn versions.',
+    restore: fr ? 'Restaure uniquement les dossiers gérés absents depuis les versions et empreintes du verrou. Aucun dossier présent remplacé, aucun handler exécuté.' : 'Restore only missing managed directories from the locked versions and digests. No present directory is replaced and no handler is executed.',
+    registry: fr ? 'Le fichier de clés publiques doit être vérifié. --shared enregistre une configuration versionnable et un chemin de confiance relatif au projet ; les identifiants restent locaux.' : 'Verify the public-key file first. --shared records a versionable configuration and project-relative trust path; credentials remain local.',
+    remove: fr ? 'Retire un package géré. Les points d’entrée concernés sont signalés et restent à réviser explicitement dans le projet.' : 'Remove a managed package. Affected entry points are reported and still require explicit project review.',
+  };
+  return [usage, notes[action], fr ? 'Options communes : --lang fr|en, --json. Aide par commande : touba package <commande> --help.' : 'Common options: --lang fr|en, --json. Per-command help: touba package <command> --help.'].filter(Boolean).join('\n\n');
+}
+
 async function executePackageCommand({ action, target, options }) {
-  if (action === 'audit' || action === 'list' && options.status) {
+  if (['audit', 'search', 'info', 'restore'].includes(action) || action === 'list' && options.status) {
     Object.assign(options, registryOptions(options));
     if (!options.registry) throw packageError('RegistryConfigurationRequired', 'select a registry explicitly or configure this workspace');
   }
@@ -166,6 +189,20 @@ async function executePackageCommand({ action, target, options }) {
         minutes: Math.floor((identity.session_max_age_seconds ?? 600) / 60) })] };
   }
   else if (action === 'registry') report = configureRegistry(target, options);
+  else if (action === 'restore') report = await restorePackages(target, options);
+  else if (['search', 'info'].includes(action)) {
+    if (action === 'info' && !PACKAGE_NAME.test(target ?? '')) throw packageError('PackageNameInvalid', 'select an exact package name');
+    if (options.offset !== undefined && !/^\d{1,6}$/.test(options.offset)) throw packageError('PackageOptionInvalid', 'offset must be a nonnegative integer');
+    const reader = createRegistryReader(options.registry, { noBrowser: options['no-browser'], sessionOnly: options['session-only'] });
+    try {
+      const catalog = await listRegistryPackages({ registry: options.registry, trust: options.trust, readBytes: reader.readBytes,
+        query: target ?? '', exact: action === 'info', offset: Number(options.offset ?? 0), includeWithdrawn: options.withdrawn === true });
+      report = { command: `package ${action}`, status: 'success', ...catalog, packages: catalog.items,
+        notes: [packageLocale() === 'fr' ? 'Versions du catalogue vérifié. Choisissez une version exacte à installer ; aucune mise à jour automatique.'
+          : 'Versions from the verified catalog. Choose an exact version to install; no automatic update.',
+          ...(catalog.next_offset === null ? [] : [`--offset ${catalog.next_offset}`])] };
+    } finally { await reader.close(); }
+  }
   else if (action === 'audit') report = await auditPackageStatus(options);
   else if (action === 'list' && options.status) report = { ...await auditPackageStatus({ ...options, offline: true }), command: 'package list' };
   else if (action === "new") report = await create(target, options);
@@ -186,7 +223,7 @@ async function executePackageCommand({ action, target, options }) {
   } else if (action === 'update') report = await (options.registry ? updateRegistryPackage : reviewPackageUpdate)(target, options);
   else if (action === "list" || (action === "check" && !target && !existsSync(join(findPackageWorkspace(options.root), PACKAGE_MANIFEST)))) {
     const root = findPackageWorkspace(options.root), workspace = readPackageWorkspace(root);
-    const inspected = action === 'list' ? inspectInstalledPackages(root, workspace.records) : null;
+    const inspected = action === 'list' ? inspectInstalledPackages(root, workspace.records, { allowMissing: true }) : null;
     const lock = inspected?.lock ?? verifyInstalledPackages(root, workspace.records);
     const packages = [];
     for (const record of workspace.records) {

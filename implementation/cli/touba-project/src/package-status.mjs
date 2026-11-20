@@ -31,7 +31,7 @@ export async function auditPackageStatus(options) {
   const date = value => new Intl.DateTimeFormat(fr ? 'fr-CA' : 'en-CA',
     { dateStyle: 'medium', timeStyle: 'long' }).format(new Date(value));
   const root = findPackageWorkspace(options.root), workspace = readPackageWorkspace(root);
-  const { lock, packages: inspected } = inspectInstalledPackages(root, workspace.records);
+  const { lock, packages: inspected } = inspectInstalledPackages(root, workspace.records, { allowMissing: true });
   const configured = configuredRegistry(root);
   const remembered = configured?.registry === options.registry && configured?.trust === options.trust;
   const reader = options.offline ? { readBytes: async () => { throw new Error('Offline audit must not access the network'); }, close: async () => {} }

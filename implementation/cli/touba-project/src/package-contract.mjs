@@ -15,7 +15,7 @@ export const PACKAGE_NAME = /^[a-z_][a-z0-9_-]*(\.[a-z_][a-z0-9_-]*)+$/;
 // Historical signed catalogue entries keep their exact identities, including
 // withdrawn versions. New executable manifests use one canonical spelling.
 export const CANONICAL_PACKAGE_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/;
-import { UNSAFE_PUBLIC_TEXT } from './public-text.mjs';
+import { UNSAFE_PUBLIC_TEXT, publicTextIssues } from './public-text.mjs';
 const INSTALLED_INSPECTION = Symbol('installed-package-inspection');
 const FIELDS = new Set(["package_schema_version", "name", "version", "root", "touba", "exports", "description", "publisher", "license", "readme", "files", "dependencies", "contexts", "handlers", "hosts", "engines", "provenance", "contract_tests"]);
 const CONTEXT_ID = /^[a-z][a-z0-9-]*$/;
@@ -24,6 +24,11 @@ const AUTHORITY = new Set(["binding", "bindings", "grant", "grants", "handler", 
 const SENSITIVE_PATH = /(^|\/)(\.git|\.env(?:\.[^/]*)?|\.ssh|node_modules|\.touba)(\/|$)|(?:^|\/)(?:id_rsa|id_ed25519|credentials)(?:\.|$)|\.(?:pem|key|p12|pfx)$/i;
 
 export function packageError(code, message) { return Object.assign(new Error(`${code}: ${message}`), { code }); }
+
+function requirePublicText(value, field) {
+  const issue = publicTextIssues(value)[0];
+  if (issue) throw Object.assign(packageError('PackageMetadataInvalid', `${field} contains ${issue.codepoint} at position ${issue.position}`), { publicTextIssue: { field, ...issue } });
+}
 export function exactPackageVersion(value) { return typeof value === "string" && /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value) && semver.valid(value) !== null; }
 function requireValue(condition, code, message) { if (!condition) throw packageError(code, message); }
 function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -229,7 +234,7 @@ export function validatePackageDocument(document, { runtimeVersion, publishing =
   }
   for (const field of ["description", "publisher", "license", "readme"]) if (document[field] !== undefined) requireValue(text(document[field]), "PackageSchemaMismatch", `${field} must be nonempty text`);
   for (const field of ["description", "publisher", "license"]) if (document[field] !== undefined) {
-    if (!inspecting) requireValue(!UNSAFE_PUBLIC_TEXT.test(document[field]), "PackageMetadataInvalid", "display metadata contains hidden separators or control characters");
+    if (!inspecting) requirePublicText(document[field], field);
   }
   if (document.readme) packagePath(document.readme);
   return document;
@@ -286,8 +291,7 @@ export function readPackage(path, options = {}) {
   for (const host of document.hosts ?? []) include(host.path);
   if (document.readme) {
     include(document.readme);
-    if (!options[INSTALLED_INSPECTION]) requireValue(!UNSAFE_PUBLIC_TEXT.test(readFileSync(packageFile(root, document.readme), 'utf8')),
-      'PackageMetadataInvalid', 'README contains hidden separators or control characters');
+    if (!options[INSTALLED_INSPECTION]) requirePublicText(readFileSync(packageFile(root, document.readme), 'utf8'), 'readme');
   }
   for (const path of document.contract_tests ?? []) include(path);
   for (const refs of Object.values(document.exports)) for (const ref of refs) {

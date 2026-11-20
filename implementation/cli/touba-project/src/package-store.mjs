@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { PACKAGE_MANIFEST, PACKAGE_NAME, exactPackageVersion, inspectInstalledPackage, isWithin, packageError, packageFile, readPackage } from "./package-contract.mjs";
 import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/src/package-constraints.mjs';
@@ -6,6 +6,14 @@ import { satisfiesPackageConstraint } from '../../../runtime/touba-handler-sdk/s
 export const PACKAGE_LOCK = "touba.packages.lock.json";
 export const PACKAGE_TRANSACTION = ".touba-package-installing";
 export const PACKAGE_LOCK_SCHEMA = "touba-package-lock-v1";
+
+export function acquirePackageTransaction(root, record) {
+  try { writeFileSync(join(root, PACKAGE_TRANSACTION), JSON.stringify(record) + '\n', { flag: 'wx', mode: 0o600 }); }
+  catch (error) {
+    if (error.code === 'EEXIST') throw packageError('PackageInstallationIncomplete', 'another package operation owns the transaction marker');
+    throw error;
+  }
+}
 
 export function assertPackageDirectory(root) {
   if (existsSync(root)) {
@@ -126,15 +134,15 @@ export function readPackageLock(root) {
   return value;
 }
 
-export function verifyInstalledPackages(root, records) {
-  return verifyInstalledInventory(root, records, readPackage).lock;
+export function verifyInstalledPackages(root, records, options) {
+  return verifyInstalledInventory(root, records, readPackage, options).lock;
 }
 
-export function inspectInstalledPackages(root, records) {
-  return verifyInstalledInventory(root, records, inspectInstalledPackage);
+export function inspectInstalledPackages(root, records, options) {
+  return verifyInstalledInventory(root, records, inspectInstalledPackage, options);
 }
 
-function verifyInstalledInventory(root, records, read) {
+function verifyInstalledInventory(root, records, read, { allowMissing = false } = {}) {
   root = realpathSync(root);
   assertPackageDirectory(root);
   if (existsSync(join(root, PACKAGE_TRANSACTION))) throw packageError("PackageInstallationIncomplete", "package installation is active or was interrupted; inspect .touba-package-installing before recovery");
@@ -161,10 +169,18 @@ function verifyInstalledInventory(root, records, read) {
     const entry = lock.packages.find(p => resolve(root, p.manifest) === manifest);
     if (!entry) throw packageError("PackageNotInstalled", `run touba package add ${relative(root, dirname(manifest))} to verify and register this package`);
     assertPlainDirectory(dirname(manifest));
+    if (allowMissing && !existsSync(dirname(manifest))) {
+      packages.set(manifest, { document: { name: entry.name, version: entry.version },
+        restrictions: [{ code: 'PackageInstalledContentMissing' }], missing: true });
+      continue;
+    }
     let pkg;
     try { pkg = read(manifest); }
-    catch (error) { error.installedPackageContext = true; throw error; }
-    if (pkg.document.name !== entry.name || pkg.document.version !== entry.version || record.version !== entry.version || pkg.digest !== entry.digest || JSON.stringify(pkg.files) !== JSON.stringify(entry.files)) throw packageError("PackageIntegrityMismatch", `installed package ${entry.name} differs from its lock`);
+    catch (error) {
+      if (error.code === 'ENOENT') error = packageError('PackageInstalledContentMissing', 'locked package content is missing');
+      error.installedPackageContext = true; error.packageName = entry.name; throw error;
+    }
+    if (pkg.document.name !== entry.name || pkg.document.version !== entry.version || record.version !== entry.version || pkg.digest !== entry.digest || JSON.stringify(pkg.files) !== JSON.stringify(entry.files)) throw Object.assign(packageError("PackageIntegrityMismatch", `installed package ${entry.name} differs from its lock`), { packageName: entry.name });
     assertOnlyInventory(pkg);
     packages.set(manifest, pkg);
   }

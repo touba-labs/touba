@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, symlinkSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairSync, createHash, sign } from 'node:crypto';
@@ -108,4 +108,21 @@ test('human errors are translated without changing machine codes or trusting rem
   assert.equal(unsafe.reason, 'refused'); assert.doesNotMatch(packageDiagnostic(unsafe, 'fr'), /secret/);
   for (const value of ['-1', 'nonsense', '1.2', '9999999999999999999']) assert.equal(retrySeconds(value), null);
   assert.equal(retrySeconds('Wed, 01 Jan 2025 00:00:07 GMT', Date.parse('2025-01-01T00:00:00Z')), 7);
+});
+
+test('shared registry configuration survives a clone without absolute paths or credential state', t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba-registry-shared-')));
+  t.after(() => rmSync(root, { recursive: true, force: true })); initProject({ root });
+  const registry = 'https://registry.example.invalid/registry', file = join(root, 'trust.json');
+  const key = generateKeyPairSync('ed25519');
+  writeFileSync(file, JSON.stringify({ schema_version: 'touba-registry-trust-v1', registry, keys: [{ id: 'fixture', status: 'active', public_key: key.publicKey.export({ type: 'spki', format: 'pem' }) }] }));
+  configureRegistry(registry, { root, trust: file, shared: true });
+  const config = JSON.parse(readFileSync(join(root, 'touba.registry.json')));
+  assert.equal(config.trust, 'trust.json'); assert.equal(JSON.stringify(config).includes(root), false);
+  const clone = join(root, 'clone'); mkdirSync(clone); initProject({ root: clone });
+  for (const name of ['touba.registry.json', 'trust.json']) copyFileSync(join(root, name), join(clone, name));
+  assert.deepEqual(configuredRegistry(clone), { registry, trust: join(clone, 'trust.json') });
+  assert.throws(() => configureRegistry(registry, { root, trust: file }), { code: 'RegistrySharedConfigurationPresent' });
+  config.trust = '../trust.json'; writeFileSync(join(clone, 'touba.registry.json'), JSON.stringify(config));
+  assert.throws(() => configuredRegistry(clone), { code: 'PackagePathInvalid' });
 });

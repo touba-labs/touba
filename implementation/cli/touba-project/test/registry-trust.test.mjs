@@ -110,7 +110,8 @@ test('remote indexes require explicit trust, valid signatures, origin and freshn
   token = make(replacement.privateKey, 'second', { revision: 2 });
   assert.equal((await readSignedRegistry(url, file)).signingKey, 'second');
   trust.registry += '/wrong'; save();
-  await assert.rejects(readSignedRegistry(url, file), { code: 'RegistryTrustInvalid' });
+  await assert.rejects(readSignedRegistry(url, file), { code: 'RegistryTrustTargetMismatch' });
+  trust.registry = trust.registry.slice(0, -6);
   for (const value of [null, [], {}, { ...trust, keys: [null] }]) {
     writeFileSync(file, JSON.stringify(value));
     await assert.rejects(readSignedRegistry(url, file), { code: 'RegistryTrustInvalid' });
