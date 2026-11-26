@@ -59,6 +59,7 @@ export default grammar({
       field("kind", $.value_identifier),
       $._sp,
       field("name", $.symbol_identifier),
+      repeat(seq(",", optional($._sp), field("name", $.symbol_identifier))),
       $._sp,
       "from",
       $._sp,
@@ -539,6 +540,8 @@ export default grammar({
 
     _primary_expression: $ => choice(
       $.list_comprehension_expression,
+      $.list_sum_expression,
+      $.list_sort_expression,
       $.list_concat_expression,
       $.text_join_expression,
       $.list_expression,
@@ -570,6 +573,8 @@ export default grammar({
       $._sp, "for", $._sp, field("item", $.value_identifier), $._sp, "in", $._sp,
       field("collection", $.expression), optional(seq($._sp, "if", $._sp, field("condition", $.expression))), optional($._sp), "]"),
 
+    list_sum_expression: $ => seq("sum", optional($._sp), "(", field("values", $.expression), ")"),
+    list_sort_expression: $ => seq("sort", optional($._sp), "(", field("values", $.expression), ")"),
     list_concat_expression: $ => seq("concat", optional($._sp), "(", field("left", $.expression),
       ",", optional($._sp), field("right", $.expression), ")"),
 

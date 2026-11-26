@@ -1,3 +1,5 @@
+import { boundedListSort } from "./bounded-list-sort.mjs";
+import { isRunBudgetValue, runBudgetMinimum } from "../../../contracts/run-budget-values.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { isIsoDate, matchesFieldConstraints } from "../../../contracts/machine/value-contracts.mjs";
 import { randomUUID } from "node:crypto";
@@ -7224,7 +7226,7 @@ function normalizeManifestRunLimits(limits) {
         budgetKind,
       });
     }
-    assertPositiveInteger(value, budgetKind, "run_limits");
+    if (!isRunBudgetValue(budgetKind, value)) throw new ToubaRuntimeError("InvalidToolBindingManifest", `run_limits.${budgetKind} must be a safe integer >= ${runBudgetMinimum(budgetKind)}`);
     normalized.set(budgetKind, Object.freeze({
       value,
       authoritySource: "manifest",
@@ -8798,6 +8800,17 @@ function executeBindNode(graph, node, context) {
 }
 
 function executeHumanApprovalNode(graph, node, context) {
+  const sourcePolicy = node.approval_policy?.timeout_ms_ref !== undefined ? node.approval_policy : undefined;
+  if (node.approval_policy?.timeout_ms_ref !== undefined) {
+    if (context.parallelBranch) throw new RuntimeFailure("dynamic approval timeouts require a non-parallel continuation", {}, "InvalidHumanApprovalPolicy");
+    const ref = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
+    const previous = context.approvalRuntime.state.requests[ref];
+    const policy = { ...node.approval_policy };
+    delete policy.timeout_ms_ref;
+    policy.timeout_ms = previous ? previous.policy.timeout_ms : resolveHandle(node.approval_policy.timeout_ms_ref, context, graph);
+    // The shared authority validator checks the resolved bounds before creating a request.
+    node = { ...node, approval_policy: policy };
+  }
   if (context.parallelBranch) {
     const ref = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
     return parallelHuman(context, { approval_ref: ref, mode: requiredApprovalMode(node),
@@ -8812,10 +8825,10 @@ function executeHumanApprovalNode(graph, node, context) {
       return executeHumanApprovalNodeBody(graph, node, context, authorityRef);
     });
   }
-  return executeHumanApprovalNodeBody(graph, node, context);
+  return executeHumanApprovalNodeBody(graph, node, context, null, sourcePolicy);
 }
 
-async function executeHumanApprovalNodeBody(graph, node, context, authorityRef = null) {
+async function executeHumanApprovalNodeBody(graph, node, context, authorityRef = null, sourcePolicy = undefined) {
   const approvalRef = node.approval_ref ?? `approval:${graph.id}:${node.id}`;
   const mode = requiredApprovalMode(node);
   const contextRefs = node.context_refs ?? [];
@@ -8840,7 +8853,7 @@ async function executeHumanApprovalNodeBody(graph, node, context, authorityRef =
     reviewContext.operation = approvedOperation(context.indexes.tools.get(graph.owner_ref), context);
   }
   assertCheckpointHasNoResolvedSecret(reviewContext, context, approvalRef);
-  const request = approvalRequest(context.approvalRuntime, context.trace.runId, authorityRef ?? approvalRef, node.approval_policy, reviewContext);
+  const request = approvalRequest(context.approvalRuntime, context.trace.runId, authorityRef ?? approvalRef, node.approval_policy, reviewContext, sourcePolicy);
   const decision = await authorizeApprovalDecision(context.approvalRuntime, request,
     context.humanApprovalDecisions.get(approvalRef), { replay: authorityRef !== null || context.humanApprovalResumeCheckpoint?.approval_ref === approvalRef });
   if (!decision) {
@@ -9969,6 +9982,29 @@ function evaluateExpression(expression, context, graph) {
       });
     case "list_comprehension":
       return evaluateListComprehension(expression, context, graph);
+    case "list_sum":
+    case "list_sort": {
+      const handle = expression.operands[0], inputType = resolveHandleType(handle, context, graph);
+      const values = resolveHandle(handle, context, graph), element = inputType?.slice(5);
+      const sum = expression.kind === "list_sum";
+      if (!inputType?.startsWith("list:") || ![BUILTIN_INT, BUILTIN_FLOAT, ...(sum ? [] : [BUILTIN_TEXT])].includes(element)
+        || !Array.isArray(values) || expression.type_ref !== (sum ? element : inputType)) {
+        throw new RuntimeFailure("list operation requires its declared scalar list type", { expressionId: expression.id }, "ListElementTypeMismatch");
+      }
+      if (values.length > context.maxLoopIterations) throw new RuntimeFailure("list operation exceeded runtime iteration limit", { expressionId: expression.id, maxLoopIterations: context.maxLoopIterations }, "LoopIterationLimitExceeded");
+      assertRunCanContinue(context);
+      for (const value of values) {
+        assertRunCanContinue(context);
+        if (!isValueCompatibleWithType(value, element, context)) throw new RuntimeFailure("list element violates its declared type", { expressionId: expression.id }, "ListElementTypeMismatch");
+      }
+      if (!sum) return boundedListSort(values, () => assertRunCanContinue(context));
+      let result = 0;
+      for (const value of values) {
+        assertRunCanContinue(context);
+        result = validateNumericResult(result + value, expression);
+      }
+      return result;
+    }
     case "list_concat": {
       const lists = expression.operands.map(handle => {
         const value = resolveHandle(handle, context, graph);

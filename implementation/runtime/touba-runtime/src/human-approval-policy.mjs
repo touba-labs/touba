@@ -18,10 +18,11 @@ const exactKeys = (value, keys) => object(value) && Object.keys(value).every(key
 /** @param {any} value */
 const validComment = value => value == null || (typeof value === "string" && [...value].length <= 4096);
 
-/** @param {any} policy */
-export function validateApprovalPolicy(policy) {
+/** @param {any} policy @param {boolean} [dynamic] */
+export function validateApprovalPolicy(policy, dynamic = false) {
   if (policy === undefined || policy === null) return null;
-  if (!exactKeys(policy, ["role", "timeout_ms", "distinct_from", "exclude_signers"]) || !Object.keys(policy).length
+  if (!exactKeys(policy, ["role", "timeout_ms", "distinct_from", "exclude_signers", ...(dynamic ? ["timeout_ms_ref"] : [])]) || !Object.keys(policy).length
+    || (policy.timeout_ms_ref !== undefined && (!dynamic || typeof policy.timeout_ms_ref !== "string" || !policy.timeout_ms_ref || policy.timeout_ms !== undefined))
     || (policy.role !== undefined && (!identity(policy.role) || Buffer.byteLength(policy.role, "utf8") > 128))
     || (policy.exclude_signers !== undefined && (!identity(policy.exclude_signers) || Buffer.byteLength(policy.exclude_signers, "utf8") > 128))
     || (policy.timeout_ms !== undefined && (!Number.isSafeInteger(policy.timeout_ms) || policy.timeout_ms < 1 || policy.timeout_ms > MAX_TIMEOUT_MS))
@@ -40,11 +41,18 @@ export function validateApprovalState(state) {
     || Object.keys(state.requests).length + state.receipts.length > MAX_RECORDS) invalid();
   const ids = new Set();
   for (const [ref, request] of Object.entries(state.requests)) {
-    if (!identity(ref) || !exactKeys(request, ["request_id", "run_id", "approval_ref", "created_at", "deadline_at", "policy", "review_context"])
+    if (!identity(ref) || !exactKeys(request, ["request_id", "run_id", "approval_ref", "created_at", "deadline_at", "policy", "review_context", "source_policy"])
       || !identity(request.request_id) || ids.has(request.request_id) || !identity(request.run_id)
       || request.approval_ref !== ref || !instant(request.created_at)) invalid();
     ids.add(request.request_id);
     const policy = validateApprovalPolicy(request.policy);
+    if (request.source_policy !== undefined) {
+      const source = validateApprovalPolicy(request.source_policy, true);
+      if (!source?.timeout_ms_ref || !policy?.timeout_ms) invalid();
+      delete source.timeout_ms_ref;
+      source.timeout_ms = policy.timeout_ms;
+      if (!isDeepStrictEqual(source, policy)) invalid();
+    }
     if (policy?.timeout_ms !== undefined) {
       if (!instant(request.deadline_at) || Date.parse(request.deadline_at) !== Date.parse(request.created_at) + policy.timeout_ms) invalid();
     } else if (request.deadline_at !== null) invalid();
@@ -83,7 +91,7 @@ export function createApprovalRuntime(document, options, checkpoint) {
   const policies = (document.execution_graphs ?? []).flatMap(/** @param {any} graph */ graph => graph.nodes ?? [])
     .filter(/** @param {any} node */ node => node.approval_policy !== undefined).map(/** @param {any} node */ node => {
       if (node.kind !== "human_approval") fail("InvalidHumanApprovalPolicy", "approval policy belongs only to human approval nodes");
-      return validateApprovalPolicy(node.approval_policy);
+      return validateApprovalPolicy(node.approval_policy, true);
     });
   const enabled = policies.some(Boolean) || typeof options.humanApprovalAuthority === "function" || checkpoint?.approval_state !== undefined
     || options.humanApprovalInitiator !== undefined || document.execution_graphs?.some(/** @param {any} graph */ graph => graph.nodes?.some(/** @param {any} node */ node => node.kind === "human_approval"));
@@ -99,7 +107,7 @@ export function createApprovalRuntime(document, options, checkpoint) {
   for (const request of Object.values(state.requests)) {
     const ref = request.approval_ref.split(":parallel:")[0];
     const node = nodes.find(/** @param {any} node */ node => node.approval_ref === ref);
-    if (node && !isDeepStrictEqual(node.approval_policy ?? null, request.policy)) fail("HumanApprovalCheckpointIncompatible", "persisted approval constraints differ from AIR");
+    if (node && !isDeepStrictEqual(node.approval_policy ?? null, request.source_policy ?? request.policy)) fail("HumanApprovalCheckpointIncompatible", "persisted approval constraints differ from AIR");
   }
   if (checkpoint && !resolver && options.humanApprovalInitiator !== undefined && options.humanApprovalInitiator !== state.initiator) fail("HumanApprovalIdentityMismatch", "run initiator cannot change on resume");
   const timeout = options.humanApprovalAuthorityTimeoutMs ?? 5000;
@@ -133,20 +141,21 @@ export function approvalStateSnapshot(runtime) {
   return runtime.enabled ? structuredClone(runtime.state) : undefined;
 }
 
-/** @param {any} runtime @param {string} runId @param {string} approvalRef @param {any} policy @param {any} [reviewContext] */
-export function approvalRequest(runtime, runId, approvalRef, policy, reviewContext) {
+/** @param {any} runtime @param {string} runId @param {string} approvalRef @param {any} policy @param {any} [reviewContext] @param {any} [sourcePolicy] */
+export function approvalRequest(runtime, runId, approvalRef, policy, reviewContext, sourcePolicy) {
   if (!runtime.enabled) return null;
   policy = validateApprovalPolicy(policy);
   if (policy?.distinct_from?.includes("initiator") && runtime.state.initiator === null) fail("HumanApprovalInitiatorRequired", "source separation requires a trusted host initiator");
   const old = runtime.state.requests[approvalRef];
   if (old) {
-    if (old.run_id !== runId || !isDeepStrictEqual(old.policy, policy)) fail("HumanApprovalCheckpointIncompatible", "saved approval request differs from source constraints or run");
+    if (old.run_id !== runId || !isDeepStrictEqual(old.policy, policy) || !isDeepStrictEqual(old.source_policy, sourcePolicy)) fail("HumanApprovalCheckpointIncompatible", "saved approval request differs from source constraints or run");
     if (reviewContext !== undefined && !isDeepStrictEqual(old.review_context, reviewContext)) fail("HumanApprovalCheckpointIncompatible", "saved review context differs from this occurrence");
     return structuredClone(old);
   }
   if (Object.keys(runtime.state.requests).length + runtime.state.receipts.length >= MAX_RECORDS) fail("HumanApprovalStateLimitExceeded", "approval state limit reached before creating another request");
   const now = Date.now();
   const request = { request_id: `human:${randomUUID()}`, run_id: runId, approval_ref: approvalRef,
+    ...(sourcePolicy === undefined ? {} : { source_policy: structuredClone(sourcePolicy) }),
     created_at: new Date(now).toISOString(), deadline_at: policy?.timeout_ms ? new Date(now + policy.timeout_ms).toISOString() : null, policy,
     ...(reviewContext === undefined ? {} : { review_context: structuredClone(reviewContext) }) };
   runtime.state.requests[approvalRef] = request;

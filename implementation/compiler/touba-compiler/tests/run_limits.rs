@@ -161,3 +161,30 @@ fn selected_record_constructors_retain_their_imported_field_constants() {
     );
     assert!(document.budgets.is_none());
 }
+
+#[test]
+fn zero_call_budgets_are_preserved_but_time_and_steps_stay_positive() {
+    for kind in [
+        "max_tool_calls",
+        "max_agent_invocations",
+        "max_provider_calls",
+    ] {
+        let source = format!(
+            "module zero\nlimits run\n    {kind} as 0\nfunction Ready\n    gives Int\n    do\n        give 1\n"
+        );
+        let result = compile_source("zero.tb", &source);
+        assert_eq!(result.diagnostics, []);
+        assert_eq!(result.document.unwrap().budgets.unwrap().run[kind].value, 0);
+    }
+    for kind in ["max_steps", "max_run_ms"] {
+        let source = format!("module zero\nlimits run\n    {kind} as 0\n");
+        let result = compile_source("zero.tb", &source);
+        assert!(result.document.is_none());
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == AirDiagnosticCode::InvalidRunLimits)
+        );
+    }
+}

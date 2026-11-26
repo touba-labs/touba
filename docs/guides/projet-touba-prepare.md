@@ -1024,3 +1024,19 @@ généré. Le plan affiche `remove_trigger`. Une déclaration encore présente d
 les sources ne peut pas être retirée ainsi ; désactivez-la avec `triggers` ou
 modifiez d'abord la source. Les historiques de déclenchement et d'effets restent
 conservés. La préparation n'exécute et ne rejoue aucune opération.
+
+### Renommer une déclaration avec ses références
+
+Un renommage transversal se prépare comme un changement de projet relu. Inclure
+les sources de la déclaration, les imports, les appels et les références hôtes
+connues dans **le même ensemble de changements**. Le service de revue compile
+les sources proposées et leurs dépendants inverses avant application. Un seul
+fichier renommé avec des imports encore anciens est refusé. L’application
+réutilise la transaction existante, ses empreintes de base et sa récupération.
+
+Ce parcours ne devine pas des références construites dynamiquement et ne fait
+pas de remplacement global de texte. Pour un outil/agent exporté, revoir aussi
+les clés de manifest/fragments, configuration hôte et contrat de package. Les
+collisions, cycles, chemins extérieurs, sources modifiées depuis la revue et
+interfaces déjà distribuées exigent une nouvelle revue. Aucun générateur de
+renommage automatique ni nouveau protocole n’est nécessaire à ce parcours.

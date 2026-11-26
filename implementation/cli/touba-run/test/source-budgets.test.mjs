@@ -1,6 +1,7 @@
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ function workspace(t) {
 function compile(t, code = source) {
   const path = join(workspace(t), "source.tb");
   writeFileSync(path, code);
-  return JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "-p", "touba-cli", "--bin", "touba-compile", "--", path], { cwd: implementation, encoding: "utf8" }));
+  return compileTestAir(path);
 }
 const failureCode = result => result.trace.events.findLast(event => event.payload?.runtime_error_code)?.payload.runtime_error_code;
 
@@ -84,7 +85,7 @@ test("missing or malformed checkpoint budget state is refused without provider o
   assert.equal(paused.reason, "human_approval_pending");
   for (const mutate of [c => { delete c.active_elapsed_ms; }, c => { delete c.effective_limits; },
     c => { delete c.budget_counters.tool_calls; }, c => { c.budget_counters.tool_calls = -1; },
-    c => { c.effective_limits.max_tool_calls = 0; }, c => { c.effective_limits.max_usd = 2; },
+    c => { c.effective_limits.max_tool_calls = -1; }, c => { c.effective_limits.max_usd = 2; },
     c => { c.active_elapsed_ms = NaN; }]) {
     const checkpoint = structuredClone(paused.checkpoint); mutate(checkpoint);
     const refused = await executeAirDocument(air, { ...options, humanApprovalResumeCheckpoint: checkpoint,
@@ -187,8 +188,7 @@ test("prepared multi-module project keeps the same minimum and provenance as the
   const air = JSON.parse(readFileSync(path, "utf8"));
   assert.equal(air.budgets.run.max_steps.value, 100);
   assert.match(air.budgets.run.max_steps.source_ref.source_id, /pure\.tb$/);
-  const direct = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "-p", "touba-cli", "--bin", "touba-compile", "--",
-    "--source-root", join(root, "src"), join(root, "src/budgets/pure.tb")], { cwd: implementation, encoding: "utf8" }));
+  const direct = compileTestAir("--source-root", join(root, "src"), join(root, "src/budgets/pure.tb"));
   assert.deepEqual(air.budgets, direct.budgets);
 });
 
@@ -258,4 +258,61 @@ await defineTool({ toolRef: ${JSON.stringify(tool)}, requiredGrants: [], inputSi
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.equal(JSON.parse(result.stdout).reason, "ToolCallBudgetExceeded", result.stdout + result.stderr);
   assert.deepEqual(readFileSync(journal, "utf8").trim().split("\n").map(line => JSON.parse(line)), ["incident", "incident!"]);
+});
+
+test("zero call budgets survive source, manifest, host and default admission and refuse before effects", async t => {
+  for (const [kind, entry, reason] of [
+    ["max_tool_calls", "skill:budgets.source/Repeat", "ToolCallBudgetExceeded"],
+    ["max_agent_invocations", "strategy:budgets.source/Review", "AgentInvocationBudgetExceeded"],
+    ["max_provider_calls", "strategy:budgets.source/Review", "AgentDecisionProviderBudgetExceeded"],
+  ]) {
+    for (const layer of ["source", "manifest", "host", "default"]) {
+      const air = compile(t, layer === "source" ? source.replace(new RegExp(`${kind} as \\d+`), `${kind} as 0`) : source);
+      validateAirMachineContract(air);
+      let calls = 0;
+      const options = { entryRef: entry, inputs: { value: "synthetic", request: "synthetic" },
+        toolHandlers: { [tool]: () => { calls++; return "normalized"; } },
+        agentDecisionProvider: () => { calls++; return { action: "answer_directly", result: "diagnosed" }; },
+        ...(layer === "manifest" ? { toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {}, run_limits: { [kind]: 0 } })) } : {}),
+        ...(layer === "host" ? { runLimits: { [kind]: 0 } } : {}),
+        ...(layer === "default" ? { runtimeDefaultRunLimits: { [kind]: 0 } } : {}),
+      };
+      // Each entry receives only its declared argument.
+      options.inputs = entry.startsWith("skill:") ? { value: "synthetic" } : { request: "synthetic" };
+      const result = await executeAirDocument(air, options);
+      assert.equal(result.reason, reason, `${kind}/${layer}: ${JSON.stringify(result)}`);
+      assert.equal(calls, 0, `${kind}/${layer} dispatched`);
+      const ready = await executeAirDocument(air, { ...options, entryRef: "function:budgets.source/Ready", inputs: {} });
+      assert.equal(ready.status, "success", JSON.stringify(ready));
+    }
+  }
+});
+
+test("zero unrelated counters remain zero through a human pause and resume", async t => {
+  const air = compile(t, pausedSource.replace("limits run\n", "limits run\n    max_agent_invocations as 0\n    max_provider_calls as 0\n"));
+  const options = { entryRef: "skill:budgets.paused/Review", durableHumanApprovals: true,
+    toolHandlers: { "tool:budgets.paused/Normalize": () => "done" } };
+  const paused = await executeAirDocument(air, options);
+  assert.equal(paused.reason, "human_approval_pending", JSON.stringify(paused));
+  assert.equal(paused.checkpoint.effective_limits.max_agent_invocations, 0);
+  assert.equal(paused.checkpoint.effective_limits.max_provider_calls, 0);
+  const resumed = await executeAirDocument(air, { ...options, humanApprovalResumeCheckpoint: paused.checkpoint,
+    humanApprovalDecisions: { [paused.checkpoint.approval_ref]: "approved" } });
+  assert.equal(resumed.status, "success", JSON.stringify(resumed));
+});
+
+test("CLI flags preserve zero counters while refusing zero steps and time", t => {
+  const root = workspace(t), path = join(root, "zero.air.json");
+  writeFileSync(path, JSON.stringify(compile(t)));
+  const runPath = fileURLToPath(new URL("../src/run.mjs", import.meta.url));
+  for (const flag of ["--max-tool-calls", "--max-agent-invocations", "--max-provider-calls"]) {
+    const result = spawnSync(process.execPath, [runPath, path, "--entry", "function:budgets.source/Ready", flag, "0", "--output", "result"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /ready/);
+  }
+  for (const flag of ["--max-run-ms", "--max-steps"]) {
+    const refused = spawnSync(process.execPath, [runPath, path, flag, "0"], { encoding: "utf8" });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /requires a safe integer >= 1/);
+  }
 });

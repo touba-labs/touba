@@ -371,6 +371,8 @@ pub struct AirApprovalPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distinct_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude_signers: Option<String>,
@@ -462,6 +464,8 @@ pub enum AirExpressionKind {
     CopyRecord,
     ConstructList,
     ListComprehension,
+    ListSum,
+    ListSort,
     ListConcat,
     TextJoin,
     UnaryOp,

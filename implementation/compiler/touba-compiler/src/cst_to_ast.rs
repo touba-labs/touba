@@ -101,7 +101,7 @@ impl<'a> AstLowerer<'a> {
                         );
                     }
                     if let Some(declaration) = self.lower_import_declaration(child) {
-                        imports.push(declaration);
+                        imports.extend(declaration);
                     }
                 }
                 "run_limits_declaration" => {
@@ -219,13 +219,20 @@ impl<'a> AstLowerer<'a> {
         })
     }
 
-    fn lower_import_declaration(&mut self, node: Node<'_>) -> Option<AstImportDeclaration> {
-        Some(AstImportDeclaration {
-            kind: self.required_field_text(node, "kind")?,
-            name: self.required_field_text(node, "name")?,
-            from_module: self.required_field_text(node, "from_module")?,
-            source_ref: self.source_ref(node),
-        })
+    fn lower_import_declaration(&mut self, node: Node<'_>) -> Option<Vec<AstImportDeclaration>> {
+        let kind = self.required_field_text(node, "kind")?;
+        let from_module = self.required_field_text(node, "from_module")?;
+        let mut cursor = node.walk();
+        Some(
+            node.children_by_field_name("name", &mut cursor)
+                .map(|name| AstImportDeclaration {
+                    kind: kind.clone(),
+                    name: self.text(name),
+                    from_module: from_module.clone(),
+                    source_ref: self.source_ref(node),
+                })
+                .collect(),
+        )
     }
 
     fn lower_constant_declaration(&mut self, node: Node<'_>) -> Option<AstConstantDeclaration> {
@@ -1447,6 +1454,15 @@ impl<'a> AstLowerer<'a> {
                         None => None,
                     },
                     source_ref,
+                })
+            }
+            "list_sum_expression" | "list_sort_expression" => {
+                let field = self.required_field(node, "values")?;
+                let values = Box::new(self.lower_expression(field)?);
+                Some(if node.kind() == "list_sum_expression" {
+                    AstExpression::ListSum { values, source_ref }
+                } else {
+                    AstExpression::ListSort { values, source_ref }
                 })
             }
             "list_concat_expression" => {

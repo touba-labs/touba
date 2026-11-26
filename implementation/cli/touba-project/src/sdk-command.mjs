@@ -1,3 +1,4 @@
+import { cleanSdkArchives } from "./sdk-cleanup.mjs";
 import { spawnSync } from "node:child_process";
 import { sandboxSdkConfig } from "./sdk-sandbox.mjs";
 import { createHash } from "node:crypto";
@@ -10,6 +11,7 @@ const languages = { javascript: "sdk", python: "python_sdk" };
 const help = `Usage:
   touba sdk install javascript [--root <project>]
   touba sdk install python [--root <project>] [--python <executable>] [--manager auto|uv|pip]
+  touba sdk clean javascript|python [--root <project>] [--keep <sha256,...>] [--accept <review-digest>]
   touba sdk path javascript|python
   touba sdk sandbox javascript|python --handler <path> [--root <project>]
 
@@ -127,12 +129,13 @@ export function installSdk(language, { root = process.cwd(), python, manager = "
   const pythonEnv = { PYTHONNOUSERSITE: "1", PIP_NO_INPUT: "1", PIP_DISABLE_PIP_VERSION_CHECK: "1",
     UV_OFFLINE: "true", UV_PYTHON_DOWNLOADS: "never", UV_PROJECT_ENVIRONMENT: venv };
   if (!existsSync(venv)) {
-    const base = python ?? (process.platform === "win32" ? "python" : "python3");
-    run(base, ["-I", "-c", 'import sys; assert sys.version_info >= (3, 11), "Python 3.11 or newer is required"'], root, pythonEnv);
+    const requested = python ?? (process.platform === "win32" ? "python" : "python3");
+    const base = run(requested, ["-I", "-c", 'import sys; sys.version_info >= (3, 11) or sys.exit("Python 3.11 or newer is required; select a supported interpreter with --python <executable>"); print(sys.executable)'], root, pythonEnv, { phase: "Python interpreter selection" });
+    if (!isAbsolute(base) || /[\r\n\0]/.test(base)) fail("Python did not report an absolute executable path; select it with --python <executable>.");
     if (manager === "uv") run("uv", ["venv", "--offline", "--no-config", "--no-python-downloads", "--python", base, venv], root, pythonEnv);
     else run(base, ["-I", "-m", "venv", venv], root, pythonEnv);
   }
-  const actualPrefix = run(executable, ["-I", "-c", 'import sys; assert sys.version_info >= (3, 11); assert sys.prefix != sys.base_prefix, "A virtual environment is required"; print(sys.prefix)'], root, pythonEnv);
+  const actualPrefix = run(executable, ["-I", "-c", 'import sys; sys.version_info >= (3, 11) or sys.exit("The project environment requires Python 3.11 or newer; review .venv or select a supported interpreter for a new environment"); sys.prefix != sys.base_prefix or sys.exit("A virtual environment is required"); print(sys.prefix)'], root, pythonEnv);
   if (realpathSync(actualPrefix) !== realpathSync(venv)) fail("Python interpreter does not belong to this project's .venv.");
   const archive = preserveArchive(root, sdk);
   if (manager === "uv") {
@@ -152,13 +155,17 @@ export function installSdk(language, { root = process.cwd(), python, manager = "
 export function sdkCommand(args) {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) return { text: help, exitCode: 0 };
   const [action, language, ...rest] = args;
-  if (!["path", "install", "sandbox"].includes(action)) fail(help);
+  if (!["path", "install", "sandbox", "clean"].includes(action)) fail(help);
   const options = {};
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
-    const flags = action === "install" ? ["--root", "--python", "--manager"] : action === "sandbox" ? ["--root", "--handler"] : [];
+    const flags = action === "clean" ? ["--root", "--keep", "--accept"] : action === "install" ? ["--root", "--python", "--manager"] : action === "sandbox" ? ["--root", "--handler"] : [];
     if (!flags.includes(flag) || Object.hasOwn(options, flag.slice(2)) || !rest[i + 1] || rest[i + 1].startsWith("--")) fail(`Unknown, duplicate or incomplete SDK option: ${flag}`);
     options[flag.slice(2)] = rest[++i];
+  }
+  if (action === "clean") {
+    const report = cleanSdkArchives({ ...options, language, keep: options.keep ? options.keep.split(",") : [] });
+    return { text: JSON.stringify(report, null, 2), exitCode: 0 };
   }
   if (action === "path") return { text: bundledSdk(language).path, exitCode: 0 };
   if (action === "sandbox") return { text: JSON.stringify(sandboxSdkConfig(language, options), null, 2), exitCode: 0 };

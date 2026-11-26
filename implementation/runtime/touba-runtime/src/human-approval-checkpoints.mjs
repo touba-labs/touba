@@ -1,5 +1,7 @@
 // @ts-check
 
+import { isRunBudgetValue } from "../../../contracts/run-budget-values.mjs";
+
 import { payloadValueKind } from "./payload-validation.mjs";
 import { RuntimeFailure, ToubaRuntimeError } from "./runtime-errors.mjs";
 import { resolvedSecretEntries } from "./secret-redaction.mjs";
@@ -131,7 +133,7 @@ function validateCheckpointBudgetBody(checkpoint) {
   checkpointNonNegativeSafeInteger(checkpoint.active_elapsed_ms, "active_elapsed_ms");
   const limits = mapFromCheckpointObject(checkpoint.effective_limits, "effective_limits");
   for (const [kind, value] of limits) {
-    if (!RUN_BUDGET_KIND_SET.has(kind) || !Number.isSafeInteger(value) || Number(value) <= 0) {
+    if (!RUN_BUDGET_KIND_SET.has(kind) || !isRunBudgetValue(kind, value)) {
       throw new RuntimeFailure("human checkpoint contains an invalid effective limit", {}, "InvalidHumanApprovalCheckpoint");
     }
   }

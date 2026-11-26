@@ -1,3 +1,4 @@
+import { isRunBudgetValue } from "../run-budget-values.mjs";
 import { validateAirExpressions } from "./air-expressions.mjs";
 import { validateTracePage } from "../trace-reference.mjs";
 export { validateTraceReference } from "../trace-reference.mjs";
@@ -19,7 +20,7 @@ export const AIR_EXPRESSION_KINDS = Object.freeze([
   "optional_some", "optional_none", "optional_present", "optional_value",
   "enum_value",
   "value_ref", "literal_text", "literal_boolean", "literal_int", "literal_float",
-  "text_conversion", "date_conversion", "field_access", "construct_record", "copy_record", "construct_list", "list_comprehension", "list_concat", "text_join", "unary_op", "binary_op",
+  "text_conversion", "date_conversion", "field_access", "construct_record", "copy_record", "construct_list", "list_comprehension", "list_sum", "list_sort", "list_concat", "text_join", "unary_op", "binary_op",
 ]);
 export const FAILURE_FAMILIES = Object.freeze([
   "business", "authority", "provider", "handler",
@@ -129,7 +130,7 @@ export function validateAirMachineContract(value) {
         const path = `$.budgets.run.${kind}`;
         const limit = requireObject(value, path, "AIR run limit");
         rejectUnknownFields(limit, new Set(["value", "source_ref"]), path);
-        if (!Number.isSafeInteger(limit.value) || limit.value <= 0) fail("AirBudgetInvalid", "run limit must be a positive safe integer", `${path}.value`);
+        if (!isRunBudgetValue(kind, limit.value)) fail("AirBudgetInvalid", "run limit must be a safe integer, non-negative for call counters and positive otherwise", `${path}.value`);
         requireObject(limit.source_ref, `${path}.source_ref`, "run limit source reference");
       }
     }
@@ -225,6 +226,10 @@ function validateOptionals(definitions, graphs) {
         || (expression.operands ?? []).some(/** @param {unknown} handle */ handle => typeof handle !== "string" || !handle.length)) {
         fail("AirListInvalid", "list expression requires a known list type and ordered operands", path);
       }
+    }
+    if (["list_sum", "list_sort"].includes(expression.kind)) {
+      const types = expression.kind === "list_sum" ? ["builtin:Int", "builtin:Float"] : ["list:builtin:Int", "list:builtin:Float", "list:builtin:Text"];
+      if (!types.includes(expression.type_ref) || expression.operands?.length !== 1) fail("AirListInvalid", "list aggregation or sorting requires one operand and its exact result type", "$.execution_graphs.expressions");
     }
     if (["list_comprehension", "list_concat", "text_join"].includes(expression.kind)) {
       const path = `$.execution_graphs[${graphIndex}].expressions[${index}]`;
@@ -322,13 +327,14 @@ function validateFunctionPurity(definitions, graphs) {
 }
 
 /** @param {unknown} value @param {string} path @param {boolean} [allowEmpty] */
-function validateSourceApprovalPolicy(value, path, allowEmpty = false) {
+function validateSourceApprovalPolicy(value, path, allowEmpty = false, dynamic = false) {
   const policy = requireObject(value, path, "approval policy");
   /** @param {unknown} value */
   const label = value => typeof value === "string" && value.trim() === value && value.length > 0
     && new TextEncoder().encode(value).length <= 128 && !/[\x00-\x1f\x7f]/u.test(value);
   if ((!allowEmpty && Object.keys(policy).length === 0)
-    || Object.keys(policy).some(key => !["role", "timeout_ms", "distinct_from", "exclude_signers"].includes(key))
+    || Object.keys(policy).some(key => !["role", "timeout_ms", "distinct_from", "exclude_signers", ...(dynamic ? ["timeout_ms_ref"] : [])].includes(key))
+    || (Object.hasOwn(policy, "timeout_ms_ref") && (Object.hasOwn(policy, "timeout_ms") || typeof policy.timeout_ms_ref !== "string" || !policy.timeout_ms_ref))
     || (Object.hasOwn(policy, "role") && !label(policy.role))
     || (Object.hasOwn(policy, "exclude_signers") && !label(policy.exclude_signers))
     || (Object.hasOwn(policy, "timeout_ms") && (!Number.isSafeInteger(policy.timeout_ms) || policy.timeout_ms < 1 || policy.timeout_ms > 2592000000))
@@ -353,7 +359,7 @@ function validateGraph(value, allIds, path) {
     if (Object.hasOwn(node, "approval_policy")) {
       const policyPath = `${path}.nodes[${index}].approval_policy`;
       if (node.kind !== "human_approval") fail("InvalidHumanApprovalPolicy", "approval policy requires a human approval node", policyPath);
-      validateSourceApprovalPolicy(node.approval_policy, policyPath);
+      validateSourceApprovalPolicy(node.approval_policy, policyPath, false, true);
     }
     const parallelFields = ["collection_ref", "item_binding", "max_concurrency", "max_items"];
     if (node.kind === "parallel_call") {

@@ -1,6 +1,7 @@
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,8 +13,7 @@ import { validateTraceMachineContract, validateTraceMachineStream } from "../../
 
 let air;
 before(() => {
-  const compiler = fileURLToPath(new URL(`../../../target/debug/touba-compile${process.platform === "win32" ? ".exe" : ""}`, import.meta.url));
-  air = JSON.parse(execFileSync(compiler, [fileURLToPath(new URL("fixtures/checkpoint-custody.tb", import.meta.url))], { encoding: "utf8" }));
+  air = compileTestAir(fileURLToPath(new URL("fixtures/checkpoint-custody.tb", import.meta.url)));
 });
 
 function setup(t, entry = "Process") {

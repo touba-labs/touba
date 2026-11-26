@@ -52,13 +52,13 @@
               "$ref": "#/$defs/runLimit"
             },
             "max_tool_calls": {
-              "$ref": "#/$defs/runLimit"
+              "$ref": "#/$defs/callRunLimit"
             },
             "max_agent_invocations": {
-              "$ref": "#/$defs/runLimit"
+              "$ref": "#/$defs/callRunLimit"
             },
             "max_provider_calls": {
-              "$ref": "#/$defs/runLimit"
+              "$ref": "#/$defs/callRunLimit"
             }
           }
         }
@@ -114,6 +114,24 @@
     }
   },
   "$defs": {
+    "callRunLimit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "source_ref"
+      ],
+      "properties": {
+        "value": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "source_ref": {
+          "type": "object"
+        }
+      }
+    },
     "runLimit": {
       "type": "object",
       "additionalProperties": false,
@@ -340,6 +358,7 @@
               "maxLength": 128,
               "description": "Trimmed identifier, at most 128 UTF-8 bytes; byte length is checked by the machine validator."
             },
+            "timeout_ms_ref": { "type": "string", "minLength": 1 },
             "timeout_ms": {
               "type": "integer",
               "minimum": 1,
@@ -474,6 +493,8 @@
             "copy_record",
             "construct_list",
             "list_comprehension",
+            "list_sum",
+            "list_sort",
             "list_concat",
             "text_join",
             "unary_op",

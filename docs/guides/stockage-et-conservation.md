@@ -189,3 +189,29 @@ Sauvegardez les bases au repos et protégez leurs répertoires comme les donnée
 de votre application. SQLite n’applique pas de chiffrement au repos. Pour un
 service, surveillez le disque, les files et les opérations en attente ; choisissez
 une politique de conservation compatible avec vos besoins d’audit.
+
+## Choisir le bon périmètre d’entretien
+
+Les collections d’un projet n’ont pas toutes la même durée de vie. Utilisez
+les mécanismes existants selon la donnée concernée :
+
+| Donnée | Parcours | Protection |
+| --- | --- | --- |
+| Traces terminées | Aperçu et archivage du journal de traces | Les pauses, échecs, écritures interrompues et exports protégés restent disponibles |
+| Livraisons de triggers réussies | `trigger archive-state` / `archive-queue`, filtre `--before` | Les travaux actifs ou d’issue incertaine restent exclus |
+| Conversation d’un fournisseur SDK | Suppression explicite par clé ou expiration configurée du store | Une conversation réservée ne peut pas être supprimée |
+| État complet d’un serveur de démonstration au repos | `serve --archive-state`, aperçu puis `--apply` ; restauration par identifiant | Arrêt des écrivains, état rapproché, sauvegarde relue et refus de conflit |
+
+L’archivage global ne sert pas à supprimer quelques décisions anciennes. Les
+sessions, décisions humaines, effets et gardes anti-rejeu peuvent être liés.
+Une purge unifiée par âge ne fait pas partie de ces commandes : conserver les
+collections liées tant que leur fermeture et leurs références ne sont pas
+prouvées. Aucun nettoyage automatique général n’est activé par l’entretien
+SDK ou l’archivage de traces.
+
+Pour une démonstration, travaillez sur un projet synthétique dédié. Arrêtez son
+serveur, relisez `serve --check-state`, produisez l’aperçu d’archivage, puis
+appliquez-le seulement sur ce projet après vérification. Une interruption impose
+la restauration prévue par le marqueur de maintenance ; ne retirez pas ce
+marqueur pour forcer un démarrage. Les nouvelles exécutions métier conservent
+leurs contrôles d’idempotence et d’anti-rejeu.

@@ -194,12 +194,16 @@ dans un stockage privé, car elle contient l'état complet des attentes.
 
 ### Identifiants et commentaire d'une décision
 
-`client_ref` identifie l'application qui soumet la décision.
+`client_ref` est obligatoire : il identifie l’application qui soumet la décision.
 `evidence_ref` désigne la preuve consultée par l'adaptateur d'attestation.
 Ils ont deux rôles distincts et peuvent être présents ensemble.
 Le commentaire est disponible dans `Approval.comment`, un `Optional of Text`
 limité à 4 096 caractères. C'est du texte saisi par l'utilisateur ; seuls
-`subject_ref` et `attested_roles` viennent de l'attestation validée.
+`subject_ref` et `attested_roles` viennent de l’attestation validée.
+Une décision sans `client_ref` est refusée par le schéma, même si elle possède
+`evidence_ref`. Envoyez le texte utilisateur dans `comment` (ou `null`) ; un
+champ `reason` ne remplit pas `Approval.comment`. Le `reason` du résultat du run
+reste son code de fin ou d’arrêt, pas un commentaire humain.
 
 ## Préparer et démarrer
 
@@ -806,3 +810,14 @@ Il s'agit d'une observation du runtime de confiance, pas d'une attestation
 matérielle de l'hôte ni d'une garantie sur la validité métier. L'exploitant protège
 le journal, les exécutables et le système ; les données autorisées et tous les
 fichiers du système d'exploitation ne font pas partie de l'inventaire de code.
+
+### Délai calculé d’une continuation
+
+Le prochain candidat accepte un `Int` pur pour `with timeout_ms as delay`,
+y compris une valeur calculée avant `human.approve`. La borne reste de 1 à
+2 592 000 000 millisecondes. La demande et son checkpoint conservent la valeur
+résolue et l’échéance ; reprendre l’attente ne recalcule pas ce délai.
+Les politiques attachées aux outils restent statiques. Une branche parallèle
+avec délai calculé est refusée explicitement dans cette première tranche ;
+les délais littéraux parallèles restent disponibles. `Approval.subject_ref`
+reste optionnel pour représenter aussi les branches sans attestation.

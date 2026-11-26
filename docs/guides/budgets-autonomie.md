@@ -192,3 +192,13 @@ Ils ne garantissent pas :
 - un compteur de tokens portable ;
 - une sandbox réseau ou filesystem ;
 - une conformité réglementaire automatique.
+
+## Interdire une catégorie d’appels
+
+Dans les sources du prochain candidat, les compteurs `max_tool_calls`,
+`max_agent_invocations` et `max_provider_calls` acceptent `0`. Le premier appel
+correspondant est refusé avant exécution ; les fonctions pures restent
+utilisables. Les mêmes valeurs sont admises dans le manifest, les options SDK
+`runLimits` / `run_limits` et les options CLI de compteur. Durée et nombre de
+pas restent positifs. Un plafond nul se conserve après une attente humaine
+et ne remplace pas les contrôles d’autorité `uses` / `callable_by`.

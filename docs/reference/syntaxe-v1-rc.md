@@ -78,7 +78,7 @@ limits run
     max_provider_calls as 10
 ```
 
-Un seul bloc `limits run`, après les imports et avant les déclarations, fixe les plafonds du run entier. Chaque valeur est un littéral Int strictement positif, au plus `9007199254740991`. Le compilateur conserve la localisation source dans l’AIR ; aucune édition manuelle de JSON n’est nécessaire.
+Un seul bloc `limits run`, après les imports et avant les déclarations, fixe les plafonds du run entier. Chaque valeur est un littéral Int sûr, au plus `9007199254740991`. Les compteurs `max_tool_calls`, `max_agent_invocations` et `max_provider_calls` acceptent zéro : aucun appel de cette catégorie n’est alors autorisé. `max_steps` et `max_run_ms` restent strictement positifs. Le compilateur conserve la localisation source dans l’AIR ; aucune édition manuelle de JSON n’est nécessaire.
 
 Une capacité peut être réutilisée tant que son autorité et le budget le permettent. Les sous-agents partagent les compteurs du run ; une reprise humaine conserve la consommation précédente. À l’assemblage, les plafonds du module d’entrée et des modules dont une déclaration exécutable est liée sont combinés par minimum. Importer uniquement un type, une constante ou une mémoire ne transfère pas les plafonds de son module. Les dépendances exécutables conservent leurs limites.
 
@@ -673,3 +673,11 @@ indentées sont acceptés ; l’indentation du code conserve quatre espaces par 
 Les contrôles bidi bruts U+202A à U+202E et U+2066 à U+2069 sont refusés avec
 `SourceTextDirectionInvalid`. Les textes Unicode ordinaires restent admis ;
 utilisez un échappement JSON explicite si un contrôle de direction est une donnée.
+
+### Imports groupés
+
+Un même type de déclaration et un même module peuvent partager une instruction :
+`import function First, Second from shared`. Cette forme équivaut aux deux
+imports unitaires ; chaque nom conserve son identité canonique. Les collisions,
+cycles et permissions gardent les règles existantes. Alias, wildcard et réexport
+ne sont pas ajoutés par cette syntaxe.

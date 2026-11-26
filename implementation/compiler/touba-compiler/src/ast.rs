@@ -420,6 +420,14 @@ pub enum AstExpression {
         condition: Option<Box<AstExpression>>,
         source_ref: SourceRef,
     },
+    ListSum {
+        values: Box<AstExpression>,
+        source_ref: SourceRef,
+    },
+    ListSort {
+        values: Box<AstExpression>,
+        source_ref: SourceRef,
+    },
     ListConcat {
         left: Box<AstExpression>,
         right: Box<AstExpression>,

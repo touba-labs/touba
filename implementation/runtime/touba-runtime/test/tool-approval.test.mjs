@@ -457,3 +457,13 @@ for (const sdk of ["javascript", "python"]) {
     assert.equal(retained.run_id, allowed.checkpoint.run_id);
   });
 }
+
+test('a zero shared budget still refuses dispatch after parallel approvals',async()=>{
+ const calls=[];
+ const options={entryRef:'strategy:operation_approval/Batch',durableHumanApprovals:true,runLimits:{max_tool_calls:0},humanApprovalInitiator:'employee:initiator',humanApprovalAuthority:authority(),toolHandlers:{[toolRef]:request=>{calls.push(request);return 1;}}};
+ const paused=await executeAirDocument(air,{...options,inputs:{amounts:[7,9]}});
+ assert.equal(paused.reason,'human_approval_pending');assert.equal(calls.length,0);
+ const decisions=Object.fromEntries(paused.checkpoint.pending_approvals.map(item=>[item.approval_ref,{decision:'approved',evidence_ref:'host-proof'}]));
+ const result=await executeAirDocument(air,{...options,parallelResumeCheckpoint:paused.checkpoint,humanApprovalDecisions:decisions});
+ assert.equal(result.status,'failure',JSON.stringify(result));assert.equal(calls.length,0);assert.match(JSON.stringify(result),/ToolCallBudgetExceeded/);
+});

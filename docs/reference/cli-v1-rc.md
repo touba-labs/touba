@@ -632,7 +632,7 @@ La variante inline est utile pour un test court :
 
 ```sh title="Terminal"
 touba run program.air.json \
-  --human-decisions-json '{"human:review/Approval":{"decision":"approved","reason":"reviewed locally"}}'
+  --human-decisions-json '{"human:review/Approval":{"decision":"approved","comment":"reviewed locally"}}'
 ```
 
 Ces options alimentent les noeuds `human_approval` déjà présents dans l'AIR. Elles

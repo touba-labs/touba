@@ -95,8 +95,7 @@ effect_id: request.effect.effect_id, request_digest: request.effect.request_dige
       grants: [], timeout_ms: 2000, max_payload_bytes: 65536, effect_contract: { kind: "external_write", retry_mode: "none" } },
   } }));
   const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
-    commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))],
-    env: { TOUBA_COMPILE_BIN: fileURLToPath(new URL("../../../target/debug/touba-compile", import.meta.url)) } });
+    commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
   const config = { source: "source.tb", entryRef: "strategy:industrial.parallel/Run", manifest: "manifest.json",
     effectJournal: "run.effect-journal.sqlite", parallelCheckpointOut: "progress.json", parallelLimits: { maxExternalCalls: 2 } };
   let result = await engine.run({ ...config, inputs: { incidents: ["incident-a", "incident-b", "incident-c", "incident-d"] } });

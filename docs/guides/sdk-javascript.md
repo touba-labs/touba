@@ -1257,3 +1257,21 @@ Les observations `inline` sont étiquetées `external_content`. Les valeurs
 restent des données externes ; leur exactitude métier se vérifie dans le
 programme. `opaque_refs` conserve les références sans transmettre les valeurs.
 Les raisons libres du modèle restent hors de la trace publique.
+
+## Examiner les anciennes archives SDK
+
+`touba sdk clean javascript --root .` produit un aperçu JSON : archives
+référencées ou protégées, candidats, octets récupérables et `reviewDigest`.
+Après arrêt des installations en cours et relecture, passer cette empreinte
+avec `--accept <reviewDigest>`. `--keep <sha256,...>` protège explicitement des
+archives de retour arrière. Le mode Python utilise `clean python`.
+
+Le contrôle porte sur les seules archives gérées de `vendor/touba-sdk`, reconnues
+par leur empreinte et leur nom. Les références du projet et de ses sous-projets
+sont examinées avec des bornes de lecture. Les archives inconnues ou modifiées,
+les symlinks et les références non vérifiables sont conservés. Une `.venv`
+protège les wheels Python ; les états d’exécution présents protègent les archives.
+Les fichiers privés sont laissés non lus et rendent le retrait conservateur.
+L’installation ne supprime aucune archive automatiquement. Les verrous et
+manifests ne sont pas réécrits ; le nettoyage conserve les références actuelles
+et les archives choisies pour une installation hors ligne.

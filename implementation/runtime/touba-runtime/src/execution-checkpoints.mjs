@@ -1,5 +1,7 @@
 // @ts-check
 
+import { isRunBudgetValue, RUN_BUDGET_KINDS } from "../../../contracts/run-budget-values.mjs";
+
 import { createHash } from "node:crypto";
 import { canonicalizeMachineValue } from "../../../contracts/machine/contracts.mjs";
 import { RuntimeFailure, ToubaRuntimeError } from "./runtime-errors.mjs";
@@ -365,8 +367,8 @@ function validateRuntimeState(value) {
     "runtime_state.effective_limits",
     "DurableResumeCheckpointInvalid",
   );
-  for (const limit of Object.values(limits)) {
-    requirePositiveInteger(limit, "runtime_state.effective_limits.*");
+  for (const [kind, limit] of Object.entries(limits)) {
+    if (!RUN_BUDGET_KINDS.includes(kind) || !isRunBudgetValue(kind, limit)) throw invalidCheckpoint("runtime_state.effective_limits contains an invalid run limit");
   }
   requireNonNegativeInteger(state.active_elapsed_ms, "runtime_state.active_elapsed_ms");
   requirePositiveInteger(state.next_call_index, "runtime_state.next_call_index");

@@ -660,6 +660,13 @@ impl<'a, 'b> ProjectAirCollector<'a, 'b> {
             for argument in &node.arguments {
                 self.include_value_ref(argument, Some(&node.source_ref));
             }
+            if let Some(reference) = node
+                .approval_policy
+                .as_ref()
+                .and_then(|p| p.timeout_ms_ref.as_deref())
+            {
+                self.include_value_ref(reference, Some(&node.source_ref));
+            }
             if let Some(condition_ref) = node.condition_ref.as_deref() {
                 self.include_value_ref(condition_ref, Some(&node.source_ref));
             }

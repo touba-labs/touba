@@ -1,5 +1,7 @@
 // @ts-check
 
+import { isRunBudgetValue } from "../../../contracts/run-budget-values.mjs";
+
 import { spawnSync } from "node:child_process";
 import { ToubaRuntimeError } from "./runtime-errors.mjs";
 import { probeLinuxSandbox } from "./linux-handler-sandbox.mjs";
@@ -53,7 +55,7 @@ export function enforceHardenedExecutionProfile(document, options) {
   }
   for (const budget of controls.require_budgets) {
     const entry = document.budgets?.run?.[budget];
-    if (!entry || !Number.isSafeInteger(entry.value) || entry.value <= 0) {
+    if (!entry || !isRunBudgetValue(budget, entry.value)) {
       fail("HardenedBudgetRequired", `AIR budget ${budget} is required`, { budget });
     }
   }

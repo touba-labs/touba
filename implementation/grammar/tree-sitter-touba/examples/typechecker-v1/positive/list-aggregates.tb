@@ -1,0 +1,35 @@
+module aggregates
+
+function Total
+    takes values as List of Int
+    gives Int
+    do
+        give sum(values)
+
+function TotalFloat
+    takes values as List of Float
+    gives Float
+    do
+        give sum(values)
+
+function Ordered
+    takes values as List of Int
+    gives List of Int
+    do
+        give sort(values)
+
+function OrderedText
+    takes values as List of Text
+    gives List of Text
+    do
+        give sort(values)
+
+function Empty
+    gives Int
+    do
+        give sum([])
+
+function EmptySort
+    gives List of Text
+    do
+        give sort([])

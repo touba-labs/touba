@@ -1,3 +1,4 @@
+import { isRunBudgetValue, runBudgetMinimum } from "../../../contracts/run-budget-values.mjs";
 import { closeSync, constants, existsSync, fchmodSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -887,8 +888,8 @@ function validateRunPlanLimits(limits) {
     if (!RUN_LIMIT_KEYS.has(key)) {
       throw new RunPlanCliError("RunPlanLimitInvalid", `unsupported run limit ${key}`);
     }
-    if (!Number.isSafeInteger(value) || value <= 0) {
-      throw new RunPlanCliError("RunPlanLimitInvalid", `run limit ${key} must be a positive integer`);
+    if (!isRunBudgetValue(key, value)) {
+      throw new RunPlanCliError("RunPlanLimitInvalid", `run limit ${key} must be a safe integer >= ${runBudgetMinimum(key)}`);
     }
   }
 }
@@ -1873,7 +1874,7 @@ function printUsage() {
   stderr.write("--human-checkpoint-store <path.sqlite> selects host-owned checkpoint custody (default: approval-checkpoints.sqlite beside the trace store); keep it with the effect journal.\n");
   stderr.write("Local development only: --handler-diagnostics <new-private-file.jsonl> requires a dev run plan on POSIX; unavailable in production.\n");
   stderr.write(
-    "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.sqlite>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-approval-host <host.mjs>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path>] [--human-resume-checkpoint <path>] [--parallel-checkpoint-out <path>] [--parallel-resume-checkpoint <path>] [--parallel-limits-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.triggers.sqlite>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.triggers.sqlite>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <positive-integer>] [--max-agent-invocations <positive-integer>] [--max-provider-calls <positive-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json|json-reference] [--trace-store <path.sqlite>] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
+    "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.sqlite>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-approval-host <host.mjs>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path>] [--human-resume-checkpoint <path>] [--parallel-checkpoint-out <path>] [--parallel-resume-checkpoint <path>] [--parallel-limits-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.triggers.sqlite>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.triggers.sqlite>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <non-negative-integer>] [--max-agent-invocations <non-negative-integer>] [--max-provider-calls <non-negative-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json|json-reference] [--trace-store <path.sqlite>] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
 }
 
@@ -2123,13 +2124,9 @@ function parseNonNegativeInteger(raw) {
 }
 
 function setRunLimitFlag(parsed, budgetKind, rawValue, optionName) {
-  if (rawValue === undefined) {
-    return `${optionName} requires a positive integer`;
-  }
-  const value = parsePositiveInteger(rawValue);
-  if (!value) {
-    return `${optionName} requires a positive integer`;
-  }
+  const value = parseNonNegativeInteger(rawValue);
+  if (value === null || !isRunBudgetValue(budgetKind, value)) return `${optionName} requires a safe integer >= ${runBudgetMinimum(budgetKind)}`;
+  parsed.runLimitFlags ??= {};
   parsed.runLimitFlags[budgetKind] = value;
   return "";
 }
@@ -2145,8 +2142,8 @@ function formatRuntimeError(error) {
   if (error.details?.entryRef) {
     lines.push(`entry: ${error.details.entryRef}`);
     if (error.details.schemaPath) lines.push(`schema path: ${error.details.schemaPath}`);
-    if (error.details.expectedTypeRef) lines.push(`expected type: ${error.details.expectedTypeRef}`);
-    if (error.details.actualType) lines.push(`actual type: ${error.details.actualType}`);
+    if (error.details.expectedTypeRef && !error.details.constraint) lines.push(`expected type: ${error.details.expectedTypeRef}`);
+    if (error.details.actualType && !error.details.constraint) lines.push(`actual type: ${error.details.actualType}`);
     if (error.details.missingFields?.length) lines.push(`missing fields: ${error.details.missingFields.join(", ")}`);
     if (error.details.unknownFieldCount) lines.push(`unexpected field count: ${error.details.unknownFieldCount}`);
   }
@@ -2176,10 +2173,10 @@ function formatRuntimeError(error) {
     if (error.details.schemaPath) {
       lines.push(`schema path: ${error.details.schemaPath}`);
     }
-    if (error.details.expectedTypeRef) {
+    if (error.details.expectedTypeRef && !error.details.constraint) {
       lines.push(`expected type: ${error.details.expectedTypeRef}`);
     }
-    if (error.details.actualType) {
+    if (error.details.actualType && !error.details.constraint) {
       lines.push(`actual type: ${error.details.actualType}`);
     }
     if (error.details.missingFields?.length) {
@@ -2262,6 +2259,7 @@ function formatFailureTraceDiagnostic(trace) {
         schemaPath: failureEvent.payload?.schema_path,
         expectedTypeRef: failureEvent.payload?.expected_type_ref,
         actualType: failureEvent.payload?.actual_type,
+        constraint: failureEvent.payload?.payload_constraint,
         missingFields: failureEvent.payload?.missing_fields,
         unknownFields: failureEvent.payload?.unknown_fields,
         unknownFieldCount: failureEvent.payload?.unknown_field_count,

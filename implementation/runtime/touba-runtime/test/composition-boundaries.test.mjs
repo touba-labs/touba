@@ -1,6 +1,6 @@
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,8 +12,7 @@ import { failureFamilyForRuntimeCode } from "../../../contracts/machine/contract
 let air;
 const tool = "tool:composition_boundaries/Echo";
 before(() => {
-  const compiler = fileURLToPath(new URL(`../../../target/debug/touba-compile${process.platform === "win32" ? ".exe" : ""}`, import.meta.url));
-  air = JSON.parse(execFileSync(compiler, [fileURLToPath(new URL("fixtures/composition-boundaries.tb", import.meta.url))], { encoding: "utf8" }));
+  air = compileTestAir(fileURLToPath(new URL("fixtures/composition-boundaries.tb", import.meta.url)));
 });
 const options = entry => ({ entryRef: entry, inputs: { value: "synthetic" } });
 
@@ -26,8 +25,7 @@ test("the business rule admits only nonnegative amounts within the supplied limi
     const source = page.match(/```touba title="business-validation.tb"\n([\s\S]*?)```/)[1];
     assert.equal(source.trim(), readFileSync(filename, "utf8").trim(), "The published example must match its tested fixture");
   }
-  const compiler = fileURLToPath(new URL(`../../../target/debug/touba-compile${process.platform === "win32" ? ".exe" : ""}`, import.meta.url));
-  const document = JSON.parse(execFileSync(compiler, [filename], { encoding: "utf8" }));
+  const document = compileTestAir(filename);
   for (const proposed of [-1, 0, 50, 100, 101]) {
     const result = await executeAirDocument(document, { entryRef: "strategy:business.validation/ValidatePrice", inputs: { proposed, ceiling: 100 } });
     assert.equal(result.status, proposed >= 0 && proposed <= 100 ? "success" : "stopped");

@@ -385,16 +385,24 @@ impl AirLowerer {
                     | "max_agent_invocations"
                     | "max_provider_calls"
             );
+            let minimum = if matches!(
+                limit.name.as_str(),
+                "max_tool_calls" | "max_agent_invocations" | "max_provider_calls"
+            ) {
+                0
+            } else {
+                1
+            };
             let value = match &limit.value {
                 AstExpression::IntLiteral { value, .. } => value
                     .parse::<u64>()
                     .ok()
-                    .filter(|value| (1..=9_007_199_254_740_991).contains(value)),
+                    .filter(|value| (minimum..=9_007_199_254_740_991).contains(value)),
                 _ => None,
             };
             if !allowed || !seen.insert(limit.name.clone()) || value.is_none() {
                 self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::InvalidRunLimits,
-                    format!("run limit `{}` must be a unique supported kind with an Int literal in 1..=9007199254740991", limit.name),
+                    format!("run limit `{}` must be a unique supported kind with an Int literal in {minimum}..=9007199254740991", limit.name),
                     Some(limit.source_ref.clone())));
                 continue;
             }
@@ -1205,7 +1213,7 @@ impl AirLowerer {
                         Some(approval.source_ref.clone()),
                     ));
                 }
-                FlowGraphBuilder::lower_human_approval_policy(approval, &mut self.diagnostics).unwrap_or_default()
+                FlowGraphBuilder::lower_human_approval_policy(approval, &mut self.diagnostics, false).unwrap_or_default()
             }),
             binding_ref: None,
             required_capabilities,
@@ -1998,6 +2006,8 @@ impl AirLowerer {
             AstExpression::Value { source_ref, .. }
             | AstExpression::List { source_ref, .. }
             | AstExpression::ListComprehension { source_ref, .. }
+            | AstExpression::ListSum { source_ref, .. }
+            | AstExpression::ListSort { source_ref, .. }
             | AstExpression::ListConcat { source_ref, .. }
             | AstExpression::TextJoin { source_ref, .. }
             | AstExpression::OptionalSome { source_ref, .. }
@@ -2854,7 +2864,22 @@ impl<'a> FlowGraphBuilder<'a> {
             return FlowFragment::empty();
         }
         let context_refs = self.lower_human_approval_context_refs(statement);
-        let approval_policy = Self::lower_human_approval_policy(statement, &mut self.diagnostics);
+        let mut approval_policy =
+            Self::lower_human_approval_policy(statement, &mut self.diagnostics, true);
+        for argument in &statement.arguments {
+            if argument.name == "timeout_ms"
+                && !matches!(argument.value, AstExpression::IntLiteral { .. })
+            {
+                let value = self.lower_expression_handle(
+                    &argument.value,
+                    Some(BUILTIN_INT),
+                    ExpressionContext::Expression,
+                );
+                approval_policy
+                    .get_or_insert_with(AirApprovalPolicy::default)
+                    .timeout_ms_ref = Some(value.handle);
+            }
+        }
         let result_binding = statement.result_binding.as_ref().and_then(|binding| {
             self.lower_result_binding(binding, Some(BUILTIN_APPROVAL.to_string()))
         });
@@ -2918,6 +2943,7 @@ impl<'a> FlowGraphBuilder<'a> {
     fn lower_human_approval_policy(
         statement: &AstHumanApprovalStatement,
         diagnostics: &mut Vec<AirDiagnostic>,
+        dynamic_timeout: bool,
     ) -> Option<AirApprovalPolicy> {
         let mut policy = AirApprovalPolicy::default();
         for argument in &statement.arguments {
@@ -2945,6 +2971,7 @@ impl<'a> FlowGraphBuilder<'a> {
                     policy.distinct_from = Some(value.clone());
                     true
                 }
+                ("timeout_ms", _) if dynamic_timeout => true,
                 ("context", _) => true,
                 ("exclude_signers", AstExpression::StringLiteral { value, .. })
                     if !value.is_empty()
@@ -3369,6 +3396,8 @@ impl<'a> FlowGraphBuilder<'a> {
             | AstExpression::OptionalNone { .. }
             | AstExpression::List { .. }
             | AstExpression::ListComprehension { .. }
+            | AstExpression::ListSum { .. }
+            | AstExpression::ListSort { .. }
             | AstExpression::ListConcat { .. }
             | AstExpression::TextJoin { .. }
             | AstExpression::Record { .. }
@@ -3410,6 +3439,18 @@ impl<'a> FlowGraphBuilder<'a> {
                 item,
                 collection,
                 condition.as_deref(),
+                expected_type,
+                source_ref,
+            ),
+            AstExpression::ListSum { values, source_ref } => self.lower_list_builtin(
+                AirExpressionKind::ListSum,
+                values,
+                expected_type,
+                source_ref,
+            ),
+            AstExpression::ListSort { values, source_ref } => self.lower_list_builtin(
+                AirExpressionKind::ListSort,
+                values,
                 expected_type,
                 source_ref,
             ),
@@ -3473,6 +3514,12 @@ impl<'a> FlowGraphBuilder<'a> {
                 None,
                 source_ref,
             ),
+            AstExpression::ListSum { values, source_ref } => {
+                self.lower_list_builtin(AirExpressionKind::ListSum, values, None, source_ref)
+            }
+            AstExpression::ListSort { values, source_ref } => {
+                self.lower_list_builtin(AirExpressionKind::ListSort, values, None, source_ref)
+            }
             AstExpression::ListConcat {
                 left,
                 right,
@@ -3764,6 +3811,52 @@ impl<'a> FlowGraphBuilder<'a> {
             field_name: None,
             record_fields: Vec::new(),
         })
+    }
+
+    fn lower_list_builtin(
+        &mut self,
+        kind: AirExpressionKind,
+        values: &AstExpression,
+        expected: Option<&str>,
+        source_ref: &SourceRef,
+    ) -> LoweredExpression {
+        let sum = kind == AirExpressionKind::ListSum;
+        let expected_list = expected.map(|t| {
+            if sum {
+                format!("list:{t}")
+            } else {
+                t.to_string()
+            }
+        });
+        let input = self.lower_expression_handle(
+            values,
+            expected_list.as_deref(),
+            ExpressionContext::Expression,
+        );
+        let element = input
+            .type_ref
+            .as_deref()
+            .and_then(|t| t.strip_prefix("list:"))
+            .unwrap_or("unresolved:list")
+            .to_string();
+        if !matches!(element.as_str(), "builtin:Int" | "builtin:Float")
+            && (sum || element != "builtin:Text")
+        {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidExpressionOperandType,
+                "sum requires a numeric list; sort requires a numeric or Text list".to_string(),
+                Some(source_ref.clone()),
+            ));
+        }
+        let output = if sum {
+            element
+        } else {
+            input
+                .type_ref
+                .clone()
+                .unwrap_or("unresolved:list".to_string())
+        };
+        self.lower_optional_expression(kind, vec![input.handle], output, source_ref)
     }
 
     fn lower_list_concat(
@@ -4898,6 +4991,8 @@ impl<'a> FlowGraphBuilder<'a> {
             AstExpression::FieldAccess { .. }
             | AstExpression::List { .. }
             | AstExpression::ListComprehension { .. }
+            | AstExpression::ListSum { .. }
+            | AstExpression::ListSort { .. }
             | AstExpression::ListConcat { .. }
             | AstExpression::TextJoin { .. }
             | AstExpression::OptionalSome { .. }
@@ -5240,6 +5335,8 @@ fn expression_handle(expression: &AstExpression) -> String {
         | AstExpression::RecordCopy { source_ref, .. }
         | AstExpression::List { source_ref, .. }
         | AstExpression::ListComprehension { source_ref, .. }
+        | AstExpression::ListSum { source_ref, .. }
+        | AstExpression::ListSort { source_ref, .. }
         | AstExpression::ListConcat { source_ref, .. }
         | AstExpression::TextJoin { source_ref, .. }
         | AstExpression::OptionalSome { source_ref, .. }
@@ -5279,6 +5376,8 @@ fn expression_source_ref(expression: &AstExpression) -> SourceRef {
         AstExpression::Symbol { source_ref, .. }
         | AstExpression::List { source_ref, .. }
         | AstExpression::ListComprehension { source_ref, .. }
+        | AstExpression::ListSum { source_ref, .. }
+        | AstExpression::ListSort { source_ref, .. }
         | AstExpression::ListConcat { source_ref, .. }
         | AstExpression::TextJoin { source_ref, .. }
         | AstExpression::OptionalSome { source_ref, .. }

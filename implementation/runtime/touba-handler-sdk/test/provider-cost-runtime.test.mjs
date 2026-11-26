@@ -1,10 +1,10 @@
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { createOpenAiDecisionProvider, createProviderTokenCostAdapter } from "../src/index.mjs";
@@ -34,9 +34,7 @@ strategy Run
             into result
         give result
 `);
-    const compiled = spawnSync(resolve(implementation, "target/debug/touba-compile"), [filename], { encoding: "utf8" });
-    assert.equal(compiled.status, 0, compiled.stderr);
-    air = JSON.parse(compiled.stdout);
+    air = compileTestAir(filename);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

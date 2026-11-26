@@ -555,3 +555,11 @@ un handler simple n'initialise pas les bridges de modèles, MCP ou SQLite.
 
 Le guide [SDK JavaScript](./sdk-javascript.md#transport-délais-et-diagnostics)
 détaille les limites de corps HTTP, de contexte et de coût communes aux deux SDK.
+
+### Choisir Python avec uv
+
+`--python` accepte un exécutable explicite. Pour un nouvel environnement, Touba
+résout et vérifie cet interpréteur avant de transmettre son chemin exact au
+gestionnaire. Une `.venv` existante est conservée et sa version est vérifiée ;
+l’option ne recrée pas silencieusement cet environnement. Un Python trop ancien
+produit un diagnostic invitant à choisir Python 3.11 ou plus récent.

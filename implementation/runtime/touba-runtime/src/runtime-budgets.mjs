@@ -1,15 +1,10 @@
 // @ts-check
 
 import { ToubaRuntimeError } from "./runtime-errors.mjs";
-import { normalizePositiveRuntimeInteger } from "./runtime-options.mjs";
+import { isRunBudgetValue, runBudgetMinimum } from "../../../contracts/run-budget-values.mjs";
 
-export const RUN_BUDGET_KINDS = Object.freeze([
-  "max_run_ms",
-  "max_steps",
-  "max_tool_calls",
-  "max_agent_invocations",
-  "max_provider_calls",
-]);
+import { RUN_BUDGET_KINDS } from "../../../contracts/run-budget-values.mjs";
+export { RUN_BUDGET_KINDS };
 export const RUN_BUDGET_KIND_SET = new Set(RUN_BUDGET_KINDS);
 export const RUN_BUDGET_ERROR_CODES = Object.freeze({
   max_run_ms: "RunTimeBudgetExceeded",
@@ -115,8 +110,8 @@ export function normalizeAirRunLimits(limits, fieldName) {
     if (Object.keys(record).some(key => key !== "value" && key !== "source_ref")) {
       throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName}.${budgetKind} contains unknown fields`, { budgetKind });
     }
-    if (typeof record.value !== "number" || !Number.isSafeInteger(record.value) || record.value <= 0) {
-      throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName}.${budgetKind}.value must be a positive integer`, {
+    if (!isRunBudgetValue(budgetKind, record.value)) {
+      throw new ToubaRuntimeError("InvalidAirDocument", `${fieldName}.${budgetKind}.value must be a safe integer >= ${runBudgetMinimum(budgetKind)}`, {
         budgetKind,
       });
     }
@@ -154,8 +149,11 @@ export function normalizeRunLimitMap(limits, fieldName, authoritySource) {
         budgetKind,
       });
     }
+    if (!isRunBudgetValue(budgetKind, value)) {
+      throw new ToubaRuntimeError("InvalidRuntimeOption", `${fieldName}.${budgetKind} must be a safe integer >= ${runBudgetMinimum(budgetKind)}`);
+    }
     normalized.set(budgetKind, Object.freeze({
-      value: normalizePositiveRuntimeInteger(value, `${fieldName}.${budgetKind}`),
+      value,
       authoritySource,
     }));
   }
