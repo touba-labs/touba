@@ -143,7 +143,9 @@ export async function runProcessToolHandler(input) {
   }
   const child = /** @type {import('node:child_process').ChildProcessWithoutNullStreams} */ (spawnProcess(sandboxPlan.command, sandboxPlan.args, {
     cwd: binding.handler.cwd,
-    env: childEnv,
+    // Node propagates this ambient variable even with an explicit env object.
+    // An own undefined value suppresses that implicit child-process propagation.
+    env: { NODE_V8_COVERAGE: undefined, ...childEnv },
     stdio: sandboxPlan.policy ? ["pipe", "pipe", "pipe", diagnostics ? "pipe" : "ignore", "pipe", "pipe"]
       : sandboxPlan.seccomp ? ["pipe", "pipe", "pipe", diagnostics ? "pipe" : "ignore", "pipe"]
       : diagnostics ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],

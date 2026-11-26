@@ -25,10 +25,22 @@ function quantiles(values) {
   return Object.fromEntries([50, 95, 99].map(p => [`p${p}_ms`, sorted[Math.ceil(sorted.length * p / 100) - 1]]));
 }
 let base;
+let transportFailures = [];
 async function request(path, expected, body) {
-  const response = await fetch(base + path, { signal: AbortSignal.timeout(deadlineMs),
-    ...(body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
-  const value = await response.json();
+  let response, value, phase = "headers";
+  try {
+    response = await fetch(base + path, { signal: AbortSignal.timeout(deadlineMs),
+      ...(body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
+    phase = "body";
+    value = await response.json();
+  } catch (error) {
+    if (transportFailures.length < 64) transportFailures.push({
+      method: body === undefined ? "GET" : "POST", path: path.split("?")[0], phase,
+      code: error.cause?.code ?? error.code ?? error.name,
+      outcome_unknown: body !== undefined,
+    });
+    throw error;
+  }
   assert.equal(response.status, expected, JSON.stringify({ path, value }));
   return value;
 }
@@ -81,12 +93,18 @@ try {
   // Both waves finish their approvals. The second wave has exactly C more
   // completed records; report that difference instead of hiding it as N.
   for (const [wave, phase] of ["first_wave", "warm_wave"].entries()) {
+    transportFailures = [];
     let peakRss = process.memoryUsage().rss;
     const sampler = setInterval(() => { peakRss = Math.max(peakRss, process.memoryUsage().rss); }, 10);
     const lag = monitorEventLoopDelay({ resolution: 10 }); lag.enable();
     const cpu = process.cpuUsage(), beforeIo = io(), at = performance.now();
     let samples, error;
-    try { samples = await Promise.all(Array.from({ length: concurrency }, (_, i) => flow(`${phase}-${i}`))); }
+    try {
+      const results = await Promise.allSettled(Array.from({ length: concurrency }, (_, i) => flow(`${phase}-${i}`)));
+      const failure = results.find(result => result.status === "rejected");
+      if (failure) throw failure.reason;
+      samples = results.map(result => result.value);
+    }
     catch (failure) { error = failure; }
     finally { clearInterval(sampler); lag.disable(); }
     const elapsed = performance.now() - at;
@@ -96,7 +114,7 @@ try {
       repetition, phase, elapsed_ms: elapsed, throughput_per_second: error ? null : concurrency * 1000 / elapsed,
       peak_rss_bytes: peakRss, cpu_microseconds: usage, process_io: delta(beforeIo, io()),
       lag_mean_ms: lag.mean / 1e6, lag_max_ms: lag.max / 1e6,
-      errors: error ? [error.message] : [], samples: samples ?? [],
+      errors: error ? [error.message] : [], transport_failures: transportFailures, samples: samples ?? [],
       quantiles: samples ? Object.fromEntries(Object.keys(samples[0]).map(key => [key, quantiles(samples.map(s => s[key]))])) : {},
     }) + "\n");
     if (error) throw error;

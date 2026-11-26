@@ -170,7 +170,7 @@ manuscripts and explains the scope of their formal results.
 
 ## Building from source
 
-Use Node.js 24.22.1 or a newer patched 24.x release, pnpm 10.33.2 and the Rust toolchain pinned in
+Use Node.js 24.22.3 or a newer patched 24.x release, pnpm 10.33.2 and the Rust toolchain pinned in
 `implementation/rust-toolchain.toml`.
 
 ```sh

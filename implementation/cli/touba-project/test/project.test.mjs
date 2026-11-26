@@ -2645,7 +2645,7 @@ test("CLI doctor rejects Node releases below the security baseline", () => {
   assert.equal(result.status, 1, result.stderr);
   const check = JSON.parse(result.stdout).checks.find((item) => item.id === "node_version");
   assert.equal(check.status, "error");
-  assert.equal(check.details.expected, ">=24.22.1 <25");
+  assert.equal(check.details.expected, ">=24.22.3 <25");
 });
 
 test("CLI update identifies a source checkout without fetching an update", () => {

@@ -74,9 +74,9 @@ try {
       assert.ok(existsSync(target), `Missing qualified dependency: ${target}`);
       return pathToFileURL(target).href;
     };
-    source = source.replace(/from "(\.[^"]+)"/g, (_match, specifier) => `from ${JSON.stringify(resolveLocation(specifier))}`);
-    source = source.replace(/new URL\("([^"]+)", import.meta.url\)/g,
-      (_match, specifier) => `new URL(${JSON.stringify(resolveLocation(specifier))})`);
+    source = source.replace(/from (["'])(\.[^"']+)\1/g, (_match, _quote, specifier) => `from ${JSON.stringify(resolveLocation(specifier))}`);
+    source = source.replace(/new URL\((["'])([^"']+)\1, import.meta.url\)/g,
+      (_match, _quote, specifier) => `new URL(${JSON.stringify(resolveLocation(specifier))})`);
     if (name === "runtime.test.mjs") {
       const original = 'sdk === "javascript" ? process.execPath : "python3"';
       assert.ok(source.includes(original));
@@ -87,10 +87,10 @@ try {
     files.push(file);
   }
   const output = run(["--test", "--test-concurrency=1", "--test-reporter=tap", ...files]);
-  assert.match(output, /# tests 59\b/);
+  assert.match(output, /# tests 66\b/);
   assert.match(output, /# fail 0\b/);
   assert.match(output, /# skipped 0\b/);
-  console.log("APPROVED_OPERATION_DISTRIBUTION_OK: 59 canonical tests against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.");
+  console.log("APPROVED_OPERATION_DISTRIBUTION_OK: 66 canonical tests against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.");
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

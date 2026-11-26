@@ -136,7 +136,7 @@ Préparez une nouvelle version conforme et revoyez les imports des consommateurs
 plutôt que de modifier une copie installée. La récupération d'une réservation
 dans un registre ne rend pas cette ancienne archive admissible à l'exécution.
 
-Si elle est déjà installée, [le parcours de récupération](recuperer-package-historique.md)
+Si elle est déjà installée, [le parcours de récupération](./recuperer-package-historique.md)
 permet de la lister, d'en auditer le statut et de la retirer explicitement, sans
 assouplir l'intégrité ou les règles d'exécution. Les noms publics, descriptions
 et README refusent les contrôles d'affichage trompeurs (bidi, séparateurs cachés,

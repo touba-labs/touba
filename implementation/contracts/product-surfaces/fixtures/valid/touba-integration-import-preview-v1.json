@@ -8,7 +8,7 @@
   "kind": "mcp",
   "runtime": {
     "language": "javascript",
-    "node_version": "24.22.1",
+    "node_version": "24.22.3",
     "sdk": "unavailable",
     "sdk_version": "1.5.0",
     "timeout_ms": 5000,

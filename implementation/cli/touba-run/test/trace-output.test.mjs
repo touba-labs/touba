@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +16,6 @@ import { createHash } from "node:crypto";
 import { buildRunSummary } from "../src/trace-summary.mjs";
 import { traceCommand } from "../src/trace-command.mjs";
 
-const compiler = fileURLToPath(new URL("../../../target/debug/touba-compile", import.meta.url));
 const command = fileURLToPath(new URL("../src/run.mjs", import.meta.url));
 const cli = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
 function fixture(t) {
@@ -23,7 +23,7 @@ function fixture(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const source = join(root, "main.tb"), air = join(root, "main.air.json"), database = join(root, "traces.sqlite");
   writeFileSync(source, 'module traces.test\nstrategy Run\n    gives Text\n    do\n        give "stored"\n');
-  writeFileSync(air, execFileSync(compiler, [source]));
+  writeFileSync(air, JSON.stringify(compileTestAir(source)));
   return { root, source, air, database };
 }
 
@@ -154,7 +154,7 @@ test("storage failure after an actual handler never becomes false admission evid
   db.exec("CREATE TRIGGER fail_after_handler BEFORE INSERT ON touba_trace_events WHEN NEW.kind='call_completed' BEGIN SELECT RAISE(ABORT,'injected storage fault after handler'); END;");
   db.close();
   writeFileSync(source, 'module traces.test\ntool Write\n    gives Text\nskill Run\n    gives Text\n    uses Write\n    do\n        Write\n            into value\n        give value\n');
-  writeFileSync(air, execFileSync(compiler, [source]));
+  writeFileSync(air, JSON.stringify(compileTestAir(source)));
   const marker = join(root, "effect.txt"), output = join(root, "trace.json"), manifest = join(root, "manifest.json");
   writeFileSync(manifest, JSON.stringify({ manifest_version: "touba-manifest-v1", bindings: {
     "tool:traces.test/Write": { handler: { kind: "process", command: process.execPath, args: ["-e",

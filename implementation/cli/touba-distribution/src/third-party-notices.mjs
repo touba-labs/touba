@@ -32,7 +32,7 @@ export function writeThirdPartyNotices({implementationRoot, toolchainRoot, nodeS
   const out = join(toolchainRoot, 'licenses');
   mkdirSync(join(out, 'node'), {recursive:true});
   copyFileSync(nodeLicense, join(out, 'node', 'LICENSE'));
-  const components = [{name:'Node.js', version:'24.22.1', license:'Node.js consolidated notices', files:[{path:'licenses/node/LICENSE',sha256:hash(nodeLicense)}]}];
+  const components = [{name:'Node.js', version:'24.22.3', license:'Node.js consolidated notices', files:[{path:'licenses/node/LICENSE',sha256:hash(nodeLicense)}]}];
   rustLibrary ??= {version:compilerInfo.version,noticePath:join(implementationRoot,'cli/touba-distribution/licenses',`rust-${compilerInfo.version}-COPYRIGHT-library.html`)};
   if (!existsSync(rustLibrary.noticePath) || !readFileSync(rustLibrary.noticePath,'utf8').includes('Rust Standard Library')) throw new Error('Missing original Rust Standard Library notices for the pinned compiler');
   const libraryTarget=join(out,'rust-standard-library','COPYRIGHT-library.html');

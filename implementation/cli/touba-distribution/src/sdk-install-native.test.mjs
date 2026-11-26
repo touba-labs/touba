@@ -15,7 +15,7 @@ test("offline JavaScript SDK installation repeats across projects with the bundl
   const sdk=packageSdk(implementation,toolchain);
   writeFileSync(join(toolchain,"TOOLCHAIN.json"),JSON.stringify({sdk}));
   const sourceNode=process.platform==='darwin' && process.arch==='arm64'
-    ? resolve(implementation,".toolchains/node-v24.22.1-darwin-arm64/bin/node") : process.execPath;
+    ? resolve(implementation,".toolchains/node-v24.22.3-darwin-arm64/bin/node") : process.execPath;
   assert.ok(existsSync(sourceNode),"A portable native Node binary is required");
   const node=join(toolchain,"bin",process.platform==='win32'?'node.exe':'node');copyFileSync(sourceNode,node);
   const module=pathToFileURL(join(implementation,"cli/touba-project/src/sdk-command.mjs")).href;

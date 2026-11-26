@@ -101,3 +101,26 @@ test('an observation callback failure never changes a successful handler result'
     onIsolationObservation: () => { throw new Error('synthetic observer failure'); } });
   assert.equal(result.value, 7);
 });
+
+// Node's spawn implementation otherwise forwards NODE_V8_COVERAGE outside its
+// caller-supplied whitelist. Exercise a real child and the original exit code.
+test('ambient coverage is absent from a real confined handler and cannot alter a nonzero diagnostic', { skip: process.platform !== 'darwin' }, async t => {
+  const { root, file, binding } = fixture(t);
+  const ambient = realpathSync(mkdtempSync(join(tmpdir(), 'touba-parent-coverage-')));
+  const previous = process.env.NODE_V8_COVERAGE;
+  t.after(() => {
+    if (previous === undefined) delete process.env.NODE_V8_COVERAGE;
+    else process.env.NODE_V8_COVERAGE = previous;
+    rmSync(ambient, { recursive: true, force: true });
+  });
+  process.env.NODE_V8_COVERAGE = ambient;
+  writeFileSync(file, 'process.stdout.write(JSON.stringify({ok:true,value:Object.hasOwn(process.env,"NODE_V8_COVERAGE")}));');
+  const invoke = () => runProcessToolHandler({ toolRef, binding, secretHandles: [], request: { arguments: {} } });
+  assert.equal((await invoke()).value, false);
+  writeFileSync(file, 'process.exit(3);');
+  await assert.rejects(invoke(), error => {
+    assert.equal(error.code, 'ToolHandlerNonZeroExit');
+    assert.equal(error.details.exitCode, 3);
+    return true;
+  });
+});

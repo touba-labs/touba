@@ -151,6 +151,45 @@ for (const operation of ["export", "deployment"]) test(`package ${operation}: re
       assert.ok(done.trace.events.some(event => event.type === "package_tool_admitted"));
     } finally { await service.stop(); }
   }
+  // Positive parity is checked too: a tamper-only refusal cannot prove that
+  // Python preserves admitted package provenance through an approved resume.
+  const pythonPositive = spawnSync(process.env.TOUBA_HOST_PYTHON ?? process.env.TOUBA_TEST_PYTHON ?? "python3", ["-c", `import sys, json, asyncio, re
+from pathlib import Path
+from touba_sdk import ToubaEngine, AsyncToubaEngine
+root, node, cli, expected_digest = sys.argv[1:]
+options = dict(command=node, command_args=[cli])
+def check(result):
+    assert result.status == "success"
+    events = result.trace["events"]
+    evidence = next(e["payload"] for e in events if e["kind"] == "package_admission_verified")
+    assert evidence["packages"][0]["version"] == "0.1.1"
+    assert evidence["packages"][0]["digest"] == expected_digest
+    approved = next(e["payload"] for e in events if e["kind"] == "tool_approval_authorized")
+    admitted = next(e["payload"] for e in events if e["kind"] == "package_tool_admitted")
+    assert admitted["approval_request_id"] == approved["request_id"]
+    assert admitted["admission_id"] == evidence["admission_id"]
+    signer = next(e["payload"]["signer_ref"] for e in events if e["kind"] == "human_approval_decided")
+    assert re.fullmatch(r"sha256:[a-f0-9]{64}", signer)
+    assert root not in json.dumps(evidence)
+    assert "user:reviewer" not in json.dumps(result.trace)
+def sync_run():
+    engine = ToubaEngine(root, **options)
+    pending = engine.run(project=root, inputs={"value":"Python sync provenance"}, human_approval_host="authority.mjs", human_checkpoint_out="python-sync.json")
+    assert pending.reason == "human_approval_pending"
+    checkpoint = json.loads((Path(root)/"python-sync.json").read_text())
+    check(engine.run(project=root, human_approval_host="authority.mjs", human_resume_checkpoint="python-sync.json", human_decisions={checkpoint["approval_ref"]:{"decision":"approved","evidence_ref":"test"}}))
+async def async_run():
+    engine = AsyncToubaEngine(root, **options)
+    pending = await engine.run(project=root, inputs={"value":"Python async provenance"}, human_approval_host="authority.mjs", human_checkpoint_out="python-async.json")
+    assert pending.reason == "human_approval_pending"
+    checkpoint = json.loads((Path(root)/"python-async.json").read_text())
+    check(await engine.run(project=root, human_approval_host="authority.mjs", human_resume_checkpoint="python-async.json", human_decisions={checkpoint["approval_ref"]:{"decision":"approved","evidence_ref":"test"}}))
+sync_run()
+asyncio.run(async_run())
+print("PYTHON_PROVENANCE_AND_APPROVAL_OK")
+`, project, process.execPath, cli, digest], {encoding:"utf8", timeout:60000, env:{...process.env, PYTHONDONTWRITEBYTECODE:"1", PYTHONPATH:process.env.TOUBA_HOST_PYTHON ? "" : fileURLToPath(new URL("../../../runtime/touba-python-sdk/src", import.meta.url))}});
+  assert.equal(pythonPositive.status, 0, pythonPositive.stdout + pythonPositive.stderr);
+  assert.equal(pythonPositive.stdout.trim(), "PYTHON_PROVENANCE_AND_APPROVAL_OK");
   // Even a same-contract update must not inherit an already paused approval.
   const engine = engines[0], checkpointName = "before-update.json";
   const paused = await engine.run({project, inputs:{value:"paused request"}, humanApprovalHost:"authority.mjs", humanCheckpointOut:checkpointName});

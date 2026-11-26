@@ -1,10 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {execFileSync} from "node:child_process";
+import {compileTestAir} from "../../../tests/helpers/compile.mjs";
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {fileURLToPath} from "node:url";
 import {executeAirDocument} from "../../../runtime/touba-runtime/src/index.mjs";
 
 test("published multi-agent guide executes single and parallel reviews with capability descriptions", async t => {
@@ -14,8 +13,7 @@ test("published multi-agent guide executes single and parallel reviews with capa
   const source = [...guide.matchAll(/```touba[^\n]*\n([\s\S]*?)```/g)].map(match => match[1]).find(text => text.includes("function PrepareBrief"));
   assert.ok(source);
   const file = join(root, "review.tb"); writeFileSync(file, source);
-  const compiler = fileURLToPath(new URL("../../../target/debug/touba-compile", import.meta.url));
-  const air = JSON.parse(execFileSync(compiler, [file], {encoding: "utf8"}));
+  const air = compileTestAir(file);
   const module = /module (\S+)/.exec(source)[1];
   const provider = request => request.mode === "summary" ? {action: "request_capabilities"}
     : request.observations.length ? {action: "answer_directly", result: request.observations.at(-1).value}
@@ -26,7 +24,7 @@ test("published multi-agent guide executes single and parallel reviews with capa
     assert.deepEqual(result.result, expected);
   }
   writeFileSync(file, source.replace(/^\s*description .*\n/m, "\n"));
-  const old = JSON.parse(execFileSync(compiler, [file], {encoding: "utf8"}));
+  const old = compileTestAir(file);
   const refused = await executeAirDocument(old, {entryRef: `strategy:${module}/ReviewOne`, inputs: {brief: "one"}, agentDecisionProvider: provider});
   assert.equal(refused.reason, "AgentCapabilityDescriptionRequired");
 });

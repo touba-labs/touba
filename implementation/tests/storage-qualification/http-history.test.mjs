@@ -41,7 +41,7 @@ test("HTTP histories: fresh-process audits, repeated concurrent decisions and re
         [".git", ".env", ".venv", "__pycache__", "dist", "target"].includes(part)) });
     args.push("--mount", `type=bind,source=${join(frozen, path)},target=/source/implementation/${path},readonly`);
   }
-  args.push("node:24.22.1-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205",
+  args.push("node:24.22.3-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205",
     "node", "--max-old-space-size=512", "--test", "--test-name-pattern=WAIT [0-9]+ completed approvals",
     "cli/touba-project-server/test/durable-human-waits.test.mjs");
   const cleanup = () => {

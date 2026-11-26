@@ -413,10 +413,10 @@ test("rejects invalid loop iteration bounds before execution", () => {
 });
 
 test("rejects invalid BQ-1 CLI budget values before execution", () => {
-  const failure = runCliExpectFailure([runPath, "fixture.air.json", "--max-tool-calls", "0"]);
+  const failure = runCliExpectFailure([runPath, "fixture.air.json", "--max-tool-calls", "-1"]);
 
   assert.equal(failure.status, 2);
-  assert.match(failure.stderr, /--max-tool-calls requires a positive integer/);
+  assert.match(failure.stderr, /--max-tool-calls requires a safe integer >= 0/);
 
   const invalidJson = runCliExpectFailure([
     runPath,

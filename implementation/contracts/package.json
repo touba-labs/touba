@@ -11,6 +11,6 @@
     "test": "node --test machine/contracts.test.mjs conformance/conformance.test.mjs reference-runtime/reference-runtime.test.mjs",
     "conformance": "node conformance/runner.mjs"
   },
-  "engines": { "node": ">=24.22.1 <25" },
+  "engines": { "node": ">=24.22.3 <25" },
   "license": "Apache-2.0"
 }

@@ -215,3 +215,42 @@ test('a failed replacement preserves the previous code, lock and configuration',
   assert.equal(f.lock().packages[0].version, '1.0.0');
   assert.equal((await reviewPackageUpdate(f.source, { root: f.consumer, accept: plan.review_digest })).status, 'success');
 });
+
+for (const phase of ['package-directory', 'lock-metadata']) test(`a killed update at ${phase} retains its guard and verified rollback material`, { skip: process.platform === 'win32' }, async t => {
+  const f = await fixture(t);
+  const configPath = join(f.consumer, 'touba.project.json');
+  const lockPath = join(f.consumer, 'touba.packages.lock.json');
+  const originalConfig = readFileSync(configPath), originalLock = readFileSync(lockPath);
+  const originalDigest = f.lock().packages[0].digest;
+  f.version('1.1.0');
+  const { spawnSync } = await import('node:child_process');
+  const { renameSync } = await import('node:fs');
+  const target = phase === 'package-directory' ? join(f.consumer, 'packages/fixture.update') : lockPath;
+  const script = `import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module';
+const rename = fs.renameSync;
+fs.renameSync = (...args) => { const result = rename(...args); if (args[1] === process.argv[3]) process.kill(process.pid, 'SIGKILL'); return result; };
+syncBuiltinESMExports();
+const {updatePackage} = await import(process.argv[4]);
+await updatePackage(process.argv[1], {root:process.argv[2],name:'fixture.update'});
+throw new Error('The requested interruption was not reached');`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script, f.source, f.consumer, target,
+    new URL('../src/packages.mjs', import.meta.url).href], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(child.signal, 'SIGKILL', child.stderr);
+  const markerPath = join(f.consumer, '.touba-package-installing');
+  const marker = JSON.parse(readFileSync(markerPath));
+  assert.throws(f.lock, { code: 'PackageInstallationIncomplete' });
+  const backup = join(marker.staging, 'previous-fixture.update');
+  const { readPackage } = await import('../src/package-contract.mjs');
+  assert.equal(readPackage(backup).digest, originalDigest);
+  assert.equal(JSON.parse(readFileSync(join(f.consumer, 'packages/fixture.update/touba.package.json'))).version, '1.1.0');
+  // An operator can restore a verified complete backup. This fixture owns every
+  // path below; the product never guesses that an interrupted marker is stale.
+  rmSync(join(f.consumer, 'packages/fixture.update'), { recursive: true });
+  renameSync(backup, join(f.consumer, 'packages/fixture.update'));
+  writeFileSync(configPath, originalConfig); writeFileSync(lockPath, originalLock);
+  assert.equal(readPackage(join(f.consumer, 'packages/fixture.update')).digest, originalDigest);
+  assert(readFileSync(configPath).equals(originalConfig)); assert(readFileSync(lockPath).equals(originalLock));
+  rmSync(markerPath);
+  assert.equal(f.lock().packages[0].version, '1.0.0');
+  assert.equal(f.lock().packages[0].digest, originalDigest);
+});

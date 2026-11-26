@@ -136,13 +136,13 @@ function copyNodeRuntime(toolchainRoot) {
   const copied = spawnSync(join(toolchainRoot, "bin", nodeName), ["--version"], {
     encoding: "utf8", timeout: 10000, windowsHide: true,
   });
-  if (copied.error || copied.status !== 0 || copied.stdout.trim() !== "v24.22.1") {
-    throw new Error(`Bundled Node must run independently as v24.22.1; provision the official native distribution in .toolchains/node-v24.22.1-${platform} before packaging`);
+  if (copied.error || copied.status !== 0 || copied.stdout.trim() !== "v24.22.3") {
+    throw new Error(`Bundled Node must run independently as v24.22.3; provision the official native distribution in .toolchains/node-v24.22.3-${platform} before packaging`);
   }
 }
 
 function resolveNodeRuntimeSource(nodeName) {
-  const localNode = join(implementationRoot, ".toolchains", `node-v24.22.1-${platform}`, "bin", nodeName);
+  const localNode = join(implementationRoot, ".toolchains", `node-v24.22.3-${platform}`, "bin", nodeName);
   if (existsSync(localNode)) {
     return realpathSync(localNode);
   }
@@ -273,7 +273,7 @@ function writeMetadata(sdk, pythonSdk, toolchainRoot) {
     build: toolchainBuildIdentity(toolchainRoot),
     touba_version: readPackageVersion(join(implementationRoot, "cli", "touba-project", "package.json")),
     node_runtime: {
-      version: "24.22.1",
+      version: "24.22.3",
       sha256: createHash("sha256").update(readFileSync(join(toolchainRoot, "bin", process.platform === "win32" ? "node.exe" : "node"))).digest("hex"),
       notices: "THIRD_PARTY_NOTICES.md",
     },

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readStoreFixture, writeStoreFixture } from "./store-fixtures.mjs";
 import { completedCheckpointCount, corruptLastCheckpoint, restoreHttpHistoryFixture } from "./http-history-fixture.mjs";
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import {
   cpSync,
   existsSync,
@@ -113,6 +114,59 @@ strategy RunApproval
     const missing = await getJson(`${base}/decisions?request_id=unknown-request`);
     assert.equal(missing.decisions.length, 0);
     assert.equal(missing.pending_requests.total, 0);
+  } finally { await service.stop(); }
+});
+
+test("a lost HTTP resume reply after durable completion is recovered without dispatching its handler again", async t => {
+  const root = createTestProject();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = join(root, "src/demo/approval.tb");
+  writeFileSync(source, `module demo.approval
+tool Sentinel
+    gives Text
+    requires network
+    human.approve
+strategy RunApproval
+    gives Text
+    uses Sentinel
+    do
+        Sentinel
+            into result
+        give result
+`);
+  writeJson(join(root, ".touba/air/demo/approval.air.json"), compileTestAir(source));
+  const marker = join(root, "payment.log");
+  configureSentinelHandler(root, marker);
+  let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+  let dropped = false;
+  try {
+    await service.start();
+    await runSandbox(serverBaseUrl(service), WAIT_TARGET, "allow_declared_external_effects");
+    const pending = await getJson(`${serverBaseUrl(service)}/approvals/pending/current`);
+    assert.equal(existsSync(marker), false);
+    assert.equal((await postJson(`${serverBaseUrl(service)}/decisions`, decisionFor(pending))).status, 202);
+    service.server.prependListener("request", (request, response) => {
+      if (request.method !== "POST" || request.url !== "/runs/sandbox/resume") return;
+      response.end = () => {
+        assert.equal(humanRecord(root, pending.request_id).status, "completed");
+        dropped = true;
+        response.destroy();
+        return response;
+      };
+    });
+    await assert.rejects(postJson(`${serverBaseUrl(service)}/runs/sandbox/resume`, { request_id: pending.request_id }), error => error instanceof TypeError);
+    assert.equal(dropped, true, "the reply was lost only after the completed record was persisted");
+    assert.equal(readFileSync(marker, "utf8"), "dispatched\n");
+    const persisted = humanRecord(root, pending.request_id);
+    assert.equal(persisted.result.status, "success");
+    await service.stop();
+    service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
+    await service.start();
+    const response = await postJson(`${serverBaseUrl(service)}/runs/sandbox/resume`, { request_id: pending.request_id });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.deepEqual(await response.json(), persisted.result);
+    assert.equal(readFileSync(marker, "utf8"), "dispatched\n", "recovery reads the saved result without redispatch");
+    assert.equal((await getJson(`${serverBaseUrl(service)}/operations/incidents`)).items.length, 0);
   } finally { await service.stop(); }
 });
 
@@ -306,7 +360,7 @@ test("human checkpoint budget omissions and tampering fail before recovery witho
   const path = join(root, ".touba/sandbox-checkpoints.sqlite");
   const original = readStoreFixture(path);
   for (const mutate of [c => { delete c.active_elapsed_ms; }, c => { delete c.effective_limits; },
-    c => { c.active_elapsed_ms = -1; }, c => { c.effective_limits = { max_tool_calls: 0 }; },
+    c => { c.active_elapsed_ms = -1; }, c => { c.effective_limits = { max_tool_calls: -1 }; },
     c => { delete c.call_stack; }, c => { c.call_frame = {}; }, c => { c.call_stack = [{ kind: "invented" }]; },
     c => { delete c.loop_state; }, c => { delete c.next_call_index; }, c => { delete c.active_caller_ref; },
     c => { delete c.budget_counters.provider_calls; }]) {

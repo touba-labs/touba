@@ -1,11 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { execFileSync } from "node:child_process";
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
 
 test("real process diagnostics compare sequential and parallel service collection", async t => {
@@ -76,7 +75,7 @@ strategy Run
   const metrics = {};
   for (const [mode, body] of Object.entries(bodies)) {
     const path = join(root, `${mode}.tb`); writeFileSync(path, common + body);
-    const document = JSON.parse(execFileSync(new URL("../../../target/debug/touba-compile", import.meta.url).pathname, [path], { encoding: "utf8" }));
+    const document = compileTestAir(path);
     peak = 0; requests = 0;
     let providers = 0, largestCheckpoint = 0;
     const started = performance.now();
