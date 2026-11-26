@@ -14,7 +14,7 @@ const implementation = fileURLToPath(new URL("../", import.meta.url));
 const filename = process.platform === "linux" ? "linux-handler-sandbox-native.test.mjs" : "handler-sandbox-os.test.mjs";
 const sourcePath = path.join(implementation, "runtime/touba-runtime/test", filename);
 let source = readFileSync(sourcePath, "utf8");
-source = source.replace(/from "(\.[^"]+)"/g, (_match, specifier) => {
+source = source.replace(/from (["'])(\.[^"']+)\1/g, (_match, _quote, specifier) => {
   const relative = path.relative(implementation, path.resolve(path.dirname(sourcePath), specifier));
   assert.ok(!relative.startsWith("..") && !path.isAbsolute(relative));
   const destination = path.join(payload, "lib", relative);
@@ -69,7 +69,7 @@ try {
     return pathToFileURL(destination).href;
   };
   const packageSource = readFileSync(packageSourcePath, "utf8")
-    .replace(/from "(\.[^"]+)"/g, (_match, specifier) => `from ${JSON.stringify(location(specifier))}`)
+    .replace(/from (["'])(\.[^"']+)\1/g, (_match, _quote, specifier) => `from ${JSON.stringify(location(specifier))}`)
     .replace(/new URL\("([^"]+)", import.meta.url\)/g, (_match, specifier) => `new URL(${JSON.stringify(location(specifier))})`);
   const packageTest = path.join(scratch, "python-package-sandbox.test.mjs");
   writeFileSync(packageTest, packageSource);
