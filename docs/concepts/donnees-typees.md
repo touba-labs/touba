@@ -106,6 +106,7 @@ croissante de nombres ou de textes, sans modifier l’entrée. Pour Text, l’or
 est lexicographique UTF-16, indépendant de la langue et de la locale.
 Les records et comparateurs personnalisés ne sont pas acceptés.
 
+<!-- touba-example: compile -->
 ```touba
 module examples.totals
 function Total
