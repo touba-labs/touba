@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
-import { randomUUID } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -17,6 +16,7 @@ import { createCompensation } from '../../runtime/touba-runtime/src/compensation
 import { createSqliteCompensationStore } from '../../runtime/touba-runtime/src/sqlite-compensation-store.mjs';
 import { createSqliteEffectJournal } from '../../runtime/touba-runtime/src/sqlite-effect-journal.mjs';
 import { executeAirDocument, loadSecretsFromJson } from '../../runtime/touba-runtime/src/index.mjs';
+import { isolatedPostgres } from '../helpers/postgres.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url)), implementation = resolve(here, '../..');
 const library = process.env.TOUBA_TEST_LIBRARY ?? resolve(implementation, '../../touba-library');
@@ -25,14 +25,13 @@ const { Client } = require('pg'), pgPath = require.resolve('pg');
 
 test('installed HTTP/SQL packages: compiled workflow, lost receipt, restart, reconciliation, conflict and compensation', { timeout: 120000 }, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba-real-package-effects-')));
-  const project = join(root, 'consumer'), container = `touba-effects-qa-${randomUUID()}`;
-  const docker = args => execFileSync('docker', args, { encoding: 'utf8', timeout: 20000 }).trim();
-  let admin, server, started = false, reads = 0;
+  const project = join(root, 'consumer');
+  let admin, server, postgres, reads = 0;
   t.after(async () => {
     try { await admin?.end(); }
     finally {
       if (server) await new Promise(resolveClose => { server.closeAllConnections(); server.close(resolveClose); });
-      try { if (started) docker(['stop', '--time', '2', container]); }
+      try { await postgres?.stop(); }
       finally { rmSync(root, { recursive: true, force: true }); }
     }
   });
@@ -50,10 +49,8 @@ test('installed HTTP/SQL packages: compiled workflow, lost receipt, restart, rec
   mkdirSync(join(project, 'handlers'), { recursive: true }); cpSync(join(here, 'handlers.mjs'), join(project, 'handlers/pilot.mjs'));
   const air = JSON.parse(execFileSync(process.execPath, [join(implementation, 'cli/touba-project/src/main.mjs'), 'compile', join(project, 'src/pilot.tb'), '--stdout'],
     { encoding: 'utf8', cwd: project, timeout: 30000 }));
-  docker(['run', '--detach', '--rm', '--pull', 'never', '--name', container, '--memory', '256m', '--cpus', '0.5', '--pids-limit', '128',
-    '--publish', '127.0.0.1::5432', '--env', 'POSTGRES_USER=effects_test', '--env', 'POSTGRES_PASSWORD=isolated-effects-test',
-    '--env', 'POSTGRES_DB=effects_test', 'postgres:17.10-alpine']); started = true;
-  const port = Number(docker(['port', container, '5432/tcp']).split(':').at(-1));
+  postgres = await isolatedPostgres({ user: 'effects_test', password: 'isolated-effects-test', database: 'effects_test' });
+  const { port } = postgres;
   const connection = `postgresql://effects_test:isolated-effects-test@127.0.0.1:${port}/effects_test`;
   for (let attempt = 0; attempt < 50; attempt++) {
     admin = new Client({ connectionString: connection, connectionTimeoutMillis: 1000 });

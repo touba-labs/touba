@@ -1373,7 +1373,10 @@ function createProjectServerWithLease(options, takeLease) {
 
   const applicationAdmission = createApplicationAdmission();
   let stopping = false, stoppingPromise = null;
-  const server = createServer(async (request, response) => {
+  // Leave the advertised idle timeout and active request deadlines unchanged.
+  // Durable commits can delay the event loop past a client's pool retirement;
+  // keep the underlying socket alive for a bounded additional five seconds.
+  const server = createServer({ keepAliveTimeoutBuffer: 5000 }, async (request, response) => {
     let releaseActivity = () => {};
     try {
       if (stopping) { response.setHeader('Connection', 'close'); writeJson(response, 503, { status: 'error', code: 'ToubaServeStopping' }); return; }

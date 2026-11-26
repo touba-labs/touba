@@ -4,6 +4,8 @@ import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer, request as httpRequest } from "node:http";
+import { connect } from "node:net";
+import { once } from "node:events";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -75,6 +77,35 @@ import {
 } from "../../../contracts/machine/contracts.mjs";
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+
+test("HTTP keeps an idle pooled socket alive through the internal expiry margin", { timeout: 15000 }, async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-http-expiry-margin-"));
+  mkdirSync(join(root, "src"));
+  writeFileSync(join(root, "src/main.tb"), "module test.keepalive\n");
+  const core = createToubaProjectServer({ projectRoot: root, contractsRoot, quiet: true, port: 0 });
+  let socket;
+  t.after(async () => {
+    socket?.destroy();
+    await core.stop();
+    rmSync(root, { recursive: true, force: true });
+  });
+  assert.equal(core.server.keepAliveTimeout, 5000);
+  assert.equal(core.server.requestTimeout, 300000);
+  await core.start();
+  socket = connect(core.server.address().port, "127.0.0.1");
+  await once(socket, "connect");
+  const health = async () => {
+    const reply = once(socket, "data");
+    socket.write("GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+    return String((await reply)[0]);
+  };
+  assert.match(await health(), /HTTP\/1\.1 200 OK/);
+  // The former default buffer closes this socket after six seconds. A late
+  // pool retirement must not race the transport while durable work blocks JS.
+  await new Promise(resolve => setTimeout(resolve, 6500));
+  assert.equal(socket.destroyed, false, "socket closed inside the extra expiry margin");
+  assert.match(await health(), /HTTP\/1\.1 200 OK/);
+});
 
 test("refusing a change requires mutation authority just like applying it", () => {
   for (const pathname of ["/changes/apply", "/changes/refuse"]) assert.equal(requiredIdentityPermission("POST", pathname), "governance.apply");

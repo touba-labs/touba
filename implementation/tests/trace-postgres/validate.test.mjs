@@ -11,31 +11,27 @@ import { randomUUID } from "node:crypto";
 import { createSqliteTraceStore } from "../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
 import { createPostgresTraceDestination } from "../../runtime/touba-runtime/src/postgres-trace-destination.mjs";
 import { createTraceExportWorker } from "../../runtime/touba-runtime/src/trace-export-worker.mjs";
+import { isolatedPostgres } from "../helpers/postgres.mjs";
 const { Pool } = createRequire(new URL("../../cli/touba-run/package.json", import.meta.url))("pg");
 
 test("real PostgreSQL: lost COMMIT reply, replay, conflict, fencing, outage and restart", { timeout: 90000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-postgres-trace-"));
-  const container = `touba-trace-qa-${randomUUID()}`;
-  const docker = args => execFileSync("docker", args, { encoding: "utf8", timeout: 20000 }).trim();
-  let started = false, paused = false, pool, store, child, saturated;
+  let postgres, pool, store, child, saturated;
   t.after(async () => {
     if (child && child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL"); await once(child, "exit");
     }
-    if (paused) docker(["unpause", container]);
+    postgres?.resume();
     store?.close();
     saturated?.close();
     try { await pool?.end(); }
     finally {
-      try { if (started) docker(["stop", "--time", "2", container]); }
+      try { await postgres?.stop(); }
       finally { rmSync(root, { recursive: true, force: true }); }
     }
   });
-  docker(["run", "--detach", "--rm", "--name", container, "--memory", "256m", "--cpus", "0.5", "--pids-limit", "128",
-    "--publish", "127.0.0.1::5432", "--env", "POSTGRES_USER=trace_test", "--env", "POSTGRES_PASSWORD=isolated-trace-test",
-    "--env", "POSTGRES_DB=trace_test", "postgres:17.10-alpine"]);
-  started = true;
-  const port = Number(docker(["port", container, "5432/tcp"]).split(":").at(-1));
+  postgres = await isolatedPostgres({ user: "trace_test", password: "isolated-trace-test", database: "trace_test" });
+  const { port } = postgres;
   pool = new Pool({ host: "127.0.0.1", port, database: "trace_test", user: "trace_test", password: "isolated-trace-test", max: 3, connectionTimeoutMillis: 1000, query_timeout: 2000 });
   pool.on("error", () => {});
   let ready = false;
@@ -120,7 +116,7 @@ test("real PostgreSQL: lost COMMIT reply, replay, conflict, fencing, outage and 
   store.append(outageId, { run_id: "outage-run", event_id: "event:outage-run:1", sequence_index: 0, kind: "run_started", payload: {} });
   const outageWorker = createTraceExportWorker({ store, destination, owner: "worker-outage" });
   assert.equal((await outageWorker.step()).pendingEvents, 0);
-  docker(["pause", container]); paused = true;
+  postgres.pause();
   // Real remote unavailability does not stop local journaling. No local cursor
   // may move until PostgreSQL acknowledges the missing event after recovery.
   store.append(outageId, { run_id: "outage-run", event_id: "event:outage-run:2", sequence_index: 1, kind: "run_completed", payload: { status: "success" } });
@@ -145,7 +141,7 @@ test("real PostgreSQL: lost COMMIT reply, replay, conflict, fencing, outage and 
   assert.equal(saturated.archive({}).segments, 0, "unacknowledged/incomplete evidence is not reclaimable");
   await assert.rejects(saturatedWorker.step(), /timeout|terminated|closed/i);
   assert.equal(saturated.exportStatus("primary").pendingEvents, accepted);
-  docker(["unpause", container]); paused = false;
+  postgres.resume();
   assert.equal((await outageWorker.step()).pendingEvents, 0);
   assert.equal(Number((await pool.query("SELECT count(*) AS n FROM touba_traces.events WHERE segment_id=$1", [outageId])).rows[0].n), 2);
   await outageWorker.close();

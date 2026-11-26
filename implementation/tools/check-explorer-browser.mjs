@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startExplorer } from '../cli/touba-inspect/src/explorer/server.mjs';
@@ -7,6 +7,11 @@ import { implementationRoot } from '../cli/touba-inspect/src/explorer/project.mj
 
 // The qualification host supplies Playwright; it is not a distributed runtime dependency.
 const { chromium } = await import(process.env.TOUBA_PLAYWRIGHT_MODULE || 'playwright');
+const coverageDirectory = process.env.TOUBA_BROWSER_COVERAGE_DIR;
+async function saveCoverage(page, name) {
+  if (coverageDirectory) await writeFile(join(coverageDirectory, name + '.json'),
+    JSON.stringify(await page.coverage.stopJSCoverage()) + '\n', { flag: 'wx' });
+}
 
 async function checkDisplayControls(page) {
   await page.locator('#hide-resources').click(); assert.equal(await page.locator('#resources-panel').isVisible(),false);
@@ -70,10 +75,12 @@ limits run
 `)+ '\ntype Diagnosis\n    summary is Text default "ready"\n    severity is Int min 0 max 10 default 0\n    urgent is Boolean default false\n');
   server=await startExplorer({root,openBrowser:false,interval:200}); await server.ready;
   browser=await chromium.launch({headless:true,...(process.env.TOUBA_BROWSER_CHANNEL ? {channel:process.env.TOUBA_BROWSER_CHANNEL} : {})});
+  if (coverageDirectory) await mkdir(coverageDirectory, { recursive: true });
   let count=0;
   for (const width of [320,390,1440,1920]) for (const theme of ['light','dark']) for (const language of ['fr','en']) {
     const context=await browser.newContext({viewport:{width,height:width===320 ? 640 : 950},locale:language,colorScheme:theme,reducedMotion:'reduce',acceptDownloads:true});
     const page=await context.newPage(), errors=[];
+    if (coverageDirectory) await page.coverage.startJSCoverage({ resetOnNavigation: false });
     page.on('pageerror',error=>errors.push(error.message));
     page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
     await page.goto(server.url); await page.locator('#status[data-status="ready"]').waitFor();
@@ -105,7 +112,7 @@ limits run
     assert.match(fieldDetails,/severity/);
     assert.match(fieldDetails,/10/);
     assert.match(fieldDetails,/\b0\b/);
-    assert.match(fieldDetails,/false/);
+    assert.match(fieldDetails,language==='fr' ? /urgent · Boolean\s+Valeur par défaut\s+Non\b/ : /urgent · Boolean\s+Default value\s+No\b/);
     assert.doesNotMatch(fieldDetails,/source_ref|start_byte|\[object Object\]/);
     await page.locator('#group').uncheck(); assert.equal(await page.locator('.node').count(),5);
     await page.locator('#module').selectOption('');
@@ -174,12 +181,14 @@ limits run
     await writeFile(file,original+'\n'); await page.locator('#status[data-status="ready"]').waitFor();
     assert.equal(await page.locator('#detail h2').innerText(),selected); assert.equal(await page.locator('#graph').getAttribute('viewBox'),viewport);
     assert.deepEqual(errors,[]);
+    await saveCoverage(page, `${width}-${theme}-${language}`);
     await context.close(); count++; console.log(`PASS explorer ${width}px ${theme} ${language}`);
   }
   console.log(`Explorer browser qualification: ${count}/16 configurations passed.`);
   const started=performance.now();
   await writeFile(join(root,'src/catalog.tb'), 'module catalog\n'+Array.from({length:300},(_,i)=>`function Entry${i}\n    takes value as Text\n    gives Text\n    do\n        give value\n`).join('\n'));
   const context=await browser.newContext({viewport:{width:1440,height:950}}), page=await context.newPage();
+  if (coverageDirectory) await page.coverage.startJSCoverage({ resetOnNavigation: false });
   await page.goto(server.url);
   await page.waitForFunction(()=>document.querySelector('#module').options.length===3 && document.querySelector('#status').dataset.status==='ready');
   await page.locator('#group').uncheck();
@@ -190,5 +199,6 @@ limits run
   await page.locator('#search').fill('Entry299'); assert.equal(await page.locator('.node').count(),1);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   console.log(`PASS real 300-function project: capped graph, complete list, last-node selection and search (${Math.round(performance.now()-started)} ms).`);
+  await saveCoverage(page, 'catalog-300');
   await context.close();
 } finally { await browser?.close(); await server?.close(); await rm(root,{recursive:true,force:true}); }
