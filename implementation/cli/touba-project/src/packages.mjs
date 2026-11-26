@@ -155,8 +155,15 @@ async function checkPackageClosure(closure, options = {}) {
           ...(handler.effect_contract ? { recommended_effect: handler.effect_contract } : {}) })),
       }));
     } : undefined });
-  if (diagnostics.length) throw Object.assign(packageError("PackageSourceInvalid",
-    diagnostics.map(d => `${d.source_path ?? ""}${d.source_ref ? `:${d.source_ref.start_line + 1}:${d.source_ref.start_column + 1}` : ""} ${d.code}: ${d.message}`.trim()).join("\n")), { diagnostics });
+  if (diagnostics.length) {
+    // Only inventory-backed paths become public package-relative locations.
+    // Never infer a source location from an arbitrary host path.
+    const locations = new Map(closure.packages.flatMap(pkg => pkg.files.map(file =>
+      [resolve(pkg.root, file.path), `${pkg === closure.first ? '' : `${pkg.document.name}@${pkg.document.version}/`}${file.path}`])));
+    const location = d => typeof d.source_path === 'string' ? locations.get(resolve(d.source_path)) ?? '' : '';
+    throw Object.assign(packageError("PackageSourceInvalid",
+      diagnostics.map(d => `${location(d)}${d.source_ref ? `:${d.source_ref.start_line + 1}:${d.source_ref.start_column + 1}` : ""} ${d.code}: ${d.message}`.trim()).join("\n")), { diagnostics });
+  }
   const missing = ["description", "publisher", "license"].filter(field => !closure.first.document[field]);
   const fr = packageLocale(options.lang) === 'fr';
   const initial = closure.first.document;

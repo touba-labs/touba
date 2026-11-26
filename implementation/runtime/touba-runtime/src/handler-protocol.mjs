@@ -364,7 +364,7 @@ export async function runProcessToolHandler(input) {
       } catch {
         finishReject(
           new RuntimeFailure(
-            `tool handler returned invalid JSON ${toolRef}`,
+            `tool handler returned invalid JSON ${toolRef}; reserve stdout for the protocol and write diagnostic logs to stderr`,
             { toolRef },
             "ToolHandlerInvalidJson",
           ),

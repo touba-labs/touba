@@ -432,7 +432,7 @@ function requestFor(element) {
     proposal_id: `proposal_${element.kind}_${element.name}`,
     module_ref: MODULE_REF,
     element,
-    requested_by: { kind: "studio", id: "touba-studio" },
+    requested_by: { kind: "studio", id: "example-client" },
     reason: `Add ${element.name}.`,
   };
 }

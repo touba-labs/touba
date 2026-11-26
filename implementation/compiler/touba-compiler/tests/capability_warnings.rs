@@ -1,6 +1,6 @@
 use touba_compiler::{
-    capability_description_warnings, compile_project_sources, compile_source_to_air,
-    AirDiagnosticCode,
+    AirDiagnosticCode, capability_description_warnings, compile_project_sources,
+    compile_source_to_air,
 };
 
 #[test]
@@ -20,17 +20,21 @@ fn warnings_apply_to_agent_catalogues_not_deterministic_calls() {
         "tool Read\n",
         "tool Read\n    description \"Read a local note\"\n",
     );
-    assert!(capability_description_warnings(
-        &compile_source_to_air("catalogue.tb", &described)
-            .document
-            .unwrap()
-    )
-    .is_empty());
+    assert!(
+        capability_description_warnings(
+            &compile_source_to_air("catalogue.tb", &described)
+                .document
+                .unwrap()
+        )
+        .is_empty()
+    );
     let direct = "module direct\ntool Read\n    gives Text\nstrategy Run\n    uses Read\n    do\n        Read\n";
-    assert!(capability_description_warnings(
-        &compile_source_to_air("direct.tb", direct).document.unwrap()
-    )
-    .is_empty());
+    assert!(
+        capability_description_warnings(
+            &compile_source_to_air("direct.tb", direct).document.unwrap()
+        )
+        .is_empty()
+    );
 }
 
 #[test]

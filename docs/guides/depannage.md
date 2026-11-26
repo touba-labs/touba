@@ -5,7 +5,7 @@ Ce guide part des symptômes courants. Pour les codes détaillés, lire la réf�
 ## `zsh: command not found: code`
 
 La commande terminal de VS Code n’est pas dans le `PATH`. Sur macOS,
-[activez-la depuis la palette de commandes](./ide-vscode.md#code-cli-macos),
+[activez-la depuis la palette de commandes](https://toubalang.org/docs/guides/ide-vscode#code-cli-macos),
 puis ouvrez un nouveau terminal. `code` et la CLI `touba` sont deux commandes
 distinctes ; réinstaller Touba ne configure pas `code`.
 
@@ -22,7 +22,7 @@ Cause probable :
 
 - le VSIX installe l’extension **Touba Language Toolkit** ;
 - il ne crée pas automatiquement les commandes terminal `touba`, `touba run`, `touba compile`, `touba inspect`, `touba manifest` ou `touba handler stub` ;
-- installer la CLI depuis [Installation](../demarrer/installation.md), puis ouvrir un nouveau terminal ;
+- installer la CLI depuis [Installation](https://toubalang.org/docs/demarrer/installation), puis ouvrir un nouveau terminal ;
 - pour un fichier `.tb` simple, utiliser la commande VS Code `Touba: Run Current File` ;
 - pour `touba init`, `touba prepare` ou les commandes runtime, utiliser un environnement où la CLI Touba est explicitement disponible.
 

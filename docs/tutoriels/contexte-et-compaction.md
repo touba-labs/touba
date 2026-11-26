@@ -5,7 +5,7 @@ configuré, sans confondre taille de prompt, historique conservé et autorisatio
 
 ## 1. Partir d'un agent fonctionnel
 
-Utilisez le [calculateur du tutoriel natif](./provider-natif-gouverne.md).
+Utilisez le [calculateur du tutoriel natif](https://toubalang.org/docs/tutoriels/provider-natif-gouverne).
 Son programme Touba ne change pas. Dans son provider, utilisez :
 
 ```js title="providers/calculator.provider.mjs"
@@ -86,7 +86,7 @@ revoir le volume des résultats, les budgets ou la décomposition du travail.
 
 La compaction par défaut n'appelle aucun résumeur. Si votre application dispose
 d'un service de résumé qualifié, fournissez `history.summarize`. Son contrat est
-décrit dans le [guide de l'historique](../guides/historique-conversationnel.md).
+décrit dans le [guide de l'historique](https://toubalang.org/docs/guides/historique-conversationnel).
 Il reçoit les échanges sortants et le résumé précédent ; il retourne un texte
 borné. Le SDK ajoute ce texte comme donnée non fiable avec provenance, puis
 recompte la requête. Les anciens échanges restent consultables dans le stockage.

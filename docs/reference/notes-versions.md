@@ -17,6 +17,6 @@ déjà consommées. Les diagnostics des SDK conservent les causes structurées.
 Pour migrer, sauvegardez les données, terminez ou rapprochez les opérations
 suspendues, installez la distribution puis actualisez les SDK de chaque projet.
 Un retour à l’ancien exécutable conserve les données métier actuelles.
-Le [guide d’installation](../demarrer/installation.md) décrit ce parcours.
+Le [guide d’installation](https://toubalang.org/docs/demarrer/installation) décrit ce parcours.
 
 Les mises à jour suivantes paraîtront ici après qualification et distribution.

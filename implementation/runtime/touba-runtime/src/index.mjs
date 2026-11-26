@@ -12,7 +12,7 @@ import {
   agentDecisionProviderContent,
   agentProviderObservationBudgetReport,
 } from "./agent-provider-content.mjs";
-import { runAgentDecisionLoop, appendAgentCapabilityObservation } from "./agent-loop.mjs";
+import { runAgentDecisionLoop, appendAgentCapabilityObservation, assertAgentCapabilityAllowed } from "./agent-loop.mjs";
 import { createInvocationScope, snapshotInvocationValue } from "./invocation-scope.mjs";
 import { createToolApprovalGraphs, approvedOperation, grantToolApproval, consumeToolApproval, toolApprovalPolicy } from "./tool-approval.mjs";
 import { withTraceInvocation } from "./trace-context.mjs";
@@ -3289,26 +3289,7 @@ async function executeTargetInScope(targetRef, context, callArguments, options) 
         }
 
         assertAgentDecisionDoesNotExecuteSkillPack(decision, agent, capabilityRefs, context);
-        if (!capabilityRefs.includes(decision.targetRef)) {
-          context.trace.push("agent_capability_refused", {
-            payload: {
-              agent_ref: agent.id,
-              selected_ref: decision.targetRef,
-              allowed_refs: capabilityRefs,
-              reason: "capability_not_declared_in_uses",
-            },
-          });
-          throw new RuntimeFailure(
-            `agent capability refused: ${decision.targetRef} is not declared in ${agent.id} uses`,
-            {
-              targetRef: decision.targetRef,
-              agentRef: agent.id,
-              allowedRefs: capabilityRefs,
-              reason: "capability_not_declared_in_uses",
-            },
-            "AgentCapabilityNotAllowed",
-          );
-        }
+        assertAgentCapabilityAllowed(agent, capabilityRefs, decision.targetRef, context);
 
         context.trace.push("agent_capability_selected", {
           payload: compactPayload({

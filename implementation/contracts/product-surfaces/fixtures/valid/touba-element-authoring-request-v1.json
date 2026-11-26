@@ -13,10 +13,17 @@
       }
     ],
     "gives": "Text",
-    "requirements": ["network", "secret_read"],
-    "secrets": ["SUPPORT_API_TOKEN"],
+    "requirements": [
+      "network",
+      "secret_read"
+    ],
+    "secrets": [
+      "SUPPORT_API_TOKEN"
+    ],
     "handler": {
-      "effect_contract": { "kind": "none" },
+      "effect_contract": {
+        "kind": "none"
+      },
       "timeout_ms": 5000,
       "max_payload_bytes": 1048576,
       "sandbox_required": true
@@ -24,7 +31,7 @@
   },
   "requested_by": {
     "kind": "studio",
-    "id": "touba-studio"
+    "id": "example-client"
   },
   "reason": "Add the governed support lookup capability."
 }

@@ -126,6 +126,12 @@ test('device grant is reused, refresh rotates, logout revokes, invalid grants re
   const locked = { read: () => null, remove: () => {}, write: () => { throw Object.assign(Error('vault unavailable'), { code: 'RegistryVaultUnavailable' }); } };
   await assert.rejects(connect({ ...options, vault: locked }), { code: 'RegistryVaultUnavailable' });
   assert.deepEqual(revoked.slice(-2), ['refresh-device', 'access-device']);
+  const login = await packageCommand(['login','--registry',root+'/registry','--session-only','--no-browser','--lang','fr','--json']);
+  const logged = JSON.parse(login.text);
+  assert.equal(login.exitCode,0);
+  assert.match(logged.notes[0],/Identité vérifiée : account/);
+  assert.match(logged.notes[0],/pas au projet/);
+  assert.equal(logged.notes.join(' ').includes('access-device'),false);
 });
 
 test('explicit CLI locale takes precedence without mutating concurrent commands or the shell', async () => {

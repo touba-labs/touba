@@ -86,4 +86,4 @@ Corrigez le fichier pour retrouver l’état **À jour**.
 
 Terminez avec l’export **SVG** ou **PNG**, puis fermez le service avec **Ctrl+C**.
 Pour explorer un traitement parallèle, poursuivez avec le
-[tutoriel parallèle](./traitement-parallele.md).
+[tutoriel parallèle](https://toubalang.org/docs/tutoriels/traitement-parallele).

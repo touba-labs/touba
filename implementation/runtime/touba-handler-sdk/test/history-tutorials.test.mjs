@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-const root = new URL("../../../../../", import.meta.url);
+const siteRoot = process.env.TOUBA_TUTORIAL_SITE_ROOT;
 const sdk = new URL("../src/index.mjs", import.meta.url).href;
 const sqlite = new URL("../src/sqlite-decision-history.mjs", import.meta.url).href;
 const blocks = text => [...text.matchAll(/```js[^\n]*\n([\s\S]*?)```/g)].map(match => match[1]);
@@ -64,13 +64,14 @@ for (const name of ["historique-sqlite", "contexte-et-compaction"]) {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
-  const translations = [`documentation-site/docs/tutoriels/${name}.md`,
-    `documentation-site/i18n/en/docusaurus-plugin-content-docs/current/tutoriels/${name}.md`]
-    .map(path => new URL(path, root));
+  const translations = siteRoot ? [`docs/tutoriels/${name}.md`,
+    `i18n/en/docusaurus-plugin-content-docs/current/tutoriels/${name}.md`]
+    .map(path => resolve(siteRoot, path)) : [];
   // Cross-repository parity is independent of executing the mandatory Core
-  // tutorial above. A standalone Core checkout does not contain the site.
+  // tutorial above. An explicitly requested site must exist and match; missing
+  // translations fail instead of silently disabling this optional integration.
   test(`${name}: site FR/EN JavaScript matches the canonical tutorial`, {
-    skip: translations.every(path => existsSync(path)) ? false : "Separate documentation checkout is not present",
+    skip: siteRoot ? false : "Set TOUBA_TUTORIAL_SITE_ROOT to check a separate documentation site",
   }, () => {
     const canonical = blocks(readFileSync(new URL(`../../../../docs/tutoriels/${name}.md`, import.meta.url), "utf8"));
     for (const path of translations) assert.deepEqual(blocks(readFileSync(path, "utf8")), canonical);

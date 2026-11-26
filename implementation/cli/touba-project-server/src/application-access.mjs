@@ -1,4 +1,4 @@
-// Applications never inherit client's human role or the server's shared key.
+// Applications never inherit the operator's human role or the server's shared key.
 export function servicePrincipal(result, expectedProjectRoot) {
   if (result?.principal?.kind !== 'service') return null;
   const scopes = result.scopes;

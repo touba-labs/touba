@@ -185,7 +185,10 @@ async function executePackageCommand({ action, target, options }) {
     const identity = await authorizeRegistry(registry, { access: options.read ? 'read' : 'publication', forceLogin: action === 'login', logout: action === 'logout', noBrowser: options['no-browser'] === true, sessionOnly: options['session-only'] === true });
     await identity.revoke();
     report = { command: `package ${action}`, status: 'success', registry,
-      notes: [packageSessionNotice({ logout: action === 'logout', persistent: identity.persistent, read: options.read,
+      notes: [...(action === 'login' && identity.account_label ? [packageLocale(options.lang) === 'fr'
+        ? `Identité vérifiée : ${identity.account_label}. La session appartient à l’utilisateur du système, pas au projet.`
+        : `Verified identity: ${identity.account_label}. The session belongs to the OS user, not the project.`] : []),
+        packageSessionNotice({ logout: action === 'logout', persistent: identity.persistent, read: options.read,
         minutes: Math.floor((identity.session_max_age_seconds ?? 600) / 60) })] };
   }
   else if (action === 'registry') report = configureRegistry(target, options);

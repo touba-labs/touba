@@ -1,0 +1,37 @@
+{
+  "action_plan_schema_version": "touba-action-plan-v1",
+  "mode": "validate",
+  "action": "ValidateMemoryAccess",
+  "inputs": {
+    "tool_ref": "tool:examples.a2_memory_agent_read/ReadProjectKnowledge",
+    "memory_ref": "memory:examples.a2_memory_agent_read/ProjectKnowledge",
+    "access": "read",
+    "owner_ref": "agent:examples.a2_memory_agent_read/Researcher"
+  },
+  "artifacts": {
+    "air": {
+      "required": true
+    },
+    "manifest": {
+      "required": true
+    }
+  },
+  "reads": [
+    {
+      "kind": "air",
+      "artifact": "air"
+    },
+    {
+      "kind": "manifest",
+      "artifact": "manifest"
+    }
+  ],
+  "writes": [],
+  "preconditions": [],
+  "outputs": [
+    {
+      "kind": "validation_report"
+    }
+  ],
+  "diagnostics": []
+}

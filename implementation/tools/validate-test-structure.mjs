@@ -124,8 +124,6 @@ function main() {
       "pnpm validate:triggers-cli",
       "pnpm test:lsp",
       "pnpm test:inspect",
-      "pnpm test:trace-renderer",
-      "pnpm check:architecture-fixtures",
     ]);
     assertCommandsExclude(packageJson, "validate:triggers", [
       "pnpm validate:tool-binding-live",

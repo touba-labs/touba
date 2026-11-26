@@ -13,6 +13,7 @@ mod graph_lowering;
 mod parser;
 mod project_air;
 mod resolution;
+mod source_validation;
 mod typecheck;
 
 pub use air::{AirDiagnostic, AirDiagnosticCode};

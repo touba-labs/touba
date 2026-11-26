@@ -1,0 +1,19 @@
+[package]
+name = "touba-windows-sandbox-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Deliberately separate: this diagnostic is not a distributed runtime backend.
+[workspace]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+  "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization",
+  "Win32_Security_Isolation", "Win32_Storage_FileSystem",
+  "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Threading",
+  "Win32_System_WindowsProgramming", "Win32_System_SystemServices",
+  "Win32_Networking_WinSock", "Win32_System_Registry", "Win32_System_Rpc",
+  "Win32_NetworkManagement_WindowsFilteringPlatform", "Win32_NetworkManagement_Dns",
+  "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis"
+] }

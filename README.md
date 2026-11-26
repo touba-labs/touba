@@ -11,7 +11,7 @@ Touba means **Thinking Orchestration Using Bounded Agency**. Programs use the
 by the runtime.
 
 [Documentation](https://toubalang.org/) ·
-[Downloads](https://toubalang.org/hub/) ·
+[Downloads](https://toubalang.org/hub/telechargements/) ·
 [Research](https://toubalang.org/recherche/) ·
 [Contact Touba Labs](mailto:contact@touba-labs.com)
 
@@ -33,7 +33,7 @@ correctness of a model's answer.
 
 ## Get started
 
-Touba is available from the [downloads page](https://toubalang.org/hub/).
+Touba is available from the [downloads page](https://toubalang.org/hub/telechargements/).
 Use `touba version` to identify the installed version and build, and
 `touba update --check` to check for an available update.
 
@@ -70,7 +70,7 @@ touba run hello.air.json
 Add `--output trace` to the run command to inspect the execution events.
 
 Export with `--trace-out trace.json`, then use `touba inspect trace.json`
-for a summary or **Touba: Render Trace** in VS Code to read the events.
+for a summary and read the recorded events.
 
 For a project with generated handler scaffolding, choose the host language:
 
@@ -99,7 +99,7 @@ Strategies and skills can also execute directly. Traces preserve the actual
 structural caller instead of attributing those operations to an invented agent.
 
 The [concepts](https://toubalang.org/docs/concepts/composants-touba),
-[guides](docs/guides/) and [tutorials](docs/tutoriels/) explain the language,
+[guides](https://toubalang.org/docs/guides/) and [tutorials](https://toubalang.org/docs/tutoriels/) explain the language,
 handler integration, multi-agent composition, parallelism and execution history.
 
 ## Reusable packages
@@ -176,9 +176,17 @@ Use Node.js 24.22.1 or a newer patched 24.x release, pnpm 10.33.2 and the Rust t
 ```sh
 cd implementation
 pnpm install --frozen-lockfile
-cargo test -p touba-compiler
-pnpm validate:v1-local
+cargo build --locked -p touba-cli --bin touba-compile
+cargo test --locked
+python3 -m venv .venv-sdk-build
+.venv-sdk-build/bin/python -m pip install -r runtime/touba-python-sdk/build-requirements.txt
+TOUBA_PYTHON_BUILD_BIN="$PWD/.venv-sdk-build/bin/python" pnpm validate:v1-local
 ```
+
+On Windows, use `.venv-sdk-build/Scripts/python.exe` for the builder.
+`TOUBA_PYTHON_BUILD_BIN` selects that interpreter without changing your application
+environment. Installed-toolchain recipe checks are run separately against a
+packaged release; the source checks use the compiler built above.
 
 Source checks do not by themselves qualify a downloadable release. Platform
 installation checks apply to the actual archives. Release maintenance is

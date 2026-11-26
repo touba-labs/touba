@@ -310,6 +310,13 @@ touba prepare --mode write
 
 Suivez le [tutoriel de handlers Python](../tutoriels/handlers-python.md).
 
+
+La sortie standard d’un handler process est réservée au protocole JSON.
+Pour les journaux, utilisez `console.error` en JavaScript ou
+`print(message, file=sys.stderr)` en Python, sans secrets ni données personnelles.
+Une sortie parasite entraîne `ToolHandlerInvalidJson` ; un effet déjà produit
+n’est pas annulé par cette erreur. Vérifiez son état avant de relancer une écriture.
+
 ## Effets et provenance
 
 La provenance mémoire utilise une enveloppe explicite, séparée des données métier :
@@ -341,7 +348,7 @@ Cet extrait prolonge `run.py`. `touba_sdk.testing` fournit aussi `create_scripte
 
 Pour reprendre une attente, transmettez le checkpoint de l’opération, le même journal d’effets et la décision visant l’occurrence attendue. `human_checkpoint_out` et `human_resume_checkpoint` suivent les approbations ; `parallel_checkpoint_out` et `parallel_resume_checkpoint` suivent les groupes parallèles. L’application atteste les identités via `human_approval_host`, jamais via un dictionnaire fourni par le modèle.
 
-`AsyncToubaEngine` permet plusieurs appels avec `asyncio.gather`. Cela ne remplace pas un groupe parallèle déclaré dans le programme Touba, qui conserve ses propres limites et règles de reprise. Voir [traitement parallèle](../tutoriels/traitement-parallele.md) et [approbations](../tutoriels/approbations-roles-delais.md).
+`AsyncToubaEngine` permet plusieurs appels avec `asyncio.gather`. Cela ne remplace pas un groupe parallèle déclaré dans le programme Touba, qui conserve ses propres limites et règles de reprise. Voir [traitement parallèle](https://toubalang.org/docs/tutoriels/traitement-parallele) et [approbations](../tutoriels/approbations-roles-delais.md).
 
 `timeout=30` borne le transport ; `cancel_event=threading.Event()` annule un appel synchrone. Avec asyncio, annulez la tâche. Aucun rejeu automatique. POSIX termine le groupe de processus ; Windows termine la CLI sans garantie équivalente sur ses descendants. Un effet peut déjà avoir eu lieu : inspectez le journal avant la reprise.
 
@@ -418,7 +425,7 @@ les deux, le transport de comptage exige son propre tarif explicite.
 Une panne du canal n'est jamais rejouée automatiquement.
 
 Voir le [tutoriel provider Python](../tutoriels/sdk-engine-provider-python.md)
-et les règles communes d'[historique](./historique-conversationnel.md).
+et les règles communes d'[historique](https://toubalang.org/docs/guides/historique-conversationnel).
 
 ## MCP
 
@@ -504,7 +511,7 @@ Une génération interrompue expose `finish_reason` et, lorsqu’elle est fourni
 
 Pour un handler d’écriture, le code public de l’erreur est conservé ; un reçu
 absent ou invalide est signalé séparément. Voir
-[Effets externes](effets-idempotents.md#erreur-du-handler-et-état-de-leffet).
+[Effets externes](https://toubalang.org/docs/guides/effets-idempotents#erreur-du-handler-et-état-de-leffet).
 
 ### Router plusieurs providers
 

@@ -144,6 +144,10 @@ fn compile_sources(entry_source: &str, sources: &[(String, String)], link: bool)
 
 fn map_ast_diagnostic(diagnostic: AstDiagnostic) -> AirDiagnostic {
     let code = match diagnostic.code {
+        AstDiagnosticCode::SourceComplexityExceeded => AirDiagnosticCode::SourceComplexityExceeded,
+        AstDiagnosticCode::SourceTextDirectionInvalid => {
+            AirDiagnosticCode::SourceTextDirectionInvalid
+        }
         AstDiagnosticCode::DuplicateCallArgument => AirDiagnosticCode::DuplicateCallArgument,
         AstDiagnosticCode::InvalidTextLiteral => AirDiagnosticCode::InvalidTextLiteral,
         AstDiagnosticCode::InvalidRunLimits => AirDiagnosticCode::InvalidRunLimits,
@@ -324,18 +328,17 @@ impl AirLowerer {
                 });
             if let Some(uses) = uses {
                 for node in &graph.nodes {
-                    if let Some(target) = &node.target_ref {
-                        if ["tool:", "skill:", "agent:", "strategy:"]
+                    if let Some(target) = &node.target_ref
+                        && ["tool:", "skill:", "agent:", "strategy:"]
                             .iter()
                             .any(|prefix| target.starts_with(prefix))
-                            && !uses.contains(target)
-                        {
-                            self.diagnostics.push(AirDiagnostic::new(
-                                AirDiagnosticCode::CapabilityNotDeclaredInUses,
-                                format!("`{target}` is not declared in `{}` uses", graph.owner_ref),
-                                Some(node.source_ref.clone()),
-                            ));
-                        }
+                        && !uses.contains(target)
+                    {
+                        self.diagnostics.push(AirDiagnostic::new(
+                            AirDiagnosticCode::CapabilityNotDeclaredInUses,
+                            format!("`{target}` is not declared in `{}` uses", graph.owner_ref),
+                            Some(node.source_ref.clone()),
+                        ));
                     }
                 }
             }
@@ -984,14 +987,12 @@ impl AirLowerer {
                 .filter(|(actual, _)| is_assignable_to(actual, &expected))
                 .map(|(_, value)| value),
         };
-        if let Some(value) = value {
-            if let Ok(constraints) =
+        if let Some(value) = value
+            && let Ok(constraints) =
                 crate::field_contracts::constraints(&field.constraints, &expected)
-            {
-                if crate::field_contracts::matches(&value, &constraints) {
-                    return Some(value);
-                }
-            }
+            && crate::field_contracts::matches(&value, &constraints)
+        {
+            return Some(value);
         }
         self.diagnostics.push(AirDiagnostic::new(AirDiagnosticCode::InvalidFieldDefault,
             "default requires a typed scalar literal, date literal, none(Type) or empty list satisfying the field constraints".to_string(),
@@ -1454,14 +1455,14 @@ impl AirLowerer {
         // Every catalog entry is selectable. Reject locally resolved contracts
         // that this agent can never satisfy, even before a model makes a choice.
         for target in &uses {
-            if let Some(callers) = self.agent_authority.get(target) {
-                if !callers.iter().any(|caller| caller.caller_ref == id) {
-                    self.diagnostics.push(AirDiagnostic::new(
+            if let Some(callers) = self.agent_authority.get(target)
+                && !callers.iter().any(|caller| caller.caller_ref == id)
+            {
+                self.diagnostics.push(AirDiagnostic::new(
                         AirDiagnosticCode::AgentCallerNotAllowed,
                         format!("agent `{id}` cannot select `{target}` without a matching `callable_by` rule"),
                         Some(declaration.source_ref.clone()),
                     ));
-                }
             }
             if let Some(accesses) = self.tool_memory_accesses.get(target) {
                 for access in accesses {
@@ -2363,7 +2364,18 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     fn lower_body(&mut self, body: &AstBody) {
-        self.lower_statement_sequence(&body.statements);
+        let sequence = self.lower_statement_sequence(&body.statements);
+        if self.owner_ref.starts_with("function:")
+            && self.output_type.is_some()
+            && !sequence.exits.is_empty()
+            && self.diagnostics.is_empty()
+        {
+            self.diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::MissingFunctionReturn,
+                "function can finish without `give`; return a value on every normal exit path",
+                Some(body.source_ref.clone()),
+            ));
+        }
     }
 
     fn lower_failure_handler(&mut self, handler: Option<&AstFailureHandler>) {
@@ -2670,10 +2682,10 @@ impl<'a> FlowGraphBuilder<'a> {
         call.result_binding = None;
         // Unlike historical implicit calls, a fan-out always has an explicit
         // interface, including the zero-argument spelling.
-        if call.arguments.is_empty() {
-            if let Some(symbol) = self.symbols.get(&call.target).cloned() {
-                self.lower_call_arguments(&call, &symbol);
-            }
+        if call.arguments.is_empty()
+            && let Some(symbol) = self.symbols.get(&call.target).cloned()
+        {
+            self.lower_call_arguments(&call, &symbol);
         }
         let count = self.nodes.len();
         let fragment = self.lower_call(&call);
@@ -3491,14 +3503,14 @@ impl<'a> FlowGraphBuilder<'a> {
                 source_ref,
             } => {
                 let operand = self.lower_expression_handle(expression, Some(BUILTIN_TEXT), context);
-                if let AstExpression::StringLiteral { value, .. } = expression.as_ref() {
-                    if !is_iso_date(value) {
-                        self.diagnostics.push(AirDiagnostic::new(
-                            AirDiagnosticCode::InvalidExpressionOperandType,
-                            "date(...) requires a valid YYYY-MM-DD civil date".to_string(),
-                            Some(source_ref.clone()),
-                        ));
-                    }
+                if let AstExpression::StringLiteral { value, .. } = expression.as_ref()
+                    && !is_iso_date(value)
+                {
+                    self.diagnostics.push(AirDiagnostic::new(
+                        AirDiagnosticCode::InvalidExpressionOperandType,
+                        "date(...) requires a valid YYYY-MM-DD civil date".to_string(),
+                        Some(source_ref.clone()),
+                    ));
                 }
                 self.lower_optional_expression(
                     AirExpressionKind::DateConversion,
@@ -3919,17 +3931,17 @@ impl<'a> FlowGraphBuilder<'a> {
                 expected.type_ref.as_deref(),
                 ExpressionContext::Expression,
             );
-            if let Some((_, literal)) = crate::field_contracts::literal(&field.value) {
-                if !crate::field_contracts::matches(&literal, &expected.constraints) {
-                    self.diagnostics.push(AirDiagnostic::new(
-                        AirDiagnosticCode::InvalidFieldConstraint,
-                        format!(
-                            "record field `{name}` violates constraints {:?}",
-                            expected.constraints
-                        ),
-                        Some(field.source_ref.clone()),
-                    ));
-                }
+            if let Some((_, literal)) = crate::field_contracts::literal(&field.value)
+                && !crate::field_contracts::matches(&literal, &expected.constraints)
+            {
+                self.diagnostics.push(AirDiagnostic::new(
+                    AirDiagnosticCode::InvalidFieldConstraint,
+                    format!(
+                        "record field `{name}` violates constraints {:?}",
+                        expected.constraints
+                    ),
+                    Some(field.source_ref.clone()),
+                ));
             }
             if let (Some(actual), Some(expected)) =
                 (lowered.type_ref.as_deref(), expected.type_ref.as_deref())
@@ -4816,15 +4828,15 @@ impl<'a> FlowGraphBuilder<'a> {
         });
         let body_first = self.nodes.len();
         let fragment = self.lower_statement_sequence(statements);
-        if let Some(prefix) = prefix.as_ref() {
-            if let Some(body) = self.nodes.get(body_first) {
-                self.edges.push(AirFlowEdge {
-                    from_node_id: prefix.entry_node_id.clone().expect("binding has an entry"),
-                    to_node_id: body.id.clone(),
-                    role: AirFlowEdgeRole::Next,
-                    source_ref: statements.first().map(statement_source_ref),
-                });
-            }
+        if let Some(prefix) = prefix.as_ref()
+            && let Some(body) = self.nodes.get(body_first)
+        {
+            self.edges.push(AirFlowEdge {
+                from_node_id: prefix.entry_node_id.clone().expect("binding has an entry"),
+                to_node_id: body.id.clone(),
+                role: AirFlowEdgeRole::Next,
+                source_ref: statements.first().map(statement_source_ref),
+            });
         }
         let branch_external_effect_possible = self.external_effect_possible;
         if let Some(entry_node_id) = self

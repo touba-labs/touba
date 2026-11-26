@@ -99,6 +99,8 @@ test("package compiler failures preserve source diagnostics without cascading mi
     assert.ok(error.diagnostics.length > 0);
     assert.ok(error.diagnostics.some(d => d.code === 'UnknownTypeReference' && d.source_ref?.start_line === 2));
     assert.match(error.message, /echo\.tb:3:14 UnknownTypeReference/);
+    assert.match(error.message, /src\/example\/echo\.tb:3:14/);
+    assert.equal(error.message.includes(root), false);
     assert.ok(error.diagnostics.every(d => d.code !== 'PackageExportUnknownRef'));
     return true;
   });

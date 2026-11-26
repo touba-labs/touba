@@ -5,8 +5,8 @@ export const translations = {
 Object.assign(translations.fr, { crossRunCategory: 'Rechercher parmi les exécutions', allRuns: 'Toutes les exécutions', segments: 'segments', TraceRunSegmentLimit: 'Cette exécution dépasse 1 000 segments. Consultez un segment depuis son export.' });
 Object.assign(translations.en, { crossRunCategory: 'Search across executions', allRuns: 'All executions', segments: 'segments', TraceRunSegmentLimit: 'This run exceeds 1,000 segments. Open a segment from its export.' });
 export const categories = ['agent','call','flow','memory','human','budget','effect','refusal','error'];
-Object.assign(translations.fr, { origin_service: 'Application', origin_user: 'Utilisateur', origin_studio: 'client', origin_ide: 'Éditeur', origin_cli: 'CLI' });
-Object.assign(translations.en, { origin_service: 'Application', origin_user: 'User', origin_studio: 'client', origin_ide: 'Editor', origin_cli: 'CLI' });
+Object.assign(translations.fr, { origin_service: 'Application', origin_user: 'Utilisateur', origin_studio: 'Application', origin_ide: 'Éditeur', origin_cli: 'CLI' });
+Object.assign(translations.en, { origin_service: 'Application', origin_user: 'User', origin_studio: 'Application', origin_ide: 'Editor', origin_cli: 'CLI' });
 Object.assign(translations.fr, { origin_scheduler: 'Planificateur' });
 Object.assign(translations.en, { origin_scheduler: 'Scheduler' });
 

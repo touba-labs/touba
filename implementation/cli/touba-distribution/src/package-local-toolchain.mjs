@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -15,6 +16,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { copyDependency, packageSdk } from "./package-sdk.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
+import { writeThirdPartyNotices } from "./third-party-notices.mjs";
 import { packagePythonSdk } from "./package-python-sdk.mjs";
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -61,6 +63,7 @@ export function packageLocalToolchain(options = {}) {
 
   copyNodeRuntime(toolchainRoot);
   copyCompiler(toolchainRoot);
+  writeThirdPartyNotices({ implementationRoot, toolchainRoot, nodeSource: resolveNodeRuntimeSource(process.platform === "win32" ? "node.exe" : "node") });
   copyToubaPackages(toolchainRoot);
   const updateSupport = join(toolchainRoot, 'lib/cli/touba-distribution/src');
   mkdirSync(updateSupport, { recursive: true });
@@ -269,7 +272,11 @@ function writeMetadata(sdk, pythonSdk, toolchainRoot) {
     python_sdk: pythonSdk,
     build: toolchainBuildIdentity(toolchainRoot),
     touba_version: readPackageVersion(join(implementationRoot, "cli", "touba-project", "package.json")),
-    node_source: resolveNodeRuntimeSource(process.platform === "win32" ? "node.exe" : "node"),
+    node_runtime: {
+      version: "24.22.1",
+      sha256: createHash("sha256").update(readFileSync(join(toolchainRoot, "bin", process.platform === "win32" ? "node.exe" : "node"))).digest("hex"),
+      notices: "THIRD_PARTY_NOTICES.md",
+    },
     entrypoints: {
       cli: "bin/touba",
       compiler: process.platform === "win32" ? "bin/touba-compile.exe" : "bin/touba-compile",

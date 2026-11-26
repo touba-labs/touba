@@ -9,7 +9,7 @@
   },
   "requested_by": {
     "kind": "studio",
-    "id": "touba-studio"
+    "id": "example-client"
   },
   "reason": "Authorize Reviewer to use ValidateChange."
 }

@@ -1,7 +1,13 @@
 {
   "schema_version": "touba-project-change-history-v1",
   "generated_at": "2026-06-23T00:00:00.000Z",
-  "pagination": { "limit": 50, "cursor": null, "next_cursor": null, "order": "recorded_desc", "status": "all" },
+  "pagination": {
+    "limit": 50,
+    "cursor": null,
+    "next_cursor": null,
+    "order": "recorded_desc",
+    "status": "all"
+  },
   "summary": {
     "total": 2,
     "pending": 1,
@@ -18,10 +24,10 @@
       },
       "requested_by": {
         "kind": "studio",
-        "id": "touba-studio"
+        "id": "example-client"
       },
       "proposed_at": "2026-06-23T00:00:00.000Z",
-      "proposal_reason": "client-authored project change",
+      "proposal_reason": "Client-authored project change",
       "content_sha256": "abc123",
       "decided_at": null,
       "decided_by": null,
@@ -46,7 +52,7 @@
         "kind": "user",
         "id": "khadim"
       },
-      "decision_reason": "Approved in client"
+      "decision_reason": "Approved by the project owner"
     }
   ]
 }

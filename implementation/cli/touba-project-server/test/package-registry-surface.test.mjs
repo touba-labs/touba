@@ -8,7 +8,7 @@ import { signedPackageFixture } from './fixtures/signed-package.mjs';
 import { initProject } from '../../touba-project/src/project.mjs';
 
 async function fixture(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba-studio-registry-')));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba-project-registry-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'consumer'); initProject({ root: project });
   const registry = 'https://cloud.example.test/registry';

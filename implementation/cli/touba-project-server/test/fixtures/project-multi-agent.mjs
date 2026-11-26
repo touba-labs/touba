@@ -1,4 +1,4 @@
-export const multiAgentSource = `module studio.multi
+export const multiAgentSource = `module review.multi
 
 skill Echo
     description "Return the request without an external effect."
@@ -77,7 +77,7 @@ export function multiAgentProvider(calls = []) {
     }
     const specialist = request.agent_ref.endsWith("/Specialist"), coordinator = request.agent_ref.endsWith("/Coordinator");
     if ((specialist && observations.length < 2) || (coordinator && !observations.length)) return {
-      action: "select_capability", target_ref: `${specialist ? "skill" : "agent"}:studio.multi/${specialist ? "Echo" : "Specialist"}`,
+      action: "select_capability", target_ref: `${specialist ? "skill" : "agent"}:review.multi/${specialist ? "Echo" : "Specialist"}`,
       arguments: { request: value }, reason: "Exercise the declared capability." };
     return { action: "answer_directly", result: value, reason: "Return the checked request." };
   };

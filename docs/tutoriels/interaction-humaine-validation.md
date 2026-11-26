@@ -174,7 +174,7 @@ interrompue. Un checkpoint ancien sans registre de confiance doit également
 ## Pour continuer
 
 Pour un effet réel après approbation, voir
-[validation avant effet externe](validation-avant-effet-externe.md).
+[validation avant effet externe](https://toubalang.org/docs/tutoriels/validation-avant-effet-externe).
 Un provider peut aussi choisir `request_human_review` ; ce choix dynamique
 ne remplace pas une barrière d'approbation source. Voir
-[décision agentique gouvernée](decision-agentique-gouvernee.md).
+[décision agentique gouvernée](https://toubalang.org/docs/tutoriels/decision-agentique-gouvernee).

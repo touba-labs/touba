@@ -116,7 +116,7 @@ test("element authoring preview renders and validates changes without mutating t
         proposal_id: "preview_memory_001",
         module_ref: "demo.preview",
         element: { kind: "memory", name: "ReviewMemory", description: "" },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "Preview a governed memory.",
       },
     });
@@ -140,10 +140,7 @@ test("project server contracts keep product presentation outside the Touba proje
     new URL("../../../contracts/product-surfaces/interaction-contracts.mjs", import.meta.url),
     "utf8",
   );
-  const serverSource = readFileSync(new URL("../src/serve.mjs", import.meta.url), "utf8")
-    .split("\n")
-    .filter((line) => !line.includes("LEGACY_CHANGE_"))
-    .join("\n");
+
 
   assert.equal(existsSync(inputPresentationSchema), false);
   assert.doesNotMatch(interactionContracts, /generated_fields|touba\.inputs/u);
@@ -226,7 +223,7 @@ test('authority graph merges imported memories and marks calls required by sourc
   } finally { rmSync(root, {recursive:true, force:true}); }
 });
 
-test("project server ignores obsolete client change stores without modifying them", async () => {
+test("project server ignores obsolete change stores without modifying them", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-change-migration-"));
   const dataRoot = join(root, ".touba");
   mkdirSync(dataRoot, { recursive: true });
@@ -774,7 +771,7 @@ test("authority graph extracts source, AIR and manifest authority", () => {
   }
 });
 
-test("authority graph ignores legacy client governance overlays", () => {
+test("authority graph ignores legacy governance overlays", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-governance-action-"));
   try {
     writeFileSync(join(root, "workflow.tb"), [
@@ -955,7 +952,7 @@ test("operational project surfaces report supply chain, governance readiness and
           status: "proposed",
           action: "write_text_file",
           target: { path: "touba.project.json" },
-          requested_by: { kind: "studio", id: "touba-studio" },
+          requested_by: { kind: "studio", id: "example-client" },
           reason: "governance check",
           proposed_at: "2026-06-23T00:00:00.000Z",
           content: "{\"project_version\":\"touba-project-v1\"}",
@@ -1369,7 +1366,7 @@ test("multi-file change sets apply through a recoverable transaction", () => {
       proposedAt: "2026-07-23T00:00:00Z",
       changeSet: {
         proposal_id: "change_set_001",
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "Add a governed tool source and handler stub.",
         changes: [
           {
@@ -1434,7 +1431,7 @@ test("multi-file change sets reject invalid parent paths before changing files",
       changeProposalsPath,
       changeSet: {
         proposal_id: "change_set_rollback",
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "Exercise transaction rollback.",
         changes: [
           {
@@ -1608,7 +1605,7 @@ test("governance relation changes edit compiled Touba source through review", ()
           source_ref: "agent:demo.governance_edit/Reviewer",
           target_ref: "skill:demo.governance_edit/SummarizeRecord",
         },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "Authorize Reviewer to use SummarizeRecord.",
       },
     });
@@ -1647,7 +1644,7 @@ test("governance relation changes edit compiled Touba source through review", ()
           source_ref: "agent:demo.governance_edit/Reviewer",
           target_ref: "skill:demo.governance_edit/SummarizeRecord",
         },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "Remove Reviewer access to SummarizeRecord.",
       },
     });
@@ -1699,7 +1696,7 @@ test("multi-agent governance edits uses and callable_by as one reviewed change",
           source_ref: "agent:demo.agent_authority_edit/Supervisor",
           target_ref: "agent:demo.agent_authority_edit/Worker",
         },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "Authorize supervised delegation.",
       },
     });
@@ -1788,7 +1785,7 @@ test("governance relation changes edit memory access and replace trigger targets
           target_ref: "memory:demo.contextual_governance/ProjectNotes",
           access: "read",
         },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "Authorize the strategy to read project notes.",
       },
     });
@@ -1824,7 +1821,7 @@ test("governance relation changes edit memory access and replace trigger targets
           source_ref: "trigger:demo.contextual_governance/ProjectWebhook",
           target_ref: "strategy:demo.contextual_governance/RunSecondary",
         },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "Route the trigger to the secondary strategy.",
       },
     });
@@ -1883,7 +1880,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
         source_ref: "agent:demo.governance_guard/Reviewer",
         target_ref: "skill:demo.governance_other/ExternalSkill",
       },
-      requested_by: { kind: "studio", id: "touba-studio" },
+      requested_by: { kind: "studio", id: "example-client" },
       reason: "Cross-source authority request.",
     };
     assert.throws(
@@ -1916,7 +1913,7 @@ test("governance relation changes reject incompatible, cross-source and stale ed
         proposal_id: "stale_change",
         action: "write_text_file",
         target: { path: "src/main.tb" },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "Validated before an external source edit.",
         content: `${readFileSync(sourcePath, "utf8")}\n`,
       },
@@ -1954,7 +1951,7 @@ test("change history reports pending, applied and refused proposals without raw 
         proposal_id: "pending_change",
         action: "write_text_file",
         target: { path: "src/pending.tb" },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "keep pending",
         content: "module demo.pending\n",
       },
@@ -1994,7 +1991,7 @@ test("change history reports pending, applied and refused proposals without raw 
         proposal_id: "refused_change",
         action: "write_text_file",
         target: { path: "src/refused.tb" },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         reason: "refuse this",
         content: "module demo.refused\n",
       },
@@ -2106,7 +2103,7 @@ test("change proposals validate Touba project metadata schemas before review", (
           proposal_id: "bad_manifest",
           action: "write_text_file",
           target: { path: "touba.manifest.json" },
-          requested_by: { kind: "studio", id: "touba-studio" },
+          requested_by: { kind: "studio", id: "example-client" },
           content: JSON.stringify({ bindings: [] }),
         },
       }),
@@ -2121,7 +2118,7 @@ test("change proposals validate Touba project metadata schemas before review", (
           proposal_id: "bad_ownership",
           action: "write_text_file",
           target: { path: "touba.ownership.json" },
-          requested_by: { kind: "studio", id: "touba-studio" },
+          requested_by: { kind: "studio", id: "example-client" },
           content: JSON.stringify({
             ownership_schema_version: "touba-ownership-v1",
             grants: ["network"],
@@ -2139,7 +2136,7 @@ test("change proposals validate Touba project metadata schemas before review", (
           proposal_id: "bad_resources",
           action: "write_text_file",
           target: { path: "touba.resources.json" },
-          requested_by: { kind: "studio", id: "touba-studio" },
+          requested_by: { kind: "studio", id: "example-client" },
           content: JSON.stringify({
             resource_bindings_schema_version: "touba-resource-bindings-v1",
           }),
@@ -2157,7 +2154,7 @@ test("change proposals validate Touba project metadata schemas before review", (
           proposal_id: "legacy_governance_overlay",
           action: "write_text_file",
           target: { path: "touba.governance-actions.json" },
-          requested_by: { kind: "studio", id: "touba-studio" },
+          requested_by: { kind: "studio", id: "example-client" },
           content: "{}",
         },
       }),
@@ -2172,7 +2169,7 @@ test("change proposals validate Touba project metadata schemas before review", (
         proposal_id: "package_ok",
         action: "write_text_file",
         target: { path: "touba.package.json" },
-        requested_by: { kind: "studio", id: "touba-studio" },
+        requested_by: { kind: "studio", id: "example-client" },
         content: JSON.stringify({
           package_schema_version: "touba-package-v1",
           name: "org.example.demo",
@@ -2203,9 +2200,9 @@ test("change proposals allow guarded handler stubs but reject arbitrary handler 
         schema_version: "touba-project-change-proposal-v1",
         proposal_id: "handler_stub_ok",
         action: "write_text_file",
-        target: { path: "handlers/studio/studio_draft_tool.handler.mjs" },
-        requested_by: { kind: "studio", id: "touba-studio" },
-        content: generateHandlerStubFromAirTool({ id: "tool:studio/StudioDraftTool" }),
+        target: { path: "handlers/examples/draft_tool.handler.mjs" },
+        requested_by: { kind: "studio", id: "example-client" },
+        content: generateHandlerStubFromAirTool({ id: "tool:examples.draft/DraftTool" }),
       },
     });
     assert.equal(accepted.status, "proposed");
@@ -2218,8 +2215,8 @@ test("change proposals allow guarded handler stubs but reject arbitrary handler 
           schema_version: "touba-project-change-proposal-v1",
           proposal_id: "handler_arbitrary",
           action: "write_text_file",
-          target: { path: "handlers/studio/arbitrary.handler.mjs" },
-          requested_by: { kind: "studio", id: "touba-studio" },
+          target: { path: "handlers/examples/arbitrary.handler.mjs" },
+          requested_by: { kind: "studio", id: "example-client" },
           content: [
             "// Touba generated handler stub v0.1",
             "import { readFileSync } from 'node:fs';",
@@ -2317,7 +2314,7 @@ test("human decision detail rejects unknown decision ids", () => {
   }
 });
 
-test("HTTP project server rejects invalid client and Mobile contract payloads", async () => {
+test("HTTP project server rejects invalid client contract payloads", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-contracts-"));
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src", "main.tb"), "module demo.contracts\n", "utf8");
@@ -2374,7 +2371,7 @@ test("HTTP project server rejects invalid client and Mobile contract payloads", 
       proposal_id: "contract_change_001",
       action: "write_text_file",
       target: { path: "src/main.tb" },
-      requested_by: { kind: "studio", id: "touba-studio" },
+      requested_by: { kind: "studio", id: "example-client" },
       reason: "contract validation test",
       content: "module demo.contracts\n",
     };
@@ -2395,7 +2392,7 @@ test("HTTP project server rejects invalid client and Mobile contract payloads", 
       schema_version: "touba-project-change-apply-v1",
       proposal_id: proposal.proposal_id,
       decision: "apply",
-      decided_by: { kind: "studio", id: "touba-studio" },
+      decided_by: { kind: "studio", id: "example-client" },
       reason: "contract validation test",
       raw_payload: "not allowed",
     });
@@ -2859,7 +2856,7 @@ test("HTTP project server validates, reviews and applies semantic governance edi
         source_ref: "agent:demo.http_governance/Reviewer",
         target_ref: "skill:demo.http_governance/SummarizeRecord",
       },
-      requested_by: { kind: "studio", id: "touba-studio" },
+      requested_by: { kind: "studio", id: "example-client" },
       reason: "Authorize Reviewer to use SummarizeRecord.",
     });
     assert.equal(proposalResponse.status, 202);
@@ -5054,7 +5051,7 @@ test("HTTP project server requires bearer auth when configured", async () => {
   }
 });
 
-test("client authoring and deployment routes complete a governed project lifecycle", async () => {
+test("Client authoring and deployment routes complete a governed project lifecycle", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-project-server-lifecycle-"));
   const targetStorage = mkdtempSync(join(tmpdir(), "touba-deployment-target-lifecycle-"));
   const token = "project-lifecycle-deployment-token-32-characters";
@@ -5120,7 +5117,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
         name: "LifecycleEvidence",
         description: "Stores governed lifecycle evidence.",
       },
-      requested_by: { kind: "studio", id: "touba-studio" },
+      requested_by: { kind: "studio", id: "example-client" },
       reason: "Add lifecycle evidence memory.",
     };
     const memoryPreviewResponse = await postJson(`${baseUrl}/elements/preview`, memoryRequest);
@@ -5165,7 +5162,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
           sandbox_required: true,
         },
       },
-      requested_by: { kind: "studio", id: "touba-studio" },
+      requested_by: { kind: "studio", id: "example-client" },
       reason: "Add the governed lifecycle integration.",
     };
     const toolPreviewResponse = await postJson(`${baseUrl}/elements/preview`, toolRequest);
@@ -5207,7 +5204,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
       proposal_id: "author_stale_lifecycle",
       module_ref: "demo.lifecycle",
       element: { kind: "memory", name: "StaleEvidence", description: "" },
-      requested_by: { kind: "studio", id: "touba-studio" },
+      requested_by: { kind: "studio", id: "example-client" },
       reason: "Prove stale preview rejection.",
     };
     const stalePreview = await (await postJson(`${baseUrl}/elements/preview`, staleRequest)).json();
@@ -5268,7 +5265,7 @@ test("client authoring and deployment routes complete a governed project lifecyc
         name: "SecondRevisionEvidence",
         description: "Stores evidence for the second revision.",
       },
-      requested_by: { kind: "studio", id: "touba-studio" },
+      requested_by: { kind: "studio", id: "example-client" },
       reason: "Create a second immutable revision.",
     });
     assert.equal(secondProposal.status, 202);
@@ -5529,7 +5526,7 @@ function sandboxAirDocument({ withInput = false, withTool = false } = {}) {
       {
         id: "function:demo.sandbox/FormatReady",
         name: "FormatReady",
-        description: "Returns a pure result for client function testing.",
+        description: "Returns a pure result for function testing.",
         signature: { inputs: [], output_type: "builtin:Text" },
         body_graph_ref: "graph:function:demo.sandbox/FormatReady",
         source_ref: sourceRef(),
@@ -5645,7 +5642,7 @@ function sandboxAgentAirDocument() {
       {
         id: "skill:demo.agent/BuildOverview",
         name: "BuildOverview",
-        description: "Builds the project overview for client sandbox testing.",
+        description: "Builds the project overview for sandbox testing.",
         signature: { inputs: [], output_type: "builtin:Text" },
         uses: [],
         use_refs: [],
@@ -5656,7 +5653,7 @@ function sandboxAgentAirDocument() {
       {
         id: "skill:demo.agent/BuildOperations",
         name: "BuildOperations",
-        description: "Builds the operations snapshot for client sandbox testing.",
+        description: "Builds the operations snapshot for sandbox testing.",
         signature: { inputs: [], output_type: "builtin:Text" },
         uses: [],
         use_refs: [],
@@ -5669,8 +5666,8 @@ function sandboxAgentAirDocument() {
       {
         id: "agent:demo.agent/StudioAgent",
         name: "StudioAgent",
-        description: "Chooses between overview and operations capabilities for client sandbox testing.",
-        responsibility: "Select a declared client sandbox capability.",
+        description: "Chooses between overview and operations capabilities for sandbox testing.",
+        responsibility: "Select a declared sandbox capability.",
         uses: [
           "skill:demo.agent/BuildOverview",
           "skill:demo.agent/BuildOperations",
@@ -5693,7 +5690,7 @@ function sandboxAgentAirDocument() {
       {
         id: "strategy:demo.agent/RunAgent",
         name: "RunAgent",
-        description: "Runs a client sandbox agent through a configured decision provider.",
+        description: "Runs a sandbox agent through a configured decision provider.",
         uses: ["agent:demo.agent/StudioAgent"],
         use_refs: [{ target_ref: "agent:demo.agent/StudioAgent", source_ref: sourceRef() }],
         flow_graph_ref: "graph:strategy:demo.agent/RunAgent",

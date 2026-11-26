@@ -17,7 +17,7 @@
   "session": {
     "id": "session-01",
     "user_id": "user-01",
-    "device_id": "studio-01",
+    "device_id": "example-client-01",
     "client": "studio",
     "platform": "darwin",
     "created_at": "2026-07-23T12:00:00.000Z",

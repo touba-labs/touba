@@ -376,3 +376,32 @@ function validTrace() {
     ],
   };
 }
+
+test('AIR admission validates unexecuted expressions, types, references and cycles', () => {
+  function expressionAir() {
+    const air = validAir(), graph = air.execution_graphs[0];
+    air.definitions.skills[0].signature = { inputs: [{name:'n', type_ref:'builtin:Int'}], output_type:'builtin:Int' };
+    graph.nodes = [{id:'n1',kind:'give',arguments:['expr:expression:sum']}];
+    graph.edges = [];
+    graph.expressions = [{id:'expression:sum',kind:'binary_op',operator:'add',operands:['value:n','literal:int:1'],type_ref:'builtin:Int'}];
+    return air;
+  }
+  assert.doesNotThrow(() => validateAirMachineContract(expressionAir()));
+  for (const [mutate, code] of [
+    [air => {air.execution_graphs[0].expressions[0].operator='unknown';}, 'AirExpressionInvalid'],
+    [air => {air.execution_graphs[0].expressions[0].type_ref='builtin:Text';}, 'AirExpressionTypeInvalid'],
+    [air => {air.execution_graphs[0].expressions[0].operands[0]='value:missing';}, 'AirReferenceUnresolved'],
+    [air => {air.execution_graphs[0].expressions[0].operands[0]='expr:absent';}, 'AirReferenceUnresolved'],
+    [air => {air.execution_graphs[0].expressions[0].operands[0]='literal:int:9007199254740992';}, 'AirLiteralInvalid'],
+    [air => {air.execution_graphs[0].expressions[0].operands[0]='literal:float:NaN';}, 'AirLiteralInvalid'],
+    [air => {air.execution_graphs[0].expressions[0].operands[0]='expr:expression:sum';}, 'AirExpressionCycle'],
+    [air => {air.execution_graphs[0].expressions.push({...air.execution_graphs[0].expressions[0]});}, 'DuplicateAirId'],
+    [air => {air.execution_graphs[0].nodes[0].trace_point_refs=['trace:missing'];}, 'AirReferenceUnresolved'],
+    [air => {air.module.id='module:another';}, 'AirModuleIdentityInvalid'],
+    // Unused expressions must pass the same contract as evaluated expressions.
+    [air => {air.execution_graphs[0].expressions.push({id:'unused',kind:'binary_op',operator:'unknown',operands:['literal:int:1','literal:int:2']});}, 'AirExpressionInvalid'],
+  ]) {
+    const air=expressionAir(); mutate(air);
+    assert.throws(() => validateAirMachineContract(air), error => error.code === code && error.path.startsWith('$.'));
+  }
+});

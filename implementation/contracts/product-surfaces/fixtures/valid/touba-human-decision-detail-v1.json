@@ -7,13 +7,13 @@
     "run_id": "run_20260622_002",
     "trace_ref": "trace:run_20260622_002",
     "user_ref": "user:soukaina",
-    "device_ref": "device:studio-02",
+    "device_ref": "device:example-client-02",
     "decision_kind": "human_review",
     "result": "changes_requested",
     "decided_by": "user:soukaina",
     "decided_at": "2026-06-22T15:00:00Z",
     "comment": "Add provenance details for the third dataset before publication.",
-    "client_ref": "touba-studio",
+    "client_ref": "example-client",
     "accepted_at": "2026-06-22T15:00:02Z"
   }
 }

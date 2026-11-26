@@ -22,6 +22,8 @@ La CLI et les SDK JavaScript/Python conservent ces codes d'admission.
 structuré exploitable n'a été reçu ; le code de sortie est alors disponible.
 Les messages privés de stderr ne sont pas recopiés dans le diagnostic public.
 
+
+
 ## Données typées et admission
 
 | Code | Cause | Action |
@@ -47,7 +49,7 @@ invalide. Sans preuve d'application, l'effet reste d'issue inconnue.
 | `StrategyInputTypeMismatch` | Arguments incompatibles avec l’interface de la stratégie | Corriger les valeurs ou types source, puis recompiler |
 | `InvocationDepthLimitExceeded` | Plus de 64 appels imbriqués | Borner la récursion ou simplifier le workflow, sans élargir l’autorité |
 | `InvalidHumanApprovalCheckpoint` / `HumanApprovalCheckpointIncompatible` | Continuation absente, mal formée ou incompatible avec l’AIR | Préserver l’état ; employer l’AIR correspondant et un checkpoint complet du format courant, sans rejouer les effets |
-| `UnknownToolCapability` | Nom de capacité inconnu | Utiliser la liste fermée du [guide tools](../guides/tool-binding-handler-manifest.md) ; séparer les opérations en tools distincts |
+| `UnknownToolCapability` | Nom de capacité inconnu | Utiliser la liste fermée du [guide tools](https://toubalang.org/docs/guides/tool-binding-handler-manifest) ; séparer les opérations en tools distincts |
 | `MissingTriggerArgument` | Argument `takes` de la cible non lié | Ajouter `with <nom> as payload.<champ>` pour une requête, ou une valeur pour un schedule |
 | `AgentDecisionRequired` | Aucune décision déterministe ou provider configuré | Configurer `--agent-decision-provider` sur `run` ou `serve`, ou des décisions explicites |
 | `ToolHandlerReportedError` / `UnhandledHandlerError` | Exception du handler | Reproduire son `run({ request, context })` dans un test métier local ; ne pas publier de messages contenant des secrets |
@@ -249,7 +251,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `SkillPackActivationUntraced` | Pack actif sans événement d'activation observable | Corriger l'hôte ou la trace de run |
 | `SkillPackExecutableConfusion` | Un `skill_pack:*` est choisi comme capacité exécutable | Choisir une `skill` ou un `tool` Touba déclaré dans `uses` |
 
-## Authoring client et changements
+## Création d’éléments et changements
 
 | Code | Cause probable | Action |
 | --- | --- | --- |
@@ -306,7 +308,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 
 Les erreurs propres au tool, au provider, à l'autorité ou au budget restent
 visibles : un échec de branche n'est pas remplacé par un succès partiel.
-Voir [Reprise](../guides/reprise-durable-bornee.md) et [Budgets](../guides/budgets-autonomie.md).
+Voir [Reprise](https://toubalang.org/docs/guides/reprise-durable-bornee) et [Budgets](../guides/budgets-autonomie.md).
 
 ## Distribution des packages
 
@@ -325,35 +327,37 @@ Voir les [diagnostics de package](packages.md#vérifications-et-diagnostics). Le
 | `HumanApprovalCheckpointIncompatible` | Conserver l'AIR original et le checkpoint privé complet ; ne pas inventer l'état d'autorité manquant. |
 | `HumanApprovalStateLimitExceeded` | Le run atteint sa borne de 10 000 demandes et reçus d'approbation. |
 
+
 ## Provenance d’état et installation
 
 - `ToubaServeStateBuildMismatch` : utiliser la build conservée qui a créé l’état,
- puis contrôler la transition ; ne pas réécrire son identité.
+  puis contrôler la transition ; ne pas réécrire son identité.
 - `ToubaServeStateProjectMismatch` : la provenance vise un autre chemin de projet.
- Restaurer le projet à son emplacement d’origine ; aucune migration implicite.
+  Restaurer le projet à son emplacement d’origine ; aucune migration implicite.
 - `ToubaServeStateOriginInvalid` / `ToubaServeBuildIdentityInvalid` : métadonnées
- invalides ; vérifier l’archive et la sauvegarde.
+  invalides ; vérifier l’archive et la sauvegarde.
 - `ToubaServeStateSnapshotRequired` : journal SQLite présent ; arrêter les
- écrivains et établir une sauvegarde cohérente avant le préflight.
+  écrivains et établir une sauvegarde cohérente avant le préflight.
 - `ToubaStoreFormatIncompatible` : format d’état non reconnu par cette build.
 - `InstallationBuildMismatch`, `InstallationArchiveConflict` : empreinte
- incohérente ; l’installation active n’est pas remplacée.
+  incohérente ; l’installation active n’est pas remplacée.
 - `InstallationInProgress` : verrou d’installation présent. Vérifier le processus
- propriétaire avant toute intervention ; pas de reprise concurrente implicite.
+  propriétaire avant toute intervention ; pas de reprise concurrente implicite.
 - `InstallationPathUnsafe` / `InstallationPathsOverlap` : cible liée ou
- recouvrant la source ; choisir des répertoires distincts.
+  recouvrant la source ; choisir des répertoires distincts.
+
 
 ## Politiques hôtes et contrôle de contenu
 
 - `ProjectConfigFieldUnknown` : clé inconnue dans le projet ou `configuration`.
- Les contextes se déclarent dans `configuration.contexts`.
+  Les contextes se déclarent dans `configuration.contexts`.
 - `ToolHandlerSandboxAccessDenied` : l'OS signale un accès refusé dans la
- sandbox obligatoire. Vérifier les chemins de code et les grants/périmètres
- de données, sans désactiver l'isolation. Un module inaccessible peut aussi
- apparaître comme introuvable ; ce cas reste un échec de chargement.
+  sandbox obligatoire. Vérifier les chemins de code et les grants/périmètres
+  de données, sans désactiver l'isolation. Un module inaccessible peut aussi
+  apparaître comme introuvable ; ce cas reste un échec de chargement.
 - `EngineCapacityExceeded` : le moteur JavaScript persistant a atteint sa
- capacité de requêtes. Attendre la fin d'un run actif avant de réessayer ;
- ce n'est pas un échec de lancement.
+  capacité de requêtes. Attendre la fin d'un run actif avant de réessayer ;
+  ce n'est pas un échec de lancement.
 
 `SkillPackSensitiveContentForbidden` reconnaît les valeurs de secrets résolues
 pour le run et les catégories de contenu explicitement interdites. Il ne s'agit

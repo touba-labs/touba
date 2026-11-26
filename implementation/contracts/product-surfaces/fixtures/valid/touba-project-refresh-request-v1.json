@@ -2,7 +2,7 @@
   "schema_version": "touba-project-refresh-request-v1",
   "requested_by": {
     "kind": "studio",
-    "id": "touba-studio"
+    "id": "example-client"
   },
   "reason": "user-requested-refresh"
 }

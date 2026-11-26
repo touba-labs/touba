@@ -1731,15 +1731,13 @@ test("fails observably when an AIR call argument value is absent", async () => {
     ],
   });
 
-  const result = await executeAirDocument(document, {
+  let effects = 0;
+  await assert.rejects(executeAirDocument(document, {
     entryRef: "skill:test/Build",
-    toolHandlers: {
-      "tool:test/Fetch": () => "unused",
-    },
-  });
+    toolHandlers: { "tool:test/Fetch": () => { effects++; return "unused"; } },
+  }), error => error.code === "InvalidAirDocument" && error.details.contractCode === "AirReferenceUnresolved");
+  assert.equal(effects, 0);
 
-  assert.equal(result.status, "failure");
-  assert.equal(result.trace.events.at(-1).payload.status, "failure");
 });
 
 test("evaluates a branch from an explicit local boolean value", async () => {
@@ -2500,10 +2498,9 @@ test("function-local bindings never replace caller values or escape to a later c
   const invalid = structuredClone(document);
   invalid.definitions.skills[0].signature.inputs = [parameter("caller_only", "builtin:Text")];
   invalid.execution_graphs[0].nodes[0].arguments = ["value:caller_only"];
-  const refused = await executeAirDocument(invalid, {
+  await assert.rejects(executeAirDocument(invalid, {
     entryRef: "skill:test/Caller", inputs: { caller_only: "must not be captured" },
-  });
-  assert.equal(refused.status, "failure");
+  }), error => error.code === "InvalidAirDocument" && error.details.contractCode === "AirReferenceUnresolved");
 });
 
 test("nested calls restore local value types as well as values", async () => {
@@ -2733,6 +2730,12 @@ test("fails observably on invalid expression evaluation", async () => {
       ],
     });
 
+    if (["missing field", "non-finite Float literal"].includes(fixture.name)) {
+      const expected = fixture.name === "missing field" ? "AirReferenceUnresolved" : "AirLiteralInvalid";
+      await assert.rejects(executeAirDocument(document, { entryRef: "function:test/Evaluate", inputs: fixture.inputs }),
+        error => error.code === "InvalidAirDocument" && error.details.contractCode === expected);
+      continue;
+    }
     const result = await executeAirDocument(document, {
       entryRef: "function:test/Evaluate",
       inputs: fixture.inputs,

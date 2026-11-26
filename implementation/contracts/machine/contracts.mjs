@@ -1,3 +1,4 @@
+import { validateAirExpressions } from "./air-expressions.mjs";
 import { validateTracePage } from "../trace-reference.mjs";
 export { validateTraceReference } from "../trace-reference.mjs";
 
@@ -148,6 +149,7 @@ export function validateAirMachineContract(value) {
   validateOptionals(definitions, graphs);
   validateFunctionPurity(definitions, graphs);
   validateStrategyCalls(definitions, graphs);
+  validateAirExpressions(document, fail);
   const callable = new Map([...(definitions.functions ?? []), ...(definitions.tools ?? []), ...(definitions.skills ?? []),
     ...(definitions.agents ?? []), ...(definitions.strategies ?? [])].map(item => [item.id, item]));
   for (const graph of graphs) for (const node of graph.nodes) {

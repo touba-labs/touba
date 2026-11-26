@@ -1,0 +1,21 @@
+module examples.approval_roles
+
+strategy ApproveInvoice
+    takes invoice as Text
+    gives Text
+    do
+        human.approve
+            with context as invoice
+            with role as "finance"
+            with timeout_ms as 30000
+            with distinct_from as "initiator"
+            into approval
+            on expired
+                human.approve
+                    with context as invoice
+                    with role as "finance_manager"
+                    with timeout_ms as 30000
+                    with distinct_from as "initiator"
+                    into escalation
+                give "Accepted by the manager"
+        give "Accepted by finance"

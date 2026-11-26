@@ -381,7 +381,7 @@ la sélection : son résultat rejoint les observations du caller avant la procha
 étape. Une nouvelle invocation exige sa propre décision humaine ; les plafonds
 restent effectifs. Les transferts de session restent distincts de cette composition. Le
 parallélisme natif est décrit ci-dessous. Voir la
-[validation humaine](../concepts/validation-humaine.md).
+[validation humaine](https://toubalang.org/docs/concepts/validation-humaine).
 
 ## Exécuter des agents en parallèle
 

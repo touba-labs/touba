@@ -87,12 +87,12 @@ peuvent garder leurs pages ouvertes. Attendez la sortie du processus avant de
 redémarrer ; un serveur encore actif est identifié par son PID. Un effet externe
 déjà engagé garde les garanties de son propre contrat, même pendant un arrêt.
 
-## Identité applicative Cloud
+## Identité applicative
 
-Dans client, le propriétaire ouvre **Projets → Gérer → Applications** et crée
-une clé avec des entrées exactes et une durée de validité. La clé est affichée
-une fois. Conservez-la dans le gestionnaire de secrets du backend client.
-Envoyez-la dans `X-Touba-Identity-Token` au serveur de projet raccordé au Cloud.
+L'exploitant fournit une identité applicative avec des entrées exactes et une
+durée de validité. Conservez sa clé dans le gestionnaire de secrets du backend
+client. Envoyez-la dans `X-Touba-Identity-Token` au serveur de projet configuré
+avec l'adaptateur d'identité correspondant.
 Si un jeton de transport est configuré, il reste également nécessaire.
 
 | Permission | Appels accessibles |
@@ -205,9 +205,8 @@ limité à 4 096 caractères. C'est du texte saisi par l'utilisateur ; seuls
 
 ### Modules hôtes fournis par un package
 
-Dans client, **Packages → Modules hôtes** présente les adaptateurs JS/Python
-installés. Sélectionnez l'attestation humaine et/ou le fournisseur de décisions,
-puis soumettez le plan à la revue dans **Changements**. Le plan
+Les adaptateurs JS/Python installés peuvent fournir l'attestation humaine et/ou
+le fournisseur de décisions. Soumettez leur sélection à la revue du plan. Le plan
 `touba.hosts.json` est lié aux empreintes des packages installés.
 
 L'exploitant active cette sélection au prochain démarrage en ajoutant
@@ -219,11 +218,11 @@ pas. La vérification du verrou est refaite avant le chargement.
 Les modules hôtes sont du code de confiance exécuté par l'hôte. La revue et
 l'application du plan n'importent aucun module dans le serveur en cours.
 Un changement de package exige une nouvelle revue du plan. Pour désactiver
-une sélection, choisissez « Aucun », faites appliquer le plan, puis redémarrez.
+une sélection, faites appliquer un plan sans module sélectionné, puis redémarrez.
 
 ### Commande de démarrage
 
-Pour proposer l'installation depuis une registry dans client, ajouter à la
+Pour proposer l'installation depuis une registry, ajouter à la
 commande du serveur :
 
 ```sh
@@ -231,12 +230,12 @@ commande du serveur :
 --package-registry-trust /chemin/prive/registry-trust.json
 ```
 
-L'exploitant choisit l'origine et les clés de confiance. client télécharge depuis
-son origine Cloud authentifiée ; le Core vérifie l'index signé, les métadonnées
+L'exploitant choisit l'origine et les clés de confiance. Le client télécharge depuis
+la registry authentifiée ; le Core vérifie l'index signé, les métadonnées
 et l'archive avant de proposer l'installation. Le jeton du projet n'est pas
 transmis à la registry. Un aperçu expire après cinq minutes ; le serveur borne
 les transferts à une archive de 64 Mio et les aperçus à deux. L'installation
-et la revue n'activent aucun module hôte. **Préparer** appelle ensuite
+et la revue n'activent aucun module hôte. La préparation appelle ensuite
 `POST /project/prepare`, avec confirmation et droit `governance.apply`.
 
 Depuis la racine du projet :
@@ -259,8 +258,8 @@ hôte de confiance, jamais un fichier fourni par un utilisateur du client.
 
 Le serveur lit directement la préparation `.touba/build/dev/` : aucune copie
 d'AIR n'est nécessaire. Il vérifie les empreintes de ses entrées avant une
-exécution. Après une modification ou une installation de package, client propose
-**Préparer** dans l'en-tête du projet. `POST /project/prepare` reçoit `{}` et
+exécution. Après une modification ou une installation de package,
+`POST /project/prepare` reçoit `{}` et
 appelle la préparation canonique en mode `write`, profil `dev`, puis actualise
 l'inventaire. Cette action exige `governance.apply` et renvoie
 `touba-project-preparation-v1` : `success`, `needs_changes` ou `error`, avec les
@@ -487,13 +486,13 @@ En cas de réponse réseau perdue, relisez l'opération et son `resume_request_i
 avant toute autre action. Le client ne doit pas répéter automatiquement un POST.
 
 1. Créez une session avec `target_ref`, `target_kind: "strategy"`,
- `presentation: "workflow"`, `effect_policy` et `requested_by`.
+   `presentation: "workflow"`, `effect_policy` et `requested_by`.
 2. Envoyez un message avec un `message_id` unique, `display_text`, `inputs`
- et `requested_by`. Conservez `session_id`, `operation_id` et `run_id`.
+   et `requested_by`. Conservez `session_id`, `operation_id` et `run_id`.
 3. Suivez l'opération via SSE ou sa route GET. Si elle est `awaiting_human`,
- chargez la demande avec **son `run_id`**, pas le dernier run global.
+   chargez la demande avec **son `run_id`**, pas le dernier run global.
 4. Présentez `summary`, `allowed_decisions` et `expires_at`, puis envoyez
- les références exactes reçues dans la demande :
+   les références exactes reçues dans la demande :
 
 ```json
 {
@@ -512,8 +511,8 @@ avant toute autre action. Le client ne doit pas répéter automatiquement un POS
 ```
 
 5. Après l'acceptation 202 de la décision, reprenez la session avec son
- `request_id`. Une décision acceptée n'est pas encore un effet exécuté.
- Lisez le résultat terminal, y compris après un rejet ou une expiration.
+   `request_id`. Une décision acceptée n'est pas encore un effet exécuté.
+   Lisez le résultat terminal, y compris après un rejet ou une expiration.
 
 Le résumé reprend uniquement le `context` explicite de `human.approve`,
 évalué au moment de la pause et limité à 4 096 caractères. Choisissez un dossier
@@ -591,7 +590,7 @@ séparation des tâches métier.
 
 L'export `touba-run-trace-export-v1` contient `segments` et `complete`. Un segment porte son état (`recording`, `paused`, `terminal`, `unavailable`), son digest et celui du précédent. `complete: true` signifie que le lancement et tous les segments sont disponibles et que le run est terminé, pas que la tâche métier a réussi. Après un arrêt brutal, un segment peut rester `recording` avec `trace: null` et `reason: "not_completed"` : aucune preuve manquante n'est reconstruite. Un run historique sans preuve native répond 404.
 
-Le jeton projet est requis lorsqu'il est configuré, et `executions.read` lorsque le contrôle d'identité est activé. Le seul jeton mobile ne permet pas cet export. Aucun AIR, source, manifest, message métier ou checkpoint privé n'est découvert ni inclus automatiquement. Pour [l'audit local](./audit-traces.md), extrayez le champ `trace` de chaque segment disponible et fournissez explicitement l'AIR correspondant à son `run.air_digest`. Les digests locaux ne sont pas des signatures.
+Le jeton projet est requis lorsqu'il est configuré, et `executions.read` lorsque le contrôle d'identité est activé. Le seul jeton mobile ne permet pas cet export. Aucun AIR, source, manifest, message métier ou checkpoint privé n'est découvert ni inclus automatiquement. Pour [l'audit local](https://toubalang.org/docs/guides/audit-traces), extrayez le champ `trace` de chaque segment disponible et fournissez explicitement l'AIR correspondant à son `run.air_digest`. Les digests locaux ne sont pas des signatures.
 
 Les traces utilisent `.touba/traces.sqlite` (512 Mio de contenu sérialisé
 par défaut), avec un index séparé limité à 128 Mio de pages SQLite et 256 segments
@@ -628,7 +627,7 @@ enregistrements lus n’ont pas changé.
 
 Les résultats sandbox et les messages de session transmettent les sorties
 `show` dans `messages`, séparément de la valeur `result` retournée par
-`give`. client affiche ces messages dans l'ordre, y compris avant une pause
+`give`. Le client reçoit ces messages dans l'ordre, y compris avant une pause
 humaine. Une reprise ajoute seulement ses nouveaux messages ; rejouer la même
 demande de reprise ne duplique pas ceux déjà enregistrés.
 
@@ -667,9 +666,9 @@ par les règles de rétention est refusé, comme au démarrage. Le précontrôle
 ne répare ni ne modifie les fichiers d'origine.
 L'historique des décisions et celui des changements utilisent des pages de
 50 lignes, au maximum 100, et un curseur SQLite décroissant. Les corps sont
-bornés à 16 Mio. Les compteurs portent sur l'ensemble du store ; dans client,
-la recherche textuelle des changements porte sur la page affichée, le filtre
-de statut sur le store entier. Une seule page est conservée dans l'interface.
+bornés à 16 Mio. Les compteurs et le filtre de statut portent sur l'ensemble du
+store. Un client qui recherche du texte dans une page doit préciser cette portée
+à l'utilisateur.
 La fenêtre d'interaction de 100 sessions reste une projection bornée : son
 renouvellement ne supprime ni checkpoints ni décisions ni effets.
 Les écritures durables sont synchronisées sur disque ; mesurez leur coût avec
@@ -699,18 +698,18 @@ et les changements documentés avant de remplacer l'installation.
 Pour une sauvegarde cohérente :
 
 1. Bloquez les nouvelles admissions et les producteurs de triggers, attendez
- la fin des handlers en cours, puis arrêtez le serveur. Une attente humaine
- déjà persistée peut être sauvegardée ; elle ne doit pas être supprimée.
+   la fin des handlers en cours, puis arrêtez le serveur. Une attente humaine
+   déjà persistée peut être sauvegardée ; elle ne doit pas être supprimée.
 2. Sauvegardez ensemble les sources, handlers, dépendances, manifest,
- configurations, locks et tout le répertoire `.touba`. Incluez aussi les
- chemins d'état explicitement configurés hors de ce répertoire. Les journaux
- d'effets, checkpoints, identités, décisions, sessions et traces natives
- forment un ensemble corrélé. Protégez et chiffrez les copies contenant des
- secrets ou des données métier, avec leurs droits d'accès.
+   configurations, locks et tout le répertoire `.touba`. Incluez aussi les
+   chemins d'état explicitement configurés hors de ce répertoire. Les journaux
+   d'effets, checkpoints, identités, décisions, sessions et traces natives
+   forment un ensemble corrélé. Protégez et chiffrez les copies contenant des
+   secrets ou des données métier, avec leurs droits d'accès.
 3. Restaurez d'abord dans un environnement isolé, avec la même toolchain et
- les mêmes chemins pour les configurations absolues. Vérifiez les attentes,
- leurs échéances, les preuves natives et le journal d'effets avant de
- réautoriser des effets. Une sauvegarde n'arrête pas l'horloge des échéances.
+   les mêmes chemins pour les configurations absolues. Vérifiez les attentes,
+   leurs échéances, les preuves natives et le journal d'effets avant de
+   réautoriser des effets. Une sauvegarde n'arrête pas l'horloge des échéances.
 
 La restauration qualifiée conserve l'identifiant d'une attente et ses preuves,
 reprend après décision et ne redispatche pas l'effet lors d'une seconde reprise.
@@ -757,14 +756,14 @@ preuve ni l'autorité d'une approbation. Une attente non résolue bloque le tran
 
 L'export OpenTelemetry est une projection de la trace native, pas son
 remplacement pour l'audit. Il existe sous forme de fichier ; l'envoi natif
-vers un collecteur n'est pas fourni. Voir [audit des traces](./audit-traces.md)
-et [expiration des validations](./expiration-annulation-validations-humaines.md).
+vers un collecteur n'est pas fourni. Voir [audit des traces](https://toubalang.org/docs/guides/audit-traces)
+et [expiration des validations](https://toubalang.org/docs/guides/expiration-annulation-validations-humaines).
 
 Voir aussi : [SDK](./sdk-javascript.md), [triggers](./triggers-gouvernes.md),
-[effets idempotents](./effets-idempotents.md),
+[effets idempotents](https://toubalang.org/docs/guides/effets-idempotents),
 [agent et effets sortants](./agent-effets-sortants.md).
 
-Avant de changer de build, utilisez le [contrôle d’état et la conservation des builds](../demarrer/installation.md#changer-de-build-sans-perdre-les-attentes).
+Avant de changer de build, utilisez le [contrôle d’état et la conservation des builds](https://toubalang.org/docs/demarrer/installation#changer-de-build-sans-perdre-les-attentes).
 
 ## Capacité des approbations
 

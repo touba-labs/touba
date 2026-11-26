@@ -72,7 +72,7 @@ Un agent peut invoquer un autre agent lorsque son `uses` et le
 et récupérez un résultat typé. Un appel n'accorde ni héritage des secrets,
 ni partage implicite de mémoire ou de conversation.
 
-Les [imports multi-modules](./imports-multi-modules.md) permettent de répartir
+Les [imports multi-modules](https://toubalang.org/docs/guides/imports-multi-modules) permettent de répartir
 ces déclarations. Les mêmes vérifications s'appliquent à une cible importée.
 Un modèle propose un appel ; il ne crée pas une cible arbitraire à partir
 d'un nom reçu dans une réponse.
@@ -85,4 +85,4 @@ un agent reste séquentielle ; le parallélisme est déclaré par le workflow.
 
 Suivez le [tutoriel multi-agent](../tutoriels/orchestration-multi-agent-sequentielle.md)
 pour la délégation, les révisions et les validations humaines, puis le
-[guide parallèle](./parallelisme-borne.md) pour les bornes et la jointure.
+[guide parallèle](https://toubalang.org/docs/guides/parallelisme-borne) pour les bornes et la jointure.

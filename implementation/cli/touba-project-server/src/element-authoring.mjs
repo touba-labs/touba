@@ -42,7 +42,7 @@ const REQUIREMENTS = new Set([
 ]);
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const MODULE_REF = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/u;
-// The same lexical input contract is consumed by client; compilation resolves types.
+// Clients consume the same lexical input contract; compilation resolves types.
 const SECRET_REF = /^[A-Z][A-Z0-9_]*$/u;
 const DECLARATION = /^(type|enum|memory|function|tool|skill|agent|strategy|trigger)\s+([A-Za-z][A-Za-z0-9_]*)\b/gmu;
 const MODULE_LINE = /^module\s+([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)\s*$/mu;

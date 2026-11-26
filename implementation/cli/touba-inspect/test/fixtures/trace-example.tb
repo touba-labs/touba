@@ -1,0 +1,20 @@
+module lecture
+
+function Label
+    takes value as Int
+    gives Text
+    do
+        give "Item " ++ text(value)
+
+strategy Run
+    gives Text
+    do
+        Label
+            with value as 1
+            into first
+        Label
+            with value as 2
+            into second
+        show
+            with message as first ++ ", " ++ second
+        give "done"

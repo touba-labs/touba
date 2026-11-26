@@ -132,6 +132,16 @@ static void update_indent(Scanner *scanner, uint32_t indent) {
 }
 
 static bool scan_newline(Scanner *scanner, TSLexer *lexer) {
+  bool trailing_space = false;
+  while (lexer->lookahead == ' ') {
+    trailing_space = true;
+    lexer->advance(lexer, true);
+  }
+  if (trailing_space && lexer->eof(lexer)) {
+    update_indent(scanner, 0);
+    lexer->result_symbol = NEWLINE;
+    return true;
+  }
   if (lexer->lookahead != '\n' && lexer->lookahead != '\r') {
     return false;
   }
@@ -152,12 +162,22 @@ static bool scan_newline(Scanner *scanner, TSLexer *lexer) {
       indent = 0;
     }
 
-    while (lexer->lookahead == ' ') {
+    bool has_tab = false;
+    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
+      has_tab = has_tab || lexer->lookahead == '\t';
       lexer->advance(lexer, true);
       indent++;
     }
 
-    if (lexer->lookahead == '\t') {
+    // Whitespace-only lines have no indentation semantics, including at EOF.
+    // Keep their bytes in the source so subsequent locations remain exact.
+    if (lexer->lookahead == '\n' || lexer->lookahead == '\r') {
+      continue;
+    }
+    if (lexer->eof(lexer)) {
+      break;
+    }
+    if (has_tab) {
       scanner->pending_error = true;
       break;
     }
@@ -208,7 +228,7 @@ bool tree_sitter_touba_external_scanner_scan(
     return true;
   }
 
-  if (valid_symbols[NEWLINE] && (lexer->lookahead == '\n' || lexer->lookahead == '\r')) {
+  if (valid_symbols[NEWLINE] && (lexer->lookahead == ' ' || lexer->lookahead == '\n' || lexer->lookahead == '\r')) {
     // On malformed CRLF, return false directly so Tree-sitter rewinds the
     // lookahead; do not consume a bare CR through the EOF dedent path below.
     return scan_newline(scanner, lexer);

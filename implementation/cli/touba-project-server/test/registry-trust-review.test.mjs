@@ -55,7 +55,7 @@ test('expiry, drift, foreign origin, oversize and preconfigured external trust f
   writeFileSync(join(f.root, 'touba.registry-trust.json'), JSON.stringify(f.document));
   assert.throws(() => review.apply('alice', { id: preview.id, review_digest: preview.review_digest }), { code: 'RegistryTrustReviewRequired' });
   f.setDocument({ ...f.document, registry: 'https://foreign.example/registry' });
-  await assert.rejects(review.preview('alice', 'owner-grant'), { code: 'RegistryTrustInvalid' });
+  await assert.rejects(review.preview('alice', 'owner-grant'), { code: 'RegistryTrustTargetMismatch' });
   const outside = createRegistryTrustReview(f.root, { ...f.options, configuredRegistry: f.registry, configuredTrust: '/operator/trust.json' });
   assert.equal(outside.available, false);
   await assert.rejects(outside.preview('alice', 'owner-grant'), { code: 'RegistryTrustUnavailable' });

@@ -98,7 +98,7 @@ return create_tool_result(result["value"], effect_receipt=result["effect_receipt
 Le helper ferme la connexion dans les deux SDK. Le callback contient uniquement
 les requêtes SQL de cette transaction. La connexion, les délais et les secrets
 appartiennent à l’hôte ; le tool déclare ses besoins et le manifest accorde les
-droits correspondants. Le [guide des effets](effets-idempotents.md) montre ce binding.
+droits correspondants. Le [guide des effets](https://toubalang.org/docs/guides/effets-idempotents) montre ce binding.
 
 ## Comprendre la reprise
 

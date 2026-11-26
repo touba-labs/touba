@@ -2,7 +2,7 @@
   "name": "@touba/project-server",
   "version": "1.5.0",
   "private": true,
-  "description": "Touba project server for client, Mobile and contract clients.",
+  "description": "Touba project server for authenticated contract clients.",
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs"

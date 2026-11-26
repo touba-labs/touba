@@ -157,7 +157,7 @@ test('source requires matching AIR and stays inside explicit project root', asyn
   const {root,document,air}=await fixture(t);
   const reader=new TraceReader({filename:join(root,'trace.json'),root}); t.after(()=>reader.close()); reader.select({id:'document'});
   await assert.rejects(reader.source({sequence:document.events[1].sequence_index}),/TraceSourceAirRequired/);
-  const bad=structuredClone(air);bad.module.name='changed';await writeFile(join(root,'other.json'),JSON.stringify(bad));
+  const bad=structuredClone(air);bad.execution_graphs[0].nodes.find(node=>node.kind==='give').arguments=['literal:string:changed-source'];await writeFile(join(root,'other.json'),JSON.stringify(bad));
   const other=new TraceReader({filename:join(root,'trace.json'),root,air:join(root,'other.json')});t.after(()=>other.close());
   assert.equal(other.select({id:'document'}).sourceAvailable,false);
 });
@@ -166,9 +166,9 @@ test('query validation, graph cycles and projection remain bounded',()=>{
   const nodes=graphLayout([{id:'a'},{id:'b'}],[{from:'a',to:'b'},{from:'b',to:'a'}]); assert.ok(nodes.every(n=>n.x<=3392));
   const event=projectEvent({payload:{message:'secret',trace_context:{span_id:'span:a',password:'secret'}}});assert.equal(JSON.stringify(event).includes('secret'),false);
 });
-test('the published tutorial compiles, runs and resolves its actual source', async t => {
-  const {root}=await fixture(t), guide=await readFile(new URL('../../../../docs/tutoriels/explorer-une-trace.md',import.meta.url),'utf8');
-  const source=guide.match(/```touba\n([\s\S]*?)```/u)[1];
+test('the bundled example compiles, runs and resolves its actual source', async t => {
+  const {root}=await fixture(t);
+  const source=await readFile(new URL('./fixtures/trace-example.tb',import.meta.url),'utf8');
   await writeFile(join(root,'lecture.tb'),source);
   const air=JSON.parse(execFileSync('cargo',['run','--quiet','--manifest-path',new URL('../../../Cargo.toml',import.meta.url).pathname,'-p','touba-cli','--bin','touba-compile','--',join(root,'lecture.tb')],{encoding:'utf8'}));
   await writeFile(join(root,'tutorial.air.json'),JSON.stringify(air));

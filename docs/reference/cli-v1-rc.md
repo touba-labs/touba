@@ -112,14 +112,14 @@ utilisez `path` et ce gestionnaire, sans créer un second lockfile.
 `path` est en lecture seule et imprime le chemin absolu vérifié.
 La distribution installée doit inclure les archives SDK ; un checkout source
 non packagé n'en fabrique pas implicitement.
-Détails : [choisir le SDK](../demarrer/installation.md#choisir-le-sdk-de-son-application).
+Détails : [choisir le SDK](https://toubalang.org/docs/demarrer/installation#choisir-le-sdk-de-son-application).
 
 `sandbox` produit les sections `handler` et `sandbox` pour le fichier choisi,
 sans les écrire dans la configuration. Il vérifie le SDK et sélectionne ses
 fichiers de code ; pour Python, il interroge explicitement l'interpréteur de
 confiance du projet, hooks de démarrage désactivés. Relisez l'inventaire avant
 de l'appliquer au fragment. Les grants et chemins de données restent à choisir.
-Exemple complet : [confinement d'un package Python](../guides/profil-execution-durci.md#python--package-et-fragment-explicite).
+Exemple complet : [confinement d'un package Python](https://toubalang.org/docs/guides/profil-execution-durci#python--package-et-fragment-explicite).
 
 ## `touba init`
 
@@ -462,7 +462,7 @@ Le runtime Touba exécute l’AIR, pas directement le fichier `.tb`.
 
 Pour le diagnostic local, `--handler-diagnostics <fichier-neuf>` exige un
 run plan `dev` sur POSIX, sans profil durci ni lock obligatoire. Voir
-[le canal privé du handler](../guides/tool-binding-handler-manifest.md).
+[le canal privé du handler](https://toubalang.org/docs/guides/tool-binding-handler-manifest).
 
 ```sh title="Terminal"
 touba run program.air.json
@@ -549,7 +549,7 @@ touba run program.air.json \
 ```
 
 Le runner valide l’artefact avant dispatch, mais il ne crée pas de connexion
-PostgreSQL, HTTP, queue, Vault, client ou Mobile.
+PostgreSQL, HTTP, files de messages ou gestionnaires de secrets.
 
 Avec entrées explicites :
 
@@ -1113,6 +1113,7 @@ Pour un endpoint Ollama local standard, aucune clé n’est requise. Si l’endp
 compatible exige une clé, elle doit venir d’un secret hôte ou de l’environnement,
 pas des inputs Touba ni d’un fichier versionné.
 
+
 ## Sorties de `touba run`
 
 ### Contrat de sortie pour les intégrations
@@ -1145,6 +1146,7 @@ Les scripts doivent traiter le code 3 comme une attente, pas comme une réussite
 `touba inspect trace.json` présente une chronologie compacte et les limites
 observées. `--json` conserve la chronologie complète. Une justification fournie
 est signalée comme `reported_reason` ; aucune intention du modèle n'est inventée.
+
 
 ```sh title="Terminal"
 touba run program.air.json --output show
@@ -1214,7 +1216,7 @@ runtime et l’autorité déclarée du projet.
 Par défaut, `touba serve` charge `touba.secrets.dev.json` lorsqu’il est présent
 à la racine du projet. `--secrets <fichier>` sélectionne un autre profil
 explicitement. Les handles restent soumis au manifest, aux scopes des agents et
-aux grants des bindings ; client ne reçoit jamais les valeurs résolues.
+aux grants des bindings ; les clients ne reçoivent jamais les valeurs résolues.
 
 ```sh title="Terminal"
 touba serve \
@@ -1233,7 +1235,7 @@ touba serve \
   --deployment-target-token-env TOUBA_DEPLOY_TOKEN
 ```
 
-Le token de déploiement reste côté serveur. client n’en reçoit ni la valeur ni
+Le token de déploiement reste côté serveur. Le client n’en reçoit ni la valeur ni
 le nom de variable.
 
 ## `touba deploy`
@@ -1280,6 +1282,10 @@ touba deploy target serve \
   --host 127.0.0.1 \
   --port 8792
 ```
+
+Une cible hors loopback exige `--tls-cert` et `--tls-key`. La publication
+vérifie le bundle avant matérialisation ; l’activation vérifie à nouveau les
+artefacts de la révision. Le serveur conserve les contrôles et les décisions de déploiement.
 
 ## `touba inspect`
 
@@ -1446,7 +1452,7 @@ La validation couvre :
 - metadata SDK déclarative, dont nom, version et protocole handler attendu ;
 - identité déclarée `handler_package` des handlers ;
 - fichiers de paquet handler et artefacts de dépendances déclarés sous
- `handler_package` ;
+  `handler_package` ;
 - provenance déclarée du lock ;
 - revue déclarée du lock et preuves associées ;
 - diagnostics anti-fuite sur les champs d’autorité.
@@ -1681,8 +1687,9 @@ Les installations système, dont
 le paquet DEB, restent mises à jour par leur gestionnaire de paquets.
 
 Retour : `0` pour une vérification ou une installation réussie, `2` pour une
-annulation, un refus ou une erreur. La [page Installation](../demarrer/installation.md)
+annulation, un refus ou une erreur. La [page Installation](https://toubalang.org/docs/demarrer/installation)
 explique la mise à jour des SDK et la reprise des traitements en attente.
+
 
 ## Exécutions parallèles
 

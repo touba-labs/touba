@@ -53,19 +53,19 @@ interrompu est lisible, mais n'est pas une trace terminale complète.
 ## Durabilité et limites
 
 - SQLite embarqué, `journal_mode=DELETE`, `synchronous=EXTRA`, `fullfsync=ON`.
- Un événement est acquitté après commit. Pas de réseau ni d'exécution à distance.
+  Un événement est acquitté après commit. Pas de réseau ni d'exécution à distance.
 - Défauts : 512 Mio de contenu sérialisé total, 1 Mio par événement et page,
- 16 Mio pour une matérialisation complète. Les plafonds de contenu ne mesurent
- pas l'espace physique total du fichier SQLite ni son journal de transaction.
+  16 Mio pour une matérialisation complète. Les plafonds de contenu ne mesurent
+  pas l'espace physique total du fichier SQLite ni son journal de transaction.
 - Fichier privé (0600 sous POSIX), liens symboliques et liens physiques refusés.
- L'hôte doit protéger le répertoire et utiliser un disque local adapté à SQLite.
+  L'hôte doit protéger le répertoire et utiliser un disque local adapté à SQLite.
 - Un `run_id` peut avoir plusieurs segments, notamment après une reprise.
- Les clés de stockage comprennent le segment ; aucun segment précédent n'est écrasé.
+  Les clés de stockage comprennent le segment ; aucun segment précédent n'est écrasé.
 - Une erreur d'écriture se propage. Elle ne devient pas un avertissement
- d'observabilité et n'autorise pas la poursuite d'un appel non encore commencé.
- Les effets déjà acquis restent régis par leur journal d'effets.
+  d'observabilité et n'autorise pas la poursuite d'un appel non encore commencé.
+  Les effets déjà acquis restent régis par leur journal d'effets.
 - Les empreintes détectent une altération accidentelle ; elles ne constituent
- pas une signature contre un administrateur pouvant réécrire la base.
+  pas une signature contre un administrateur pouvant réécrire la base.
 
 Le builder ne garde pas le tableau croissant en mode SQLite. Les digests JSON
 et canoniques des approbations sont calculés progressivement, avec les mêmes
@@ -197,7 +197,7 @@ créer un nouvel état ; son archive reste restituable avec cette build.
 Le mode SDK intégral garde la limite de transport de 32 Mio ; le mode référence
 permet de lire une trace plus grande par pages, sous la même limite de transport.
 L'état dédupliqué des triggers reste un
-fichier, à migrer avec les autres collections dans . Les résultats
+fichier ; sa migration avec les autres collections reste distincte. Les résultats
 métier et messages de plusieurs runs restent proportionnels à la sortie
 demandée ; la lecture bornée des traces ne borne pas ces valeurs applicatives.
 La qualification de débit sur des applications représentatives,

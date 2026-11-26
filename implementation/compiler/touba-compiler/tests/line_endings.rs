@@ -3,13 +3,51 @@ use touba_compiler::{compile_source_to_air, parse_source};
 const PROGRAM: &str = "module examples.vscode_run\n\nstrategy RunSmoke\n    do\n        show\n            with message as \"Touba VS Code run ok\"\n";
 
 #[test]
+fn whitespace_only_lines_never_define_indentation() {
+    for ending in ["\n", "\r\n"] {
+        for whitespace in [" ", "  ", "   ", "    ", "        ", "\t", " \t "] {
+            for suffix in ["", ending] {
+                let source = format!("{}{}{}", PROGRAM.replace('\n', ending), whitespace, suffix);
+                let compiled = compile_source_to_air("blank.tb", &source);
+                assert!(
+                    compiled.document.is_some(),
+                    "{source:?}: {:?}",
+                    compiled.diagnostics
+                );
+            }
+            let source = PROGRAM
+                .replace("    do\n", &format!("{whitespace}\n    do\n"))
+                .replace('\n', ending);
+            let compiled = compile_source_to_air("blank.tb", &source);
+            assert!(
+                compiled.document.is_some(),
+                "{source:?}: {:?}",
+                compiled.diagnostics
+            );
+            let ast = parse_source("blank.tb", &source).document.unwrap();
+            assert_eq!(
+                ast.declarations[0].source_ref().start_byte,
+                source.find("strategy").unwrap()
+            );
+        }
+    }
+}
+
+#[test]
 fn inline_comments_keep_indentation_strings_and_source_positions() {
     let program = "module comments.inline # module\n\ndefine Label as Text = \"#not a comment\" # value\nfunction Read # declaration\n    gives Text # signature\n    do # block\n        if true # branch\n            give Label # result\n        else # other\n            give \"#still text\" # end\n";
-    for source in [program.to_string(), program.replace('\n', "\r\n"), program.trim_end().to_string()] {
+    for source in [
+        program.to_string(),
+        program.replace('\n', "\r\n"),
+        program.trim_end().to_string(),
+    ] {
         let compiled = compile_source_to_air("inline.tb", &source);
         assert!(compiled.document.is_some(), "{:?}", compiled.diagnostics);
         let ast = parse_source("inline.tb", &source).document.unwrap();
-        assert_eq!(ast.declarations[1].source_ref().start_byte, source.find("function").unwrap());
+        assert_eq!(
+            ast.declarations[1].source_ref().start_byte,
+            source.find("function").unwrap()
+        );
     }
 }
 
@@ -127,4 +165,37 @@ fn every_grammar_fixture_keeps_its_compilation_result_in_crlf() {
         "LF/CRLF compilation parity verified for {} fixtures",
         fixtures.len()
     );
+}
+
+#[test]
+fn trailing_spaces_preserve_source_and_never_relax_code_indentation() {
+    for ending in ["\n", "\r\n"] {
+        for suffix in ["", ending] {
+            let source = PROGRAM
+                .lines()
+                .map(|line| format!("{line}   "))
+                .collect::<Vec<_>>()
+                .join(ending)
+                + suffix;
+            let result = compile_source_to_air("spaces.tb", &source);
+            assert!(
+                result.document.is_some(),
+                "{source:?}: {:?}",
+                result.diagnostics
+            );
+            let ast = parse_source("spaces.tb", &source).document.unwrap();
+            assert_eq!(
+                ast.declarations[0].source_ref().start_byte,
+                source.find("strategy").unwrap()
+            );
+        }
+    }
+    for source in [
+        "module spaces.bad\nstrategy Main\n  do   \n        stop   \n",
+        "module spaces.bad\nstrategy Main\n\tdo   \n        stop   \n",
+    ] {
+        assert!(compile_source_to_air("bad.tb", source).document.is_none());
+    }
+    let result = compile_source_to_air("last.tb", "module spaces.last   ");
+    assert!(result.document.is_some(), "{:?}", result.diagnostics);
 }

@@ -301,7 +301,7 @@ Un nom de module projet doit contenir au moins deux segments en minuscules, par 
 
 `touba package new acme.review --context --yes` crée le manifeste auteur, la procédure et le README.
 Utilisez `touba package check review`, puis `touba package add ./review` pour l'enregistrer.
-Voir les [packages](creer-partager-package.md) et [l'activation du contexte](skills-first.md).
+Voir les [packages](creer-partager-package.md) et [l'activation du contexte](https://toubalang.org/docs/guides/skills-first).
 
 ## Préparer un projet sans tool
 

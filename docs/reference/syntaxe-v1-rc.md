@@ -19,7 +19,7 @@ Une liste vide reçoit son type du contexte, par exemple `bind labels as List of
 
 Les compréhensions respectent la limite d'itérations de l'hôte, y compris pour
 les éléments filtrés, ainsi que les contrôles d'annulation et de durée.
-Voir le [tutoriel de fonctions pures](../tutoriels/fonctions-metier-pures.md).
+Voir le [tutoriel de fonctions pures](https://toubalang.org/docs/tutoriels/fonctions-metier-pures).
 
 
 Cette page est une aide de consultation pour la syntaxe visible.
@@ -41,6 +41,11 @@ entière, pas un marqueur de commentaire.
 Un littéral `Text` est entre guillemets doubles sur une ligne source. Les échappements JSON sont décodés une seule fois : `\n` (saut de ligne), `\r`, `\t`, `\b`, `\f`, `\"`, `\\`, `\/` et `\uXXXX` (Unicode, y compris paires valides). `"a\n\nb"` contient deux sauts de ligne ; `"\\n"` conserve un antislash suivi de n. Les échappements invalides et les contrôles bruts sont refusés. Les chaînes source multilignes restent non admises ; aucune interpolation implicite ni évaluation JavaScript.
 
 `Int / Int` retourne un `Float`. `Int // Int` retourne un `Int` tronqué vers zéro : `(0 - 7) // 2` vaut `-3`. Le diviseur zéro est refusé. Le formatage monétaire et les conventions locales relèvent d'un package, pas d'une conversion implicite.
+
+Les calculs numériques mixtes promeuvent `Int` vers `Float` : `1 + 2.5` vaut
+`3.5`. `%` est le reste de la division entière tronquée vers zéro, avec le signe
+du dividende : `(0 - 7) % 2` vaut `-1`. Le moins unaire n'est pas admis ; pour
+exprimer une valeur négative, utilisez une soustraction comme `0 - 7`.
 
 Un gabarit est explicitement marqué : `f"Dossier {reference}, quantité {text(quantity)}"`. Chaque expression entre accolades doit produire `Text`. Écrivez `{{` et `}}` pour des accolades littérales. Les échappements restent ceux des textes ordinaires ; les expressions sont pures et aucun code hôte n'est exécuté.
 
@@ -234,7 +239,7 @@ listes et signatures peuvent utiliser ce type ; l'import est
 le nom exact du membre, par exemple `"high"`, vérifié dans le type attendu.
 Une valeur inconnue est refusée, jamais remplacée par un membre par défaut.
 Pour un argument statique de trigger, utiliser une constante `define`.
-Les variantes ne portent pas de payload. `match value` puis des blocs `case Enum.member` sélectionnent une branche exhaustive : tous les membres doivent apparaître une seule fois, sans cas par défaut. Voir [Énumérations](../concepts/enumerations.md).
+Les variantes ne portent pas de payload. `match value` puis des blocs `case Enum.member` sélectionnent une branche exhaustive : tous les membres doivent apparaître une seule fois, sans cas par défaut. Voir [Énumérations](https://toubalang.org/docs/concepts/enumerations).
 
 ### Valeurs optionnelles explicites
 
@@ -658,3 +663,13 @@ peut pas dépasser la cardinalité maximale. Tous les arguments sont contrôlés
 avant admission. Aucun résultat partiel n'est publié. Les règles d'autorité
 usuelles s'appliquent ; une function pure ne peut pas contenir ce bloc.
 Voir le [tutoriel multi-agent](../tutoriels/orchestration-multi-agent-sequentielle.md).
+
+## Complexité des sources et caractères de direction
+
+Le compilateur borne la profondeur syntaxique à 256 niveaux et la taille de
+l’arbre à 100 000 nœuds. Dépasser une borne produit `SourceComplexityExceeded` ;
+scindez l’expression ou le module. Les espaces finaux et les lignes blanches
+indentées sont acceptés ; l’indentation du code conserve quatre espaces par niveau.
+Les contrôles bidi bruts U+202A à U+202E et U+2066 à U+2069 sont refusés avec
+`SourceTextDirectionInvalid`. Les textes Unicode ordinaires restent admis ;
+utilisez un échappement JSON explicite si un contrôle de direction est une donnée.

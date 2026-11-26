@@ -45,3 +45,18 @@ fn omitted_else_reaches_the_following_statement() {
             .any(|edge| edge.from_node_id == graph.nodes[1].id)
     );
 }
+
+#[test]
+fn a_typed_function_must_return_on_every_normal_exit_path() {
+    let source = "module flow.result\nfunction Pick\n    takes c as Boolean\n    gives Int\n    do\n        if c\n            give 1\n";
+    let result = compile_source_to_air("return.tb", source);
+    assert!(result.document.is_none());
+    assert_eq!(
+        result.diagnostics[0].code,
+        touba_compiler::AirDiagnosticCode::MissingFunctionReturn
+    );
+    for tail in ["        give 2\n", "        stop\n"] {
+        let result = compile_source_to_air("return.tb", &(source.to_string() + tail));
+        assert!(result.document.is_some(), "{:?}", result.diagnostics);
+    }
+}

@@ -1,0 +1,37 @@
+{
+  "action_plan_schema_version": "touba-action-plan-v1",
+  "mode": "plan",
+  "action": "AddMemory",
+  "inputs": {
+    "module": "examples.a2_memory_agent_read",
+    "memory": "ProjectKnowledge"
+  },
+  "artifacts": {
+    "source": {
+      "required": true
+    }
+  },
+  "reads": [
+    {
+      "kind": "source",
+      "artifact": "source"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "source_patch",
+      "effect": "propose",
+      "target": "source"
+    }
+  ],
+  "preconditions": [
+    "MemoryNameAvailable",
+    "NoBackendDeclaration"
+  ],
+  "outputs": [
+    {
+      "kind": "patch_preview"
+    }
+  ],
+  "diagnostics": []
+}

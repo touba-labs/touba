@@ -6819,7 +6819,7 @@ export function readMobileNotifications({
     filePath: mobileNotificationsPath,
     schemaVersion: MOBILE_NOTIFICATION_SCHEMA_VERSION,
     errorCode: "ToubaServeMobileNotificationsInvalid",
-    message: "mobile notification report does not match mobile client-notification-v1",
+    message: "mobile notification report does not match touba-mobile-notification-v1",
   });
   return stored ?? emptyMobileNotifications(generatedAt);
 }
@@ -6884,7 +6884,7 @@ export function issueMobilePairingRequest({
     schemaVersion: MOBILE_PAIRING_REQUEST_SCHEMA_VERSION,
     value: pairingRequest,
     errorCode: "ToubaServeMobilePairingInvalid",
-    message: "mobile pairing request does not match mobile client-pairing-request-v1",
+    message: "mobile pairing request does not match touba-mobile-pairing-request-v1",
   });
   const store = loadMobilePairingStore(mobilePairingsPath);
   if (store.pairings.some((item) => item.pairing_id === pairingId && item.status !== "revoked")) {
@@ -6920,7 +6920,7 @@ export function acceptMobilePairing({
     schemaVersion: MOBILE_PAIRING_REQUEST_SCHEMA_VERSION,
     value: pairingRequest,
     errorCode: "ToubaServeMobilePairingInvalid",
-    message: "mobile pairing request does not match mobile client-pairing-request-v1",
+    message: "mobile pairing request does not match touba-mobile-pairing-request-v1",
   });
   const scopes = normalizeMobilePairingScopes(pairingRequest.scopes);
   const store = loadMobilePairingStore(mobilePairingsPath);
@@ -7010,7 +7010,7 @@ export function readMobileQuickApprovalPolicy({ contractsRoot, mobileQuickApprov
     filePath: mobileQuickApprovalPolicyPath,
     schemaVersion: MOBILE_QUICK_APPROVAL_POLICY_SCHEMA_VERSION,
     errorCode: "ToubaServeMobileQuickApprovalPolicyInvalid",
-    message: "mobile quick approval policy does not match mobile client-quick-approval-policy-v1",
+    message: "mobile quick approval policy does not match touba-mobile-quick-approval-policy-v1",
   });
   return stored ?? disabledMobileQuickApprovalPolicy();
 }
@@ -7039,7 +7039,7 @@ export function readMobileEscalation({ contractsRoot, mobileEscalationPath }) {
     filePath: mobileEscalationPath,
     schemaVersion: MOBILE_ESCALATION_SCHEMA_VERSION,
     errorCode: "ToubaServeMobileEscalationInvalid",
-    message: "mobile escalation report does not match mobile client-escalation-v1",
+    message: "mobile escalation report does not match touba-mobile-escalation-v1",
   });
   return stored ?? emptyMobileEscalation();
 }
@@ -13057,7 +13057,7 @@ function usage() {
     "--schedule-triggers runs enabled, prepared schedule entrypoints with this server's explicit hosts and secrets; one worker, no catch-up replay.",
     "--request-triggers serves prepared request entrypoints under /_touba/events with a private queue and the same approval host.",
     "--webhook-signature-secret-env <NAME> selects the HMAC v1 secret (at least 32 bytes); required for --request-triggers.",
-    "--validation-plan <path> authorizes fixed, reviewed host test suites for client; no third-party test discovery or shell commands.",
+    "--validation-plan <path> authorizes fixed, reviewed host test suites for clients; no third-party test discovery or shell commands.",
     "--human-approval-host and --agent-decision-provider accept JavaScript (.mjs) and Python (.py) host modules.",
     "--package-hosts activates the reviewed touba.hosts.json package selections at startup; it cannot be combined with explicit host paths.",
     "--package-registry URL --package-registry-trust FILE enables signed Library previews with consumer-selected local trust; no server-side registry requests.",

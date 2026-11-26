@@ -20,7 +20,7 @@
       "kind": "user",
       "id": "khadim"
     },
-    "decision_reason": "Approved in client",
+    "decision_reason": "Approved by the project owner",
     "validations": [
       {
         "severity": "info",

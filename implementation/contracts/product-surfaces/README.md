@@ -245,7 +245,7 @@ preserves consumer approval minima and grants no additional authority. Raw
 handler arguments and host plans are not projected; fragment changes use Core's
 redacted values. Oversized interactive reviews return 429 and require CLI review.
 The legacy empty-object `/project/prepare` remains available, without an implicit
-acceptance of package contract changes. client uses only the reviewed routes.
+acceptance of package contract changes. Clients use only the reviewed routes.
 
 Project mutation routes refuse active human waits, interrupted operations and
 concurrent executions with `ToubaServeProjectOperationsActive`. An execution
@@ -445,7 +445,7 @@ and at most 100 (`limit`). `cursor` follows decreasing SQLite storage keys;
 remain global. `pagination.next_cursor=null` marks the last page. New proposals
 appear after refreshing the first page. Each stored page is capped at 16 MiB
 before projection; proposal content is never included in the response.
-client consumes one page and uses its text search within that page.
+Clients consume one page and search text within that page.
 Current clients require this pagination metadata and must be paired with the
 corresponding Core. The local store is `project-change-proposals.sqlite`;
 old JSON needs the explicit `touba state migrate changes` maintenance command.

@@ -3147,7 +3147,7 @@ test("CLI run prod profile refuses before runtime when project lock drifts", () 
     initProject({ root });
     const fixture = processRunFixture(root);
     const air = JSON.parse(readFileSync(fixture.airPath, "utf8"));
-    air.module.name = "changed";
+    air.execution_graphs[0].nodes.find(node => node.kind === "give").arguments = ["literal:string:changed-source"];
     writeJson(fixture.airPath, air);
     const result = spawnSync(process.execPath, [cliPath, "run", fixture.airPath,
       "--manifest", fixture.manifest, "--profile", "prod", "--output", "trace"], { cwd: root, encoding: "utf8" });
@@ -4469,3 +4469,21 @@ function packageManifestDocument(options = {}) {
 function sha256(text) {
   return crypto.createHash("sha256").update(text, "utf8").digest("hex");
 }
+
+test('a failed source compilation never proposes removal of reviewed manifest bindings', async () => {
+  const root = tempRoot();
+  try {
+    const source = join(root, 'src/review/main.tb');
+    mkdirSync(dirname(source), {recursive:true});
+    writeFileSync(source, 'module review.main\nfunction Main\n    gives Int\n    do\n        give ???\n');
+    const manifestPath = join(root, 'manifest.json');
+    const previous = JSON.stringify({manifest_version:'touba-manifest-v1',bindings:{'tool:review.main/Existing':{handler:{kind:'process',command:process.execPath,args:['not-executed.mjs']},grants:[],effect_contract:{kind:'none'}}}});
+    writeFileSync(manifestPath, previous);
+    const report = await prepareProject({root, sourcePaths:[source], manifestPath, mode:'write'});
+    assert.equal(report.status, 'error');
+    assert.ok(report.diagnostics.some(item => item.code === 'AstError'));
+    assert.equal(report.diagnostics.some(item => ['ManifestBindingObsolete','ManifestHasUnexpectedBindings'].includes(item.code)), false);
+    assert.deepEqual(report.actions, []);
+    assert.equal(readFileSync(manifestPath,'utf8'), previous);
+  } finally { cleanup(root); }
+});

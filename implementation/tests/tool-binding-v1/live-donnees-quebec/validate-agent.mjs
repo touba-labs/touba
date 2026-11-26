@@ -399,7 +399,7 @@ function assertTrace(trace, messages) {
   if (selectedCapability.payload.authority_source !== "uses") {
     throw new Error(`unexpected selected authority ${selectedCapability.payload.authority_source}`);
   }
-  const expectedDecisionSource = liveMode ? "openai_structured_output" : "fixture_dry_run";
+  const expectedDecisionSource = "decision_provider";
   if (selectedCapability.payload.decision_source !== expectedDecisionSource) {
     throw new Error(
       `expected decision source ${expectedDecisionSource}, got ${selectedCapability.payload.decision_source}`,

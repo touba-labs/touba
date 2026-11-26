@@ -1,0 +1,20 @@
+module examples.parallel
+
+agent Diagnose
+    takes incident as Text
+    gives Text
+    responsibility "Return the diagnosis for the supplied incident without invoking external effects."
+    callable_by strategy Run
+
+strategy Run
+    takes incidents as List of Text
+    gives List of Text
+    uses Diagnose
+    do
+        parallel Diagnose
+            each incident in incidents
+            with incident as incident
+            max_concurrency 3
+            max_items 20
+            into diagnoses
+        give diagnoses

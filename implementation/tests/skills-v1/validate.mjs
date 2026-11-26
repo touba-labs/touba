@@ -362,7 +362,7 @@ async function runNegativeCases(root) {
         descriptor.name = "invalid";
       },
     });
-    expectProjectValidation(fixture.root, "bad-ref", ["PackageSchemaMismatch"]);
+    expectProjectValidation(fixture.root, "bad-ref", ["PackageNameInvalid"]);
   });
 
   await check("SKILL-V1-N03", "content change after inventory is rejected", () => {

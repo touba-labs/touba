@@ -25,6 +25,14 @@ impl AstBuildResult {
 }
 
 pub fn build_ast(source_id: String, source: &str, root: Node<'_>) -> AstBuildResult {
+    if let Some(diagnostic) =
+        crate::source_validation::validate_source_tree(&source_id, source, root)
+    {
+        return AstBuildResult {
+            document: None,
+            diagnostics: vec![diagnostic],
+        };
+    }
     let mut lowerer = AstLowerer {
         source_id,
         source,

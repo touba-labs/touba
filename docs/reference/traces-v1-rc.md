@@ -35,7 +35,7 @@ l'hôte de confiance.
 ## Lecture et corrélations
 
 `touba inspect trace.json` résume l’exécution exportée et ses événements marquants.
-Le [guide de lecture](../guides/explorer-traces.md) explique comment les examiner.
+Le [guide de lecture](https://toubalang.org/docs/guides/explorer-traces) explique comment les examiner.
 
 Les nouveaux événements émis dans une invocation peuvent porter
 `payload.trace_context` : `span_id`, `target_ref`, `parent_span_id`,

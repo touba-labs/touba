@@ -29,7 +29,7 @@ sélectionner l’élément situé sous le curseur.
 Les flèches portent leur relation. **Peut utiliser** correspond à `uses` ;
 **peut appeler l’agent** correspond à `callable_by`. Un appel écrit dans le
 code apparaît dans Architecture et Parcours. Les décisions prises pendant
-une exécution se consultent dans ses [traces d’exécution](explorer-traces.md).
+une exécution se consultent dans ses [traces d’exécution](https://toubalang.org/docs/guides/explorer-traces).
 
 Une opération `parallel` présente sa cible et les bornes `max_concurrency`
 et `max_items`. Le nombre effectif de branches dépend de la liste reçue

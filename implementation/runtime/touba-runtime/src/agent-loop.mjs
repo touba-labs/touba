@@ -109,27 +109,7 @@ export async function runAgentDecisionLoop(
       context,
       stepIndex,
     );
-    if (!capabilityRefs.includes(decision.targetRef)) {
-      context.trace.push("agent_capability_refused", {
-        payload: {
-          agent_ref: agent.id,
-          step_index: stepIndex,
-          selected_ref: decision.targetRef,
-          allowed_refs: capabilityRefs,
-          reason: "capability_not_declared_in_uses",
-        },
-      });
-      throw new RuntimeFailure(
-        `agent capability refused: ${decision.targetRef} is not declared in ${agent.id} uses`,
-        {
-          targetRef: decision.targetRef,
-          agentRef: agent.id,
-          allowedRefs: capabilityRefs,
-          reason: "capability_not_declared_in_uses",
-        },
-        "AgentCapabilityNotAllowed",
-      );
-    }
+    assertAgentCapabilityAllowed(agent, capabilityRefs, decision.targetRef, context, stepIndex);
 
     const selectedCallArguments = operations.callArgumentsForAgentDecision(decision, context);
     // Snapshot validated arguments before dispatch; handlers cannot rewrite
@@ -252,4 +232,25 @@ export function appendAgentCapabilityObservation(agentRef, targetRef, stepIndex,
     agent_ref: agentRef, step_index: stepIndex, selected_ref: targetRef,
     result_available: true, result_type: observation.result_type, ...repetition,
   } });
+}
+
+/** Enforce the declared capability boundary for either decision entry path.
+ * @param {any} agent @param {string[]} capabilityRefs @param {string} targetRef
+ * @param {any} context @param {number} [stepIndex] */
+export function assertAgentCapabilityAllowed(agent, capabilityRefs, targetRef, context, stepIndex) {
+  if (capabilityRefs.includes(targetRef)) return;
+  context.trace.push("agent_capability_refused", {
+    payload: compactPayload({
+      agent_ref: agent.id,
+      step_index: stepIndex,
+      selected_ref: targetRef,
+      allowed_refs: capabilityRefs,
+      reason: "capability_not_declared_in_uses",
+    }),
+  });
+  throw new RuntimeFailure(
+    `agent capability refused: ${targetRef} is not declared in ${agent.id} uses`,
+    { targetRef, agentRef: agent.id, allowedRefs: capabilityRefs, reason: "capability_not_declared_in_uses" },
+    "AgentCapabilityNotAllowed",
+  );
 }

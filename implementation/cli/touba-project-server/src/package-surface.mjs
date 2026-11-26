@@ -63,7 +63,7 @@ export function createProjectPackageSurface(root, { now = Date.now, registry, tr
     if (closed || working) fail("ToubaServePackageBusy", "A package operation is in progress");
     if (pending.size + resolutions.size >= 2) fail("ToubaServePackageCapacity", "Cancel or finish a pending package preview");
     working = true;
-    const directory = realpathSync(mkdtempSync(join(tmpdir(), "touba-studio-package-")));
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "touba-project-package-")));
     try {
       const archive = join(directory, "package.tar.gz"), before = revision();
       let bytes;

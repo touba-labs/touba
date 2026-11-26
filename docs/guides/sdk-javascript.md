@@ -378,6 +378,13 @@ await defineTool({
 secret handles reçus, puis appelle une fonction métier `run({ request,
 context })`. La fonction retourne une valeur conforme au `gives` du tool.
 
+
+La sortie standard d’un handler process est réservée au protocole JSON.
+Pour les journaux, utilisez `console.error` en JavaScript ou
+`print(message, file=sys.stderr)` en Python, sans secrets ni données personnelles.
+Une sortie parasite entraîne `ToolHandlerInvalidJson` ; un effet déjà produit
+n’est pas annulé par cette erreur. Vérifiez son état avant de relancer une écriture.
+
 ### Exemple
 
 ```js title="search_datasets.handler.mjs"
@@ -608,7 +615,7 @@ et les budgets consommés. Chaque réponse concerne une seule occurrence.
 les réponses explicites de `userInputs`.
 Voir le [tutoriel complet](../tutoriels/orchestration-multi-agent-sequentielle.md).
 
-Pour un parcours exécutable de succès et de refus, voir [Tester un programme Touba](./tests-metier.md).
+Pour un parcours exécutable de succès et de refus, voir [Tester un programme Touba](https://toubalang.org/docs/guides/tests-metier).
 
 ## Budgets financiers
 
@@ -708,7 +715,7 @@ vérifier par Touba et par l’application.
 #### Choisir l’interface native
 
 Pour un parcours complet, de la source `.tb` à l’inspection de la trace, suivre
-le tutoriel [Utiliser les appels natifs sous autorité Touba](../tutoriels/provider-natif-gouverne.md).
+le tutoriel [Utiliser les appels natifs sous autorité Touba](https://toubalang.org/docs/tutoriels/provider-natif-gouverne).
 
 Pour un modèle AI SDK qui prend en charge les appels de fonctions et les sorties
 structurées, activer l’interface native dans le fichier provider :
@@ -765,7 +772,7 @@ Le SDK conserve désormais les messages originaux du connecteur par invocation,
 avec leurs identifiants et métadonnées opaques en mode `inline`. La RAM est le
 défaut ; un stockage transactionnel, notamment SQLite, permet les reprises
 après redémarrage. L'historique reste borné et distinct de la mémoire métier.
-Voir [Historique conversationnel des agents](historique-conversationnel.md)
+Voir [Historique conversationnel des agents](https://toubalang.org/docs/guides/historique-conversationnel)
 pour les limites, la persistance, l'isolation et la frontière `opaque_refs`.
 
 La rétention est distincte de la fenêtre envoyée. `context` active le prévol
@@ -1057,7 +1064,7 @@ RAM est le stockage par défaut ; SQLite conserve les mêmes identifiants
 d'invocation et exigences de reprise dans les deux SDK.
 La compaction structurelle est locale. Un résumé textuel est produit seulement
 par le callback hôte `summarize` s'il est fourni.
-Voir [historique et contexte](./historique-conversationnel.md).
+Voir [historique et contexte](https://toubalang.org/docs/guides/historique-conversationnel).
 
 Les coûts se branchent au transport final par `cost: { budget, ...adapter }`
 dans `createOpenAiDecisionProvider`. Le contrôle de contexte et le budget
@@ -1194,7 +1201,7 @@ Une génération interrompue expose `finish_reason` et, lorsqu’elle est fourni
 
 Pour un handler d’écriture, le code public de l’erreur est conservé ; un reçu
 absent ou invalide est signalé séparément. Voir
-[Effets externes](effets-idempotents.md#erreur-du-handler-et-état-de-leffet).
+[Effets externes](https://toubalang.org/docs/guides/effets-idempotents#erreur-du-handler-et-état-de-leffet).
 
 ### Router plusieurs providers
 

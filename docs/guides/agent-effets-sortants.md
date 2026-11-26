@@ -80,7 +80,7 @@ Le handler `ReadCase` doit être réellement sans effet et déclaré
 `effect_contract.kind: "none"`. `SendReply` nécessite un binding autorisant
 `network`, un contrat `external_write` et un journal d'effets.
 Implémentez-le avec le SDK et une clé idempotente côté service.
-Voir [les effets idempotents](./effets-idempotents.md).
+Voir [les effets idempotents](https://toubalang.org/docs/guides/effets-idempotents).
 L'agent ne peut ni choisir `SendReply`, ni supprimer les étapes de la strategy.
 
 ## Vérifier le parcours

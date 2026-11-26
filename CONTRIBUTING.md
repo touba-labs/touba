@@ -19,7 +19,7 @@ scope described in `README.md`.
 
 ## Before Opening A Pull Request
 
-1. Read the repository `README.md`.
+1. Read the repository `README.md` and [development guide](DEVELOPMENT.md).
 2. Check existing issues and pull requests for related work.
 3. For substantial changes, open an issue first and describe the problem,
    proposed direction and impact.
@@ -28,10 +28,10 @@ scope described in `README.md`.
 
 ## Branch Workflow
 
-Use `dev` as the integration branch and keep `main` for validated public
-content. Start focused work from `dev` on a short branch such as
-`work/<topic>`, `feat/<topic>`, `fix/<topic>` or `docs/<topic>`. Merge or push
-to `main` only after maintainer validation.
+Start focused work from the repository's default branch on a short branch such
+as `feat/<topic>`, `fix/<topic>` or `docs/<topic>`. Open a pull request against the
+default branch unless a maintainer names a different integration branch.
+Maintainers review changes before merging or publishing a release.
 
 ## Commit Messages
 

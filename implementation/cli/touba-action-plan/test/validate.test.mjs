@@ -19,7 +19,7 @@ import {
 
 const validationFixturesDir = path.resolve(
   implementationDir,
-  "../validation/action-plans-memoires-v0.1",
+  "cli/touba-action-plan/test/fixtures/memory-plans",
 );
 const validateScript = path.join(implementationDir, "cli/touba-action-plan/src/validate.mjs");
 

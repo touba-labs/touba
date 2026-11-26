@@ -57,9 +57,10 @@ every <n>h
 
 Un cron complet reste hors périmètre du runner.
 
-### Planifier dans un projet administré par client
+### Planifier dans un projet administré
 
 Exposez le trigger dans `entrypoints` de `touba.project.json`, préparez le projet,
+puis faites revoir et activez son binding de déclenchement.
 Le serveur peut ensuite gérer ses échéances :
 
 ```sh title="Terminal"
@@ -69,14 +70,14 @@ touba serve --schedule-triggers \
   --secrets touba.secrets.dev.json
 ```
 
-Conservez vos options de connexion Cloud. Les modules hôtes et secrets sont ceux
+Conservez vos options d'identité et de transport. Les modules hôtes et secrets sont ceux
 explicitement configurés par l'exploitant. L'interface ne les charge pas à chaud.
 L'option de planification reste désactivée par défaut.
 
-client affiche les prochaines échéances, le dernier résultat, les occurrences
+Le plan expose les prochaines échéances, le dernier résultat, les occurrences
 manquées et les interruptions. Le serveur traite un run à la fois. Une décision
 humaine en attente bloque les nouvelles occurrences du même trigger. Elle peut
-être approuvée et reprise dans client, y compris après redémarrage.
+être approuvée et reprise par les routes de décision, y compris après redémarrage.
 
 Une suspension opérationnelle arrête les prochaines occurrences, sans modifier
 le programme ni supprimer les approbations en attente. Le contrôle **Suspendre**
@@ -97,8 +98,7 @@ Les intervalles suivent les bornes UTC. Un nouveau plan commence à l'échéance
 suivante. Après une interruption du service, les occurrences intermédiaires sont
 comptées comme manquées ; une seule occurrence courante peut démarrer. Une
 horloge reculée ne rejoue pas les anciennes échéances. Le registre d'admission
-SQLite applique le rejeu et `max_runs_per_day` aussi aux appels manuels depuis
-client.
+SQLite applique le rejeu et `max_runs_per_day` aussi aux appels manuels.
 
 Après une révision validée des limites, le planificateur réévalue le quota au
 lieu de conserver aveuglément l'attente jusqu'à minuit. L'admission du runtime
@@ -259,13 +259,13 @@ compteurs, jamais les arguments. `POST /triggers/webhooks/review` exige
 `governance.apply`, `queue_id`, `review_digest`, `action` et `reason` :
 
 * `retry` est proposé seulement si aucune exécution n'a commencé et si
- l'événement n'a pas été consommé. La préparation doit être identique.
+  l'événement n'a pas été consommé. La préparation doit être identique.
 * `discard` ferme une entrée non exécutée. Un événement accepté sous un ancien
- plan doit être écarté puis soumis de nouveau après revue, pas exécuté sous un
- programme différent.
+  plan doit être écarté puis soumis de nouveau après revue, pas exécuté sous un
+  programme différent.
 * `close` exige aussi `reconciled: true`, après vérification réelle des effets.
- Il ferme la file sans rejouer l'opération, sans effacer les traces ni modifier
- le journal d'effets. Les incidents de ce journal restent à traiter séparément.
+  Il ferme la file sans rejouer l'opération, sans effacer les traces ni modifier
+  le journal d'effets. Les incidents de ce journal restent à traiter séparément.
 
 Une revue périmée est refusée en `409`. La relance explicite attend au moins une
 seconde ; les effets incertains ne sont jamais automatiquement rejoués. Le worker
@@ -435,10 +435,10 @@ La reprise utilise exclusivement le checkpoint conservé. Elle ne reçoit ni
 nouveaux arguments, ni nouvelle politique. Une décision périmée, un checkpoint
 modifié ou un rejeu ne déclenche pas l'effet. Une seconde approbation produit
 une nouvelle demande. Les traces de chaque segment sont conservées séparément.
-`/status` distingue les attentes humaines et les interruptions ; client les lit
-depuis les magasins déclarés dans **Opérations**. Pour le parcours humain intégré
-dans **Décisions**, utilisez le serveur projet administré : ses sessions et
-identités Cloud sont distinctes de ce service autonome.
+`/status` distingue les attentes humaines et les interruptions à partir des
+magasins déclarés. Pour le parcours humain intégré, utilisez le serveur projet
+administré : ses sessions et son adaptateur d'identité sont distincts de ce
+service autonome.
 
 ## 6. Tester les checks sans exécuter
 
@@ -569,14 +569,14 @@ donc pas `exactly-once` ni un rapprochement automatique.
 - Le manifest active explicitement chaque trigger.
 - L’état de trigger enregistre les `event_id` consommés et les refus de replay.
 - Les contrats de payload du manifest mappent des champs JSON explicites vers
- les arguments de la stratégie cible.
+  les arguments de la stratégie cible.
 - Le service webhook gère les signatures HMAC, retries bornés, attentes humaines
- durables, interruptions à réconcilier et états dead-letter.
+  durables, interruptions à réconcilier et états dead-letter.
 - La propriété de queue et du journal est locale à un processus. Le package
- doit honorer réellement la clé idempotente ou le rapprochement déclaré.
+  doit honorer réellement la clé idempotente ou le rapprochement déclaré.
 - La CLI, le SDK, le service de triggers et le serveur projet raccordent un
- journal d'effets, avec des identités de portée propres à chaque hôte.
+  journal d'effets, avec des identités de portée propres à chaque hôte.
 - Les schedulers distribués, queues distribuées, adapters cloud, auto-discovery
- de manifest, déclenchements directs d’agents et certifications réglementaires
- relèvent des couches plateforme environnantes.
+  de manifest, déclenchements directs d’agents et certifications réglementaires
+  relèvent des couches plateforme environnantes.
 :::

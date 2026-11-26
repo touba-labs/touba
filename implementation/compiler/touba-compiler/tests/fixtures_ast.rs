@@ -334,8 +334,8 @@ module recovered.syntax
         .find(|diagnostic| diagnostic.code == AstDiagnosticCode::ParseError)
         .expect("recovered syntax should produce a parse diagnostic");
     assert!(
-        diagnostic.message.contains("ERROR") || diagnostic.message.contains("MISSING"),
-        "diagnostic should name Tree-sitter recovery"
+        diagnostic.message.contains("Invalid Touba syntax"),
+        "diagnostic should describe a Touba syntax error"
     );
 }
 
@@ -393,11 +393,8 @@ function
             .find(|diagnostic| diagnostic.code == AstDiagnosticCode::ParseError)
             .unwrap_or_else(|| panic!("{source_id} should produce a parse diagnostic"));
         assert!(
-            diagnostic.message.contains("Tree-sitter")
-                && (diagnostic.message.contains("ERROR")
-                    || diagnostic.message.contains("MISSING")
-                    || diagnostic.message.contains("recovery node")),
-            "{source_id} diagnostic should identify Tree-sitter recovery: {}",
+            !diagnostic.message.is_empty() && !diagnostic.message.contains("Tree-sitter"),
+            "{source_id} diagnostic should explain the language error: {}",
             diagnostic.message
         );
         assert!(

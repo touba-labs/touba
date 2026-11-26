@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateTraceMachineContract } from "../../contracts/machine/contracts.mjs";
 import { airDocumentDigest } from "../../runtime/touba-runtime/src/air-identity.mjs";
 
 const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -51,6 +52,9 @@ try {
   assertSuccess("run", run);
   assert.deepEqual(JSON.parse(run.stdout), { verdict: "approved" });
   const trace = readJson(tracePath);
+  validateTraceMachineContract(trace);
+  assert.match(trace.run.run_id, /^run-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  for (const event of trace.events) assert.equal(event.run_id, trace.run.run_id);
   // Event timestamps are required and validated independently of the semantic
   // fixture, which predates wall-clock trace observations.
   const semanticTrace = { ...trace, events: trace.events.map(({ observed_at, ...event }) => {
@@ -59,14 +63,14 @@ try {
     return event;
   }) };
   if (process.argv.includes("--write-trace-fixture")) {
-    writeFileSync(expectedTracePath, JSON.stringify(stripSourceRefs(semanticTrace), null, 2) + "\n");
+    writeFileSync(expectedTracePath, JSON.stringify(stripSourceRefs(normalizeRunIdentifiers(semanticTrace, trace.run.run_id)), null, 2) + "\n");
   }
   const expectedTrace = readJson(expectedTracePath);
   // The snapshot describes event semantics. Independently recompute the full
   // commitment from this compilation, including its portable source metadata.
-  // Never rewrite the historical snapshot or omit the commitment assertion.
+  // Never omit the commitment assertion or normalize semantic decisions.
   expectedTrace.run.air_digest = airDocumentDigest(air);
-  assert.deepEqual(stripSourceRefs(semanticTrace), expectedTrace);
+  assert.deepEqual(stripSourceRefs(normalizeRunIdentifiers(semanticTrace, trace.run.run_id)), expectedTrace);
   assert.equal(JSON.stringify(trace).includes("Review fixture"), false);
   assert.equal(JSON.stringify(trace).includes("approved"), false);
 
@@ -137,4 +141,21 @@ function assertSuccess(label, result) {
   if (result.status !== 0) {
     throw new Error(`${label} failed (${result.status}): ${result.stderr || result.stdout}`);
   }
+}
+
+function normalizeRunIdentifiers(value, runId) {
+  const invocations = new Map();
+  const visit = (value, key = "") => {
+    if (Array.isArray(value)) return value.map(item => visit(item, key));
+    if (value !== null && typeof value === "object") return Object.fromEntries(
+      Object.entries(value).map(([name, item]) => [name, visit(item, name)]));
+    if (typeof value !== "string" || !/(?:_id|_ref)$/.test(key)) return value;
+    if (key === "agent_invocation_id") {
+      assert.match(value, /^invocation:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      if (!invocations.has(value)) invocations.set(value, `invocation:${invocations.size + 1}`);
+      return invocations.get(value);
+    }
+    return value.replaceAll(runId, "run-1");
+  };
+  return visit(value);
 }

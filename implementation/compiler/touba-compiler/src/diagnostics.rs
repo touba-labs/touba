@@ -36,6 +36,8 @@ pub enum AstDiagnosticSeverity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AstDiagnosticCode {
     ParseError,
+    SourceComplexityExceeded,
+    SourceTextDirectionInvalid,
     InvalidTextLiteral,
     MissingModule,
     DuplicateModule,

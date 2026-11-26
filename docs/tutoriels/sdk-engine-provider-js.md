@@ -209,7 +209,7 @@ sans journaliser aveuglément les inputs ou variables d'environnement.
 
 Fournir exactement un de `source`, `air` ou `airJson` par run. Réutiliser une
 instance dans un même projet. Pour les écritures externes, fournir `effectJournal`
-et déclarer le vrai contrat d'effet ; voir [effets et reprise](../guides/effets-idempotents.md).
+et déclarer le vrai contrat d'effet ; voir [effets et reprise](https://toubalang.org/docs/guides/effets-idempotents).
 
 ## 6. Utiliser un modèle
 
@@ -223,7 +223,7 @@ export const decideAgentCapability = createOpenAiDecisionProvider({ model: "gpt-
 ```
 
 Le helper utilise l'interface structurée par défaut. Pour les appels de fonctions
-natifs du modèle, voir [appels natifs sous autorité Touba](provider-natif-gouverne.md).
+natifs du modèle, voir [appels natifs sous autorité Touba](https://toubalang.org/docs/tutoriels/provider-natif-gouverne).
 Le helper générique `createAiSdkDecisionProvider` accepte un véritable objet
 modèle provenant d'un provider AI SDK explicitement installé. Aucun helper ne
 donne d'autorité : le runtime vérifie déclarations, appelants, signatures, grants

@@ -1,0 +1,33 @@
+module examples.scenario_external_approval
+
+type PaymentRequest
+    reference is Text
+    amount_cents is Int
+    destination is Text
+
+type PaymentResult
+    receipt is Text
+
+tool RecordPayment
+    description "Append an approved demonstration payment to the local ledger. This does not transfer money."
+    takes request as PaymentRequest
+    gives PaymentResult
+    requires filesystem_write, secret_read
+    secrets LEDGER_TOKEN
+
+strategy RunRegulatedPayment
+    takes request as PaymentRequest
+    gives PaymentResult
+    uses RecordPayment
+    do
+        show
+            with message as "Payment review requested: " ++ request.reference
+        human.approve
+            with context as request
+            into approval
+        RecordPayment
+            with request as request
+            into stored
+        show
+            with message as "Ledger receipt: " ++ stored.receipt
+        give stored

@@ -1,6 +1,9 @@
 use std::env;
 use std::process;
-use touba_compiler::{compile_module_sources, compile_project_sources, serialize_air_to_json, capability_description_warnings};
+use touba_compiler::{
+    capability_description_warnings, compile_module_sources, compile_project_sources,
+    serialize_air_to_json,
+};
 
 mod source_inputs;
 
@@ -24,7 +27,11 @@ fn main() {
         result.document =
             Some(serde_json::from_value(value).expect("source identities preserve AIR shape"));
     }
-    let warnings = result.document.as_ref().map(capability_description_warnings).unwrap_or_default();
+    let warnings = result
+        .document
+        .as_ref()
+        .map(capability_description_warnings)
+        .unwrap_or_default();
     if inputs.json {
         let diag_json =
             serde_json::to_value(&result.diagnostics).unwrap_or(serde_json::Value::Null);
@@ -47,8 +54,14 @@ fn main() {
 
     for warning in &warnings {
         if let Some(source) = &warning.source_ref {
-            eprintln!("{}:{}:{}: warning {:?}: {}", source.source_id, source.start_line + 1,
-                source.start_column + 1, warning.code, warning.message);
+            eprintln!(
+                "{}:{}:{}: warning {:?}: {}",
+                source.source_id,
+                source.start_line + 1,
+                source.start_column + 1,
+                warning.code,
+                warning.message
+            );
         }
     }
     for diag in &result.diagnostics {
@@ -93,10 +106,9 @@ fn portable_source_ids(value: &mut serde_json::Value, root: &std::path::Path) {
             if let Some(serde_json::Value::String(id)) = fields
                 .get_mut("source_ref")
                 .and_then(|reference| reference.get_mut("source_id"))
+                && let Ok(relative) = std::path::Path::new(id).strip_prefix(root)
             {
-                if let Ok(relative) = std::path::Path::new(id).strip_prefix(root) {
-                    *id = relative.to_string_lossy().replace('\\', "/");
-                }
+                *id = relative.to_string_lossy().replace('\\', "/");
             }
             for child in fields.values_mut() {
                 portable_source_ids(child, root);

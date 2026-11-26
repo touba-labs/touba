@@ -8,7 +8,7 @@ Node.js 24 : aucune installation système ni paquet SQLite supplémentaire.
 ## 1. Préparer le projet
 
 Suivez les prérequis et l'installation du SDK dans le
-[tutoriel des appels natifs](./provider-natif-gouverne.md), puis créez son programme
+[tutoriel des appels natifs](https://toubalang.org/docs/tutoriels/provider-natif-gouverne), puis créez son programme
 `native-calculator.tb` et compilez-le. Conservez les contrats et les commandes de
 ce tutoriel ; seul le provider change ici. La même configuration fonctionne avec
 `decisionInterface: "structured"`.
@@ -97,7 +97,7 @@ Relancer la strategy crée un nouveau run et une nouvelle invocation. Il est
 normal que son historique soit distinct : **la base ne rejoue pas un ancien run**.
 Une vraie reprise d'approbation utilise le checkpoint, le même store, le même
 namespace et le même modèle/interface ; le runtime conserve l'identité.
-Voir le [guide des attentes et reprises humaines](../guides/expiration-annulation-validations-humaines.md).
+Voir le [guide des attentes et reprises humaines](https://toubalang.org/docs/guides/expiration-annulation-validations-humaines).
 
 Après un arrêt brutal, `DecisionHistoryBusy` peut signaler une réservation
 persistante. Vérifiez l'arrêt de l'ancien worker et réconciliez les effets avant

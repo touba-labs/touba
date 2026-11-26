@@ -110,6 +110,6 @@ l'environnement hôte et un budget adapté avant de lancer un appel payant.
 Les deux interfaces gardent la même admission Core. L'adaptateur générique
 accepte aussi `generate_text` et `json_schema`, avec le contrat AI SDK.
 
-Pour borner le contexte, lisez [historique et compaction](../guides/historique-conversationnel.md).
+Pour borner le contexte, lisez [historique et compaction](https://toubalang.org/docs/guides/historique-conversationnel).
 Les limites d'historique ne sont pas un plafond financier ; celui-ci se branche
 séparément selon le [guide des coûts](../guides/couts-fournisseurs.md).

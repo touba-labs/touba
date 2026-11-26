@@ -8,7 +8,6 @@ import { runDocumentRecipe } from "./tutorial-recipe.mjs";
 const implementationRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 let roots = [
   ["fr", resolve(implementationRoot, "../docs/tutoriels")],
-  ["en", resolve(implementationRoot, "../../documentation-site/i18n/en/docusaurus-plugin-content-docs/current/tutoriels")],
 ];
 let toolchain;
 let locale;
@@ -24,7 +23,8 @@ for (let index = 2; index < process.argv.length; index++) {
 }
 if (locale && !["fr", "en"].includes(locale)) throw new Error("Locale must be fr or en");
 if (docsRoot && !locale) throw new Error("An explicit docs root requires an explicit locale");
-if (locale) roots = roots.filter(([name]) => name === locale).map(([name, directory]) => [name, docsRoot ?? directory]);
+if (locale === "en" && !docsRoot) throw new Error("English recipes require --docs-root <tutorials-directory>");
+if (locale) roots = docsRoot ? [[locale, docsRoot]] : roots.filter(([name]) => name === locale);
 if (!toolchain || !existsSync(join(toolchain, "TOOLCHAIN.json"))) throw new Error("An installed or packaged Touba toolchain is required");
 const documents = readdirSync(roots[0][1]).filter(name => name.endsWith(".md") && name !== "README.md").sort();
 for (const name of selected) if (!documents.includes(name)) throw new Error(`Unknown tutorial: ${name}`);

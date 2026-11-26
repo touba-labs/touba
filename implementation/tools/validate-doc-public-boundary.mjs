@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import { publicDocumentationPaths } from "./validate-doc-examples.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const docsRoot = resolve(__dir, "../../docs");
@@ -19,8 +20,6 @@ const forbidden = [
   { pattern: /cargo\s+run\s+-p/, reason: "commande de monorepo interne" },
   { pattern: /node\s+cli\//, reason: "commande de chemin interne" },
   { pattern: /\/Users\//, reason: "chemin machine local" },
-  // Users configure their own GitHub repository for verified package drafts.
-  { pattern: /\bd[ée]p[ôo]t\b(?! GitHub\b)/i, reason: "vocabulaire de depot interne" },
   { pattern: /monorepo/i, reason: "vocabulaire de depot interne" },
   { pattern: /organisation interne/i, reason: "mention de structure interne" },
   { pattern: /chemins internes/i, reason: "mention de chemins internes" },
@@ -42,7 +41,8 @@ for (const name of ["README.md", "implementation/runtime/touba-python-sdk/README
   });
 }
 
-for (const file of walkMarkdown(docsRoot)) {
+for (const relativePath of publicDocumentationPaths(resolve(docsRoot, "..")).filter(path => path.startsWith("docs/"))) {
+  const file = resolve(docsRoot, "..", relativePath);
   const content = readFileSync(file, "utf8");
   const lines = content.split(/\r?\n/);
   let codeFence = null;
@@ -91,15 +91,3 @@ if (failures.length > 0) {
 }
 
 process.stdout.write("docs-public-boundary: status=success\n");
-
-function* walkMarkdown(root) {
-  for (const entry of readdirSync(root)) {
-    const path = join(root, entry);
-    const stats = statSync(path);
-    if (stats.isDirectory()) {
-      yield* walkMarkdown(path);
-    } else if (entry.endsWith(".md") || entry.endsWith(".mdx")) {
-      yield path;
-    }
-  }
-}

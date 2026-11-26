@@ -20,7 +20,7 @@ import { ownershipMembership, resolveOwnershipInheritance } from './ownership-re
 import { planPreparedRestoration, applyPreparedRestoration } from './preparation-restoration.mjs';
 import { normalizeFragmentBaselines, reconcileFragmentBindings, updateFragmentBaselines } from "./fragment-governance.mjs";
 import { proposePackageGovernance, normalizeConsumerPolicies, normalizePackageContracts, applyConsumerPolicies } from "./package-governance.mjs";
-import { normalizeTriggerEntries } from "../../touba-manifest/src/generate.mjs";
+import { normalizeTriggerEntries } from "../../touba-manifest/src/manifest-values.mjs";
 import { loadSkillPack, projectContextSelections, normalizeProjectContexts } from "./skill-packs.mjs";
 import { PACKAGE_SCHEMA, PACKAGE_RUNTIME_VERSION, packageDigest, packageError, readPackage, packageHandlerConfiguration } from "./package-contract.mjs";
 import { normalizeHandlerConfiguration } from '../../../runtime/touba-handler-sdk/src/handler-configuration.mjs';
@@ -505,6 +505,15 @@ export async function prepareProject(options = {}) {
     ?? configured?.ownership;
   let entryRef = options.entryRef ?? projectConfigResolution.document?.entry
     ?? projectConfigResolution.document?.entrypoints?.[0];
+  const failedPreparation = () => ({ workflow_version: PROJECT_MANIFEST_VERSION, command: 'prepare', mode, status: 'error', root,
+      review_digest: packageDigest(Buffer.from(JSON.stringify({ mode, diagnostics }))),
+      project_config_path: projectConfigPath, artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
+      build_root: buildRoot, air_root: airRoot, profile: runProfile, entry_ref: entryRef ?? null,
+      language: languageProfile.language, sdk: languageProfile.sdk, sdk_dependency: null,
+      manifest_path: manifestPath, binding_fragments: [], resource_bindings: [], run_plan_path: null,
+      effective_project_path: null, ownership: null, secret_profiles: [], sources, air_inputs: airPaths,
+      packages: [], modules: [], imports: [], tools: [], manifest_requirements: null, actions: [],
+      diagnostics: diagnostics.filter((item, index, all) => all.findIndex(other => stableJson(other) === stableJson(item)) === index) });
   const packageInputs = collectPackageInputs({
     root,
     projectPackageRecords: projectConfigResolution.document?.packages ?? [],
@@ -516,14 +525,7 @@ export async function prepareProject(options = {}) {
   if (diagnostics.some(item => item.code === 'PackageIntegrityMismatch'
     || ['PackageNameInvalid', 'PackageModuleOwnershipMismatch', 'PackageMetadataInvalid'].includes(item.code)
     || item.code?.startsWith('PackageLock') || item.code === 'PackageInstallationIncomplete')) {
-    return { workflow_version: PROJECT_MANIFEST_VERSION, command: 'prepare', mode, status: 'error', root,
-      review_digest: packageDigest(Buffer.from(JSON.stringify({ mode, diagnostics }))),
-      project_config_path: projectConfigPath, artifact_layout: PROJECT_ARTIFACT_LAYOUT_VERSION,
-      build_root: buildRoot, air_root: airRoot, profile: runProfile, entry_ref: entryRef ?? null,
-      language: languageProfile.language, sdk: languageProfile.sdk, sdk_dependency: null,
-      manifest_path: manifestPath, binding_fragments: [], resource_bindings: [], run_plan_path: null,
-      effective_project_path: null, ownership: null, secret_profiles: [], sources: [], air_inputs: airPaths,
-      packages: [], modules: [], imports: [], tools: [], manifest_requirements: null, actions: [], diagnostics };
+    return failedPreparation();
   }
   const compileOptions = {
     ...options,
@@ -612,6 +614,11 @@ export async function prepareProject(options = {}) {
   });
   diagnostics.push(...packageResolution.diagnostics);
   if (packageResolution.packages.length) diagnostics.push(...await cachedPackageDiagnostics(root));
+
+  // Collect independent source and package diagnostics before stopping. Failed
+  // compilation is not evidence that reviewed bindings disappeared.
+  if (airDocuments.length !== sourcePaths.length + airPaths.length
+    || hasErrorDiagnostics(packageResolution.diagnostics)) return failedPreparation();
 
   // An explicitly selected package export is an entry, not an implicit grant
   // or permission to execute every private declaration in that package.

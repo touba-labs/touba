@@ -919,7 +919,7 @@ Pour accéder aux ressources d'une dépendance depuis un handler, utilisez le
 Il utilise le verrou du package, au lieu d'un chemin dépendant de `cwd()`.
 
 Pour une écriture, testez le reçu et l'état réellement enregistré par le service,
-y compris si la réponse se perd. Le [guide des effets](effets-idempotents.md#tester-un-handler-de-package)
+y compris si la réponse se perd. Le [guide des effets](https://toubalang.org/docs/guides/effets-idempotents#tester-un-handler-de-package)
 présente les cas à couvrir et les assertions JavaScript/Python.
 
 ## Préserver la gouvernance
@@ -930,7 +930,7 @@ source ; une stratégie exportée peut l'appeler sous ce contrat. Un contexte
 guide le modèle sans lui ajouter de capacité.
 
 Suite : [tutoriel d'import](../tutoriels/package-reutilisable.md),
-[procédures contextuelles](skills-first.md), [référence](../reference/packages.md).
+[procédures contextuelles](https://toubalang.org/docs/guides/skills-first), [référence](../reference/packages.md).
 
 ## Préparer un brouillon depuis GitHub Actions
 

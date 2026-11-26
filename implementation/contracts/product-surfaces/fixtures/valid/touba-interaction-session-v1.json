@@ -5,12 +5,15 @@
   "target_kind": "agent",
   "presentation": "conversation",
   "effect_policy": "runtime_only",
-  "title": "InvoiceAgent · Review invoice INV-001",
+  "title": "InvoiceAgent \u00b7 Review invoice INV-001",
   "status": "running",
   "last_run_status": "running",
   "created_at": "2026-07-24T12:00:00Z",
   "updated_at": "2026-07-24T12:00:01Z",
-  "created_by": { "kind": "studio", "id": "touba-studio" },
+  "created_by": {
+    "kind": "studio",
+    "id": "example-client"
+  },
   "messages": [
     {
       "message_id": "message_01",

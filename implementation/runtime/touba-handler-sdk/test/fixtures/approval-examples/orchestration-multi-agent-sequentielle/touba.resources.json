@@ -1,0 +1,19 @@
+{
+  "resource_bindings_schema_version": "touba-resource-bindings-v1",
+  "resources": {
+    "memory:examples.incident_remediation/RemediationLedger": {
+      "kind": "memory_backend",
+      "provider": "host.local.remediation_ledger",
+      "config": {
+        "path": "remediation-ledger.ndjson"
+      },
+      "grants": [
+        "memory.write"
+      ],
+      "secrets": [],
+      "limits": {
+        "max_payload_bytes": 65536
+      }
+    }
+  }
+}

@@ -5,9 +5,19 @@ fn module_date_constants_require_valid_literals() {
     let source = "module dates\ndefine Closing as Date = date(\"2024-02-29\")\nfunction Read\n    gives Date\n    do\n        give Closing\n";
     let result = compile_source_to_air("dates.tb", source);
     assert!(result.document.is_some(), "{:?}", result.diagnostics);
-    for expression in ["date(\"2023-02-29\")", "date(Other)", "\"2024-02-29\"", "date(3)"] {
+    for expression in [
+        "date(\"2023-02-29\")",
+        "date(Other)",
+        "\"2024-02-29\"",
+        "date(3)",
+    ] {
         let invalid = source.replace("date(\"2024-02-29\")", expression);
-        assert!(compile_source_to_air("dates.tb", &invalid).document.is_none(), "accepted {expression}");
+        assert!(
+            compile_source_to_air("dates.tb", &invalid)
+                .document
+                .is_none(),
+            "accepted {expression}"
+        );
     }
 }
 

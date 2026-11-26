@@ -14,7 +14,7 @@ import removalSchema from "../../../contracts/product-surfaces/schemas/touba-pro
 import detailsSchema from '../../../contracts/product-surfaces/schemas/touba-package-details-v1.schema.json' with { type: 'json' };
 
 async function fixture(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-studio-package-test-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-project-package-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const consumer = join(root, "consumer"); mkdirSync(consumer);
   initProject({ root: consumer, language: "javascript" });
@@ -26,7 +26,7 @@ async function fixture(t) {
   return { surface, root: consumer, archive: packed.output, bytes: readFileSync(packed.output), advance: () => { time += 301000; } };
 }
 
-test("client package archive is checked, confirmed once, installed with canonical lock and no grants", async t => {
+test("Client package archive is checked, confirmed once, installed with canonical lock and no grants", async t => {
   const { surface, root, bytes } = await fixture(t);
   const before = readFileSync(join(root, "touba.project.json"));
   const preview = await surface.preview("alice", bytes);
@@ -106,7 +106,7 @@ test('installation previews reuse compatible dependencies and mixed selections u
   assert.equal(surface.inventory().packages.length, 2);
 });
 
-test("client package previews refuse malformed archive, stale project, expiry and wrong cancellation owner", async t => {
+test("Client package previews refuse malformed archive, stale project, expiry and wrong cancellation owner", async t => {
   const { surface, root, bytes, advance } = await fixture(t);
   await assert.rejects(surface.preview("alice", Buffer.from("not an archive")));
   const preview = await surface.preview("alice", bytes);

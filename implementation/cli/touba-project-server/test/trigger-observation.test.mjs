@@ -13,7 +13,7 @@ import { createToubaProjectServer, readProjectTriggerStatus } from "../src/serve
 
 const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
 
-test("client observes real webhook admissions and dead letters from the service SQLite stores", async t => {
+test("Client observes real webhook admissions and dead letters from the service SQLite stores", async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-trigger-observation-"));
   let service, server;
   t.after(async () => {

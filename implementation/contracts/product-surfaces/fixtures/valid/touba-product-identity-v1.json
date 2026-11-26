@@ -55,7 +55,7 @@
       "revoked_at": null
     },
     {
-      "device_ref": "device:studio-01",
+      "device_ref": "device:example-client-01",
       "user_ref": "user:khadim",
       "kind": "studio",
       "status": "revoked",
@@ -117,7 +117,7 @@
       "type": "device.revoked",
       "emitted_at": "2026-06-22T10:00:00.000Z",
       "user_ref": "user:khadim",
-      "device_ref": "device:studio-01",
+      "device_ref": "device:example-client-01",
       "request_id": null,
       "run_id": null,
       "trace_ref": null

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const __dir = dirname(fileURLToPath(import.meta.url));
 const defaultImplementationRoot = resolve(__dir, "..");
 
-export const RELEASE_READINESS_SCHEMA_VERSION = "touba-release-readiness-v1";
+export const RELEASE_READINESS_SCHEMA_VERSION = "touba-release-readiness-v2";
 
 const REQUIRED_SCRIPTS = Object.freeze([
   ["v1_local_validation_command", "validate:v1-local"],
@@ -29,7 +29,7 @@ const REQUIRED_FILES = Object.freeze([
   ["repository_readme", "../README.md"],
   ["public_changelog", "../CHANGELOG.md"],
   ["source_ci_workflow", "../.github/workflows/source-ci.yml"],
-  ["external_user_session_kit", "EXTERNAL-USER-SESSION.md"],
+  ["contributor_guide", "../DEVELOPMENT.md"],
   ["public_release_index", "release/releases.json"],
 ]);
 
@@ -51,13 +51,32 @@ export const OBSERVED_RELEASE_GATES = Object.freeze([
   "publisher_signatures", "documentation_review",
 ]);
 const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"];
-export const REQUIRED_V1_TASKS = Object.freeze([
-  ...["javascript_sdk_distribution","sdk_project_handlers","sdk_tutorials","lexical_runtime_scopes","compiler_lsp_import_diagnostics","air_trace_admission","runtime_secret_redaction","agent_cycle_finalization","skill_pack_workflows","project_manifest_locks","input_admission_boundaries","cli_sdk_inspection_contracts","unified_v1_workflows"],
-  "history_independent_serving", "execution_cost_budgets", "typed_multi_agent_coordination", "executable_adoption_recipes", "industrial_v1_qualification", "sdk_choice_graphical_installers", "python_javascript_sdk_parity",
+export const REQUIRED_V1_DELIVERABLES = Object.freeze(
+[
+  "javascript_sdk_distribution",
+  "sdk_project_handlers",
+  "sdk_tutorials",
+  "lexical_runtime_scopes",
+  "compiler_lsp_import_diagnostics",
+  "air_trace_admission",
+  "runtime_secret_redaction",
+  "agent_cycle_finalization",
+  "skill_pack_workflows",
+  "project_manifest_locks",
+  "input_admission_boundaries",
+  "cli_sdk_inspection_contracts",
+  "unified_v1_workflows",
+  "history_independent_serving",
+  "execution_cost_budgets",
+  "typed_multi_agent_coordination",
+  "executable_adoption_recipes",
+  "industrial_v1_qualification",
+  "sdk_choice_graphical_installers",
+  "python_javascript_sdk_parity"
 ]);
-// Only these tasks have explicitly approved V2 slices. An uncompleted V1
-// slice cannot be hidden by marking the whole task deferred.
-const SPLIT_V1_TASKS = new Set(["typed_multi_agent_coordination", "industrial_v1_qualification", "python_javascript_sdk_parity"]);
+// Only these deliverables have a separately reviewed later-version slice.
+// Every required V1 slice must still have been delivered.
+const SPLIT_V1_DELIVERABLES = new Set(['typed_multi_agent_coordination', 'industrial_v1_qualification', 'python_javascript_sdk_parity']);
 export const INDUSTRIAL_CHECKS = Object.freeze([
   "http_load_matrix", "durability_recovery", "backup_restore", "python_process_performance",
   "shared_provider_budgets", "multi_agent_authority_isolation", "parallel_cancel_resume",
@@ -98,8 +117,8 @@ function observedGates({ qualification, candidate, implementationVersion, tutori
     if (!Number.isFinite(time) || time > now || now - time > 7 * 86400000) reason = "observation is missing, future-dated or older than seven days";
     if (!Array.isArray(gate.evidence) || !gate.evidence.length || gate.evidence.some(item => typeof item !== "string" || !item.trim())) reason = "missing evidence references";
     if (observation.status !== "satisfied") reason = "observation did not pass";
-    if (id === "p0_delivery" && REQUIRED_V1_TASKS.some(task => observation.tasks?.[task] !== "completed"
-      && !(SPLIT_V1_TASKS.has(task) && observation.tasks?.[task] === "v1_completed"))) reason = "a required V1 task or V1 slice is not delivered";
+    if (id === "p0_delivery" && REQUIRED_V1_DELIVERABLES.some(deliverable => observation.deliverables?.[deliverable] !== "completed"
+      && !(SPLIT_V1_DELIVERABLES.has(deliverable) && observation.deliverables?.[deliverable] === "v1_completed"))) reason = "a required V1 deliverable or V1 slice is not delivered";
     if (["multi_os_ci_observation", "public_release_artifacts"].includes(id)
       && PLATFORMS.some(platform => observation.platforms?.[platform] !== "passed")) reason = "a claimed platform remains unqualified";
     if (id === "installed_sdk_distribution" && PLATFORMS.some(platform => ["javascript", "python"].some(language =>

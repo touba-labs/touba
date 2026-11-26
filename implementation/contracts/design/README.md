@@ -1,13 +1,20 @@
 # Touba Design Tokens
 
 This directory contains the versioned visual token contract shared by Touba
-documentation site, Cloud, client, Explorer, Traces and IDE surfaces.
+documentation site, Explorer, Traces and IDE surfaces.
 
 The source contract is `touba-design-tokens-v1.json`. The CSS file is a direct
 web export for Docusaurus, Tauri, and other web-based surfaces. Flutter and
 native clients should derive their constants from the JSON contract.
 
 Current consumers:
+
+- A documentation site can keep a generated CSS snapshot at
+  `src/css/touba-design-tokens-v1.css` and validates it against this contract
+  when the full workspace is available.
+- Touba IDE uses the same brand token family for icons and maps semantic roles
+  to VS Code light and dark themes.
+- Web readers consume the same canonical family.
 
 ## Interface requirements
 

@@ -1781,7 +1781,7 @@ test("refuses changed executable artifacts and revoked authority before a handle
   }), /capture compatible/u);
 
   const changed = structuredClone(document);
-  changed.module.name = "changed-source";
+  changed.execution_graphs[0].nodes.find(node => node.kind === "give").arguments = ["literal:string:changed-source"];
   const incompatible = await executeAirDocument(changed, {
     ...durableOptions({ manifest, journal, observer: async () => {} }),
     secretStore: authoritySecretStore("active"),

@@ -1,15 +1,27 @@
-use touba_compiler::{compile_project_sources, compile_source_to_air, AirDiagnosticCode};
+use touba_compiler::{AirDiagnosticCode, compile_project_sources, compile_source_to_air};
 
 #[test]
 fn composition_calls_require_explicit_uses_in_all_paths() {
     for owner in ["skill", "strategy"] {
-        for body in ["        Echo\n            into result\n        give result",
-            "        if true\n            Echo\n                into result\n            give result\n        else\n            give \"no\""] {
-            let source = format!("module scope\ntool Echo\n    gives Text\n{owner} Main\n    gives Text\n    do\n{body}\n");
+        for body in [
+            "        Echo\n            into result\n        give result",
+            "        if true\n            Echo\n                into result\n            give result\n        else\n            give \"no\"",
+        ] {
+            let source = format!(
+                "module scope\ntool Echo\n    gives Text\n{owner} Main\n    gives Text\n    do\n{body}\n"
+            );
             let refused = compile_source_to_air("scope.tb", &source);
             assert!(refused.document.is_none());
-            assert!(refused.diagnostics.iter().any(|d| d.code == AirDiagnosticCode::CapabilityNotDeclaredInUses));
-            let accepted = compile_source_to_air("scope.tb", &source.replace("    do", "    uses Echo\n    do"));
+            assert!(
+                refused
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.code == AirDiagnosticCode::CapabilityNotDeclaredInUses)
+            );
+            let accepted = compile_source_to_air(
+                "scope.tb",
+                &source.replace("    do", "    uses Echo\n    do"),
+            );
             assert!(accepted.document.is_some(), "{:?}", accepted.diagnostics);
         }
     }

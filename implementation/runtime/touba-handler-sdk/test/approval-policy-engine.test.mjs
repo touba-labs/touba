@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, cpSync, rmSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,15 +10,10 @@ import { ToubaEngine } from "../src/index.mjs";
 for (const [page, marker] of [
   ["validation-avant-effet-externe", "APPROVAL_GRANTS_AND_SINGLE_ACQUIRED_WRITE_OK"],
   ["orchestration-multi-agent-sequentielle", "THREE_AGENTS_APPROVAL_SCOPES_AND_ONE_ACQUIRED_WRITE_OK"],
-]) test(`the ${page} tutorial refuses checkpoint replay with a single acquired effect`, t => {
+]) test(`the ${page} example refuses checkpoint replay with a single acquired effect`, t => {
   const root = mkdtempSync(join(tmpdir(), "touba-approval-effect-tutorial-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const markdown = readFileSync(new URL(`../../../../docs/tutoriels/${page}.md`, import.meta.url), "utf8");
-  for (const match of markdown.matchAll(/```(?:touba|js|json) title="([^"]+)"\n([\s\S]*?)```/g)) {
-    const output = join(root, match[1]);
-    mkdirSync(join(output, ".."), { recursive: true });
-    writeFileSync(output, match[2]);
-  }
+  cpSync(new URL(`./fixtures/approval-examples/${page}/`, import.meta.url), root, { recursive: true });
   const bin = join(root, "bin"); mkdirSync(bin);
   symlinkSync(fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url)), join(bin, "touba"));
   mkdirSync(join(root, "node_modules/@touba"), { recursive: true });
@@ -28,13 +23,10 @@ for (const [page, marker] of [
   assert.ok(execFileSync(process.execPath, ["exercise.mjs"], options).includes(marker));
 });
 
-test("the published roles tutorial compiles and executes its host evidence and refusal example", t => {
+test("the roles example compiles and executes its host evidence and refusal example", t => {
   const root = mkdtempSync(join(tmpdir(), "touba-approval-tutorial-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const markdown = readFileSync(new URL("../../../../docs/tutoriels/approbations-roles-delais.md", import.meta.url), "utf8");
-  for (const match of markdown.matchAll(/```(?:touba|js) title="([^"]+)"\n([\s\S]*?)```/g)) {
-    writeFileSync(join(root, match[1]), match[2]);
-  }
+  cpSync(new URL("./fixtures/approval-examples/approbations-roles-delais/", import.meta.url), root, { recursive: true });
   const bin = join(root, "bin"); mkdirSync(bin);
   symlinkSync(fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url)), join(bin, "touba"));
   const options = { cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8" };

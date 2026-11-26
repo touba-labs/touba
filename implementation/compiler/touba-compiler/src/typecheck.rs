@@ -80,7 +80,7 @@ pub(crate) fn is_iso_date(value: &str) -> bool {
     let year: u32 = value[0..4].parse().unwrap();
     let month: usize = value[5..7].parse().unwrap();
     let day: u32 = value[8..10].parse().unwrap();
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
     let days = [
         31,
         if leap { 29 } else { 28 },

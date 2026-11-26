@@ -4,7 +4,7 @@
   "run": {
     "run_id": "run-1",
     "air_schema_version": "touba-air-v1",
-    "air_digest": "sha256:f758c2e456922c1d25dee046eb305c0710e1aab1c83d23a94934e9215db8e984",
+    "air_digest": "sha256:d32f437a91d4986a17696a1f17bd38f64b489ae0b99022d50a067693aedbf603",
     "module_ref": "module:examples.agent_interface",
     "entry_ref": "strategy:examples.agent_interface/RunReview"
   },
@@ -27,6 +27,12 @@
       "air_ref": {
         "flow_graph_ref": "graph:strategy:examples.agent_interface/RunReview",
         "owner_ref": "strategy:examples.agent_interface/RunReview"
+      },
+      "payload": {
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.agent_interface/RunReview"
+        }
       }
     },
     {
@@ -43,7 +49,11 @@
         "target_ref": "agent:examples.agent_interface/Reviewer",
         "caller_ref": "strategy:examples.agent_interface/RunReview",
         "agent_ref": null,
-        "argument_count": 1
+        "argument_count": 1,
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.agent_interface/RunReview"
+        }
       }
     },
     {
@@ -59,7 +69,11 @@
       "payload": {
         "caller_ref": "strategy:examples.agent_interface/RunReview",
         "agent_ref": "agent:examples.agent_interface/Reviewer",
-        "authority_source": "callable_by"
+        "authority_source": "callable_by",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.agent_interface/RunReview"
+        }
       }
     },
     {
@@ -71,7 +85,14 @@
         "agent_ref": "agent:examples.agent_interface/Reviewer",
         "caller_ref": "strategy:examples.agent_interface/RunReview",
         "input_count": 1,
-        "output_type": "type:examples.agent_interface/ReviewResult"
+        "output_type": "type:examples.agent_interface/ReviewResult",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:1"
+        }
       }
     },
     {
@@ -129,7 +150,14 @@
             "uses": [],
             "memory_accesses": []
           }
-        ]
+        ],
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:1"
+        }
       }
     },
     {
@@ -146,7 +174,14 @@
         "responsibility_description_count": 0,
         "absent_description_count": 0,
         "missing_source_description_count": 0,
-        "production_recommendation": "source_descriptions_complete"
+        "production_recommendation": "source_descriptions_complete",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:1"
+        }
       }
     },
     {
@@ -181,7 +216,14 @@
         ],
         "input_keys": [
           "request"
-        ]
+        ],
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:1"
+        }
       }
     },
     {
@@ -193,13 +235,22 @@
         "agent_ref": "agent:examples.agent_interface/Reviewer",
         "mode": "summary",
         "provider_attempt": 0,
+        "timeout_ms": 120000,
         "provider_metadata": {
           "provider_kind": "test_provider",
           "provider_name": "agent-interface-v1-fixture",
           "provider_version": "1.0.0",
           "decision_schema_version": "touba-agent-decision-v1"
         },
-        "request_digest": "7c557fb299cbf6f68ab2e2f6b5d09364daf04c451ff0c8876269e8e974ce6617"
+        "request_digest": "7c557fb299cbf6f68ab2e2f6b5d09364daf04c451ff0c8876269e8e974ce6617",
+        "request_digest_scope": "redacted_metadata",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:1"
+        }
       }
     },
     {
@@ -212,12 +263,19 @@
         "mode": "summary",
         "provider_attempt": 0,
         "action": "answer_directly",
-        "decision_source": "fixture_provider",
+        "decision_source": "decision_provider",
         "provider_metadata": {
           "provider_kind": "test_provider",
           "provider_name": "agent-interface-v1-fixture",
           "provider_version": "1.0.0",
           "decision_schema_version": "touba-agent-decision-v1"
+        },
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:1"
         }
       }
     },
@@ -230,7 +288,14 @@
         "agent_ref": "agent:examples.agent_interface/Reviewer",
         "step_index": 0,
         "action": "answer_directly",
-        "decision_source": "fixture_provider"
+        "decision_source": "decision_provider",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:1"
+        }
       }
     },
     {
@@ -241,7 +306,14 @@
       "payload": {
         "agent_ref": "agent:examples.agent_interface/Reviewer",
         "step_index": 0,
-        "decision_source": "fixture_provider"
+        "decision_source": "decision_provider",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:1"
+        }
       }
     },
     {
@@ -253,7 +325,14 @@
         "agent_ref": "agent:examples.agent_interface/Reviewer",
         "caller_ref": "strategy:examples.agent_interface/RunReview",
         "output_type": "type:examples.agent_interface/ReviewResult",
-        "result_type": "object"
+        "result_type": "object",
+        "trace_context": {
+          "span_id": "span:run-1:0:2",
+          "target_ref": "agent:examples.agent_interface/Reviewer",
+          "parent_span_id": "span:run-1:0:1",
+          "call_event_id": "event:run-1:3",
+          "agent_invocation_id": "invocation:1"
+        }
       }
     },
     {
@@ -269,7 +348,12 @@
       "payload": {
         "target_ref": "agent:examples.agent_interface/Reviewer",
         "caller_ref": "strategy:examples.agent_interface/RunReview",
-        "result_binding": "review"
+        "result_binding": "review",
+        "call_started_event_id": "event:run-1:3",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.agent_interface/RunReview"
+        }
       }
     },
     {
@@ -283,7 +367,11 @@
         "node_id": "node:graph:strategy:examples.agent_interface/RunReview:2"
       },
       "payload": {
-        "status": "success"
+        "status": "success",
+        "trace_context": {
+          "span_id": "span:run-1:0:1",
+          "target_ref": "strategy:examples.agent_interface/RunReview"
+        }
       }
     },
     {

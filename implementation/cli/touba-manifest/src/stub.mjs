@@ -48,6 +48,7 @@ export async function run({ request, context }) {
   void INPUT_SIGNATURE;
   void OUTPUT_TYPE;
 
+  // stdout is reserved for the JSON protocol. Send logs to stderr without secrets.
   // Implement the bounded external effect here. Touba runtime already validates
   // structural input/output; keep domain-specific validation inside this handler.
   throw new ToubaHandlerError(

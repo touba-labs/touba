@@ -4,5 +4,8 @@
   "target_kind": "agent",
   "presentation": "conversation",
   "effect_policy": "runtime_only",
-  "requested_by": { "kind": "studio", "id": "touba-studio" }
+  "requested_by": {
+    "kind": "studio",
+    "id": "example-client"
+  }
 }

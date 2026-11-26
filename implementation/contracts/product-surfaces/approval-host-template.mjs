@@ -39,7 +39,7 @@ from pathlib import Path
 def _attest(request, subject):
     if not isinstance(subject, str) or not subject.startswith('user:'):
         raise ValueError('Authenticated signer required')
-    with (Path(__file__).parent / '../config/client-directory.json').open('rb') as stream:
+    with (Path(__file__).parent / '../config/studio-directory.json').open('rb') as stream:
         raw = stream.read(262145)
     if len(raw) > 262144:
         raise ValueError('Approval directory too large')

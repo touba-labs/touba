@@ -2,9 +2,12 @@ packages:
   - "grammar/tree-sitter-touba"
   - "compiler/*"
   - "runtime/*"
-  - "lsp/*"
+  - "lsp/touba-lsp"
   - "cli/*"
   - "tests/*"
 
 onlyBuiltDependencies:
   - "tree-sitter-cli"
+
+overrides:
+  "zod@>=4.0.0 <4.6.6": "4.6.6"

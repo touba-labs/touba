@@ -66,10 +66,10 @@ pub(crate) fn constraints(
             }
         }
     }
-    if let (Some(min), Some(max)) = (result.get("min"), result.get("max")) {
-        if min.as_f64() > max.as_f64() {
-            return Err("min exceeds max".into());
-        }
+    if let (Some(min), Some(max)) = (result.get("min"), result.get("max"))
+        && min.as_f64() > max.as_f64()
+    {
+        return Err("min exceeds max".into());
     }
     Ok(result)
 }

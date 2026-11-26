@@ -22,6 +22,7 @@ TOUBA_HANDLER_GENERATED_BY = {"tool": "touba handler stub", "version": ${JSON.st
 
 
 async def run(request, context):
+    # stdout is reserved for the JSON protocol. Send logs to stderr without secrets.
     # Implement business behavior here. The Core owns admission and type checks.
     raise ToubaHandlerError("HandlerNotImplemented", "Handler is not implemented")
 

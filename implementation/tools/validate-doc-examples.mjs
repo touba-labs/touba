@@ -4,13 +4,11 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -103,12 +101,13 @@ export function validateRelativeMarkdownLinks(content, docPath, root = repoRoot)
 }
 
 export function publicDocumentationPaths(root = repoRoot) {
-  const paths = ["README.md"];
-  const docsRoot = resolve(root, "docs");
-  for (const path of walkMarkdown(docsRoot)) {
-    paths.push(relative(root, path));
+  const manifest = JSON.parse(readFileSync(resolve(root, "implementation/tools/documentation-sources.json"), "utf8"));
+  if (!Array.isArray(manifest.documents) || manifest.documents.length === 0
+    || new Set(manifest.documents).size !== manifest.documents.length
+    || manifest.documents.some(path => typeof path !== "string" || path.startsWith("/") || path.split("/").includes(".."))) {
+    throw new Error("documentation sources must be a non-empty, unique list of relative paths");
   }
-  return [...new Set(paths)].sort();
+  return [...manifest.documents].sort();
 }
 
 export function runDocumentationValidation(options = {}) {
@@ -209,18 +208,6 @@ function agentBlocks(source) {
     blocks.push({ name: match[1], line: index, body });
   }
   return blocks;
-}
-
-function walkMarkdown(root) {
-  const paths = [];
-  if (!existsSync(root)) return paths;
-  for (const entry of readdirSync(root)) {
-    const path = join(root, entry);
-    const stats = statSync(path);
-    if (stats.isDirectory()) paths.push(...walkMarkdown(path));
-    else if (extname(path) === ".md") paths.push(path);
-  }
-  return paths;
 }
 
 function existsAsDocumentTarget(path) {
