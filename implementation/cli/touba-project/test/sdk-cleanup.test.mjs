@@ -46,3 +46,18 @@ test('decoded JSON and URI references protect archives, malformed declarations s
   assert.equal(reviewSdkCleanup({root,language:'javascript'}).candidates.length,0);assert(existsSync(join(root,archive.path)));
  }
 });
+
+test('nested execution state and unknown checkpoint names protect archives even beside an empty state directory',t=>{
+ const {root,add}=fixture(t),archive=add('touba-sdk-old.tgz','controlled');
+ const options={root,language:'javascript'},before=reviewSdkCleanup(options);
+ assert.equal(before.candidates.length,1);
+ mkdirSync(join(root,'packages/active/.touba'),{recursive:true});
+ writeFileSync(join(root,'packages/active/.touba/wait.json'),JSON.stringify({status:'human_approval_pending'}));
+ mkdirSync(join(root,'packages/empty/.touba'),{recursive:true});
+ const preview=reviewSdkCleanup(options);
+ assert.equal(preview.candidates.length,0);
+ assert.equal(preview.archives[0].protectedBy,'execution_state');
+ assert.throws(()=>cleanSdkArchives({...options,accept:before.reviewDigest}),{code:'SDKCleanupReviewStale'});
+ const applied=cleanSdkArchives({...options,accept:preview.reviewDigest});
+ assert.equal(applied.removed.length,0);assert(existsSync(join(root,archive.path)));
+});

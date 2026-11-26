@@ -19,8 +19,10 @@ export function reviewSdkCleanup({root=process.cwd(),language,keep=[]}={}){
       if(path===directory)return;
       if(['.git','node_modules','__pycache__'].includes(path.split(/[\\/]/).at(-1)))return;
       if(existsSync(join(path,'pyvenv.cfg'))){environment=true;inventory.push({path:name,kind:'python-environment'});return;}
-      if(name==='.touba'){
-        executionState=readdirSync(path).some(file=>file.endsWith('.sqlite')||file.endsWith('checkpoint.json'));
+      if(path.split(/[\\/]/).at(-1)==='.touba'){
+        // A nested project or an unfamiliar checkpoint name can retain this SDK.
+        // Treat nonempty state as protected instead of interpreting private stores.
+        executionState ||= readdirSync(path).length>0;
         inventory.push({path:name,kind:'execution-state',protected:executionState});return;
       }
       for(const child of readdirSync(path).sort())scan(join(path,child),depth+1);
