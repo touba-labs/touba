@@ -47,6 +47,25 @@ test("indexed store selects and updates only the requested record, retaining all
   } finally { db.close(); }
 });
 
+test("all record readers reject stored UTF-8 bodies over their configured limit before parsing", t => {
+  const { path, store } = fixture(t);
+  const initial = store.read();
+  initial.push({ id: "large", status: "done", payload: "é".repeat(80) });
+  store.write(initial);
+  const before = readFileSync(path);
+  let parses = 0;
+  const limited = indexedStore({ path, schemaVersion: "test-record-v1", keyOf: record => record.id,
+    maxRecordBytes: 128, validate() { parses++; },
+    parseValidated(body) { parses++; return JSON.parse(body); } });
+  for (const read of [() => limited.read([{ id: "large" }]),
+    () => limited.page({ filter: [{ id: "large" }] }),
+    () => limited.project(row => row.id, { filter: [{ id: "large" }], limit: 1 })]) {
+    assert.throws(read, { code: "ToubaStoreRecordTooLarge" });
+  }
+  assert.equal(parses, 0, "byte admission must precede JSON parsing or validation-cache reuse");
+  assert.deepEqual(readFileSync(path), before);
+});
+
 test("bounded pages retain indexed OR filters, cursors and revision-checked writes", t => {
   let validations = 0;
   const { store } = fixture(t, { validate: () => validations++ });

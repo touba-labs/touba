@@ -174,6 +174,7 @@ export function indexedStore({ path, schemaVersion, keyOf, validate, parseValida
         let bytes = 0;
         for (const stored of db.prepare(`SELECT rowid, id, revision, body FROM records${query.sql}${tail}`).iterate(...params)) {
           const row = /** @type {{rowid: number, id: string, revision: number, body: string}} */ (stored);
+          if (Buffer.byteLength(row.body) > maxRecordBytes) throw storeError("ToubaStoreRecordTooLarge", "record exceeds its byte limit");
           if (page) {
             const size = Buffer.byteLength(row.body);
             if (size > 16 * 1024 * 1024) throw storeError("ToubaStoreRecordTooLarge", "record exceeds the page byte limit");
