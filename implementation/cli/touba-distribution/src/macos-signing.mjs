@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,6 +74,7 @@ export function signMacPayload(root, identity) {
   }
   for (const file of files) signCode(file, identity, file === join(root, "bin/node") ? nodeEntitlements : undefined);
   const sourceBuild = metadata.build.id;
+  metadata.node_runtime.sha256 = createHash("sha256").update(readFileSync(join(root, "bin/node"))).digest("hex");
   metadata.build = toolchainBuildIdentity(root);
   writeFileSync(metadataPath, JSON.stringify(metadata, null, 2) + "\n");
   return { source_build: sourceBuild, build: metadata.build.id, native_files: files.map(file => relative(root, file)) };

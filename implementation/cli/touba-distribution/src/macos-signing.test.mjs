@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { nativeMacFiles, sealMacApp, validateMacSigningIdentity, verifyMacSignature } from "./macos-signing.mjs";
+import { nativeMacFiles, sealMacApp, signMacPayload, validateMacSigningIdentity, verifyMacSignature } from "./macos-signing.mjs";
+import { toolchainBuildIdentity } from "./build-identity.mjs";
 import { notarizeInstaller, requireAcceptedNotarization } from "./notarize-installer.mjs";
 
 test("signing refuses ambiguous identities and never accepts ad hoc as Developer ID", () => {
@@ -74,4 +76,31 @@ test("real macOS bundle is sealed after assembly and resource tampering is rejec
   assert.throws(() => verifyMacSignature(app, { developerId: true }), /Developer ID/);
   writeFileSync(resource, "changed after signing\n");
   assert.throws(() => verifyMacSignature(app), /failed/);
+});
+
+test("signed payload metadata identifies the delivered Node bytes after signing", {
+  skip: process.platform !== "darwin" || !process.env.TOUBA_TEST_MAC_SIGN_IDENTITY,
+}, t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-signed-payload-metadata-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const directory of ["bin", "lib", "sdk"]) mkdirSync(join(root, directory));
+  const node = join(root, "bin/node");
+  // A tiny real Mach-O exercises signing and its changed bytes, without
+  // rebuilding Node or pretending this fixture is an installed Node runtime.
+  const compile = spawnSync("/usr/bin/clang", ["-x", "c", "-", "-o", node], {
+    input: "int main(void) { return 0; }\n", encoding: "utf8", timeout: 30000,
+  });
+  assert.equal(compile.status, 0, compile.error?.message ?? compile.stderr);
+  copyFileSync(node, join(root, "bin/touba-compile"));
+  const hash = file => createHash("sha256").update(readFileSync(file)).digest("hex");
+  const originalNodeHash = hash(node);
+  const metadata = { node_runtime: { version: "signing-fixture", sha256: originalNodeHash },
+    build: toolchainBuildIdentity(root) };
+  writeFileSync(join(root, "TOOLCHAIN.json"), JSON.stringify(metadata));
+  const report = signMacPayload(root, process.env.TOUBA_TEST_MAC_SIGN_IDENTITY);
+  const signed = JSON.parse(readFileSync(join(root, "TOOLCHAIN.json"), "utf8"));
+  assert.notEqual(hash(node), originalNodeHash, "signing must actually change the native bytes");
+  assert.equal(signed.node_runtime.sha256, hash(node));
+  assert.equal(report.source_build, metadata.build.id);
+  assert.equal(signed.build.id, toolchainBuildIdentity(root).id);
 });
