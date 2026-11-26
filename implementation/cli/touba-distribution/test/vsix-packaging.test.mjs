@@ -44,11 +44,12 @@ test("native VSIX names distinguish all four supported targets", () => {
   assert.throws(() => nativeVsixTarget("freebsd", "x64"), /Unsupported/);
 });
 
-test("VSIX naming rejects nonfinal versions, traversal and unknown targets", () => {
+test("VSIX naming rejects invalid versions, traversal and unknown targets", () => {
   for (const version of [undefined, null, 1, "", "1.0", "v1.0.0", "01.0.0", "1.00.0", "1.0.01",
-    "1.0.0-rc.1", "1.0.0+build.1", "1.0.0\n", "1.0.0 ", "../1.0.0"]) {
+    "1.0.0-rc.0", "1.0.0-rc.01", "1.0.0-rc.x", "1.0.0+build.1", "1.0.0\n", "1.0.0 ", "../1.0.0"]) {
     assert.throws(() => vsixFilename({version}, "darwin-arm64"), /version/);
   }
+  assert.equal(vsixFilename({version: "1.0.0-rc.1"}, "darwin-arm64"), "touba-vscode-v1.0.0-rc.1-darwin-arm64.vsix");
   for (const target of ["universal", "linux-arm64", "windows-x64", "darwin-arm64\n", "../darwin-arm64", null]) {
     assert.throws(() => vsixFilename({version: "1.0.0"}, target), /target/);
   }
