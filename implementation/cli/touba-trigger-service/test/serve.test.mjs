@@ -15,9 +15,11 @@ import {
   buildTriggerStatusContract,
   createTriggerService,
 } from "../src/serve.mjs";
+import { fileURLToPath } from "node:url";
 
-const servePath = new URL("../src/serve.mjs", import.meta.url).pathname;
-const implementationDir = new URL("../../..", import.meta.url).pathname;
+
+const servePath = fileURLToPath(new URL("../src/serve.mjs", import.meta.url));
+const implementationDir = fileURLToPath(new URL("../../..", import.meta.url));
 const triggerStatusSchemaPath = join(
   implementationDir,
   "contracts/product-surfaces/schemas/touba-trigger-status-v1.schema.json",

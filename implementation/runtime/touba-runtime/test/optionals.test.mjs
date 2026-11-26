@@ -7,12 +7,14 @@ import { executeReferenceAir } from "../../../contracts/reference-runtime/runtim
 import { agentResultSchema, argumentsSchemaForCapability } from "../../touba-handler-sdk/src/decision-contract.mjs";
 import { createAiSdkDecisionProvider } from "../../touba-handler-sdk/src/index.mjs";
 import { nativeCapabilityName } from "../../touba-handler-sdk/src/native-decision.mjs";
+import { fileURLToPath } from "node:url";
+
 
 let air;
 before(() => {
   air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
-    new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--",
-    new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/optional-business.tb", import.meta.url).pathname], { encoding: "utf8" }));
+    fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--",
+    fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/optional-business.tb", import.meta.url))], { encoding: "utf8" }));
 });
 const present = value => ({ present: true, value });
 const absent = { present: false };

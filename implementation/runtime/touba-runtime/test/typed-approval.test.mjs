@@ -4,8 +4,10 @@ import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { executeAirDocument } from "../src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { pendingParallelApprovals } from "../src/parallel-execution.mjs";
+import { fileURLToPath } from "node:url";
+
 let air;
-before(() => { air = compileTestAir(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/typed-approval.tb", import.meta.url).pathname); });
+before(() => { air = compileTestAir(fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/typed-approval.tb", import.meta.url))); });
 
 test("rejected and expired continuations cannot execute the approved effect", async () => {
   for (const decision of ["approved", "rejected", "expired"]) {

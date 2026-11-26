@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { executeAirDocument } from "../src/index.mjs";
 import { validateApprovalState } from "../src/human-approval-policy.mjs";
+import { fileURLToPath } from "node:url";
+
 
 let air;
 before(() => {
-  air = compileTestAir(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/approval-policy.tb", import.meta.url).pathname);
+  air = compileTestAir(fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/approval-policy.tb", import.meta.url)));
 });
 const copy = value => JSON.parse(JSON.stringify(value));
 const base = { entryRef: "strategy:approval_policy/ApproveTwice", durableHumanApprovals: true, humanApprovalInitiator: "employee:initiator" };

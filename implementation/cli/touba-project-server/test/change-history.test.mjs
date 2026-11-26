@@ -9,8 +9,10 @@ import { CHANGE_INDEXES, readChangeProposals, saveChangeProposals, migrateChange
 import { createToubaProjectServer, listProjectChanges, getProjectChangeDetail, checkToubaProjectState } from "../src/serve.mjs";
 import { validateObject } from "../../../contracts/product-surfaces/validate.mjs";
 import { stateCommand } from "../../touba-project/src/state-command.mjs";
+import { fileURLToPath } from "node:url";
 
-const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+
+const contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url));
 const schema = JSON.parse(readFileSync(join(contractsRoot, "schemas/touba-project-change-history-v1.schema.json")));
 const sample = { schema_version: "touba-project-change-proposal-v1", proposal_id: "first",
   status: "proposed", action: "write_text_file", target: { path: "src/main.tb" },

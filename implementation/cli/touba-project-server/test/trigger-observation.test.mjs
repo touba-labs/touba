@@ -10,8 +10,10 @@ import { readPreparedProject } from "../src/prepared-project.mjs";
 import { createTriggerService } from "../../touba-trigger-service/src/serve.mjs";
 import { createSqliteTriggerQueue } from "../../touba-trigger-service/src/sqlite-queue.mjs";
 import { createToubaProjectServer, readProjectTriggerStatus } from "../src/serve.mjs";
+import { fileURLToPath } from "node:url";
 
-const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+
+const contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url));
 
 test("Client observes real webhook admissions and dead letters from the service SQLite stores", async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-trigger-observation-"));
@@ -122,7 +124,7 @@ trigger Scheduled
   }`);
   writeFileSync(join(root, "approval.mjs"), `export const initiatorRef = "service:qa";
     export function attestHumanApproval() { throw new Error("No approval is declared in this test"); }`);
-  const cli = new URL("../../touba-project/src/main.mjs", import.meta.url).pathname;
+  const cli = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
   const run = spawnSync(process.execPath, [cli, "trigger", "run",
     join(root, inputs.find(input => input.kind === "air").path),
     "--manifest", join(root, inputs.find(input => input.kind === "manifest").path),

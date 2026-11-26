@@ -75,8 +75,10 @@ import {
   AIR_JSON_PROFILE,
   AIR_SCHEMA_VERSION,
 } from "../../../contracts/machine/contracts.mjs";
+import { fileURLToPath } from "node:url";
 
-const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+
+const contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url));
 
 test("HTTP keeps an idle pooled socket alive through the internal expiry margin", { timeout: 15000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-http-expiry-margin-"));
@@ -197,7 +199,7 @@ test("preflight rejects invalid contracts root and decision store path", () => {
 test("serve help documents host options and CLI names an identity outside the project", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-serve-identity-path-"));
   try {
-    const cli = new URL("../../touba-project/src/main.mjs", import.meta.url).pathname;
+    const cli = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
     const help = spawnSync(process.execPath, [cli, "serve", "--help"], { encoding: "utf8" });
     assert.equal(help.status, 0, help.stderr);
     for (const flag of ["--identity <", "--agent-decision-provider <", "--agent-decision-provider-timeout-ms"]) assert.ok(help.stdout.includes(flag));
@@ -218,7 +220,7 @@ test("authority graph preserves two approval sites without duplicating source an
     writeFileSync(source, 'module gates.check\nstrategy Run\n    do\n        human.approve\n            with context as "First"\n            into first\n        human.approve\n            with context as "Second"\n            into second\n');
     const sourceGraph = buildAuthorityGraph({ projectRoot: root });
     assert.equal(sourceGraph.nodes.filter(node => node.kind === "human_gate").length, 2);
-    const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path", new URL("../../../Cargo.toml", import.meta.url).pathname,
+    const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path", fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)),
       "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
     writeFileSync(join(root, "main.air.json"), JSON.stringify(air));
     const graph = buildAuthorityGraph({ projectRoot: root });
@@ -240,7 +242,7 @@ test('authority graph merges imported memories and marks calls required by sourc
     for (const name of ['first','second','third','fourth']) {
       const source = join(root, `${name}.tb`);
       writeFileSync(source, `module ${name}\nimport tool Read from library\nimport memory Notes from library\nstrategy Run\n    gives Text\n    uses Read\n    memory Notes read\n    do\n        Read\n            into note\n        give note\n`);
-      const air = execFileSync(process.execPath, [new URL('../../touba-project/src/main.mjs', import.meta.url).pathname,
+      const air = execFileSync(process.execPath, [fileURLToPath(new URL('../../touba-project/src/main.mjs', import.meta.url)),
         'compile',source,'--stdout','--source-root',root], {encoding:'utf8'});
       writeFileSync(join(root, `${name}.air.json`), air);
     }
@@ -5458,7 +5460,7 @@ async function withTimeout(promise, label, timeoutMs = 10000) {
 }
 
 async function startProjectServerProcess(projectRoot) {
-  const servePath = new URL("../src/serve.mjs", import.meta.url).pathname;
+  const servePath = fileURLToPath(new URL("../src/serve.mjs", import.meta.url));
   const child = spawn(process.execPath, [
     servePath,
     "--contracts-root", contractsRoot,

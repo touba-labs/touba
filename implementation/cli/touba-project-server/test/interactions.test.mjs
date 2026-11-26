@@ -146,7 +146,7 @@ test('offline CLI archives an interrupted pre-checkpoint operation from an older
   const originPath = join(root,'.touba/state-origin.json');
   writeFileSync(originPath,JSON.stringify({schema_version:'touba-serve-state-origin-v1',project_root:realpathSync(root),build_id:'f'.repeat(64)}));
   const original = readFileSync(sessionsPath);
-  const args = [new URL('../src/serve.mjs',import.meta.url).pathname,'--project-root',root,'--archive-state','--abandon-operations','--reason','Synthetic interrupted operation reviewed.'];
+  const args = [fileURLToPath(new URL('../src/serve.mjs',import.meta.url)),'--project-root',root,'--archive-state','--abandon-operations','--reason','Synthetic interrupted operation reviewed.'];
   const preview = JSON.parse(execFileSync(process.execPath,args,{encoding:'utf8'}));
   assert.equal(preview.recovery.waits[0].operation_id, operation.operation_id);
   assert.equal(preview.recovery.waits[0].previous_status, 'interrupted');

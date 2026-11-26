@@ -9,6 +9,8 @@ import { initProject, prepareProject } from "../../touba-project/src/project.mjs
 import { createToubaProjectServer } from "../src/serve.mjs";
 import { readPreparedProject } from "../src/prepared-project.mjs";
 import { newPackage, addPackage } from "../../touba-project/src/packages.mjs";
+import { fileURLToPath } from "node:url";
+
 
 test("unified serve CLI loads a provider and documented identity and routes triggers explicitly", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-server-provider-"));
@@ -63,7 +65,7 @@ trigger Hourly
       triggers: { "trigger:demo.server/Hourly": { enabled: true, source: { kind: "schedule" }, limits: { max_runs_per_day: 10, timeout_ms: 30000 } } } }));
     const activated = await prepareProject({ root, mode: "write", profile: "dev", manifestPath: "touba.manifest.json" });
     assert.notEqual(activated.status, "error", JSON.stringify(activated));
-    const cli = new URL("../../touba-project/src/main.mjs", import.meta.url).pathname;
+    const cli = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
     child = spawn(process.execPath, [cli, "serve", "--project-root", root, "--port", "0",
       "--agent-decision-provider", join(root, "provider.mjs"), "--identity", join(root, "project-identity.json")],
       { cwd: root, stdio: ["ignore", "pipe", "pipe"] });

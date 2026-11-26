@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initProject, prepareProject, renderReport } from "../src/project.mjs";
 import { fragmentContract, normalizeFragmentBaselines } from "../src/fragment-governance.mjs";
+import { fileURLToPath } from "node:url";
+
 
 const ref = "tool:fragment.demo/Read";
 const json = path => JSON.parse(readFileSync(path, "utf8"));
@@ -157,7 +159,7 @@ test('CLI restores the same known projection through explicit host decisions', a
   const plan = await prepareProject({ ...f.options, mode: 'plan' });
   const digest = plan.actions.find(item => item.kind === 'restore_fragment_binding').digest;
   save(join(f.root, 'restore.json'), { restore_fragments: { [ref]: { digest, reason: 'Reviewed CLI recovery' } } });
-  const result = spawnSync(process.execPath, [new URL('../src/main.mjs', import.meta.url).pathname, 'prepare', '--root', f.root,
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../src/main.mjs', import.meta.url)), 'prepare', '--root', f.root,
     '--entry', f.options.entryRef, '--mode', 'write', '--host-decisions', 'restore.json', '--json'], { cwd: f.root, encoding: 'utf8', timeout: 30000 });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.equal(json(f.manifestPath).bindings[ref].timeout_ms, 10000);

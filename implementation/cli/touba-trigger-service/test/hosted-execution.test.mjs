@@ -8,6 +8,8 @@ import { spawnSync } from "node:child_process";
 import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { createTriggerService } from "../src/serve.mjs";
 import { createSqliteTriggerQueue } from "../src/sqlite-queue.mjs";
+import { fileURLToPath } from "node:url";
+
 
 async function fixture(t, { twice = false, timeout = 60000, python = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "touba-trigger-hosts-"));
@@ -170,7 +172,7 @@ test("management is explicitly configured and never shares the ingress credentia
   delete f.options.managementTokenEnv;
   await f.start();
   assert.equal((await f.request('/_touba/approvals')).status,404);
-  const help=spawnSync(process.execPath,[new URL('../src/serve.mjs',import.meta.url).pathname,'--agent-decision-provider','provider.py',
+  const help=spawnSync(process.execPath,[fileURLToPath(new URL('../src/serve.mjs',import.meta.url)),'--agent-decision-provider','provider.py',
     '--human-approval-host','authority.mjs','--human-checkpoint-store','custody.sqlite','--management-token-env','QA','--help'],{encoding:'utf8'});
   assert.equal(help.status,0,help.stderr);
   for(const flag of ['--agent-decision-provider','--human-approval-host','--human-checkpoint-store','--management-token-env','--effect-journal']) assert.ok(help.stdout.includes(flag));

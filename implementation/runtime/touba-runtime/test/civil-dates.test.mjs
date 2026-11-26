@@ -5,10 +5,12 @@ import { executeAirDocument } from "../src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { argumentsSchemaForCapability } from "../../touba-handler-sdk/src/decision-contract.mjs";
 import { createDecisionWireSchema } from "../../touba-handler-sdk/src/decision-wire-schema.mjs";
+import { fileURLToPath } from "node:url";
+
 let air;
 before(() => { air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path",
-  new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--",
-  new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/civil-dates.tb", import.meta.url).pathname], { encoding: "utf8" })); });
+  fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--",
+  fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/civil-dates.tb", import.meta.url))], { encoding: "utf8" })); });
 const run = (entry, inputs = {}, options = {}) => executeAirDocument(air, { entryRef: `function:calendar/${entry}`, inputs, ...options });
 test("Date validates Gregorian civil dates, compares and renders without timezone conversion", async () => {
   for (const value of ["0001-01-01", "2000-02-29", "2024-02-29", "9999-12-31"]) {

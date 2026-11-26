@@ -6,8 +6,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { scaffoldRestTool } from "../src/rest-scaffold.mjs";
+import { fileURLToPath } from "node:url";
 
-const cliPath = new URL("../src/main.mjs", import.meta.url).pathname;
+
+const cliPath = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 
 test("rest scaffold plans and writes governed Touba artifacts from explicit operation config", () => {
   const root = tempRoot();

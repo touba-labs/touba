@@ -5,6 +5,8 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
+import { fileURLToPath } from "node:url";
+
 
 for (const imported of [false, true]) test(`function capability preserves its source description (${imported ? "imported" : "local"})`, async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-function-capability-"));
@@ -37,7 +39,7 @@ strategy Run
         give result
 `);
     const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
-      new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--",
+      fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--",
       "--source-root", root, source], { encoding: "utf8" }));
     const target = `function:${imported ? "math" : "app"}/Double`;
     for (const code of ["DecisionHistoryLimitExceeded", "DecisionHistorySummaryInvalid", "ProviderContextWindowExceeded"]) {

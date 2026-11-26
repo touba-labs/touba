@@ -5,10 +5,12 @@ import { executeAirDocument } from "../src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { argumentsSchemaForCapability } from "../../touba-handler-sdk/src/decision-contract.mjs";
 import { createDecisionWireSchema } from "../../touba-handler-sdk/src/decision-wire-schema.mjs";
+import { fileURLToPath } from "node:url";
+
 let air;
 before(() => { air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path",
-  new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--",
-  new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/field-contracts.tb", import.meta.url).pathname], { encoding: "utf8" })); });
+  fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--",
+  fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/field-contracts.tb", import.meta.url))], { encoding: "utf8" })); });
 const run = (name, inputs) => executeAirDocument(air, { entryRef: `function:fields/${name}`, inputs });
 const account = { institution: "815", transit: "00001", account: "00000001234" };
 test("source defaults are explicit values and copy keeps the original unchanged", async () => {

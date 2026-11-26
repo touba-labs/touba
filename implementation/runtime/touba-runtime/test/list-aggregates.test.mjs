@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {compileTestAir} from '../../../tests/helpers/compile.mjs';
 import {executeAirDocument} from '../src/index.mjs';
 import {validateAirMachineContract} from '../../../contracts/machine/contracts.mjs';
-const air=compileTestAir(new URL('../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/list-aggregates.tb',import.meta.url).pathname);
+import { fileURLToPath } from "node:url";
+
+const air=compileTestAir(fileURLToPath(new URL('../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/list-aggregates.tb',import.meta.url)));
 const run=(name,inputs={},options={})=>executeAirDocument(air,{entryRef:`function:aggregates/${name}`,inputs,...options});
 
 test('sum uses typed empty identity, ordered additions and checked numeric bounds',async()=>{

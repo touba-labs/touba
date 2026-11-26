@@ -20,8 +20,10 @@ import {
   getInteractionOperation,
   requestInteractionOperationCancel,
 } from "../src/interactions.mjs";
+import { fileURLToPath } from "node:url";
 
-const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+
+const contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url));
 
 test("durable resume requires the explicit current request contract before store access", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-resume-contract-"));

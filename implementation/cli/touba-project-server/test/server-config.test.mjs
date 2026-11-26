@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expandServerConfig, serverConfigArguments } from '../src/server-config.mjs';
 import { initProject, newModule } from '../../touba-project/src/project.mjs';
+import { fileURLToPath } from "node:url";
+
 
 function fixture(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba server config ')));
@@ -81,7 +83,7 @@ test('real CLI loads a profile during offline preflight without executing its ho
   const { root, profile, write } = fixture(t);
   writeFileSync(join(root, 'host.mjs'), 'throw new Error("must-not-be-imported");');
   write({ ...profile, human_approval_host: 'host.mjs' });
-  const raw = execFileSync(process.execPath, [new URL('../src/serve.mjs', import.meta.url).pathname,
+  const raw = execFileSync(process.execPath, [fileURLToPath(new URL('../src/serve.mjs', import.meta.url)),
     '--project-root', root, '--config', 'touba.server.json', '--check-state'], { encoding: 'utf8', timeout: 30000 });
   assert.equal(JSON.parse(raw).status, 'structurally_valid');
   assert.deepEqual(readdirSync(root).sort(), ['host.mjs', 'touba.server.json']);
@@ -93,7 +95,7 @@ test('real CLI starts and stops a project from its explicit profile', { timeout:
   newModule('config.demo', { root });
   write({ schema_version: 'touba-project-server-config-v1', host: '127.0.0.1', port: 0,
     schedule_triggers: false, cloud_notifications: false });
-  const child = spawn(process.execPath, [new URL('../src/serve.mjs', import.meta.url).pathname,
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../src/serve.mjs', import.meta.url)),
     '--project-root', root, '--config', 'touba.server.json'], { stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = once(child, 'exit');
   let stderr = '';

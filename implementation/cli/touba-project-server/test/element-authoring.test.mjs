@@ -14,6 +14,8 @@ import {
   normalizeElementAuthoringRequest,
   readElementSource,
 } from "../src/element-authoring.mjs";
+import { fileURLToPath } from "node:url";
+
 
 const MODULE_REF = "demo.authoring";
 
@@ -530,7 +532,7 @@ function createProject() {
 function assertCompiles(projectRoot, content) {
   const sourcePath = join(projectRoot, "generated.tb");
   writeFileSync(sourcePath, content, "utf8");
-  const compiler = new URL("../../touba-project/src/main.mjs", import.meta.url).pathname;
+  const compiler = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
   const result = spawnSync(process.execPath, [compiler, "compile", sourcePath, "--stdout"], {
     cwd: projectRoot,
     encoding: "utf8",

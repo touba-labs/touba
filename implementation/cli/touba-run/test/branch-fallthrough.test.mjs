@@ -5,6 +5,8 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
+import { fileURLToPath } from "node:url";
+
 
 test("compiled branches fall through and preserve early returns and typed caller results", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-branch-flow-"));
@@ -30,7 +32,7 @@ strategy Use
         give picked + 1
 `);
     const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
-      new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
+      fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
     for (const [target, inputs, expected] of [
       ["function:flow.check/Pick", { x: 1 }, 10],
       ["function:flow.check/Pick", { x: 2 }, 20],

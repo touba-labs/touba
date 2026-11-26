@@ -7,8 +7,10 @@ import { DatabaseSync } from "node:sqlite";
 import { createToubaProjectServer } from "../src/serve.mjs";
 import { createSqliteEffectJournal, auditSqliteEffectJournal } from "../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs";
 import { deriveEffectId } from "../../../runtime/touba-runtime/src/effect-contract.mjs";
+import { fileURLToPath } from "node:url";
 
-const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+
+const contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url));
 
 for (const name of ["sandbox-checkpoints", "human-requests", "human-decisions", "project.effect-journal", "interaction-sessions", "interaction-assets"]) {
   test(`previous ${name} store blocks startup unchanged before recovery`, t => {

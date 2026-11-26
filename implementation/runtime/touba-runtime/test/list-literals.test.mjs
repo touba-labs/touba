@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { executeAirDocument } from "../src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
+import { fileURLToPath } from "node:url";
+
 
 let air;
 before(() => {
   air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path",
-    new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--",
-    new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/list-literals.tb", import.meta.url).pathname], { encoding: "utf8" }));
+    fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--",
+    fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/typechecker-v1/positive/list-literals.tb", import.meta.url))], { encoding: "utf8" }));
 });
 test("compiled lists preserve order, nested empties, record and optional contexts", async () => {
   validateAirMachineContract(air);

@@ -8,6 +8,24 @@ import { tmpdir } from "node:os";
 // Run the canonical approval/admission tests against the packaged runtime and
 // SDKs installed from this payload. Only import/fixture/interpreter locations
 // change. The reference model, compiler helper and LSP assertions use test sources.
+function assertCanonicalResults(output, platform) {
+  assert.ok(["darwin", "linux", "win32"].includes(platform));
+  // These exact canonical cases explicitly require Seatbelt. Linux confinement
+  // has its separate mandatory native recipe; Windows confinement remains V2.
+  const expectedSkips = platform === "darwin" ? [] : [
+    "a runtime-approved process records confinement only after actual dispatch",
+    "required sandbox configuration is refused before asking a human and rechecked after approval",
+  ];
+  const skipped = [...output.matchAll(/^ok \d+ - (.+?) # SKIP(?: .*)?$/gm)].map(match => match[1]).sort();
+  assert.deepEqual(skipped, [...expectedSkips].sort(), "only the named macOS cases may be inapplicable");
+  assert.match(output, /# tests 67\b/);
+  assert.match(output, new RegExp(`# pass ${67 - expectedSkips.length}\\b`));
+  assert.match(output, /# fail 0\b/);
+  assert.match(output, new RegExp(`# skipped ${expectedSkips.length}\\b`));
+  assert.match(output, /# cancelled 0\b/);
+  assert.match(output, /# todo 0\b/);
+  return { passed: 67 - expectedSkips.length, skipped: expectedSkips.length };
+}
 const payload = path.resolve(process.argv[2] ?? "");
 assert.ok(process.argv[2], "Usage: node check-approved-operation-distribution.mjs <toolchain>");
 assert.ok(existsSync(path.join(payload, "TOOLCHAIN.json")), "A packaged toolchain is required");
@@ -87,10 +105,8 @@ try {
     files.push(file);
   }
   const output = run(["--test", "--test-concurrency=1", "--test-reporter=tap", ...files]);
-  assert.match(output, /# tests 67\b/);
-  assert.match(output, /# fail 0\b/);
-  assert.match(output, /# skipped 0\b/);
-  console.log("APPROVED_OPERATION_DISTRIBUTION_OK: 67 canonical tests against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.");
+  const counts = assertCanonicalResults(output, process.platform);
+  console.log(`APPROVED_OPERATION_DISTRIBUTION_OK: ${counts.passed} applicable canonical tests passed, ${counts.skipped} named macOS-only cases inapplicable, against the packaged runtime, CLI, compiler and installed JavaScript/Python SDKs.`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

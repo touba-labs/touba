@@ -7,6 +7,8 @@ import { execFileSync } from "node:child_process";
 import { initProject, prepareProject, resolveProjectRunArgs } from "../../touba-project/src/project.mjs";
 import { projectEntrypoints } from "../../touba-project/src/project-entrypoints.mjs";
 import { createToubaProjectServer } from "../src/serve.mjs";
+import { fileURLToPath } from "node:url";
+
 
 test("project admission rejects malformed lists and direct agents", () => {
   for (const config of [{ entrypoints: "strategy:demo.main/Run" }, { entry: "agent:demo.main/Reader" },
@@ -63,7 +65,7 @@ process.stdout.write(JSON.stringify({ok:true,value:"wrote"}));
   assert.equal((await prepareProject({ root, mode: "check", hostDecisions })).status, "success");
   for (const [ref, value] of [[config.entry, "first"], [config.entrypoints[1], "second"]]) {
     const args = resolveProjectRunArgs(["--project", root, "--entry", ref, "--output", "result"]);
-    const cli = new URL("../../touba-run/src/run.mjs", import.meta.url).pathname;
+    const cli = fileURLToPath(new URL("../../touba-run/src/run.mjs", import.meta.url));
     assert.match(execFileSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8" }), new RegExp(value));
   }
   let providerCalls = 0;

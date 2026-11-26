@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { createToubaProjectServer } from "../src/serve.mjs";
+import { fileURLToPath } from "node:url";
+
 
 const { root, concurrency, history, repetition } = JSON.parse(process.argv[2]);
 assert.ok([1, 8, 32].includes(concurrency));
-const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+const contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url));
 const target = "strategy:demo.approval/RunSentinel";
 const requestedBy = { kind: "studio", id: "http-history-qualification" };
 const deadlineMs = 60000;

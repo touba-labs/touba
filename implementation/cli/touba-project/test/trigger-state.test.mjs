@@ -4,7 +4,9 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-const cli = new URL("../src/main.mjs", import.meta.url).pathname;
+import { fileURLToPath } from "node:url";
+
+const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 
 test("queue CLI preserves migrated pending work and exposes bounded pages", t => {
   const root = mkdtempSync(join(tmpdir(), "touba-queue-cli-"));

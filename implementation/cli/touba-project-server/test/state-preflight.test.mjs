@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkToubaProjectState } from "../src/serve.mjs";
 import { createInteractionSession, storeInteractionAsset } from "../src/interactions.mjs";
+import { fileURLToPath } from "node:url";
+
 
 test("offline preflight covers interactions without changing bytes or importing host code", t => {
   const root = mkdtempSync(join(tmpdir(), "touba-state-preflight-test-"));
@@ -19,7 +21,7 @@ test("offline preflight covers interactions without changing bytes or importing 
     buffer: Buffer.from("isolated state"), contentKind: "document", mediaType: "text/plain", name: "sample.txt" });
   const before = [sessionsPath, assetsPath].map(path => readFileSync(path));
   writeFileSync(join(root, "forbidden-host.mjs"), 'throw new Error("Host code must not load during preflight");');
-  const raw = execFileSync(process.execPath, [new URL("../src/serve.mjs", import.meta.url).pathname,
+  const raw = execFileSync(process.execPath, [fileURLToPath(new URL("../src/serve.mjs", import.meta.url)),
     "--project-root", root, "--check-state", "--human-approval-host", join(root, "forbidden-host.mjs"),
     "--agent-decision-provider", join(root, "forbidden-host.mjs")], { encoding: "utf8" });
   const checked = JSON.parse(raw);

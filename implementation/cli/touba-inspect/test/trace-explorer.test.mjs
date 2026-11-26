@@ -14,6 +14,8 @@ import { TraceClient } from '../src/trace-explorer/client.mjs';
 import { startTraceExplorer, traceHtml } from '../src/trace-explorer/server.mjs';
 import { queryOptions, projectEvent, eventCategory } from '../src/trace-explorer/model.mjs';
 import { graphLayout, label, originLabel } from '../src/trace-explorer/web/view.mjs';
+import { fileURLToPath } from "node:url";
+
 
 test('trace origins distinguish the scheduler from applications without trusting a display name', () => {
   const scheduler = { kind: 'service', id: 'touba-project-scheduler', name: 'Scheduler' };
@@ -187,7 +189,7 @@ test('the bundled example compiles, runs and resolves its actual source', async 
   const {root}=await fixture(t);
   const source=await readFile(new URL('./fixtures/trace-example.tb',import.meta.url),'utf8');
   await writeFile(join(root,'lecture.tb'),source);
-  const air=JSON.parse(execFileSync('cargo',['run','--quiet','--manifest-path',new URL('../../../Cargo.toml',import.meta.url).pathname,'-p','touba-cli','--bin','touba-compile','--',join(root,'lecture.tb')],{encoding:'utf8'}));
+  const air=JSON.parse(execFileSync('cargo',['run','--quiet','--manifest-path',fileURLToPath(new URL('../../../Cargo.toml',import.meta.url)),'-p','touba-cli','--bin','touba-compile','--',join(root,'lecture.tb')],{encoding:'utf8'}));
   await writeFile(join(root,'tutorial.air.json'),JSON.stringify(air));
   const result=await executeAirDocument(air,{entryRef:'strategy:lecture/Run'});assert.equal(result.status,'success');
   await writeFile(join(root,'tutorial.trace.json'),JSON.stringify(result.trace));
@@ -203,7 +205,7 @@ test('refusals and human resume segments retain status and exact selection',asyn
   const limited=await executeAirDocument(air,{traceStorage:store,entryRef:'strategy:examples.linear_skill/RunSourcedNote',inputs:{request:{topic:'x'}},runLimits:{max_steps:1}});
   assert.equal(limited.status,'failure');
   await writeFile(join(root,'review.tb'),'module review\nstrategy Run\n    gives Text\n    do\n        human.approve\n            with context as "Review"\n            into approval\n        give "done"\n');
-  const review=JSON.parse(execFileSync('cargo',['run','--quiet','--manifest-path',new URL('../../../Cargo.toml',import.meta.url).pathname,'-p','touba-cli','--bin','touba-compile','--',join(root,'review.tb')],{encoding:'utf8'}));
+  const review=JSON.parse(execFileSync('cargo',['run','--quiet','--manifest-path',fileURLToPath(new URL('../../../Cargo.toml',import.meta.url)),'-p','touba-cli','--bin','touba-compile','--',join(root,'review.tb')],{encoding:'utf8'}));
   const paused=await executeAirDocument(review,{traceStorage:store,durableHumanApprovals:true});assert.equal(paused.reason,'human_approval_pending');
   const resumed=await executeAirDocument(review,{traceStorage:store,durableHumanApprovals:true,humanApprovalResumeCheckpoint:paused.checkpoint,humanApprovalDecisions:{[paused.checkpoint.approval_ref]:'approved'}});assert.equal(resumed.status,'success');
   const reader=new TraceReader({filename,root});t.after(()=>reader.close());

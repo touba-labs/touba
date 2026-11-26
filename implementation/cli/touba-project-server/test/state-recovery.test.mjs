@@ -14,9 +14,11 @@ import { createSqliteTriggerStore } from '../../../runtime/touba-runtime/src/sql
 import { createSqliteTriggerQueue } from '../../touba-trigger-service/src/sqlite-queue.mjs';
 import { createSqliteHumanCheckpointStore } from '../../../runtime/touba-runtime/src/human-checkpoint-store.mjs';
 import { createSqliteEffectJournal, auditSqliteEffectJournal } from '../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs';
+import { fileURLToPath } from "node:url";
+
 
 const sha = path => createHash('sha256').update(readFileSync(path)).digest('hex');
-const serve = new URL('../src/serve.mjs', import.meta.url).pathname;
+const serve = fileURLToPath(new URL('../src/serve.mjs', import.meta.url));
 
 for (const [scheduled, deadLetter] of [[false, false], [true, false], [true, true]]) test(`offline CLI abandons a real ${scheduled ? 'scheduled' : 'direct'} protected wait from another build${deadLetter ? ' retaining failed deliveries' : ''}, preserves evidence and starts fresh without an effect`, async t => {
   const root = mkdtempSync(join(tmpdir(), 'touba-offline-recovery-'));

@@ -6,6 +6,8 @@ import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createMcpDiscovery} from '../src/mcp-discovery.mjs';
 import {discoverMcpTools} from '../../../runtime/touba-handler-sdk/src/index.mjs';
+import { fileURLToPath } from "node:url";
+
 
 function fixture(mode='normal') {
   const root=realpathSync(mkdtempSync(join(tmpdir(),'touba-mcp-discovery-')));
@@ -39,7 +41,7 @@ test('explicit discovery is paged, bounded and never calls a business tool',asyn
     assert.deepEqual(result.document.tools.map(t=>t.name),['first','second']);
     const messages=readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse);
     assert.deepEqual(messages.map(m=>m.method),['initialize','notifications/initialized','tools/list','tools/list']);
-    const cli=spawnSync(process.execPath,[new URL('../src/main.mjs',import.meta.url).pathname,'mcp','discover',f.configPath,'fixture','--confirm-process'],{encoding:'utf8',timeout:5000});
+    const cli=spawnSync(process.execPath,[fileURLToPath(new URL('../src/main.mjs',import.meta.url)),'mcp','discover',f.configPath,'fixture','--confirm-process'],{encoding:'utf8',timeout:5000});
     assert.equal(cli.status,0,cli.stderr);assert.equal(JSON.parse(cli.stdout).document.tools.length,2);
   }finally{f.cleanup();}
 });

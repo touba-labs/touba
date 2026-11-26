@@ -12,6 +12,8 @@ import { createSqliteTraceStore } from "../../runtime/touba-runtime/src/sqlite-t
 import { createPostgresTraceDestination } from "../../runtime/touba-runtime/src/postgres-trace-destination.mjs";
 import { createTraceExportWorker } from "../../runtime/touba-runtime/src/trace-export-worker.mjs";
 import { isolatedPostgres } from "../helpers/postgres.mjs";
+import { fileURLToPath } from "node:url";
+
 const { Pool } = createRequire(new URL("../../cli/touba-run/package.json", import.meta.url))("pg");
 
 test("real PostgreSQL: lost COMMIT reply, replay, conflict, fencing, outage and restart", { timeout: 90000 }, async t => {
@@ -153,7 +155,7 @@ test("real PostgreSQL: lost COMMIT reply, replay, conflict, fencing, outage and 
   // An isolated distribution can replace the source launcher. The same real
   // database and assertions then exercise its bundled runtime and pg dependency.
   const launcher = process.env.TOUBA_TRACE_TEST_CLI;
-  const output = execFileSync(launcher ?? process.execPath, [...(launcher ? [] : [new URL("../../cli/touba-project/src/main.mjs", import.meta.url).pathname]),
+  const output = execFileSync(launcher ?? process.execPath, [...(launcher ? [] : [fileURLToPath(new URL("../../cli/touba-project/src/main.mjs", import.meta.url))]),
     "trace", "export", "--store", filename, "--postgres-env", "TOUBA_TRACE_QA_DATABASE"], {
     encoding: "utf8", timeout: 20000, env: { ...process.env,
       TOUBA_TRACE_QA_DATABASE: `postgresql://trace_test:isolated-trace-test@127.0.0.1:${port}/trace_test` },

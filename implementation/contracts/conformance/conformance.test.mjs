@@ -9,6 +9,8 @@ import { runConformance } from "./runner.mjs";
 import principalAdapter from "./principal-runtime-adapter.mjs";
 import { baseAir, baseTrace } from "./corpus.mjs";
 import { validateAirMachineContract, validateTraceMachineContract } from "../machine/contracts.mjs";
+import { fileURLToPath } from "node:url";
+
 
 test("runs the public corpus in contract-only mode", async () => {
   const report = await runConformance();
@@ -39,7 +41,7 @@ test("requires a terminal reason instead of inferring one from status", () => {
 test("package runs outside the workspace without dependencies", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "touba-conformance-"));
   try {
-    const packageRoot = path.resolve(new URL("..", import.meta.url).pathname);
+    const packageRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
     const packed = spawnSync("npm", ["pack", "--silent", packageRoot], {
       cwd: root,
       encoding: "utf8",

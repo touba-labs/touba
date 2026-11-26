@@ -8,6 +8,8 @@ import { spawnSync } from 'node:child_process';
 import { prepareValidationPlan, validationPlanCommand } from '../src/validation-plan-command.mjs';
 import { readValidationPlan } from '../../touba-project-server/src/project-validation.mjs';
 import { validateObject } from '../../../contracts/product-surfaces/validate.mjs';
+import { fileURLToPath } from "node:url";
+
 
 const reviewSchema = JSON.parse(readFileSync(new URL('../../../contracts/product-surfaces/schemas/touba-validation-plan-review-v1.schema.json', import.meta.url)));
 
@@ -20,7 +22,7 @@ test('validation help works outside a project and does not inspect or write file
     assert.match(result.text, /--review-digest/);
     assert.match(result.text, /--python/);
   }
-  const result = spawnSync(process.execPath, [new URL('../src/main.mjs', import.meta.url).pathname,
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../src/main.mjs', import.meta.url)),
     'validation', 'plan', '--help'], { cwd: tmpdir(), encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Preview first/);
@@ -93,7 +95,7 @@ test('Python interpreter pinning reads bytes without starting the executable', t
 });
 test('the real CLI previews and writes a plan with the exact reviewed digest', t => {
   const { root } = fixture(t);
-  const args = [new URL('../src/main.mjs', import.meta.url).pathname, 'validation', 'plan',
+  const args = [fileURLToPath(new URL('../src/main.mjs', import.meta.url)), 'validation', 'plan',
     '--root', root, '--id', 'contracts', '--test', 'tests/demo.test.mjs', '--input', 'handler.mjs'];
   const preview = spawnSync(process.execPath, args, { encoding: 'utf8' });
   assert.equal(preview.status, 0, preview.stderr);

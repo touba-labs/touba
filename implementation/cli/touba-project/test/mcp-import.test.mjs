@@ -6,8 +6,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { importMcpTools } from "../src/mcp-import.mjs";
+import { fileURLToPath } from "node:url";
 
-const cliPath = new URL("../src/main.mjs", import.meta.url).pathname;
+
+const cliPath = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 
 test("mcp import plans and writes governed Touba artifacts from a tools snapshot", () => {
   const root = tempRoot();

@@ -25,7 +25,7 @@ import { validateObject } from "../../../tools/validate-product-surface-contract
 import { createToubaProjectServer } from "../../touba-project-server/src/serve.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
-const cliPath = new URL("../src/main.mjs", import.meta.url).pathname;
+const cliPath = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 const implementationRoot = join(testDir, "../../..");
 const releaseVersion = JSON.parse(readFileSync(join(implementationRoot, "package.json"), "utf8")).version;
 const linearAirFixture = join(implementationRoot, "tests/air/tb-v01-001-linear-skill.air.json");

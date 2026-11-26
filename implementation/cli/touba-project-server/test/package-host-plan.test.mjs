@@ -93,7 +93,7 @@ strategy Run
   assert.equal((await prepareProject({ root: project, mode: 'write' })).status, 'success');
   for (const activate of [false, true]) {
     // The actual public CLI is restarted, not an in-process loader surrogate.
-    const cli = new URL('../../touba-project/src/main.mjs', import.meta.url).pathname;
+    const cli = fileURLToPath(new URL('../../touba-project/src/main.mjs', import.meta.url));
     const child = spawn(process.execPath, [cli, 'serve', '--project-root', project, '--port', '0', ...(activate ? ['--package-hosts'] : [])], { stdio: ['ignore', 'pipe', 'pipe'] });
     const closed = once(child, 'close'); let errors = '', output = '';
     child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-8000); });

@@ -6,8 +6,10 @@ import test from "node:test";
 import { loadHumanDecisionStore, saveHumanDecisionStore, pageHumanDecisions, readHumanRequestStore, saveHumanRequestStore } from "../src/human-stores.mjs";
 import { createToubaProjectServer, listHumanDecisions, pagePendingHumanRequests } from "../src/serve.mjs";
 import { validateObject } from "../../../contracts/product-surfaces/validate.mjs";
+import { fileURLToPath } from "node:url";
 
-const contractsRoot = new URL("../../../contracts/product-surfaces/", import.meta.url).pathname;
+
+const contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url));
 const schema = JSON.parse(readFileSync(join(contractsRoot, "schemas/touba-human-decision-history-v1.schema.json")));
 const approval = JSON.parse(readFileSync(join(contractsRoot, "fixtures/valid/touba-approval-decision-v1.json")));
 const review = JSON.parse(readFileSync(join(contractsRoot, "fixtures/valid/touba-human-review-decision-v1.json")));

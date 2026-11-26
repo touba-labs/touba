@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installToolchainPayload } from "./install-toolchain-payload.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
+import { fileURLToPath } from "node:url";
+
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "touba-install-preservation-"));
@@ -55,7 +57,7 @@ test("candidate corruption, concurrent installation and unsafe targets leave the
 test("installer command executes through a symlinked temporary parent", t => {
   const { root, candidate } = fixture(t);
   const a = candidate("candidate"), alias = join(root, "script-alias");
-  symlinkSync(new URL(".", import.meta.url).pathname, alias, process.platform === "win32" ? "junction" : "dir");
+  symlinkSync(fileURLToPath(new URL(".", import.meta.url)), alias, process.platform === "win32" ? "junction" : "dir");
   const report = JSON.parse(execFileSync(process.execPath, [join(alias, "install-toolchain-payload.mjs"),
     "--source", a.dir, "--prefix", join(root, "installed")], { encoding: "utf8" }));
   assert.equal(report.build_id, a.build.id);

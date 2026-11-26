@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
-const cliPath = new URL("../src/main.mjs", import.meta.url).pathname;
+const cliPath = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 
 test("CLI registry resolve writes a verified draft static lock with explicit opt-in", () => {
   const fixture = createRegistryFixture();

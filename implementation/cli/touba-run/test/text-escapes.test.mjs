@@ -5,6 +5,8 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
+import { fileURLToPath } from "node:url";
+
 
 test("Text escapes survive compilation, function calls, runtime and JSON traces exactly once", async () => {
   const root = mkdtempSync(join(tmpdir(), "touba-text-escapes-"));
@@ -26,7 +28,7 @@ strategy Run
         give body
 `);
     const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",
-      new URL("../../../Cargo.toml", import.meta.url).pathname, "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
+      fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)), "-p", "touba-cli", "--bin", "touba-compile", "--", source], { encoding: "utf8" }));
     const expected = 'Hello\nLine\t"two"\r\n😀\b\f/\\n';
     const result = await executeAirDocument(air, { entryRef: "strategy:text.check/Run" });
     assert.equal(result.status, "success", JSON.stringify(result));

@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 export const RELEASE_ASSETS_SCHEMA_VERSION = "touba-github-release-assets-v1";
 export const PUBLIC_RELEASE_PLATFORMS = Object.freeze([
@@ -20,7 +20,7 @@ export const PUBLIC_RELEASE_PLATFORMS = Object.freeze([
   "linux-x64",
   "win32-x64",
 ]);
-const DEFAULT_IMPLEMENTATION_ROOT = resolve(new URL("..", import.meta.url).pathname);
+const DEFAULT_IMPLEMENTATION_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const INSTALLER_FORMATS = { "darwin-arm64": "dmg", "darwin-x64": "dmg", "linux-x64": "deb", "win32-x64": "exe" };
 
 export function assembleReleaseAssets(options = {}) {

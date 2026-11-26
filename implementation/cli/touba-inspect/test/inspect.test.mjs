@@ -15,6 +15,8 @@ import {
 } from "../src/inspect.mjs";
 import { projectExplorer } from "../src/explorer/model.mjs";
 import { compileTestAir } from "../../../tests/helpers/compile.mjs";
+import { fileURLToPath } from "node:url";
+
 
 test("inspection and Explorer expose source and consumer tool approval requirements", () => {
   const source = path.join(implementationDir, "grammar/tree-sitter-touba/examples/human-approval-v1/positive/tool-approval.tb");
@@ -151,7 +153,7 @@ test("inspects the effective project from one model in text and JSON without sen
     assert.deepEqual(projectInspectionContract(inspection), artifact);
 
     const cli = spawnSync(process.execPath, [
-      new URL("../src/inspect.mjs", import.meta.url).pathname,
+      fileURLToPath(new URL("../src/inspect.mjs", import.meta.url)),
       artifactPath,
       "--json",
     ], { encoding: "utf8" });

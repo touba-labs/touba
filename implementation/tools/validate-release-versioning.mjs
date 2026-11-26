@@ -5,7 +5,7 @@ import {
   readFileSync,
 } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 export const RELEASE_VERSIONING_SCHEMA_VERSION = "touba-release-versioning-report-v1";
 
@@ -28,7 +28,7 @@ const RELEASE_NOTE_REQUIRED_HEADINGS = Object.freeze([
 ]);
 
 export function buildReleaseVersioningReport(options = {}) {
-  const implementationRoot = resolve(options.implementationRoot ?? new URL("..", import.meta.url).pathname);
+  const implementationRoot = resolve(options.implementationRoot ?? fileURLToPath(new URL("..", import.meta.url)));
   const repoRoot = resolve(options.repoRoot ?? join(implementationRoot, ".."));
   const expectedVersion = options.expectedVersion;
   const diagnostics = [];

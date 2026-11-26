@@ -12,6 +12,8 @@ import { validateObject } from "../../../tools/validate-product-surface-contract
 import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
 import { attachTraceReader } from "../../../runtime/touba-runtime/src/trace-builder.mjs";
 import { executeProjectSandboxRun, loadSandboxCheckpointStore } from "../src/serve.mjs";
+import { fileURLToPath } from "node:url";
+
 
 const sample = JSON.parse(readFileSync(new URL("../../../tests/traces/tb-v01-003-branch.trace.json", import.meta.url), "utf8"));
 const schema = JSON.parse(readFileSync(new URL("../../../contracts/product-surfaces/schemas/touba-run-trace-export-v1.schema.json", import.meta.url), "utf8"));
@@ -33,8 +35,8 @@ function temporary(t) { const root = mkdtempSync(join(tmpdir(), "touba-native-tr
 
 test("a real approval resume retains sealed observation times and detects timestamp tampering", async t => {
   const projectRoot = temporary(t), runId = "run:timestamp-resume";
-  const air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path", new URL("../../../Cargo.toml", import.meta.url).pathname,
-    "-p", "touba-cli", "--bin", "touba-compile", "--", new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/typed-approval.tb", import.meta.url).pathname], { encoding: "utf8" }));
+  const air = JSON.parse(execFileSync("cargo", ["run", "--quiet", "--manifest-path", fileURLToPath(new URL("../../../Cargo.toml", import.meta.url)),
+    "-p", "touba-cli", "--bin", "touba-compile", "--", fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/typed-approval.tb", import.meta.url))], { encoding: "utf8" }));
   const options = { entryRef: "strategy:approval_result/Receipt", runId, inputs: { dossier: "invoice" }, durableHumanApprovals: true };
   const paused = await withNativeTrace({ projectRoot, runId, phase: "initial" }, () => executeAirDocument(air, options));
   assert.equal(paused.reason, "human_approval_pending");
@@ -257,13 +259,13 @@ strategy Run
         give value
 ` : 'module bounded_server\nstrategy Run\n    gives Text\n    do\n        bind value as Text = "retained"\n        give value\n');
   writeFileSync(join(projectRoot, "touba.project.json"), JSON.stringify({ entry: targetRef }));
-  const air = execFileSync(new URL("../../../target/debug/touba-compile", import.meta.url).pathname, [source], { encoding: "utf8" });
+  const air = execFileSync(fileURLToPath(new URL("../../../target/debug/touba-compile", import.meta.url)), [source], { encoding: "utf8" });
   writeFileSync(join(projectRoot, ".touba/air/main.air.json"), air);
   const traceStorage = createSqliteTraceStore({ filename: join(projectRoot, "traces.sqlite"), maxDocumentBytes: 1 });
   try {
     const output = await executeProjectSandboxRun({
       projectRoot, traceStorage, executionKind: "entrypoint", runId: "sequential-reader", operationId: "operation:sequential-reader",
-      contractsRoot: new URL("../../../contracts/product-surfaces/", import.meta.url).pathname,
+      contractsRoot: fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url)),
       request: { schema_version: "touba-sandbox-run-request-v1", execution_kind: "entrypoint", target_ref: targetRef,
         effect_policy: "runtime_only", inputs: {}, requested_by: { kind: "service", id: "trace-test" }, reason: "Validate checkpoint readers." },
     });
