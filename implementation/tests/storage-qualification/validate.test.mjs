@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 test("OS ENOSPC preserves records and traces, refuses dispatch, and recovers after space is released", { timeout: 60000 }, t => {
   const name = `touba-storage-qa-${randomUUID()}`;
   const source = fileURLToPath(new URL("../../", import.meta.url));
-  const image = "node:24.22.3-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205";
+  const image = "node:24.22.3-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530";
   const docker = args => execFileSync("docker", args, { encoding: "utf8", timeout: 45000, stdio: ["ignore", "pipe", "pipe"] });
   t.after(() => {
     // A timed-out child must not leave the isolated container running.

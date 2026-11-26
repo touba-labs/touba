@@ -98,3 +98,22 @@ test("failed CLI preserves exit status without leaking stderr", async t => {
     return true;
   });
 });
+
+test("malformed and unrecognized command failures never expose arbitrary diagnostic text", async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-untrusted-diagnostic-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const privateText = "PRIVATE_DIAGNOSTIC_SENTINEL";
+  for (const [output, expectedCode] of [[privateText + "{", "EngineCommandFailed"], [JSON.stringify({ code: "PrivateCustomFailure", message: privateText }), "InvalidRunResult"]]) {
+    const file = join(root, "failed.mjs");
+    writeFileSync(file, `process.stdout.write(${JSON.stringify(output)});process.stderr.write(${JSON.stringify(privateText)});process.exitCode=17;`);
+    const engine = new ToubaEngine({ projectRoot: root, command: process.execPath, commandArgs: [file] });
+    await assert.rejects(engine.run({ airJson: {} }), error => {
+      assert.doesNotMatch(JSON.stringify(error), /PRIVATE_DIAGNOSTIC_SENTINEL|PrivateCustomFailure/);
+      assert.doesNotMatch(error.message, /PRIVATE_DIAGNOSTIC_SENTINEL|PrivateCustomFailure/);
+      assert.equal(error.code, expectedCode);
+      assert.equal(error.details.exitCode, 17);
+      assert.equal(error.details.stage, "result_transport");
+      return true;
+    });
+  }
+});

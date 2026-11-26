@@ -596,6 +596,27 @@ strategy Run
             _result(interrupted, 1)
         self.assertEqual(failed.exception.code, "ExecutionInterrupted")
 
+    def test_malformed_and_unknown_command_failures_do_not_expose_private_diagnostics(self):
+        sentinel = "PRIVATE_DIAGNOSTIC_SENTINEL"
+        for output, code in [(sentinel + "{", "EngineCommandFailed"),
+                             (json.dumps({"code": "PrivateCustomFailure", "message": sentinel}), "InvalidRunResult")]:
+            script = self.root / "failed.mjs"
+            script.write_text(f"process.stdout.write({json.dumps(output)});process.stderr.write({json.dumps(sentinel)});process.exitCode=17;")
+            options = dict(project_root=self.root, command=NODE, command_args=[str(script)])
+            def check(error):
+                self.assertEqual(error.code, code)
+                self.assertNotIn(sentinel, str(error))
+                self.assertNotIn(sentinel, str(error.details))
+                self.assertNotIn("PrivateCustomFailure", str(error.details))
+            with self.assertRaises(ToubaEngineError) as failed:
+                ToubaEngine(**options).run(air_json={})
+            check(failed.exception)
+            async def exercise():
+                with self.assertRaises(ToubaEngineError) as failed:
+                    await AsyncToubaEngine(**options).run(air_json={})
+                check(failed.exception)
+            asyncio.run(exercise())
+
     def test_timeout_and_sync_cancellation_kill_dedicated_process(self):
         (self.root / "blocked.mjs").write_text('setInterval(()=>{}, 1000);')
         engine = ToubaEngine(self.root, command=NODE, command_args=[str(self.root / "blocked.mjs")])

@@ -328,7 +328,12 @@ export class ToubaEngine {
       const expectedExit = envelope?.status === "success" ? 0
         : envelope?.status === "cancelled" || envelope?.reason === "human_approval_cancelled" ? 5
           : envelope?.status === "stopped" ? (["human_approval_pending", "user_input_pending"].includes(envelope.reason) ? 3 : 4) : 1;
-      if (!validEnvelope || (admissionRefused ? ![1, 2].includes(result.status) : result.status !== expectedExit) || envelope.status === "failure") {
+      if (!validEnvelope) {
+        throw new ToubaEngineError("run", "Invalid Touba run result", {
+          code: "InvalidRunResult", exitCode: result.status, stage: "result_transport",
+        });
+      }
+      if ((admissionRefused ? ![1, 2].includes(result.status) : result.status !== expectedExit) || envelope.status === "failure") {
         const message = validEnvelope && admissionRefused ? {
           AirUnreadable: "Touba cannot read the AIR file. Check its path relative to projectRoot, its read permissions, and that compilation or project preparation has completed successfully.",
           AirInvalid: "The file was read, but is not valid Touba AIR. Recompile the saved .tb source with a compatible Touba version, or prepare the project again.",
