@@ -40,8 +40,10 @@ class Backend:
         self.child = subprocess.Popen([executable, *arguments], env=environment,
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       shell=False, bufsize=0)
-        threading.Thread(target=self._read, daemon=True).start()
-        threading.Thread(target=self._stderr, daemon=True).start()
+        self.reader_thread = threading.Thread(target=self._read, daemon=True)
+        self.stderr_thread = threading.Thread(target=self._stderr, daemon=True)
+        self.reader_thread.start()
+        self.stderr_thread.start()
 
     def pack(self, value, owned_callbacks=None, depth=0):
         if depth > 100:
@@ -209,6 +211,12 @@ class Backend:
             self.child.wait(timeout=1)
         except subprocess.TimeoutExpired:
             self.child.kill(); self.child.wait()
+        current = threading.current_thread()
+        for reader in (self.reader_thread, self.stderr_thread):
+            if reader is not current:
+                reader.join(timeout=1)
+        self.child.stdout.close()
+        self.child.stderr.close()
         self.executor.shutdown(wait=False, cancel_futures=True)
 
 

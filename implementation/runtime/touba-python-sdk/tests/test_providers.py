@@ -103,6 +103,12 @@ async def decide_agent_capability(request):
         from touba_sdk._backend import Backend
         backend = Backend()
         backend.close()
+        self.assertIsNotNone(backend.child.poll())
+        self.assertTrue(backend.child.stdin.closed)
+        self.assertTrue(backend.child.stdout.closed)
+        self.assertTrue(backend.child.stderr.closed)
+        self.assertFalse(backend.reader_thread.is_alive())
+        self.assertFalse(backend.stderr_thread.is_alive())
         with self.assertRaises(ToubaAgentDecisionProviderError) as raised:
             backend.request(method='create', kind='fixture', options={}).result(timeout=2)
         self.assertEqual(raised.exception.code, 'PythonHostUnavailable')
