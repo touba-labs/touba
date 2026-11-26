@@ -38,6 +38,8 @@ async function request(path, expected, body) {
       method: body === undefined ? "GET" : "POST", path: path.split("?")[0], phase,
       code: error.cause?.code ?? error.code ?? error.name,
       outcome_unknown: body !== undefined,
+      ...(path === '/runs/sandbox/resume' && typeof body?.request_id === 'string'
+        ? { request_id: body.request_id } : {}),
     });
     throw error;
   }

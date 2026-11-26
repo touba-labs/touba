@@ -2224,10 +2224,14 @@ async function qualifyHttpHistoryMatrix(root, history, marker, t) {
         // processes. Keep its exact origin and source path; never reattribute
         // these completed runs to a future build during diagnosis.
         cpSync(join(backup, "state"), join(evidence, "state"), { recursive: true });
+        // All timed workers have stopped. Keep their observed terminal files
+        // separately from the baseline, including failed/uncertain outcomes.
+        cpSync(state, join(evidence, "observed-state"), { recursive: true });
+        if (existsSync(marker)) cpSync(marker, join(evidence, "observed-dispatches.txt"));
         cpSync(root, join(evidence, "project"), { recursive: true, filter: source => source !== state && source !== marker });
         writeJson(join(evidence, "preservation.json"), {
           history, originalProjectRoot: root, origin: readJson(join(backup, "state/state-origin.json")),
-          note: "Coherent synthetic baseline retained after all timed processes; not new outcomes.",
+          note: "state is the coherent baseline, not new outcomes; observed-state is the stopped workers' final evidence and is not a success assertion. A completed matrix deliberately corrupts its last checkpoint for the final refusal test.",
         });
         t.diagnostic(`Preserved coherent synthetic baseline: ${evidence}`);
       }
