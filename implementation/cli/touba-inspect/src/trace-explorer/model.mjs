@@ -29,6 +29,23 @@ function bounded(value, depth = 0) {
 }
 export function projectEvent(event) {
   const payload = Object.fromEntries(Object.entries(event.payload ?? {}).filter(([key]) => fields.has(key)).map(([key, value]) => [key, bounded(value)]));
+  if (['package_admission_verified', 'package_tool_admitted', 'human_approval_decided', 'tool_approval_authorized'].includes(event.kind)) {
+    for (const key of ['admission_id', 'project_digest', 'package_lock_digest', 'run_plan_digest', 'manifest_digest', 'policy_digest', 'package_digest', 'signer_ref']) {
+      if (typeof event.payload?.[key] === 'string' && /^sha256:[a-f0-9]{64}$/.test(event.payload[key])) payload[key] = event.payload[key];
+    }
+    for (const key of ['request_id', 'approval_request_id', 'package_name', 'package_version']) {
+      if (typeof event.payload?.[key] === 'string' && /^[A-Za-z0-9_:.-]{1,200}$/.test(event.payload[key])) payload[key] = event.payload[key];
+    }
+    if (['approved', 'rejected', 'expired', 'cancelled'].includes(event.payload?.decision)) payload.decision = event.payload.decision;
+    if (event.kind === 'package_admission_verified' && Array.isArray(event.payload?.packages)) {
+      payload.packages = event.payload.packages.slice(0, 100).map(pkg => Object.fromEntries(
+        [['name', pkg?.name], ['version', pkg?.version], ['digest', pkg?.digest]].filter(([key, value]) =>
+          typeof value === 'string' && (key === 'digest' ? /^sha256:[a-f0-9]{64}$/.test(value) : /^[A-Za-z0-9_.+-]{1,200}$/.test(value))),
+      ));
+      payload.packages_total = event.payload.packages.length;
+      payload.packages_omitted = Math.max(0, event.payload.packages.length - payload.packages.length);
+    }
+  }
   if (/^[A-Za-z0-9_:.-]{1,120}$/u.test(event.payload?.reason ?? '')) payload.reason = event.payload.reason;
   // Flatten only explicit, bounded provider facts. Never project host paths,
   // namespace identifiers, prompt text, provider options or arbitrary metadata.

@@ -23,6 +23,23 @@ test('trace origins distinguish the scheduler from applications without trusting
   assert.equal(originLabel({ kind: 'user', id: 'user:42' }, 'en'), 'User · user:42');
 });
 
+test('package inspection retains bounded verified provenance without arbitrary package metadata', () => {
+  const digest = 'sha256:' + 'a'.repeat(64);
+  const event = { kind: 'package_admission_verified', payload: { admission_id: digest,
+    manifest_digest: '/private/PRIVATE_SENTINEL', private_path: '/private/PRIVATE_SENTINEL',
+    packages: Array.from({ length: 101 }, () => ({ name: 'fixture.package', version: '1.0.0-rc.1', digest,
+      private_path: '/private/PRIVATE_SENTINEL', description: 'PRIVATE_SENTINEL' })) } };
+  const projected = projectEvent(event).payload;
+  assert.equal(projected.admission_id, digest);
+  assert.equal(projected.packages.length, 100);
+  assert.equal(projected.packages_total, 101);
+  assert.equal(projected.packages_omitted, 1);
+  assert.deepEqual(projected.packages[0], { name: 'fixture.package', version: '1.0.0-rc.1', digest });
+  assert.equal(projected.manifest_digest, undefined);
+  assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_SENTINEL|private_path|description/);
+  assert.deepEqual(projectEvent({ kind: 'unrecognized_event', payload: { admission_id: digest, packages: event.payload.packages } }).payload, {});
+});
+
 test('tool execution phases remain readable and classify refusals separately from output errors', () => {
   const event = (phase, status) => ({ event_id:'event:test:1', run_id:'test', sequence_index:0,
     kind:'tool_execution_status', payload:{ phase, status, effect_status:'unknown', result_origin:'handler' } });

@@ -15,6 +15,7 @@ import { loadPreparedPackageAdmission } from "../../touba-project-server/src/pre
 import { issuePackageAdmission, packageAdmissionEvidence, withSupplyChainAdmission } from "../../../contracts/package-admission.mjs";
 import { createToubaProjectServer } from "../../touba-project-server/src/serve.mjs";
 import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
+import { projectEvent } from "../../touba-inspect/src/trace-explorer/model.mjs";
 
 const cli = fileURLToPath(new URL("../src/main.mjs", import.meta.url));
 const json = path => JSON.parse(readFileSync(path, "utf8"));
@@ -112,6 +113,13 @@ for (const operation of ["export", "deployment"]) test(`package ${operation}: re
     assert.match(signed.payload.signer_ref, /^sha256:[a-f0-9]{64}$/);
     assert.ok(!JSON.stringify(result.trace).includes("user:reviewer"));
     assert.equal(signed.payload.request_id, approval.payload.request_id);
+    const inspected = projectEvent(result.trace.events.find(e => e.kind === "package_admission_verified")).payload;
+    assert.equal(inspected.admission_id, evidence.admission_id);
+    assert.equal(inspected.packages[0].digest, digest);
+    assert.equal(inspected.packages[0].version, "0.1.1");
+    assert.equal(inspected.packages_omitted, 0);
+    assert.equal(projectEvent(admitted).payload.approval_request_id, approval.payload.request_id);
+    assert.equal(projectEvent(signed).payload.signer_ref, signed.payload.signer_ref);
     t.diagnostic(JSON.stringify({ transport: executionMode, admission_bytes: Buffer.byteLength(JSON.stringify(evidence)), trace_events: result.trace.events.length }));
     await assert.rejects(engine.run({ ...common, humanResumeCheckpoint: common.humanCheckpointOut,
       humanDecisions: { [checkpoint.approval_ref]: { decision: "approved", evidence_ref: "test" } } }), error => error.code === "HumanApprovalCheckpointAlreadyConsumed");
