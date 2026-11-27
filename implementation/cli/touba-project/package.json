@@ -8,7 +8,7 @@
     "touba": "./src/main.mjs"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test --test-timeout=180000 test/*.test.mjs"
   },
   "dependencies": {
     "@touba/deployment": "workspace:*",

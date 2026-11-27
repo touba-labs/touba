@@ -16,6 +16,6 @@
   },
   "scripts": {
     "check:types": "tsc -p tsconfig.check.json",
-    "test": "pnpm run check:types && node --test test/*.test.mjs"
+    "test": "pnpm run check:types && node --test --test-timeout=180000 test/*.test.mjs"
   }
 }

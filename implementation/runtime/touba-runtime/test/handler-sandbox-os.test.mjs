@@ -4,22 +4,24 @@ import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, symlinkSync, rmSyn
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
+import { once } from "node:events";
 import { runProcessToolHandler, buildHandlerSandboxPlan } from "../src/handler-protocol.mjs";
 import { spawnSync } from "node:child_process";
 import { validHandlerIsolationObservation, sameHandlerIsolationIdentity, handlerIsolationIdentity } from '../src/handler-isolation-evidence.mjs';
 
 test("macOS enforces file scopes, inherited child restrictions and separate Unix sockets", { skip: process.platform !== "darwin" }, async t => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "tb-sb-")));
+  // macOS Unix sockets require a short pathname even when TMPDIR is nested.
+  const root = realpathSync(mkdtempSync("/tmp/tb-sb-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const code = join(root, "handler.mjs"), canary = join(root, "private.txt"), output = join(root, "out.txt");
   const allowed = join(root, "allowed"); mkdirSync(allowed);
   symlinkSync(canary, join(allowed, "linked.txt")); writeFileSync(canary, "isolated-canary");
   const tcp = createServer(socket => socket.end());
   const unix = createServer(socket => socket.end());
-  await new Promise(resolve => tcp.listen(0, "127.0.0.1", resolve));
-  const socketPath = join(root, "service.sock");
-  await new Promise(resolve => unix.listen(socketPath, resolve));
   t.after(async () => { await Promise.all([tcp, unix].map(server => new Promise(resolve => server.close(resolve)))); });
+  await once(tcp.listen(0, "127.0.0.1"), "listening");
+  const socketPath = join(root, "service.sock");
+  await once(unix.listen(socketPath), "listening");
   writeFileSync(code, `import fs from 'node:fs'; import {spawnSync} from 'node:child_process'; import net from 'node:net';
 let request=''; for await(const chunk of process.stdin) request+=chunk;
 const safe = fn => { try { fn(); return true; } catch { return false; } };

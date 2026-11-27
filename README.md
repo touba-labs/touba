@@ -286,7 +286,8 @@ manuscripts and explains the scope of their formal results.
 ## Building from source
 
 Requires Node.js 24.22.3 or a newer patched 24.x release, pnpm 10.33.2 and the
-Rust toolchain pinned in `implementation/rust-toolchain.toml`.
+Rust toolchain pinned in `implementation/rust-toolchain.toml`. Use Python 3.11
+or newer with `venv` and `pip` for SDK builds and Python validation.
 
 ```sh
 cd implementation
@@ -301,7 +302,8 @@ TOUBA_PYTHON_BUILD_BIN="$PWD/.venv-sdk-build/bin/python" pnpm validate:v1-local
 > [!TIP]
 > On Windows, use `.venv-sdk-build/Scripts/python.exe` for the builder.
 > `TOUBA_PYTHON_BUILD_BIN` selects that interpreter without changing your
-> application environment.
+> application environment. Set `TOUBA_TEST_PYTHON` to the same interpreter if
+> the runtime tests would otherwise select an older Python from your PATH.
 
 Installed-toolchain recipe checks are run separately against a packaged
 release; the source checks use the compiler built above. Source checks do not

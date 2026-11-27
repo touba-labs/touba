@@ -8,8 +8,8 @@
     ".": "./src/run.mjs"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "test:trigger-runner": "node --test --test-name-pattern \"trigger runner\" test/*.test.mjs",
+    "test": "node --test --test-timeout=180000 test/*.test.mjs",
+    "test:trigger-runner": "node --test --test-timeout=180000 --test-name-pattern \"trigger runner\" test/*.test.mjs",
     "validate:corpus": "node validate-corpus.mjs",
     "validate:corpus:anneau1": "node validate-anneau1-corpus.mjs",
     "validate:corpus:expressions-v1": "node validate-expressions-corpus.mjs",

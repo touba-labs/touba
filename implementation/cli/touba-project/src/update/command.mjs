@@ -180,7 +180,7 @@ export async function updateCommand(args, root) {
   } catch (error) {
     const unmanaged = !error.code && !existsSync(join(root, 'TOOLCHAIN.json'));
     const code = unmanaged ? 'UpdateUnmanagedInstallation' : error.code ?? 'UpdateFailed';
-    const message = unmanaged ? 'Install the latest Touba build from https://toubalang.org/hub/ to enable verified updates.'
+    const message = unmanaged ? 'Install the latest Touba build from https://toubalang.org/hub/telechargements/ to enable verified updates.'
       : error.message;
     return { text: options.json ? JSON.stringify({ schema: 'touba-update-result-v1', status: 'refused', code, message }) : `${code}: ${message}`, exitCode: 2 };
   } finally {

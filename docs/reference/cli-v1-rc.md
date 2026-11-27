@@ -494,6 +494,9 @@ Les traces sont conservées par défaut dans `.touba/traces.sqlite` du projet.
 `--trace-store <base.sqlite>` choisit un autre journal SQLite privé.
 `--trace-out <trace.json>` exporte le document JSON. Voir
 [la conservation des traces](traces-v1-rc.md#conserver-les-traces).
+Si le journal partagé est encore occupé après les tentatives d’écriture,
+le diagnostic `TraceStorageBusy` indique le conflit. Un chemin
+`--trace-store` distinct permet d’isoler le journal d’un lancement.
 
 `--output json-reference` retourne le résultat avec une référence au journal.
 `touba trace read --store <base.sqlite> --reference-json <json> --limit 100`
@@ -720,6 +723,10 @@ touba run program.air.json \
   --run-limits-json '{"max_steps":100,"max_tool_calls":20}' \
   --output trace
 ```
+
+En l’absence de budget de pas déclaré, le runtime applique une limite de
+100 000 pas par exécution. Les budgets explicites restent applicables via
+l’AIR, le manifest et la configuration de l’hôte.
 
 `--run-timeout-ms` produit une annulation `cancelled`. `--max-run-ms` produit un refus de budget avec statut `failure`.
 
