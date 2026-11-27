@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from touba_sdk import (ToubaEngine, ToubaEngineError, ToubaAgentDecisionProviderError,
                        create_ai_sdk_decision_provider, create_memory_decision_history_store,
@@ -46,6 +47,29 @@ def generated(_options):
 
 
 class ProviderTests(unittest.TestCase):
+    def test_backend_preserves_integer_beyond_float_range(self):
+        from touba_sdk._backend import Backend
+        backend = Backend.__new__(Backend)
+        for value in (10**400, -(10**400)):
+            self.assertEqual(backend.pack(value), {"t": "integer", "v": str(value)})
+
+    def test_backend_settles_request_after_malformed_result(self):
+        from touba_sdk._backend import Backend
+        script = """
+import json
+import sys
+request = json.loads(sys.stdin.readline())
+print(json.dumps({"id": request["id"], "result": {"t": "integer", "v": "invalid"}}), flush=True)
+"""
+        with patch.dict(os.environ, {"TOUBA_SDK_SERVICE_COMMAND": json.dumps([sys.executable, "-c", script])}):
+            backend = Backend()
+        try:
+            with self.assertRaises(ToubaAgentDecisionProviderError) as raised:
+                backend.request(method="fixture").result(timeout=2)
+            self.assertEqual(raised.exception.code, "PythonHostUnavailable")
+        finally:
+            backend.close()
+
     def test_callback_failures_are_classified_without_messages_or_hidden_retries(self):
         cases = [(RuntimeError('private-sentinel'), 'PythonHostCallbackFailed'),
                  (ssl.SSLError('private-sentinel'), 'PythonHostTlsFailed'),

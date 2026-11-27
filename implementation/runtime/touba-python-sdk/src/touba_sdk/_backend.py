@@ -5,7 +5,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import contextvars
 import inspect
 import json
-import math
 import os
 import subprocess
 import threading
@@ -54,7 +53,7 @@ class Backend:
             return {"t": "handle", "v": value.handle}
         if isinstance(value, MicroUnits):
             return {"t": "integer", "v": str(value)}
-        if value is None or type(value) in (str, bool) or (type(value) in (int, float) and math.isfinite(value) and abs(value) <= 2**53 - 1):
+        if value is None or type(value) in (str, bool) or (type(value) in (int, float) and abs(value) <= 2**53 - 1):
             return {"t": "value", "v": value}
         if type(value) is int:
             return {"t": "integer", "v": str(value)}
@@ -167,17 +166,28 @@ class Backend:
                             raise _error("PythonHostPayloadInvalid")
                         self.executor.submit(self._callback, message, state)
                     else:
-                        state = self.pending.pop(message["id"], None)
+                        request_id = message["id"]
+                        state = self.pending.get(request_id)
                         if state is None:
                             raise _error("PythonHostPayloadInvalid")
                         future, _, _, timer = state
+                        # Keep the request pending until decoding succeeds so
+                        # close() can settle it if the backend sends invalid data.
+                        running = future.set_running_or_notify_cancel()
+                        failed = "error" in message
+                        if running:
+                            if failed:
+                                error = message["error"]
+                                outcome = _error(error.get("code", "PythonHostUnavailable"), error.get("details"))
+                            else:
+                                outcome = self.unpack(message["result"])
+                        self.pending.pop(request_id)
                         timer.cancel()
-                        if future.cancelled():
-                            continue
-                        if "error" in message:
-                            future.set_exception(_error(message["error"].get("code", "PythonHostUnavailable"), message["error"].get("details")))
-                        else:
-                            future.set_result(self.unpack(message["result"]))
+                        if running:
+                            if failed:
+                                future.set_exception(outcome)
+                            else:
+                                future.set_result(outcome)
         except BaseException:
             pass
         finally:
