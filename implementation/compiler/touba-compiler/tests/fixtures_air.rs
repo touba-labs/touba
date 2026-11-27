@@ -3205,6 +3205,9 @@ fn assert_air_references_resolve(document: &AirDocument) {
             .get(graph.id.as_str())
             .expect("graph should be indexed");
         assert!(node_ids.contains(graph.entry_node_id.as_str()));
+        let expression_ids = expression_ids_by_graph
+            .get(graph.id.as_str())
+            .expect("graph expressions should be indexed");
 
         for node in &graph.nodes {
             if matches!(
@@ -3212,7 +3215,9 @@ fn assert_air_references_resolve(document: &AirDocument) {
                 AirFlowNodeKind::CallFunction
                     | AirFlowNodeKind::CallTool
                     | AirFlowNodeKind::CallSkill
+                    | AirFlowNodeKind::CallStrategy
                     | AirFlowNodeKind::CallAgent
+                    | AirFlowNodeKind::ParallelCall
                     | AirFlowNodeKind::Fallback
             ) {
                 assert!(
@@ -3224,9 +3229,6 @@ fn assert_air_references_resolve(document: &AirDocument) {
             if matches!(node.kind, AirFlowNodeKind::Branch | AirFlowNodeKind::Loop) {
                 assert!(node.condition_ref.is_some());
             }
-            let expression_ids = expression_ids_by_graph
-                .get(graph.id.as_str())
-                .expect("graph expressions should be indexed");
             for argument in &node.arguments {
                 assert_expression_handle_resolves(argument, expression_ids);
             }
@@ -3236,17 +3238,20 @@ fn assert_air_references_resolve(document: &AirDocument) {
             if let Some(condition_ref) = &node.condition_ref {
                 assert_expression_handle_resolves(condition_ref, expression_ids);
             }
+            if let Some(collection_ref) = &node.collection_ref {
+                assert_expression_handle_resolves(collection_ref, expression_ids);
+            }
             for trace_point_ref in &node.trace_point_refs {
                 assert!(trace_ids.contains(trace_point_ref.as_str()));
             }
         }
 
-        let expression_ids = expression_ids_by_graph
-            .get(graph.id.as_str())
-            .expect("graph expressions should be indexed");
         for expression in &graph.expressions {
             for operand in &expression.operands {
                 assert_expression_handle_resolves(operand, expression_ids);
+            }
+            for field in &expression.record_fields {
+                assert_expression_handle_resolves(&field.value_ref, expression_ids);
             }
         }
 
