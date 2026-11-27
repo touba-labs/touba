@@ -142,7 +142,10 @@ test("new module writes canonical dotted module under src", () => {
     assert.equal(readFileSync(sourcePath, "utf8"), "module donnees_quebec.live_search\n");
     assert.throws(() => newModule("scratch", { root }), /at least two lowercase dotted/);
     assert.throws(() => newModule("DonneesQuebec.live_search", { root }), /lowercase dotted/);
+    const edited = "module donnees_quebec.live_search\n# author edit\n";
+    writeFileSync(sourcePath, edited);
     assert.throws(() => newModule("donnees_quebec.live_search", { root }), /already exists/);
+    assert.equal(readFileSync(sourcePath, "utf8"), edited);
   } finally {
     cleanup(root);
   }
@@ -1409,6 +1412,7 @@ test("project run resolution passes an explicit prepared run plan to the low-lev
       () => resolveProjectRunArgs(["legacy.air.json", "--project", root]),
       /positional AIR path/,
     );
+    assert.throws(() => resolveProjectRunArgs(["--project="], { root }), /--project requires a path/);
     assert.throws(
       () => resolveProjectRunArgs(["--project", root, "--entry", "strategy:local.run/Other"]),
       /not a declared project entrypoint/,
@@ -1416,6 +1420,21 @@ test("project run resolution passes an explicit prepared run plan to the low-lev
   } finally {
     cleanup(root);
   }
+});
+
+test("prepare rejects an invalid profile name before compiling or writing", async t => {
+  const root = tempRoot();
+  t.after(() => cleanup(root));
+  const sourcePath = join(root, "source.tb");
+  writeFileSync(sourcePath, "module local.source\n");
+  const report = await prepareProject({
+    root, mode: "write", runProfile: "Release candidate", sourcePaths: [sourcePath],
+    compileSource: () => assert.fail("an invalid profile cannot reach compilation"),
+  });
+  assert.equal(report.status, "error");
+  assert.deepEqual(report.diagnostics.map(entry => entry.code), ["RunPlanSchemaMismatch"]);
+  assert.deepEqual(report.actions, []);
+  assert.equal(existsSync(join(root, ".touba")), false);
 });
 
 test("prepare run plan check reports missing, drift and sensitive payloads", async () => {
@@ -1450,6 +1469,14 @@ test("prepare run plan check reports missing, drift and sensitive payloads", asy
     });
     assert.equal(report.status, "error");
     assert.equal(report.diagnostics.some((item) => item.code === "RunPlanDrift"), true);
+
+    const malformed = join(root, "touba.run-plan.json");
+    writeJson(malformed, { ...JSON.parse(readFileSync(malformed, "utf8")), profile: ["dev"] });
+    const invalidProfile = await prepareProject({
+      root, mode: "check", runPlanPath: malformed,
+      compileSource: () => airDocumentWithPureStrategy(),
+    });
+    assert.ok(invalidProfile.diagnostics.some(item => item.code === "RunPlanSchemaMismatch"));
 
     writeJson(join(root, "touba.run-plan.json"), {
       run_plan_schema_version: "touba-run-plan-v1",
@@ -1560,7 +1587,7 @@ test("prepare ownership reports missing required artifacts and reviews", async (
           reviewers: ["team:security"],
         },
       },
-      reviews: [],
+      reviews: [null],
     }));
 
     const report = await prepareProject({
@@ -1574,6 +1601,8 @@ test("prepare ownership reports missing required artifacts and reviews", async (
     assert.equal(report.status, "error");
     assert.equal(report.diagnostics.some((item) => item.code === "OwnershipMissing"), true);
     assert.equal(report.diagnostics.some((item) => item.code === "ReviewGateMissing"), true);
+    assert.ok(report.diagnostics.some(item => item.code === "OwnershipSchemaMismatch"));
+    assert.deepEqual(report.ownership.review_states, []);
   } finally {
     cleanup(root);
   }

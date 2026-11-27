@@ -267,7 +267,6 @@ export function initProject(options = {}) {
     }
   }
 
-  const gitignorePath = join(root, ".gitignore");
   ensureProjectGitignore(root, created, preserved);
   ensureProjectConfig(root, projectConfig.document, created, preserved);
   ensureLocalSecretSupport(root, created, preserved);
@@ -297,13 +296,14 @@ export function newModule(moduleName, options = {}) {
     ? resolve(root, options.sourcePath)
     : moduleNameToSourcePath(root, moduleName);
 
-  if (existsSync(sourcePath) && options.force !== true) {
-    throw new Error(`module source already exists: ${sourcePath}`);
-  }
-
   mkdirSync(dirname(sourcePath), { recursive: true });
   const content = `module ${moduleName}\n`;
-  writeFileSync(sourcePath, content, "utf8");
+  try {
+    writeFileSync(sourcePath, content, { encoding: "utf8", flag: options.force === true ? "w" : "wx" });
+  } catch (error) {
+    if (error.code === "EEXIST" && options.force !== true) throw new Error(`module source already exists: ${sourcePath}`);
+    throw error;
+  }
 
   return {
     workflow_version: PROJECT_MANIFEST_VERSION,
@@ -384,7 +384,9 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
       }
       projectRoot = resolve(options.root ?? process.cwd(), rawArgs[index]);
     } else if (arg.startsWith("--project=")) {
-      projectRoot = resolve(options.root ?? process.cwd(), arg.slice("--project=".length));
+      const value = arg.slice("--project=".length);
+      if (!value) throw new Error("--project requires a path");
+      projectRoot = resolve(options.root ?? process.cwd(), value);
     } else {
       if (arg === "--profile") profile = rawArgs[index + 1];
       else if (arg.startsWith("--profile=")) profile = arg.slice("--profile=".length);
@@ -418,7 +420,7 @@ export function resolveProjectRunArgs(rawArgs, options = {}) {
     throw new Error(`project config artifact_layout must be ${PROJECT_ARTIFACT_LAYOUT_VERSION}; old layouts are not read or converted`);
   }
   const profileName = profile ?? "dev";
-  if (projectConfig.run_profiles[profileName] === undefined) {
+  if (!Object.hasOwn(projectConfig.run_profiles, profileName)) {
     throw new Error(`unknown run profile ${profileName}`);
   }
   const runPlanPath = resolve(projectRoot, DEFAULT_BUILD_ROOT, profileName, "touba.run-plan.json");
@@ -459,7 +461,6 @@ export async function prepareProject(options = {}) {
   if (!["plan", "check", "write"].includes(mode)) {
     throw new Error(`unsupported prepare mode: ${mode}`);
   }
-
   const projectConfigPath = resolve(root, DEFAULT_PROJECT_CONFIG_PATH);
   const airPaths = normalizeAirPaths(root, options.airPaths);
   const sourcePaths = normalizeSourcePaths(root, options.sourcePaths, airPaths);
@@ -471,16 +472,19 @@ export async function prepareProject(options = {}) {
   const projectConfigResolution = resolveProjectConfigForPrepare(root, diagnostics);
   const languageProfile = projectConfigResolution.profile;
   const runProfile = options.runProfile ?? "dev";
-  if (
+  const validProfile = typeof runProfile === "string" && RUN_PROFILE_PATTERN.test(runProfile);
+  if (!validProfile) {
+    diagnostics.push(errorDiagnostic("RunPlanSchemaMismatch", "run profile names must match [a-z][a-z0-9_-]*"));
+  } else if (
     projectConfigResolution.document !== null
-    && projectConfigResolution.document.run_profiles[runProfile] === undefined
+    && !Object.hasOwn(projectConfigResolution.document.run_profiles, runProfile)
   ) {
     diagnostics.push(errorDiagnostic("ProjectRunProfileUnknown", `run profile ${runProfile} is not declared`, {
       profile: runProfile,
       project_config_path: projectConfigPath,
     }));
   }
-  const buildRoot = resolve(root, DEFAULT_BUILD_ROOT, runProfile);
+  const buildRoot = resolve(root, DEFAULT_BUILD_ROOT, validProfile ? runProfile : "dev");
   const airRoot = join(buildRoot, "air");
   const manifestPath = resolve(
     root,
@@ -506,6 +510,7 @@ export async function prepareProject(options = {}) {
       effective_project_path: null, ownership: null, secret_profiles: [], sources, air_inputs: airPaths,
       packages: [], modules: [], imports: [], tools: [], manifest_requirements: null, actions: [],
       diagnostics: diagnostics.filter((item, index, all) => all.findIndex(other => stableJson(other) === stableJson(item)) === index) });
+  if (!validProfile) return failedPreparation();
   const packageInputs = collectPackageInputs({
     root,
     projectPackageRecords: projectConfigResolution.document?.packages ?? [],
@@ -1854,9 +1859,8 @@ function normalizeProjectLanguage(language) {
 
 function projectLanguageProfile(language) {
   const normalized = normalizeProjectLanguage(language);
-  const profile = PROJECT_LANGUAGE_PROFILES[normalized];
-  if (profile !== undefined) {
-    return profile;
+  if (Object.hasOwn(PROJECT_LANGUAGE_PROFILES, normalized)) {
+    return PROJECT_LANGUAGE_PROFILES[normalized];
   }
   if (RESERVED_PROJECT_LANGUAGES.has(normalized)) {
     throw new Error(`project language ${normalized} is not available in this V1; choose javascript or python`);
@@ -1993,10 +1997,10 @@ export function applyRunProfileToArgs(rawArgs, options = {}) {
   if (projectConfig === null) {
     throw new Error(`run profile ${profileName} requires ${DEFAULT_PROJECT_CONFIG_PATH} in ${root}`);
   }
-  const profile = projectConfig.run_profiles[profileName];
-  if (profile === undefined) {
+  if (!Object.hasOwn(projectConfig.run_profiles, profileName)) {
     throw new Error(`unknown run profile ${profileName}; available profiles: ${Object.keys(projectConfig.run_profiles).sort().join(", ")}`);
   }
+  const profile = projectConfig.run_profiles[profileName];
 
   const nextArgs = [...args];
   if (profile.require_supply_chain_lock === true) {
@@ -3779,8 +3783,10 @@ function validateOwnershipForPrepare({
       inherited_owner_count: effectiveOwners.filter(item => item.inherited).length,
       review_scope_digest: revision,
       target_refs: [...targets.knownTargetRefs].filter(ref => OWNERSHIP_TARGET_REF_PATTERN.test(ref)).sort(),
-      review_states: (document.reviews ?? []).map(review => ({ review_id: review.review_id,
-        state: review.revision === undefined ? 'declared' : review.revision === revision ? 'current' : 'stale' })),
+      review_states: (document.reviews ?? [])
+        .filter(review => typeof review?.review_id === "string")
+        .map(review => ({ review_id: review.review_id,
+          state: review.revision === undefined ? 'declared' : review.revision === revision ? 'current' : 'stale' })),
       gate_count: Object.keys(document.review_gates ?? {}).length,
       review_count: Array.isArray(document.reviews) ? document.reviews.length : 0,
       active_gate_subjects: reviewGate?.subjects ?? [],
@@ -4305,14 +4311,14 @@ function buildExpectedRunPlan({
   }
 
   const runProfiles = projectConfig.run_profiles ?? cloneJson(DEFAULT_RUN_PROFILES);
-  const runProfile = runProfiles[profile];
-  if (runProfile === undefined) {
+  if (!Object.hasOwn(runProfiles, profile)) {
     diagnostics.push(errorDiagnostic("RunPlanSchemaMismatch", `run profile ${profile} is not declared by project config`, {
       profile,
       run_plan_path: runPlanPath,
     }));
     return null;
   }
+  const runProfile = runProfiles[profile];
 
   const entry = resolveRunPlanEntry(preparedAirDocuments, entryRef, diagnostics, runPlanPath);
   if (entry === null) {
@@ -4976,7 +4982,7 @@ function validateRunPlanShape(document, runPlanPath, diagnostics) {
       ok = false;
     }
   }
-  if (document.profile !== undefined && !RUN_PROFILE_PATTERN.test(String(document.profile))) {
+  if (document.profile !== undefined && (typeof document.profile !== "string" || !RUN_PROFILE_PATTERN.test(document.profile))) {
     diagnostics.push(errorDiagnostic("RunPlanSchemaMismatch", "run plan profile name is invalid", {
       run_plan_path: runPlanPath,
       profile: document.profile,
