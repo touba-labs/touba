@@ -2,8 +2,3 @@ module invalid.type_ref
 
 type Draft
     body is MissingText
-
-function Build
-    gives Draft
-    do
-        give Draft

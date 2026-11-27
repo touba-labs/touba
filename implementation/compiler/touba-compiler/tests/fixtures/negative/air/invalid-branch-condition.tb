@@ -3,26 +3,10 @@ module invalid.branch
 type AcceptedDraft
     body is Text
 
-function IsAcceptable
-    gives Boolean
-    do
-        give true
-
 skill ReviewDraft
     gives AcceptedDraft
-    uses IsAcceptable
     do
         if accepted
-            give AcceptedDraft
+            give record AcceptedDraft { body as "accepted" }
         else
             stop
-
-agent Reviewer
-    responsibility "Fulfill the declared Reviewer responsibility using only authorized capabilities."
-    uses ReviewDraft
-
-strategy RunReview
-    uses Reviewer
-    do
-        Reviewer
-        give AcceptedDraft
