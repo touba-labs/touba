@@ -82,7 +82,7 @@ impl<'a> ProjectAirAssembler<'a> {
         // A source limit constrains the whole linked run, never a fresh allowance
         // for each imported call. Type/data imports do not import executable
         // policy. Entry provenance wins ties, then lexical order.
-        let executable_refs: HashSet<_> = assembled
+        let executable_modules: HashSet<_> = assembled
             .definitions
             .functions
             .iter()
@@ -115,17 +115,17 @@ impl<'a> ProjectAirAssembler<'a> {
                     .iter()
                     .map(|item| item.id.as_str()),
             )
+            .filter_map(|reference| {
+                reference
+                    .split_once(':')
+                    .and_then(|(_, rest)| rest.split_once('/'))
+                    .map(|(module, _)| module)
+            })
             .collect();
         let mut budget_modules: Vec<_> = visited_modules
             .iter()
             .filter(|name| {
-                name.as_str() == self.entry_module
-                    || executable_refs.iter().any(|reference| {
-                        reference
-                            .split_once(':')
-                            .and_then(|(_, rest)| rest.split_once('/'))
-                            .is_some_and(|(module, _)| module == name.as_str())
-                    })
+                name.as_str() == self.entry_module || executable_modules.contains(name.as_str())
             })
             .collect();
         budget_modules.sort();
