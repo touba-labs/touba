@@ -14,10 +14,10 @@ const source = block[1].replace(/\n$/, '').split('\n');
 const themes = {
   light: { card: '#f6f8fa', border: '#d0d7de', rule: '#d8dee4', ink: '#1f2328', muted: '#59636e', faint: '#8c959f',
     keyword: '#2f63c6', string: '#0a7c66', type: '#9a6700', accent: '#2f63c6', band: 'rgba(47,99,198,0.09)',
-    node: '#ffffff', dot: '#d0d7de', error: '#cf222e' },
+    node: '#ffffff', dot: '#d0d7de' },
   dark: { card: '#161b22', border: '#30363d', rule: '#262c34', ink: '#e6edf3', muted: '#9198a1', faint: '#6e7681',
     keyword: '#7ea6ff', string: '#5fd4b3', type: '#e3b341', accent: '#7ea6ff', band: 'rgba(126,166,255,0.13)',
-    node: '#0d1117', dot: '#3d444d', error: '#ff7b72' },
+    node: '#0d1117', dot: '#3d444d' },
 };
 const mono = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace";
 const sans = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif";
@@ -146,79 +146,6 @@ function program(theme, narrow = false) {
 `;
 }
 
-// Exact compiler output for README's refusal example; refresh it if diagnostics change.
-const wideSession = [
-  { prompt: true, parts: [['ink', 'touba compile refunds.tb --out refunds.air.json']] },
-  { parts: [['muted', 'refunds.tb:36:9-38:1: '], ['error', 'AgentCallerNotAllowed'], ['ink', ': `strategy:shop.refunds/RefundEverything`']] },
-  { parts: [['ink', 'cannot call agent `agent:shop.refunds/RefundAgent` without a matching `callable_by` rule']] },
-  { prompt: true, parts: [['ink', 'echo $?']] },
-  { parts: [['error', '1']] },
-];
-const narrowSession = [
-  wideSession[0],
-  { parts: [['muted', 'refunds.tb:36:9-38:1: '], ['error', 'AgentCallerNotAllowed'], ['ink', ':']] },
-  { parts: [['ink', '`strategy:shop.refunds/RefundEverything` cannot call']] },
-  { parts: [['ink', 'agent `agent:shop.refunds/RefundAgent` without a']] },
-  { parts: [['ink', 'matching `callable_by` rule']] },
-  wideSession[3], wideSession[4],
-];
-
-function refusal(theme, narrow = false) {
-  const c = themes[theme];
-  const session = narrow ? narrowSession : wideSession;
-  const width = narrow ? 500 : 880, bar = 40, line = 22, char = 7.8, x0 = 24;
-  const height = bar + 18 + session.length * line + 14;
-  const rows = [];
-  let clock = 0.4;
-  session.forEach((row, index) => {
-    const y = bar + 18 + index * line + 15;
-    let column = 0;
-    const spans = [];
-    if (row.prompt) { spans.push(`<tspan class="prompt" x="${x0}">$</tspan>`); column = 2; }
-    const start = column;
-    for (const [kind, text] of row.parts) {
-      spans.push(`<tspan class="${kind}" x="${(x0 + column * char).toFixed(1)}">${esc(text)}</tspan>`);
-      column += text.length;
-    }
-    const length = column - start;
-    let animation;
-    if (row.prompt) {
-      const duration = Math.max(0.2, length * 0.03);
-      const w = Math.ceil(length * char + 3);
-      rows.push(`<text y="${y}">${spans.join('')}</text>`);
-      rows.push(`<rect class="cover" x="${x0 + start * char - 1}" y="${y - 15}" width="${w}" height="${line}" style="transform:translateX(${w}px);animation:t${index} ${duration.toFixed(2)}s steps(${length}) ${clock.toFixed(2)}s backwards"/>`);
-      rows.push(`<style>@keyframes t${index}{from{transform:translateX(0)}to{transform:translateX(${w}px)}}</style>`);
-      clock += duration + 0.35;
-    } else {
-      animation = `animation-delay:${clock.toFixed(2)}s`;
-      rows.push(`<text class="reveal" style="${animation}" y="${y}">${spans.join('')}</text>`);
-      clock += 0.12;
-      if (!session[index + 1] || session[index + 1].prompt) clock += 0.6;
-    }
-  });
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title description">
-  <title id="title">The compiler rejects a caller that is not listed in callable_by</title>
-  <desc id="description">${esc(wideSession.map(row => (row.prompt ? '$ ' : '') + row.parts.map(part => part[1]).join('')).join('\n'))}</desc>
-  <style>
-    text { font-family: ${mono}; font-size: 13px; fill: ${c.ink}; }
-    .prompt { fill: ${c.accent}; font-weight: 700; }
-    .muted { fill: ${c.muted}; }
-    .error { fill: ${c.error}; font-weight: 700; }
-    .file { fill: ${c.muted}; font-size: 12px; }
-    .cover { fill: ${c.card}; }
-    .reveal { animation: reveal 0.35s ease-out backwards; }
-    @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
-    @media (prefers-reduced-motion: reduce) { .cover, .reveal { animation: none !important; } }
-  </style>
-  <rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="14" fill="${c.card}" stroke="${c.border}"/>
-  <path d="M1 ${bar} H${width - 1}" stroke="${c.rule}"/>
-  <circle cx="22" cy="20" r="5" fill="${c.dot}"/><circle cx="40" cy="20" r="5" fill="${c.dot}"/><circle cx="58" cy="20" r="5" fill="${c.dot}"/>
-  <text class="file" x="82" y="24">terminal</text>
-  ${rows.join('\n  ')}
-</svg>
-`;
-}
-
 const stages = [
   { label: '.tb source', detail: ['typed declarations', 'and workflows'], width: 144 },
   { label: 'compiler', detail: ['checks contracts', 'before execution'], width: 144 },
@@ -341,7 +268,5 @@ for (const theme of Object.keys(themes)) {
   writeFileSync(resolve(here, `governed-agent-${theme}-narrow.svg`), program(theme, true));
   writeFileSync(resolve(here, `pipeline-${theme}.svg`), pipeline(theme));
   writeFileSync(resolve(here, `pipeline-${theme}-narrow.svg`), pipelineNarrow(theme));
-  writeFileSync(resolve(here, `refusal-${theme}.svg`), refusal(theme));
-  writeFileSync(resolve(here, `refusal-${theme}-narrow.svg`), refusal(theme, true));
 }
 console.log('README visuals written for', Object.keys(themes).join(' and '));

@@ -37,6 +37,15 @@ those capabilities require, and where execution must wait for a human decision.
 Programs use the `.tb` extension and compile to **AIR**, the intermediate
 representation executed by the runtime.
 
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/readme/cli-demo-dark-narrow.svg">
+    <source media="(max-width: 600px)" srcset="assets/readme/cli-demo-light-narrow.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/cli-demo-dark.svg">
+    <img src="assets/readme/cli-demo-light.svg" width="880" alt="Terminal demo. touba run hello.tb prints Touba ready. touba run refunds.tb with --output run-summary returns status approval_pending with steps_used 1, tool_calls_used 0 and provider_calls_used 0. touba run bypass.tb, where a strategy is not listed in callable_by, is refused before running with AgentCallerNotAllowed.">
+  </picture>
+</p>
+
 ## Touba at a glance
 
 <p align="center">
@@ -49,7 +58,7 @@ representation executed by the runtime.
 </p>
 
 <details>
-<summary><b>Copy <code>refunds.tb</code></b></summary>
+<summary><b>Copy <code>refunds.tb</code> and try the refusal</b></summary>
 
 <!-- touba-example: compile -->
 ```touba
@@ -85,9 +94,8 @@ strategy HandleRefund
         give receipt
 ```
 
-</details>
 
-Append a strategy that is not listed in `callable_by`, and the build fails
+Append this strategy, which is not listed in `callable_by`, and the build fails
 before anything runs:
 
 <!-- touba-example: fragment -->
@@ -100,14 +108,7 @@ strategy RefundEverything
             with order as order
 ```
 
-<p align="center">
-  <picture>
-    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/readme/refusal-dark-narrow.svg">
-    <source media="(max-width: 600px)" srcset="assets/readme/refusal-light-narrow.svg">
-    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/refusal-dark.svg">
-    <img src="assets/readme/refusal-light.svg" width="880" alt="$ touba compile refunds.tb --out refunds.air.json. Output: refunds.tb:36:9-38:1: AgentCallerNotAllowed: `strategy:shop.refunds/RefundEverything` cannot call agent `agent:shop.refunds/RefundAgent` without a matching `callable_by` rule. The command exits with status 1.">
-  </picture>
-</p>
+</details>
 
 ## What you can build
 
@@ -192,6 +193,28 @@ Install a host SDK from your application's directory with
 `touba sdk install javascript` or `touba sdk install python`. The SDKs ship
 with the toolchain, so there is no unpublished package to find on npm or PyPI.
 Both use Touba's runtime and governance contracts.
+
+## Explore a project
+
+`touba explore` opens a read-only view of a project, compiled locally from its
+sources: the architecture, each contract, the flow of a strategy with its
+approvals, and the declared governance. No model or external service is needed.
+
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/readme/explore-dark-narrow.svg">
+    <source media="(max-width: 600px)" srcset="assets/readme/explore-light-narrow.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/explore-dark.svg">
+    <img src="assets/readme/explore-light.svg" width="880" alt="Touba Explorer on a project: the module, the contract of the Specialist agent, the flow of the Review strategy with its human approval for the incident_manager role, then the declared governance relations.">
+  </picture>
+</p>
+
+```sh
+touba explore my-project
+```
+
+The [Explorer tutorial](docs/tutoriels/explorer-un-projet.md) shows how to build
+the example above. In VS Code, **Touba: Explore Project** opens the same views.
 
 ## Core concepts
 

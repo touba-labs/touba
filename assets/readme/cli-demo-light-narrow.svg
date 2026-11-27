@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="389" viewBox="0 0 500 389" role="img" aria-label="Touba CLI demo: touba run executes a source file, pauses for a human approval with no tool or model call, then refuses an unauthorized caller before running.">
+<style>
+  text { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-size: 13px; fill: #1f2328; white-space: pre; }
+  .cover { fill: #f6f8fa; animation: 16.404000000000003s linear infinite; }
+  .out { opacity: 0; animation: 16.404000000000003s linear infinite; }
+  .scene { opacity: 0; animation: 16.404000000000003s ease infinite; }
+  .chip { fill: #f6f8fa; stroke: #d0d7de; }
+  .on { fill: none; stroke: #2f63c6; stroke-width: 1.6; opacity: 0; animation: 16.404000000000003s ease infinite; }
+  .caption { opacity: 0; animation: 16.404000000000003s ease infinite; }
+  .num { font: 700 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; fill: #ffffff; text-anchor: middle; }
+  .label { font: 600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; fill: #1f2328; }
+  .big { font-size: 15px; }
+  .file { font-size: 12px; fill: #59636e; }
+  @keyframes sc0{0%,1.219%{opacity:0}2.438%,53.694%{opacity:1}55.218%,100%{opacity:0}}
+  @keyframes t0_0{0%,3.048%{transform:translateX(0);animation-timing-function:steps(18,end)}5.462%,100%{transform:translateX(145px)}}
+  @keyframes o0_1{0%,8.083%{opacity:0}8.815%,100%{opacity:1}}
+  @keyframes t0_2{0%,13.875%{transform:translateX(0);animation-timing-function:steps(22,end)}16.825%,100%{transform:translateX(176px)}}
+  @keyframes t0_3{0%,17.313%{transform:translateX(0);animation-timing-function:steps(40,end)}22.677%,100%{transform:translateX(316px)}}
+  @keyframes t0_4{0%,23.165%{transform:translateX(0);animation-timing-function:steps(49,end)}29.737%,100%{transform:translateX(387px)}}
+  @keyframes o0_5{0%,32.358%{opacity:0}33.089%,100%{opacity:1}}
+  @keyframes o0_6{0%,32.663%{opacity:0}33.394%,100%{opacity:1}}
+  @keyframes o0_7{0%,32.968%{opacity:0}33.699%,100%{opacity:1}}
+  @keyframes o0_8{0%,33.272%{opacity:0}34.004%,100%{opacity:1}}
+  @keyframes o0_9{0%,33.577%{opacity:0}34.309%,100%{opacity:1}}
+  @keyframes o0_10{0%,33.882%{opacity:0}34.614%,100%{opacity:1}}
+  @keyframes o0_11{0%,34.187%{opacity:0}34.918%,100%{opacity:1}}
+  @keyframes o0_12{0%,34.492%{opacity:0}35.223%,100%{opacity:1}}
+  @keyframes sc1{0%,54.913%{opacity:0}56.133%,96.952%{opacity:1}98.476%,100%{opacity:0}}
+  @keyframes t1_0{0%,56.742%{transform:translateX(0);animation-timing-function:steps(19,end)}59.290%,100%{transform:translateX(153px)}}
+  @keyframes o1_1{0%,61.912%{opacity:0}62.643%,100%{opacity:1}}
+  @keyframes o1_2{0%,62.217%{opacity:0}62.948%,100%{opacity:1}}
+  @keyframes o1_3{0%,62.521%{opacity:0}63.253%,100%{opacity:1}}
+  @keyframes o1_4{0%,62.826%{opacity:0}63.558%,100%{opacity:1}}
+  @keyframes o1_5{0%,63.131%{opacity:0}63.862%,100%{opacity:1}}
+  @keyframes o1_6{0%,63.436%{opacity:0}64.167%,100%{opacity:1}}
+  @keyframes t1_7{0%,69.227%{transform:translateX(0);animation-timing-function:steps(19,end)}71.775%,100%{transform:translateX(153px)}}
+  @keyframes o1_8{0%,74.396%{opacity:0}75.128%,100%{opacity:1}}
+  @keyframes o1_9{0%,74.701%{opacity:0}75.433%,100%{opacity:1}}
+  @keyframes o1_10{0%,75.006%{opacity:0}75.738%,100%{opacity:1}}
+  @keyframes o1_11{0%,75.311%{opacity:0}76.042%,100%{opacity:1}}
+  @keyframes st0{0%,2.134%{opacity:0}3.658%,11.131%{opacity:1}12.351%,100%{opacity:0}}
+  @keyframes st1{0%,12.960%{opacity:0}14.484%,52.170%{opacity:1}53.389%,100%{opacity:0}}
+  @keyframes st2{0%,55.828%{opacity:0}57.352%,95.428%{opacity:1}96.647%,100%{opacity:0}}
+  @media (prefers-reduced-motion: reduce) { .cover, .out, .scene, .on, .caption { animation: none; } .out, .scene.still, .caption.still { opacity: 1; } .cover { display: none; } }
+</style>
+<rect width="500" height="389" fill="#ffffff"/>
+<g class="caption" style="animation-name:st0" transform="translate(157.9 8)"><rect width="28" height="28" rx="8" fill="#2f63c6"/><text class="num" x="14" y="19.5">1</text><text class="label big" x="38" y="19.5">Run a source file</text></g><g class="caption still" style="animation-name:st1" transform="translate(157.9 8)"><rect width="28" height="28" rx="8" fill="#2f63c6"/><text class="num" x="14" y="19.5">2</text><text class="label big" x="38" y="19.5">Waits for a human</text></g><g class="caption" style="animation-name:st2" transform="translate(106.30000000000001 8)"><rect width="28" height="28" rx="8" fill="#2f63c6"/><text class="num" x="14" y="19.5">3</text><text class="label big" x="38" y="19.5">Bypass refused before running</text></g>
+<rect x="0.5" y="50.5" width="499" height="338" rx="14" fill="#f6f8fa" stroke="#d0d7de"/>
+<path d="M1 86 H499" stroke="#d8dee4"/>
+<circle cx="22" cy="68" r="5" fill="#d0d7de"/><circle cx="40" cy="68" r="5" fill="#d0d7de"/><circle cx="58" cy="68" r="5" fill="#d0d7de"/>
+<text class="file" x="82" y="72">~/shop</text>
+  <g class="scene still" style="animation-name:sc0">
+    <text y="115"><tspan x="22" fill="#2f63c6" font-weight="700">$</tspan><tspan x="37.6">touba run hello.tb</tspan></text>
+    <rect class="cover" x="36.6" y="100" width="145" height="21" style="animation-name:t0_0;transform:translateX(145px)"/>
+    <text class="out" y="136" x="22" style="animation-name:o0_1"><tspan>Touba ready</tspan></text>
+    <text y="157"><tspan x="22" fill="#2f63c6" font-weight="700">$</tspan><tspan x="37.6">touba run refunds.tb \</tspan></text>
+    <rect class="cover" x="36.6" y="142" width="176" height="21" style="animation-name:t0_2;transform:translateX(176px)"/>
+    <text y="178"><tspan x="22">    --inputs-json '{"order":"A-1042"}' \</tspan></text>
+    <rect class="cover" x="21" y="163" width="316" height="21" style="animation-name:t0_3;transform:translateX(316px)"/>
+    <text y="199"><tspan x="22">    --output run-summary | jq '{status, budgets}'</tspan></text>
+    <rect class="cover" x="21" y="184" width="387" height="21" style="animation-name:t0_4;transform:translateX(387px)"/>
+    <text class="out" y="220" x="22" style="animation-name:o0_5"><tspan>{</tspan></text>
+    <text class="out" y="241" x="22" style="animation-name:o0_6"><tspan>  </tspan><tspan fill="#2f63c6">"status"</tspan><tspan>:</tspan><tspan> </tspan><tspan fill="#0a7c66">"approval_pending"</tspan><tspan>,</tspan></text>
+    <text class="out" y="262" x="22" style="animation-name:o0_7"><tspan>  </tspan><tspan fill="#2f63c6">"budgets"</tspan><tspan>:</tspan><tspan> {</tspan></text>
+    <text class="out" y="283" x="22" style="animation-name:o0_8"><tspan>    </tspan><tspan fill="#2f63c6">"steps_used"</tspan><tspan>:</tspan><tspan> </tspan><tspan fill="#1f2328" font-weight="700">1</tspan><tspan>,</tspan></text>
+    <text class="out" y="304" x="22" style="animation-name:o0_9"><tspan>    </tspan><tspan fill="#2f63c6">"tool_calls_used"</tspan><tspan>:</tspan><tspan> </tspan><tspan fill="#1f2328" font-weight="700">0</tspan><tspan>,</tspan></text>
+    <text class="out" y="325" x="22" style="animation-name:o0_10"><tspan>    </tspan><tspan fill="#2f63c6">"provider_calls_used"</tspan><tspan>:</tspan><tspan> </tspan><tspan fill="#1f2328" font-weight="700">0</tspan></text>
+    <text class="out" y="346" x="22" style="animation-name:o0_11"><tspan>  }</tspan></text>
+    <text class="out" y="367" x="22" style="animation-name:o0_12"><tspan>}</tspan></text>
+  </g>
+  <g class="scene" style="animation-name:sc1">
+    <text y="115"><tspan x="22" fill="#2f63c6" font-weight="700">$</tspan><tspan x="37.6">tail -n 6 bypass.tb</tspan></text>
+    <rect class="cover" x="36.6" y="100" width="153" height="21" style="animation-name:t1_0;transform:translateX(153px)"/>
+    <text class="out" y="136" x="22" style="animation-name:o1_1"><tspan fill="#2f63c6">strategy</tspan><tspan> </tspan><tspan>RefundEverything</tspan></text>
+    <text class="out" y="157" x="22" style="animation-name:o1_2"><tspan>    </tspan><tspan fill="#2f63c6">takes</tspan><tspan> </tspan><tspan>order</tspan><tspan> </tspan><tspan fill="#2f63c6">as</tspan><tspan> </tspan><tspan>Text</tspan></text>
+    <text class="out" y="178" x="22" style="animation-name:o1_3"><tspan>    </tspan><tspan fill="#2f63c6">uses</tspan><tspan> </tspan><tspan>RefundAgent</tspan></text>
+    <text class="out" y="199" x="22" style="animation-name:o1_4"><tspan>    </tspan><tspan fill="#2f63c6">do</tspan></text>
+    <text class="out" y="220" x="22" style="animation-name:o1_5"><tspan>        </tspan><tspan>RefundAgent</tspan></text>
+    <text class="out" y="241" x="22" style="animation-name:o1_6"><tspan>            </tspan><tspan fill="#2f63c6">with</tspan><tspan> </tspan><tspan>order</tspan><tspan> </tspan><tspan fill="#2f63c6">as</tspan><tspan> </tspan><tspan>order</tspan></text>
+    <text y="262"><tspan x="22" fill="#2f63c6" font-weight="700">$</tspan><tspan x="37.6">touba run bypass.tb</tspan></text>
+    <rect class="cover" x="36.6" y="247" width="153" height="21" style="animation-name:t1_7;transform:translateX(153px)"/>
+    <text class="out" y="283" x="22" style="animation-name:o1_8"><tspan fill="#59636e">~/shop/bypass.tb:36:9-38:1: </tspan><tspan fill="#cf222e" font-weight="700">AgentCallerNotAllowed</tspan><tspan>:</tspan></text>
+    <text class="out" y="304" x="22" style="animation-name:o1_9"><tspan>`strategy:shop.refunds/RefundEverything` cannot call agent</tspan></text>
+    <text class="out" y="325" x="22" style="animation-name:o1_10"><tspan>`agent:shop.refunds/RefundAgent` without a matching</tspan></text>
+    <text class="out" y="346" x="22" style="animation-name:o1_11"><tspan>`callable_by` rule</tspan></text>
+  </g>
+</svg>
