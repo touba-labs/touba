@@ -24,6 +24,7 @@ export async function executeReferenceAir(document, {
   let result;
   let failureCode = null;
   try {
+    if (!Number.isSafeInteger(maxSteps) || maxSteps < 1) throw refusal("ReferenceStepLimitInvalid", "authority");
     if (document.required_features?.length) throw refusal("ReferenceFeatureOutsideProfile", "authority");
     if ((document.definitions.types ?? []).some(type => type.variants)) throw refusal("ReferenceEnumOutsideProfile", "business");
     if (document.execution_graphs.some(graph => (graph.expressions ?? []).some(expression => expression.kind.startsWith("optional_")))
@@ -104,11 +105,12 @@ function definitionById(document, id) {
 }
 
 function resolveValue(ref, values) {
-  if (typeof ref !== "string") return undefined;
+  if (ref === undefined) return undefined;
   if (ref.startsWith("literal:string:")) return ref.slice("literal:string:".length);
-  if (ref.startsWith("literal:boolean:")) return ref.endsWith("true");
-  if (ref.startsWith("value:")) return values.get(ref.slice("value:".length));
-  return undefined;
+  if (ref === "literal:bool:true" || ref === "literal:boolean:true") return true;
+  if (ref === "literal:bool:false" || ref === "literal:boolean:false") return false;
+  if (ref.startsWith("value:") && values.has(ref.slice("value:".length))) return values.get(ref.slice("value:".length));
+  throw refusal("ReferenceValueOutsideProfile", "business");
 }
 
 function refusal(code, failureFamily) {

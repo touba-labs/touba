@@ -19,6 +19,34 @@ test("matches principal runtime result, authority refusal and essential events",
   assert.ok(report.comparisons.every((item) => item.classification === "conformant"));
 });
 
+test("preserves canonical Boolean results and refuses unsupported value expressions", async () => {
+  const air = baseAir();
+  const graph = air.execution_graphs[0];
+  air.definitions.skills[0].signature.output_type = "builtin:Boolean";
+  const run = () => executeReferenceAir(air, { entryRef: "skill:conformance/Run" });
+  for (const value of [true, false]) {
+    graph.nodes[0].arguments = [`literal:bool:${value}`];
+    const result = await run();
+    assert.equal(result.status, "success");
+    assert.equal(result.result, value);
+  }
+
+  graph.expressions.push({ id: "bool", kind: "literal_boolean", literal_boolean: true,
+    type_ref: "builtin:Boolean", source_ref: air.module.source_ref });
+  graph.nodes[0].arguments = ["expr:bool"];
+  const refusal = await run();
+  assert.equal(refusal.status, "failure");
+  assert.equal(refusal.failure_code, "ReferenceValueOutsideProfile");
+});
+
+test("refuses non-positive or non-integral reference step limits", async () => {
+  for (const maxSteps of [0, -1, 1.5, NaN, Infinity, "1"]) {
+    const result = await executeReferenceAir(baseAir(), { entryRef: "skill:conformance/Run", maxSteps });
+    assert.equal(result.status, "failure");
+    assert.equal(result.failure_code, "ReferenceStepLimitInvalid");
+  }
+});
+
 test("refuses an effect before adapter invocation when uses is absent", async () => {
   const air = effectAir();
   air.definitions.skills[0].uses = [];
