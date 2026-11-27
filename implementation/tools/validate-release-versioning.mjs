@@ -41,7 +41,7 @@ export function buildReleaseVersioningReport(options = {}) {
   validatePackageVersions({ packageVersions, currentVersion: releaseIndex?.current_version, diagnostics });
   validateNativeAndPythonVersions(implementationRoot, releaseIndex?.current_version, diagnostics);
   validateChangelog({ repoRoot, currentVersion: releaseIndex?.current_version, diagnostics });
-  validateWorkflow({ repoRoot, diagnostics });
+  if (!options.sourceOnly) validateWorkflow({ repoRoot, diagnostics });
 
   return {
     schema_version: RELEASE_VERSIONING_SCHEMA_VERSION,
@@ -88,6 +88,8 @@ export function parseReleaseVersioningArgs(rawArgs) {
       options.expectedVersion = requiredValue(arg, rawArgs, ++index);
     } else if (arg.startsWith("--version=")) {
       options.expectedVersion = valueFromEquals(arg, "--version");
+    } else if (arg === "--source-only") {
+      options.sourceOnly = true;
     } else if (arg === "--compact") {
       options.pretty = false;
     } else if (arg === "--help" || arg === "-h") {
@@ -425,7 +427,7 @@ function valueFromEquals(arg, flag) {
 }
 
 function usage() {
-  return "Usage: validate-release-versioning [--version <x.y.z>] [--compact]";
+  return "Usage: validate-release-versioning [--version <x.y.z>] [--source-only] [--compact]";
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

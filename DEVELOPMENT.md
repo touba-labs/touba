@@ -22,6 +22,15 @@ checks. Packaging also requires an official, relocatable Node distribution
 with its complete license, and the native release compiler. Source validation
 and installed distribution qualification are separate checks.
 
+## Source and release provenance
+
+The Touba 1.5.0 release record identifies source revision
+`4bc7d7acb59bbd6ad044648751457314792b0252`.
+The source history preserves the original authors and dates and has been
+filtered for publication. A local build from this repository has its own
+source revision and artifact identity. Verify the signed release separately
+with the metadata and checksums supplied with the downloads.
+
 ## HTTP and PostgreSQL integration
 
 The integration pilot needs the source packages `touba.http-api` and

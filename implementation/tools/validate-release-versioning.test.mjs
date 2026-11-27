@@ -37,6 +37,22 @@ test("validates a coherent Touba release version set", () => {
   }
 });
 
+test("source validation works without a release workflow and still checks versions", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
+  const implementationRoot = join(repoRoot, "implementation");
+  try {
+    writeFixtureRepo({ repoRoot, implementationRoot, version: "1.2.3" });
+    rmSync(join(repoRoot, ".github/workflows/release.yml"));
+    const options = { repoRoot, implementationRoot, ...parseReleaseVersioningArgs(["--source-only"]) };
+    assert.equal(buildReleaseVersioningReport(options).status, "ok");
+    assert.ok(buildReleaseVersioningReport({ repoRoot, implementationRoot })
+      .diagnostics.some(item => item.code === "ReleaseWorkflowMissing"));
+    assert.equal(buildReleaseVersioningReport({ ...options, expectedVersion: "1.2.4" }).status, "failed");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("reports mismatched package and expected versions", () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba-versioning-test-"));
   try {
