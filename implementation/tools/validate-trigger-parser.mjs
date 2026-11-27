@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,8 +9,6 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const implementationRoot = resolve(__dir, "..");
 const grammarRoot = join(implementationRoot, "grammar/tree-sitter-touba");
 const treeSitterBin = join(implementationRoot, "node_modules/.bin/tree-sitter");
-const buildDir = mkdtempSync(join(tmpdir(), "touba-tree-sitter-"));
-const libPath = join(buildDir, `tree-sitter-touba.${sharedLibraryExtension()}`);
 
 const triggerFixtures = [
   "examples/triggers-anneau-2/positive/tb-a2-trigger-p01-schedule-strategy-minimal.tb",
@@ -29,29 +27,37 @@ const triggerFixtures = [
   "examples/triggers-anneau-2/negative/semantic/tb-a2-trigger-n10-host-input-rejected.tb",
 ];
 
-run(treeSitterBin, ["generate"], { cwd: grammarRoot });
-run(
-  "cc",
-  ["-fPIC", "-I./src", "-shared", "src/parser.c", "src/scanner.c", "-o", libPath],
-  { cwd: grammarRoot },
-);
-run(
-  treeSitterBin,
-  [
-    "parse",
-    "--config-path",
-    "./tree-sitter-cli.config.json",
-    "--lib-path",
-    libPath,
-    "--lang-name",
-    "touba",
-    "-q",
-    ...triggerFixtures,
-  ],
-  { cwd: grammarRoot },
-);
-
-console.log(`trigger-parser: status=success checked=${triggerFixtures.length}`);
+const buildDir = mkdtempSync(join(tmpdir(), "touba-tree-sitter-"));
+const libPath = join(buildDir, `tree-sitter-touba.${sharedLibraryExtension()}`);
+try {
+  run(treeSitterBin, ["generate", "--output", buildDir], { cwd: grammarRoot });
+  run(
+    "cc",
+    ["-fPIC", "-I./src", "-shared", join(buildDir, "parser.c"), "src/scanner.c", "-o", libPath],
+    { cwd: grammarRoot },
+  );
+  run(
+    treeSitterBin,
+    [
+      "parse",
+      "--config-path",
+      "./tree-sitter-cli.config.json",
+      "--lib-path",
+      libPath,
+      "--lang-name",
+      "touba",
+      "-q",
+      ...triggerFixtures,
+    ],
+    { cwd: grammarRoot },
+  );
+  console.log(`trigger-parser: status=success checked=${triggerFixtures.length}`);
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = error.exitCode ?? 1;
+} finally {
+  rmSync(buildDir, { recursive: true, force: true });
+}
 
 function run(command, args, options) {
   const result = spawnSync(command, args, {
@@ -63,7 +69,7 @@ function run(command, args, options) {
     throw result.error;
   }
   if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+    throw Object.assign(new Error(`${command} ${args[0]} failed`), { exitCode: result.status ?? 1 });
   }
 }
 
