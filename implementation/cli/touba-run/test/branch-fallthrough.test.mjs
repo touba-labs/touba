@@ -47,8 +47,9 @@ strategy Use
     const malformed = structuredClone(air);
     const graph = malformed.execution_graphs.find(graph => graph.owner_ref === "function:flow.check/Pick");
     graph.edges = graph.edges.filter(edge => edge.role !== "false");
-    const refused = await executeAirDocument(malformed, { entryRef: "function:flow.check/Pick", inputs: { x: 3 } });
-    assert.equal(refused.status, "failure");
-    assert.match(JSON.stringify(refused.trace), /does not match builtin:Int/);
+    await assert.rejects(
+      executeAirDocument(malformed, { entryRef: "function:flow.check/Pick", inputs: { x: 3 } }),
+      error => error.code === "InvalidAirDocument" && error.details?.contractCode === "AirGraphUnreachableNode",
+    );
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
