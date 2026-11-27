@@ -3,7 +3,7 @@ import { dirname, basename, resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 // A published snapshot is complete and private. Never follow a checkpoint link.
-export function writeParallelCheckpoint(path, checkpoint) {
+export function writeCheckpointFile(path, checkpoint, indent) {
   const target = resolve(path);
   try { if (!lstatSync(target).isFile()) throw new Error("checkpoint target must be a regular file"); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -11,7 +11,7 @@ export function writeParallelCheckpoint(path, checkpoint) {
   let fd;
   try {
     fd = openSync(temporary, "wx", 0o600);
-    writeFileSync(fd, JSON.stringify(checkpoint) + "\n");
+    writeFileSync(fd, JSON.stringify(checkpoint, null, indent) + "\n");
     fsyncSync(fd); closeSync(fd); fd = undefined;
     renameSync(temporary, target);
     // Node cannot open directories with `r` on Windows (EISDIR). The file is

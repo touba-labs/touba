@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { linkSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -332,6 +332,10 @@ process.stdout.write(JSON.stringify({ok:true,value}));
   } }));
   // The log is test instrumentation; this handler declares no business effect.
   const cli = fileURLToPath(new URL("../src/run.mjs", import.meta.url));
+  const previousPath = join(root, "previous-checkpoint.json");
+  const previous = '{"previous":true}\n';
+  writeFileSync(previousPath, previous);
+  linkSync(previousPath, join(root, "checkpoint-0.json"));
   let checkpoint;
   for (let turn = 0; turn < 4; turn++) {
     const outputPath = join(root, `checkpoint-${turn}.json`);
@@ -342,5 +346,6 @@ process.stdout.write(JSON.stringify({ok:true,value}));
     assert.equal(run.status, turn === 3 ? 0 : 3, run.stderr + run.stdout);
     if (turn < 3) checkpoint = { path: outputPath, value: JSON.parse(readFileSync(outputPath, "utf8")) };
   }
+  assert.equal(readFileSync(previousPath, "utf8"), previous);
   assert.deepEqual(readFileSync(marker, "utf8").trim().split("\n").map(JSON.parse), ["start", "before", "one", "before", "two"]);
 });

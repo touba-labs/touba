@@ -1,9 +1,9 @@
 import { isRunBudgetValue, runBudgetMinimum } from "../../../contracts/run-budget-values.mjs";
-import { closeSync, constants, existsSync, fchmodSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { openCliEffectJournal, effectJournalPathDiagnostic } from "./effect-journal.mjs";
-import { writeParallelCheckpoint } from "./parallel-checkpoint-file.mjs";
+import { writeCheckpointFile } from "./parallel-checkpoint-file.mjs";
 import { traceOutputChunks, writeChunks, writeTraceFile } from "./trace-output.mjs";
 import { buildRunSummary } from "./trace-summary.mjs";
 import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
@@ -538,7 +538,7 @@ try {
     humanApprovalResumeCheckpoint,
     parallelLimits: parsedArgs.parallelLimitsJson === undefined ? undefined : parseJsonObject(parsedArgs.parallelLimitsJson, "--parallel-limits-json"),
     parallelCheckpointObserver: parsedArgs.parallelCheckpointOutPath === undefined ? undefined
-      : ({ checkpoint }) => writeParallelCheckpoint(parsedArgs.parallelCheckpointOutPath, checkpoint),
+      : ({ checkpoint }) => writeCheckpointFile(parsedArgs.parallelCheckpointOutPath, checkpoint),
     hardenedExecutionProfile,
     supplyChainValidated,
     redactionEnabled: true,
@@ -632,12 +632,7 @@ if (parsedArgs.traceOutPath !== undefined) {
 // completed run may already have produced effects; preserve its real outcome.
 if (parsedArgs.humanCheckpointOutPath !== undefined && result.checkpoint && result.status !== "failure") {
   try {
-    const fd = openSync(parsedArgs.humanCheckpointOutPath,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0), 0o600);
-    try {
-      fchmodSync(fd, 0o600);
-      writeFileSync(fd, serializeJson(result.checkpoint), "utf8");
-    } finally { closeSync(fd); }
+    writeCheckpointFile(parsedArgs.humanCheckpointOutPath, result.checkpoint, 2);
   } catch (e) {
     stderr.write(`error: cannot write human checkpoint ${parsedArgs.humanCheckpointOutPath}: ${e.message}\n`);
     return await exitAfterFlush(1);
