@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { generateManifestFromAirDocument } from "../cli/touba-manifest/src/generate.mjs";
 import {
+  EFFECT_JOURNAL_SCHEMA_VERSION,
   executeAirDocument,
   loadAirFromJson,
   loadSecretsFromJson,
@@ -208,6 +209,7 @@ async function validateMemoryScope() {
   const document = compileScenario(positives.memoryScope);
   const manifest = generateManifestFromAirDocument(document);
   Object.assign(manifest.bindings["tool:examples.scenario_memory_scope/ReadProjectKnowledge"], {
+    effect_contract: { kind: "none" },
     grants: ["memory_read"],
     memories: [{ ref: "memory:examples.scenario_memory_scope/ProjectKnowledge", access: "read" }],
   });
@@ -255,8 +257,33 @@ async function validateMemoryScope() {
 async function validateRegulatedPayment() {
   const document = compileScenario(positives.regulatedPayment);
   const manifest = generateManifestFromAirDocument(document);
+  // Use a local fixture process to exercise the receipt and journal contract.
+  const paymentFixture = `
+    const assert = require("node:assert/strict");
+    let input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => { input += chunk; });
+    process.stdin.on("end", () => {
+      const request = JSON.parse(input);
+      assert.deepEqual(request.grants, ["network", "secret_read"]);
+      assert.deepEqual(request.secret_handles, ["PAYMENT_API_KEY"]);
+      const receipt = "receipt:" + request.arguments.request.reference;
+      process.stdout.write(JSON.stringify({
+        ok: true,
+        value: { receipt },
+        effect_receipt: {
+          effect_id: request.effect.effect_id,
+          request_digest: request.effect.request_digest,
+          outcome: "applied",
+          receipt_ref: receipt,
+        },
+      }));
+    });
+  `;
   Object.assign(manifest.bindings["tool:examples.scenario_external_approval/SendPayment"], {
+    effect_contract: { kind: "external_write", retry_mode: "none" },
     grants: ["network", "secret_read"], secrets: ["PAYMENT_API_KEY"],
+    handler: { kind: "process", command: process.execPath, args: ["-e", paymentFixture] },
   });
   const secretStore = loadSecretsFromJson(JSON.stringify({
     secrets_version: "touba-secrets-v1",
@@ -275,48 +302,46 @@ async function validateRegulatedPayment() {
     destination: "supplier-a",
   };
   const approvalRef = findNode(document, "human_approval").approval_ref;
-  let approvedHandlerCalled = false;
-
-  const approved = await executeAirDocument(document, {
+  const entries = new Map();
+  const effectJournal = {
+    schemaVersion: EFFECT_JOURNAL_SCHEMA_VERSION,
+    readEntry(effectId) {
+      return structuredClone(entries.get(effectId) ?? null);
+    },
+    writeEntry(entry) {
+      entries.set(entry.effect_id, structuredClone(entry));
+    },
+  };
+  const options = {
     entryRef: "strategy:examples.scenario_external_approval/RunRegulatedPayment",
     inputs: { request },
     toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(manifest)),
     secretStore,
+    effectJournal,
+  };
+  const approved = await executeAirDocument(document, {
+    ...options,
+    effectScopeId: "scenario:payment-approved",
     humanApprovalDecisions: { [approvalRef]: "approved" },
-    toolHandlers: {
-      "tool:examples.scenario_external_approval/SendPayment": ({ arguments: args, binding }) => {
-        approvedHandlerCalled = true;
-        assert.deepEqual(binding.grants, ["network", "secret_read"]);
-        assert.deepEqual(binding.secretHandles, ["PAYMENT_API_KEY"]);
-        return { receipt: `receipt:${args.request.reference}` };
-      },
-    },
   });
 
-  assert.equal(approved.status, "success");
-  assert.equal(approvedHandlerCalled, true);
+  assert.equal(approved.status, "success", eventOf(approved.trace, "failure_detected")?.payload?.runtime_error_code);
   assert.deepEqual(approved.result, { receipt: "receipt:PAY-42" });
+  assert.equal(entries.size, 1);
+  const [applied] = entries.values();
+  assert.equal(applied.state, "applied");
   assert.equal(eventOf(approved.trace, "human_approval_decided").payload.decision, "approved");
   assert.equal(eventOf(approved.trace, "tool_binding_authorized").payload.tool_ref, "tool:examples.scenario_external_approval/SendPayment");
   assert.equal(JSON.stringify(approved.trace).includes("resolved-payment-secret"), false);
 
-  let rejectedHandlerCalled = false;
   const rejected = await executeAirDocument(document, {
-    entryRef: "strategy:examples.scenario_external_approval/RunRegulatedPayment",
-    inputs: { request },
-    toolBindingManifest: loadToolBindingManifestFromJson(JSON.stringify(manifest)),
-    secretStore,
+    ...options,
+    effectScopeId: "scenario:payment-rejected",
     humanApprovalDecisions: { [approvalRef]: "rejected" },
-    toolHandlers: {
-      "tool:examples.scenario_external_approval/SendPayment": () => {
-        rejectedHandlerCalled = true;
-        return { receipt: "must-not-run" };
-      },
-    },
   });
 
   assert.equal(rejected.status, "stopped");
-  assert.equal(rejectedHandlerCalled, false);
+  assert.equal(entries.size, 1);
   assert.equal(eventOf(rejected.trace, "human_approval_rejected").payload.approval_ref, approvalRef);
   assert.equal(eventsOf(rejected.trace, "tool_binding_authorized").length, 0);
   assert.equal(JSON.stringify(rejected.trace).includes("resolved-payment-secret"), false);
@@ -331,6 +356,7 @@ async function validateToolSecurityRefusals() {
   const document = compileSourcePath(sourcePath);
   const manifest = generateManifestFromAirDocument(document);
   Object.assign(manifest.bindings["tool:examples.v1_process_binding/FetchSource"], {
+    effect_contract: { kind: "none" },
     grants: ["network", "secret_read"], secrets: ["SEARCH_API_KEY"],
   });
   const secretStore = loadSecretsFromJson(
