@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,4 +92,29 @@ test("publication refuses links, conflicts, concurrent writers and unsupported r
   await assert.rejects(publishPackage(source, { registry }), { code: "PackagePublicationConflict" });
   assert.equal(readFileSync(orphan, "utf8"), "preserve evidence");
   assert.equal(existsSync(lock), false);
+});
+
+test("local publication can retry after the final index write fails", async t => {
+  const root = workspace(t), source = author(root), registry = join(root, "registry");
+  const index = join(registry, "index.json");
+  await publishPackage(source, { registry });
+  const previousIndex = readFileSync(index);
+  versionPackage("patch", { root: source });
+
+  const rename = fs.renameSync;
+  const failing = t.mock.method(fs, "renameSync", (from, to) => {
+    if (to === index) throw Object.assign(new Error("simulated index write failure"), { code: "EIO" });
+    return rename(from, to);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(publishPackage(source, { registry }), { code: "EIO" });
+  } finally {
+    failing.mock.restore();
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(readFileSync(index), previousIndex);
+  assert.equal(existsSync(join(registry, "archives/acme.echo-0.1.1.tar.gz")), false);
+  assert.equal(existsSync(join(registry, "metadata/acme.echo-0.1.1.json")), false);
+  assert.equal((await publishPackage(source, { registry })).version, "0.1.1");
 });

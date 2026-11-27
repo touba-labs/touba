@@ -35,6 +35,7 @@ export async function publishPackage(path, options = {}) {
   catch (error) { if (error.code === "EEXIST") throw packageError("PackagePublicationBusy", "registry has an active or interrupted publication; inspect it before recovery"); throw error; }
   let temporary;
   let stagedIndex;
+  const unindexed = [];
   try {
     temporary = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-publish-")));
     const indexPath = join(registry, "index.json");
@@ -70,15 +71,22 @@ export async function publishPackage(path, options = {}) {
       metadata_path: metadataPath, metadata_digest: packageDigest(Buffer.from(metadataBytes)) });
     index.packages.sort((a, b) => `${a.package_ref}@${a.version}`.localeCompare(`${b.package_ref}@${b.version}`));
     if ((existsSync(indexPath) ? readFileSync(indexPath, "utf8") : null) !== before) throw packageError("PackagePublicationConflict", "registry index changed during publication");
-    mkdirSync(dirname(join(registry, archivePath)), { recursive: true });
-    mkdirSync(dirname(join(registry, metadataPath)), { recursive: true });
-    copyFileSync(archive.output, join(registry, archivePath), constants.COPYFILE_EXCL);
-    writeFileSync(join(registry, metadataPath), metadataBytes, { flag: "wx" });
     stagedIndex = mkdtempSync(join(registry, ".index-"));
+    const stagedMetadata = join(stagedIndex, "metadata.json");
+    writeFileSync(stagedMetadata, metadataBytes, { flag: "wx" });
     writeFileSync(join(stagedIndex, "index.json"), json(index), { flag: "wx" });
+    for (const [origin, relative] of [[archive.output, archivePath], [stagedMetadata, metadataPath]]) {
+      const destination = join(registry, relative);
+      mkdirSync(dirname(destination), { recursive: true });
+      copyFileSync(origin, destination, constants.COPYFILE_EXCL);
+      unindexed.push(destination);
+    }
     renameSync(join(stagedIndex, "index.json"), indexPath);
     return { status: "success", command: "package publish", package: name, version, path: registry,
       notes: ["Published locally as draft. Review code before installing with --allow-draft. No code was executed or uploaded."] };
+  } catch (error) {
+    for (const path of unindexed) rmSync(path, { force: true });
+    throw error;
   } finally {
     closeSync(fd);
     unlinkSync(lock);
