@@ -2,12 +2,15 @@
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
+  closeSync,
   constants,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -59,13 +62,13 @@ export function assembleReleaseAssets(options = {}) {
   for (const item of [...tarballs, ...installers]) {
     const target = join(outputDir, item.filename);
     copyFileSync(item.path, target, constants.COPYFILE_EXCL);
-    const sha256 = sha256File(target);
+    const { sha256, size_bytes } = readReleaseAssetIdentity(target);
     checksumLines.push(`${sha256}  ${item.filename}`);
     assets.push({
       name: item.filename,
       platform: item.platform,
       sha256,
-      size_bytes: readFileSync(target).byteLength,
+      size_bytes,
     });
   }
 
@@ -129,7 +132,7 @@ function readCanonicalReleaseNotes(path, version) {
     throw new Error(`release notes are required for ${version}: ${path}`);
   }
   const source = readFileSync(path, "utf8").trim();
-  if (!new RegExp(`^#\\s+Touba\\s+${escapeRegExp(version)}\\s*$`, "mu").test(source)) {
+  if (source.split(/\r?\n/u, 1)[0].trimEnd() !== `# Touba ${version}`) {
     throw new Error(`release notes for ${version} must start with '# Touba ${version}'`);
   }
   return source;
@@ -151,10 +154,6 @@ function renderReleaseNotes(manifest, canonicalReleaseNotes) {
     "https://toubalang.org/docs/demarrer/installation",
     "",
   ].join("\n");
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function validateTarballs(tarballs, version) {
@@ -211,17 +210,32 @@ function resolveRequiredDir(path, label) {
   return resolved;
 }
 
+export function isReleaseVersion(version) {
+  return typeof version === "string" && /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version);
+}
+
 function normalizeVersion(version) {
-  if (typeof version !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)) {
+  if (!isReleaseVersion(version)) {
     throw new Error("version must be a semver-like string");
   }
   return version;
 }
 
-function sha256File(path) {
+export function readReleaseAssetIdentity(path) {
   const hash = createHash("sha256");
-  hash.update(readFileSync(path));
-  return hash.digest("hex");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  const descriptor = openSync(path, "r");
+  let size = 0;
+  try {
+    let bytes;
+    while ((bytes = readSync(descriptor, buffer, 0, buffer.length, null)) > 0) {
+      hash.update(buffer.subarray(0, bytes));
+      size += bytes;
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+  return { sha256: hash.digest("hex"), size_bytes: size };
 }
 
 function requiredValue(flag, args, index) {
@@ -244,7 +258,7 @@ function usage() {
   return "Usage: assemble-release-assets --input <dir> --out <dir> --version <x.y.z>";
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const options = parseAssembleArgs(process.argv.slice(2));
     if (options.help === true) {

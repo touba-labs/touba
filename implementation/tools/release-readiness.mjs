@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isReleaseVersion, PUBLIC_RELEASE_PLATFORMS as PLATFORMS, readReleaseAssetIdentity } from "./assemble-release-assets.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const defaultImplementationRoot = resolve(__dir, "..");
@@ -50,7 +51,6 @@ export const OBSERVED_RELEASE_GATES = Object.freeze([
   "industrial_qualification", "desktop_installers", "dependency_security",
   "publisher_signatures", "documentation_review",
 ]);
-const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"];
 export const REQUIRED_V1_DELIVERABLES = Object.freeze(
 [
   "javascript_sdk_distribution",
@@ -141,7 +141,7 @@ export function identifyReleaseCandidate(path, sourceRevision) {
   const assets = manifest.assets ?? manifest.artifacts;
   if (!Array.isArray(assets) || assets.length === 0) throw new Error("Candidate checksums contain no artifacts");
   const version = manifest.version ?? manifest.touba_version;
-  if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(version ?? "")) throw new Error("Invalid candidate version");
+  if (!isReleaseVersion(version)) throw new Error("Invalid candidate version");
   const expected = new Set(PLATFORMS.flatMap(platform => [
     `touba-v${version}-${platform}.tar.gz`,
     `touba-v${version}-${platform}-setup.${platform.startsWith("darwin") ? "dmg" : platform === "win32-x64" ? "exe" : "deb"}`,
@@ -153,8 +153,11 @@ export function identifyReleaseCandidate(path, sourceRevision) {
     seen.add(name);
     const file = resolve(dirname(path), name);
     if (!lstatSync(file).isFile()) throw new Error("Candidate artifact must be a regular file");
-    const hash = createHash("sha256").update(readFileSync(file)).digest("hex");
-    if (hash !== asset.sha256) throw new Error("Candidate artifact checksum mismatch: " + name);
+    const identity = readReleaseAssetIdentity(file);
+    if (identity.sha256 !== asset.sha256) throw new Error("Candidate artifact checksum mismatch: " + name);
+    if (asset.size_bytes !== undefined && asset.size_bytes !== identity.size_bytes) {
+      throw new Error("Candidate artifact size mismatch: " + name);
+    }
   }
   if (seen.size !== expected.size) throw new Error("Candidate must contain all four archives and graphical installers");
   return { sha256: createHash("sha256").update(bytes).digest("hex"), source_revision: sourceRevision,
@@ -180,7 +183,7 @@ export function buildReleaseReadinessReport(options = {}) {
     ...scriptGates(packageJson),
     ...fileGates(pathExists),
     currentReleaseNoteGate(packageJson, pathExists),
-    packageVersionGate(readJson),
+    packageVersionGate(readJson, packageJson.version),
     ...observedGates({ ...options, implementationVersion: packageJson.version,
       tutorialDocuments: options.tutorialDocuments ?? tutorialInventory(implementationRoot) }),
   ];
@@ -276,9 +279,10 @@ function currentReleaseNoteGate(packageJson, pathExists) {
 
 /**
  * @param {(relativePath: string) => Record<string, any>} readJson
+ * @param {string | undefined} expectedVersion
  * @returns {ReleaseGate}
  */
-function packageVersionGate(readJson) {
+function packageVersionGate(readJson, expectedVersion) {
   const versions = VERSIONED_PACKAGES.map(([component, relativePath]) => {
     let version = "unknown";
     try {
@@ -288,8 +292,8 @@ function packageVersionGate(readJson) {
     }
     return { component, version };
   });
-  const invalid = versions.filter((entry) => entry.version === "unknown" || entry.version === "0.0.0");
-  if (invalid.length === 0) {
+  const invalid = versions.filter((entry) => entry.version !== expectedVersion);
+  if (isReleaseVersion(expectedVersion) && expectedVersion !== "0.0.0" && invalid.length === 0) {
     return {
       id: "package_versions",
       status: "satisfied",
@@ -303,8 +307,8 @@ function packageVersionGate(readJson) {
     status: "failed",
     required: true,
     evidence: VERSIONED_PACKAGES.map(([, relativePath]) => `implementation/${relativePath}`),
-    reason: "package versions must not be unknown or 0.0.0 for public release readiness",
-    details: { versions, invalid },
+    reason: "package versions must match the current implementation version",
+    details: { expectedVersion, versions, invalid },
   };
 }
 

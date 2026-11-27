@@ -6,14 +6,13 @@ import {
 } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { isReleaseVersion, PUBLIC_RELEASE_PLATFORMS as PUBLIC_PLATFORMS } from "./assemble-release-assets.mjs";
 
 export const RELEASE_VERSIONING_SCHEMA_VERSION = "touba-release-versioning-report-v1";
 
 const RELEASE_INDEX_SCHEMA_VERSION = "touba-release-index-v1";
 const RELEASE_STATUSES = new Set(["planned", "candidate", "published", "retired", "yanked"]);
 const CHANNELS = new Set(["github_release", "touba_hub"]);
-const PUBLIC_PLATFORMS = Object.freeze(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]);
-const SEMVER_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/;
 const DATE_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 const RELEASE_NOTE_REQUIRED_HEADINGS = Object.freeze([
   "Executive Summary",
@@ -187,7 +186,7 @@ function validateReleaseEntryDocumentation(entry, label, implementationRoot, dia
     return;
   }
   const note = readFileSync(notePath, "utf8");
-  if (!new RegExp(`^#\\s+Touba\\s+${escapeRegExp(entry.version)}\\s*$`, "mu").test(note)) {
+  if (note.trimStart().split(/\r?\n/u, 1)[0].trimEnd() !== `# Touba ${entry.version}`) {
     diagnostics.push(error("ReleaseNotesTitleMismatch", `${entry.release_notes} must start with '# Touba ${entry.version}'`, entry.release_notes));
   }
   for (const heading of RELEASE_NOTE_REQUIRED_HEADINGS) {
@@ -305,7 +304,8 @@ function validateChangelog({ repoRoot, currentVersion, diagnostics }) {
     return;
   }
   const changelog = readFileSync(changelogPath, "utf8");
-  if (!new RegExp(`^##\\s+${escapeRegExp(currentVersion)}\\b`, "mu").test(changelog)) {
+  const versions = [...changelog.matchAll(/^##[ \t]+(\S+)/gmu)].map(([, version]) => version);
+  if (!versions.includes(currentVersion)) {
     diagnostics.push(error("ChangelogVersionMissing", `CHANGELOG.md must contain a section for ${currentVersion}`, "CHANGELOG.md"));
   }
 }
@@ -334,14 +334,11 @@ function collectPackageVersions(root, diagnostics) {
       continue;
     }
     const rel = toPosix(relative(root, path));
-    if (isIgnoredPackage(rel)) {
-      continue;
-    }
     const parsed = readJson(path, diagnostics);
     if (!isObject(parsed)) {
       continue;
     }
-    if (typeof parsed.version !== "string" || !SEMVER_PATTERN.test(parsed.version)) {
+    if (!isReleaseVersion(parsed.version)) {
       diagnostics.push(error("PackageVersionInvalid", `${rel} must contain a semver-like version`, rel));
       continue;
     }
@@ -353,16 +350,6 @@ function collectPackageVersions(root, diagnostics) {
   }
   packages.sort((left, right) => left.relative_path.localeCompare(right.relative_path));
   return packages;
-}
-
-function isIgnoredPackage(relativePath) {
-  return [
-    "node_modules/",
-    "dist/",
-    "target/",
-    ".vscode-test/",
-    ".git/",
-  ].some((prefix) => relativePath.startsWith(prefix));
 }
 
 function collectFiles(root) {
@@ -391,7 +378,7 @@ function readJson(path, diagnostics) {
 }
 
 function validateSemver(value, label, path, diagnostics) {
-  if (typeof value !== "string" || !SEMVER_PATTERN.test(value)) {
+  if (!isReleaseVersion(value)) {
     diagnostics.push(error("ReleaseVersionInvalid", `${label} must be semver-like`, path));
   }
 }
@@ -441,7 +428,7 @@ function usage() {
   return "Usage: validate-release-versioning [--version <x.y.z>] [--compact]";
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const options = parseReleaseVersioningArgs(process.argv.slice(2));
     if (options.help === true) {

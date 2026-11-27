@@ -90,6 +90,14 @@ test("requires canonical release notes before publishing assets", () => {
       version: "1.2.3",
       releaseNotesPath: join(workspace, "missing.md"),
     }), /release notes are required/u);
+    const misplacedTitle = join(workspace, "misplaced-title.md");
+    writeFileSync(misplacedTitle, "Candidate notes\n\n# Touba 1.2.3\n");
+    assert.throws(() => assembleReleaseAssets({
+      inputDir: input,
+      outputDir: join(workspace, "publish"),
+      version: "1.2.3",
+      releaseNotesPath: misplacedTitle,
+    }), /must start with '# Touba 1.2.3'/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

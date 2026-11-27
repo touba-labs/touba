@@ -28,6 +28,10 @@ test("validates a coherent Touba release version set", () => {
     assert.equal(report.current_version, "1.2.3");
     assert.equal(report.summary.package_count, 2);
     assert.equal(report.diagnostics.length, 0);
+
+    writeFileSync(join(repoRoot, "CHANGELOG.md"), "## 1.2.3-rc.1\n\nPrerelease only.\n");
+    const missingStable = buildReleaseVersioningReport({ repoRoot, implementationRoot });
+    assert.ok(missingStable.diagnostics.some(item => item.code === "ChangelogVersionMissing"));
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

@@ -119,6 +119,11 @@ function qualificationFixture() {
 
 test("only fresh complete evidence for the exact candidate can qualify release readiness", () => {
   assert.equal(buildReleaseReadinessReport(qualificationFixture()).overall_status, "ready");
+  const coherentEvidence = qualificationFixture();
+  coherentEvidence.readJson = path => ({ version: path === "runtime/touba-runtime/package.json" ? "0.1.1" : "0.1.0" });
+  const mismatched = buildReleaseReadinessReport(coherentEvidence);
+  assert.equal(mismatched.overall_status, "failed");
+  assert.equal(mismatched.gates.find(gate => gate.id === "package_versions").status, "failed");
   for (const mutate of [
     o => { delete o.qualification.observations.installed_sdk_distribution; },
     o => { delete o.qualification.observations.p0_delivery.deliverables; },
@@ -163,24 +168,28 @@ test("qualification flags are explicit and missing values are refused", () => {
 test("candidate identity verifies real archive bytes and refuses missing, altered or escaping assets", () => {
   const root = mkdtempSync(join(tmpdir(), "touba-readiness-"));
   try {
+    const version = "1.0.0-rc.1";
     const names = ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].flatMap(platform => [
-      `touba-v1.0.0-${platform}.tar.gz`,
-      `touba-v1.0.0-${platform}-setup.${platform.startsWith("darwin") ? "dmg" : platform === "win32-x64" ? "exe" : "deb"}`,
+      `touba-v${version}-${platform}.tar.gz`,
+      `touba-v${version}-${platform}-setup.${platform.startsWith("darwin") ? "dmg" : platform === "win32-x64" ? "exe" : "deb"}`,
     ]);
     const file = join(root, names[0]);
     const manifest = join(root, "CHECKSUMS.json");
-    for (const name of names) writeFileSync(join(root, name), "qualification-test-only");
-    const asset = { name: names[0], sha256: createHash("sha256").update("qualification-test-only").digest("hex") };
-    const value = { version: "1.0.0", assets: names.map(name => ({ ...asset, name })) };
+    const bytes = Buffer.alloc(3 * 65_536 + 17, "qualification-test-only");
+    for (const name of names) writeFileSync(join(root, name), bytes);
+    const asset = { name: names[0], sha256: createHash("sha256").update(bytes).digest("hex"), size_bytes: bytes.length };
+    const value = { version, assets: names.map(name => ({ ...asset, name })) };
     writeFileSync(manifest, JSON.stringify(value));
     const candidate = identifyReleaseCandidate(manifest, "source-commit");
-    assert.equal(candidate.version, "1.0.0");
+    assert.equal(candidate.version, version);
     assert.equal(candidate.source_revision, "source-commit");
     assert.match(candidate.sha256, /^[a-f0-9]{64}$/);
     for (const assets of [value.assets.slice(0, 4), [...value.assets, asset]]) {
       writeFileSync(manifest, JSON.stringify({ ...value, assets }));
       assert.throws(() => identifyReleaseCandidate(manifest, "source-commit"), /all four|duplicate/);
     }
+    writeFileSync(manifest, JSON.stringify({ ...value, assets: [{ ...asset, size_bytes: bytes.length + 1 }, ...value.assets.slice(1)] }));
+    assert.throws(() => identifyReleaseCandidate(manifest, "source-commit"), /size mismatch/);
     writeFileSync(manifest, JSON.stringify(value));
     writeFileSync(file, "changed");
     assert.throws(() => identifyReleaseCandidate(manifest, "source-commit"), /checksum mismatch/);
