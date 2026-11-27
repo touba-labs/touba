@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security disclosure
-    url: https://github.com/touba-labs/touba/blob/main/SECURITY.md
+    url: https://github.com/touba-labs/touba/blob/dev/SECURITY.md
     about: Do not report vulnerabilities through public issues.

@@ -405,6 +405,9 @@ These are source changes, not a new published binary release.
 
 Detailed release note: `implementation/release/notes/v0.1.0.md`.
 
+The [release index](implementation/release/releases.json) records the
+retirement of this distribution and the maintainer decision.
+
 ### Language And Runtime
 
 - Added the V1 Touba language surface for typed `tool`, `skill`, `agent`,

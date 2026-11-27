@@ -94,13 +94,10 @@ function ReadClosing
 Un échec de contrainte indique le champ, la contrainte et sa borne :
 par exemple `min requires 0`. La valeur rejetée reste hors du diagnostic.
 
-Le résultat `Approval` expose aussi `comment as Optional of Text`. Ce commentaire
-facultatif accompagne la décision ; les rôles et le signataire sont attestés par l’hôte.
-
 ## Agréger et trier des listes pures
 
-Dans le prochain candidat, `sum(values)` additionne une liste de `Int` ou de
-`Float`, dans son ordre. Une liste vide typée donne zéro. Un débordement Int ou
+`sum(values)` additionne une liste de `Int` ou de `Float`, dans son ordre.
+Une liste vide typée donne zéro. Un débordement Int ou
 une somme Float non finie est refusé. `sort(values)` retourne une nouvelle liste
 croissante de nombres ou de textes, sans modifier l’entrée. Pour Text, l’ordre
 est lexicographique UTF-16, indépendant de la langue et de la locale.
