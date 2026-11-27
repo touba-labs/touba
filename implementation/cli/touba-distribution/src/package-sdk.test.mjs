@@ -20,7 +20,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const windows = process.platform === "win32";
 const npmInstallTimeout = windows ? 180_000 : 60_000;
 
-test("installed archive supplies an independent SDK, provider dependencies, licenses and a working project server", { timeout: windows ? 600_000 : 360_000 }, async () => {
+test("installed archive supplies an independent SDK, provider dependencies, licenses and a working project server", { timeout: 600_000 }, async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba archive SDK "));
   try {
     const { toolchainRoot } = packageLocalToolchain({

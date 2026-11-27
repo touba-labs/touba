@@ -10,7 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { packageLocalToolchain } from "./package-local-toolchain.mjs";
@@ -81,7 +81,9 @@ export function packageRelease(options = {}) {
   writeReleaseMetadata(plan, toolchainRoot);
 
   rmSync(plan.tarballPath, { force: true });
-  const tar = spawnSync("tar", ["-czf", plan.tarballPath, "-C", plan.releaseRoot, plan.releaseName], {
+  // GNU tar treats a drive letter in an archive filename as a remote host.
+  const tar = spawnSync("tar", ["-czf", basename(plan.tarballPath), plan.releaseName], {
+    cwd: plan.releaseRoot,
     stdio: "inherit",
   });
   if (tar.error) {

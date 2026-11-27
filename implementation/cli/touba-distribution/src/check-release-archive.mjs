@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { npmCommand } from "./npm-command.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
@@ -38,7 +38,7 @@ function checkReleaseArchive(plan) {
     const extractRoot = join(workspace, "extract");
     const installPrefix = join(workspace, "prefix");
     mkdirSync(extractRoot, { recursive: true });
-    runCommand("tar", ["-xzf", plan.tarballPath, "-C", extractRoot]);
+    runCommand("tar", ["-xzf", basename(plan.tarballPath), "-C", extractRoot], { cwd: plan.releaseRoot });
 
     const releaseDir = join(extractRoot, plan.releaseName);
     assertFile(join(releaseDir, "README.txt"));
