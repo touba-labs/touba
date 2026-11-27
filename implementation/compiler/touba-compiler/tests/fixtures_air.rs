@@ -37,6 +37,26 @@ const REFERENCE_FIXTURES: &[(&str, &str)] = &[
 ];
 
 #[test]
+fn compiles_the_public_agent_responsibility_example() {
+    let source = include_str!(
+        "../../../grammar/tree-sitter-touba/examples/agent-responsibility-v1/positive/tb-agent-responsibility-p01-explicit.tb"
+    );
+    let result = compile_source_to_air("agent-responsibility-example.tb", source);
+    assert_eq!(result.diagnostics, []);
+    let document = result
+        .document
+        .expect("the positive fixture should compile");
+    assert_eq!(
+        document.definitions.skills[0]
+            .signature
+            .output_type
+            .as_deref(),
+        Some("builtin:Boolean"),
+    );
+    assert_eq!(document.definitions.agents[0].callable_by.len(), 1);
+}
+
+#[test]
 fn lowers_nominal_record_constructor_to_canonical_air() {
     let source = include_str!(
         "../../../grammar/tree-sitter-touba/examples/record-construction-v1/positive/tb-record-v1-p01-nominal.tb"
