@@ -45,7 +45,7 @@ strategy Run
   export function attestHumanApproval() { throw new Error("no decision submitted"); }
 `);
   const invoke = value => spawnSync(process.execPath, [run, air, "--entry", "strategy:timeout_demo/Run", "--human-approval-host", host,
-    flag, String(value), "--human-checkpoint-out", join(root, `checkpoint-${value}.json`), "--output", "json"], { encoding: "utf8" });
+    flag, String(value), "--human-checkpoint-out", join(root, `checkpoint-${value}.json`), "--output", "json"], { cwd: root, encoding: "utf8" });
   const refused = invoke(10);
   assert.match(refused.stdout + refused.stderr, /HumanApprovalAuthorityUnavailable/);
   const pending = invoke(1000);

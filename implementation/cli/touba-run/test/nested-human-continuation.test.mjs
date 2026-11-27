@@ -346,7 +346,7 @@ process.stdout.write(JSON.stringify({ok:true,value}));
     const args = [cli, airPath, "--entry", ref("Run"), "--manifest", manifest, "--human-checkpoint-out", outputPath, "--output", "trace"];
     if (checkpoint) args.push("--human-resume-checkpoint", checkpoint.path, "--human-decisions-json", JSON.stringify({ [checkpoint.value.approval_ref]: "approved" }));
     else args.push("--inputs-json", JSON.stringify({ values: ["one", "two"] }));
-    const run = spawnSync(process.execPath, args, { encoding: "utf8" });
+    const run = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8" });
     assert.equal(run.status, turn === 3 ? 0 : 3, run.stderr + run.stdout);
     if (turn < 3) checkpoint = { path: outputPath, value: JSON.parse(readFileSync(outputPath, "utf8")) };
   }

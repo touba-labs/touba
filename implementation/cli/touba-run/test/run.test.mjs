@@ -132,12 +132,12 @@ test("optional human checkpoint preserves a completed run and never erases an ex
     const checkpointPath = join(workspace, "optional.json");
     const args = [runPath, airPath, ...fixtureBindingArgs(airPath, { content: "completed once" }),
       "--human-checkpoint-out", checkpointPath, "--output", "json"];
-    const first = spawnSync(process.execPath, args, { encoding: "utf8" });
+    const first = spawnSync(process.execPath, args, { cwd: workspace, encoding: "utf8" });
     assert.equal(first.status, 0, first.stderr);
     assert.equal(JSON.parse(first.stdout).status, "success");
     assert.equal(existsSync(checkpointPath), false);
     writeFileSync(checkpointPath, "previous checkpoint, not from this run");
-    const second = spawnSync(process.execPath, args, { encoding: "utf8" });
+    const second = spawnSync(process.execPath, args, { cwd: workspace, encoding: "utf8" });
     assert.equal(second.status, 0, second.stderr);
     assert.equal(JSON.parse(second.stdout).status, "success");
     assert.equal(readFileSync(checkpointPath, "utf8"), "previous checkpoint, not from this run");
@@ -1563,7 +1563,7 @@ test("writes and resumes a human approval checkpoint without replaying prior too
         "--output",
         "trace",
       ],
-      { encoding: "utf8" },
+      { cwd: workspace, encoding: "utf8" },
     );
     const pausedTrace = JSON.parse(pausedStdout);
     const checkpoint = JSON.parse(readFileSync(checkpointPath, "utf8"));
@@ -1588,7 +1588,7 @@ test("writes and resumes a human approval checkpoint without replaying prior too
         "--output",
         "trace",
       ],
-      { encoding: "utf8" },
+      { cwd: workspace, encoding: "utf8" },
     );
     const approvedTrace = JSON.parse(approvedStdout);
 
@@ -1645,7 +1645,7 @@ test("writes and resumes an agent human review checkpoint without replaying prio
         "--output",
         "trace",
       ],
-      { encoding: "utf8" },
+      { cwd: workspace, encoding: "utf8" },
     );
     const pausedTrace = JSON.parse(pausedStdout);
     const checkpoint = JSON.parse(readFileSync(checkpointPath, "utf8"));
@@ -1694,7 +1694,7 @@ test("writes and resumes an agent human review checkpoint without replaying prio
         "--output",
         "result",
       ],
-      { encoding: "utf8" },
+      { cwd: workspace, encoding: "utf8" },
     );
     const resumedTrace = JSON.parse(readFileSync(tracePath, "utf8"));
 
