@@ -182,6 +182,10 @@ function validateWrites(mode, writes, diagnostics) {
   for (const write of writes) {
     const kind = write?.kind;
     const effect = write?.effect;
+    if (typeof kind !== "string" || kind.length === 0) {
+      diagnostics.push(error("InvalidActionPlan", "write kind must be a nonempty string"));
+      continue;
+    }
     if (mode === "validate" && PATCH_WRITE_KINDS.has(kind)) {
       diagnostics.push(
         error(
@@ -190,7 +194,7 @@ function validateWrites(mode, writes, diagnostics) {
         ),
       );
     }
-    if (mode === "plan" && PATCH_WRITE_KINDS.has(kind) && effect !== "propose") {
+    if (mode === "plan" && effect !== "propose") {
       diagnostics.push(
         error(
           "WriteEffectMustBePropose",
@@ -206,7 +210,7 @@ function validateArtifactRequirements(plan, artifacts, diagnostics) {
     return;
   }
   for (const [artifactName, requirement] of Object.entries(plan.artifacts)) {
-    if (requirement?.required === true && !artifacts[artifactName]) {
+    if (requirement?.required === true && (!Object.hasOwn(artifacts, artifactName) || !artifacts[artifactName])) {
       diagnostics.push(error("MissingArtifact", `plan requires artifact ${artifactName}`));
     }
   }
@@ -530,7 +534,7 @@ function parseArgs(args) {
         throw new Error(`duplicate option: ${arg}`);
       }
       const value = args[index + 1];
-      if (!value) {
+      if (!value || value.startsWith("--")) {
         throw new Error(`missing value for option: ${arg}`);
       }
       paths[optionName] = value;

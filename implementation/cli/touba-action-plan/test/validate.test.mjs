@@ -104,6 +104,15 @@ test("reports missing explicit artifacts required by the plan", () => {
   assertDiagnostic(report, "MissingArtifact");
 });
 
+test("requires proposed write effects in plan mode", () => {
+  const plan = readActionPlan(path.join(validationFixturesDir, "positive/add-memory.plan.json"));
+  const artifacts = { source: { kind: "source", path: "/tmp/example.tb" } };
+  plan.writes = [{ kind: "report", effect: "apply" }];
+  assertDiagnostic(validateActionPlanDocument(plan, artifacts), "WriteEffectMustBePropose");
+  plan.writes = [{ kind: "report", effect: "propose" }];
+  assert.equal(validateActionPlanDocument(plan, artifacts).status, "ok");
+});
+
 test("reports trace refusal when a matching memory access was refused", () => {
   const plan = readActionPlan(
     path.join(validationFixturesDir, "positive/validate-memory-access.plan.json"),
@@ -220,6 +229,14 @@ test("CLI exits non-zero for unsupported apply mode while rendering diagnostics"
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /ApplyModeUnsupported/);
+});
+
+test("CLI reports a missing path before consuming the next option", () => {
+  const result = spawnSync(process.execPath, [validateScript, "--plan", "--trace"], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /missing value for option: --plan/);
 });
 
 function assertDiagnostic(report, code) {
