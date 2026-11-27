@@ -11,7 +11,6 @@ import {
   EFFECT_JOURNAL_SCHEMA_VERSION,
   EXECUTION_CHECKPOINT_VERSION,
   canonicalDigest,
-  executeAirDocument,
   loadSecretsFromJson,
   loadToolBindingManifestFromJson,
   validateExecutionCheckpoint,
@@ -19,6 +18,10 @@ import {
 import { deriveEffectId, deriveEffectRequestDigest } from "../src/effect-contract.mjs";
 import { airDocumentDigest } from "../src/human-approval-checkpoints.mjs";
 import { createSqliteTraceStore } from "../src/sqlite-trace-store.mjs";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 test("SQLite checkpoints consume deltas and retain their exact prefix without materialization", async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-durable-traces-"));

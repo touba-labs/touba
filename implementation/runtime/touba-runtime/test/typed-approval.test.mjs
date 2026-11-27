@@ -1,10 +1,13 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { compileTestAir } from "../../../tests/helpers/compile.mjs";
-import { executeAirDocument } from "../src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { pendingParallelApprovals } from "../src/parallel-execution.mjs";
 import { fileURLToPath } from "node:url";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 let air;
 before(() => { air = compileTestAir(fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/human-approval-v1/positive/typed-approval.tb", import.meta.url))); });

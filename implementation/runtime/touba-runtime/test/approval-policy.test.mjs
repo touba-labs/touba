@@ -1,9 +1,12 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { compileTestAir } from "../../../tests/helpers/compile.mjs";
-import { executeAirDocument } from "../src/index.mjs";
 import { validateApprovalState } from "../src/human-approval-policy.mjs";
 import { fileURLToPath } from "node:url";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 
 let air;

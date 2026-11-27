@@ -8,10 +8,13 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createSqliteTraceStore } from "../src/sqlite-trace-store.mjs";
 import { TraceBuilder, sha256Json } from "../src/trace-builder.mjs";
-import { executeAirDocument } from "../src/index.mjs";
 import { canonicalDigest } from "../src/execution-checkpoints.mjs";
 import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { createTraceReference, traceJsonDigest } from "../../../contracts/trace-reference.mjs";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 function fixture(t, options = {}) {
   const root = mkdtempSync(join(tmpdir(), "touba-trace-sqlite-"));

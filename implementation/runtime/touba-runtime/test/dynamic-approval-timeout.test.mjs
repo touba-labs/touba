@@ -1,6 +1,10 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';import {join} from 'node:path';import {tmpdir} from 'node:os';
-import {compileTestAir} from '../../../tests/helpers/compile.mjs';import {executeAirDocument} from '../src/index.mjs';import {validateAirMachineContract} from '../../../contracts/machine/contracts.mjs';
+import {compileTestAir} from '../../../tests/helpers/compile.mjs';import {validateAirMachineContract} from '../../../contracts/machine/contracts.mjs';
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 function program(t){const root=mkdtempSync(join(tmpdir(),'touba-dynamic-deadline-'));t.after(()=>rmSync(root,{recursive:true,force:true}));const path=join(root,'source.tb');writeFileSync(path,`module deadline
 function Delay
     takes duration as Int

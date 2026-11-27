@@ -129,7 +129,7 @@ export async function captureProject(root) {
   return { root, name: basename(root), files, roots, revision, diagnostics, packages, entrypoints, toolPolicies };
 }
 
-async function compilerBinary() {
+export async function resolveExplorerCompiler() {
   if (process.env.TOUBA_COMPILE_BIN) return resolve(process.env.TOUBA_COMPILE_BIN);
   const candidates = [join(implementationRoot, 'bin'), resolve(implementationRoot, '../bin'), join(implementationRoot, 'target/release'), join(implementationRoot, 'target/debug')];
   const available = [];
@@ -146,7 +146,7 @@ export async function compileCapture(capture, { signal } = {}) {
   signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(120000)]);
   if (capture.diagnostics.some(d => d.severity === 'error')) return { diagnostics: capture.diagnostics };
   if (!capture.files.length) return capture.packages.length ? { graph:projectExplorer([],capture), diagnostics:[] } : { diagnostics: [{ code: 'ExplorerNoSources', message: 'No .tb source in this project.', severity: 'error' }] };
-  const binary = await compilerBinary();
+  const binary = await resolveExplorerCompiler();
   const temporary = await realpath(await mkdtemp(join(tmpdir(), 'touba-explore-')));
   try {
     for (const file of capture.files) {

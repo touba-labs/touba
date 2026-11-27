@@ -1,9 +1,12 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { executeAirDocument } from "../src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { fileURLToPath } from "node:url";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 
 let air;

@@ -1,13 +1,17 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { executeAirDocument, loadToolBindingManifestFromJson } from "../src/index.mjs";
+import { loadToolBindingManifestFromJson } from "../src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { executeReferenceAir } from "../../../contracts/reference-runtime/runtime.mjs";
 import { agentResultSchema, argumentsSchemaForCapability } from "../../touba-handler-sdk/src/decision-contract.mjs";
 import { createAiSdkDecisionProvider } from "../../touba-handler-sdk/src/index.mjs";
 import { nativeCapabilityName } from "../../touba-handler-sdk/src/native-decision.mjs";
 import { fileURLToPath } from "node:url";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 
 let air;

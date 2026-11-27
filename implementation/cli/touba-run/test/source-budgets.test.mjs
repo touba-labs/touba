@@ -6,11 +6,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { executeAirDocument, loadToolBindingManifestFromJson } from "../../../runtime/touba-runtime/src/index.mjs";
+import { loadToolBindingManifestFromJson } from "../../../runtime/touba-runtime/src/index.mjs";
 import { validateAirDocument } from "../../../runtime/touba-runtime/src/air-runtime-profile.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { prepareProject } from "../../touba-project/src/project.mjs";
 import { generateSupplyChainLock } from "../../touba-supply-chain/src/generate.mjs";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 const implementation = fileURLToPath(new URL("../../../", import.meta.url));
 const source = readFileSync(new URL("../../../grammar/tree-sitter-touba/examples/budgets-bq1/source-limits.tb", import.meta.url), "utf8");

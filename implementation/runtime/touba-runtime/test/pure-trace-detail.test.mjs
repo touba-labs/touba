@@ -4,9 +4,12 @@ import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { executeAirDocument } from "../src/index.mjs";
 import { validateTraceMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { loadTraceAuditArtifacts, validateTraceAuditArtifacts, createTraceAuditExport } from "../../../cli/touba-audit/src/audit.mjs";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 let air;
 before(() => {

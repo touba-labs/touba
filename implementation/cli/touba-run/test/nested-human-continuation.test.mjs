@@ -5,8 +5,12 @@ import { linkSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { executeAirDocument, loadSecretsFromJson } from "../../../runtime/touba-runtime/src/index.mjs";
+import { loadSecretsFromJson } from "../../../runtime/touba-runtime/src/index.mjs";
 import { checkpointJsonClone, validateHumanCheckpointContinuation } from "../../../runtime/touba-runtime/src/human-approval-checkpoints.mjs";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 const fixture = fileURLToPath(new URL("../../../grammar/tree-sitter-touba/examples/agent-interface-v1/positive/tb-nested-human-continuation.tb", import.meta.url));
 const air = JSON.parse(execFileSync(process.env.CARGO ?? "cargo", ["run", "--quiet", "--manifest-path",

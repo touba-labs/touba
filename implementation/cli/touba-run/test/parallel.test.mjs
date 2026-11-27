@@ -5,11 +5,14 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
 import { validateAirMachineContract } from "../../../contracts/machine/contracts.mjs";
 import { createSqliteEffectJournal } from "../../../runtime/touba-runtime/src/sqlite-effect-journal.mjs";
 import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
 import { canonicalDigest } from "../../../runtime/touba-runtime/src/execution-checkpoints.mjs";
+import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkpoints.mjs";
+
+const executeAirDocument = createApprovalTestRunner();
+
 
 const cargoManifest = fileURLToPath(new URL("../../../Cargo.toml", import.meta.url));
 // Cargo coordinates compilation with the other test files. Executing the
