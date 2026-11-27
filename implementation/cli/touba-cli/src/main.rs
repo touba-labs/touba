@@ -1,8 +1,7 @@
 use std::env;
 use std::process;
 use touba_compiler::{
-    capability_description_warnings, compile_module_sources, compile_project_sources,
-    serialize_air_to_json,
+    capability_description_warnings, compile_sources_with_package_interfaces, serialize_air_to_json,
 };
 
 mod source_inputs;
@@ -16,11 +15,12 @@ fn main() {
         }
     };
     let path = &inputs.entry;
-    let mut result = if inputs.module_only {
-        compile_module_sources(path, &inputs.sources)
-    } else {
-        compile_project_sources(path, &inputs.sources)
-    };
+    let mut result = compile_sources_with_package_interfaces(
+        path,
+        &inputs.sources,
+        !inputs.module_only,
+        &inputs.package_interfaces,
+    );
     if let Some(document) = result.document.take() {
         let mut value = serde_json::to_value(document).expect("AIR serializes");
         portable_source_ids(&mut value, &inputs.source_root);

@@ -671,6 +671,7 @@ pub enum AirDiagnosticCode {
     ProjectEntryModuleNotFound,
     ImportModuleNotFound,
     ImportDeclarationNotFound,
+    PackageExportMissing,
     ImportKindMismatch,
     ImportCycleDetected,
     ImportFunctionNotPure,

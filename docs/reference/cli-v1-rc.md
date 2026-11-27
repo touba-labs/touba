@@ -439,8 +439,10 @@ Compile une source `.tb` vers un AIR JSON.
 
 Dans un projet, la commande retrouve la racine depuis le fichier et résout les
 imports des packages installés après contrôle d'intégrité, même si le terminal
-est ouvert ailleurs. `touba prepare` prépare en plus les manifests, bindings et
-plans d'exécution de l'ensemble du projet.
+est ouvert ailleurs. Un import depuis l’application ou un autre package
+doit désigner un export déclaré par le package qui le fournit.
+`touba prepare` prépare en plus les manifests, bindings et plans d'exécution
+de l'ensemble du projet.
 
 Le chemin `--out` est le mode recommandé : Touba vérifie que la cible se termine
 par `.air.json` et que la sortie du compilateur est bien un document AIR JSON

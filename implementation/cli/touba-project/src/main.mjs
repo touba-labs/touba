@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { runPassthrough } from "./passthrough.mjs";
+import { snapshotCompilerPackageInterfaces } from "./compiler-package-interfaces.mjs";
 import { projectAdmissionFailure, requestsJsonRunOutput } from "./run-admission.mjs";
 import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -303,7 +304,7 @@ async function dispatch(rawArgs) {
   return { usage: true, exitCode: 2 };
 }
 
-function compileCommand(rawArgs) {
+async function compileCommand(rawArgs) {
   const options = parseCompileOptions(rawArgs);
   if (options.help === true) {
     return { text: compileUsage(), exitCode: 0 };
@@ -312,9 +313,10 @@ function compileCommand(rawArgs) {
     throw new Error("touba compile cannot combine --out and --stdout");
   }
   let sourceIndex = -1;
+  let packageInterfaces = [];
   for (let index = 0; index < options.compilerArgs.length; index += 1) {
     const arg = options.compilerArgs[index];
-    if (["--source-root", "--module-source"].includes(arg)) { index += 1; continue; }
+    if (["--source-root", "--module-source", "--package-interfaces"].includes(arg)) { index += 1; continue; }
     // Leave unknown options to the selected compiler, including an explicit
     // host compiler override whose command-line contract may differ.
     if (arg.startsWith("-") && !["--json", "--stdin", "--module"].includes(arg)) break;
@@ -328,26 +330,32 @@ function compileCommand(rawArgs) {
       else for (const diagnostic of context.diagnostics) process.stderr.write(`${diagnostic.code}: ${diagnostic.message}\n`);
       return { passthrough: true, exitCode: 1 };
     }
+    packageInterfaces = context.packageInterfaces;
     options.compilerArgs[sourceIndex] = source;
     options.compilerArgs.push(...context.sourceRoots.flatMap(root => ["--source-root", root]),
       ...context.moduleSourcePaths.flatMap(path => ["--module-source", path]));
   }
-  if (options.out === undefined && options.stdout === true) {
-    return runCompilerPassthrough(options.compilerArgs);
-  }
-  if (options.out === undefined) {
+  if (options.out === undefined && options.stdout !== true) {
     throw new Error("touba compile requires an explicit output mode: use --out <program.air.json> or --stdout");
   }
 
-  assertCompileOutputPath(options.out);
-  const compiler = compileCommandSpec(options.compilerArgs);
-  const result = spawnSync(compiler.command, compiler.args, {
-    cwd: compiler.cwd ?? process.cwd(),
-    env: process.env,
-    stdio: ["inherit", "pipe", "pipe"],
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  if (options.out !== undefined) assertCompileOutputPath(options.out);
+  const snapshot = snapshotCompilerPackageInterfaces(packageInterfaces);
+  let result;
+  try {
+    const args = [...options.compilerArgs, ...snapshot.args];
+    if (options.stdout === true) return await runCompilerPassthrough(args);
+    const compiler = compileCommandSpec(args);
+    result = spawnSync(compiler.command, compiler.args, {
+      cwd: compiler.cwd ?? process.cwd(),
+      env: process.env,
+      stdio: ["inherit", "pipe", "pipe"],
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } finally {
+    snapshot.dispose();
+  }
 
   if (result.error) {
     throw result.error;

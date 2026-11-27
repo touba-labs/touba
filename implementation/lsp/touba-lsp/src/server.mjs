@@ -12,6 +12,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { compilerInputsForFile } from "../../../cli/touba-project/src/project.mjs";
+import { snapshotCompilerPackageInterfaces } from "../../../cli/touba-project/src/compiler-package-interfaces.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const implDir = process.env.TOUBA_IMPLEMENTATION_DIR
@@ -146,10 +147,11 @@ export function compilerCommandSpec(sourcePath, {
   sourceText,
   sourceRoots = [],
   moduleSourcePaths = [],
+  packageInterfaceArgs = [],
 } = {}) {
   const args = ["--json", ...(sourceText === undefined ? [] : ["--stdin"]),
     ...sourceRoots.flatMap(root => ["--source-root", root]),
-    ...moduleSourcePaths.flatMap(path => ["--module-source", path]), sourcePath];
+    ...moduleSourcePaths.flatMap(path => ["--module-source", path]), ...packageInterfaceArgs, sourcePath];
   if (env.TOUBA_COMPILE_BIN) {
     return { command: env.TOUBA_COMPILE_BIN, args };
   }
@@ -173,8 +175,9 @@ export function compilerCommandSpec(sourcePath, {
 }
 
 export function runToubaCompileJson(sourcePath, options = {}) {
-  const compiler = compilerCommandSpec(sourcePath, options);
+  const snapshot = snapshotCompilerPackageInterfaces(options.packageInterfaces);
   try {
+    const compiler = compilerCommandSpec(sourcePath, { ...options, packageInterfaceArgs: snapshot.args });
     const raw = execFileSync(
       compiler.command,
       compiler.args,
@@ -187,6 +190,8 @@ export function runToubaCompileJson(sourcePath, options = {}) {
       return envelope;
     }
     throw error;
+  } finally {
+    snapshot.dispose();
   }
 }
 

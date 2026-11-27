@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use touba_compiler::parse_source;
+use touba_compiler::{PackageInterface, parse_source};
 
 pub struct Inputs {
     pub json: bool,
@@ -11,6 +11,7 @@ pub struct Inputs {
     pub entry: String,
     pub sources: Vec<(String, String)>,
     pub source_root: PathBuf,
+    pub package_interfaces: Vec<PackageInterface>,
 }
 
 // Resolve source modules, never runtime handlers, configuration or secrets.
@@ -23,6 +24,7 @@ pub fn load(args: impl Iterator<Item = String>) -> Result<Inputs, String> {
     let mut entry = None;
     let mut paths = Vec::new();
     let mut roots = Vec::new();
+    let mut package_interfaces_path = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => json = true,
@@ -34,6 +36,12 @@ pub fn load(args: impl Iterator<Item = String>) -> Result<Inputs, String> {
             "--source-root" => roots.push(absolute(&PathBuf::from(
                 args.next().ok_or("--source-root requires a path")?,
             ))?),
+            "--package-interfaces" => {
+                let path = args.next().ok_or("--package-interfaces requires a path")?;
+                if package_interfaces_path.replace(path).is_some() {
+                    return Err("--package-interfaces may only be supplied once".into());
+                }
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown compiler option {flag}")),
             _ if entry.is_none() => entry = Some(absolute(Path::new(&arg))?),
             _ => {
@@ -44,6 +52,21 @@ pub fn load(args: impl Iterator<Item = String>) -> Result<Inputs, String> {
         }
     }
     let entry = entry.ok_or("usage: touba-compile [--json] [--stdin] [--source-root <directory>] [--module-source <file.tb>] <source.tb>")?;
+    let mut package_interfaces: Vec<PackageInterface> = match package_interfaces_path {
+        Some(path) => serde_json::from_str(&read(Path::new(&path))?)
+            .map_err(|error| format!("invalid compiler package interfaces: {error}"))?,
+        None => Vec::new(),
+    };
+    let mut package_roots = HashSet::new();
+    for package in &mut package_interfaces {
+        if !package.source_root.is_absolute() {
+            return Err("compiler package source roots must be absolute".into());
+        }
+        package.source_root = absolute(&package.source_root)?;
+        if !package_roots.insert(package.source_root.clone()) {
+            return Err("duplicate compiler package source root".into());
+        }
+    }
     if let Some(root) = entry
         .ancestors()
         .find(|p| p.file_name().is_some_and(|name| name == "src"))
@@ -130,6 +153,7 @@ pub fn load(args: impl Iterator<Item = String>) -> Result<Inputs, String> {
         entry,
         sources,
         source_root,
+        package_interfaces,
     })
 }
 

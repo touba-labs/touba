@@ -1671,7 +1671,7 @@ test("real prepare resolves imported fields and signatures before expression typ
   } finally { cleanup(root); }
 });
 
-test("real prepare checks package signatures without granting private exports", async () => {
+test("prepare and compile require exported package declarations", async () => {
   const root = tempRoot();
   try {
     initProject({ root });
@@ -1687,10 +1687,27 @@ test("real prepare checks package signatures without granting private exports", 
     writeFileSync(sourcePath, source);
     let report = await prepareProject({ root, mode: "write", entryRef: "function:examples.search/Label" });
     assert.equal(report.status, "success", JSON.stringify(report.diagnostics));
+    const output = join(root, "direct.air.json");
+    const accepted = spawnSync(process.execPath, [cliPath, "compile", sourcePath, "--out", output], { encoding: "utf8" });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    const originalAir = readFileSync(output);
+
     writeFileSync(sourcePath, source.replaceAll("Public", "Private"));
     report = await prepareProject({ root, mode: "plan" });
     assert.equal(report.status, "error");
     assert.ok(report.diagnostics.some(d => d.code === "PackageExportMissing"), JSON.stringify(report.diagnostics));
+    const refused = spawnSync(process.execPath, [cliPath, "compile", sourcePath, "--out", output], { encoding: "utf8" });
+    assert.equal(refused.status, 1, refused.stderr);
+    assert.match(refused.stderr, /PackageExportMissing/);
+    assert.deepEqual(readFileSync(output), originalAir);
+
+    const streamed = spawnSync(process.execPath,
+      [cliPath, "compile", sourcePath, "--stdout", "--json"], { encoding: "utf8" });
+    assert.equal(streamed.status, 1, streamed.stderr);
+    const diagnostic = JSON.parse(streamed.stdout);
+    assert.equal(diagnostic.air, null);
+    assert.equal(diagnostic.diagnostics[0].code, "PackageExportMissing");
+    assert.equal(diagnostic.diagnostics[0].source_ref.start_line, 1);
   } finally { cleanup(root); }
 });
 

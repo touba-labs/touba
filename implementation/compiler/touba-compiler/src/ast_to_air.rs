@@ -59,16 +59,22 @@ pub fn build_air(document: &AstDocument) -> AirBuildResult {
 /// Compile an explicitly supplied set of source modules, resolving contracts
 /// before lowering expressions. Filesystem discovery belongs to the host.
 pub fn compile_project_sources(entry_source: &str, sources: &[(String, String)]) -> AirBuildResult {
-    compile_sources(entry_source, sources, true)
+    compile_sources_with_package_interfaces(entry_source, sources, true, &[])
 }
 
 /// Produce a typed module for project linking, after checking the complete
 /// source context. This is not an unchecked single-source compilation path.
 pub fn compile_module_sources(entry_source: &str, sources: &[(String, String)]) -> AirBuildResult {
-    compile_sources(entry_source, sources, false)
+    compile_sources_with_package_interfaces(entry_source, sources, false, &[])
 }
 
-fn compile_sources(entry_source: &str, sources: &[(String, String)], link: bool) -> AirBuildResult {
+/// Apply package visibility to each module's imports before combining their AIR.
+pub fn compile_sources_with_package_interfaces(
+    entry_source: &str,
+    sources: &[(String, String)],
+    link: bool,
+    packages: &[crate::PackageInterface],
+) -> AirBuildResult {
     let mut documents = Vec::new();
     let mut diagnostics = Vec::new();
     let mut entry_module = None;
@@ -122,6 +128,9 @@ fn compile_sources(entry_source: &str, sources: &[(String, String)], link: bool)
             modules.push(module);
         }
     }
+    diagnostics.extend(crate::package_interfaces::validate_package_imports(
+        &modules, packages,
+    ));
     if !diagnostics.is_empty() {
         return AirBuildResult {
             document: None,

@@ -1339,13 +1339,13 @@ async function loadLocalPackages({
   };
 }
 
-// Editor hosts use the same package metadata validation as prepare; this only
-// discovers source files and never grants runtime authority or loads secrets.
+// Discover registered source files and verified package export interfaces.
+// This does not grant runtime authority or load secrets.
 export function compilerInputsForFile(sourcePath) {
   let root = dirname(resolve(sourcePath));
   while (!existsSync(join(root, DEFAULT_PROJECT_CONFIG_PATH)) && !existsSync(join(root, "touba.package.json"))) {
     const parent = dirname(root);
-    if (parent === root) return { sourceRoots: [], moduleSourcePaths: [], diagnostics: [] };
+    if (parent === root) return { sourceRoots: [], moduleSourcePaths: [], packageInterfaces: [], diagnostics: [] };
     root = parent;
   }
   const diagnostics = [];
@@ -1355,6 +1355,11 @@ export function compilerInputsForFile(sourcePath) {
     sourceRoots: [join(root, DEFAULT_SOURCE_ROOT), ...packages.map(({ metadata }) => join(metadata.root, DEFAULT_SOURCE_ROOT))],
     moduleSourcePaths: packages.flatMap(({ metadata }) => packageExportModuleNames(metadata.exports)
       .map(moduleName => moduleNameToSourcePath(metadata.root, moduleName)).filter(path => existsSync(path))),
+    packageInterfaces: packages.map(({ metadata }) => ({
+      name: metadata.name,
+      source_root: join(metadata.root, DEFAULT_SOURCE_ROOT),
+      exports: Object.values(metadata.exports).flat(),
+    })),
     diagnostics,
   };
 }

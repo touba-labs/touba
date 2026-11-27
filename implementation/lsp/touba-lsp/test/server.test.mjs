@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { SymbolKind } from "vscode-languageserver/node.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compilerInputsForFile, initProject } from "../../../cli/touba-project/src/project.mjs";
 
 import {
   completionForPosition,
@@ -692,6 +693,38 @@ test("editor positions belong to the open file even when imported code uses the 
   assert.equal(definitionForPosition(result.air, uri, { line: 6, character: 7 }, sourceUris), null);
   assert.match(hoverForPosition(result.air, { line: 8, character: 1 }, uri, sourceUris), /strategy Local/);
   assert.equal(definitionForPosition(result.air, uri, { line: 1, character: 8 }, sourceUris).uri, dependencyUri);
+});
+
+test("editor diagnostics use the verified package interface for unsaved source", t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-lsp-packages-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  initProject({ root });
+  const packageRoot = join(root, "author");
+  mkdirSync(join(packageRoot, "src", "example"), { recursive: true });
+  writeFileSync(join(packageRoot, "src", "example", "catalog.tb"),
+    "module example.catalog\ndefine Title as Text = \"Public title\"\ndefine DraftTitle as Text = \"Draft title\"\n");
+  writeFileSync(join(packageRoot, "touba.package.json"), JSON.stringify({
+    name: "example.catalog",
+    version: "1.0.0",
+    package_schema_version: "touba-package-v1",
+    touba: { air_profile: "touba-air-json-canonical-v1", runtime_compatibility: ">=1 <2" },
+    exports: { defines: ["constant:example.catalog/Title"] },
+  }));
+  const configurationPath = join(root, "touba.project.json");
+  const configuration = JSON.parse(readFileSync(configurationPath, "utf8"));
+  configuration.packages = [{ editable: true, manifest: "author/touba.package.json" }];
+  writeFileSync(configurationPath, JSON.stringify(configuration));
+  const sourcePath = join(root, "src", "main.tb");
+  const text = "module main\nimport define Title from example.catalog\n";
+  writeFileSync(sourcePath, text);
+  const context = compilerInputsForFile(sourcePath);
+  assert.deepEqual(context.diagnostics, []);
+  assert.equal(runToubaCompileJson(sourcePath, { ...context, sourceText: text }).ok, true);
+  const result = runToubaCompileJson(sourcePath, { ...context, sourceText: text.replace("Title", "DraftTitle") });
+  assert.equal(result.ok, false);
+  assert.equal(result.air, null);
+  assert.equal(result.diagnostics[0].code, "PackageExportMissing");
+  assert.equal(result.diagnostics[0].source_ref.start_line, 1);
 });
 
 test("editor navigation resolves each name in a grouped import", t => {
