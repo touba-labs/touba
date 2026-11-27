@@ -15,7 +15,6 @@ authors:
     given-names: Jean-Sébastien
     email: jean-sebastien.dessureault@uqtr.ca
     affiliation: "Mathematics and Computer Science, LSSI, Université du Québec à Trois-Rivières"
-version: 1.0.0
 license: Apache-2.0
 repository-code: "https://github.com/touba-labs/touba"
 url: "https://github.com/touba-labs/touba"

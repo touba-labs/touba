@@ -22,6 +22,21 @@ checks. Packaging also requires an official, relocatable Node distribution
 with its complete license, and the native release compiler. Source validation
 and installed distribution qualification are separate checks.
 
+## HTTP and PostgreSQL integration
+
+The integration pilot needs the source packages `touba.http-api` and
+`touba.sql-effects` and a disposable PostgreSQL instance. Point
+`TOUBA_TEST_LIBRARY` at a directory with both packages under `packages/`.
+
+```sh
+TOUBA_TEST_LIBRARY=/path/to/package-sources pnpm validate:reliable-effects-pilot
+```
+
+The pilot uses Docker by default. For a native installation, set
+`TOUBA_TEST_POSTGRES_DRIVER=native` and point `TOUBA_TEST_POSTGRES_BIN` to
+the directory containing the PostgreSQL binaries. The pilot runs separately
+from `validate:v1-local`.
+
 Tests own their executable examples and synthetic data. Keep test effects in
 temporary directories, use local fixtures and assert both success and refusal.
 Do not turn a missing component or an unexecuted platform check into success.

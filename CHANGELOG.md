@@ -1,5 +1,25 @@
 # Changelog
 
+All notable public changes to Touba are summarized here. Structured release
+notes remain the source of truth for version deltas, validation evidence,
+downloadable artifacts, checksums and platform-specific installation
+instructions.
+
+Release notes live in [`implementation/release/notes`](implementation/release/notes/);
+downloads are on the [Touba hub](https://toubalang.org/hub/telechargements/).
+
+| Version | Highlights |
+| --- | --- |
+| [1.5.0](#150) | Authenticated project request ingress, reviewed queue recovery, scheduler controls, package compatibility diagnostics |
+| [1.5.0-rc.1](#150-rc1) | Reviewed multi-project lifecycle, server profiles, private approval dossiers, verified registry trust |
+| [1.4.0](#140) | Application approval requirements preserved across package updates, review against the exact package digest |
+| [1.3.1](#131) | Operation-bound tool approvals, prepared resources, strict host configuration, host-controlled compensation |
+| [1.3.0](#130) | Tool-level approval of exact arguments, execution provenance for JavaScript and Python handlers |
+| [1.2.0](#120) | Prepared resource files across CLI, project server and SDK runs, strict binding fields |
+| [1.1.0](#110) | Verified `touba update`, approval checkpoint integrity, improved Explorer and SDK errors |
+| [1.0.0](#100) | One distribution version for core, compiler, runtime, CLI and SDKs, with its qualification history |
+| [0.1.0](#010) | First V1 language surface, AIR, runtime, CLI and archives |
+
 ## 1.5.0
 
 Local candidate with authenticated project request ingress, reviewed queue
@@ -13,12 +33,9 @@ Local test candidate: reviewed multi-project lifecycle, server profiles,
 private approval dossiers, persistent diagnostics and verified registry trust.
 See [release notes](implementation/release/notes/v1.5.0-rc.1.md).
 
-All notable public changes to Touba are summarized here. Structured release
-notes remain the source of truth for version deltas, validation evidence,
-downloadable artifacts, checksums and platform-specific installation
-instructions.
+## 1.4.0
 
-## 1.4.0 - Candidate
+Published on November 10, 2026.
 
 - Preserve the application's approval requirements across package updates and reinstallation.
 - Review tool contract changes against the exact package digest before preparation.
@@ -26,8 +43,8 @@ instructions.
 - Trace verified package versions, lock digests and operation approvals.
 - Preserve precise package admission diagnostics in JavaScript and Python.
 
-See [migration and candidate notes](implementation/release/notes/v1.4.0.md).
-Native qualification is required before distribution. Published versions remain unchanged.
+See [migration and release notes](implementation/release/notes/v1.4.0.md)
+and the [published downloads](https://toubalang.org/hub/telechargements/).
 
 ## 1.3.1
 
@@ -40,7 +57,9 @@ See [migration and release notes](implementation/release/notes/v1.3.1.md).
 Update the runtime and project SDKs together. Preserve suspended executions
 with their original build. Previously distributed archives remain unchanged.
 
-## 1.3.0 - Local candidate
+## 1.3.0
+
+<sub>Local candidate</sub>
 
 - Tool-level approval covers exact arguments on direct, composed and agent-selected calls.
 - JavaScript and Python handlers receive execution provenance; update SDKs with the runtime.
@@ -49,7 +68,9 @@ with their original build. Previously distributed archives remain unchanged.
 
 See [migration and release notes](implementation/release/notes/v1.3.0.md).
 
-## 1.2.0 - Local candidate
+## 1.2.0
+
+<sub>Local candidate</sub>
 
 - Prepared resource files now reach CLI, project-server and JavaScript/Python
   project runs, with fingerprint checks and per-call memory permissions.
@@ -78,7 +99,9 @@ See [migration and release notes](implementation/release/notes/v1.2.0.md).
 See [migration and release notes](implementation/release/notes/v1.1.0.md).
 Existing approvals and project data are not migrated automatically.
 
-## 1.0.0 - Initial distribution and qualification history
+## 1.0.0
+
+<sub>Initial distribution and qualification history</sub>
 
 Core, compiler, runtime, CLI and both SDKs share a distribution version. The editor extension
 has its own release cycle.
@@ -92,6 +115,9 @@ Windows resolve the bundled CLI without evaluating batch scripts. Release gates
 cover both SDKs, native GUI sessions, the current FR/EN tutorial inventory,
 industrial qualification, security/signatures and production restoration.
 These gates remain open until their actual evidence is supplied.
+
+<details>
+<summary><b>Distribution and qualification history</b>, 18 October 2026 to 26 October 2026</summary>
 
 ### Package diagnostics and recovery recipes, 26 October 2026
 
@@ -401,9 +427,13 @@ identity; the digest-named archive must be installed explicitly after an update.
 
 These are source changes, not a new published binary release.
 
-## 0.1.0 - Initial Public Release
+</details>
 
-Detailed release note: `implementation/release/notes/v0.1.0.md`.
+## 0.1.0
+
+Archived development prototype.
+
+Detailed release note: [v0.1.0](implementation/release/notes/v0.1.0.md).
 
 The [release index](implementation/release/releases.json) records the
 retirement of this distribution and the maintainer decision.

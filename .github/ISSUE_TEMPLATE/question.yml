@@ -1,0 +1,33 @@
+name: Question or design feedback
+description: Ask about the language, the runtime or a design choice, or share a research perspective.
+title: "question: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start from the real use case, then explain the limitation, risk or open question you encountered. The [documentation](https://toubalang.org/) may already have the answer.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of question
+      options:
+        - How do I do this with Touba?
+        - Why does Touba work this way?
+        - Research or paradigm question
+        - Product or roadmap question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What you are building or studying.
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true

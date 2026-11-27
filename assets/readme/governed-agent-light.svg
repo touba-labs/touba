@@ -1,0 +1,203 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="704" viewBox="0 0 880 704" role="img" aria-labelledby="title description">
+  <title id="title">refunds.tb, an annotated Touba program</title>
+  <desc id="description">module shop.refunds
+
+tool IssueRefund
+    description "Refund an order through the payment API."
+    takes order as Text
+    gives Text
+    requires network, secret_read
+    secrets PAYMENTS_API_KEY
+
+agent RefundAgent
+    description "Refund the order and return the receipt."
+    takes order as Text
+    gives Text
+    responsibility "Refund only the supplied order."
+    uses IssueRefund
+    callable_by strategy HandleRefund
+
+strategy HandleRefund
+    takes order as Text
+    gives Text
+    uses RefundAgent
+    do
+        human.approve
+            with context as order
+            with role as "finance"
+            into approval
+        RefundAgent
+            with order as order
+            into receipt
+        give receipt</desc>
+  <style>
+    text { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-size: 13px; fill: #1f2328; }
+    .n { fill: #8c959f; text-anchor: end; font-size: 12px; }
+    .declaration, .builtin { fill: #2f63c6; font-weight: 700; }
+    .keyword { fill: #2f63c6; }
+    .name { font-weight: 700; }
+    .string { fill: #0a7c66; }
+    .type { fill: #9a6700; }
+    .file { fill: #59636e; font-size: 12px; }
+    .title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; font-size: 13.5px; font-weight: 600; }
+    .detail { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; font-size: 12.5px; fill: #59636e; }
+    .label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; font-size: 12px; font-weight: 600; fill: #2f63c6; text-anchor: end; }
+    .cover { fill: #f6f8fa; }
+    .band { fill: rgba(47,99,198,0.09); }
+    .link { stroke: #2f63c6; stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.7; }
+    .mark { fill: #2f63c6; }
+    .reveal { animation: reveal 0.5s ease-out backwards; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    @keyframes k0{from{transform:translateX(0)}to{transform:translateX(152px)}}
+    @keyframes k2{from{transform:translateX(0)}to{transform:translateX(128px)}}
+    @keyframes k3{from{transform:translateX(0)}to{transform:translateX(425px)}}
+    @keyframes k4{from{transform:translateX(0)}to{transform:translateX(152px)}}
+    @keyframes k5{from{transform:translateX(0)}to{transform:translateX(81px)}}
+    @keyframes k6{from{transform:translateX(0)}to{transform:translateX(230px)}}
+    @keyframes k7{from{transform:translateX(0)}to{transform:translateX(191px)}}
+    @keyframes k9{from{transform:translateX(0)}to{transform:translateX(136px)}}
+    @keyframes k10{from{transform:translateX(0)}to{transform:translateX(425px)}}
+    @keyframes k11{from{transform:translateX(0)}to{transform:translateX(152px)}}
+    @keyframes k12{from{transform:translateX(0)}to{transform:translateX(81px)}}
+    @keyframes k13{from{transform:translateX(0)}to{transform:translateX(378px)}}
+    @keyframes k14{from{transform:translateX(0)}to{transform:translateX(128px)}}
+    @keyframes k15{from{transform:translateX(0)}to{transform:translateX(261px)}}
+    @keyframes k17{from{transform:translateX(0)}to{transform:translateX(167px)}}
+    @keyframes k18{from{transform:translateX(0)}to{transform:translateX(152px)}}
+    @keyframes k19{from{transform:translateX(0)}to{transform:translateX(81px)}}
+    @keyframes k20{from{transform:translateX(0)}to{transform:translateX(128px)}}
+    @keyframes k21{from{transform:translateX(0)}to{transform:translateX(19px)}}
+    @keyframes k22{from{transform:translateX(0)}to{transform:translateX(105px)}}
+    @keyframes k23{from{transform:translateX(0)}to{transform:translateX(167px)}}
+    @keyframes k24{from{transform:translateX(0)}to{transform:translateX(175px)}}
+    @keyframes k25{from{transform:translateX(0)}to{transform:translateX(105px)}}
+    @keyframes k26{from{transform:translateX(0)}to{transform:translateX(89px)}}
+    @keyframes k27{from{transform:translateX(0)}to{transform:translateX(152px)}}
+    @keyframes k28{from{transform:translateX(0)}to{transform:translateX(97px)}}
+    @keyframes k29{from{transform:translateX(0)}to{transform:translateX(97px)}}
+    @media (prefers-reduced-motion: reduce) { .cover, .reveal { animation: none !important; } }
+  </style>
+  <defs><clipPath id="code"><rect x="48" y="40" width="492" height="664"/></clipPath></defs>
+  <rect x="0.5" y="0.5" width="879" height="703" rx="14" fill="#f6f8fa" stroke="#d0d7de"/>
+  <path d="M1 40 H879" stroke="#d8dee4"/>
+  <circle cx="22" cy="20" r="5" fill="#d0d7de"/><circle cx="40" cy="20" r="5" fill="#d0d7de"/><circle cx="58" cy="20" r="5" fill="#d0d7de"/>
+  <text class="file" x="82" y="24">refunds.tb</text>
+  <text class="n" x="44" y="71">1</text>
+  <text y="71"><tspan class="declaration" x="60.0">module</tspan><tspan class="name" x="114.6">shop.refunds</tspan></text>
+  <text class="n" x="44" y="92">2</text>
+  <text class="n" x="44" y="113">3</text>
+  <text y="113"><tspan class="declaration" x="60.0">tool</tspan><tspan class="name" x="99.0">IssueRefund</tspan></text>
+  <text class="n" x="44" y="134">4</text>
+  <text y="134"><tspan class="keyword" x="91.2">description</tspan><tspan class="string" x="184.8">"Refund an order through the payment API."</tspan></text>
+  <text class="n" x="44" y="155">5</text>
+  <text y="155"><tspan class="keyword" x="91.2">takes</tspan><tspan class="ink" x="138.0">order</tspan><tspan class="keyword" x="184.8">as</tspan><tspan class="type" x="208.2">Text</tspan></text>
+  <text class="n" x="44" y="176">6</text>
+  <text y="176"><tspan class="keyword" x="91.2">gives</tspan><tspan class="type" x="138.0">Text</tspan></text>
+  <text class="n" x="44" y="197">7</text>
+  <text y="197"><tspan class="keyword" x="91.2">requires</tspan><tspan class="ink" x="161.4">network</tspan><tspan class="ink" x="216.0">,</tspan><tspan class="ink" x="231.6">secret_read</tspan></text>
+  <text class="n" x="44" y="218">8</text>
+  <text y="218"><tspan class="keyword" x="91.2">secrets</tspan><tspan class="ink" x="153.6">PAYMENTS_API_KEY</tspan></text>
+  <text class="n" x="44" y="239">9</text>
+  <text class="n" x="44" y="260">10</text>
+  <text y="260"><tspan class="declaration" x="60.0">agent</tspan><tspan class="name" x="106.8">RefundAgent</tspan></text>
+  <text class="n" x="44" y="281">11</text>
+  <text y="281"><tspan class="keyword" x="91.2">description</tspan><tspan class="string" x="184.8">"Refund the order and return the receipt."</tspan></text>
+  <text class="n" x="44" y="302">12</text>
+  <text y="302"><tspan class="keyword" x="91.2">takes</tspan><tspan class="ink" x="138.0">order</tspan><tspan class="keyword" x="184.8">as</tspan><tspan class="type" x="208.2">Text</tspan></text>
+  <text class="n" x="44" y="323">13</text>
+  <text y="323"><tspan class="keyword" x="91.2">gives</tspan><tspan class="type" x="138.0">Text</tspan></text>
+  <text class="n" x="44" y="344">14</text>
+  <text y="344"><tspan class="keyword" x="91.2">responsibility</tspan><tspan class="string" x="208.2">"Refund only the supplied order."</tspan></text>
+  <text class="n" x="44" y="365">15</text>
+  <text y="365"><tspan class="keyword" x="91.2">uses</tspan><tspan class="ink" x="130.2">IssueRefund</tspan></text>
+  <text class="n" x="44" y="386">16</text>
+  <text y="386"><tspan class="keyword" x="91.2">callable_by</tspan><tspan class="keyword" x="184.8">strategy</tspan><tspan class="ink" x="255.0">HandleRefund</tspan></text>
+  <text class="n" x="44" y="407">17</text>
+  <text class="n" x="44" y="428">18</text>
+  <text y="428"><tspan class="declaration" x="60.0">strategy</tspan><tspan class="name" x="130.2">HandleRefund</tspan></text>
+  <text class="n" x="44" y="449">19</text>
+  <text y="449"><tspan class="keyword" x="91.2">takes</tspan><tspan class="ink" x="138.0">order</tspan><tspan class="keyword" x="184.8">as</tspan><tspan class="type" x="208.2">Text</tspan></text>
+  <text class="n" x="44" y="470">20</text>
+  <text y="470"><tspan class="keyword" x="91.2">gives</tspan><tspan class="type" x="138.0">Text</tspan></text>
+  <text class="n" x="44" y="491">21</text>
+  <text y="491"><tspan class="keyword" x="91.2">uses</tspan><tspan class="ink" x="130.2">RefundAgent</tspan></text>
+  <text class="n" x="44" y="512">22</text>
+  <text y="512"><tspan class="keyword" x="91.2">do</tspan></text>
+  <text class="n" x="44" y="533">23</text>
+  <text y="533"><tspan class="builtin" x="122.4">human.approve</tspan></text>
+  <text class="n" x="44" y="554">24</text>
+  <text y="554"><tspan class="keyword" x="153.6">with</tspan><tspan class="ink" x="192.6">context</tspan><tspan class="keyword" x="255.0">as</tspan><tspan class="ink" x="278.4">order</tspan></text>
+  <text class="n" x="44" y="575">25</text>
+  <text y="575"><tspan class="keyword" x="153.6">with</tspan><tspan class="ink" x="192.6">role</tspan><tspan class="keyword" x="231.6">as</tspan><tspan class="string" x="255.0">"finance"</tspan></text>
+  <text class="n" x="44" y="596">26</text>
+  <text y="596"><tspan class="keyword" x="153.6">into</tspan><tspan class="ink" x="192.6">approval</tspan></text>
+  <text class="n" x="44" y="617">27</text>
+  <text y="617"><tspan class="ink" x="122.4">RefundAgent</tspan></text>
+  <text class="n" x="44" y="638">28</text>
+  <text y="638"><tspan class="keyword" x="153.6">with</tspan><tspan class="ink" x="192.6">order</tspan><tspan class="keyword" x="239.4">as</tspan><tspan class="ink" x="262.8">order</tspan></text>
+  <text class="n" x="44" y="659">29</text>
+  <text y="659"><tspan class="keyword" x="153.6">into</tspan><tspan class="ink" x="192.6">receipt</tspan></text>
+  <text class="n" x="44" y="680">30</text>
+  <text y="680"><tspan class="keyword" x="122.4">give</tspan><tspan class="ink" x="161.4">receipt</tspan></text>
+  <g clip-path="url(#code)">
+  <rect class="cover" x="59" y="56" width="152" height="21" style="transform:translateX(152px);animation:k0 0.085s steps(19) 0.350s backwards"/>
+  <rect class="cover" x="59" y="98" width="128" height="21" style="transform:translateX(128px);animation:k2 0.080s steps(16) 0.515s backwards"/>
+  <rect class="cover" x="90.2" y="119" width="425" height="21" style="transform:translateX(425px);animation:k3 0.243s steps(54) 0.625s backwards"/>
+  <rect class="cover" x="90.2" y="140" width="152" height="21" style="transform:translateX(152px);animation:k4 0.085s steps(19) 0.898s backwards"/>
+  <rect class="cover" x="90.2" y="161" width="81" height="21" style="transform:translateX(81px);animation:k5 0.080s steps(10) 1.014s backwards"/>
+  <rect class="cover" x="90.2" y="182" width="230" height="21" style="transform:translateX(230px);animation:k6 0.130s steps(29) 1.124s backwards"/>
+  <rect class="cover" x="90.2" y="203" width="191" height="21" style="transform:translateX(191px);animation:k7 0.108s steps(24) 1.284s backwards"/>
+  <rect class="cover" x="59" y="245" width="136" height="21" style="transform:translateX(136px);animation:k9 0.080s steps(17) 1.472s backwards"/>
+  <rect class="cover" x="90.2" y="266" width="425" height="21" style="transform:translateX(425px);animation:k10 0.243s steps(54) 1.583s backwards"/>
+  <rect class="cover" x="90.2" y="287" width="152" height="21" style="transform:translateX(152px);animation:k11 0.085s steps(19) 1.856s backwards"/>
+  <rect class="cover" x="90.2" y="308" width="81" height="21" style="transform:translateX(81px);animation:k12 0.080s steps(10) 1.971s backwards"/>
+  <rect class="cover" x="90.2" y="329" width="378" height="21" style="transform:translateX(378px);animation:k13 0.216s steps(48) 2.081s backwards"/>
+  <rect class="cover" x="90.2" y="350" width="128" height="21" style="transform:translateX(128px);animation:k14 0.080s steps(16) 2.327s backwards"/>
+  <rect class="cover" x="90.2" y="371" width="261" height="21" style="transform:translateX(261px);animation:k15 0.148s steps(33) 2.437s backwards"/>
+  <rect class="cover" x="59" y="413" width="167" height="21" style="transform:translateX(167px);animation:k17 0.094s steps(21) 2.665s backwards"/>
+  <rect class="cover" x="90.2" y="434" width="152" height="21" style="transform:translateX(152px);animation:k18 0.085s steps(19) 2.790s backwards"/>
+  <rect class="cover" x="90.2" y="455" width="81" height="21" style="transform:translateX(81px);animation:k19 0.080s steps(10) 2.905s backwards"/>
+  <rect class="cover" x="90.2" y="476" width="128" height="21" style="transform:translateX(128px);animation:k20 0.080s steps(16) 3.015s backwards"/>
+  <rect class="cover" x="90.2" y="497" width="19" height="21" style="transform:translateX(19px);animation:k21 0.080s steps(2) 3.125s backwards"/>
+  <rect class="cover" x="121.4" y="518" width="105" height="21" style="transform:translateX(105px);animation:k22 0.080s steps(13) 3.235s backwards"/>
+  <rect class="cover" x="152.6" y="539" width="167" height="21" style="transform:translateX(167px);animation:k23 0.094s steps(21) 3.345s backwards"/>
+  <rect class="cover" x="152.6" y="560" width="175" height="21" style="transform:translateX(175px);animation:k24 0.099s steps(22) 3.470s backwards"/>
+  <rect class="cover" x="152.6" y="581" width="105" height="21" style="transform:translateX(105px);animation:k25 0.080s steps(13) 3.599s backwards"/>
+  <rect class="cover" x="121.4" y="602" width="89" height="21" style="transform:translateX(89px);animation:k26 0.080s steps(11) 3.709s backwards"/>
+  <rect class="cover" x="152.6" y="623" width="152" height="21" style="transform:translateX(152px);animation:k27 0.085s steps(19) 3.819s backwards"/>
+  <rect class="cover" x="152.6" y="644" width="97" height="21" style="transform:translateX(97px);animation:k28 0.080s steps(12) 3.934s backwards"/>
+  <rect class="cover" x="121.4" y="665" width="97" height="21" style="transform:translateX(97px);animation:k29 0.080s steps(12) 4.044s backwards"/>
+  </g>
+  <g class="reveal" style="animation-delay:4.40s">
+    <rect class="band" x="52" y="183" width="488" height="40" rx="6"/>
+    <path class="link" d="M546 203 H570"/>
+    <circle class="mark" cx="576" cy="203" r="3.5"/>
+    <text class="title" x="584" y="190">Declared resources</text>
+    <text class="detail" x="584" y="208">Network access and one named secret,</text>
+    <text class="detail" x="584" y="225">mediated by the runtime.</text>
+  </g>
+  <g class="reveal" style="animation-delay:4.95s">
+    <rect class="band" x="52" y="351" width="488" height="40" rx="6"/>
+    <path class="link" d="M546 371 H570"/>
+    <circle class="mark" cx="576" cy="371" r="3.5"/>
+    <text class="title" x="584" y="358">Bounded at compile time</text>
+    <text class="detail" x="584" y="376">Only declared capabilities, and only</text>
+    <text class="detail" x="584" y="393">from declared callers.</text>
+  </g>
+  <g class="reveal" style="animation-delay:5.50s">
+    <rect class="band" x="52" y="519" width="488" height="82" rx="6"/>
+    <path class="link" d="M546 560 H570"/>
+    <circle class="mark" cx="576" cy="560" r="3.5"/>
+    <text class="title" x="584" y="547">Human gate</text>
+    <text class="detail" x="584" y="565">The run waits for a finance decision</text>
+    <text class="detail" x="584" y="582">attested by the host.</text>
+  </g>
+  <g class="reveal" style="animation-delay:6.05s">
+    <rect class="band" x="52" y="666" width="488" height="19" rx="6"/>
+    <path class="link" d="M546 675.5 H570"/>
+    <circle class="mark" cx="576" cy="675.5" r="3.5"/>
+    <text class="title" x="584" y="662.5">Traced end to end</text>
+    <text class="detail" x="584" y="680.5">Each step is recorded with its</text>
+    <text class="detail" x="584" y="697.5">real caller and source span.</text>
+  </g>
+</svg>

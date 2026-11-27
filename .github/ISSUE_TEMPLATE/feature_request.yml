@@ -1,0 +1,68 @@
+name: Feature request
+description: Propose a capability or an improvement, starting from a real use case.
+title: "feature: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Good proposals start from the workflow you are trying to run, then describe what is missing. Discussing the problem first often leads to a better design than the first solution that comes to mind.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched the existing issues and the documentation.
+          required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Area
+      options:
+        - Language and compiler
+        - Runtime and governance
+        - CLI
+        - Project server and triggers
+        - Packages and registry
+        - JavaScript or Python SDK
+        - Traces and observability
+        - Editor extension
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: The real workflow or problem you are facing.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The capability or change you would like. A sketch of Touba source is welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: value
+    attributes:
+      label: Why it matters
+      description: The value, risk reduction or developer experience improvement.
+    validations:
+      required: true
+  - type: textarea
+    id: governance
+    attributes:
+      label: Authority and governance impact
+      description: Would this change who may call what, which resources are reachable, budgets, approvals or traces?
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is included, and what is intentionally left out.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

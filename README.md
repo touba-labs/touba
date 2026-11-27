@@ -1,19 +1,113 @@
-# Touba
+<div align="center">
 
-A programming language and runtime for governed agentic systems.
+<img src="touba-logo.svg" alt="" width="76" height="76">
 
-An agent's instructions describe what it should do. Touba also makes explicit
-what it may do: which capabilities it can invoke, which resources those
-capabilities require, and where execution must wait for a human decision.
+<h1>Touba</h1>
 
-Touba means **Thinking Orchestration Using Bounded Agency**. Programs use the
-`.tb` extension and compile to AIR, the intermediate representation executed
-by the runtime.
+<p><strong>A programming language and runtime for governed agentic systems.</strong></p>
 
-[Documentation](https://toubalang.org/) ·
-[Downloads](https://toubalang.org/hub/telechargements/) ·
-[Research](https://toubalang.org/recherche/) ·
-[Contact Touba Labs](mailto:contact@touba-labs.com)
+<p>
+  <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/readme/acronym-dark-narrow.svg">
+    <source media="(max-width: 600px)" srcset="assets/readme/acronym-light-narrow.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/acronym-dark.svg">
+    <img src="assets/readme/acronym-light.svg" width="560" alt="Thinking Orchestration Using Bounded Agency">
+  </picture>
+</p>
+
+[![Source CI](https://img.shields.io/github/actions/workflow/status/touba-labs/touba/source-ci.yml?branch=dev&style=flat-square&label=source%20CI&labelColor=1f2328)](https://github.com/touba-labs/touba/actions/workflows/source-ci.yml)
+[![Release](https://img.shields.io/badge/release-v1.4.0-2f63c6?style=flat-square&labelColor=1f2328)](https://toubalang.org/hub/telechargements/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-2f63c6?style=flat-square&labelColor=1f2328)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-2f63c6?style=flat-square&labelColor=1f2328)](https://toubalang.org/docs/demarrer/installation)
+
+<a href="https://toubalang.org/">Documentation</a> &nbsp;·&nbsp;
+<a href="https://toubalang.org/hub/telechargements/">Downloads</a> &nbsp;·&nbsp;
+<a href="https://toubalang.org/docs/tutoriels/">Tutorials</a> &nbsp;·&nbsp;
+<a href="https://toubalang.org/benchmarks/">Benchmarks</a> &nbsp;·&nbsp;
+<a href="https://toubalang.org/recherche/">Research</a>
+
+</div>
+
+<br>
+
+An agent's instructions describe what it **should** do. Touba also makes
+explicit what it **may** do: which capabilities it can invoke, which resources
+those capabilities require, and where execution must wait for a human decision.
+
+Programs use the `.tb` extension and compile to **AIR**, the intermediate
+representation executed by the runtime.
+
+## Touba at a glance
+
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/readme/governed-agent-dark-narrow.svg">
+    <source media="(max-width: 600px)" srcset="assets/readme/governed-agent-light-narrow.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/governed-agent-dark.svg">
+    <img src="assets/readme/governed-agent-light.svg" width="880" alt="A Touba program. The IssueRefund tool declares network access and one secret. RefundAgent may only use IssueRefund and may only be called by the HandleRefund strategy. HandleRefund waits for a finance approval before calling the agent, and each step is traced.">
+  </picture>
+</p>
+
+<details>
+<summary><b>Copy <code>refunds.tb</code></b></summary>
+
+<!-- touba-example: compile -->
+```touba
+module shop.refunds
+
+tool IssueRefund
+    description "Refund an order through the payment API."
+    takes order as Text
+    gives Text
+    requires network, secret_read
+    secrets PAYMENTS_API_KEY
+
+agent RefundAgent
+    description "Refund the order and return the receipt."
+    takes order as Text
+    gives Text
+    responsibility "Refund only the supplied order."
+    uses IssueRefund
+    callable_by strategy HandleRefund
+
+strategy HandleRefund
+    takes order as Text
+    gives Text
+    uses RefundAgent
+    do
+        human.approve
+            with context as order
+            with role as "finance"
+            into approval
+        RefundAgent
+            with order as order
+            into receipt
+        give receipt
+```
+
+</details>
+
+Append a strategy that is not listed in `callable_by`, and the build fails
+before anything runs:
+
+<!-- touba-example: fragment -->
+```touba
+strategy RefundEverything
+    takes order as Text
+    uses RefundAgent
+    do
+        RefundAgent
+            with order as order
+```
+
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/readme/refusal-dark-narrow.svg">
+    <source media="(max-width: 600px)" srcset="assets/readme/refusal-light-narrow.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/refusal-dark.svg">
+    <img src="assets/readme/refusal-light.svg" width="880" alt="$ touba compile refunds.tb --out refunds.air.json. Output: refunds.tb:36:9-38:1: AgentCallerNotAllowed: `strategy:shop.refunds/RefundEverything` cannot call agent `agent:shop.refunds/RefundAgent` without a matching `callable_by` rule. The command exits with status 1.">
+  </picture>
+</p>
 
 ## What you can build
 
@@ -25,27 +119,37 @@ by the runtime.
 - Reusable packages containing declarations, handlers or contextual procedures.
 - JavaScript and Python applications that run Touba and consume its events.
 
+## How it works
+
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/readme/pipeline-dark-narrow.svg">
+    <source media="(max-width: 600px)" srcset="assets/readme/pipeline-light-narrow.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/pipeline-dark.svg">
+    <img src="assets/readme/pipeline-light.svg" width="880" alt="Pipeline: a .tb source is checked by the compiler, compiled to AIR, executed by the runtime, which mediates calls, resources, budgets and approvals, and recorded as a structured trace. The host application supplies handlers, credentials and identity.">
+  </picture>
+</p>
+
 The compiler checks source contracts. During execution, the runtime mediates
 calls, resource access, budgets and approval gates and produces structured
-traces. The host remains responsible for credentials, identity and the behavior
-of external systems. These controls bound execution; they do not guarantee the
-correctness of a model's answer.
+traces that connect each observed action or refusal to its source declaration.
+
+> [!NOTE]
+> The host remains responsible for credentials, identity and the behavior of
+> external systems. These controls bound execution; they do not guarantee the
+> correctness of a model's answer.
 
 ## Get started
 
-Touba is available from the [downloads page](https://toubalang.org/hub/telechargements/).
-Use `touba version` to identify the installed version and build, and
-`touba update --check` to check for an available update.
-
+Download Touba from the [downloads page](https://toubalang.org/hub/telechargements/).
 The [installation guide](https://toubalang.org/docs/demarrer/installation)
-covers archives, graphical installers and checksum verification. The release
-targets macOS Apple Silicon, macOS Intel, Linux x64 and Windows x64.
-
-After installation:
+covers archives, graphical installers and checksum verification for macOS
+Apple Silicon, macOS Intel, Linux x64 and Windows x64.
 
 ```sh
-touba version
-touba doctor
+touba version          # installed version and build
+touba doctor           # check the local installation
+touba update --check   # look for an available update
 ```
 
 Create `hello.tb`:
@@ -60,32 +164,29 @@ strategy Hello
             with message as "Touba ready"
 ```
 
-Compile and run it:
+Compile it, run it, then look inside:
 
 ```sh
 touba compile hello.tb --out hello.air.json
 touba run hello.air.json
+touba run hello.air.json --output trace          # stream the execution events
+touba run hello.air.json --trace-out trace.json  # or export them
+touba inspect trace.json                         # and summarize the run
 ```
 
-Add `--output trace` to the run command to inspect the execution events.
-
-Export with `--trace-out trace.json`, then use `touba inspect trace.json`
-for a summary and read the recorded events.
-
-For a project with generated handler scaffolding, choose the host language:
+Scaffold a project with generated handlers, in the host language of your choice:
 
 ```sh
 touba init --language javascript --root my-project
-# Or create a separate Python project:
 touba init --language python --root my-python-project
 ```
 
 Install a host SDK from your application's directory with
-`touba sdk install javascript` or `touba sdk install python`. The SDKs come
-with the toolchain; you do not need to find an unpublished package on npm or
-PyPI. Both use Touba's runtime and governance contracts.
+`touba sdk install javascript` or `touba sdk install python`. The SDKs ship
+with the toolchain, so there is no unpublished package to find on npm or PyPI.
+Both use Touba's runtime and governance contracts.
 
-## A small set of concepts
+## Core concepts
 
 | Construct | Role |
 | --- | --- |
@@ -93,18 +194,18 @@ PyPI. Both use Touba's runtime and governance contracts.
 | `skill` | A reusable composition of declared capabilities. |
 | `agent` | A declared responsibility and capability-selection boundary. |
 | `strategy` | An executable workflow. |
+| `trigger` | A schedule or an HTTP request that starts a governed run. |
 | Package | A versioned unit of reuse, with one `touba.package.json` manifest. |
 
 Strategies and skills can also execute directly. Traces preserve the actual
 structural caller instead of attributing those operations to an invented agent.
 
 The [concepts](https://toubalang.org/docs/concepts/composants-touba),
-[guides](https://toubalang.org/docs/guides/) and [tutorials](https://toubalang.org/docs/tutoriels/) explain the language,
+[documentation](https://toubalang.org/docs/) and
+[tutorials](https://toubalang.org/docs/tutoriels/) explain the language,
 handler integration, multi-agent composition, parallelism and execution history.
 
 ## Reusable packages
-
-Create an author project:
 
 ```sh
 touba package new review --org acme --license Apache-2.0 --yes
@@ -119,6 +220,14 @@ Consumers install an archive, a reviewed local directory, or an exact version
 from an explicitly selected registry. The installer checks identity,
 compatibility and content before updating the managed `packages/` directory.
 It does not run author tests or install hooks.
+
+> [!IMPORTANT]
+> Installation does not grant runtime authority. The consuming program still
+> declares its callers, bindings and permissions.
+
+<details>
+<summary><b>Testing, updating and auditing packages</b></summary>
+<br>
 
 `package test` starts from a fresh temporary distribution. The generated test
 uses a separate consumer project for each case and leaves the author folder
@@ -138,8 +247,7 @@ After a successful signed lookup, `audit --offline` or `list --status` reads
 the verified cache without network access and makes its age and expiry visible.
 Expired status evidence never authorizes installation.
 
-Installation does not grant runtime authority. The consuming program still
-declares its callers, bindings and permissions.
+</details>
 
 See the [package guide](docs/guides/creer-partager-package.md) and the
 [complete author-to-consumer tutorial](docs/tutoriels/package-reutilisable.md).
@@ -170,8 +278,8 @@ manuscripts and explains the scope of their formal results.
 
 ## Building from source
 
-Use Node.js 24.22.3 or a newer patched 24.x release, pnpm 10.33.2 and the Rust toolchain pinned in
-`implementation/rust-toolchain.toml`.
+Requires Node.js 24.22.3 or a newer patched 24.x release, pnpm 10.33.2 and the
+Rust toolchain pinned in `implementation/rust-toolchain.toml`.
 
 ```sh
 cd implementation
@@ -183,29 +291,41 @@ python3 -m venv .venv-sdk-build
 TOUBA_PYTHON_BUILD_BIN="$PWD/.venv-sdk-build/bin/python" pnpm validate:v1-local
 ```
 
-On Windows, use `.venv-sdk-build/Scripts/python.exe` for the builder.
-`TOUBA_PYTHON_BUILD_BIN` selects that interpreter without changing your application
-environment. Installed-toolchain recipe checks are run separately against a
-packaged release; the source checks use the compiler built above.
+> [!TIP]
+> On Windows, use `.venv-sdk-build/Scripts/python.exe` for the builder.
+> `TOUBA_PYTHON_BUILD_BIN` selects that interpreter without changing your
+> application environment.
 
-Source checks do not by themselves qualify a downloadable release. Platform
-installation checks apply to the actual archives. Release maintenance is
-described in the [version and release reference](https://toubalang.org/docs/reference/versions-releases).
+Installed-toolchain recipe checks are run separately against a packaged
+release; the source checks use the compiler built above. Source checks do not
+by themselves qualify a downloadable release. Platform installation checks
+apply to the actual archives. Release maintenance is described in the
+[version and release reference](https://toubalang.org/docs/reference/versions-releases),
+and the contributor workflow in [DEVELOPMENT.md](DEVELOPMENT.md).
 
-## Contributing and feedback
+## Community
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a change.
-For questions and access-independent feedback, contact
-[contact@touba-labs.com](mailto:contact@touba-labs.com).
-Follow [SECURITY.md](SECURITY.md) for security reports.
+- **Contributing.** Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a change.
+- **Feedback.** Open a GitHub issue as described in [FEEDBACK.md](FEEDBACK.md), or write to
+  [contact@touba-labs.com](mailto:contact@touba-labs.com) for access-independent feedback.
+- **Security.** Report vulnerabilities as described in [SECURITY.md](SECURITY.md), never in a public issue.
+- **Conduct.** Participation follows the [code of conduct](CODE_OF_CONDUCT.md).
+- **Changes.** Public changes are summarized in the [changelog](CHANGELOG.md).
 
 ## Authors and citation
 
-Touba is authored by Khadim Lo, Jean-Sebastien Dessureault and Soukaina Alaoui
-Ismaili. See [AUTHORS.md](AUTHORS.md) and [CITATION.cff](CITATION.cff).
+Touba is authored by Khadim Lo, Soukaina Alaoui Ismaili and Jean-Sébastien
+Dessureault. See [AUTHORS.md](AUTHORS.md). To cite Touba, use **Cite this
+repository** on GitHub, generated from [CITATION.cff](CITATION.cff).
 
 ## License
 
 The Touba language implementation, runtime, CLI and SDK code in this repository
 are open-source software under the [Apache License 2.0](LICENSE).
 Third-party dependencies retain their respective licenses.
+
+<br>
+
+<div align="center">
+<sub>Touba is developed by Touba Labs &nbsp;·&nbsp; <a href="https://toubalang.org/">toubalang.org</a></sub>
+</div>

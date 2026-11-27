@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="166" viewBox="0 0 880 166" role="img" aria-labelledby="title">
+  <title id="title">A .tb source is checked by the compiler, compiled to AIR, executed by the runtime and recorded as a structured trace. The host supplies handlers, credentials and identity.</title>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; fill: #59636e; text-anchor: middle; }
+    .label { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-size: 15px; font-weight: 600; fill: #1f2328; }
+    .detail { font-size: 12px; }
+    .node { fill: #ffffff; stroke: #d0d7de; stroke-width: 1.2; }
+    .stage .node { animation: lit 6s ease-in-out infinite; animation-delay: inherit; }
+    @keyframes lit { 0%, 30%, 100% { stroke: #d0d7de; } 8%, 18% { stroke: #2f63c6; } }
+    .arrow { stroke: #8c959f; stroke-width: 1.4; fill: none; }
+    .head { fill: #8c959f; }
+    .packet { fill: #2f63c6; animation: travel 6s linear infinite; }
+    @keyframes travel { 0% { transform: translateX(0); } 66%, 100% { transform: translateX(726px); } }
+    .lane { fill: none; stroke: #d0d7de; stroke-dasharray: 4 4; }
+    .lane-text { font-size: 12.5px; }
+    .lane-text tspan.strong { fill: #1f2328; font-weight: 600; }
+    @media (prefers-reduced-motion: reduce) { .stage .node, .packet { animation: none; } }
+  </style>
+  <path class="arrow" d="M149 54 H160.5"/><path class="head" d="M159.5 50 L165.5 54 L159.5 58 Z"/>
+  <path class="arrow" d="M317.5 54 H329"/><path class="head" d="M328 50 L334 54 L328 58 Z"/>
+  <path class="arrow" d="M478 54 H489.5"/><path class="head" d="M488.5 50 L494.5 54 L488.5 58 Z"/>
+  <path class="arrow" d="M698.5 54 H710"/><path class="head" d="M709 50 L715 54 L709 58 Z"/>
+  <circle class="packet" cx="73" cy="54" r="4"/>
+  <g class="stage" style="animation-delay:-0.78s">
+    <rect class="node" x="1" y="12" width="144" height="84" rx="12"/>
+    <text class="label" x="73" y="45">.tb source</text>
+    <text class="detail" x="73" y="68">typed declarations</text>
+    <text class="detail" x="73" y="84">and workflows</text>
+  </g>
+  <g class="stage" style="animation-delay:0.14s">
+    <rect class="node" x="169.5" y="12" width="144" height="84" rx="12"/>
+    <text class="label" x="241.5" y="45">compiler</text>
+    <text class="detail" x="241.5" y="68">checks contracts</text>
+    <text class="detail" x="241.5" y="84">before execution</text>
+  </g>
+  <g class="stage" style="animation-delay:1.04s">
+    <rect class="node" x="338" y="12" width="136" height="84" rx="12"/>
+    <text class="label" x="406" y="45">AIR</text>
+    <text class="detail" x="406" y="68">intermediate</text>
+    <text class="detail" x="406" y="84">representation</text>
+  </g>
+  <g class="stage" style="animation-delay:2.08s">
+    <rect class="node" x="498.5" y="12" width="196" height="84" rx="12"/>
+    <text class="label" x="596.5" y="45">runtime</text>
+    <text class="detail" x="596.5" y="68">mediates calls, resources,</text>
+    <text class="detail" x="596.5" y="84">budgets and approvals</text>
+  </g>
+  <g class="stage" style="animation-delay:3.18s">
+    <rect class="node" x="719" y="12" width="160" height="84" rx="12"/>
+    <text class="label" x="799" y="45">trace</text>
+    <text class="detail" x="799" y="68">structured events</text>
+    <text class="detail" x="799" y="84">linked to source</text>
+  </g>
+  <path class="lane" d="M596.5 96 V122"/>
+  <rect class="lane" x="498.5" y="122" width="379.5" height="34" rx="10"/>
+  <text class="lane-text" x="688.75" y="143.5"><tspan class="strong">host application</tspan> · handlers, credentials, identity</text>
+</svg>
