@@ -43,6 +43,6 @@ pnpm test:design-tokens
 ```
 
 The validator checks schema identity, required palette tokens, light/dark
-semantic contexts, hex color format, and CSS coverage.
+semantic contexts, hex color format, and the exported CSS values for each theme.
 It does not verify layout, keyboard behavior, text contrast in a composed screen
 or real browser responsiveness; run the affected product's UI recipe as well.

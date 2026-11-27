@@ -21,15 +21,15 @@
   --touba-gray-300: #c7d0dd;
   --touba-gray-600: #4b5563;
   --touba-gray-800: #1f2937;
-  --touba-background: #f6f8fb;
+  --touba-background: #ffffff;
   --touba-surface: #ffffff;
-  --touba-surface-muted: #f1f4f8;
+  --touba-surface-muted: #f7f9fc;
   --touba-surface-raised: #ffffff;
   --touba-text: #121826;
-  --touba-text-muted: #566477;
-  --touba-border: #d9e0e9;
-  --touba-border-soft: #e5eaf1;
-  --touba-primary: #285fc7;
+  --touba-text-muted: #526071;
+  --touba-border: #d8dee9;
+  --touba-border-soft: #d4e2fb;
+  --touba-primary: #2f63c6;
   --touba-primary-hover: #214f9f;
   --touba-primary-text: #ffffff;
   --touba-secondary: #ffffff;
@@ -49,14 +49,14 @@
 
 [data-theme="dark"],
 .touba-theme-dark {
-  --touba-background: #0f1622;
-  --touba-surface: #151e2c;
-  --touba-surface-muted: #111a28;
-  --touba-surface-raised: #1a2535;
+  --touba-background: #111827;
+  --touba-surface: #151d2b;
+  --touba-surface-muted: #101827;
+  --touba-surface-raised: #172033;
   --touba-text: #f8fafc;
   --touba-text-muted: #cbd5e1;
   --touba-border: #334155;
-  --touba-border-soft: #2a3749;
+  --touba-border-soft: #263244;
   --touba-primary: #7ea6f2;
   --touba-primary-hover: #d4e2fb;
   --touba-primary-text: #07111f;

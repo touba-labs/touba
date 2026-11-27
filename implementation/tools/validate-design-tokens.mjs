@@ -142,26 +142,33 @@ function validateRadii(radii, diagnostics, path) {
 }
 
 function validateCssExport(tokens, css, diagnostics, path) {
-  for (const key of REQUIRED_PALETTE) {
-    const variable = `--touba-${key.replaceAll("_", "-")}:`;
-    if (!css.includes(variable)) {
-      diagnostics.push(error("CssPaletteTokenMissing", `${variable} is missing from CSS export`, path));
+  // The web export is a flat list of rules with literal custom properties.
+  const rules = [...css.replace(/\/\*[\s\S]*?\*\//gu, "").matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+    .map(([, selectors, body]) => ({
+      selectors: selectors.split(",").map(selector => selector.trim()),
+      declarations: [...body.matchAll(/(--touba-[\w-]+)\s*:\s*([^;]+);/gu)]
+        .map(([, name, value]) => [name, value.trim()]),
+    }));
+  const radii = Object.fromEntries(Object.entries(tokens.radii ?? {}).map(([key, value]) => [`radius_${key}`, `${value}px`]));
+  const light = { ...tokens.palette, ...tokens.semantic?.light, ...radii };
+  for (const [selector, expected] of [
+    [":root", light],
+    [".touba-theme-light", light],
+    [".touba-theme-dark", tokens.semantic?.dark ?? {}],
+    ['[data-theme="dark"]', tokens.semantic?.dark ?? {}],
+  ]) {
+    const matching = rules.filter(rule => rule.selectors.includes(selector));
+    if (!matching.length) {
+      diagnostics.push(error("CssThemeSelectorMissing", `CSS export must include ${selector}`, path));
+      continue;
     }
-  }
-  for (const key of REQUIRED_SEMANTIC) {
-    const variable = key === "white" ? "--touba-white:" : `--touba-${key.replaceAll("_", "-")}:`;
-    if (!css.includes(variable)) {
-      diagnostics.push(error("CssSemanticTokenMissing", `${variable} is missing from CSS export`, path));
+    const exported = new Map(matching.flatMap(rule => rule.declarations));
+    for (const [key, value] of Object.entries(expected)) {
+      const variable = `--touba-${key.replaceAll("_", "-")}`;
+      if (exported.get(variable) !== value) {
+        diagnostics.push(error("CssTokenMismatch", `${selector} ${variable} must equal ${value}`, path));
+      }
     }
-  }
-  if (!css.includes(".touba-theme-light") || !css.includes(".touba-theme-dark")) {
-    diagnostics.push(error("CssThemeSelectorMissing", "CSS export must include .touba-theme-light and .touba-theme-dark", path));
-  }
-  if (!css.includes('[data-theme="dark"]')) {
-    diagnostics.push(error("CssDarkDataThemeMissing", "CSS export must include [data-theme=\"dark\"]", path));
-  }
-  if (!css.includes(tokens.palette.white)) {
-    diagnostics.push(error("CssWhiteMissing", "CSS export must include #ffffff", path));
   }
 }
 
