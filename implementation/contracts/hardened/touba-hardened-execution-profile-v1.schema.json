@@ -11,10 +11,29 @@
       "additionalProperties": false,
       "required": ["sandbox", "provider_content_mode", "require_supply_chain_lock", "require_budgets", "require_redaction", "require_durable_checkpoints", "secrets_policy"],
       "properties": {
-        "sandbox": { "type": "object", "required": ["required", "minimum_versions"], "properties": { "required": { "const": true }, "minimum_versions": { "type": "object" } } },
+        "sandbox": {
+          "type": "object",
+          "required": ["required", "minimum_versions"],
+          "properties": {
+            "required": { "const": true },
+            "minimum_versions": {
+              "type": "object",
+              "additionalProperties": { "type": "string", "pattern": "^[0-9]{1,9}(\\.[0-9]{1,9}){0,3}(?![\\s\\S])" }
+            }
+          }
+        },
         "provider_content_mode": { "const": "opaque_refs" },
         "require_supply_chain_lock": { "const": true },
-        "require_budgets": { "type": "array", "items": { "type": "string" } },
+        "require_budgets": {
+          "type": "array",
+          "items": { "enum": ["max_run_ms", "max_steps", "max_tool_calls", "max_agent_invocations", "max_provider_calls"] },
+          "allOf": [
+            { "contains": { "const": "max_run_ms" } },
+            { "contains": { "const": "max_steps" } },
+            { "contains": { "const": "max_tool_calls" } },
+            { "contains": { "const": "max_agent_invocations" } }
+          ]
+        },
         "require_redaction": { "const": true },
         "require_durable_checkpoints": { "const": true },
         "secrets_policy": { "const": "handles_only" }

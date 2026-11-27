@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import profile from "../../../contracts/hardened/profile.json" with { type: "json" };
 
 import {
   enforceHardenedExecutionProfile,
@@ -43,27 +44,30 @@ test("requires every effect binding to request a sandbox", () => {
 });
 
 test("checks Linux macOS and Windows sandbox availability and useful version", () => {
+  const document = effectDocument();
   for (const [platform, mechanism, version] of [
-    ["linux", "bubblewrap", "0.8.0"],
+    ["linux", "bubblewrap-seccomp-landlock", "1.0.0"],
     ["darwin", "sandbox-exec", "1"],
-    ["win32", "sandboxie-plus", "1.0"],
+    ["win32", "windows-lpac-job", "1.0"],
   ]) {
-    const options = evidence({
+    const options = (version) => evidence({
       platform,
       toolBindingManifest: manifest(true),
       hardenedSandboxProbe: () => ({ available: true, platform, mechanism, version }),
     });
-    const result = enforceHardenedExecutionProfile(effectDocument(), options);
+    const result = enforceHardenedExecutionProfile(document, options(version));
     assert.equal(result.agentDecisionProviderContentMode, "opaque_refs");
+    assert.throws(() => enforceHardenedExecutionProfile(document, options("0.9")), {
+      code: "HardenedSandboxVersionUnsupported",
+    });
+    assert.throws(() => enforceHardenedExecutionProfile(document, options("unknown")), {
+      code: "HardenedSandboxVersionUnsupported",
+    });
   }
-  assert.throws(() => enforceHardenedExecutionProfile(effectDocument(), evidence({
+  assert.throws(() => enforceHardenedExecutionProfile(document, evidence({
     toolBindingManifest: manifest(true),
-    hardenedSandboxProbe: () => ({ available: false, platform: "linux", mechanism: "bubblewrap", version: "0" }),
+    hardenedSandboxProbe: () => ({ available: false, platform: "linux", mechanism: "bubblewrap-seccomp-landlock", version: "0" }),
   })), { code: "HardenedSandboxUnavailable" });
-  assert.throws(() => enforceHardenedExecutionProfile(effectDocument(), evidence({
-    toolBindingManifest: manifest(true),
-    hardenedSandboxProbe: () => ({ available: true, platform: "linux", mechanism: "bubblewrap", version: "0.7.0" }),
-  })), { code: "HardenedSandboxVersionUnsupported" });
 });
 
 test("refuses profile weakening and unknown controls", () => {
@@ -77,6 +81,21 @@ test("refuses profile weakening and unknown controls", () => {
   });
 });
 
+test("sandbox version requirements are numeric and required budgets are declared", () => {
+  for (const minimums of [[], { "sandbox-exec": 1 }, { "sandbox-exec": "unknown" }, { "sandbox-exec": "1.0\n" }]) {
+    const input = hardenedProfile();
+    input.controls.sandbox.minimum_versions = minimums;
+    assert.throws(() => enforceHardenedExecutionProfile(pureDocument(), evidence({ hardenedExecutionProfile: input })), {
+      code: "HardenedControlRequired",
+    });
+  }
+  const input = hardenedProfile();
+  input.controls.require_budgets.pop();
+  assert.throws(() => enforceHardenedExecutionProfile(pureDocument(), evidence({ hardenedExecutionProfile: input })), {
+    code: "HardenedControlRequired",
+  });
+});
+
 function evidence(overrides = {}) {
   return {
     hardenedExecutionProfile: hardenedProfile(), supplyChainValidated: true,
@@ -85,20 +104,7 @@ function evidence(overrides = {}) {
 }
 
 function hardenedProfile() {
-  return {
-    schema_version: "touba-hardened-execution-profile-v1",
-    controls: {
-      sandbox: { required: true, minimum_versions: {
-        bubblewrap: "0.8.0", "sandbox-exec": "1", "sandboxie-plus": "1.0",
-      } },
-      provider_content_mode: "opaque_refs",
-      require_supply_chain_lock: true,
-      require_budgets: ["max_run_ms", "max_steps", "max_tool_calls", "max_agent_invocations"],
-      require_redaction: true,
-      require_durable_checkpoints: true,
-      secrets_policy: "handles_only",
-    },
-  };
+  return structuredClone(profile);
 }
 
 function pureDocument() {

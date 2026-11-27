@@ -1,6 +1,6 @@
 // @ts-check
 
-import { isRunBudgetValue } from "../../../contracts/run-budget-values.mjs";
+import { RUN_BUDGET_KINDS, isRunBudgetValue } from "../../../contracts/run-budget-values.mjs";
 
 import { spawnSync } from "node:child_process";
 import { ToubaRuntimeError } from "./runtime-errors.mjs";
@@ -18,6 +18,7 @@ export const HARDENED_ERROR_CODES = Object.freeze([
   "HardenedProfileVersionUnsupported", "HardenedControlRequired", "HardenedProfileExtensionUnknown",
 ]);
 const REQUIRED_BUDGETS = ["max_run_ms", "max_steps", "max_tool_calls", "max_agent_invocations"];
+const SANDBOX_VERSION = /^[0-9]{1,9}(?:\.[0-9]{1,9}){0,3}(?![\s\S])/u;
 const PROFILE_FIELDS = new Set(["schema_version", "controls"]);
 const CONTROL_FIELDS = new Set([
   "sandbox", "provider_content_mode", "require_supply_chain_lock", "require_budgets",
@@ -73,9 +74,12 @@ export function enforceHardenedExecutionProfile(document, options) {
       ? options.hardenedSandboxProbe({ platform: options.platform ?? process.platform, controls })
       : probeHostSandbox({ platform: options.platform ?? process.platform, env: options.env ?? process.env });
     if (!probe.available) fail("HardenedSandboxUnavailable", "required host sandbox is unavailable", probe);
-    const minimum = controls.sandbox.minimum_versions?.[probe.mechanism];
-    if (minimum && compareVersions(probe.version, minimum) < 0) {
-      fail("HardenedSandboxVersionUnsupported", `sandbox ${probe.mechanism} ${probe.version} is older than ${minimum}`, probe);
+    const minimums = controls.sandbox.minimum_versions;
+    if (Object.hasOwn(minimums, probe.mechanism)) {
+      const minimum = minimums[probe.mechanism];
+      if (!isSandboxVersion(probe.version) || compareVersions(probe.version, minimum) < 0) {
+        fail("HardenedSandboxVersionUnsupported", `sandbox ${probe.mechanism} must report a version of at least ${minimum}`, probe);
+      }
     }
   }
   return { agentDecisionProviderContentMode: "opaque_refs", hardenedExecutionProfileActive: true };
@@ -106,12 +110,14 @@ function validateProfile(profile) {
     if (controls[flag] !== true) fail("HardenedControlRequired", `${flag} must be true`, { control: flag });
   }
   if (!Array.isArray(controls.require_budgets)
+    || controls.require_budgets.some((budget) => !RUN_BUDGET_KINDS.includes(budget))
     || REQUIRED_BUDGETS.some((budget) => !controls.require_budgets.includes(budget))) {
-    fail("HardenedControlRequired", `require_budgets must include ${REQUIRED_BUDGETS.join(", ")}`);
+    fail("HardenedControlRequired", `require_budgets must use known budgets and include ${REQUIRED_BUDGETS.join(", ")}`);
   }
-  if (!controls.sandbox || controls.sandbox.required !== true
-    || !controls.sandbox.minimum_versions || typeof controls.sandbox.minimum_versions !== "object") {
-    fail("HardenedControlRequired", "sandbox.required and minimum_versions are required");
+  const minimums = controls.sandbox?.minimum_versions;
+  if (controls.sandbox?.required !== true || !minimums || typeof minimums !== "object"
+    || Array.isArray(minimums) || Object.values(minimums).some((version) => !isSandboxVersion(version))) {
+    fail("HardenedControlRequired", "sandbox.required must be true and minimum_versions must map mechanisms to numeric versions");
   }
 }
 
@@ -121,12 +127,17 @@ function normalizedBindings(manifest) {
   return new Map(Object.entries(manifest?.bindings ?? {}));
 }
 
-/** @param {unknown} actual @param {unknown} minimum */
+/** @param {unknown} value @returns {value is string} */
+function isSandboxVersion(value) {
+  return typeof value === "string" && SANDBOX_VERSION.test(value);
+}
+
+/** @param {string} actual @param {string} minimum */
 function compareVersions(actual, minimum) {
-  const left = String(actual).split(".").map(Number);
-  const right = String(minimum).split(".").map(Number);
+  const left = actual.split(".").map(Number);
+  const right = minimum.split(".").map(Number);
   for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const difference = (left[index] || 0) - (right[index] || 0);
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
     if (difference !== 0) return difference;
   }
   return 0;

@@ -4,9 +4,9 @@
     "sandbox": {
       "required": true,
       "minimum_versions": {
-        "bubblewrap": "0.8.0",
+        "bubblewrap-seccomp-landlock": "1",
         "sandbox-exec": "1",
-        "sandboxie-plus": "1.0"
+        "windows-lpac-job": "1"
       }
     },
     "provider_content_mode": "opaque_refs",
