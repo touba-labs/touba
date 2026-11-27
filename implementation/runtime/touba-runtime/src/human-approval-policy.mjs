@@ -39,12 +39,12 @@ export function validateApprovalState(state) {
     || (state.requires_attestation !== undefined && typeof state.requires_attestation !== "boolean")
     || !object(state.requests) || !Array.isArray(state.receipts)
     || Object.keys(state.requests).length + state.receipts.length > MAX_RECORDS) invalid();
-  const ids = new Set();
+  const requestsById = new Map();
   for (const [ref, request] of Object.entries(state.requests)) {
     if (!identity(ref) || !exactKeys(request, ["request_id", "run_id", "approval_ref", "created_at", "deadline_at", "policy", "review_context", "source_policy"])
-      || !identity(request.request_id) || ids.has(request.request_id) || !identity(request.run_id)
+      || !identity(request.request_id) || requestsById.has(request.request_id) || !identity(request.run_id)
       || request.approval_ref !== ref || !instant(request.created_at)) invalid();
-    ids.add(request.request_id);
+    requestsById.set(request.request_id, request);
     const policy = validateApprovalPolicy(request.policy);
     if (request.source_policy !== undefined) {
       const source = validateApprovalPolicy(request.source_policy, true);
@@ -71,7 +71,7 @@ export function validateApprovalState(state) {
     if (receipt.excluded_signers !== undefined && (!validExclusions(receipt.excluded_signers)
       || receipt.excluded_signers.subject_refs.includes(receipt.subject_ref))) invalid();
     consumed.add(receipt.request_id);
-    const request = Object.values(state.requests).find(/** @param {any} item */ item => item.request_id === receipt.request_id);
+    const request = requestsById.get(receipt.request_id);
     if (request && (request.run_id !== receipt.run_id || request.approval_ref !== receipt.approval_ref
       || Date.parse(receipt.accepted_at) < Date.parse(request.created_at)
       || (["approved", "rejected"].includes(receipt.decision)
