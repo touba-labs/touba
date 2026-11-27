@@ -26,13 +26,16 @@ const { Client } = require('pg'), pgPath = require.resolve('pg');
 test('installed HTTP/SQL packages: compiled workflow, lost receipt, restart, reconciliation, conflict and compensation', { timeout: 120000 }, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'touba-real-package-effects-')));
   const project = join(root, 'consumer');
-  let admin, server, postgres, reads = 0;
+  let admin, server, postgresStart, reads = 0;
   t.after(async () => {
     try { await admin?.end(); }
     finally {
       if (server) await new Promise(resolveClose => { server.closeAllConnections(); server.close(resolveClose); });
-      try { await postgres?.stop(); }
-      finally { rmSync(root, { recursive: true, force: true }); }
+      try {
+        // A test deadline can expire while the server is still starting.
+        const postgres = await postgresStart?.catch(() => undefined);
+        await postgres?.stop();
+      } finally { rmSync(root, { recursive: true, force: true }); }
     }
   });
   mkdirSync(project); initProject({ root: project });
@@ -49,8 +52,10 @@ test('installed HTTP/SQL packages: compiled workflow, lost receipt, restart, rec
   mkdirSync(join(project, 'handlers'), { recursive: true }); cpSync(join(here, 'handlers.mjs'), join(project, 'handlers/pilot.mjs'));
   const air = JSON.parse(execFileSync(process.execPath, [join(implementation, 'cli/touba-project/src/main.mjs'), 'compile', join(project, 'src/pilot.tb'), '--stdout'],
     { encoding: 'utf8', cwd: project, timeout: 30000 }));
-  postgres = await isolatedPostgres({ user: 'effects_test', password: 'isolated-effects-test', database: 'effects_test' });
-  const { port } = postgres;
+  t.signal.throwIfAborted();
+  postgresStart = isolatedPostgres({ user: 'effects_test', password: 'isolated-effects-test', database: 'effects_test' });
+  const { port } = await postgresStart;
+  t.signal.throwIfAborted();
   const connection = `postgresql://effects_test:isolated-effects-test@127.0.0.1:${port}/effects_test`;
   for (let attempt = 0; attempt < 50; attempt++) {
     admin = new Client({ connectionString: connection, connectionTimeoutMillis: 1000 });
@@ -59,6 +64,7 @@ test('installed HTTP/SQL packages: compiled workflow, lost receipt, restart, rec
   }
   await admin.query(readFileSync(join(project, 'packages/touba.sql-effects/sql/schema.sql'), 'utf8'));
   await admin.query('CREATE TABLE orders(id text PRIMARY KEY, status text NOT NULL)');
+  t.signal.throwIfAborted();
   server = createServer((_request, response) => { reads++; response.setHeader('content-type', 'application/json'); response.end('{"available":true}'); });
   await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
   const origin = `http://127.0.0.1:${server.address().port}`;
