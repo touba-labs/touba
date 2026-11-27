@@ -1,4 +1,6 @@
-use touba_compiler::{air::AirFlowNodeKind, compile_project_sources, compile_source_to_air};
+use touba_compiler::{
+    AirDiagnosticCode, air::AirFlowNodeKind, compile_project_sources, compile_source_to_air,
+};
 
 const SOURCE: &str =
     include_str!("../../../grammar/tree-sitter-touba/examples/parallel-v1/positive/diagnostics.tb");
@@ -72,12 +74,21 @@ fn parallel_imported_agents_preserve_interfaces_and_caller_authority() {
 
 #[test]
 fn zero_argument_parallel_spelling_cannot_omit_required_tool_inputs() {
-    let source = SOURCE
+    let authorized = SOURCE
         .replace("parallel Specialist", "parallel Diagnose")
-        .replace("            with request as incident\n", "");
+        .replace("    uses Specialist\n", "    uses Diagnose\n");
+    let nominal = compile_source_to_air("with-argument.tb", &authorized);
+    assert!(nominal.document.is_some(), "{:?}", nominal.diagnostics);
+
+    let source = authorized.replace("            with request as incident\n", "");
+    let refused = compile_source_to_air("missing.tb", &source);
+    assert!(refused.document.is_none());
     assert!(
-        compile_source_to_air("missing.tb", &source)
-            .document
-            .is_none()
+        refused.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == AirDiagnosticCode::MissingExplicitCallArgument
+                && diagnostic.message.contains("`request`")
+        }),
+        "{:?}",
+        refused.diagnostics
     );
 }

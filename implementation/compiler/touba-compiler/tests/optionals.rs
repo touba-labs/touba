@@ -1,3 +1,4 @@
+use touba_compiler::air::AirExpressionKind;
 use touba_compiler::{compile_project_sources, compile_source_to_air};
 
 const SOURCE: &str = include_str!(
@@ -19,14 +20,21 @@ fn optional_guards_constructors_lists_and_records_compile() {
             .type_ref,
         "optional:type:contacts/Contact"
     );
-    let encoded = serde_json::to_string(&air).unwrap();
     for kind in [
-        "optional_some",
-        "optional_none",
-        "optional_present",
-        "optional_value",
+        AirExpressionKind::OptionalSome,
+        AirExpressionKind::OptionalNone,
+        AirExpressionKind::OptionalPresent,
+        AirExpressionKind::OptionalValue,
     ] {
-        assert!(encoded.contains(kind));
+        assert!(
+            air.execution_graphs.iter().any(|graph| {
+                graph
+                    .expressions
+                    .iter()
+                    .any(|expression| expression.kind == kind)
+            }),
+            "missing {kind:?}"
+        );
     }
 }
 

@@ -1,3 +1,4 @@
+use touba_compiler::air::AirExpressionKind;
 use touba_compiler::compile_source_to_air;
 
 #[test]
@@ -10,9 +11,17 @@ fn typed_and_inferred_lists_compile_with_nested_empty_contexts() {
     );
     assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
     assert!(
-        serde_json::to_string(&result.document.unwrap())
+        result
+            .document
             .unwrap()
-            .contains("construct_list")
+            .execution_graphs
+            .iter()
+            .any(|graph| {
+                graph
+                    .expressions
+                    .iter()
+                    .any(|expression| expression.kind == AirExpressionKind::ConstructList)
+            })
     );
 }
 
@@ -41,9 +50,21 @@ fn comprehensions_concat_and_join_are_typed_and_scoped() {
     );
     let result = compile_source_to_air("lists.tb", source);
     assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
-    let json = serde_json::to_string(&result.document.unwrap()).unwrap();
-    for kind in ["list_comprehension", "list_concat", "text_join"] {
-        assert!(json.contains(kind));
+    let document = result.document.unwrap();
+    for kind in [
+        AirExpressionKind::ListComprehension,
+        AirExpressionKind::ListConcat,
+        AirExpressionKind::TextJoin,
+    ] {
+        assert!(
+            document.execution_graphs.iter().any(|graph| {
+                graph
+                    .expressions
+                    .iter()
+                    .any(|expression| expression.kind == kind)
+            }),
+            "missing {kind:?}"
+        );
     }
     for body in [
         "give [value for value in 1]",
@@ -61,10 +82,11 @@ fn comprehensions_concat_and_join_are_typed_and_scoped() {
         let result = compile_source_to_air("invalid.tb", &source);
         assert!(result.document.is_none(), "unexpected success: {source}");
         assert!(
-            result
-                .diagnostics
-                .iter()
-                .all(|diagnostic| !diagnostic.message.contains("recovered Tree-sitter")),
+            !result.diagnostics.is_empty()
+                && result
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| !diagnostic.message.contains("recovered Tree-sitter")),
             "invalid test syntax: {source}"
         );
     }

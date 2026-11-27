@@ -1,3 +1,4 @@
+use touba_compiler::air::{AirExpressionOperator, AirFlowNodeKind};
 use touba_compiler::{AirDiagnosticCode, compile_project_sources, compile_source_to_air};
 
 const SOURCE: &str = include_str!(
@@ -8,10 +9,30 @@ const SOURCE: &str = include_str!(
 fn exhaustive_matches_templates_and_integer_division_lower_to_air() {
     let result = compile_source_to_air("selection.tb", SOURCE);
     assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
-    let json = serde_json::to_string(&result.document.unwrap()).unwrap();
-    assert!(json.contains("integer_divide"));
-    assert!(json.contains("text_concat"));
-    assert!(json.contains("match:temporary:"));
+    let document = result.document.unwrap();
+    for operator in [
+        AirExpressionOperator::IntegerDivide,
+        AirExpressionOperator::TextConcat,
+    ] {
+        assert!(
+            document.execution_graphs.iter().any(|graph| {
+                graph
+                    .expressions
+                    .iter()
+                    .any(|expression| expression.operator == Some(operator))
+            }),
+            "missing {operator:?}"
+        );
+    }
+    assert!(document.execution_graphs.iter().any(|graph| {
+        graph.nodes.iter().any(|node| {
+            node.kind == AirFlowNodeKind::Bind
+                && node
+                    .result_binding
+                    .as_deref()
+                    .is_some_and(|binding| binding.starts_with("match:temporary:"))
+        })
+    }));
 }
 
 #[test]
