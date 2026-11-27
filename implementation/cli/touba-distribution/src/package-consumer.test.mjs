@@ -12,7 +12,7 @@ import { unpackPackage } from "../../touba-project/src/packages.mjs";
 test("isolated distribution supports package creation, archive installation and the contextual-tool tutorial", async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-consumer-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const { toolchainRoot } = packageLocalToolchain();
+  const { toolchainRoot } = packageLocalToolchain({ toolchainRoot: join(root, "candidate") });
   const isolated = join(root, "toolchain");
   cpSync(toolchainRoot, isolated, { recursive: true });
   const binary = join(isolated, "bin", process.platform === "win32" ? "touba.cmd" : "touba");
@@ -98,7 +98,10 @@ test("isolated distribution supports package creation, archive installation and 
 test("published package lifecycle runs every documented command through upgrade, registry and manual registration", () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "touba-package-lifecycle-")));
   try {
-    const binary = process.env.TOUBA_PACKAGE_TEST_CLI ?? join(packageLocalToolchain({ quiet: true }).toolchainRoot,
+    const binary = process.env.TOUBA_PACKAGE_TEST_CLI ?? join(packageLocalToolchain({
+      toolchainRoot: join(root, "candidate"),
+      quiet: true,
+    }).toolchainRoot,
       "bin", process.platform === "win32" ? "touba.cmd" : "touba");
     const env = { PATH: [dirname(binary), process.env.PATH].join(delimiter), TMPDIR: root };
     for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP"]) if (process.env[key]) env[key] = process.env[key];

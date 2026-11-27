@@ -19,7 +19,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 test("installed archive supplies an independent SDK, provider dependencies, licenses and a working project server", { timeout: 360000 }, async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba archive SDK "));
   try {
-    const { toolchainRoot } = packageLocalToolchain({ quiet: true });
+    const { toolchainRoot } = packageLocalToolchain({
+      toolchainRoot: join(workspace, "toolchain"),
+      quiet: true,
+    });
     const prefix = join(workspace, process.platform === "win32" ? "custom %prefix" : "custom $prefix's");
     const installed = installLocalToolchain({ source: toolchainRoot, prefix });
     const node = join(installed.install_root, "bin", process.platform === "win32" ? "node.exe" : "node");
