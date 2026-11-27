@@ -58,9 +58,9 @@ export function startServer() {
   });
 
   connection.onHover(({ textDocument, position }) => {
-    const air = airCache.get(textDocument.uri)?.air;
-    if (!air) return null;
-    const value = hoverForPosition(air, position);
+    const cached = airCache.get(textDocument.uri);
+    if (!cached) return null;
+    const value = hoverForPosition(cached.air, position, textDocument.uri, cached.sourceUris);
     return value ? { contents: { kind: "plaintext", value } } : null;
   });
 
@@ -92,7 +92,10 @@ function validate(document) {
       const visit = value => {
         if (!value || typeof value !== "object") return;
         const id = value.source_ref?.source_id;
-        if (typeof id === "string") sourceUris.set(id, pathToFileURL(resolve(result.source_root, id)).href);
+        if (typeof id === "string") {
+          const path = resolve(result.source_root, id);
+          sourceUris.set(id, sourceUris.get(path) ?? pathToFileURL(path).href);
+        }
         for (const child of Object.values(value)) visit(child);
       };
       visit(result.air);
@@ -301,7 +304,8 @@ export function extractSymbols(air, uri, sourceUris) {
   return symbols;
 }
 
-export function hoverForPosition(air, position) {
+export function hoverForPosition(air, position, uri, sourceUris) {
+  position = { ...position, uri, sourceUris };
   const member = findEnumMember(air, position);
   if (member) return `${member.type.name}.${member.variant.name}\ntype: ${member.type.id}`;
   const importDeclaration = findHoverImport(air, position);
@@ -611,12 +615,13 @@ function pushIfPresent(lines, label, value) {
 }
 
 function isOnDeclarationHeader(position, ref) {
-  if (!ref || typeof ref.start_line !== "number") return false;
+  if (!ref || typeof ref.start_line !== "number" || !isSourceRefInDocument(position, ref)) return false;
   if (position.line !== ref.start_line) return false;
   return position.character >= (ref.start_column ?? 0);
 }
 
 export function definitionForPosition(air, uri, position, sourceUris) {
+  position = { ...position, uri, sourceUris };
   const member = findEnumMember(air, position);
   if (member) return locationForSourceRef(uri, member.variant.source_ref, sourceUris);
   const definitions = indexDefinitionsById(air);
@@ -773,11 +778,16 @@ function indexDefinitionsById(air) {
 }
 
 function containsPosition(position, ref) {
-  if (!ref) return false;
+  if (!ref || !isSourceRefInDocument(position, ref)) return false;
   if (position.line < ref.start_line || position.line > ref.end_line) return false;
   if (position.line === ref.start_line && position.character < ref.start_column) return false;
   if (position.line === ref.end_line && position.character > ref.end_column) return false;
   return true;
+}
+
+function isSourceRefInDocument(position, ref) {
+  const sourceUri = position.sourceUris?.get(ref.source_id);
+  return sourceUri === undefined || sourceUri === position.uri;
 }
 
 function findEnumMember(air, position) {

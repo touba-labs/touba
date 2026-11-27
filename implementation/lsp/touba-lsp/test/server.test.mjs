@@ -674,6 +674,26 @@ test("temporary source mapping preserves non-file editor URI schemes", () => {
   );
 });
 
+test("editor positions belong to the open file even when imported code uses the same lines", t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-lsp-source-selection-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = join(root, "main.tb");
+  const dependency = join(root, "dep.tb");
+  writeFileSync(source, "module main\nimport skill Imported from dep\n\n\n\n\n\n\n"
+    + "strategy Local\n    do\n        stop\n");
+  writeFileSync(dependency, "module dep\n\ntool Lookup\n    gives Text\n"
+    + "skill Imported\n    gives Text\n    uses Lookup\n    do\n        Lookup\n            into result\n        give result\n");
+  const result = runToubaCompileJson(source, { sourceRoots: [root], moduleSourcePaths: [dependency] });
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  const uri = pathToFileURL(source).href;
+  const dependencyUri = pathToFileURL(dependency).href;
+  const sourceUris = new Map([["main.tb", uri], ["dep.tb", dependencyUri]]);
+  assert.equal(hoverForPosition(result.air, { line: 2, character: 1 }, uri, sourceUris), null);
+  assert.equal(definitionForPosition(result.air, uri, { line: 6, character: 7 }, sourceUris), null);
+  assert.match(hoverForPosition(result.air, { line: 8, character: 1 }, uri, sourceUris), /strategy Local/);
+  assert.equal(definitionForPosition(result.air, uri, { line: 1, character: 8 }, sourceUris).uri, dependencyUri);
+});
+
 test("completionForPosition returns deterministic keywords and local declarations", () => {
   const labels = completionForPosition(hoverFixtureAir(), "    us", {
     line: 0,
