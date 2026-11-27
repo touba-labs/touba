@@ -456,19 +456,7 @@ function createExecutionContext(document, entryRef, options = {}) {
   if (traceStorage !== null && ["openSegment", "append", "document", "events", "snapshot"].some(name => typeof traceStorage[name] !== "function")) {
     throw new ToubaRuntimeError("InvalidRuntimeOption", "traceStorage requires openSegment, append, document, events and snapshot methods");
   }
-  const trace = new TraceBuilder(
-    document,
-    entryRef,
-    runId,
-    normalizeTraceEventObserver(options.traceEventObserver ?? options.trace_event_observer),
-    executionResumeCheckpoint?.trace_state.next_sequence_index
-      ?? humanApprovalResumeCheckpoint?.next_sequence_index
-      ?? internalCompensation?.trace_state?.next_sequence_index
-      ?? 0,
-    options.tracePureFunctions ?? "full",
-    traceStorage,
-    executionResumeCheckpoint || humanApprovalResumeCheckpoint || internalCompensation ? randomUUID() : null,
-  );
+  const traceObserver = normalizeTraceEventObserver(options.traceEventObserver ?? options.trace_event_observer);
   const initialValues = normalizeInputs(options.inputs ?? {});
   const resourceBindings = normalizeOptionalResourceBindings(options.resourceBindings);
   const skillPacks = normalizeSkillPacks(options.skillPacks ?? options.skill_packs ?? []);
@@ -487,7 +475,6 @@ function createExecutionContext(document, entryRef, options = {}) {
     indexes,
     toolApprovalGraphs,
     entryRef,
-    trace,
     toolHandlers: options.toolHandlers ?? {},
     toolBindingManifest,
     resourceBindings,
@@ -614,6 +601,21 @@ function createExecutionContext(document, entryRef, options = {}) {
     );
     restoreDurableRuntimeState(context, executionResumeCheckpoint);
   }
+  // Opening a durable segment changes storage. Do it after all context inputs
+  // have been admitted so invalid options leave no empty execution record.
+  context.trace = new TraceBuilder(
+    document,
+    entryRef,
+    runId,
+    traceObserver,
+    executionResumeCheckpoint?.trace_state.next_sequence_index
+      ?? humanApprovalResumeCheckpoint?.next_sequence_index
+      ?? internalCompensation?.trace_state?.next_sequence_index
+      ?? 0,
+    options.tracePureFunctions ?? "full",
+    traceStorage,
+    executionResumeCheckpoint || humanApprovalResumeCheckpoint || internalCompensation ? randomUUID() : null,
+  );
   return context;
 }
 

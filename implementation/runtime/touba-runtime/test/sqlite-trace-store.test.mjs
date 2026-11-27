@@ -427,6 +427,16 @@ test("asynchronous or missing durable acknowledgements cannot advance execution"
   assert.throws(() => builder({ ...store, openSegment: () => Promise.resolve("fake") }), /synchronously return/);
 });
 
+test("invalid runtime options do not leave an empty durable trace segment", async t => {
+  const { store } = fixture(t);
+  await assert.rejects(executeAirDocument(air, { traceStorage: store, maxAgentSteps: 0 }),
+    { code: "InvalidRuntimeOption" });
+  assert.equal(store.statistics().segments, 0);
+  const result = await executeAirDocument(air, { traceStorage: store });
+  assert.equal(result.status, "success");
+  assert.equal(store.statistics().segments, 1);
+});
+
 test("a storage failure before a call prevents the handler from running", async t => {
   const { store } = fixture(t);
   const document = structuredClone(air);
