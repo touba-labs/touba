@@ -1,5 +1,5 @@
 import { isRunBudgetValue, runBudgetMinimum } from "../../../contracts/run-budget-values.mjs";
-import { closeSync, constants, existsSync, fchmodSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { openCliEffectJournal, effectJournalPathDiagnostic } from "./effect-journal.mjs";

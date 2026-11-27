@@ -1,7 +1,7 @@
 // Opt-in causal diagnostics, not paper benchmarks. All provider calls and
 // outcomes are retained, including failed runs. Local effects are an independent
 // append-only journal, not inferred from the runtime trace.
-import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

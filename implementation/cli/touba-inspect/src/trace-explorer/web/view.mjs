@@ -39,7 +39,7 @@ Object.assign(translations.fr, {
   budget_consumed:'Budget consommé',budget_limit_exceeded:'Budget dépassé',dispatch_refused_budget_exceeded:'Exécution refusée : budget',failure_detected:'Erreur détectée',
   user_interaction_shown:'Message affiché',user_interaction_requested:'Saisie demandée',user_interaction_answered:'Réponse reçue',binding_created:'Valeur liée',branch_evaluated:'Condition évaluée',loop_evaluated:'Itération',
   parallel_group_admitted:'Groupe parallèle admis',parallel_branch_started:'Branche démarrée',parallel_branch_completed:'Branche terminée',parallel_join_completed:'Résultats réunis',parallel_join_failed:'Jointure interrompue',
-  target_ref:'Cible',tool_ref:'Outil',memory_ref:'Mémoire',owner_ref:'Responsable structurel',agent_ref:'Agent',selected_ref:'Ressource choisie',access:'Accès',action:'Action',mode:'Mode',handler_kind:'Type de handler',
+  target_ref:'Cible',tool_ref:'Outil',memory_ref:'Mémoire',owner_ref:'Responsable structurel',agent_ref:'Agent',selected_ref:'Ressource choisie',access:'Accès',action:'Action',mode:'Mode',
   secret_handle:'Nom du secret',secret_handles_required:'Secrets requis (noms)',secret_handles_granted:'Secrets autorisés (noms)',secret_handles_used:'Secrets utilisés (noms)',secret_handles_refused:'Secrets refusés (noms)',
   memory_accesses_required:'Accès mémoire requis',memory_accesses_granted:'Accès mémoire autorisés',required_memory_accesses:'Accès mémoire requis',granted_capabilities:'Capacités accordées',
   group_id:'Groupe',branch_id:'Branche',approval_ref:'Approbation',review_ref:'Revue',call_started_event_id:'Événement de début',handler_kind:'Handler',effect_contract_kind:'Contrat d’effet',timeout_ms:'Délai (ms)',max_payload_bytes:'Taille maximale (octets)',

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { validateValidationPlan } from '../../touba-project-server/src/project-validation.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };

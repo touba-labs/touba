@@ -6,7 +6,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { createHash } from 'node:crypto';
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { isAuthoringTypeReference } from "../../../contracts/product-surfaces/input-contracts.mjs";
 import { effectContractToJson, normalizeEffectContract } from "../../touba-manifest/src/effect-contract.mjs";
 import { generateHandlerStubFromAirTool } from "../../touba-manifest/src/stub.mjs";

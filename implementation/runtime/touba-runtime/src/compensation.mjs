@@ -8,7 +8,6 @@ import { indexAirDocument, validateAirDocument } from "./air-runtime-profile.mjs
 import { issueCompensationExecutionContext } from "./compensation-context.mjs";
 import {
   COMPENSATION_RESULTS,
-  compensationRecordDigest,
   requireCompensationStoreAdapter,
   sealCompensationRecord,
   validateCompensationRecord,

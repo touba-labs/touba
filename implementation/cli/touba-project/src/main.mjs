@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import { satisfies } from "semver";
 
 import {
-  applyRunProfileToArgs,
   checkProjectSecret,
   compilerInputsForFile,
   initProject,

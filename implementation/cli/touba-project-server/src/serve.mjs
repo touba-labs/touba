@@ -43,7 +43,6 @@ import { assertProjectEntrypoint, readProjectEntrypoints } from "../../touba-pro
 import { createHostModuleLoader } from "../../touba-run/src/host-modules.mjs";
 import { readPackageHostPlan, validatePackageHostPlan } from "../../touba-project/src/package-host-plan.mjs";
 import { verifyManifestPackages } from "../../touba-project/src/handler-packages.mjs";
-import { spawnSync } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   chmodSync,

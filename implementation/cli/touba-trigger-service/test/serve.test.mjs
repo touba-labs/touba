@@ -1,6 +1,6 @@
 import { readEffectJournalFixture } from "../../../tests/helpers/effect-journal.mjs";
 import { createSqliteTriggerQueue } from "../src/sqlite-queue.mjs";
-import { createSqliteTriggerStore, migrateTriggerState } from "../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs";
+import { createSqliteTriggerStore } from "../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";

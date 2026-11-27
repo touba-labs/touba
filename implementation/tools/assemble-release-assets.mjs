@@ -10,7 +10,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
 export const RELEASE_ASSETS_SCHEMA_VERSION = "touba-github-release-assets-v1";

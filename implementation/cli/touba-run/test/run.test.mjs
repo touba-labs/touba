@@ -3404,7 +3404,6 @@ function projectToolDocument() {
     air_schema_version: "touba-air-v1",
     air_capability_profile: "touba-air-capabilities-v1",
     air_json_profile: "touba-air-json-canonical-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:project.echo",
       name: "project.echo",
@@ -3467,7 +3466,6 @@ function listConstraintToolDocument() {
   return {
     air_schema_version: "touba-air-v1",
     air_capability_profile: "touba-air-capabilities-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
     air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:project.batch",
@@ -3540,7 +3538,6 @@ function memoryResourceDocument({ withScope = true } = {}) {
   return {
     air_schema_version: "touba-air-v1",
     air_capability_profile: "touba-air-capabilities-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
     air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:project.memory",
@@ -3621,7 +3618,6 @@ function runPlanPureDocument() {
     air_schema_version: "touba-air-v1",
     air_capability_profile: "touba-air-capabilities-v1",
     air_json_profile: "touba-air-json-canonical-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.run_plan",
       name: "examples.run_plan",
@@ -3661,7 +3657,6 @@ function importedToolDocument() {
   return {
     air_schema_version: "touba-air-v1",
     air_capability_profile: "touba-air-capabilities-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
     air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.research_app",
@@ -3812,7 +3807,6 @@ function twoToolBudgetDocument() {
     air_schema_version: "touba-air-v1",
     air_capability_profile: "touba-air-capabilities-v1",
     air_json_profile: "touba-air-json-canonical-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.budget_cli",
       name: "examples.budget_cli",
@@ -3887,7 +3881,6 @@ function agentDecisionProviderDocument() {
   return {
     air_schema_version: "touba-air-v1",
     air_capability_profile: "touba-air-capabilities-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
     air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.linear_skill",
@@ -4225,7 +4218,6 @@ function timeoutToolDocument() {
   return {
     air_schema_version: "touba-air-v1",
     air_capability_profile: "touba-air-capabilities-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
     air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.cli_timeout",
@@ -4615,7 +4607,6 @@ function triggerDocument({ scheduleValue = "0 8 * * *" } = {}) {
   return {
     air_schema_version: "touba-air-v1",
     air_capability_profile: "touba-air-capabilities-v1",
-    air_json_profile: "touba-air-json-canonical-v1",
     air_json_profile: "touba-air-json-canonical-v1",
     module: {
       id: "module:examples.cli_trigger",

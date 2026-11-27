@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { assertWebhookSignature, validateWebhookArguments } from './request-admission.mjs';
 import { mapTriggerPayload } from '../../../contracts/machine/trigger-payload.mjs';
 import { createServer } from "node:http";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createSqliteTriggerStore } from "../../../runtime/touba-runtime/src/sqlite-trigger-store.mjs";
