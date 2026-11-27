@@ -146,6 +146,30 @@ test("Request measurement preserves BOM and invalid-byte lengths exactly", async
   }
 });
 
+test("streamed Request measurement finishes as soon as the budget is exceeded", async () => {
+  const sent = transport();
+  let produced = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      produced += 1;
+      controller.enqueue(new Uint8Array([1, 2]));
+      if (produced === 20) controller.close();
+    },
+  });
+  const request = new Request(url, { method: "POST", body, duplex: "half" });
+  try {
+    await assert.rejects(
+      () => providerBudgetFetch({ maxProviderRequestBytes: 3, fetch: sent.fetch })(request),
+      (error) => error.code === "ProviderRequestBudgetExceeded" && error.details.actual_bytes === 4,
+    );
+    assert.equal(sent.calls.length, 0);
+    assert.equal(request.bodyUsed, false);
+    assert.ok(produced < 20);
+  } finally {
+    await request.body.cancel();
+  }
+});
+
 test("explicit Request body overrides are measured instead of the inherited body", async () => {
   const sent = transport();
   const request = new Request(url, { method: "POST", body: "large original body" });

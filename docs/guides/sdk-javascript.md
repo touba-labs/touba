@@ -921,6 +921,7 @@ ensuite le corps réellement sérialisé, y compris l’historique, les instruct
 et les schémas ajoutés par le SDK. Un dépassement produit
 `ProviderRequestBudgetExceeded` avant envoi, sans troncature silencieuse. Un corps
 impossible à mesurer est refusé par `ProviderRequestBodyUnavailable`.
+Pour un corps lu en flux, la mesure s’arrête dès que la limite est dépassée.
 
 `agentProviderObservationsMaxBytes` reste un contrôle distinct de la projection
 d’observations runtime, pas une mesure du corps HTTP. Aucun de ces plafonds

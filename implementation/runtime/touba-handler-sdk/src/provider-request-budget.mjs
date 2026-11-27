@@ -44,9 +44,7 @@ export function providerBudgetFetch(options = {}, request) {
       if (typeof body === "string") bytes = Buffer.byteLength(body, "utf8");
       else if (body instanceof Uint8Array) bytes = body.byteLength;
       else if (body == null && input instanceof Request) {
-        // Read a clone, never consume the Request passed to fetch. Decode-free
-        // measurement includes BOM and invalid UTF-8 bytes without alteration.
-        bytes = (await input.clone().arrayBuffer()).byteLength;
+        bytes = await measureRequestBody(input, maxBytes);
       } else throw new Error("unmeasurable provider request body");
     } catch {
       // No cause/message from a body reader is copied: it may contain payloads.
@@ -59,4 +57,24 @@ export function providerBudgetFetch(options = {}, request) {
     }
     return fetchImpl(input, init);
   };
+}
+
+async function measureRequestBody(request, maxBytes) {
+  const body = request.clone().body;
+  if (body === null) return 0;
+  const reader = body.getReader();
+  let bytes = 0;
+  try {
+    while (bytes <= maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+    }
+    return bytes;
+  } finally {
+    // A cloned stream shares its producer with the original request. Finish
+    // the measurement without waiting for the untouched branch to be read.
+    if (bytes > maxBytes) void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
