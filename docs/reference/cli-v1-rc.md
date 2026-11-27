@@ -1686,7 +1686,7 @@ services utilisant cette installation avant la mise à jour. Les projets,
 leurs données, leurs packages et leurs SDK restent inchangés.
 
 Les anciennes installations qui affichent une politique de réinstallation
-passent une première fois par l’installateur des [Téléchargements](/hub/telechargements).
+passent une première fois par l’installateur des [Téléchargements](https://toubalang.org/hub/telechargements/).
 Les installations système, dont
 le paquet DEB, restent mises à jour par leur gestionnaire de paquets.
 

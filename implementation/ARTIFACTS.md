@@ -32,11 +32,11 @@ evidence of the current source tree.
 
 ## Cleanup
 
-The ignored outputs can be removed with standard filesystem cleanup. Recreate
-them with the corresponding scripts, for example:
+Recreate the Core artifacts from this repository’s root.
 
 ```sh
-pnpm --dir touba/implementation package:vscode-ext
-pnpm --dir touba/implementation package:touba-toolchain
-pnpm --dir touba/implementation package:touba-release-macos
+pnpm --dir implementation package:touba-toolchain
+pnpm --dir implementation package:touba-release-macos
 ```
+
+Build an editor archive with `pnpm package:local` from the Touba IDE repository.
