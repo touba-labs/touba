@@ -39,13 +39,15 @@ def validate_reference(value):
 
 
 def validate_page(page, reference, after, limit):
+    if not isinstance(page, dict) or set(page) != {"schema_version", "reference", "header", "events", "next", "done"}:
+        raise ValueError("InvalidTracePage")
     # Python treats True == 1 and False == 0; dictionary equality alone is
     # insufficient for the embedded protocol reference.
-    validate_reference(page.get("reference") if isinstance(page, dict) else None)
+    validate_reference(page["reference"])
     end = reference["start_index"] + reference["event_count"] - 1
-    run = page.get("header", {}).get("run", {}) if isinstance(page, dict) else {}
-    if (not isinstance(page, dict) or set(page) != {"schema_version", "reference", "header", "events", "next", "done"}
-            or page["schema_version"] != "touba-trace-page-v1" or page["reference"] != reference
+    header = page["header"]
+    run = header.get("run") if isinstance(header, dict) else None
+    if (not isinstance(run, dict) or page["schema_version"] != "touba-trace-page-v1" or page["reference"] != reference
             or _digest(page["header"]) != reference["header_digest"] or not isinstance(page["events"], list)
             or run.get("run_id") != reference["run_id"]
             or ("segment_id" in run and run["segment_id"] != reference["segment_id"])
@@ -62,8 +64,11 @@ def validate_page(page, reference, after, limit):
             raise ValueError("InvalidTracePage")
         if sequence != end and event["kind"] == "run_completed":
             raise ValueError("InvalidTracePage")
-        if sequence == end and (event["kind"] != "run_completed" or _digest(event) != reference["terminal"]["digest"]
-                or event.get("payload", {}).get("status") != reference["terminal"]["status"]
-                or event.get("payload", {}).get("reason") != reference["terminal"]["reason"]):
-            raise ValueError("InvalidTracePage")
+        if sequence == end:
+            payload = event.get("payload")
+            if (event["kind"] != "run_completed" or not isinstance(payload, dict)
+                    or _digest(event) != reference["terminal"]["digest"]
+                    or payload.get("status") != reference["terminal"]["status"]
+                    or payload.get("reason") != reference["terminal"]["reason"]):
+                raise ValueError("InvalidTracePage")
     return page

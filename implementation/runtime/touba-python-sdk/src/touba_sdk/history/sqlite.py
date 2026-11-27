@@ -1,5 +1,5 @@
 """SQLite history with the same records, leases and explicit recovery as JS."""
-from ..providers import DecisionHistoryStore, _options
+from ..providers import DecisionHistoryStore
 
 
 def create_sqlite_decision_history_store(*, filename, max_sessions=128, max_bytes=33554432, ttl_ms=86400000):

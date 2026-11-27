@@ -177,7 +177,8 @@ class EngineTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_reference(dict(reference, **change))
         page = self.engine.read_trace(trace_store="traces.sqlite", reference=reference, limit=1)
-        for change in [{"next": True}, {"done": True}, {"events": []}, {"extra": 1}, {"header": {}}]:
+        for change in [{"next": True}, {"done": True}, {"events": []}, {"extra": 1},
+                       {"header": {}}, {"header": None}, {"header": {"run": None}}]:
             with self.assertRaises(ValueError):
                 validate_page(dict(page, **change), reference, -1, 1)
         with self.assertRaises(ValueError):

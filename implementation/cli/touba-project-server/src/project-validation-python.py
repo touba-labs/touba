@@ -6,6 +6,17 @@ import unittest
 import hashlib
 import importlib.util
 
+
+class ValidationResult(unittest.TextTestResult):
+    def __init__(self, stream, descriptions, verbosity):
+        super().__init__(stream, descriptions, verbosity)
+        self.passed = 0
+
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        self.passed += 1
+
+
 sys.path.insert(0, os.getcwd())
 suite = unittest.TestSuite()
 for filename in sys.argv[1:]:
@@ -20,7 +31,6 @@ for filename in sys.argv[1:]:
     sys.modules[name] = module
     spec.loader.exec_module(module)
     suite.addTests(unittest.TestLoader().loadTestsFromModule(module))
-result = unittest.TextTestRunner(verbosity=2).run(suite)
-passed = result.testsRun - len(result.errors) - len(result.failures) - len(result.skipped)
-print(f"# TOUBA_VALIDATION tests={result.testsRun} passed={passed}")
+result = unittest.TextTestRunner(verbosity=2, resultclass=ValidationResult).run(suite)
+print(f"# TOUBA_VALIDATION tests={result.testsRun} passed={result.passed}")
 sys.exit(0 if result.wasSuccessful() else 1)
