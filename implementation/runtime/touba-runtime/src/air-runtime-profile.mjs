@@ -1,7 +1,5 @@
 // @ts-check
 
-import { normalizeAirRunLimits } from "./runtime-budgets.mjs";
-import { ToubaRuntimeError } from "./runtime-errors.mjs";
 import {
   AIR_CAPABILITY_PROFILE,
   AIR_JSON_PROFILE,
@@ -9,6 +7,9 @@ import {
   MachineContractError,
   validateAirMachineContract,
 } from "../../../contracts/machine/contracts.mjs";
+import { APPROVAL_TYPE } from "../../../contracts/machine/value-contracts.mjs";
+import { normalizeAirRunLimits } from "./runtime-budgets.mjs";
+import { ToubaRuntimeError } from "./runtime-errors.mjs";
 
 export { AIR_CAPABILITY_PROFILE, AIR_JSON_PROFILE, AIR_SCHEMA_VERSION };
 
@@ -226,4 +227,3 @@ export function indexById(items) {
   }
   return index;
 }
-import { APPROVAL_TYPE } from "../../../contracts/machine/value-contracts.mjs";

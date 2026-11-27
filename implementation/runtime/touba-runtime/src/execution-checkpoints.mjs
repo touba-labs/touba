@@ -1,11 +1,10 @@
 // @ts-check
 
-import { isRunBudgetValue, RUN_BUDGET_KINDS } from "../../../contracts/run-budget-values.mjs";
-
 import { createHash } from "node:crypto";
 import { canonicalizeMachineValue } from "../../../contracts/machine/contracts.mjs";
-import { RuntimeFailure, ToubaRuntimeError } from "./runtime-errors.mjs";
+import { isRunBudgetValue, RUN_BUDGET_KINDS } from "../../../contracts/run-budget-values.mjs";
 import { validateApprovalState } from "./human-approval-policy.mjs";
+import { RuntimeFailure, ToubaRuntimeError } from "./runtime-errors.mjs";
 
 export const EXECUTION_CHECKPOINT_VERSION = "touba-run-checkpoint-v1";
 const HUMAN_APPROVAL_CHECKPOINT_VERSION = "touba-human-approval-checkpoint-v1";
@@ -134,8 +133,11 @@ export function validateExecutionCheckpoint(value) {
   validatePendingDispatch(checkpoint.pending_dispatch, checkpoint);
   validateDecisions(checkpoint.decisions_consumed);
   if (checkpoint.approval_state !== undefined) {
-    try { validateApprovalState(checkpoint.approval_state); }
-    catch { throw invalidCheckpoint("approval_state is invalid"); }
+    try {
+      validateApprovalState(checkpoint.approval_state);
+    } catch {
+      throw invalidCheckpoint("approval_state is invalid");
+    }
   }
   validateTraceState(checkpoint.trace_state);
 
@@ -368,7 +370,9 @@ function validateRuntimeState(value) {
     "DurableResumeCheckpointInvalid",
   );
   for (const [kind, limit] of Object.entries(limits)) {
-    if (!RUN_BUDGET_KINDS.includes(kind) || !isRunBudgetValue(kind, limit)) throw invalidCheckpoint("runtime_state.effective_limits contains an invalid run limit");
+    if (!RUN_BUDGET_KINDS.includes(kind) || !isRunBudgetValue(kind, limit)) {
+      throw invalidCheckpoint("runtime_state.effective_limits contains an invalid run limit");
+    }
   }
   requireNonNegativeInteger(state.active_elapsed_ms, "runtime_state.active_elapsed_ms");
   requirePositiveInteger(state.next_call_index, "runtime_state.next_call_index");
