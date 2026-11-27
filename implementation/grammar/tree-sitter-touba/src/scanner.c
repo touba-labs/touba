@@ -183,10 +183,10 @@ static bool scan_newline(Scanner *scanner, TSLexer *lexer) {
     }
 
     if (lexer->lookahead == '#') {
-      while (!lexer->eof(lexer) && lexer->lookahead != '\n') {
+      while (!lexer->eof(lexer) && lexer->lookahead != '\n' && lexer->lookahead != '\r') {
         lexer->advance(lexer, true);
       }
-      if (lexer->lookahead == '\n') {
+      if (lexer->lookahead == '\n' || lexer->lookahead == '\r') {
         continue;
       }
     }

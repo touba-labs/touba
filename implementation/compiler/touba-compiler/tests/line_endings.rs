@@ -105,6 +105,7 @@ fn a_bare_carriage_return_is_not_a_line_ending_or_ignored_whitespace() {
         "module newline.bad\rstrategy Run\n    do\n        stop\n",
         "module newline.bad\r",
         "module newline.bad\nstrategy Run\n    do\n        stop\r",
+        "module newline.bad\n# comment\rstrategy Hidden\n\nstrategy Shown\n    do\n        stop\n",
     ] {
         assert!(
             parse_source("bare-cr.tb", source).document.is_none(),

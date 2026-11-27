@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtempSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,35 +13,31 @@ const treeSitterBin = join(
   implementationRoot,
   process.platform === "win32" ? "node_modules/.bin/tree-sitter.cmd" : "node_modules/.bin/tree-sitter",
 );
-const buildDir = mkdtempSync(join(tmpdir(), "touba-tree-sitter-"));
-const libPath = join(buildDir, `tree-sitter-touba.${sharedLibraryExtension()}`);
-
 const fixtures = listTbFixtures(examplesRoot)
   .map((file) => relative(grammarRoot, file))
   .filter((file) => !file.replaceAll("\\", "/").includes("/negative/syntax/"))
   .sort();
 
-run(treeSitterBin, ["generate"], { cwd: grammarRoot });
-run(cCompiler(), cCompilerArgs(libPath), { cwd: grammarRoot });
-for (const fixtureChunk of chunks(fixtures, 40)) {
-  run(
-    treeSitterBin,
-    [
-      "parse",
-      "--config-path",
-      "./tree-sitter-cli.config.json",
-      "--lib-path",
-      libPath,
-      "--lang-name",
-      "touba",
-      "-q",
-      ...fixtureChunk,
-    ],
-    { cwd: grammarRoot },
-  );
+const buildDir = mkdtempSync(join(tmpdir(), "touba-tree-sitter-"));
+try {
+  const libPath = join(buildDir, `tree-sitter-touba.${sharedLibraryExtension()}`);
+  run(treeSitterBin, ["generate"], { cwd: grammarRoot });
+  run(cCompiler(), cCompilerArgs(libPath), { cwd: grammarRoot });
+  for (const fixtureChunk of chunks(fixtures, 40)) {
+    run(
+      treeSitterBin,
+      ["parse", "--config-path", "./tree-sitter-cli.config.json", "--lib-path", libPath,
+        "--lang-name", "touba", "-q", ...fixtureChunk],
+      { cwd: grammarRoot },
+    );
+  }
+  console.log(`tree-sitter-corpus: status=success checked=${fixtures.length}`);
+} catch (error) {
+  console.error(`tree-sitter-corpus: ${error.message}`);
+  process.exitCode = error.exitCode ?? 1;
+} finally {
+  rmSync(buildDir, { recursive: true, force: true });
 }
-
-console.log(`tree-sitter-corpus: status=success checked=${fixtures.length}`);
 
 function* chunks(values, size) {
   for (let index = 0; index < values.length; index += size) {
@@ -74,7 +70,9 @@ function run(command, args, options) {
     throw result.error;
   }
   if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+    throw Object.assign(new Error(`${command} failed (${result.signal ?? result.status})`), {
+      exitCode: result.status ?? 1,
+    });
   }
 }
 

@@ -24,6 +24,10 @@ fn main() {
     );
     println!("cargo:rerun-if-changed={}", parser_c.display());
     println!("cargo:rerun-if-changed={}", scanner_c.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        grammar_dir.join("src/tree_sitter").display()
+    );
 
     let mut build = cc::Build::new();
     build.include(grammar_dir.join("src")).file(parser_c);

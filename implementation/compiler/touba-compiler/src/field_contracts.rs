@@ -51,10 +51,16 @@ pub(crate) fn constraints(
                 let Some(number) = number else {
                     return Err("numeric constraint requires a finite number".into());
                 };
-                if type_ref == "builtin:Int"
-                    && (number.fract() != 0.0 || number.abs() > 9_007_199_254_740_991.0)
-                {
-                    return Err("Int constraint requires a safe integer".into());
+                if type_ref == "builtin:Int" {
+                    // A decimal fraction can round to an integer in f64.
+                    // Validate the source digits before using the numeric value.
+                    let (whole, fraction) = item.value.split_once('.').unwrap_or((&item.value, ""));
+                    let safe_whole = whole
+                        .parse::<i64>()
+                        .is_ok_and(|value| value.unsigned_abs() <= 9_007_199_254_740_991);
+                    if !safe_whole || !fraction.bytes().all(|digit| digit == b'0') {
+                        return Err("Int constraint requires a safe integer".into());
+                    }
                 }
                 result.insert(item.kind.clone(), json!(number));
             }

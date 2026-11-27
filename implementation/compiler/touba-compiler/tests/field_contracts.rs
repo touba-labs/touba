@@ -7,6 +7,15 @@ const SOURCE: &str = include_str!(
 fn defaults_constraints_and_copies_compile_and_survive_imports() {
     let result = compile_source_to_air("fields.tb", SOURCE);
     assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let exact_bound = compile_source_to_air(
+        "bounds.tb",
+        "module bounds\ntype Item\n    value is Int max 9007199254740991.0\n",
+    );
+    assert!(
+        exact_bound.document.is_some(),
+        "{:?}",
+        exact_bound.diagnostics
+    );
     let source = "module consumer\nimport type Status from fields\nfunction New\n    gives Status\n    do\n        bind original as Status = record Status { id as \"ok\" }\n        give copy original { code as 2 }\n";
     let imported = compile_project_sources(
         "consumer.tb",
@@ -32,6 +41,8 @@ fn invalid_field_contracts_fail_even_without_construction() {
         "Text length -1",
         "Int min 10 max 2",
         "Int min 1.5",
+        "Int min 0.99999999999999999",
+        "Int max 9007199254740990.5",
         "Int min 9007199254740992",
         "Text length 2 length 3",
         "Text format \"digits\" default \"abc\"",
