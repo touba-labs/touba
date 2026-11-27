@@ -24,6 +24,7 @@ downloads are on the [Touba hub](https://toubalang.org/hub/telechargements/).
 
 Local candidate with authenticated project request ingress, reviewed queue
 recovery, scheduler controls and precise package compatibility diagnostics.
+`touba run hello.tb` compiles and runs a source file in one command.
 Includes the reviewed lifecycle and private approval dossiers of the earlier RC.
 See [release and migration notes](implementation/release/notes/v1.5.0.md).
 

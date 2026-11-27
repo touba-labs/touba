@@ -74,7 +74,7 @@ Ce document n'active pas le trigger à la place du manifest hôte.
 | `touba prepare` | Prépare ou vérifie les artefacts dérivés du projet |
 | `touba secret` | Gère le store de secrets de développement |
 | `touba compile` | Compile une source `.tb` vers AIR JSON |
-| `touba run` | Exécute un AIR JSON |
+| `touba run` | Compile et exécute une source `.tb`, ou exécute un AIR JSON ou un plan préparé |
 | `touba trigger run` | Exécute un trigger `schedule` en runner foreground borné |
 | `touba trigger serve` | Lance un service webhook pour triggers `request` |
 | `touba serve` | Lance le serveur projet authentifié pour les clients de contrats |
@@ -458,9 +458,27 @@ Dans ce cas, `--stdout` rend le pipeline explicite. Le shell crée quand même l
 fichier à droite de `>` ; Touba ne peut donc pas valider son extension. Sans
 `--out` ou `--stdout`, `touba compile` refuse l'exécution.
 
-Le runtime Touba exécute l’AIR, pas directement le fichier `.tb`.
+Le runtime Touba exécute l’AIR produit par le compilateur.
 
 ## `touba run`
+
+Pour exécuter un fichier source en une commande :
+
+```sh title="Terminal"
+touba run hello.tb
+```
+
+La commande compile la source avec la même résolution d’imports que
+`touba compile`, exécute l’AIR temporaire et le retire à la fin. Les options
+d’entrée, de manifest et de trace s’appliquent à l’exécution. La trace
+persistante est rangée à la racine du projet ou, pour un fichier autonome,
+dans `.touba/` à côté de la source. Une erreur de compilation arrête la commande
+avant l’exécution. En sortie JSON, elle produit le motif `SourceCompilationFailed`
+et affiche le diagnostic du compilateur sur stderr.
+
+Pour une exécution avec un verrou de chaîne d’approvisionnement, utilisez
+l’AIR référencé par le verrou ou le plan préparé correspondant. Le verrou
+identifie l’artefact par son chemin et son empreinte.
 
 Pour le diagnostic local, `--handler-diagnostics <fichier-neuf>` exige un
 run plan `dev` sur POSIX, sans profil durci ni lock obligatoire. Voir
@@ -470,7 +488,7 @@ run plan `dev` sur POSIX, sans profil durci ni lock obligatoire. Voir
 touba run program.air.json
 ```
 
-Exécute un AIR JSON.
+Exécute exactement l’AIR fourni.
 
 Les traces sont conservées par défaut dans `.touba/traces.sqlite` du projet.
 `--trace-store <base.sqlite>` choisit un autre journal SQLite privé.

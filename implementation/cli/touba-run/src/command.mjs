@@ -47,7 +47,7 @@ import {
 } from "@touba/supply-chain";
 
 // Shared admission path: each invocation owns its arguments, output and runtime state.
-export async function executeRunCommand(args, { stdout = process.stdout, stderr = process.stderr, signal } = {}) {
+export async function executeRunCommand(args, { stdout = process.stdout, stderr = process.stderr, signal, compileSource } = {}) {
 
 const RUN_PLAN_SCHEMA_VERSION = "touba-run-plan-v1";
 const RUN_EVIDENCE_SCHEMA_VERSION = "touba-run-evidence-v1";
@@ -96,6 +96,8 @@ class ResourceBindingsCliError extends Error {
 }
 
 const parsedArgs = parseArgs(args);
+const sourcePath = compileSource === undefined
+  ? undefined : parsedArgs.positional.find(path => path.endsWith(".tb"));
 const hostModules = createHostModuleLoader();
 let traceStorage = null;
 let triggerState;
@@ -127,6 +129,22 @@ async function refuseAdmission(code, stage, exitCode = 1) {
       result: null, messages: [], trace })));
   }
   return await exitAfterFlush(exitCode);
+}
+
+if (sourcePath !== undefined) {
+  // Keep user-supplied output paths from overwriting the source, even when
+  // an admission failure would normally export a trace.
+  const source = canonicalPath(sourcePath);
+  const outputs = [parsedArgs.traceOutPath, parsedArgs.evidenceOutPath, parsedArgs.traceStorePath,
+    parsedArgs.humanCheckpointOutPath, parsedArgs.parallelCheckpointOutPath, parsedArgs.humanCheckpointStorePath,
+    parsedArgs.effectJournalPath, parsedArgs.triggerStatePath, parsedArgs.handlerDiagnosticsPath];
+  if (outputs.some(path => path !== undefined && canonicalPath(path) === source)) {
+    if (parsedArgs.traceOutPath !== undefined && canonicalPath(parsedArgs.traceOutPath) === source) {
+      parsedArgs.traceOutPath = undefined;
+    }
+    stderr.write("error: run output paths must not overwrite the Touba source file\n");
+    return await refuseAdmission("ArgumentsInvalid", "arguments", 2);
+  }
 }
 
 if (parsedArgs.error) {
@@ -182,18 +200,33 @@ if (parsedArgs.preparedPackagePlan !== undefined) {
 parsedArgs.traceStorePath ??= projectTracePath(filePath, parsedArgs.runPlanPath);
 parsedArgs.humanCheckpointStorePath ??= join(dirname(parsedArgs.traceStorePath), "approval-checkpoints.sqlite");
 let json;
-try {
-  json = readFileSync(filePath, "utf8");
-} catch (e) {
-  const detail = e.code === "ENOENT" || e.code === "ENOTDIR"
-    ? "AIR file not found. Check the path and current directory. Compile the saved .tb file with touba compile <source.tb> --out <program.air.json>, or prepare the project with touba prepare --mode write."
-    : e.code === "EACCES" || e.code === "EPERM"
-      ? "AIR file access denied. Check the file and parent-directory read permissions for the current user."
-      : e.code === "EISDIR"
-        ? "The AIR path is a directory. Select the compiled .air.json file."
-        : "AIR file could not be read. Check the path, current directory and read permissions.";
-  stderr.write(`error [AirUnreadable]: ${detail}\n`);
-  return await refuseAdmission("AirUnreadable", "air", 2);
+if (sourcePath !== undefined) {
+  if (parsedArgs.supplyChainLockPath !== undefined || parsedArgs.requireSupplyChainLock) {
+    stderr.write("error [SourceRunRequiresPreparedAir]: a supply-chain lock identifies an exact AIR artifact. Run that .air.json file or its prepared run plan.\n");
+    return await refuseAdmission("SourceRunRequiresPreparedAir", "arguments", 2);
+  }
+  try {
+    const compiled = await compileSource(sourcePath, stderr);
+    if (compiled.exitCode !== 0) return await refuseAdmission("SourceCompilationFailed", "compilation", compiled.exitCode);
+    json = compiled.json;
+  } catch (error) {
+    stderr.write(`error [SourceCompilationFailed]: ${error.message}\n`);
+    return await refuseAdmission("SourceCompilationFailed", "compilation", 1);
+  }
+} else {
+  try {
+    json = readFileSync(filePath, "utf8");
+  } catch (e) {
+    const detail = e.code === "ENOENT" || e.code === "ENOTDIR"
+      ? "AIR file not found. Check the path and current directory. Compile the saved .tb file with touba compile <source.tb> --out <program.air.json>, or prepare the project with touba prepare --mode write."
+      : e.code === "EACCES" || e.code === "EPERM"
+        ? "AIR file access denied. Check the file and parent-directory read permissions for the current user."
+        : e.code === "EISDIR"
+          ? "The AIR path is a directory. Select the compiled .air.json file."
+          : "AIR file could not be read. Check the path, current directory and read permissions.";
+    stderr.write(`error [AirUnreadable]: ${detail}\n`);
+    return await refuseAdmission("AirUnreadable", "air", 2);
+  }
 }
 
 let document;
@@ -1786,7 +1819,7 @@ function printUsage() {
   stderr.write("--human-checkpoint-store <path.sqlite> selects host-owned checkpoint custody (default: approval-checkpoints.sqlite beside the trace store); keep it with the effect journal.\n");
   stderr.write("Local development only: --handler-diagnostics <new-private-file.jsonl> requires a dev run plan on POSIX; unavailable in production.\n");
   stderr.write(
-    "usage: touba run (<file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.sqlite>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-approval-host <host.mjs>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path>] [--human-resume-checkpoint <path>] [--parallel-checkpoint-out <path>] [--parallel-resume-checkpoint <path>] [--parallel-limits-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.triggers.sqlite>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.triggers.sqlite>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <non-negative-integer>] [--max-agent-invocations <non-negative-integer>] [--max-provider-calls <non-negative-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json|json-reference] [--trace-store <path.sqlite>] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
+    "usage: touba run (<source.tb> | <file.air.json> | --run-plan <touba.run-plan.json>) [--manifest <path> [--secrets <path>]] [--resource-bindings <path> [--require-resource-bindings]] [--supply-chain-lock <path> [--require-supply-chain-lock]] [--effect-journal <run.effect-journal.sqlite>] [--hardened-profile <touba.hardened-profile.json>] [--inputs-json <json-object>] [--human-approval-host <host.mjs>] [--human-decisions <path> | --human-decisions-json <json-object>] [--human-checkpoint-out <path>] [--human-resume-checkpoint <path>] [--parallel-checkpoint-out <path>] [--parallel-resume-checkpoint <path>] [--parallel-limits-json <json-object>] [--user-inputs <path> | --user-inputs-json <json-object> | --interactive-user-inputs] [--agent-decisions <path> | --agent-decisions-json <json-object>] [--agent-decision-provider <path> [--agent-decision-provider-metadata-json <json-object>] [--agent-decision-provider-content-mode inline|opaque_refs] [--agent-decision-provider-initial-mode summary|capabilities] [--agent-decision-provider-timeout-ms <positive-integer>] [--agent-decision-provider-max-retries <non-negative-integer>]] [--trigger-event <path> | --trigger-event-json <json-object> [--state <touba.triggers.sqlite>]] [--trigger-dry-run] [--trigger <trigger-ref> --max-runs <positive-integer> --state <touba.triggers.sqlite>] [--skill-pack <directory>...] [--activate-skill-pack <ref>...] [--skill-pack-discovery-max-bytes <n>] [--skill-pack-activation-max-bytes <n>] [--agent-model-input-max-bytes <n>] [--max-agent-steps <positive-integer>] [--max-loop-iterations <positive-integer>] [--run-timeout-ms <positive-integer>] [--run-limits-json <json-object>] [--max-run-ms <positive-integer>] [--max-steps <positive-integer>] [--max-tool-calls <non-negative-integer>] [--max-agent-invocations <non-negative-integer>] [--max-provider-calls <non-negative-integer>] [--cancel-before-dispatch] [--cancel-on-pause] [--kill-switch-enabled] [--entry <air-ref>] [--output show|result|trace|all|run-summary|json|json-reference] [--trace-store <path.sqlite>] [--trace-out <path>] [--evidence-out <run.evidence.json> [--evidence-ref <label=uri>...]]\n",
   );
 }
 

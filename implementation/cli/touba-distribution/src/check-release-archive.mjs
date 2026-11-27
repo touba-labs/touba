@@ -101,6 +101,18 @@ function checkReleaseArchive(plan) {
     assertEqual(doctorReport.version.cli, plan.toubaVersion, "doctor CLI version");
     assertEqual(doctorReport.version.commands.supply_chain_validate, true, "doctor supply-chain command manifest");
 
+    const hello = join(workspace, "hello source.tb");
+    writeFileSync(hello, `module release.hello
+
+strategy Hello
+    do
+        show
+            with message as "Touba ready"
+`);
+    const helloRun = runTouba(cliPath, ["run", hello], cliEnv);
+    assertEqual(helloRun.stdout, "Touba ready\n", "installed CLI runs source directly");
+    process.stdout.write("CHECKED_RELEASE_RUN_SOURCE\n");
+
     const project = join(workspace, "independent SDK project");
     mkdirSync(project);
     writeFileSync(join(project, "package.json"), JSON.stringify({ name: "release-sdk-check", private: true }));

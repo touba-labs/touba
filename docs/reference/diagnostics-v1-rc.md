@@ -146,6 +146,11 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 
 ## Runtime, tools, manifest et secrets
 
+Avec `touba run fichier.tb`, le motif `SourceCompilationFailed` dans la
+sortie JSON accompagne le diagnostic de compilation sur stderr.
+`SourceRunRequiresPreparedAir` demande de sélectionner l’AIR ou le plan
+préparé correspondant au verrou fourni.
+
 | Code | Cause probable | Action |
 | --- | --- | --- |
 | `ToolBindingManifestMissing` | Manifest absent | Fournir le manifest |

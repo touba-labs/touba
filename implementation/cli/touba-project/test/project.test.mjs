@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -2649,7 +2649,8 @@ test("CLI trigger, manifest and handler help match current public options", () =
 test("CLI run help exposes project profiles before runtime options", () => {
   const result = spawnSync(process.execPath, [cliPath, "run", "--help"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Usage: touba run <program\.air\.json> \[--profile pure\|dev\|prod\]/);
+  assert.match(result.stdout, /Usage: touba run <source\.tb\|program\.air\.json> \[--profile pure\|dev\|prod\]/);
+  assert.match(result.stdout, /touba run --run-plan <touba\.run-plan\.json>/);
   assert.match(result.stdout, /touba run --project <path>/);
   assert.match(result.stdout, /Project profiles are read from touba\.project\.json/);
   assert.match(result.stdout, /prod profile requires touba\.lock\.json/);
@@ -2660,8 +2661,85 @@ test("CLI run help exposes project profiles before runtime options", () => {
 
   const profiledResult = spawnSync(process.execPath, [cliPath, "run", "--profile", "prod", "--help"], { encoding: "utf8" });
   assert.equal(profiledResult.status, 0, profiledResult.stderr);
-  assert.match(profiledResult.stdout, /Usage: touba run <program\.air\.json> \[--profile pure\|dev\|prod\]/);
+  assert.match(profiledResult.stdout, /Usage: touba run <source\.tb\|program\.air\.json> \[--profile pure\|dev\|prod\]/);
   assert.equal(profiledResult.stderr, "");
+});
+
+test("CLI runs a Touba source with project imports and normal traces", t => {
+  const root = tempRoot();
+  t.after(() => cleanup(root));
+  const project = join(root, "project with spaces");
+  initProject({ root: project });
+  const sources = join(project, "src", "example");
+  mkdirSync(sources, { recursive: true });
+  writeFileSync(join(sources, "labels.tb"), `module example.labels
+function Welcome
+    gives Text
+    do
+        give "Bonjour Touba"
+`);
+  const source = join(sources, "hello.tb");
+  writeFileSync(source, `module example.hello
+import function Welcome from example.labels
+function Main
+    gives Text
+    do
+        Welcome
+            into message
+        give message
+`);
+  const temporary = join(root, "temporary");
+  mkdirSync(temporary);
+  const options = { cwd: root, encoding: "utf8", env: { ...process.env, TMPDIR: temporary, TEMP: temporary, TMP: temporary } };
+  const entry = "function:example.hello/Main";
+  const result = spawnSync(process.execPath, [cliPath, "run", "--entry", entry, source, "--output", "json"], options);
+  assert.equal(result.status, 0, result.stderr);
+  const run = JSON.parse(result.stdout);
+  assert.equal(run.result, "Bonjour Touba");
+  assert.equal(existsSync(join(project, ".touba", "traces.sqlite")), true);
+  assert.deepEqual(readdirSync(sources).sort(), ["hello.tb", "labels.tb"]);
+  assert.deepEqual(readdirSync(temporary), []);
+
+  const air = join(root, "hello.air.json");
+  const compiled = spawnSync(process.execPath, [cliPath, "compile", source, "--out", air], options);
+  assert.equal(compiled.status, 0, compiled.stderr);
+  const lock = join(root, "touba.lock.json");
+  generateSupplyChainLock({ air, out: lock });
+  const reviewedLock = JSON.parse(readFileSync(lock, "utf8"));
+  reviewedLock.review = { status: "approved", reviewed_at: "2026-10-15T12:00:00Z",
+    reviewers: [{ kind: "human", id: "fixture:reviewer" }] };
+  writeJson(lock, reviewedLock);
+  const locked = spawnSync(process.execPath, [cliPath, "run", source, "--entry", entry,
+    "--supply-chain-lock", lock, "--require-supply-chain-lock", "--output", "json"], options);
+  assert.equal(locked.status, 2, locked.stderr);
+  assert.equal(JSON.parse(locked.stdout).reason, "SourceRunRequiresPreparedAir");
+  const verified = spawnSync(process.execPath, [cliPath, "run", air, "--entry", entry,
+    "--supply-chain-lock", lock, "--require-supply-chain-lock", "--output", "json"], options);
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.equal(JSON.parse(verified.stdout).trace.run.air_digest, run.trace.run.air_digest);
+  assert.deepEqual(readdirSync(temporary), []);
+});
+
+test("CLI reports source compilation failure before execution and preserves the source", t => {
+  const root = tempRoot();
+  t.after(() => cleanup(root));
+  const sourcePath = join(root, "invalid.tb");
+  const source = "module example.invalid\nfunction Broken\n    gives Text\n    do\n        give 42\n";
+  writeFileSync(sourcePath, source);
+  const options = { cwd: root, encoding: "utf8" };
+
+  const invalid = spawnSync(process.execPath, [cliPath, "run", sourcePath, "--output", "json"], options);
+  assert.equal(invalid.status, 1, invalid.stderr);
+  assert.match(invalid.stderr, /invalid\.tb:/);
+  const failure = JSON.parse(invalid.stdout);
+  assert.equal(failure.reason, "SourceCompilationFailed");
+  assert.deepEqual(failure.trace.events.map(event => event.kind), ["admission_refused"]);
+  assert.equal(existsSync(join(root, ".touba")), false);
+
+  const conflicting = spawnSync(process.execPath, [cliPath, "run", sourcePath, "--trace-out", sourcePath], options);
+  assert.equal(conflicting.status, 2, conflicting.stderr);
+  assert.match(conflicting.stderr, /must not overwrite the Touba source/);
+  assert.equal(readFileSync(sourcePath, "utf8"), source);
 });
 
 test("CLI version keeps human output concise and does not claim an environment-supplied build identity", () => {
