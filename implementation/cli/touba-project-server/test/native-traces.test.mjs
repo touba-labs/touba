@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { canonicalDigest, executeAirDocument } from "@touba/runtime";
 import { NATIVE_TRACE_LIMITS, withNativeTrace, readNativeTraceExport, readNativeTraceIndex, readNativeTracePage, nativeTraceExportChunks, validateNativeTraceExport } from "../src/native-traces.mjs";
 import { validateObject } from "../../../tools/validate-product-surface-contracts.mjs";
+import { compileTestAir } from "../../../tests/helpers/compile.mjs";
 import { createSqliteTraceStore } from "../../../runtime/touba-runtime/src/sqlite-trace-store.mjs";
 import { attachTraceReader } from "../../../runtime/touba-runtime/src/trace-builder.mjs";
 import { executeProjectSandboxRun, loadSandboxCheckpointStore } from "../src/serve.mjs";
@@ -259,8 +260,8 @@ strategy Run
         give value
 ` : 'module bounded_server\nstrategy Run\n    gives Text\n    do\n        bind value as Text = "retained"\n        give value\n');
   writeFileSync(join(projectRoot, "touba.project.json"), JSON.stringify({ entry: targetRef }));
-  const air = execFileSync(fileURLToPath(new URL("../../../target/debug/touba-compile", import.meta.url)), [source], { encoding: "utf8" });
-  writeFileSync(join(projectRoot, ".touba/air/main.air.json"), air);
+  const air = compileTestAir(source);
+  writeFileSync(join(projectRoot, ".touba/air/main.air.json"), JSON.stringify(air));
   const traceStorage = createSqliteTraceStore({ filename: join(projectRoot, "traces.sqlite"), maxDocumentBytes: 1 });
   try {
     const output = await executeProjectSandboxRun({

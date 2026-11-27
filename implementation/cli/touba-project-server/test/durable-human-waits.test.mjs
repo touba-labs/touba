@@ -318,7 +318,7 @@ strategy RunApproval
             into results
         give results
 `);
-  const air = JSON.parse(execFileSync(fileURLToPath(new URL(`../../../target/debug/touba-compile${process.platform === "win32" ? ".exe" : ""}`, import.meta.url)), [path], { encoding: "utf8" }));
+  const air = compileTestAir(path);
   writeJson(join(root, ".touba/air/demo/approval.air.json"), air);
   let service = createToubaProjectServer({ contractsRoot, projectRoot: root, port: 0, quiet: true });
   try {
