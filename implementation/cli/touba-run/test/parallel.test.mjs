@@ -13,6 +13,10 @@ import { createApprovalTestRunner } from "../../../tests/helpers/approval-checkp
 
 const executeAirDocument = createApprovalTestRunner();
 
+function assertProcessTerminated(result) {
+  if (process.platform === "win32") assert.ok(Number.isInteger(result.status) && result.status !== 0, result.stderr);
+  else assert.equal(result.signal, "SIGKILL", result.stderr);
+}
 
 const cargoManifest = fileURLToPath(new URL("../../../Cargo.toml", import.meta.url));
 // Cargo coordinates compilation with the other test files. Executing the
@@ -527,7 +531,7 @@ const result = await executeAirDocument(document, {
 
 writeFileSync('result.json', JSON.stringify(result));`);
   const killed = spawnSync(process.execPath, [join(root, "worker.mjs")], { cwd: root, encoding: "utf8" });
-  assert.equal(killed.signal, "SIGKILL", killed.stderr);
+  assertProcessTerminated(killed);
   assert.equal(readFileSync(join(root, "calls.txt"), "utf8"), "a\n");
   const resumed = spawnSync(process.execPath, [join(root, "worker.mjs"), "--resume"], { cwd: root, encoding: "utf8" });
   assert.equal(resumed.status, 0, resumed.stderr);
@@ -620,7 +624,7 @@ const result=await executeAirDocument(JSON.parse(readFileSync('air.json')), {
 writeFileSync('result.json',JSON.stringify(result));`);
   const run = args => spawnSync(process.execPath, [join(root, "worker.mjs"), ...args], { cwd: root, encoding: "utf8", timeout: 30000 });
   const killed = run([]);
-  assert.equal(killed.signal, "SIGKILL", killed.stderr);
+  assertProcessTerminated(killed);
   assert.equal(readFileSync(join(root, "payments.txt"), "utf8"), "a\n");
   const resumed = run(["--resume"]);
   assert.equal(resumed.status, 0, resumed.stderr);

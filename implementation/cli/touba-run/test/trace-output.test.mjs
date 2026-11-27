@@ -20,11 +20,15 @@ const command = fileURLToPath(new URL("../src/run.mjs", import.meta.url));
 const cli = fileURLToPath(new URL("../../touba-project/src/main.mjs", import.meta.url));
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "touba-trace-output-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const disposals = [];
+  t.after(async () => {
+    for (const dispose of disposals.reverse()) await dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
   const source = join(root, "main.tb"), air = join(root, "main.air.json"), database = join(root, "traces.sqlite");
   writeFileSync(source, 'module traces.test\nstrategy Run\n    gives Text\n    do\n        give "stored"\n');
   writeFileSync(air, JSON.stringify(compileTestAir(source)));
-  return { root, source, air, database };
+  return { root, source, air, database, beforeCleanup: dispose => disposals.push(dispose) };
 }
 
 test("trace archival requires an existing standalone journal and an explicit apply", t => {
@@ -199,9 +203,9 @@ test("a slow output never queues the next trace chunk before acknowledgement", a
 });
 
 for (const executionMode of ["process", "persistent"]) test(`JavaScript SDK (${executionMode}) persists the chosen trace store`, async t => {
-  const { root, database } = fixture(t);
+  const { root, database, beforeCleanup } = fixture(t);
   const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath, commandArgs: [cli] });
-  t.after(() => engine.close());
+  beforeCleanup(() => engine.close());
   const result = await engine.run({ source: "main.tb", traceStore: "traces.sqlite" });
   assert.equal(result.result, "stored");
   const store = createSqliteTraceStore({ filename: database });
@@ -213,9 +217,9 @@ for (const executionMode of ["process", "persistent"]) test(`JavaScript SDK (${e
 });
 
 for (const executionMode of ["process", "persistent"]) test(`JavaScript SDK (${executionMode}) reads durable traces by pages`, async t => {
-  const { root } = fixture(t);
+  const { root, beforeCleanup } = fixture(t);
   const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath, commandArgs: [cli] });
-  t.after(() => engine.close());
+  beforeCleanup(() => engine.close());
   const options = { source: "main.tb", traceStore: "traces.sqlite", traceMode: "reference", traceOut: "export.json" };
   const automatic = await engine.run({ ...options, traceStore: undefined });
   assert.equal(automatic.result, "stored");
@@ -270,9 +274,9 @@ test("CLI reference output keeps the canonical export and refuses invalid reader
 });
 
 test("reference mode preserves pauses, stops, cancellations and runtime failure evidence", async t => {
-  const { root, source } = fixture(t);
+  const { root, source, beforeCleanup } = fixture(t);
   const engine = new ToubaEngine({ projectRoot: root, command: process.execPath, commandArgs: [cli] });
-  t.after(() => engine.close());
+  beforeCleanup(() => engine.close());
   const cases = [
     ["stop", "        stop", {}, "stopped"],
     ["pause", '        ask\n            with prompt as "Continue?"\n            into answer', {}, "stopped"],
@@ -297,9 +301,9 @@ test("reference mode preserves pauses, stops, cancellations and runtime failure 
 });
 
 test("admission refusal in reference mode retains its full small error trace without a fake segment", async t => {
-  const { root, database } = fixture(t);
+  const { root, database, beforeCleanup } = fixture(t);
   const engine = new ToubaEngine({ projectRoot: root, command: process.execPath, commandArgs: [cli] });
-  t.after(() => engine.close());
+  beforeCleanup(() => engine.close());
   const { airDocument } = await engine.compile({ source: "main.tb" });
   airDocument.air_schema_version = "unsupported";
   await assert.rejects(engine.run({ airJson: airDocument,

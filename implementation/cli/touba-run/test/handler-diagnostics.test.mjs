@@ -57,7 +57,7 @@ inputSignature:[{name:"ticket",type_ref:"builtin:Text"}], outputType:"builtin:Te
   return { root, plan, handlerPath, handlerCode, run };
 }
 
-test("local opt-in records actual SDK exception location without secrets, messages or public trace fields", async t => {
+test("local opt-in records actual SDK exception location without secrets, messages or public trace fields", { skip: process.platform === "win32" }, async t => {
   const f = await fixture(t);
   const plain = f.run();
   assert.equal(plain.status, 1, plain.stderr);
@@ -88,7 +88,7 @@ test("local opt-in records actual SDK exception location without secrets, messag
   assert.equal(JSON.parse(f.run(["--handler-diagnostics", link]).stdout).reason, "HandlerDiagnosticsUnavailable");
 });
 
-test("startup failures retain only class and selected source position before the SDK loads", async t => {
+test("startup failures retain only class and selected source position before the SDK loads", { skip: process.platform === "win32" }, async t => {
   const f = await fixture(t);
   writeFileSync(f.handlerPath, `throw new TypeError(${JSON.stringify(unknownSecret)});`);
   const path = join(f.root, "startup.jsonl");
@@ -119,6 +119,17 @@ test("prod and locked runs refuse diagnostics before invoking the handler", asyn
   assert.equal(existsSync(path), false);
 });
 
+test("Windows refuses the POSIX diagnostic channel before dispatch", { skip: process.platform !== "win32" }, async t => {
+  const f = await fixture(t);
+  const diagnostic = join(f.root, "diagnostic.jsonl");
+  const run = f.run(["--handler-diagnostics", diagnostic]);
+  assert.equal(run.status, 2, run.stderr);
+  const result = JSON.parse(run.stdout);
+  assert.equal(result.reason, "HandlerDiagnosticsForbidden");
+  assert.deepEqual(result.trace.events.map(event => event.kind), ["admission_refused"]);
+  assert.equal(existsSync(diagnostic), false);
+});
+
 test("ambient diagnostic variables never activate the child channel without the CLI opt-in", async t => {
   const f = await fixture(t);
   writeFileSync(f.handlerPath, f.handlerCode('if (process.env.TOUBA_LOCAL_DIAGNOSTIC_FD) throw new Error("unexpected channel"); return request;'));
@@ -127,7 +138,7 @@ test("ambient diagnostic variables never activate the child channel without the 
   assert.equal(JSON.parse(run.stdout).result, "test");
 });
 
-test("malicious private data is discarded and non-zero stderr never enters public output", async t => {
+test("malicious private data is discarded and non-zero stderr never enters public output", { skip: process.platform === "win32" }, async t => {
   const f = await fixture(t);
   writeFileSync(f.handlerPath, `import { writeSync } from "node:fs";
 if (process.env.TOUBA_LOCAL_DIAGNOSTIC_FD) writeSync(3, "x".repeat(20000) + process.env.DEBUG_TOKEN);
