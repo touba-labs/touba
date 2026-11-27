@@ -37,9 +37,12 @@ function validateSchemaNode(schema, value, path, diagnostics, root, depth = 0) {
     return;
   }
   if (typeof value === "string") {
-    const length = [...value].length;
-    if (schema.minLength !== undefined && length < schema.minLength) diagnostics.push(error("StringTooShort", `${path} is too short`, path));
-    if (schema.maxLength !== undefined && length > schema.maxLength) diagnostics.push(error("StringTooLong", `${path} is too long`, path));
+    if (schema.minLength !== undefined || schema.maxLength !== undefined) {
+      let length = 0;
+      for (const _character of value) length += 1;
+      if (schema.minLength !== undefined && length < schema.minLength) diagnostics.push(error("StringTooShort", `${path} is too short`, path));
+      if (schema.maxLength !== undefined && length > schema.maxLength) diagnostics.push(error("StringTooLong", `${path} is too long`, path));
+    }
     if (schema.pattern && !new RegExp(schema.pattern, "u").test(value)) diagnostics.push(error("PatternMismatch", `${path} does not match its declared pattern`, path));
   }
   if (typeof value === "number") {

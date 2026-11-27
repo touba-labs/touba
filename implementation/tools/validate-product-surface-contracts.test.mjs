@@ -162,6 +162,14 @@ test("keeps a historical agent input contract open without inferring from uses",
   assert.deepEqual(contract.fields, []);
 });
 
+test("string length limits count Unicode code points", () => {
+  const schema = { type: "string", minLength: 2, maxLength: 2 };
+  assert.deepEqual(validateObject(schema, "A😀"), []);
+  assert.deepEqual(validateObject(schema, "😀😀"), []);
+  assert.deepEqual(validateObject(schema, "😀").map(item => item.code), ["StringTooShort"]);
+  assert.deepEqual(validateObject(schema, "A😀😀").map(item => item.code), ["StringTooLong"]);
+});
+
 test("derives adaptive interaction profiles without inventing media support", () => {
   const contract = {
     mode: "declared",
