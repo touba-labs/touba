@@ -3,7 +3,7 @@
   "version": "1.5.0",
   "private": true,
   "type": "module",
-  "description": "Initial Tree-sitter grammar for the bounded Touba v0.1 surface.",
+  "description": "Tree-sitter grammar for the Touba language.",
   "tree-sitter": [
     {
       "scope": "source.touba",
