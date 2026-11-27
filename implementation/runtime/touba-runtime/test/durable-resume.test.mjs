@@ -1138,7 +1138,10 @@ test("refuses a removed or changed consumed human decision as current authority"
 
 test("refuses unsupported closure and missing bindings before any handler", async () => {
   const branched = effectDocument();
-  branched.execution_graphs[0].edges.push({ from_node_id: "call", to_node_id: "give", role: "next" });
+  const graph = branched.execution_graphs[0];
+  graph.nodes.push({ id: "fallback", kind: "give", arguments: ["literal:string:unavailable"] });
+  graph.failure_paths.push({ id: "failure:fallback", trigger_node_id: "call",
+    target_node_id: "fallback", mode: "fallback", failure_family: "handler" });
   for (const [document, manifest] of [
     [branched, effectManifest(successHandlerScript())],
     [effectDocument(), emptyEffectManifest()],

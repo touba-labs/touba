@@ -149,6 +149,16 @@ test("validates current AIR and trace contracts", () => {
   assert.equal(validateTraceMachineContract(trace), trace);
 });
 
+test("AIR requires an unambiguous reachable flow graph", () => {
+  const competingSuccessors = validAir();
+  const graph = competingSuccessors.execution_graphs[0];
+  graph.edges.push({ ...graph.edges[0] });
+  assert.throws(() => validateAirMachineContract(competingSuccessors), { code: "AirGraphAmbiguousSuccessor" });
+  const disconnected = validAir();
+  disconnected.execution_graphs[0].nodes.push({ id: "extra", kind: "give" });
+  assert.throws(() => validateAirMachineContract(disconnected), { code: "AirGraphUnreachableNode" });
+});
+
 test("admission evidence refuses invented execution, raw payloads and AIR identity", () => {
   for (const mutate of [
     value => { value.run.air_digest = `sha256:${"a".repeat(64)}`; },
@@ -188,8 +198,8 @@ test("function purity admits pure graphs and rejects every effectful node kind",
       target_ref: "tool:contract/Read", collection_ref: "value:items", item_binding: "value:item",
       result_binding: "results", max_concurrency: 2, max_items: 8,
     } : {};
-    // An unreachable effect is also forbidden.
-    air.execution_graphs[0].nodes.push({ id: "unreachable", kind, ...parallel });
+    const graph = air.execution_graphs[0];
+    graph.nodes[0] = { id: graph.entry_node_id, kind, ...parallel };
     assert.throws(() => validateAirMachineContract(air), { code: "AirFunctionNotPure" });
   }
 });
@@ -357,9 +367,11 @@ function validAir() {
       skills: [{ id: "skill:contract/Run", name: "Run", source_ref }],
       agents: [], strategies: [], triggers: [] },
     execution_graphs: [{ id: "graph:skill:contract/Run", owner_ref: "skill:contract/Run",
-      entry_node_id: "n1", nodes: [{ id: "n1", kind: "give",
-        arguments: ["literal:string:ok"], source_ref }],
-      edges: [{ from_node_id: "n1", to_node_id: "n1", role: "next", source_ref }],
+      entry_node_id: "n1", nodes: [
+        { id: "n1", kind: "bind", arguments: ["literal:string:ok"], result_binding: "value", source_ref },
+        { id: "n2", kind: "give", arguments: ["value:value"], source_ref },
+      ],
+      edges: [{ from_node_id: "n1", to_node_id: "n2", role: "next", source_ref }],
       expressions: [], failure_paths: [], source_ref }],
     trace_points: [],
   };

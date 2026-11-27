@@ -9442,9 +9442,14 @@ function assertRunCanDispatchFinal(context, details) {
   });
 }
 
+// Guard otherwise unbounded runs without adding budget events to every
+// successful step of an ordinary run.
+const DEFAULT_STEP_LIMIT = Object.freeze({ value: 100_000, authoritySource: "runtime_default" });
+
 function assertDurableBudgetCountersWithinLimits(context, details = {}) {
   for (const [budgetKind, counterName] of Object.entries(RUN_BUDGET_COUNTERS)) {
-    const limit = context.budgetState.effectiveLimits.get(budgetKind);
+    const limit = context.budgetState.effectiveLimits.get(budgetKind)
+      ?? (budgetKind === "max_steps" ? DEFAULT_STEP_LIMIT : undefined);
     const consumedValue = context.budgetState.counters[counterName];
     if (!limit || consumedValue <= limit.value) continue;
     traceBudgetExceeded(context, budgetKind, limit, consumedValue, details);
@@ -9606,7 +9611,8 @@ function consumeRunBudget(context, budgetKind, amount, details = {}) {
 }
 
 function consumeRunBudgetBody(context, budgetKind, amount, details = {}) {
-  const limit = context.budgetState.effectiveLimits.get(budgetKind);
+  const configuredLimit = context.budgetState.effectiveLimits.get(budgetKind);
+  const limit = configuredLimit ?? (budgetKind === "max_steps" ? DEFAULT_STEP_LIMIT : undefined);
   const counterName = RUN_BUDGET_COUNTERS[budgetKind];
   if (!counterName) {
     return;
@@ -9631,6 +9637,7 @@ function consumeRunBudgetBody(context, budgetKind, amount, details = {}) {
     );
   }
   context.budgetState.counters[counterName] = nextValue;
+  if (configuredLimit === undefined) return;
   context.trace.push("budget_consumed", {
     airRef: details.airRef,
     payload: compactPayload({

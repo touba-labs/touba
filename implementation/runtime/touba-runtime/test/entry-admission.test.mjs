@@ -67,9 +67,13 @@ test("host responses must target known interactions or agents before effects", a
 
 test("known future ask and approval responses remain accepted", async () => {
   const air = document();
-  air.execution_graphs[0].nodes.push(
+  const graph = air.execution_graphs[0];
+  graph.nodes.push(
     { id: "ask", kind: "user_interaction", interaction_mode: "ask", interaction_ref: "interaction:future", arguments: ["literal:string:Question?"], trace_point_refs: [] },
     { id: "approve", kind: "human_approval", approval_mode: "required_approval", approval_ref: "approval:future", context_refs: [], trace_point_refs: [] });
+  graph.edges.push({ from_node_id: "ask", to_node_id: "approve", role: "next" });
+  graph.failure_paths.push({ id: "failure:confirmation", trigger_node_id: "write",
+    target_node_id: "ask", mode: "fallback", failure_family: "handler" });
   const result = await executeAirDocument(air, { inputs: valid,
     userInputs: { "interaction:future": "answer" }, humanApprovalDecisions: { "approval:future": "approved" },
     toolHandlers: { "tool:admission/Write": () => "stored" } });

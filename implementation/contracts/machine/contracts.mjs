@@ -350,12 +350,14 @@ function validateGraph(value, allIds, path) {
   requireString(graph.owner_ref, `${path}.owner_ref`);
   const nodes = requireArray(graph.nodes, `${path}.nodes`);
   const nodeIds = new Set();
+  const nodeKinds = new Map();
   for (let index = 0; index < nodes.length; index += 1) {
     const node = requireObject(nodes[index], `${path}.nodes[${index}]`, "AIR node");
     const id = requireString(node.id, `${path}.nodes[${index}].id`);
     if (nodeIds.has(id)) fail("DuplicateAirId", `duplicate AIR node id ${id}`, `${path}.nodes[${index}].id`);
     nodeIds.add(id);
     requireEnum(node.kind, AIR_NODE_KINDS, `${path}.nodes[${index}].kind`);
+    nodeKinds.set(id, node.kind);
     if (Object.hasOwn(node, "approval_policy")) {
       const policyPath = `${path}.nodes[${index}].approval_policy`;
       if (node.kind !== "human_approval") fail("InvalidHumanApprovalPolicy", "approval policy requires a human approval node", policyPath);
@@ -378,14 +380,23 @@ function validateGraph(value, allIds, path) {
   }
   const entry = requireString(graph.entry_node_id, `${path}.entry_node_id`);
   if (!nodeIds.has(entry)) fail("AirReferenceUnresolved", `entry node ${entry} is absent`, `${path}.entry_node_id`);
+  /** @type {Map<string, { to: string, role: string, path: string }[]>} */
+  const successors = new Map();
   for (const [index, edge] of requireArray(graph.edges, `${path}.edges`).entries()) {
-    const item = requireObject(edge, `${path}.edges[${index}]`, "AIR edge");
-    requireNodeRef(item.from_node_id, nodeIds, `${path}.edges[${index}].from_node_id`);
-    requireNodeRef(item.to_node_id, nodeIds, `${path}.edges[${index}].to_node_id`);
-    requireEnum(item.role, AIR_EDGE_ROLES, `${path}.edges[${index}].role`);
-    if (["expired", "rejected"].includes(item.role) && nodes.find(node => node.id === item.from_node_id)?.kind !== "human_approval") {
-      fail("InvalidHumanApprovalPolicy", "approval outcome edge requires a human approval source", `${path}.edges[${index}]`);
+    const edgePath = `${path}.edges[${index}]`;
+    const item = requireObject(edge, edgePath, "AIR edge");
+    requireNodeRef(item.from_node_id, nodeIds, `${edgePath}.from_node_id`);
+    requireNodeRef(item.to_node_id, nodeIds, `${edgePath}.to_node_id`);
+    requireEnum(item.role, AIR_EDGE_ROLES, `${edgePath}.role`);
+    if (["expired", "rejected"].includes(item.role) && nodeKinds.get(item.from_node_id) !== "human_approval") {
+      fail("InvalidHumanApprovalPolicy", "approval outcome edge requires a human approval source", edgePath);
     }
+    const outgoing = successors.get(item.from_node_id) ?? [];
+    if (item.role === "next" && outgoing.some(next => next.role === "next")) {
+      fail("AirGraphAmbiguousSuccessor", "a node can have only one next successor", edgePath);
+    }
+    outgoing.push({ to: item.to_node_id, role: item.role, path: edgePath });
+    successors.set(item.from_node_id, outgoing);
   }
   for (const [index, expression] of (graph.expressions ?? []).entries()) {
     const item = requireObject(expression, `${path}.expressions[${index}]`, "AIR expression");
@@ -398,12 +409,54 @@ function validateGraph(value, allIds, path) {
   }
   validateApprovalOutcomeBranches(graph, path);
   for (const [index, failurePath] of (graph.failure_paths ?? []).entries()) {
-    const item = requireObject(failurePath, `${path}.failure_paths[${index}]`, "AIR failure path");
-    requireString(item.id, `${path}.failure_paths[${index}].id`);
-    requireNodeRef(item.trigger_node_id, nodeIds, `${path}.failure_paths[${index}].trigger_node_id`);
-    requireNodeRef(item.target_node_id, nodeIds, `${path}.failure_paths[${index}].target_node_id`);
-    requireEnum(item.mode, ["fallback", "stop"], `${path}.failure_paths[${index}].mode`);
-    requireEnum(item.failure_family, FAILURE_FAMILIES, `${path}.failure_paths[${index}].failure_family`);
+    const failurePathRef = `${path}.failure_paths[${index}]`;
+    const item = requireObject(failurePath, failurePathRef, "AIR failure path");
+    requireString(item.id, `${failurePathRef}.id`);
+    requireNodeRef(item.trigger_node_id, nodeIds, `${failurePathRef}.trigger_node_id`);
+    requireNodeRef(item.target_node_id, nodeIds, `${failurePathRef}.target_node_id`);
+    requireEnum(item.mode, ["fallback", "stop"], `${failurePathRef}.mode`);
+    requireEnum(item.failure_family, FAILURE_FAMILIES, `${failurePathRef}.failure_family`);
+    const outgoing = successors.get(item.trigger_node_id) ?? [];
+    outgoing.push({ to: item.target_node_id, role: "failure", path: failurePathRef });
+    successors.set(item.trigger_node_id, outgoing);
+  }
+  validateGraphTopology(entry, nodeKinds, successors, path);
+}
+
+/**
+ * Walk the graph iteratively. Returning to a loop is legal while traversing
+ * its body. The loop exit itself must lead forward.
+ * @param {string} entry
+ * @param {Map<string, string>} nodeKinds
+ * @param {Map<string, { to: string, role: string, path: string }[]>} successors
+ * @param {string} path
+ */
+function validateGraphTopology(entry, nodeKinds, successors, path) {
+  const seen = new Set([entry]);
+  /** @type {Map<string, string>} */
+  const active = new Map([[entry, ""]]);
+  const stack = [{ node: entry, index: 0 }];
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    const edge = successors.get(frame.node)?.[frame.index++];
+    if (edge === undefined) {
+      active.delete(frame.node);
+      stack.pop();
+      continue;
+    }
+    active.set(frame.node, edge.role);
+    const activeRole = active.get(edge.to);
+    if (activeRole !== undefined && (nodeKinds.get(edge.to) !== "loop" || activeRole !== "loop_next")) {
+      fail("AirGraphCycle", "a control flow cycle must return to an active loop body", edge.path);
+    }
+    if (!seen.has(edge.to)) {
+      seen.add(edge.to);
+      active.set(edge.to, "");
+      stack.push({ node: edge.to, index: 0 });
+    }
+  }
+  if (seen.size !== nodeKinds.size) {
+    fail("AirGraphUnreachableNode", "every flow node must be reachable from the graph entry", `${path}.nodes`);
   }
 }
 
