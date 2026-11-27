@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { npmCommand } from "./npm-command.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
@@ -38,7 +38,14 @@ function checkReleaseArchive(plan) {
     const extractRoot = join(workspace, "extract");
     const installPrefix = join(workspace, "prefix");
     mkdirSync(extractRoot, { recursive: true });
-    runCommand("tar", ["-xzf", basename(plan.tarballPath), "-C", extractRoot], { cwd: plan.releaseRoot });
+    // Resolve both paths in Node so GNU tar receives neither a drive letter
+    // for the archive nor escaped Windows separators in a -C argument.
+    const archive = openSync(plan.tarballPath, "r");
+    try {
+      runCommand("tar", ["-xzf", "-"], { cwd: extractRoot, stdin: archive });
+    } finally {
+      closeSync(archive);
+    }
 
     const releaseDir = join(extractRoot, plan.releaseName);
     assertFile(join(releaseDir, "README.txt"));
@@ -269,6 +276,7 @@ function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
+    stdio: [options.stdin ?? "pipe", "pipe", "pipe"],
     encoding: "utf8",
   });
   if (result.error) {
