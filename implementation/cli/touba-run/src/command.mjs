@@ -13,7 +13,12 @@ import { projectTracePath } from "../../../runtime/touba-runtime/src/project-tra
 import { createHostModuleLoader } from "./host-modules.mjs";
 import { openLocalHandlerDiagnostics } from "../../../runtime/touba-runtime/src/handler-diagnostics.mjs";
 import { resolvedSecretEntries } from "../../../runtime/touba-runtime/src/secret-redaction.mjs";
-import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
+import {
+  buildResourceInventory,
+  findForbiddenResourceBindingPayloadField,
+  missingResourceMemoryScopes,
+  requiredResourceReferences,
+} from "../../../contracts/resource-bindings.mjs";
 import { loadResourceBindingFiles, selectResourceBindings } from "../../../contracts/resource-binding-files.mjs";
 import { publicRunResult, publicReferencedRunResult, runExitCode } from "../../../contracts/run-outcome.mjs";
 import { loadSkillPack } from "../../touba-project/src/skill-packs.mjs";
@@ -63,19 +68,6 @@ const RESOURCE_BINDING_KIND_PREFIX = Object.freeze({
   event_source: "trigger:",
   decision_provider: "agent:",
 });
-const RESOURCE_BINDING_PAYLOAD_FORBIDDEN_FIELDS = new Set([
-  "api_key",
-  "connection_string",
-  "database_url",
-  "dsn",
-  "payload",
-  "payload_raw",
-  "raw_payload",
-  "secret_value",
-  "secret_values",
-  "token",
-  "value",
-]);
 const RUN_PLAN_FORBIDDEN_FIELDS = new Set([
   "input",
   "inputs",
@@ -977,7 +969,7 @@ function airRequiresSecretsProfile(document) {
 }
 
 function validateResourceBindingsForAir({ resourceBindingsPath, preparedDocument, requireAll, document }) {
-  const inventory = buildResourceInventory(document);
+  const inventory = buildResourceInventory([document]);
   const boundResources = new Set();
   let bindingsDocument;
 
@@ -1084,85 +1076,10 @@ function validateResourceBindingLimits(limits, resourceRef) {
   }
 }
 
-function buildResourceInventory(document) {
-  const knownResourceRefs = new Set();
-  const requiredResourceRefs = new Set();
-  const requiredGrantsByResource = new Map();
-  const ownersByRef = new Map();
-  const toolsByRef = new Map();
-
-  for (const memory of document.definitions?.memories ?? []) {
-    knownResourceRefs.add(memory.id);
-  }
-  for (const trigger of document.definitions?.triggers ?? []) {
-    knownResourceRefs.add(trigger.id);
-    requiredResourceRefs.add(trigger.id);
-  }
-  for (const agent of document.definitions?.agents ?? []) {
-    knownResourceRefs.add(agent.id);
-  }
-  for (const collection of ["skills", "agents", "strategies", "functions"]) {
-    for (const owner of document.definitions?.[collection] ?? []) {
-      ownersByRef.set(owner.id, owner);
-    }
-  }
-  for (const tool of document.definitions?.tools ?? []) {
-    toolsByRef.set(tool.id, tool);
-    for (const access of tool.memory_accesses ?? []) {
-      requiredResourceRefs.add(access.memory_ref);
-      addResourceGrant(requiredGrantsByResource, access.memory_ref, access.access === "write" ? "memory.write" : "memory.read");
-    }
-  }
-
-  return {
-    knownResourceRefs,
-    requiredResourceRefs,
-    requiredGrantsByResource,
-    ownersByRef,
-    toolsByRef,
-    graphOwners: document.execution_graphs ?? [],
-  };
-}
-
 function validateRequiredMemoryScopes(inventory) {
-  for (const graph of inventory.graphOwners) {
-    const owner = inventory.ownersByRef.get(graph.owner_ref);
-    const scopes = owner?.memory_scopes ?? [];
-    for (const node of graph.nodes ?? []) {
-      if (node.kind !== "call_tool") {
-        continue;
-      }
-      const tool = inventory.toolsByRef.get(node.target_ref);
-      for (const access of tool?.memory_accesses ?? []) {
-        const found = scopes.some((scope) => scope.memory_ref === access.memory_ref && scope.access === access.access);
-        if (!found) {
-          throw new ResourceBindingsCliError("ResourceBindingScopeMissing", `${graph.owner_ref} lacks memory scope for ${access.memory_ref} ${access.access}`);
-        }
-      }
-    }
+  for (const { ownerRef, memoryRef, access } of missingResourceMemoryScopes(inventory)) {
+    throw new ResourceBindingsCliError("ResourceBindingScopeMissing", `${ownerRef} lacks memory scope for ${memoryRef} ${access}`);
   }
-}
-
-function addResourceGrant(map, resourceRef, grant) {
-  const grants = map.get(resourceRef) ?? new Set();
-  grants.add(grant);
-  map.set(resourceRef, grants);
-}
-
-function findForbiddenResourceBindingPayloadField(value, path = []) {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    if (RESOURCE_BINDING_PAYLOAD_FORBIDDEN_FIELDS.has(key)) {
-      return [...path, key].join(".");
-    }
-    const nested = findForbiddenResourceBindingPayloadField(child, [...path, key]);
-    if (nested !== null) {
-      return nested;
-    }
-  }
-  return null;
 }
 
 function loadManifestFromPath(manifestPath) {

@@ -11,7 +11,12 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { requiredResourceReferences } from "../../../contracts/resource-bindings.mjs";
+import {
+  buildResourceInventory,
+  findForbiddenResourceBindingPayloadField,
+  missingResourceMemoryScopes,
+  requiredResourceReferences,
+} from "../../../contracts/resource-bindings.mjs";
 import { assertKnownFields, assertManifestFields, assertBindingFields } from "../../../contracts/manifest-fields.mjs";
 import { loadResourceBindingFiles, snapshotResourceBindings } from "../../../contracts/resource-binding-files.mjs";
 import { applyHostDecisions } from "./host-decisions.mjs";
@@ -159,19 +164,6 @@ const OWNERSHIP_COMPLIANCE_FIELDS = new Set([
   "security_status",
   "unverified",
   "verified",
-]);
-const RESOURCE_BINDING_PAYLOAD_FORBIDDEN_FIELDS = new Set([
-  "api_key",
-  "connection_string",
-  "database_url",
-  "dsn",
-  "payload",
-  "payload_raw",
-  "raw_payload",
-  "secret_value",
-  "secret_values",
-  "token",
-  "value",
 ]);
 const PACKAGE_EXPORT_COLLECTIONS = Object.freeze({
   types: Object.freeze({ importKind: "type", definitionCollection: "types", refPrefix: "type:" }),
@@ -3678,96 +3670,15 @@ function validateResourceBindingLimits(limits, diagnostics, resourceBindingsPath
   }
 }
 
-function buildResourceInventory(airDocuments) {
-  const knownResourceRefs = new Set();
-  const requiredResourceRefs = new Set();
-  const requiredGrantsByResource = new Map();
-  const ownersByRef = new Map();
-  const toolsByRef = new Map();
-  const graphOwners = [];
-
-  for (const document of airDocuments) {
-    for (const memory of document.definitions?.memories ?? []) {
-      knownResourceRefs.add(memory.id);
-    }
-    for (const trigger of document.definitions?.triggers ?? []) {
-      knownResourceRefs.add(trigger.id);
-      requiredResourceRefs.add(trigger.id);
-    }
-    for (const agent of document.definitions?.agents ?? []) {
-      knownResourceRefs.add(agent.id);
-    }
-    for (const collection of ["skills", "agents", "strategies", "functions"]) {
-      for (const owner of document.definitions?.[collection] ?? []) {
-        ownersByRef.set(owner.id, owner);
-      }
-    }
-    for (const tool of document.definitions?.tools ?? []) {
-      toolsByRef.set(tool.id, tool);
-      for (const access of tool.memory_accesses ?? []) {
-        requiredResourceRefs.add(access.memory_ref);
-        addResourceGrant(requiredGrantsByResource, access.memory_ref, access.access === "write" ? "memory.write" : "memory.read");
-      }
-    }
-    for (const graph of document.execution_graphs ?? []) {
-      graphOwners.push(graph);
-    }
-  }
-
-  return {
-    knownResourceRefs,
-    requiredResourceRefs,
-    requiredGrantsByResource,
-    ownersByRef,
-    toolsByRef,
-    graphOwners,
-  };
-}
-
 function validateRequiredMemoryScopes(inventory, diagnostics, resourceBindingsPaths) {
-  for (const graph of inventory.graphOwners) {
-    const owner = inventory.ownersByRef.get(graph.owner_ref);
-    const scopes = owner?.memory_scopes ?? [];
-    for (const node of graph.nodes ?? []) {
-      if (node.kind !== "call_tool") {
-        continue;
-      }
-      const tool = inventory.toolsByRef.get(node.target_ref);
-      for (const access of tool?.memory_accesses ?? []) {
-        const found = scopes.some((scope) => scope.memory_ref === access.memory_ref && scope.access === access.access);
-        if (!found) {
-          diagnostics.push(errorDiagnostic("ResourceBindingScopeMissing", `${graph.owner_ref} lacks memory scope for ${access.memory_ref} ${access.access}`, {
-            resource_bindings_path: resourceBindingsPaths[0],
-            owner_ref: graph.owner_ref,
-            resource_ref: access.memory_ref,
-            access: access.access,
-          }));
-        }
-      }
-    }
+  for (const { ownerRef, memoryRef, access } of missingResourceMemoryScopes(inventory)) {
+    diagnostics.push(errorDiagnostic("ResourceBindingScopeMissing", `${ownerRef} lacks memory scope for ${memoryRef} ${access}`, {
+      resource_bindings_path: resourceBindingsPaths[0],
+      owner_ref: ownerRef,
+      resource_ref: memoryRef,
+      access,
+    }));
   }
-}
-
-function addResourceGrant(map, resourceRef, grant) {
-  const grants = map.get(resourceRef) ?? new Set();
-  grants.add(grant);
-  map.set(resourceRef, grants);
-}
-
-function findForbiddenResourceBindingPayloadField(value, path = []) {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    if (RESOURCE_BINDING_PAYLOAD_FORBIDDEN_FIELDS.has(key)) {
-      return [...path, key].join(".");
-    }
-    const nested = findForbiddenResourceBindingPayloadField(child, [...path, key]);
-    if (nested !== null) {
-      return nested;
-    }
-  }
-  return null;
 }
 
 function validateOwnershipForPrepare({
