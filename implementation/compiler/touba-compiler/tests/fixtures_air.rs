@@ -4,12 +4,12 @@ use touba_compiler::air::{
     AirUserInteractionMode,
 };
 use touba_compiler::ast::{
-    AstBody, AstCallableDeclaration, AstDeclaration, AstDocument, AstModule, AstSignature,
-    AstTypeRef, SourceRef,
+    AstBody, AstCallableDeclaration, AstDeclaration, AstDocument, AstExpression, AstModule,
+    AstSignature, AstTypeRef, SourceRef,
 };
 use touba_compiler::{
     AIR_JSON_PROFILE, AirBuildResult, assemble_project_air, build_air, compile_module_sources,
-    compile_project_sources, compile_source_to_air, deserialize_air_from_json,
+    compile_project_sources, compile_source_to_air, deserialize_air_from_json, parse_source,
     serialize_air_to_json,
 };
 
@@ -2783,6 +2783,28 @@ function TooLarge
             .iter()
             .any(|diagnostic| { diagnostic.code == AirDiagnosticCode::InvalidNumericLiteral })
     );
+
+    // The public AST entry point can receive an already signed Int literal.
+    let parsed = parse_source("signed-int.tb", "module limits\ndefine Count as Int = 0\n");
+    let fixture = parsed.document.unwrap();
+    for (literal, admitted) in [("-9007199254740991", true), ("-9007199254740992", false)] {
+        let mut ast = fixture.clone();
+        let AstDeclaration::Constant(constant) = &mut ast.declarations[0] else {
+            panic!("expected the Count constant");
+        };
+        let AstExpression::IntLiteral { value, .. } = &mut constant.value else {
+            panic!("expected a literal");
+        };
+        *value = literal.into();
+        let result = build_air(&ast);
+        assert_eq!(result.document.is_some(), admitted);
+        if !admitted {
+            assert_eq!(
+                result.diagnostics[0].code,
+                AirDiagnosticCode::InvalidNumericLiteral
+            );
+        }
+    }
 }
 
 #[test]

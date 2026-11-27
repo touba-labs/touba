@@ -1086,11 +1086,11 @@ impl AirLowerer {
             }
             AstExpression::BooleanLiteral { value, .. } => constant.literal_boolean = Some(*value),
             AstExpression::IntLiteral { value, source_ref } => {
-                self.validate_int_literal(value, source_ref);
+                validate_int_literal(value, source_ref, &mut self.diagnostics);
                 constant.literal_int = Some(value.clone());
             }
             AstExpression::FloatLiteral { value, source_ref } => {
-                self.validate_float_literal(value, source_ref);
+                validate_float_literal(value, source_ref, &mut self.diagnostics);
                 constant.literal_float = Some(value.clone());
             }
             _ => {}
@@ -1111,36 +1111,6 @@ impl AirLowerer {
                 format!("define expects `{expected_type}`, got `{actual_type}`"),
                 Some(expression_source_ref(expression)),
             ));
-        }
-    }
-
-    fn validate_int_literal(&mut self, value: &str, source_ref: &SourceRef) -> Option<i128> {
-        match value.parse::<i128>() {
-            Ok(parsed) if parsed <= MAX_SAFE_INT => Some(parsed),
-            _ => {
-                self.diagnostics.push(AirDiagnostic::new(
-                    AirDiagnosticCode::InvalidNumericLiteral,
-                    format!(
-                        "Int literal `{value}` is outside the supported V1 domain [-{MAX_SAFE_INT}, {MAX_SAFE_INT}]"
-                    ),
-                    Some(source_ref.clone()),
-                ));
-                None
-            }
-        }
-    }
-
-    fn validate_float_literal(&mut self, value: &str, source_ref: &SourceRef) -> Option<f64> {
-        match value.parse::<f64>() {
-            Ok(parsed) if parsed.is_finite() => Some(parsed),
-            _ => {
-                self.diagnostics.push(AirDiagnostic::new(
-                    AirDiagnosticCode::InvalidNumericLiteral,
-                    format!("Float literal `{value}` is not finite or not representable"),
-                    Some(source_ref.clone()),
-                ));
-                None
-            }
         }
     }
 
@@ -1827,7 +1797,7 @@ impl AirLowerer {
             return None;
         };
 
-        let parsed = self.validate_int_literal(value, source_ref)?;
+        let parsed = validate_int_literal(value, source_ref, &mut self.diagnostics)?;
         if parsed <= 0 {
             self.diagnostics.push(AirDiagnostic::new(
                 AirDiagnosticCode::InvalidTriggerLimit,
@@ -1979,14 +1949,14 @@ impl AirLowerer {
                 actual_type: Some(builtin_boolean()),
             }),
             AstExpression::IntLiteral { value, source_ref } => {
-                self.validate_int_literal(value, source_ref);
+                validate_int_literal(value, source_ref, &mut self.diagnostics);
                 Some(LoweredTriggerArgumentValue::Static {
                     value_ref: expression_handle(&argument.value),
                     actual_type: Some(builtin_int()),
                 })
             }
             AstExpression::FloatLiteral { value, source_ref } => {
-                self.validate_float_literal(value, source_ref);
+                validate_float_literal(value, source_ref, &mut self.diagnostics);
                 Some(LoweredTriggerArgumentValue::Static {
                     value_ref: expression_handle(&argument.value),
                     actual_type: Some(builtin_float()),
@@ -3628,7 +3598,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 literal_zero: false,
             },
             AstExpression::IntLiteral { value, source_ref } => {
-                let parsed = self.validate_int_literal(value, source_ref);
+                let parsed = validate_int_literal(value, source_ref, &mut self.diagnostics);
                 LoweredExpression {
                     handle: expression_handle(expression),
                     type_ref: Some(builtin_int()),
@@ -3636,7 +3606,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 }
             }
             AstExpression::FloatLiteral { value, source_ref } => {
-                let parsed = self.validate_float_literal(value, source_ref);
+                let parsed = validate_float_literal(value, source_ref, &mut self.diagnostics);
                 LoweredExpression {
                     handle: expression_handle(expression),
                     type_ref: Some(builtin_float()),
@@ -4418,7 +4388,7 @@ impl<'a> FlowGraphBuilder<'a> {
                     Some(builtin_boolean())
                 } else {
                     self.invalid_operand_type(
-                        "order comparisons in `EXPR-1` expect Int or Float operands",
+                        "order comparisons require numeric operands or two Date values",
                         source_ref,
                     );
                     None
@@ -4478,36 +4448,6 @@ impl<'a> FlowGraphBuilder<'a> {
             message.to_string(),
             Some(source_ref.clone()),
         ));
-    }
-
-    fn validate_int_literal(&mut self, value: &str, source_ref: &SourceRef) -> Option<i128> {
-        match value.parse::<i128>() {
-            Ok(parsed) if parsed <= MAX_SAFE_INT => Some(parsed),
-            _ => {
-                self.diagnostics.push(AirDiagnostic::new(
-                    AirDiagnosticCode::InvalidNumericLiteral,
-                    format!(
-                        "Int literal `{value}` is outside the supported V1 domain [-{MAX_SAFE_INT}, {MAX_SAFE_INT}]"
-                    ),
-                    Some(source_ref.clone()),
-                ));
-                None
-            }
-        }
-    }
-
-    fn validate_float_literal(&mut self, value: &str, source_ref: &SourceRef) -> Option<f64> {
-        match value.parse::<f64>() {
-            Ok(parsed) if parsed.is_finite() => Some(parsed),
-            _ => {
-                self.diagnostics.push(AirDiagnostic::new(
-                    AirDiagnosticCode::InvalidNumericLiteral,
-                    format!("Float literal `{value}` is not finite or not representable"),
-                    Some(source_ref.clone()),
-                ));
-                None
-            }
-        }
     }
 
     fn push_air_expression(&mut self, expression: AirExpression) -> LoweredExpression {
@@ -5166,6 +5106,44 @@ struct TypeFieldRef {
 }
 
 const MAX_SAFE_INT: i128 = 9_007_199_254_740_991;
+
+fn validate_int_literal(
+    value: &str,
+    source_ref: &SourceRef,
+    diagnostics: &mut Vec<AirDiagnostic>,
+) -> Option<i128> {
+    match value.parse::<i128>() {
+        Ok(parsed) if (-MAX_SAFE_INT..=MAX_SAFE_INT).contains(&parsed) => Some(parsed),
+        _ => {
+            diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidNumericLiteral,
+                format!(
+                    "Int literal `{value}` is outside the supported V1 domain [-{MAX_SAFE_INT}, {MAX_SAFE_INT}]"
+                ),
+                Some(source_ref.clone()),
+            ));
+            None
+        }
+    }
+}
+
+fn validate_float_literal(
+    value: &str,
+    source_ref: &SourceRef,
+    diagnostics: &mut Vec<AirDiagnostic>,
+) -> Option<f64> {
+    match value.parse::<f64>() {
+        Ok(parsed) if parsed.is_finite() => Some(parsed),
+        _ => {
+            diagnostics.push(AirDiagnostic::new(
+                AirDiagnosticCode::InvalidNumericLiteral,
+                format!("Float literal `{value}` is not finite or not representable"),
+                Some(source_ref.clone()),
+            ));
+            None
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct LoweredExpression {
