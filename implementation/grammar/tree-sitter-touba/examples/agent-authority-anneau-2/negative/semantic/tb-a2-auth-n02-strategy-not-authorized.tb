@@ -16,7 +16,9 @@ skill MakeChange
     uses ApplyChange
     do
         ApplyChange
-        give ReviewedChange
+            with request as request
+            into result
+        give result
 
 agent Engineer
     responsibility "Fulfill the declared Engineer responsibility using only authorized capabilities."
@@ -26,10 +28,10 @@ agent Engineer
 strategy AdminRun
     uses Engineer
     do
-        give ReviewedChange
+        show
+            with message as "Administrative review"
 
 strategy RunChange
     uses Engineer
     do
         Engineer
-        give ReviewedChange

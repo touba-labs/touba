@@ -28,7 +28,8 @@ agent Engineer
 strategy AdminRun
     uses Engineer
     do
-        give ReviewedChange
+        show
+            with message as "Administrative review"
 
 strategy RunChangeReview
     takes request as ChangeRequest
