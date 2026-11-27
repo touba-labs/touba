@@ -64,6 +64,7 @@ invalide. Sans preuve d'application, l'effet reste d'issue inconnue.
 | `ToubaServeHumanWaitConflict` | Décision ou reprise déjà réclamée | Relire l'état de cette demande ; ne pas créer une approbation de remplacement |
 | `HandlerEntryUnknownTool` | Binding sans déclaration dans les AIR verrouillés | Fournir tous les AIR du projet avec des `--air` répétés, ou retirer le binding réellement obsolète |
 | `PreparedAirDrift` | AIR dérivé différent de la compilation attendue | Régénérer avec `prepare --mode write` ; ne pas éditer le dérivé |
+| `HandlerStubPathCollision` | Deux déclarations produisent le même chemin de handler ou de test de contrat | Renommer les tools en conflit, puis relancer la préparation |
 | `HandlerDeclaredContractDrift` | Constantes du handler généré différentes du source | Relire et ajuster grants, handles et signature du handler et de son test ; le code métier n'est pas écrasé |
 | `RuntimeFailure` (retour incompatible) | Valeur retournée incompatible avec `gives` | Corriger le chemin de retour et son type, puis recompiler ; ne pas accepter `null` comme succès typé |
 

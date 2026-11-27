@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { handlerRelativePathForTool } from "./requirements.mjs";
+import { assertDistinctHandlerPaths, handlerRelativePathForTool } from "./requirements.mjs";
 import { SDK_INSTALL_HINT } from "./sdk-dependency.mjs";
 import { generatePythonHandler, generatePythonContractTest } from "./python-stub.mjs";
 
@@ -226,8 +226,7 @@ export function planHandlerStubsFromAirDocument(airDocument, options = {}) {
 
   const handlerRoot = options.handlerRoot ?? DEFAULT_HANDLER_ROOT;
   const handlerExtension = options.handlerExtension ?? (options.language === "python" ? "py" : DEFAULT_HANDLER_EXTENSION);
-
-  return selectedTools.map((tool) => {
+  const planned = selectedTools.map((tool) => {
     const normalizedTool = normalizeTool(tool);
     const targetPath = handlerRelativePathForTool(normalizedTool, { handlerRoot, handlerExtension });
     return {
@@ -236,6 +235,8 @@ export function planHandlerStubsFromAirDocument(airDocument, options = {}) {
       content: generateHandlerStubFromAirTool(normalizedTool, options),
     };
   });
+  assertDistinctHandlerPaths(planned);
+  return planned;
 }
 
 export function writeHandlerStubsFromAirDocument(airDocument, options = {}) {
@@ -250,7 +251,7 @@ export function writeHandlerStubsFromAirDocument(airDocument, options = {}) {
 
   for (const stub of planned) {
     mkdirSync(dirname(stub.path), { recursive: true });
-    writeFileSync(stub.path, stub.content, "utf8");
+    writeFileSync(stub.path, stub.content, { encoding: "utf8", flag: options.force === true ? "w" : "wx" });
   }
 
   return planned;
@@ -394,6 +395,6 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.main) {
   await main();
 }

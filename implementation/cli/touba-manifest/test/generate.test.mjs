@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,6 @@ import {
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const generatePath = join(__dir, "../src/generate.mjs");
-const stubPath = join(__dir, "../src/stub.mjs");
 
 for (const language of ["javascript", "python"]) test(`CLI honors the canonical ${language} project without overwriting its manifest`, t => {
   const root = mkdtempSync(join(tmpdir(), "touba-manifest-language-"));
@@ -279,16 +278,20 @@ test("writes handler stubs without overwriting by default", () => {
   }
 });
 
-test("generates handler stubs from the CLI and refuses overwrite", () => {
-  const workspace = mkdtempSync(join(tmpdir(), "touba-handler-stub-cli-"));
+test("generates handler stubs from a CLI path with spaces and refuses overwrite", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba handler stub cli-"));
   try {
+    const copiedManifest = join(workspace, "manifest program");
+    cpSync(join(__dir, "../src"), join(copiedManifest, "src"), { recursive: true });
+    cpSync(join(__dir, "../package.json"), join(copiedManifest, "package.json"));
+    const copiedStub = join(copiedManifest, "src/stub.mjs");
     const airPath = join(workspace, "fixture.air.json");
     writeFileSync(airPath, JSON.stringify(airDocument()), "utf8");
 
     const stdout = execFileSync(
       process.execPath,
       [
-        stubPath,
+        copiedStub,
         airPath,
         "--handler-root",
         join(workspace, "handlers"),
@@ -303,13 +306,29 @@ test("generates handler stubs from the CLI and refuses overwrite", () => {
     assert.throws(
       () => execFileSync(
         process.execPath,
-        [stubPath, airPath, "--handler-root", join(workspace, "handlers")],
+        [copiedStub, airPath, "--handler-root", join(workspace, "handlers")],
         { encoding: "utf8", stdio: "pipe" },
       ),
       /handler stub already exists/,
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("refuses colliding handler names before writing any file", t => {
+  const workspace = mkdtempSync(join(tmpdir(), "touba-stub-collision-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const handlerRoot = join(workspace, "handlers");
+  const document = airDocument();
+  document.definitions.tools.push(
+    { id: "tool:examples.docs/GetURL", name: "GetURL" },
+    { id: "tool:examples.docs/GetUrl", name: "GetUrl" },
+  );
+  for (const force of [false, true]) {
+    assert.throws(() => writeHandlerStubsFromAirDocument(document, { handlerRoot, force }),
+      /GetURL and tool:examples\.docs\/GetUrl.*get_url\.handler\.mjs/);
+    assert.equal(existsSync(handlerRoot), false);
   }
 });
 

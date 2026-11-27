@@ -16,6 +16,19 @@ export function toolNameToHandlerFile(toolName, extension = "mjs") {
 }
 const toPosixPath = (value) => value.replaceAll("\\", "/");
 
+export function assertDistinctHandlerPaths(files) {
+  const toolByPath = new Map();
+  for (const { path, toolRef } of files) {
+    const previousTool = toolByPath.get(path);
+    if (previousTool !== undefined) {
+      throw Object.assign(new Error(`handler stub collision: ${previousTool} and ${toolRef} map to ${path}`), {
+        code: "HandlerStubPathCollision",
+      });
+    }
+    toolByPath.set(path, toolRef);
+  }
+}
+
 export function buildManifestRequirements(airDocuments, options = {}) {
   const bindings = {};
   for (const document of airDocuments) for (const tool of document.definitions.tools ?? []) bindings[tool.id] = bindingRequirementsForTool(tool, options);

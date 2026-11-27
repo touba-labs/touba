@@ -33,7 +33,7 @@ import {
   generateHandlerContractTestFromAirTool,
   generateHandlerStubFromAirTool,
 } from "../../touba-manifest/src/stub.mjs";
-import { buildManifestRequirements, handlerRelativePathForTool, unapprovedManifest } from "../../touba-manifest/src/requirements.mjs";
+import { assertDistinctHandlerPaths, buildManifestRequirements, handlerRelativePathForTool, unapprovedManifest } from "../../touba-manifest/src/requirements.mjs";
 import { inspectSdkDependency } from "../../touba-manifest/src/sdk-dependency.mjs";
 import { sdkSourceFiles } from "../../touba-manifest/src/sdk-build-identity.mjs";
 import { inspectPythonSdkDependency, projectPythonCommand } from "../../touba-manifest/src/python-sdk-dependency.mjs";
@@ -955,6 +955,12 @@ export async function prepareProject(options = {}) {
   // placeholders alongside a reviewed host/package handler.
   stubs = stubs.filter(stub => isDeepStrictEqual(proposedManifest.bindings[stub.tool_ref]?.handler,
     manifestRequirements.bindings[stub.tool_ref]?.handler));
+  try {
+    assertDistinctHandlerPaths(stubs.map(({ relative_path, tool_ref }) => ({ path: relative_path, toolRef: tool_ref })));
+  } catch (error) {
+    if (error.code !== "HandlerStubPathCollision") throw error;
+    diagnostics.push(errorDiagnostic(error.code, error.message));
+  }
   inspectStubs({ stubs, diagnostics, actions, mode });
   inspectSecretProfiles({ secretProfiles, diagnostics, actions, mode });
   if (expectedRunPlan !== null) {

@@ -109,4 +109,3 @@ export function positiveInteger(value, fallback, label) {
   }
   return value;
 }
-

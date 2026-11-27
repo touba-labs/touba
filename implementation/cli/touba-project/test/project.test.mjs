@@ -114,6 +114,24 @@ test("init supports Python and refuses the reserved TypeScript generator", () =>
   }
 });
 
+test("prepare refuses ambiguous generated handler paths before writing artifacts", async t => {
+  const root = tempRoot();
+  t.after(() => cleanup(root));
+  initProject({ root });
+  mkdirSync(join(root, "src/examples"));
+  writeFileSync(join(root, "src/examples/names.tb"),
+    "module examples.names\n\ntool GetURL\n    gives Text\n\ntool GetUrl\n    gives Text\n");
+
+  const result = await prepareProject({ root, mode: "write" });
+
+  assert.notEqual(result.status, "success");
+  const collision = result.diagnostics.find(item => item.code === "HandlerStubPathCollision");
+  assert.match(collision?.message ?? "", /GetURL and tool:examples\.names\/GetUrl.*get_url\.handler(?:\.contract\.test)?\.mjs/);
+  assert.equal(existsSync(join(root, "handlers/examples/names/get_url.handler.mjs")), false);
+  assert.equal(existsSync(join(root, "handlers/examples/names/get_url.handler.contract.test.mjs")), false);
+  assert.equal(existsSync(join(root, ".touba/build/dev/air/examples/names.air.json")), false);
+});
+
 test("new module writes canonical dotted module under src", () => {
   const root = tempRoot();
   try {

@@ -1585,6 +1585,8 @@ touba handler stub program.air.json
 ```
 
 Génère des squelettes de handlers pour les tools déclarés dans l’AIR.
+Si deux tools donnent le même nom de fichier, la commande refuse le lot avant
+de créer les squelettes. Choisissez des noms qui donnent des chemins distincts.
 
 Options fréquentes :
 
