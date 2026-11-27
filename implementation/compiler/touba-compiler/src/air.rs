@@ -112,8 +112,8 @@ pub struct AirEnumVariant {
 pub struct AirTypeField {
     pub name: String,
     pub type_ref: String,
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub constraints: std::collections::BTreeMap<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub constraints: BTreeMap<String, serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<serde_json::Value>,
     pub source_ref: SourceRef,
