@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { ToubaEngine, ToubaEngineError } from "@touba/sdk";
-const engine = new ToubaEngine({ projectRoot: ".", env: { LEDGER_TOKEN: "isolated-ledger-token" } });
+const engine = new ToubaEngine({ projectRoot: ".", command: process.execPath, commandArgs: [process.argv[2]],
+  env: { LEDGER_TOKEN: "isolated-ledger-token" } });
 const options = { source: "payment.tb", entryRef: "strategy:examples.scenario_external_approval/RunRegulatedPayment",
   manifest: "touba.manifest.json", secrets: "test-secret-bindings.json", effectJournal: "payment.effect-journal.sqlite",
   inputs: { request: { reference: "DEMO-42", amount_cents: 12500, destination: "isolated-demo-ledger" } } };

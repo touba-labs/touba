@@ -40,12 +40,15 @@ strategy Run
 for (const executionMode of ["process", "persistent"]) {
 test("SDK persists and answers occurrence-specific parallel asks through the CLI admission path", async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-parallel-input-sdk-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
   const program = source.replace("        Diagnose\n            with request as request\n            into report\n", "        ask\n            with prompt as request\n            into report\n")
     .replace("        human.approve\n            with context as report\n            into approval\n", "");
   writeFileSync(join(root, "source.tb"), program);
   const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
     commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
+  t.after(async () => {
+    await engine.close();
+    rmSync(root, { recursive: true, force: true });
+  });
   const config = { source: "source.tb", entryRef: "strategy:industrial.parallel/Run", parallelCheckpointOut: "progress.json" };
   let result = await engine.run({ ...config, inputs: { incidents: ["one", "two", "three"] } });
   assert.equal(result.reason, "user_input_pending");
@@ -80,7 +83,6 @@ test("SDK persists and answers occurrence-specific parallel asks through the CLI
 
 test("SDK and CLI resume concurrent external-write branches with durable checkpoints without duplicate effects", async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-parallel-sdk-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, "source.tb"), source);
   const marker = join(root, "effects.jsonl");
   writeFileSync(join(root, "handler.mjs"), `import { appendFileSync } from 'node:fs';
@@ -96,13 +98,19 @@ effect_id: request.effect.effect_id, request_digest: request.effect.request_dige
   } }));
   const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
     commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
+  t.after(async () => {
+    await engine.close();
+    rmSync(root, { recursive: true, force: true });
+  });
   const config = { source: "source.tb", entryRef: "strategy:industrial.parallel/Run", manifest: "manifest.json",
     effectJournal: "run.effect-journal.sqlite", parallelCheckpointOut: "progress.json", parallelLimits: { maxExternalCalls: 2 } };
   let result = await engine.run({ ...config, inputs: { incidents: ["incident-a", "incident-b", "incident-c", "incident-d"] } });
   assert.equal(result.reason, "human_approval_pending");
   for (let i = 0; result.status === "stopped" && i < 8; i++) {
     const checkpoint = JSON.parse(readFileSync(join(root, "progress.json"), "utf8"));
-    assert.equal(statSync(join(root, "progress.json")).mode & 0o777, 0o600);
+    const stored = statSync(join(root, "progress.json"));
+    assert.ok(stored.isFile());
+    if (process.platform !== "win32") assert.equal(stored.mode & 0o777, 0o600);
     result = await engine.run({ ...config, parallelResumeCheckpoint: "progress.json",
       humanDecisions: { [checkpoint.approval_ref]: "approved" } });
   }

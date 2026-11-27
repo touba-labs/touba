@@ -10,7 +10,11 @@ const cli = fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", imp
 async function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "touba-persistent-engine-"));
   const engine = new ToubaEngine({ projectRoot: root, command: process.execPath, commandArgs: [cli], executionMode: "persistent" });
-  t.after(async () => { await engine.close(); rmSync(root, { recursive: true, force: true }); });
+  const cleanupEngines = [engine];
+  t.after(async () => {
+    await Promise.all(cleanupEngines.map(instance => instance.close()));
+    rmSync(root, { recursive: true, force: true });
+  });
   writeFileSync(join(root, "source.tb"), `module worker
 tool Fetch
     takes value as Text
@@ -41,7 +45,7 @@ const request = JSON.parse(raw);
 process.stdout.write(JSON.stringify({ok:true,value:request.arguments.value}));`;
   writeFileSync(join(root, "handler.mjs"), handler);
   const save = () => writeFileSync(join(root, "manifest.json"), JSON.stringify(manifest)); save();
-  return { root, engine, airJson, manifest, save, handler };
+  return { root, engine, airJson, manifest, save, handler, cleanupEngines };
 }
 
 test("warm Engine reuses one process but separates values and rereads authority on every run", async t => {
@@ -104,7 +108,7 @@ process.stdout.write(JSON.stringify({ok:true,value:request.arguments.value}));`)
 });
 
 test("persistent runs do not retain a previous run's secret store or borrow another Engine's environment", async t => {
-  const { root } = await fixture(t);
+  const { root, cleanupEngines } = await fixture(t);
   writeFileSync(join(root, "secret.tb"), `module secret_worker
 tool Probe
     gives Text
@@ -127,7 +131,7 @@ strategy Run
   const engines = ["synthetic-secret-a", "synthetic-secret-b"].map(token => new ToubaEngine({
     projectRoot: root, command: process.execPath, commandArgs: [cli], executionMode: "persistent", env: { TEST_TOKEN: token },
   }));
-  t.after(async () => { await Promise.all(engines.map(engine => engine.close())); });
+  cleanupEngines.push(...engines);
   await Promise.all(engines.map(async (engine, index) => {
     await assert.rejects(engine.run({ source: "secret.tb", manifest: "secret-manifest.json", secrets: "secrets.json" }), error => {
       assert.equal(error.details.reason, "SecretValueInResult");

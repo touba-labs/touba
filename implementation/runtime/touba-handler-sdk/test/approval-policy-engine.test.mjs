@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ToubaEngine } from "../src/index.mjs";
 
+const cli = fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url));
+
 for (const [page, marker] of [
   ["validation-avant-effet-externe", "APPROVAL_GRANTS_AND_SINGLE_ACQUIRED_WRITE_OK"],
   ["orchestration-multi-agent-sequentielle", "THREE_AGENTS_APPROVAL_SCOPES_AND_ONE_ACQUIRED_WRITE_OK"],
@@ -14,24 +16,20 @@ for (const [page, marker] of [
   const root = mkdtempSync(join(tmpdir(), "touba-approval-effect-tutorial-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   cpSync(new URL(`./fixtures/approval-examples/${page}/`, import.meta.url), root, { recursive: true });
-  const bin = join(root, "bin"); mkdirSync(bin);
-  symlinkSync(fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url)), join(bin, "touba"));
   mkdirSync(join(root, "node_modules/@touba"), { recursive: true });
   symlinkSync(fileURLToPath(new URL("../", import.meta.url)), join(root, "node_modules/@touba/sdk"), "junction");
-  const options = { cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8", timeout: 30000 };
+  const options = { cwd: root, encoding: "utf8", timeout: 30000 };
   execFileSync(process.execPath, ["configure.mjs"], options);
-  assert.ok(execFileSync(process.execPath, ["exercise.mjs"], options).includes(marker));
+  assert.ok(execFileSync(process.execPath, ["exercise.mjs", cli], options).includes(marker));
 });
 
 test("the roles example compiles and executes its host evidence and refusal example", t => {
   const root = mkdtempSync(join(tmpdir(), "touba-approval-tutorial-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   cpSync(new URL("./fixtures/approval-examples/approbations-roles-delais/", import.meta.url), root, { recursive: true });
-  const bin = join(root, "bin"); mkdirSync(bin);
-  symlinkSync(fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url)), join(bin, "touba"));
-  const options = { cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8" };
-  execFileSync(join(bin, "touba"), ["compile", "approval.tb", "--out", "approval.air.json"], options);
-  assert.match(execFileSync(process.execPath, ["exercise.mjs"], options), /APPROVAL_ROLE_AND_RESUME_OK/);
+  const options = { cwd: root, encoding: "utf8", timeout: 30000 };
+  execFileSync(process.execPath, [cli, "compile", "approval.tb", "--out", "approval.air.json"], options);
+  assert.match(execFileSync(process.execPath, ["exercise.mjs", cli], options), /APPROVAL_ROLE_AND_RESUME_OK/);
 });
 
 for (const executionMode of ["process", "persistent"]) test(`Engine (${executionMode}) consumes host-attested evidence, not client identity claims`, async t => {
@@ -60,7 +58,7 @@ process.stdout.write(JSON.stringify({ok:true,value:request.arguments.value,effec
       grants: [], timeout_ms: 2000, max_payload_bytes: 65536, effect_contract: { kind: "external_write", retry_mode: "none" } },
   } }));
   const engine = new ToubaEngine({ executionMode, projectRoot: root, command: process.execPath,
-    commandArgs: [fileURLToPath(new URL("../../../cli/touba-project/src/main.mjs", import.meta.url))] });
+    commandArgs: [cli] });
   const options = { source: "source.tb", entryRef: "strategy:approval_policy/ApproveTwice", manifest: "manifest.json",
     humanApprovalHost: "authority.mjs", humanApprovalAuthorityTimeoutMs: 12000,
     humanCheckpointOut: "waiting.json", effectJournal: "run.effect-journal.sqlite" };

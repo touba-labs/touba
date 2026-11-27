@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
+const cli = process.argv[2];
+
 function run(args, expectedExit) {
-  const child = spawnSync("touba", ["run", "approval.air.json", "--entry",
+  const child = spawnSync(process.execPath, [cli, "run", "approval.air.json", "--entry",
     "strategy:examples.approval_roles/ApproveInvoice",
     "--human-approval-host", "host.mjs", "--output", "json", ...args], { encoding: "utf8" });
   assert.equal(child.status, expectedExit, child.stdout + child.stderr);

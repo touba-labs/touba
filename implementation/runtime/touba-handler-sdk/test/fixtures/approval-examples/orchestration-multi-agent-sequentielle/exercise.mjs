@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { ToubaEngine, ToubaEngineError } from "@touba/sdk";
-const engine = new ToubaEngine({ projectRoot: ".", env: { REMEDIATION_TOKEN: "isolated-ledger-credential" } });
+const cli = process.argv[2];
+const engine = new ToubaEngine({ projectRoot: ".", command: process.execPath, commandArgs: [cli],
+  env: { REMEDIATION_TOKEN: "isolated-ledger-credential" } });
 const options = { source: "incident-remediation.tb", entryRef: "strategy:examples.incident_remediation/RunIncidentRemediation",
   manifest: "touba.manifest.json", secrets: "test-secret-bindings.json", resourceBindings: "touba.resources.json", requireResourceBindings: true,
   agentDecisionProvider: "providers/incidents.mjs", maxAgentSteps: 4, effectJournal: "remediation.effect-journal.sqlite",
@@ -24,7 +26,7 @@ assert.equal(existsSync("remediation-ledger.ndjson"), false);
 const original = readFileSync("incident-remediation.tb", "utf8");
 const missingScope = original.replace("    memory RemediationLedger write\n", "");
 assert.notEqual(missingScope, original); writeFileSync("missing-scope.tb", missingScope);
-const invalid = spawnSync("touba", ["compile", "missing-scope.tb", "--out", "missing-scope.air.json"], { encoding: "utf8" });
+const invalid = spawnSync(process.execPath, [cli, "compile", "missing-scope.tb", "--out", "missing-scope.air.json"], { encoding: "utf8" });
 assert.equal(invalid.status, 1); assert.match(invalid.stderr + invalid.stdout, /OwnerMemoryScopeMissing/);
 const resume = { ...options, inputs: undefined, humanResumeCheckpoint: "approval.checkpoint.json", humanDecisions };
 const completed = await engine.run(resume);
