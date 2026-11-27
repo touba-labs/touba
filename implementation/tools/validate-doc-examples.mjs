@@ -48,7 +48,7 @@ export function exampleModuleDependencies(example, examples) {
   const selected = new Map();
   const entryModule = example.source.match(/^module\s+(\S+)/m)?.[1];
   const visit = current => {
-    for (const match of current.source.matchAll(/^import\s+\w+\s+\w+\s+from\s+(\S+)\s*$/gm)) {
+    for (const match of current.source.matchAll(/^import +\w+ +\w+(?:, *\w+)* +from +([\w.]+) *(?:#[^\r\n]*)?\r?$/gm)) {
       const module = match[1];
       if (module === entryModule || selected.has(module)) continue;
       const candidates = examples.filter(other => other.docPath === example.docPath
@@ -134,7 +134,6 @@ export function runDocumentationValidation(options = {}) {
       diagnostics.push(error instanceof Error ? error.message : String(error));
     }
     diagnostics.push(...validateRelativeMarkdownLinks(content, docPath, root));
-
   }
 
   const tempRoot = mkdtempSync(join(tmpdir(), "touba-doc-examples-"));
@@ -158,7 +157,8 @@ export function runDocumentationValidation(options = {}) {
         { cwd: options.implementationRoot ?? resolve(root, "implementation"), encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
       );
       if (result.status !== 0) {
-        diagnostics.push(`${example.docPath}:${example.startLine}: displayed Touba block does not compile: ${(result.stderr || result.stdout || `exit ${result.status}`).trim()}`);
+        const message = result.error?.message || result.stderr || result.stdout || `exit ${result.status}`;
+        diagnostics.push(`${example.docPath}:${example.startLine}: displayed Touba block does not compile: ${message.trim()}`);
         continue;
       }
       try {
