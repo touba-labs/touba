@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -347,7 +348,7 @@ test("CLI refresh signals an existing Touba project server", async () => {
   try {
     await service.start();
     const url = `http://127.0.0.1:${service.server.address().port}`;
-    writeFileSync(join(root, "main.tb"), "module demo.main\n// changed\n", "utf8");
+    writeFileSync(join(root, "main.tb"), "module demo.main\n# changed\n", "utf8");
     const result = await runCliAsync([
       cliPath,
       "refresh",
@@ -366,6 +367,24 @@ test("CLI refresh signals an existing Touba project server", async () => {
     await service.stop();
     cleanup(root);
   }
+});
+
+test("CLI refresh refuses an unexpected success response", async (t) => {
+  const listener = createServer((_request, response) => {
+    response.setHeader("content-type", "application/json");
+    response.end("null");
+  });
+  t.after(() => new Promise((resolve) => listener.close(resolve)));
+  await new Promise((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(0, "127.0.0.1", resolve);
+  });
+  const url = `http://127.0.0.1:${listener.address().port}`;
+  const result = await runCliAsync([cliPath, "refresh", "--url", url]);
+
+  assert.equal(result.status, 2);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /requires a JSON object response/);
 });
 
 test("CLI serve streams its startup address before the server exits", async () => {

@@ -641,9 +641,9 @@ Ces options alimentent les noeuds `human_approval` déjà présents dans l'AIR. 
 servent à fournir une décision dès le lancement du run. Elles ne reprennent pas
 un run suspendu : pour une reprise locale, il faut utiliser un checkpoint.
 
-Pour le cas borné d’un noeud `human_approval` explicite dans le graph d’entrée,
-ou d’un `request_human_review` agentique dont le `call_agent` appartient au
-graph d’entrée, `touba run` peut écrire puis consommer un checkpoint local :
+`touba run` peut écrire puis reprendre un checkpoint local lors d’une
+approbation source ou d’un review demandé par un agent. La reprise conserve
+la pile des appels et les sélections d’agent déjà achevées.
 
 ```sh title="Terminal"
 touba run program.air.json \
@@ -1133,8 +1133,8 @@ privé n'est inclus. Ne parsez pas l'affichage humain.
 | Code | Signification |
 | --- | --- |
 | 0 | Réussite |
-| 1 | Échec d'admission ou d'exécution |
-| 2 | Options CLI invalides |
+| 1 | Échec d’admission du runner ou d’exécution |
+| 2 | Options CLI invalides ou refus de configuration projet avant l’appel du runner |
 | 3 | Attente d'approbation humaine ou de saisie |
 | 4 | Arrêt explicite, approbation rejetée ou expirée |
 | 5 | Annulation, y compris timeout ou décision humaine d'annuler |
@@ -1165,6 +1165,9 @@ Modes :
 | `result` | affiche la valeur retournée |
 | `trace` | affiche la trace JSON complète |
 | `all` | affiche `show`, `result` et `trace` en sections |
+| `run-summary` | affiche le résumé de l’exécution |
+| `json` | émet l’enveloppe d’exécution complète |
+| `json-reference` | émet le résultat et une référence au journal de traces |
 
 Pour garder une trace dans un fichier tout en conservant la sortie utilisateur :
 
@@ -1632,9 +1635,8 @@ L'identifiant ne dépend ni du dossier d'installation ni d'une variable
 d'environnement. Il identifie le contenu au moment de l'assemblage ; ce n'est
 ni une signature ni une revérification des fichiers à chaque appel.
 
-La source courante affiche les composants du langage en `1.0.0`. Les champs de schémas
-restent versionnés séparément, par exemple `touba-air-v1` ou
-`touba-trace-v1`.
+Les composants du langage partagent la version du Core. Les schémas suivent
+leurs propres versions, par exemple `touba-air-v1` et `touba-trace-v1`.
 
 Le champ `distribution.channel` identifie le mode d'installation :
 
@@ -1746,7 +1748,3 @@ Le suffixe `.effect-journal.sqlite` identifie le journal local. Le SDK expose
 Conservez-le avec le checkpoint et la base de garde des approbations lors des
 reprises et sauvegardes. Un journal neuf ne remplace pas celui d'une opération
 déjà commencée.
-
-Le code de sortie `1` couvre un refus d'admission ou une erreur d'exécution ;
-l'enveloppe précise le code et l'étape. Le code `4` couvre un arrêt explicite
-ou un rejet humain. Lisez `status` et `reason` pour les distinguer.

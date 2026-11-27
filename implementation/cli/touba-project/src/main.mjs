@@ -866,9 +866,15 @@ async function refreshCommand(rawArgs) {
   } catch {
     throw new Error(`touba refresh received non-JSON response from ${endpoint}`);
   }
+  if (report === null || typeof report !== "object" || Array.isArray(report)) {
+    throw new Error("touba refresh requires a JSON object response");
+  }
   if (!response.ok) {
     const code = report.code ? ` [${report.code}]` : "";
     throw new Error(`touba refresh failed${code}: ${report.message ?? response.status}`);
+  }
+  if (report.schema_version !== FEATURE_VERSIONS.project_refresh || report.status !== "refreshed") {
+    throw new Error("touba refresh received an invalid refresh report");
   }
   return { json: true, report, exitCode: 0 };
 }
@@ -976,9 +982,10 @@ async function registryCommand(rawArgs) {
 
 async function mcpCommand(rawArgs) {
   const [subcommand, configPath, ...tail] = rawArgs;
-  if(subcommand==='discover' && configPath && tail.length===2 && tail[1]==='--confirm-process') {
-    const {createMcpDiscovery}=await import('./mcp-discovery.mjs');
-    return {report:await createMcpDiscovery(configPath).discover({target:tail[0],confirm_process:true}),json:true,exitCode:0};
+  if (subcommand === "discover" && configPath && tail.length === 2 && tail[1] === "--confirm-process") {
+    const { createMcpDiscovery } = await import("./mcp-discovery.mjs");
+    const report = await createMcpDiscovery(configPath).discover({ target: tail[0], confirm_process: true });
+    return { report, json: true, exitCode: 0 };
   }
   if (subcommand === "import" && configPath && configPath !== "--help" && configPath !== "-h") {
     const options = parseMcpImportOptions(tail);
