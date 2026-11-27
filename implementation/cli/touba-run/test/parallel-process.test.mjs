@@ -81,6 +81,7 @@ strategy Run
     const started = performance.now();
     const result = await executeAirDocument(document, {
       entryRef: "strategy:service.diagnostics/Run", inputs: { services },
+      humanCheckpointStorePath: join(root, "approval-checkpoints.sqlite"),
       agentDecisionProviderInitialMode: "capabilities", agentDecisionProvider: request => {
         providers++;
         return request.step_index === 0
