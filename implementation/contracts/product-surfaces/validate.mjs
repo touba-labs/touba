@@ -20,11 +20,12 @@ function validateSchemaNode(schema, value, path, diagnostics, root, depth = 0) {
     if (!target) diagnostics.push(error("SchemaReferenceInvalid", `${path} contains an unresolved local reference`, path));
     else validateSchemaNode(target, value, path, diagnostics, root, depth + 1);
   }
-  if (Array.isArray(schema.anyOf) && !schema.anyOf.some((branch) => {
-    const branchDiagnostics = [];
-    validateSchemaNode(branch, value, path, branchDiagnostics, root, depth + 1);
-    return branchDiagnostics.length === 0;
-  })) diagnostics.push(error("AnyOfMismatch", `${path} matches no declared alternative`, path));
+  if (Array.isArray(schema.anyOf) && !schema.anyOf.some(branch => matchesBranch(branch, value, path, root, depth + 1))) {
+    diagnostics.push(error("AnyOfMismatch", `${path} matches no declared alternative`, path));
+  }
+  if (Array.isArray(schema.oneOf) && schema.oneOf.filter(branch => matchesBranch(branch, value, path, root, depth + 1)).length !== 1) {
+    diagnostics.push(error("OneOfMismatch", `${path} must match exactly one declared alternative`, path));
+  }
   if (Object.hasOwn(schema, "const") && value !== schema.const) {
     diagnostics.push(error("ConstMismatch", `${path} must be ${JSON.stringify(schema.const)}`, path));
   }
@@ -45,12 +46,21 @@ function validateSchemaNode(schema, value, path, diagnostics, root, depth = 0) {
     if (schema.minimum !== undefined && value < schema.minimum) diagnostics.push(error("NumberTooSmall", `${path} is below its minimum`, path));
     if (schema.maximum !== undefined && value > schema.maximum) diagnostics.push(error("NumberTooLarge", `${path} exceeds its maximum`, path));
   }
+  if (isObject(value) && typeof schema.maxProperties === "number" && Object.keys(value).length > schema.maxProperties) {
+    diagnostics.push(error("ObjectTooManyProperties", `${path} exceeds its property limit`, path));
+  }
   if (schema.type === "object" || (schema.properties && isObject(value))) {
     validateObjectNode(schema, value, path, diagnostics, root, depth);
   }
   if (schema.type === "array" || (schema.items && Array.isArray(value))) {
     validateArrayNode(schema, value, path, diagnostics, root, depth);
   }
+}
+
+function matchesBranch(schema, value, path, root, depth) {
+  const diagnostics = [];
+  validateSchemaNode(schema, value, path, diagnostics, root, depth);
+  return diagnostics.length === 0;
 }
 
 function validateObjectNode(schema, value, path, diagnostics, root, depth) {

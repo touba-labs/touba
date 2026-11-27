@@ -51,6 +51,32 @@ test("rejects an approval decision without request_id", () => {
   assert.equal(diagnostics.some((item) => item.code === "RequiredPropertyMissing"), true);
 });
 
+test("validates the exclusive alternatives of a published package plan", () => {
+  const schema = readJson("schemas/touba-project-packages-v1.schema.json");
+  const sample = readJson("fixtures/valid/touba-project-packages-v1.json");
+  for (const host_plan of [
+    null,
+    { schema_version: "touba-package-host-plan-v1", package_lock_digest: `sha256:${"a".repeat(64)}`, hosts: {} },
+  ]) {
+    assert.deepEqual(validateObject(schema, { ...sample, host_plan }), []);
+  }
+  assert.ok(validateObject(schema, { ...sample, host_plan: "pending" }).some(item =>
+    item.code === "OneOfMismatch" && item.path === "$.host_plan"));
+  const overlapping = { oneOf: [{ type: "integer" }, { type: "number" }] };
+  assert.equal(validateObject(overlapping, 2)[0].code, "OneOfMismatch");
+  assert.deepEqual(validateObject(overlapping, 2.5), []);
+});
+
+test("honors property limits on nullable package preview records", () => {
+  const schema = readJson("schemas/touba-project-package-preview-v2.schema.json");
+  const before = schema.properties.contract_changes.items.properties.before;
+  const atLimit = Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`field${index}`, index]));
+  assert.deepEqual(validateObject(before, null), []);
+  assert.deepEqual(validateObject(before, atLimit), []);
+  assert.deepEqual(validateObject(before, { ...atLimit, extra: 33 }).map(item => item.code),
+    ["ObjectTooManyProperties"]);
+});
+
 test("rejects extra fields on product contracts", () => {
   const schema = readJson("schemas/touba-alert-v1.schema.json");
   const sample = readJson("fixtures/valid/touba-alert-v1.json");
