@@ -14,9 +14,6 @@ const defaultSecretsPath = path.join(fixtureRoot, "secrets/secret-handles.env.fi
 const secretsPath = argValue("--secrets") ?? defaultSecretsPath;
 const traceOutPath = argValue("--trace-out");
 const evidenceOutPath = argValue("--evidence-out");
-const tmpRoot = mkdtempSync(path.join(tmpdir(), "touba-donnees-quebec-agent-live-"));
-const airPath = path.join(tmpRoot, "donnees-quebec-agent-live.air.json");
-const manifestPath = path.join(tmpRoot, "touba.manifest.json");
 const cargo = process.env.CARGO ?? "cargo";
 const liveMode = process.argv.includes("--live");
 const dryRunMode = process.argv.includes("--dry-run") || !liveMode;
@@ -36,6 +33,10 @@ const missingEnvSecrets = liveMode ? missingEnvSecretsFor(secretsPath) : [];
 if (missingEnvSecrets.length > 0) {
   throw new Error(`${missingEnvSecrets.join(", ")} must be available in the environment for --live with ${secretsPath}`);
 }
+
+const tmpRoot = mkdtempSync(path.join(tmpdir(), "touba-donnees-quebec-agent-live-"));
+const airPath = path.join(tmpRoot, "donnees-quebec-agent-live.air.json");
+const manifestPath = path.join(tmpRoot, "touba.manifest.json");
 
 try {
   compileSourceToAir();

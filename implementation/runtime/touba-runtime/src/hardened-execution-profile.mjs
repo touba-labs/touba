@@ -109,9 +109,10 @@ function validateProfile(profile) {
   for (const flag of ["require_supply_chain_lock", "require_redaction", "require_durable_checkpoints"]) {
     if (controls[flag] !== true) fail("HardenedControlRequired", `${flag} must be true`, { control: flag });
   }
-  if (!Array.isArray(controls.require_budgets)
-    || controls.require_budgets.some((budget) => !RUN_BUDGET_KINDS.includes(budget))
-    || REQUIRED_BUDGETS.some((budget) => !controls.require_budgets.includes(budget))) {
+  const budgets = controls.require_budgets;
+  if (!Array.isArray(budgets)
+    || budgets.some((budget) => !RUN_BUDGET_KINDS.includes(budget))
+    || REQUIRED_BUDGETS.some((budget) => !budgets.includes(budget))) {
     fail("HardenedControlRequired", `require_budgets must use known budgets and include ${REQUIRED_BUDGETS.join(", ")}`);
   }
   const minimums = controls.sandbox?.minimum_versions;

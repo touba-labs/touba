@@ -9,9 +9,6 @@ import { generateManifestFromAirDocument } from "../../../cli/touba-manifest/src
 const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
 const implementationRoot = path.resolve(fixtureRoot, "../../..");
 const sourcePath = path.join(fixtureRoot, "source/donnees-quebec-live.tb");
-const tmpRoot = mkdtempSync(path.join(tmpdir(), "touba-donnees-quebec-live-"));
-const airPath = path.join(tmpRoot, "donnees-quebec-live.air.json");
-const manifestPath = path.join(tmpRoot, "touba.manifest.json");
 const cargo = process.env.CARGO ?? "cargo";
 const liveMode = process.argv.includes("--live");
 const dryRunMode = process.argv.includes("--dry-run") || !liveMode;
@@ -19,6 +16,10 @@ const dryRunMode = process.argv.includes("--dry-run") || !liveMode;
 if (liveMode && process.argv.includes("--dry-run")) {
   throw new Error("use either --live or --dry-run, not both");
 }
+
+const tmpRoot = mkdtempSync(path.join(tmpdir(), "touba-donnees-quebec-live-"));
+const airPath = path.join(tmpRoot, "donnees-quebec-live.air.json");
+const manifestPath = path.join(tmpRoot, "touba.manifest.json");
 
 try {
   compileSourceToAir();

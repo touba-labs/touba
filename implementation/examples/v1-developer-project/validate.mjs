@@ -8,10 +8,10 @@ const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const implementationRoot = path.resolve(projectRoot, "../..");
 const sourcePath = path.join(projectRoot, "src/program.tb");
 const manifestTemplatePath = path.join(projectRoot, "touba.manifest.template.json");
-const secretsPath = path.join(projectRoot, "touba.secrets.prod.json");
 const tmpRoot = mkdtempSync(path.join(tmpdir(), "touba-v1-workflow-"));
 const airPath = path.join(tmpRoot, "program.air.json");
 const manifestPath = path.join(tmpRoot, "touba.manifest.json");
+const secretsPath = path.join(tmpRoot, "touba.secrets.json");
 const cargo = process.env.CARGO ?? "cargo";
 const demoSecret = process.env.TOUBA_DEMO_API_KEY ?? "fixture-secret-not-in-trace";
 
@@ -21,6 +21,10 @@ try {
   binding.handler.command = process.execPath;
   binding.handler.cwd = projectRoot;
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  writeFileSync(secretsPath, JSON.stringify({
+    secrets_version: "touba-secrets-v1",
+    secrets: { DEMO_API_KEY: { source: "env", name: "TOUBA_DEMO_API_KEY" } },
+  }), "utf8");
 
   const compileResult = spawnSync(
     cargo,
