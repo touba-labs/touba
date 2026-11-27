@@ -97,7 +97,7 @@ class ResourceBindingsCliError extends Error {
 
 const parsedArgs = parseArgs(args);
 const sourcePath = compileSource === undefined
-  ? undefined : parsedArgs.positional.find(path => path.endsWith(".tb"));
+  ? undefined : parsedArgs.positional?.find(path => path.endsWith(".tb"));
 const hostModules = createHostModuleLoader();
 let traceStorage = null;
 let triggerState;
