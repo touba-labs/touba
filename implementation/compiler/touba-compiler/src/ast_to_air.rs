@@ -149,6 +149,9 @@ fn map_ast_diagnostic(diagnostic: AstDiagnostic) -> AirDiagnostic {
             AirDiagnosticCode::SourceTextDirectionInvalid
         }
         AstDiagnosticCode::DuplicateCallArgument => AirDiagnosticCode::DuplicateCallArgument,
+        AstDiagnosticCode::DuplicateDeclarationClause => {
+            AirDiagnosticCode::DuplicateDeclarationClause
+        }
         AstDiagnosticCode::InvalidTextLiteral => AirDiagnosticCode::InvalidTextLiteral,
         AstDiagnosticCode::InvalidRunLimits => AirDiagnosticCode::InvalidRunLimits,
         _ => AirDiagnosticCode::AstError,

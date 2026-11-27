@@ -594,6 +594,7 @@ pub enum AirDiagnosticCode {
     InvalidFieldDefault,
     InvalidTextLiteral,
     DuplicateDefinition,
+    DuplicateDeclarationClause,
     MissingExecutableBody,
     MissingSignatureOutput,
     MissingFunctionReturn,

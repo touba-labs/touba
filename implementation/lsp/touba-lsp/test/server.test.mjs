@@ -694,6 +694,31 @@ test("editor positions belong to the open file even when imported code uses the 
   assert.equal(definitionForPosition(result.air, uri, { line: 1, character: 8 }, sourceUris).uri, dependencyUri);
 });
 
+test("editor navigation resolves each name in a grouped import", t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-lsp-grouped-import-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = join(root, "main.tb");
+  const dependency = join(root, "dep.tb");
+  const importLine = "import function First, Second from dep";
+  writeFileSync(source, `module main\n${importLine}\n`);
+  writeFileSync(dependency, "module dep\nfunction First\n    gives Int\n    do\n        give 1\n"
+    + "function Second\n    gives Int\n    do\n        give 2\n");
+  const result = runToubaCompileJson(source, { sourceRoots: [root], moduleSourcePaths: [dependency] });
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  const uri = pathToFileURL(source).href;
+  const dependencyUri = pathToFileURL(dependency).href;
+  const sourceUris = new Map([["main.tb", uri], ["dep.tb", dependencyUri]]);
+
+  for (const [name, declarationLine] of [["First", 1], ["Second", 5]]) {
+    const position = { line: 1, character: importLine.indexOf(name) + 1 };
+    assert.equal(hoverForPosition(result.air, position, uri, sourceUris).split("\n")[0],
+      `import function ${name}`);
+    const definition = definitionForPosition(result.air, uri, position, sourceUris);
+    assert.equal(definition?.uri, dependencyUri);
+    assert.equal(definition.range.start.line, declarationLine);
+  }
+});
+
 test("completionForPosition returns deterministic keywords and local declarations", () => {
   const labels = completionForPosition(hoverFixtureAir(), "    us", {
     line: 0,

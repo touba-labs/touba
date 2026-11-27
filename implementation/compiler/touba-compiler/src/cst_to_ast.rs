@@ -223,13 +223,16 @@ impl<'a> AstLowerer<'a> {
         let kind = self.required_field_text(node, "kind")?;
         let from_module = self.required_field_text(node, "from_module")?;
         let mut cursor = node.walk();
+        let names: Vec<_> = node.children_by_field_name("name", &mut cursor).collect();
+        let grouped = names.len() > 1;
         Some(
-            node.children_by_field_name("name", &mut cursor)
+            names
+                .into_iter()
                 .map(|name| AstImportDeclaration {
                     kind: kind.clone(),
                     name: self.text(name),
                     from_module: from_module.clone(),
-                    source_ref: self.source_ref(node),
+                    source_ref: self.source_ref(if grouped { name } else { node }),
                 })
                 .collect(),
         )
@@ -328,7 +331,7 @@ impl<'a> AstLowerer<'a> {
         let mut memory_accesses = Vec::new();
         let mut body = None;
 
-        for child in named_children(node) {
+        for child in self.declaration_children(node) {
             match child.kind() {
                 "description_clause" => description = self.lower_description_clause(child),
                 "takes_clause" => signature.inputs.extend(self.lower_takes_clause(child)),
@@ -391,7 +394,7 @@ impl<'a> AstLowerer<'a> {
         let mut body = None;
         let mut failure_handler = None;
 
-        for child in named_children(node) {
+        for child in self.declaration_children(node) {
             match child.kind() {
                 "description_clause" => description = self.lower_description_clause(child),
                 "takes_clause" => signature.inputs.extend(self.lower_takes_clause(child)),
@@ -441,7 +444,7 @@ impl<'a> AstLowerer<'a> {
         let mut callable_by = Vec::new();
         let mut memory_scopes = Vec::new();
 
-        for child in named_children(node) {
+        for child in self.declaration_children(node) {
             match child.kind() {
                 "description_clause" => description = self.lower_description_clause(child),
                 "takes_clause" => signature.inputs.extend(self.lower_takes_clause(child)),
@@ -510,7 +513,7 @@ impl<'a> AstLowerer<'a> {
         let mut memory_scopes = Vec::new();
         let mut body = None;
 
-        for child in named_children(node) {
+        for child in self.declaration_children(node) {
             match child.kind() {
                 "description_clause" => description = self.lower_description_clause(child),
                 "takes_clause" => signature.inputs.extend(self.lower_takes_clause(child)),
@@ -555,7 +558,7 @@ impl<'a> AstLowerer<'a> {
         let mut arguments = Vec::new();
         let mut limits = None;
 
-        for child in named_children(node) {
+        for child in self.declaration_children(node) {
             match child.kind() {
                 "symbol_identifier" => {}
                 "trigger_on_clause" => event = self.lower_trigger_on_clause(child),
@@ -582,6 +585,33 @@ impl<'a> AstLowerer<'a> {
             limits,
             source_ref: self.source_ref(node),
         })
+    }
+
+    fn declaration_children<'b>(&mut self, node: Node<'b>) -> Vec<Node<'b>> {
+        let mut children = named_children(node);
+        let mut seen = HashSet::new();
+        children.retain(|child| {
+            let clause = match child.kind() {
+                "description_clause" => "description",
+                "gives_clause" => "gives",
+                "do_block" => "do",
+                "on_failure_clause" => "on failure",
+                "trigger_on_clause" => "on",
+                "trigger_runs_clause" => "runs",
+                "trigger_limits_block" => "limits",
+                _ => return true,
+            };
+            if seen.insert(clause) {
+                return true;
+            }
+            self.push_error(
+                AstDiagnosticCode::DuplicateDeclarationClause,
+                *child,
+                format!("a declaration accepts only one `{clause}` clause"),
+            );
+            false
+        });
+        children
     }
 
     fn lower_trigger_on_clause(&mut self, node: Node<'_>) -> Option<AstTriggerEvent> {

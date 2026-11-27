@@ -110,6 +110,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `MissingExplicitCallArgument` | Argument requis absent | Ajouter `with <nom> as <expression>` |
 | `UnknownCallArgument` | Nom d'argument inconnu | Aligner le nom après `with` avec `takes` |
 | `DuplicateCallArgument` | Même argument fourni deux fois | Supprimer le doublon |
+| `DuplicateDeclarationClause` | Une clause unique de la déclaration est répétée | Garder une seule clause `description`, `gives`, `do`, `on failure`, ou `on`, `runs` et `limits` pour un trigger |
 | `DuplicateResultBinding` | Binding `into` déjà utilisé | Choisir un nom distinct |
 | `DuplicateLocalBinding` | Nom `bind` déjà utilisé dans le graphe | Choisir un nom local distinct |
 | `UnsupportedModuleConstantExpression` | `define` contient autre chose qu'un littéral ou membre d'énumération qualifié | Utiliser une valeur admise ou déplacer le calcul dans une fonction |
@@ -118,7 +119,7 @@ Chaque ligne donne le code ou la famille d'erreur, sa cause probable et l'action
 | `MissingAgentInterfaceOutput` | Agent avec `takes` mais sans sortie finale | Ajouter `gives <Type>` |
 | `EnrichedAgentCallBlocked` | Appel `with`/`into` vers un agent sans interface résolue | Déclarer `takes` / `gives` et fournir les sources nécessaires à la résolution, y compris les modules importés |
 | `AgentCallerNotAllowed` | Appel agent non autorisé | Corriger `callable_by` |
-| `UnsupportedTriggerEventKind` | Trigger d'une famille non livrée | Utiliser `on schedule "..."` |
+| `UnsupportedTriggerEventKind` | Trigger d'une famille non livrée | Utiliser `on schedule "..."` ou `on request POST "/chemin"` |
 | `UnsupportedTriggerTargetKind` | Trigger vers une cible non livrée | Utiliser `runs strategy <Name>` |
 | `MissingTriggerLimits` | Trigger sans bloc `limits` | Ajouter `max_runs_per_day` et `timeout_ms` |
 | `MissingTriggerLimit` | Limite obligatoire absente | Ajouter la limite manquante |

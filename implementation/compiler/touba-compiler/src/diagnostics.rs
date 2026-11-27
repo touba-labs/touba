@@ -41,6 +41,7 @@ pub enum AstDiagnosticCode {
     InvalidTextLiteral,
     MissingModule,
     DuplicateModule,
+    DuplicateDeclarationClause,
     MissingRequiredChild,
     MissingExecutableBody,
     MissingAgentResponsibility,
