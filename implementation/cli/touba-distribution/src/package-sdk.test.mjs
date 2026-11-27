@@ -15,8 +15,12 @@ import { npmCommand } from "./npm-command.mjs";
 import { toolchainBuildIdentity } from "./build-identity.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+// The offline npm installation into a fresh cache can exceed a minute on
+// Windows runners. Keep its longer child-process timeout local to this step.
+const windows = process.platform === "win32";
+const npmInstallTimeout = windows ? 180_000 : 60_000;
 
-test("installed archive supplies an independent SDK, provider dependencies, licenses and a working project server", { timeout: 360000 }, async () => {
+test("installed archive supplies an independent SDK, provider dependencies, licenses and a working project server", { timeout: windows ? 600_000 : 360_000 }, async () => {
   const workspace = mkdtempSync(join(tmpdir(), "touba archive SDK "));
   try {
     const { toolchainRoot } = packageLocalToolchain({
@@ -126,8 +130,10 @@ print("PYTHON_ARCHIVE_OK")`], workspace, { PYTHONPATH: "" }), /PYTHON_ARCHIVE_OK
       const root = join(workspace, label); mkdirSync(root); projects.push(root);
       writeFileSync(join(root, "package.json"), JSON.stringify({ name: label.replaceAll(" ", "-"), private: true, scripts: { custom: "echo preserved" } }));
       const npm = npmCommand(["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", archive]);
+      const started = performance.now();
       run(npm.command, npm.args, root,
-        { npm_config_cache: join(workspace, "empty npm cache") });
+        { npm_config_cache: join(workspace, "empty npm cache") }, npmInstallTimeout);
+      console.log(`INSTALLED_SDK_OFFLINE_OK project=${label.replaceAll(" ", "-")} duration_ms=${Math.round(performance.now() - started)}`);
       const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
       assert.equal(manifest.scripts.custom, "echo preserved");
       assert.ok(manifest.dependencies["@touba/sdk"].endsWith(".tgz"));
@@ -202,9 +208,10 @@ function isolatedEnv(extra = {}) {
   for (const name of ["NODE_PATH", "TOUBA_IMPLEMENTATION_DIR", "TOUBA_COMPILE_BIN"]) delete env[name];
   return env;
 }
-function run(command, args, cwd, env = {}) {
-  const result = spawnSync(command, args, { cwd, env: isolatedEnv(env), encoding: "utf8", timeout: 60000 });
-  assert.equal(result.status, 0, result.error?.message ?? result.stderr + result.stdout);
+function run(command, args, cwd, env = {}, timeout = 60_000) {
+  const result = spawnSync(command, args, { cwd, env: isolatedEnv(env), encoding: "utf8", timeout });
+  const output = `${result.stderr ?? ""}${result.stdout ?? ""}`.slice(-8000);
+  assert.equal(result.status, 0, result.error ? `${result.error.message}\n${output}` : output);
   return result.stdout;
 }
 async function freePort() {
