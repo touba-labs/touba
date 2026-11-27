@@ -164,14 +164,14 @@ strategy Hello
             with message as "Touba ready"
 ```
 
-Run it directly from the source file:
+With Touba 1.5.0, you can run the source file directly.
 
 ```sh
 touba run hello.tb
 # Touba ready
 ```
 
-To keep the compiled AIR and inspect a run:
+Use the commands below with Touba 1.4.0 or whenever you want to keep the compiled AIR for inspection.
 
 ```sh
 touba compile hello.tb --out hello.air.json
