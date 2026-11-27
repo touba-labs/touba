@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile, chmod, stat, mkdir, symlink } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, readdir, writeFile, chmod, stat, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -238,4 +238,31 @@ test('HTTP loopback authorization, cross-origin denial, CSP, assets and cancella
   assert.equal((await request('/api/cancel',{headers})).status,200);
   assert.equal((await request('/api/list',{headers})).status,200);
   assert.match(await traceHtml(name=>`resource://${name}`,'resource:'),/resource:\/\/app.mjs/);
+});
+
+test('concurrent trace reader cancellations leave no private indices', async t => {
+  const { root, filename } = await fixture(t);
+  const scratch = join(root, 'trace-reader-temporary');
+  await mkdir(scratch);
+  const tempVariable = process.platform === 'win32' ? 'TEMP' : 'TMPDIR';
+  const previous = process.env[tempVariable];
+  process.env[tempVariable] = scratch;
+  let server;
+  try {
+    server = await startTraceExplorer({ root, filename, openBrowser: false });
+    const url = new URL(server.url);
+    const headers = { Authorization: `Bearer ${url.hash.slice(1)}` };
+    const cancel = async () => {
+      const response = await fetch(`${url.origin}/api/cancel`, { headers });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {});
+    };
+    await Promise.all([cancel(), cancel()]);
+    await server.close();
+    assert.deepEqual(await readdir(scratch), []);
+  } finally {
+    if (previous === undefined) delete process.env[tempVariable];
+    else process.env[tempVariable] = previous;
+    await server?.close();
+  }
 });

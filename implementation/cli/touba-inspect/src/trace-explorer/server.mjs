@@ -20,6 +20,17 @@ export async function startTraceExplorer({ root = process.cwd(), filename, air, 
   const readerOptions = { filename: filename ? resolve(filename) : join(root, '.touba/traces.sqlite'), root, air };
   let client = new TraceClient(readerOptions);
   try { await client.ready; } catch (error) { await client.close(); throw error; }
+  let replacement, closing;
+  function restartReader() {
+    if (closing) return closing;
+    replacement ??= (async () => {
+      await client.close();
+      if (closing) return;
+      client = new TraceClient(readerOptions);
+      await client.ready;
+    })().finally(() => { replacement = undefined; });
+    return replacement;
+  }
   const token = randomBytes(32).toString('hex'); let origin;
   const server = createServer(async (request, response) => {
     const reply = (status, type, body) => {
@@ -36,7 +47,7 @@ export async function startTraceExplorer({ root = process.cwd(), filename, air, 
         const method = url.pathname.slice(5);
         if (!['list', 'select', 'query', 'detail', 'graph', 'export', 'source', 'cancel'].includes(method)) return reply(404, 'text/plain', 'Not found');
         if (method === 'cancel') {
-          await client.close(); client = new TraceClient(readerOptions); await client.ready;
+          await restartReader();
           return reply(200, 'application/json', '{}');
         }
         const args = JSON.parse(url.searchParams.get('q') ?? '{}');
@@ -60,7 +71,18 @@ export async function startTraceExplorer({ root = process.cwd(), filename, air, 
     const child = spawn(command, process.platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url], { detached: true, stdio: 'ignore', windowsHide: true });
     child.on('error', () => process.stderr.write('Open the printed Traces URL in your browser.\n')); child.unref();
   }
-  return { url, client, async close() { await client.close(); server.closeAllConnections(); await new Promise(accept => server.close(accept)); } };
+  return { url, client, close() {
+    closing ??= (async () => {
+      const stopped = new Promise(accept => server.close(accept));
+      server.closeAllConnections();
+      try { await replacement; }
+      finally {
+        try { await client.close(); }
+        finally { await stopped; }
+      }
+    })();
+    return closing;
+  } };
 }
 export async function traceExploreCommand(args) {
   const options = {};
