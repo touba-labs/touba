@@ -28,8 +28,11 @@ try {
   const result = await engine.run({ ...options, inputs: { incidents: ["first", "second", "third"] } });
   assert.equal(result.status, "success", JSON.stringify(result));
   assert.deepEqual(result.result, ["first: reviewed", "second: reviewed", "third: reviewed"]);
-  const resumed = await engine.run({ ...options, parallelResumeCheckpoint: "progress.json" });
-  assert.deepEqual(resumed.result, result.result);
-  assert.equal(resumed.trace.events.filter(e => e.kind === "agent_decision_provider_call_attempted").length, 0);
+  await assert.rejects(engine.run({ ...options, parallelResumeCheckpoint: "progress.json" }), error => {
+    assert.equal(error.code, "HumanApprovalCheckpointAlreadyConsumed");
+    assert.ok(Array.isArray(error.details?.trace?.events));
+    assert.equal(error.details.trace.events.filter(e => e.kind === "agent_decision_provider_call_attempted").length, 0);
+    return true;
+  });
   console.log("PARALLEL_INSTALLED_CLI_AND_OFFLINE_SDK_OK");
 } finally { rmSync(root, { recursive: true, force: true }); }

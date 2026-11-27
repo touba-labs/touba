@@ -322,7 +322,7 @@ function readPackageVersion(packageJsonPath) {
   return JSON.parse(readFileSync(packageJsonPath, "utf8")).version;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     packageLocalToolchain();
   } catch (error) {

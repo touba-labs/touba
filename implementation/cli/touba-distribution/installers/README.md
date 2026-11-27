@@ -25,8 +25,9 @@ du builder Python décrit dans `runtime/touba-python-sdk/build-requirements.txt`
 
 ```sh
 node cli/touba-distribution/src/package-release.mjs --release-root /chemin/candidat --json
-node cli/touba-distribution/src/check-desktop-install.mjs /chemin/candidat/touba-v1.0.0-darwin-arm64
-node cli/touba-distribution/src/package-installers.mjs --release-dir /chemin/candidat/touba-v1.0.0-darwin-arm64 --out /chemin/installateur-neuf
+release_dir=/chemin/indique-par-release_dir
+node cli/touba-distribution/src/check-desktop-install.mjs "$release_dir"
+node cli/touba-distribution/src/package-installers.mjs --release-dir "$release_dir" --out /chemin/installateur-neuf
 ```
 
 Le contrôle installe dans un répertoire temporaire, vérifie la réinstallation,

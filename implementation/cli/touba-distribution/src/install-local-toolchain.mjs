@@ -116,7 +116,7 @@ function printUsage() {
   process.stdout.write("Usage: node install-local-toolchain.mjs --prefix <dir> [--source <toolchain-dir>] [--force]\n");
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options) {
