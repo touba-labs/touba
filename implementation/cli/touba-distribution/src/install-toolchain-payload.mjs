@@ -87,15 +87,17 @@ export function installToolchainPayload({ source, prefix, force = false, lock, v
     validate?.(candidate);
     beforeActivate?.();
     if (archived) { renameSync(installRoot, archived); moved = true; }
+    let published = false;
     try {
       renameSync(candidate, installRoot);
+      published = true;
       validate?.(installRoot);
       const report = { install_root: installRoot, build_id: nextId, preserved_build: archived ?? null, unchanged: false };
       commit?.(report);
       return report;
     } catch (error) {
+      if (published && pathExists(installRoot)) renameSync(installRoot, join(staging, 'failed-candidate'));
       if (moved) {
-        if (existsSync(installRoot)) renameSync(installRoot, join(staging, 'failed-candidate'));
         renameSync(archived, installRoot); moved = false;
       }
       throw error;

@@ -20,11 +20,15 @@ test("installed archive supplies an independent SDK, provider dependencies, lice
   const workspace = mkdtempSync(join(tmpdir(), "touba archive SDK "));
   try {
     const { toolchainRoot } = packageLocalToolchain({ quiet: true });
-    const prefix = join(workspace, "custom prefix");
+    const prefix = join(workspace, process.platform === "win32" ? "custom %prefix" : "custom $prefix's");
     const installed = installLocalToolchain({ source: toolchainRoot, prefix });
     const node = join(installed.install_root, "bin", process.platform === "win32" ? "node.exe" : "node");
     const cli = join(installed.install_root, "lib/cli/touba-project/src/main.mjs");
     const version = JSON.parse(run(node, [cli, "version", "--json"], workspace));
+    if (process.platform !== "win32") {
+      const launcherVersion = JSON.parse(run(installed.cli_path, ["version", "--json"], workspace));
+      assert.equal(launcherVersion.build.id, version.build.id);
+    }
     const archive = version.distribution.sdk_archive;
     assert.ok(archive && realpathSync(archive).startsWith(realpathSync(installed.install_root)));
     const metadata = JSON.parse(readFileSync(join(installed.install_root, "TOOLCHAIN.json"), "utf8"));

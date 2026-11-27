@@ -46,14 +46,17 @@ export function installLocalToolchain(options) {
 function writeLaunchers(prefix) {
   const binRoot = join(prefix, "bin");
   const installRoot = join(prefix, "touba-toolchain");
+  const shellPath = join(installRoot, "bin", "touba").replaceAll("'", "'\\''");
   const shellLauncher = `#!/bin/sh
-exec ${JSON.stringify(join(installRoot, "bin", "touba"))} "$@"
+exec '${shellPath}' "$@"
 `;
   writeFileSync(join(binRoot, "touba"), shellLauncher, "utf8");
   chmodSync(join(binRoot, "touba"), 0o755);
 
+  const cmdPath = join(installRoot, "bin", "touba.cmd").replaceAll("%", "%%");
   const cmdLauncher = `@echo off
-"${join(installRoot, "bin", "touba.cmd")}" %*
+setlocal DisableDelayedExpansion
+"${cmdPath}" %*
 `;
   writeFileSync(join(binRoot, "touba.cmd"), cmdLauncher, "utf8");
 }

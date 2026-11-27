@@ -52,8 +52,9 @@ const nodeModuleAliases = [
 export function packageLocalToolchain(options = {}) {
   const toolchainRoot = options.toolchainRoot ? resolve(options.toolchainRoot) : defaultToolchainRoot;
   if (options.toolchainRoot && existsSync(toolchainRoot)) throw new Error('isolated toolchain output must not already exist');
+  const targetDir = resolve(implementationRoot, process.env.CARGO_TARGET_DIR || "target");
   if (options.buildCompiler !== false) {
-    buildCompiler();
+    buildCompiler(targetDir);
   }
 
   rmSync(toolchainRoot, { recursive: true, force: true });
@@ -62,7 +63,7 @@ export function packageLocalToolchain(options = {}) {
   copyFileSync(join(implementationRoot, "../LICENSE"), join(toolchainRoot, "LICENSE"));
 
   copyNodeRuntime(toolchainRoot);
-  copyCompiler(toolchainRoot);
+  copyCompiler(toolchainRoot, targetDir);
   writeThirdPartyNotices({ implementationRoot, toolchainRoot, nodeSource: resolveNodeRuntimeSource(process.platform === "win32" ? "node.exe" : "node") });
   copyToubaPackages(toolchainRoot);
   const updateSupport = join(toolchainRoot, 'lib/cli/touba-distribution/src');
@@ -101,10 +102,12 @@ export function packageLocalToolchain(options = {}) {
   };
 }
 
-function buildCompiler() {
+function buildCompiler(targetDir) {
   const result = spawnSync(process.env.CARGO ?? "cargo", [
     "build",
     "--locked",
+    "--target-dir",
+    targetDir,
     "-p",
     "touba-cli",
     "--bin",
@@ -121,7 +124,7 @@ function buildCompiler() {
     throw new Error(`cargo build failed with status ${result.status}`);
   }
   if (["linux", "win32"].includes(process.platform)) {
-    const sandbox = spawnSync(process.env.CARGO ?? "cargo", ["build", "--locked", "-p", "touba-sandbox", "--release"], { cwd: implementationRoot, stdio: "inherit" });
+    const sandbox = spawnSync(process.env.CARGO ?? "cargo", ["build", "--locked", "--target-dir", targetDir, "-p", "touba-sandbox", "--release"], { cwd: implementationRoot, stdio: "inherit" });
     if (sandbox.error || sandbox.status !== 0) throw new Error("native sandbox build failed");
   }
 }
@@ -149,9 +152,9 @@ function resolveNodeRuntimeSource(nodeName) {
   return realpathSync(process.execPath);
 }
 
-function copyCompiler(toolchainRoot) {
+function copyCompiler(toolchainRoot, targetDir) {
   const executableName = process.platform === "win32" ? "touba-compile.exe" : "touba-compile";
-  const compilerSource = join(implementationRoot, "target", "release", executableName);
+  const compilerSource = join(targetDir, "release", executableName);
   if (!existsSync(compilerSource)) {
     throw new Error(`missing compiler binary ${compilerSource}`);
   }
@@ -159,7 +162,7 @@ function copyCompiler(toolchainRoot) {
   chmodSync(join(toolchainRoot, "bin", executableName), 0o755);
   if (["linux", "win32"].includes(process.platform)) {
     const name = process.platform === "win32" ? "touba-sandbox.exe" : "touba-sandbox";
-    const sandbox = join(implementationRoot, "target", "release", name);
+    const sandbox = join(targetDir, "release", name);
     if (!existsSync(sandbox)) throw new Error("missing native sandbox launcher");
     copyFileSync(sandbox, join(toolchainRoot, "bin", name));
     chmodSync(join(toolchainRoot, "bin", name), 0o755);

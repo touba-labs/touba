@@ -75,3 +75,16 @@ test("commit failure restores the old payload; pre-activation failure never move
     assert.equal(existsSync(join(prefix, '.install.lock')), false);
   }
 });
+
+test("a failed first installation leaves no active payload and can be retried", t => {
+  const { candidate, prefix } = fixture(t);
+  const payload = candidate("first");
+  const installRoot = join(prefix, "touba-toolchain");
+  assert.throws(() => installToolchainPayload({
+    source: payload.dir, prefix,
+    commit() { throw new Error("injected first commit failure"); },
+  }), /injected first commit failure/);
+  assert.equal(existsSync(installRoot), false);
+  assert.equal(existsSync(join(prefix, ".install.lock")), false);
+  assert.equal(installToolchainPayload({ source: payload.dir, prefix }).build_id, payload.build.id);
+});
