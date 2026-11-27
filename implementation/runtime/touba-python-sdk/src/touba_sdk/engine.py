@@ -301,20 +301,21 @@ class AsyncToubaEngine:
                     chunks.append(chunk)
             return b"".join(chunks)
 
-        async def cancelled():
+        async def cancelled(event):
             while True:
-                if cancel_event is not None and cancel_event.is_set():
+                if event.is_set():
                     raise ToubaEngineError(phase, "EngineCancelled")
                 await asyncio.sleep(.02)
 
         readers = [asyncio.create_task(read(child.stdout, True)), asyncio.create_task(read(child.stderr, False)), asyncio.create_task(child.wait())]
         collection = asyncio.gather(*readers)
-        monitor = asyncio.create_task(cancelled())
+        monitor = asyncio.create_task(cancelled(cancel_event)) if cancel_event is not None else None
+        waiters = [collection] if monitor is None else [collection, monitor]
         try:
-            done, _ = await asyncio.wait([collection, monitor], timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
             if not done:
                 raise ToubaEngineError(phase, "EngineTimeout")
-            if monitor in done:
+            if monitor is not None and monitor in done:
                 await monitor
             stdout, _, code = await collection
             return code, stdout
@@ -327,10 +328,9 @@ class AsyncToubaEngine:
             # transport before the caller can dispose of the event loop.
             child._transport.close()
             await child.wait()
-            monitor.cancel(); collection.cancel()
-            for task in readers:
+            for task in [*waiters, *readers]:
                 task.cancel()
-            await asyncio.gather(monitor, collection, *readers, return_exceptions=True)
+            await asyncio.gather(*waiters, *readers, return_exceptions=True)
 
     async def create_compensation(self, **options) -> dict[str, Any]:
         return await self._compensate("create", options)
