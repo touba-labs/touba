@@ -1,5 +1,18 @@
 # Notes de version
 
+Le [changelog](../../CHANGELOG.md) détaille les changements de chaque version.
+La [documentation publiée](https://toubalang.org/docs/reference/notes-versions/)
+présente les notes et les migrations pour les distributions disponibles.
+
+## Touba 1.4.0
+
+Les mises à jour de packages préservent les approbations exigées par
+l’application. Une modification du contrat de gouvernance demande une revue
+explicite. Les projets neufs se préparent avec `touba prepare --mode write`,
+puis `touba prepare --mode check`. Avant une mise à jour, sauvegardez les
+données et traitez les opérations suspendues avec leur build d’origine.
+Mettez ensuite la CLI et les SDK du projet à niveau.
+
 ## Touba 1.3.1
 
 Les projets préparés conservent les exigences d’approbation sur les outils

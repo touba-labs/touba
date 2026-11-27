@@ -21,6 +21,7 @@
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-2f63c6?style=flat-square&labelColor=1f2328)](https://toubalang.org/docs/demarrer/installation)
 
 <a href="https://toubalang.org/">Documentation</a> &nbsp;·&nbsp;
+<a href="https://toubalang.org/en/docs/">English docs</a> &nbsp;·&nbsp;
 <a href="https://toubalang.org/hub/telechargements/">Downloads</a> &nbsp;·&nbsp;
 <a href="https://toubalang.org/docs/tutoriels/">Tutorials</a> &nbsp;·&nbsp;
 <a href="https://toubalang.org/benchmarks/">Benchmarks</a> &nbsp;·&nbsp;
@@ -230,7 +231,8 @@ the example above. In VS Code, **Touba: Explore Project** opens the same views.
 Strategies and skills can also execute directly. Traces preserve the actual
 structural caller instead of attributing those operations to an invented agent.
 
-The [concepts](https://toubalang.org/docs/concepts/composants-touba),
+The [documentation index](docs/README.md) links guides in this checkout and
+published editions in English and French. The [concepts](https://toubalang.org/docs/concepts/composants-touba),
 [documentation](https://toubalang.org/docs/) and
 [tutorials](https://toubalang.org/docs/tutoriels/) explain the language,
 handler integration, multi-agent composition, parallelism and execution history.
