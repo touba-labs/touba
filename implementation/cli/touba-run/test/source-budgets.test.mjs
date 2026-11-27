@@ -290,7 +290,7 @@ test("zero call budgets survive source, manifest, host and default admission and
 
 test("zero unrelated counters remain zero through a human pause and resume", async t => {
   const air = compile(t, pausedSource.replace("limits run\n", "limits run\n    max_agent_invocations as 0\n    max_provider_calls as 0\n"));
-  const options = { entryRef: "skill:budgets.paused/Review", durableHumanApprovals: true,
+  const options = { entryRef: "skill:budgets.paused/Review", durableHumanApprovals: true, now: () => 0,
     toolHandlers: { "tool:budgets.paused/Normalize": () => "done" } };
   const paused = await executeAirDocument(air, options);
   assert.equal(paused.reason, "human_approval_pending", JSON.stringify(paused));
