@@ -614,7 +614,8 @@ try {
     }
     return await exitAfterFlush(1);
   }
-  const code = e instanceof ToubaRuntimeError && (HARDENED_ERROR_CODES.includes(e.code) || e.code === "EffectJournalBusy")
+  const code = e instanceof ToubaRuntimeError && (HARDENED_ERROR_CODES.includes(e.code)
+    || e.code === "EffectJournalBusy" || e.code === "TraceStorageBusy")
     ? e.code : "RuntimeAdmissionRefused";
   return await refuseAdmission(code, "runtime", 1);
 } finally {

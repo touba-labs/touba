@@ -51,6 +51,7 @@ export class TraceBuilder {
     this.pureFunctionDetail = pureFunctionDetail;
     this.pureGraphs = new Map((airDocument.execution_graphs ?? [])
       .filter(graph => graph.owner_ref.startsWith("function:")).map(graph => [graph.id, graph.owner_ref]));
+    this.pureFunctions = new Set(this.pureGraphs.values());
     if (!Number.isSafeInteger(initialSequenceIndex) || initialSequenceIndex < 0) {
       throw new TypeError("initialSequenceIndex must be a non-negative safe integer");
     }
@@ -68,6 +69,7 @@ export class TraceBuilder {
     /** @type {TraceEvent[]} */
     this.pendingEvents = [];
     this.pendingBytes = 0;
+    this.completed = false;
     this.maxPendingBytes = Math.min(65536, storage?.maxBatchBytes ?? 65536);
     if (!Number.isSafeInteger(this.maxPendingBytes) || this.maxPendingBytes < 1) throw new TypeError("trace batch byte limit must be a positive safe integer");
     this.eventCount = 0;
@@ -155,17 +157,25 @@ export class TraceBuilder {
         ? "capability is outside the declared authority" : options.message,
     }));
     if (this.storage !== null && this.storageSegment !== null) {
-      const pureDetail = pureOwner !== undefined && ["binding_created", "branch_evaluated", "loop_evaluated"].includes(kind);
-      const bytes = pureDetail ? Buffer.byteLength(JSON.stringify(event)) : 0;
-      if (pureDetail && this.storage.appendBatch && bytes <= this.maxPendingBytes) {
+      const localDetail = graphRef !== undefined
+        && ["binding_created", "branch_evaluated", "loop_evaluated"].includes(kind);
+      const pureScope = pureOwner !== undefined
+        && (kind === "scope_entered" || kind === "scope_exited" && payload?.status === "success");
+      const pureCall = (kind === "call_started" || kind === "call_completed")
+        && this.pureFunctions.has(payload?.target_ref)
+        && payload?.resumed_from_checkpoint !== true && payload?.compensation_id === undefined;
+      const batchable = localDetail || pureScope || pureCall;
+      const bytes = batchable ? Buffer.byteLength(JSON.stringify(event)) : 0;
+      if (batchable && !this.completed && this.storage.appendBatch && bytes <= this.maxPendingBytes) {
         if (this.pendingEvents.length >= 32 || this.pendingBytes + bytes > this.maxPendingBytes) this.flush();
         this.pendingEvents.push(event); this.pendingBytes += bytes;
       } else {
-        // Every non-pure-detail event is a durable barrier. In particular,
-        // call/authority/provider events flush pure computation before an effect.
+        // Authority, effect and terminal events flush preceding local
+        // observations before publishing their own durable evidence.
         this.flush();
         const committed = this.storage.append(this.storageSegment, event);
         if (committed !== true) throw new TypeError("trace storage must synchronously acknowledge a new durable event with true");
+        if (kind === "run_completed") this.completed = true;
       }
     } else this.events.push(event);
     this.eventCount += 1;

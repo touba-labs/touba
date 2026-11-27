@@ -182,7 +182,7 @@ export function createSqliteTriggerStore({ filename, maxBytes = 512 * 1024 * 102
         }
         if (verified !== copied || actual.digest("hex") !== expected) fail("TriggerStateArchiveInvalid", "archive verification failed; live events retained");
         archived.close();
-        const fd = openSync(destination, "r");
+        const fd = openSync(destination, "r+");
         try { fsyncSync(fd); } finally { closeSync(fd); }
         if (process.platform !== "win32") {
           const dir = openSync(dirname(destination), "r");

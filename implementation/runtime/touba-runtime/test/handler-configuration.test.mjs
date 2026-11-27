@@ -60,7 +60,7 @@ asyncio.run(define_tool(tool_ref=${JSON.stringify(toolRef)},run=run,input_signat
     humanApprovalDecisions: { [fresh.checkpoint.approval_ref]: { decision: 'approved', evidence_ref: 'test-proof' } } });
   assert.equal(result.status, 'success', JSON.stringify(result));
   assert.equal(result.result, 7);
-  assert.equal(readFileSync(marker, 'utf8'), 'called\n');
+  assert.match(readFileSync(marker, 'utf8'), /^called\r?\n$/);
   assert.ok(!JSON.stringify(result).includes('private-config-marker'));
   const invalid = structuredClone(manifest); invalid.bindings[toolRef].configuration.values.region = null;
   assert.throws(() => loadToolBindingManifestFromJson(JSON.stringify(invalid)), { code: 'HandlerConfigurationInvalid' });

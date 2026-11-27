@@ -20,8 +20,13 @@ function fixture(t, options = {}) {
   const root = mkdtempSync(join(tmpdir(), "touba-trace-sqlite-"));
   const filename = join(root, "state.sqlite");
   const store = createSqliteTraceStore({ filename, ...options });
-  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
-  return { root, filename, store };
+  const connections = [store];
+  function own(connection) { connections.push(connection); return connection; }
+  t.after(() => {
+    for (const connection of connections.reverse()) connection.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  return { root, filename, store, own };
 }
 const air = { air_schema_version: "touba-air-v1", air_capability_profile: "touba-air-capabilities-v1",
   air_json_profile: "touba-air-json-canonical-v1", module: { id: "module:storage", name: "storage" },
@@ -242,11 +247,10 @@ test("a reader captures its prefix before a delayed consumer starts", t => {
 });
 
 test("materialization counts JSON separators as well as stored payloads", t => {
-  const { filename, store } = fixture(t);
+  const { filename, store, own } = fixture(t);
   const trace = builder(store); trace.push("run_started");
   const bytes = Buffer.byteLength(JSON.stringify(trace.document()));
-  const limited = createSqliteTraceStore({ filename, maxDocumentBytes: bytes - 1 });
-  t.after(() => limited.close());
+  const limited = own(createSqliteTraceStore({ filename, maxDocumentBytes: bytes - 1 }));
   assert.throws(() => limited.document(trace.storageSegment), { code: "TraceMaterializationLimitExceeded" });
   assert.equal(Buffer.byteLength([...limited.json(trace.storageSegment)].join("")), bytes);
 });
@@ -400,8 +404,8 @@ test("full document limit leaves paginated evidence available", t => {
 });
 
 test("two connections share the quota and reject competing events atomically", t => {
-  const { filename, store } = fixture(t, { maxBytes: 1000 });
-  const second = createSqliteTraceStore({ filename, maxBytes: 1000 }); t.after(() => second.close());
+  const { filename, store, own } = fixture(t, { maxBytes: 1000 });
+  const second = own(createSqliteTraceStore({ filename, maxBytes: 1000 }));
   const trace = builder(store);
   const event = trace.push("run_started");
   assert.equal(second.append(trace.storageSegment, event), false);
@@ -411,8 +415,8 @@ test("two connections share the quota and reject competing events atomically", t
 });
 
 test("an export keeps its initial upper bound while another connection appends", t => {
-  const { filename, store } = fixture(t);
-  const second = createSqliteTraceStore({ filename }); t.after(() => second.close());
+  const { filename, store, own } = fixture(t);
+  const second = own(createSqliteTraceStore({ filename }));
   const trace = builder(store); trace.push("run_started");
   const exported = store.json(trace.storageSegment);
   const header = exported.next().value;
@@ -459,9 +463,9 @@ test("a storage failure before a call prevents the handler from running", async 
 });
 
 test("reopening preserves partial segments and never invents a terminal event", t => {
-  const { filename, store } = fixture(t); const trace = builder(store);
+  const { filename, store, own } = fixture(t); const trace = builder(store);
   trace.push("run_started"); store.close();
-  const reopened = createSqliteTraceStore({ filename }); t.after(() => reopened.close());
+  const reopened = own(createSqliteTraceStore({ filename }));
   assert.equal([...reopened.segments()][0].complete, false);
   assert.equal(reopened.document(trace.storageSegment).events.length, 1);
 });
@@ -486,9 +490,9 @@ test("a real approval pause and its resume retain two immutable trace segments",
 });
 
 test("reads reject corruption and deletion instead of returning a truncated trace", t => {
-  const { filename, store } = fixture(t); const trace = builder(store);
+  const { filename, store, own } = fixture(t); const trace = builder(store);
   trace.push("run_started"); trace.push("binding_created");
-  const db = new DatabaseSync(filename); t.after(() => db.close());
+  const db = own(new DatabaseSync(filename));
   db.prepare("UPDATE touba_trace_events SET body='{}' WHERE sequence_index=0").run();
   assert.throws(() => trace.document(), { code: "TraceStorageCorrupt" });
   db.prepare("DELETE FROM touba_trace_events").run();
@@ -533,9 +537,9 @@ test("a foreign database is refused without changing its contents or journal mod
 });
 
 test("reopening never recreates missing accounting or schema over existing traces", t => {
-  const { filename, store } = fixture(t);
+  const { filename, store, own } = fixture(t);
   builder(store).push("run_started"); store.close();
-  const db = new DatabaseSync(filename); t.after(() => db.close());
+  const db = own(new DatabaseSync(filename));
   db.exec("DELETE FROM touba_trace_storage");
   assert.throws(() => createSqliteTraceStore({ filename }), { code: "TraceStorageCorrupt" });
   assert.equal(db.prepare("SELECT count(*) AS n FROM touba_trace_storage").get().n, 0);

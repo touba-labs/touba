@@ -71,7 +71,7 @@ export function migrateJsonState({ source, destination, apply = false, maxSource
     build(temporary, records);
     writeFileSync(backup, bytes, { flag: "wx", mode: 0o600 });
     for (const path of [backup, temporary]) {
-      const output = openSync(path, "r");
+      const output = openSync(path, "r+");
       try { fsyncSync(output); } finally { closeSync(output); }
     }
     linkSync(temporary, destination);

@@ -9,14 +9,21 @@ import { createSqliteTriggerStore, migrateTriggerState } from "../src/sqlite-tri
 
 const moduleUrl = new URL("../src/sqlite-trigger-store.mjs", import.meta.url).href;
 const request = { triggerRef: "trigger:example/Receive", eventId: "event-1", runId: "run-1", sourceKind: "request", maxRunsPerDay: 1 };
+const openStores = new WeakMap();
 function workspace(t) {
   const root = mkdtempSync(join(tmpdir(), "touba-trigger-store-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stores = [];
+  openStores.set(t, stores);
+  t.after(() => {
+    for (const store of stores.reverse()) store.close();
+    rmSync(root, { recursive: true, force: true });
+  });
   return join(root, "triggers.sqlite");
 }
 function open(t, filename, options) {
   const store = createSqliteTriggerStore({ filename, ...options });
-  t.after(() => store.close()); return store;
+  openStores.get(t).push(store);
+  return store;
 }
 function child(code) {
   const processChild = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: ["ignore", "pipe", "pipe"] });
@@ -56,7 +63,8 @@ test("SIGKILL after admission does not allow replay", async t => {
   const result = await child(`import {createSqliteTriggerStore} from ${JSON.stringify(moduleUrl)};
     const store=createSqliteTriggerStore({filename:${JSON.stringify(filename)}});
     store.admit(${JSON.stringify(request)}); process.kill(process.pid,'SIGKILL');`);
-  assert.equal(result.signal, "SIGKILL", result.stderr);
+  if (process.platform === "win32") assert.ok(Number.isInteger(result.code) && result.code !== 0, result.stderr);
+  else assert.equal(result.signal, "SIGKILL", result.stderr);
   assert.equal(open(t, filename).admit({ ...request, runId: "after-crash" }).reason, "event_replay");
 });
 

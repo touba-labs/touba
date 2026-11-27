@@ -5,13 +5,31 @@ import { DatabaseSync } from "node:sqlite";
 import { createTraceReference, traceJsonDigest, validateTraceReference } from "../../../contracts/trace-reference.mjs";
 import { traceExportState } from "./sqlite-trace-export-state.mjs";
 import { validHandlerIsolationObservation } from './handler-isolation-evidence.mjs';
+import { ToubaRuntimeError } from "./runtime-errors.mjs";
 
 const FORMAT = "touba-trace-storage-v1";
+const RETRY_WAIT = new Int32Array(new SharedArrayBuffer(4));
 const hash = text => createHash("sha256").update(text).digest("hex");
 function fail(code, message) { throw Object.assign(new Error(message), { code }); }
 function positive(value, name) {
   if (!Number.isSafeInteger(value) || value < 1) throw new TypeError(`${name} must be a positive safe integer`);
   return value;
+}
+
+function retryBusy(action) {
+  for (let attempt = 0; ; attempt++) {
+    try { return action(); }
+    catch (error) {
+      const primaryCode = error?.errcode & 0xff;
+      if (primaryCode !== 5 && primaryCode !== 6) throw error;
+      if (attempt === 2) {
+        throw new ToubaRuntimeError("TraceStorageBusy", "the trace journal is busy; wait for the other writer or choose a separate --trace-store");
+      }
+      // Each attempt already uses SQLite's busy timeout. Stagger retries so
+      // competing writers do not all try to reacquire the reservation at once.
+      Atomics.wait(RETRY_WAIT, 0, 0, 25 + Math.random() * 50);
+    }
+  }
 }
 
 /** Local append-only trace segments. A commit acknowledges durable storage.
@@ -42,8 +60,8 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
   function transaction(fn) {
     if (closed) fail("TraceStorageClosed", "trace database is closed");
     if (readOnly) fail("TraceStorageReadOnly", "trace journal was opened for reading only");
-    db.exec("BEGIN IMMEDIATE");
-    try { const value = fn(); db.exec("COMMIT"); return value; }
+    retryBusy(() => db.exec("BEGIN IMMEDIATE"));
+    try { const value = fn(); retryBusy(() => db.exec("COMMIT")); return value; }
     catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
   }
   function existingSchema() {
@@ -55,21 +73,24 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
     }
     return count;
   }
+  let hasOrigins;
   try {
     // The first schema inspection can race another process creating this same
     // default project journal. Install the connection-local wait before reads.
     db.exec("PRAGMA busy_timeout=5000; PRAGMA trusted_schema=OFF;");
     // Do not change another application's journal mode or schema when the host
     // accidentally points --trace-store at its business database.
-    const existing = existingSchema();
+    const existing = retryBusy(existingSchema);
     if (existing === 3) {
-      const meta = db.prepare("SELECT * FROM touba_trace_storage WHERE singleton=1").get();
+      const meta = retryBusy(() => db.prepare("SELECT * FROM touba_trace_storage WHERE singleton=1").get());
       if (!meta) fail("TraceStorageCorrupt", "trace storage accounting is missing");
       if (meta.format !== FORMAT) fail("TraceStorageFormatInvalid", "unsupported trace storage format");
     } else if (readOnly) fail("TraceStorageFormatInvalid", "trace journal does not exist in this database");
     db.exec("PRAGMA cache_size=-2048;");
     if (!readOnly) {
-      db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=EXTRA; PRAGMA fullfsync=ON;");
+      const mode = retryBusy(() => db.prepare("PRAGMA journal_mode").get());
+      if (mode.journal_mode !== "delete") retryBusy(() => db.exec("PRAGMA journal_mode=DELETE;"));
+      db.exec("PRAGMA synchronous=EXTRA; PRAGMA fullfsync=ON;");
       transaction(() => {
       const existing = existingSchema();
       db.exec(`CREATE TABLE IF NOT EXISTS touba_trace_storage (
@@ -94,8 +115,8 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
         run_id TEXT PRIMARY KEY, body TEXT NOT NULL, digest TEXT NOT NULL, bytes INTEGER NOT NULL);`);
       });
     }
+    hasOrigins = Boolean(retryBusy(() => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='touba_trace_origins'").get()));
   } catch (error) { db.close(); throw error; }
-  const hasOrigins = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='touba_trace_origins'").get());
   function origin(runId) {
     if (!hasOrigins) return null;
     const row = db.prepare('SELECT body,digest FROM touba_trace_origins WHERE run_id=?').get(runId);
@@ -361,7 +382,7 @@ export function createSqliteTraceStore({ filename, maxBytes = 512 * 1024 * 1024,
           catch (error) { if (error.code === "TraceSegmentMissing") continue; throw error; }
           for (const event of reader.events()) void event;
         }
-        const file = openSync(archivePath, "r");
+        const file = openSync(archivePath, "r+");
         try { fsyncSync(file); } finally { closeSync(file); }
         if (process.platform !== "win32") {
           const directory = openSync(archiveParent, "r");

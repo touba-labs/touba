@@ -18,7 +18,6 @@ before(() => {
 
 function setup(t, entry = "Process") {
   const root = mkdtempSync(join(tmpdir(), "touba-checkpoint-custody-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
   const payments = [];
   let attestations = 0;
   let proof;
@@ -30,6 +29,10 @@ function setup(t, entry = "Process") {
     toolHandlers: { "tool:checkpoint_custody/Pay": ({ arguments: { invoice } }) => { payments.push(structuredClone(invoice)); return "paid"; } },
     humanApprovalAuthority: () => { attestations++; return proof; },
   };
+  t.after(() => {
+    options.traceStorage?.close();
+    rmSync(root, { recursive: true, force: true });
+  });
   return {
     root, options, payments, attestations: () => attestations,
     async pause() {
@@ -155,7 +158,6 @@ test("two concurrent resumes reserve only one continuation", async t => {
 test("pause, rejected resume, approved resume and replay retain one run with disjoint exported event identities", async t => {
   const h = setup(t);
   const store = createSqliteTraceStore({ filename: join(h.root, "traces.sqlite") });
-  t.after(() => store.close());
   h.options.traceStorage = store;
   const cp = await h.pause();
   assert.equal((await h.resume(cp, { humanApprovalAuthority: undefined })).reason, "HumanApprovalAuthorityRequired");
