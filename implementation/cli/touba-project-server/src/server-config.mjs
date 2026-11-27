@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { validateProjectServerConfig, serverConfigPaths as paths } from '../../../contracts/product-surfaces/server-config.mjs';
 const fields = {
   host: '--host', port: '--port', client_origins: '--client-origin',
@@ -66,7 +66,9 @@ export function expandServerConfig(rawArgs, cwd = process.cwd()) {
   const root = realpathSync(resolve(cwd, roots[0] ?? '.'));
   const file = localPath(root, configurations[0], 'config', { required: true });
   const stat = lstatSync(file);
-  if (!stat.isFile() || stat.nlink !== 1 || stat.size > 32768 || relative(root, realpathSync(file)).startsWith('..')) fail('config');
+  const local = relative(root, realpathSync(file));
+  if (!stat.isFile() || stat.nlink !== 1 || stat.size > 32768
+    || local === '..' || local.startsWith('..' + sep) || isAbsolute(local)) fail('config');
   let document;
   try { document = JSON.parse(readFileSync(file, 'utf8')); } catch { fail('json'); }
   const configured = serverConfigArguments(root, document);

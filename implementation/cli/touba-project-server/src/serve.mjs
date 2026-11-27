@@ -378,8 +378,17 @@ export function createToubaProjectServer(options = {}) {
   if (!existsSync(root) || !statSync(root).isDirectory()) throw serviceError("ToubaServeProjectRootMissing", "project root must be an existing directory");
   let release = null;
   const dropLease = () => {
-    if (ownsTraceStorage) { options.traceStorage?.close(); options.traceStorage = undefined; }
-    release?.(); release = null;
+    try {
+      if (ownsTraceStorage) {
+        const storage = options.traceStorage;
+        options.traceStorage = undefined;
+        storage?.close();
+      }
+    } finally {
+      const releaseLease = release;
+      release = null;
+      releaseLease?.();
+    }
   };
   try {
     const service = createProjectServerWithLease(options, () => { release = acquireStateLease(root); });
@@ -3430,14 +3439,20 @@ function createProjectServerWithLease(options, takeLease) {
       if (stoppingPromise) return stoppingPromise;
       stopping = true;
       stoppingPromise = (async () => {
-        await webhooks.stop();
-        await validation.stop();
-        await scheduler.stop();
-        await notifications.stop();
-        explorerSurface.close();
-        packageSurface.close();
-        registryTrust.close();
-        await traceExplorerSurface.close();
+        const failures = [];
+        for (const cleanup of [
+          () => webhooks.stop(),
+          () => validation.stop(),
+          () => scheduler.stop(),
+          () => notifications.stop(),
+          () => explorerSurface.close(),
+          () => packageSurface.close(),
+          () => registryTrust.close(),
+          () => traceExplorerSurface.close(),
+        ]) {
+          try { await cleanup(); }
+          catch (error) { failures.push(error); }
+        }
         humanWaitState.stopping = true;
         humanWaitState.workerRequested = false;
         if (humanWaitState.timer !== null) {
@@ -3457,6 +3472,7 @@ function createProjectServerWithLease(options, takeLease) {
         }
         eventClients.clear();
         if (server.listening) await new Promise(resolveClose => server.close(resolveClose));
+        if (failures.length) throw failures[0];
       })();
       return stoppingPromise;
     },

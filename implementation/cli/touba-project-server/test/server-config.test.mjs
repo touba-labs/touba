@@ -30,6 +30,8 @@ test('explicit profile resolves project paths, carries environment names and pre
   assert.deepEqual(expandServerConfig(['--port', '8792'], root), ['--port', '8792']);
   assert.deepEqual(readdirSync(root), ['touba.server.json'], 'profile loading creates no state and starts no process');
   assert.deepEqual(serverConfigArguments(root, { schema_version: profile.schema_version, package_hosts: true }), ['--package-hosts']);
+  writeFileSync(join(root, '..development.json'), JSON.stringify(profile));
+  assert.deepEqual(expandServerConfig(['--config', '..development.json', '--project-root', root]), args);
 });
 
 test('project webhook profile carries only its secret reference and requires it when enabled',t=>{

@@ -59,6 +59,7 @@ import {
 } from "../src/serve.mjs";
 import { executeAirDocument } from "../../../runtime/touba-runtime/src/index.mjs";
 import { generateHandlerStubFromAirTool } from "../../touba-manifest/src/stub.mjs";
+import { TraceClient } from "../../touba-inspect/src/trace-explorer/client.mjs";
 import {
   archiveInteractionSession,
   completeInteractionOperation,
@@ -79,6 +80,39 @@ import { fileURLToPath } from "node:url";
 
 
 const contractsRoot = fileURLToPath(new URL("../../../contracts/product-surfaces/", import.meta.url));
+
+test("server closes its listener and lease even when a trace reader reports cleanup failure", async t => {
+  const root = mkdtempSync(join(tmpdir(), "touba-server-cleanup-"));
+  mkdirSync(join(root, "src"));
+  writeFileSync(join(root, "src/main.tb"), "module test.cleanup\n");
+  const failure = new Error("injected trace reader close failure");
+  const close = TraceClient.prototype.close;
+  t.mock.method(TraceClient.prototype, "close", async function () {
+    await close.call(this);
+    throw failure;
+  });
+  const options = { projectRoot: root, contractsRoot, quiet: true, port: 0 };
+  const service = createToubaProjectServer(options);
+  let restarted;
+  t.after(async () => {
+    await service.stop().catch(() => {});
+    if (service.server.listening) await new Promise(resolveClose => service.server.close(resolveClose));
+    await restarted?.stop();
+    rmSync(root, { recursive: true, force: true });
+  });
+  await service.start();
+  const response = await fetch(`http://127.0.0.1:${service.server.address().port}/traces/explorer`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ client_id: "trace-cleanup-fixture", method: "list", args: {} }),
+  });
+  assert.equal(response.status, 200);
+  await response.json();
+  await assert.rejects(service.stop(), error => error === failure);
+  assert.equal(service.server.listening, false);
+  restarted = createToubaProjectServer(options);
+  await restarted.start();
+  assert.equal(restarted.server.listening, true);
+});
 
 test("HTTP keeps an idle pooled socket alive through the internal expiry margin", { timeout: 15000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), "touba-http-expiry-margin-"));
