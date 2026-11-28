@@ -1,0 +1,36 @@
+module examples.refunds
+
+tool IssueRefund
+    description "Refund an order through the payment API."
+    takes order as Text
+    gives Text
+    requires network, secret_read
+    secrets PAYMENTS_API_KEY
+
+agent RefundAgent
+    description "Refund the order and return the receipt."
+    takes order as Text
+    gives Text
+    responsibility "Refund only the supplied order."
+    uses IssueRefund
+    callable_by strategy HandleRefund
+
+strategy HandleRefund
+    gives Text
+    uses RefundAgent
+    do
+        human.approve
+            with context as "demo-order"
+            with role as "finance"
+            into approval
+        RefundAgent
+            with order as "demo-order"
+            into receipt
+        give receipt
+
+strategy PreviewRefund
+    do
+        show
+            with message as "Refund preview"
+        show
+            with message as "demo-order"

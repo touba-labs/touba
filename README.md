@@ -16,11 +16,11 @@
 </p>
 
 [![Source CI](https://img.shields.io/github/actions/workflow/status/touba-labs/touba/source-ci.yml?branch=dev&style=flat-square&label=source%20CI&labelColor=1f2328)](https://github.com/touba-labs/touba/actions/workflows/source-ci.yml)
-[![Release](https://img.shields.io/badge/release-v1.4.0-2f63c6?style=flat-square&labelColor=1f2328)](https://toubalang.org/hub/telechargements/)
+[![Release](https://img.shields.io/badge/release-v1.5.0-2f63c6?style=flat-square&labelColor=1f2328)](https://toubalang.org/hub/telechargements/?version=1.5.0)
 [![License](https://img.shields.io/badge/license-Apache%202.0-2f63c6?style=flat-square&labelColor=1f2328)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-2f63c6?style=flat-square&labelColor=1f2328)](https://toubalang.org/docs/demarrer/installation)
 
-<a href="https://toubalang.org/">Documentation</a> &nbsp;·&nbsp;
+<a href="https://toubalang.org/docs/">Documentation FR</a> &nbsp;·&nbsp;
 <a href="https://toubalang.org/en/docs/">English docs</a> &nbsp;·&nbsp;
 <a href="https://toubalang.org/hub/telechargements/">Downloads</a> &nbsp;·&nbsp;
 <a href="https://toubalang.org/docs/tutoriels/">Tutorials</a> &nbsp;·&nbsp;
@@ -144,7 +144,7 @@ traces that connect each observed action or refusal to its source declaration.
 ## Get started
 
 Download Touba from the [downloads page](https://toubalang.org/hub/telechargements/).
-The [installation guide](https://toubalang.org/docs/demarrer/installation)
+The [installation guide](https://toubalang.org/en/docs/demarrer/installation/)
 covers archives, graphical installers and checksum verification for macOS
 Apple Silicon, macOS Intel, Linux x64 and Windows x64.
 
@@ -172,6 +172,10 @@ With Touba 1.5.0, you can run the source file directly.
 touba run hello.tb
 # Touba ready
 ```
+
+Try the [guided refund example](docs/examples/governed-first-run/) to see a
+successful run, a compiler refusal, an approval pause and a step limit. It runs
+locally with the installed CLI and produces an inspectable trace.
 
 Use the commands below with Touba 1.4.0 or whenever you want to keep the compiled AIR for inspection.
 
@@ -286,10 +290,25 @@ See the [package guide](docs/guides/creer-partager-package.md) and the
 
 ## Integration and observability
 
+In an existing Python or JavaScript application, use Touba for the part of the
+workflow that needs explicit authorization, approval or execution evidence. For
+example, an application can keep its existing support workflow and send a
+refund request to a Touba strategy for approval before the host handler acts.
+
+[LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) models
+stateful workflows as graphs. [CrewAI](https://docs.crewai.com/en/introduction)
+and [AutoGen](https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/core-concepts/agent-and-multi-agent-application.html)
+provide frameworks for coordinating agents. Touba specifies and enforces the
+execution contract for the part you run through its runtime. The SDK is the
+connection point when a workflow framework already owns the orchestration.
+
 JavaScript and Python SDKs provide host integration and typed tool handlers.
 Explicit MCP snapshots and REST/OpenAPI descriptions can generate reviewable
 Touba contracts and handlers. Existing application code can be called through
-those handlers; it does not become trusted merely by being imported.
+those handlers; it does not become trusted merely by being imported. Start with
+the [JavaScript SDK](docs/guides/sdk-javascript.md),
+the [Python SDK](docs/guides/sdk-python.md) or the
+[MCP discovery guide](docs/guides/decouvrir-outils-mcp.md).
 
 The project server exposes HTTP and event-stream interfaces for host
 applications. Those applications supply their identity and access policy.

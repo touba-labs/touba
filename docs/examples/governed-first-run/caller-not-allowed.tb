@@ -1,0 +1,22 @@
+module examples.refused_refund
+
+agent RefundAgent
+    description "Review a refund request."
+    takes order as Text
+    gives Text
+    responsibility "Review only the supplied order."
+    callable_by strategy HandleRefund
+
+strategy HandleRefund
+    takes order as Text
+    uses RefundAgent
+    do
+        RefundAgent
+            with order as order
+
+strategy RefundEverything
+    takes order as Text
+    uses RefundAgent
+    do
+        RefundAgent
+            with order as order

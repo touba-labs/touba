@@ -22,11 +22,14 @@ downloads are on the [Touba hub](https://toubalang.org/hub/telechargements/).
 
 ## 1.5.0
 
-Local candidate with authenticated project request ingress, reviewed queue
-recovery, scheduler controls and precise package compatibility diagnostics.
+Published on November 27, 2026, with authenticated project request ingress,
+reviewed queue recovery, scheduler controls and precise package compatibility
+diagnostics.
 `touba run hello.tb` compiles and runs a source file in one command.
 Includes the reviewed lifecycle and private approval dossiers of the earlier RC.
-See [release and migration notes](implementation/release/notes/v1.5.0.md).
+See [release and migration notes](implementation/release/notes/v1.5.0.md),
+[downloads](https://toubalang.org/hub/telechargements/?version=1.5.0) and
+[source and build identity](DEVELOPMENT.md#source-and-release-provenance).
 
 ## 1.5.0-rc.1
 

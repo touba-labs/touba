@@ -24,12 +24,20 @@ and installed distribution qualification are separate checks.
 
 ## Source and release provenance
 
-The Touba 1.5.0 release record identifies source revision
-`4bc7d7acb59bbd6ad044648751457314792b0252`.
-The source history preserves the original authors and dates and has been
-filtered for publication. A local build from this repository has its own
-source revision and artifact identity. Verify the signed release separately
-with the metadata and checksums supplied with the downloads.
+For Touba 1.5.0, match the source and build identities using these references.
+
+| Reference | Value |
+| --- | --- |
+| Published source branch | [`release/1.5.0`](https://github.com/touba-labs/touba/tree/release/1.5.0) at [`0287078fc4be32cebd7ca76a3d0bc08c605e0141`](https://github.com/touba-labs/touba/commit/0287078fc4be32cebd7ca76a3d0bc08c605e0141) |
+| Source revision recorded for the distributed build | `4bc7d7acb59bbd6ad044648751457314792b0252` |
+| Official artifacts | [Touba 1.5.0 downloads](https://toubalang.org/hub/telechargements/?version=1.5.0) |
+| Archive and installer digests | [CHECKSUMS.json](https://toubalang.org/downloads/touba/v1.5.0/CHECKSUMS.json) and [SHA256SUMS](https://toubalang.org/downloads/touba/v1.5.0/SHA256SUMS) |
+| Installed build identity | Run `touba version` to see the version and build identifier. |
+
+The public branch is a filtered source snapshot that preserves the authors and
+dates. Its history has distinct commit IDs. Building from the public checkout
+produces a build with its own identity. Verify the exact downloaded archive
+against the checksum manifest before using it.
 
 ## HTTP and PostgreSQL integration
 
