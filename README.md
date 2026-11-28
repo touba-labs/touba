@@ -143,7 +143,7 @@ traces that connect each observed action or refusal to its source declaration.
 
 ## Get started
 
-Download Touba from the [downloads page](https://toubalang.org/hub/telechargements/).
+Download [Touba 1.5.0](https://toubalang.org/hub/telechargements/?version=1.5.0).
 The [installation guide](https://toubalang.org/en/docs/demarrer/installation/)
 covers archives, graphical installers and checksum verification for macOS
 Apple Silicon, macOS Intel, Linux x64 and Windows x64.
@@ -166,7 +166,7 @@ strategy Hello
             with message as "Touba ready"
 ```
 
-With Touba 1.5.0, you can run the source file directly.
+Run the source file directly:
 
 ```sh
 touba run hello.tb
@@ -177,14 +177,22 @@ Try the [guided refund example](docs/examples/governed-first-run/) to see a
 successful run, a compiler refusal, an approval pause and a step limit. It runs
 locally with the installed CLI and produces an inspectable trace.
 
-Use the commands below with Touba 1.4.0 or whenever you want to keep the compiled AIR for inspection.
+Stream execution events with `--output trace`, or save a trace and inspect it.
+Both options work directly with the source file.
+
+```sh
+touba run hello.tb --output trace
+touba run hello.tb --trace-out hello.trace.json
+touba inspect hello.trace.json
+```
+
+To keep the compiled AIR, save it to a file. You can then inspect it or run
+it again with Touba 1.5.0.
 
 ```sh
 touba compile hello.tb --out hello.air.json
+touba inspect hello.air.json
 touba run hello.air.json
-touba run hello.air.json --output trace          # stream the execution events
-touba run hello.air.json --trace-out trace.json  # or export them
-touba inspect trace.json                         # and summarize the run
 ```
 
 Scaffold a project with generated handlers, in the host language of your choice:
